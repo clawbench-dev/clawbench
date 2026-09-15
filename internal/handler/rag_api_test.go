@@ -366,9 +366,11 @@ func TestServeRAGSearch_LocalhostGlobalSearch(t *testing.T) {
 	embedder := setupWorkingMockEmbedder(t)
 	rag.GlobalEmbedder = embedder
 
-	// Localhost request without project cookie — should succeed (global search)
+	// Local AI token, no project cookie — should succeed (global search)
+	model.CookieToken = "instance-key"
 	req := newRequest(t, http.MethodPost, "/api/rag/search", map[string]any{"q": "test"})
 	req.RemoteAddr = "127.0.0.1:12345"
+	withAIToken(req)
 	w := callHandlerWithAuth(ServeRAGSearch, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -384,6 +386,42 @@ func TestServeRAGSearch_RemoteNoProjectDenied(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
+// A loopback address alone no longer reaches the cross-project exemption at
+// all: the auth middleware rejects it with 401 before the handler runs, so the
+// 403 project-scope check is only reachable by a caller that already holds a
+// valid token. This is the intended layering — the token gates entry, and the
+// project cookie then narrows scope.
+func TestServeRAGSearch_LocalhostNoTokenRejectedBeforeHandler(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.SessionToken = hashPassword("testpass")
+	model.CookieToken = "instance-key"
+
+	req := newRequest(t, http.MethodPost, "/api/rag/search", map[string]any{"q": "test"})
+	req.RemoteAddr = "127.0.0.1:12345"
+	w := callHandlerWithAuth(ServeRAGSearch, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// This isolates the handler's own exemption check by calling it directly (no
+// auth middleware in front). The exemption must be granted by the AI token, not
+// by the loopback address — otherwise any local process would get cross-project
+// reads. The paired positive case is TestServeRAGSearch_LocalhostGlobalSearch.
+func TestServeRAGSearch_ExemptionRequiresTokenNotJustLoopback(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.CookieToken = "instance-key"
+
+	req := newRequest(t, http.MethodPost, "/api/rag/search", map[string]any{"q": "test"})
+	req.RemoteAddr = "127.0.0.1:12345" // loopback, but no token
+	w := callHandler(ServeRAGSearch, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code,
+		"loopback without an AI token must not get the project-cookie exemption")
+}
+
 func TestServeRAGMessage_LocalhostCrossProject(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -392,9 +430,11 @@ func TestServeRAGMessage_LocalhostCrossProject(t *testing.T) {
 	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
 	require.NoError(t, err)
 
-	// Localhost request without project cookie — should succeed (cross-project access)
+	// Local AI token, no project cookie — should succeed (cross-project access)
+	model.CookieToken = "instance-key"
 	req := newRequest(t, http.MethodGet, "/api/rag/message?id="+fmt.Sprint(msgID), nil)
 	req.RemoteAddr = "127.0.0.1:12345"
+	withAIToken(req)
 	w := callHandlerWithAuth(ServeRAGMessage, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -407,9 +447,11 @@ func TestServeRAGSession_LocalhostCrossProject(t *testing.T) {
 	sid, err := service.CreateSession(env.ProjectDir, "claude", "Test Session", "", "", "default", "chat")
 	require.NoError(t, err)
 
-	// Localhost request without project cookie — should succeed (cross-project access)
+	// Local AI token, no project cookie — should succeed (cross-project access)
+	model.CookieToken = "instance-key"
 	req := newRequest(t, http.MethodGet, "/api/rag/session?id="+sid, nil)
 	req.RemoteAddr = "127.0.0.1:12345"
+	withAIToken(req)
 	w := callHandlerWithAuth(ServeRAGSession, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -532,8 +574,10 @@ func TestServeRAGMessageIndexStatus_LocalhostNoProject(t *testing.T) {
 	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
 	require.NoError(t, err)
 
+	model.CookieToken = "instance-key"
 	req := newRequest(t, http.MethodGet, "/api/rag/message-index-status?id="+fmt.Sprint(msgID), nil)
 	req.RemoteAddr = "127.0.0.1:12345"
+	withAIToken(req)
 	w := callHandlerWithAuth(ServeRAGMessageIndexStatus, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -1120,8 +1164,10 @@ func TestServeRAGSessionSearch_LocalhostGlobalSearch(t *testing.T) {
 	embedder := setupWorkingMockEmbedder(t)
 	rag.GlobalEmbedder = embedder
 
+	model.CookieToken = "instance-key"
 	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "test"})
 	req.RemoteAddr = "127.0.0.1:12345"
+	withAIToken(req)
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }

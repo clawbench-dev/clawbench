@@ -70,7 +70,10 @@ func fetchForgeCredentialLogin(host string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	author, err := verifyForgeTokenContext(ctx, host, token)
+	// No scheme is named here: this probes an already-bound host, so the stored
+	// instance hint is the only thing that can say. Passing "" lets
+	// verifyForgeTokenContext consult it.
+	author, err := verifyForgeTokenContext(ctx, host, token, "")
 	if err != nil {
 		return ""
 	}

@@ -9,61 +9,68 @@ import (
 
 func TestParseRemoteURL_HTTPS(t *testing.T) {
 	tests := []struct {
-		name      string
-		raw       string
-		wantPlat  Platform
-		wantHost  string
-		wantOwner string
-		wantRepo  string
-		wantErr   bool
+		name       string
+		raw        string
+		wantPlat   Platform
+		wantHost   string
+		wantScheme string
+		wantOwner  string
+		wantRepo   string
+		wantErr    bool
 	}{
 		{
-			name:      "github https with .git",
-			raw:       "https://github.com/acme/widgets.git",
-			wantPlat:  PlatformGitHub,
-			wantHost:  "github.com",
-			wantOwner: "acme",
-			wantRepo:  "widgets",
+			name:       "github https with .git",
+			raw:        "https://github.com/acme/widgets.git",
+			wantPlat:   PlatformGitHub,
+			wantScheme: SchemeHTTPS,
+			wantHost:   "github.com",
+			wantOwner:  "acme",
+			wantRepo:   "widgets",
 		},
 		{
-			name:      "github https without .git",
-			raw:       "https://github.com/acme/widgets",
-			wantPlat:  PlatformGitHub,
-			wantHost:  "github.com",
-			wantOwner: "acme",
-			wantRepo:  "widgets",
+			name:       "github https without .git",
+			raw:        "https://github.com/acme/widgets",
+			wantPlat:   PlatformGitHub,
+			wantScheme: SchemeHTTPS,
+			wantHost:   "github.com",
+			wantOwner:  "acme",
+			wantRepo:   "widgets",
 		},
 		{
-			name:      "gitlab self-hosted with port",
-			raw:       "https://git.acme.internal:8443/team/widgets.git",
-			wantPlat:  PlatformGitLab,
-			wantHost:  "git.acme.internal:8443",
-			wantOwner: "team",
-			wantRepo:  "widgets",
+			name:       "gitlab self-hosted with port",
+			raw:        "https://git.acme.internal:8443/team/widgets.git",
+			wantPlat:   PlatformGitLab,
+			wantScheme: SchemeHTTPS,
+			wantHost:   "git.acme.internal:8443",
+			wantOwner:  "team",
+			wantRepo:   "widgets",
 		},
 		{
-			name:      "gitlab multi-level group",
-			raw:       "https://gitlab.com/group/subgroup/team/widgets.git",
-			wantPlat:  PlatformGitLab,
-			wantHost:  "gitlab.com",
-			wantOwner: "group/subgroup/team",
-			wantRepo:  "widgets",
+			name:       "gitlab multi-level group",
+			raw:        "https://gitlab.com/group/subgroup/team/widgets.git",
+			wantPlat:   PlatformGitLab,
+			wantScheme: SchemeHTTPS,
+			wantHost:   "gitlab.com",
+			wantOwner:  "group/subgroup/team",
+			wantRepo:   "widgets",
 		},
 		{
-			name:      "trailing slash stripped",
-			raw:       "https://github.com/acme/widgets/",
-			wantPlat:  PlatformGitHub,
-			wantHost:  "github.com",
-			wantOwner: "acme",
-			wantRepo:  "widgets",
+			name:       "trailing slash stripped",
+			raw:        "https://github.com/acme/widgets/",
+			wantPlat:   PlatformGitHub,
+			wantScheme: SchemeHTTPS,
+			wantHost:   "github.com",
+			wantOwner:  "acme",
+			wantRepo:   "widgets",
 		},
 		{
-			name:      "case-insensitive host",
-			raw:       "https://GitHub.com/acme/widgets.git",
-			wantPlat:  PlatformGitHub,
-			wantHost:  "github.com",
-			wantOwner: "acme",
-			wantRepo:  "widgets",
+			name:       "case-insensitive host",
+			raw:        "https://GitHub.com/acme/widgets.git",
+			wantPlat:   PlatformGitHub,
+			wantScheme: SchemeHTTPS,
+			wantHost:   "github.com",
+			wantOwner:  "acme",
+			wantRepo:   "widgets",
 		},
 		{
 			name:    "github with too many segments rejected",
@@ -101,9 +108,13 @@ func TestParseRemoteURL_HTTPS(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "unsupported http scheme rejected",
-			raw:     "http://github.com/acme/widgets.git",
-			wantErr: true,
+			name:       "plain http accepted for self-hosted instance",
+			raw:        "http://gitlab.internal:8080/team/widgets.git",
+			wantPlat:   PlatformGitLab,
+			wantHost:   "gitlab.internal:8080",
+			wantScheme: SchemeHTTP,
+			wantOwner:  "team",
+			wantRepo:   "widgets",
 		},
 		{
 			name:    "bare host rejected",
@@ -121,10 +132,52 @@ func TestParseRemoteURL_HTTPS(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantPlat, got.Platform)
 			assert.Equal(t, tt.wantHost, got.Host)
+			assert.Equal(t, tt.wantScheme, got.Scheme,
+				"the remote's own scheme must survive parsing so the API is reached the same way")
 			assert.Equal(t, tt.wantOwner, got.Owner)
 			assert.Equal(t, tt.wantRepo, got.Repo)
 		})
 	}
+}
+
+// TestParseRemoteURL_SchemeSeparateFromHost pins the invariant that makes
+// schemes safe to add: the scheme never leaks into Host. Host keys credentials,
+// snapshots and read state, so "http://h" and "https://h" must resolve to ONE
+// repository, not two.
+func TestParseRemoteURL_SchemeSeparateFromHost(t *testing.T) {
+	httpRemote, err := ParseRemoteURL("http://gitlab.internal/team/widgets.git")
+	require.NoError(t, err)
+	httpsRemote, err := ParseRemoteURL("https://gitlab.internal/team/widgets.git")
+	require.NoError(t, err)
+
+	assert.Equal(t, httpRemote.Host, httpsRemote.Host,
+		"the same instance over either scheme must share one host key")
+	assert.Equal(t, httpRemote.Slug(), httpsRemote.Slug())
+	assert.Equal(t, SchemeHTTP, httpRemote.Scheme)
+	assert.Equal(t, SchemeHTTPS, httpsRemote.Scheme)
+}
+
+// TestResolveScheme pins the precedence: a binding's own scheme wins over the
+// instance hint, and https is the fallback when neither says.
+func TestResolveScheme(t *testing.T) {
+	assert.Equal(t, SchemeHTTP, ResolveScheme(SchemeHTTP, SchemeHTTPS),
+		"the binding's scheme must win over the instance hint")
+	assert.Equal(t, SchemeHTTP, ResolveScheme("", SchemeHTTP),
+		"an unset binding scheme falls back to the instance hint")
+	assert.Equal(t, SchemeHTTPS, ResolveScheme("", ""),
+		"an unknown scheme defaults to https, matching every platform-operated host")
+	assert.Equal(t, SchemeHTTPS, ResolveScheme("bogus", "bogus"),
+		"unrecognized values are treated as unspecified, not passed through")
+}
+
+// TestNormalizeScheme pins that an empty input yields empty rather than https,
+// so "not specified" is never silently recorded as a real choice.
+func TestNormalizeScheme(t *testing.T) {
+	assert.Equal(t, "", NormalizeScheme(""))
+	assert.Equal(t, "", NormalizeScheme("   "))
+	assert.Equal(t, "", NormalizeScheme("ftp"))
+	assert.Equal(t, SchemeHTTP, NormalizeScheme("HTTP"))
+	assert.Equal(t, SchemeHTTPS, NormalizeScheme(" https "))
 }
 
 func TestParseRemoteURL_SSH(t *testing.T) {
@@ -167,6 +220,8 @@ func TestParseRemoteURL_SSH(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantPlat, got.Platform)
 			assert.Equal(t, tt.wantHost, got.Host)
+			assert.Empty(t, got.Scheme,
+				"ssh describes the git transport, so it must not be mistaken for the API scheme")
 			assert.Equal(t, tt.wantOwner, got.Owner)
 			assert.Equal(t, tt.wantRepo, got.Repo)
 		})

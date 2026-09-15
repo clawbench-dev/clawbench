@@ -3,16 +3,39 @@ import {
     fetchForgeItems,
     fetchForgeItem,
     fetchForgeComments,
-    fetchForgeBinding,
+    fetchForgePipelines,
+    fetchForgePipeline,
+    fetchForgeUnreadItems,
+    markForgeRead,
     type ForgeItem,
     type ForgeComment,
-    type ForgeBinding,
+    type ForgePipelineRun,
+    type ForgeUnreadItem,
+    type ForgePipelineJob,
+    type ForgePipelineStatus,
     ForgeApiError,
 } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
-import { setForgeBindingState } from '@/composables/useForgeBinding'
+import { setForgeBindingState, useForgeBinding } from '@/composables/useForgeBinding'
+import { useForgeUnread } from '@/composables/useForgeUnread' 
 
 const TAG = 'UseForge'
+
+/**
+ * The item key the server uses to identify an issue/PR row for read state.
+ *
+ * Must match forge.ItemKeyForNumber on the Go side: "<type>/<number>". Kept as a
+ * named function so the shape lives in one place rather than being re-spelled at
+ * each call site.
+ */
+export function forgeItemKey(item: { type: string; number: number }): string {
+    return `${item.type}/${item.number}`
+}
+
+/** The item key for one CI run, matching forge.PipelineItemKey on the Go side. */
+export function forgePipelineItemKey(runID: number): string {
+    return `pipeline/run:${runID}`
+}
 
 export type ForgeFilter = 'all' | 'assigned' | 'created' | 'review'
 
@@ -26,14 +49,15 @@ export type ForgeFilter = 'all' | 'assigned' | 'created' | 'review'
  */
 export function useForgeItems(getProjectPath: () => string) {
     const items = ref<ForgeItem[]>([])
-    const binding = ref<ForgeBinding | null>(null)
-    const suggested = ref<Record<string, string> | null>(null)
     const loading = ref(false)
     const loadingMore = ref(false)
     const error = ref<{ message: string; code: string } | null>(null)
 
     const type = ref<'issue' | 'pr'>('issue')
-    const state = ref<'open' | 'closed' | 'all'>('open')
+    // "merged" is only meaningful for change requests; issues have no merged
+    // lifecycle, so the chip is hidden on the issues tab (see stateOptions in
+    // ForgePanelContent) rather than shown and always empty.
+    const state = ref<'open' | 'closed' | 'merged' | 'all'>('open')
     const mineFilter = ref<ForgeFilter>('all')
     const query = ref('')
 
@@ -42,22 +66,24 @@ export function useForgeItems(getProjectPath: () => string) {
     let requestSeq = 0
     let abort: AbortController | null = null
 
+    // The binding is a module-level singleton shared with the dock icon and the
+    // task views. Reading it directly (rather than mirroring it into a local
+    // ref) means the panel can never show a repository another consumer has
+    // already refreshed away.
+    const forge = useForgeBinding()
+    const binding = forge.binding
+
     const isBound = computed(() => binding.value !== null)
     const isEmpty = computed(() => !loading.value && !error.value && isBound.value && items.value.length === 0)
 
-    /** Load the binding (and a suggested binding when unbound). */
-    async function loadBinding() {
-        try {
-            const res = await fetchForgeBinding()
-            binding.value = res.binding
-            suggested.value = res.suggested ?? null
-        } catch (err) {
-            appLog.w(TAG, 'loadBinding failed', err)
-            binding.value = null
-        }
-        // Keep the shared binding in sync so the dock icon follows the platform
-        // (the dock lives in App.vue, outside this composable's scope).
-        setForgeBindingState(binding.value)
+    /**
+     * Load the binding through the shared store.
+     *
+     * Pass `force` after a write (bind/unbind): the server state is known to
+     * have changed, so the cached value would be stale.
+     */
+    async function loadBinding(force = false) {
+        await forge.refresh(force)
     }
 
     /** Reload the list from page 1, honouring the current filters. */
@@ -86,7 +112,15 @@ export function useForgeItems(getProjectPath: () => string) {
             })
             if (seq !== requestSeq) return
             items.value = res.items
-            binding.value = res.binding
+            // The list response carries the binding it was served for, so this
+            // is a free confirmation — route it through the shared setter so
+            // the resolved flag and cache timestamp stay consistent.
+            //
+            // Safety note: this runs only for the newest request (seq guard
+            // above), and a bind/unbind triggers refresh(true) + load(), which
+            // bumps requestSeq. So a list response that started before a manual
+            // bind cannot land here afterwards and overwrite it.
+            setForgeBindingState(res.binding)
             hasMore.value = res.hasMore
             nextPage.value = res.nextPage
         } catch (err) {
@@ -130,9 +164,13 @@ export function useForgeItems(getProjectPath: () => string) {
     function setType(t: 'issue' | 'pr') {
         if (type.value === t) return
         type.value = t
+        // Switching away from change requests must not leave a filter the new
+        // tab cannot express selected (issues have no merged state), or the
+        // list would come back permanently empty with no visible cause.
+        if (t === 'issue' && state.value === 'merged') state.value = 'open'
         void load()
     }
-    function setState(s: 'open' | 'closed' | 'all') {
+    function setState(s: 'open' | 'closed' | 'merged' | 'all') {
         if (state.value === s) return
         state.value = s
         void load()
@@ -147,19 +185,51 @@ export function useForgeItems(getProjectPath: () => string) {
         void load()
     }
 
-    function reset() {
-        items.value = []
-        binding.value = null
-        error.value = null
-        hasMore.value = false
-        nextPage.value = 1
+    /**
+     * Mark one item read (what opening a row does).
+     *
+     * The local flag is cleared optimistically so the dot disappears at once;
+     * the badge is then re-derived from the server rather than decremented, so a
+     * missed event cannot leave it permanently wrong.
+     */
+    async function markItemRead(item: ForgeItem): Promise<void> {
+        if (!item.unread) return
+        item.unread = false
+        try {
+            await markForgeRead(forgeItemKey(item))
+            useForgeUnread().refresh()
+        } catch (err) {
+            appLog.w(TAG, 'markItemRead failed', err)
+            // Restore the flag so the UI does not claim it was seen.
+            item.unread = true
+        }
+    }
+
+    /** Mark every item in the bound repository read. */
+    async function markAllRead(): Promise<void> {
+        // Snapshot so a failed write can be undone — otherwise the list claims
+        // everything was seen while the server still holds it unread.
+        const before = items.value.map(it => it.unread)
+        for (const it of items.value) it.unread = false
+        try {
+            // Shared with the badge and the pipeline list: one repo-wide write,
+            // not one per caller.
+            await useForgeUnread().markAllRead()
+        } catch (err) {
+            appLog.w(TAG, 'markAllRead failed', err)
+            items.value.forEach((it, i) => { it.unread = before[i] })
+            return
+        }
+        // Re-derive rather than assume: the server is authoritative.
+        void load()
     }
 
     return {
-        items, binding, suggested, loading, loadingMore, error,
+        items, binding, loading, loadingMore, error,
         type, state, mineFilter, query,
         hasMore, nextPage, isBound, isEmpty,
-        loadBinding, load, loadMore, setType, setState, setMineFilter, setQuery, reset,
+        loadBinding, load, loadMore, setType, setState, setMineFilter, setQuery,
+        markItemRead, markAllRead,
     }
 }
 
@@ -231,4 +301,285 @@ export function useForgeDetail() {
     }
 
     return { item, comments, loading, loadingComments, error, hasMoreComments, open, loadOlderComments, close }
+}
+
+/**
+ * Status filters offered on the Pipelines tab, in display order.
+ *
+ * "all" comes first because it is the default: the active filter should be the
+ * leftmost chip, and the order reads as "everything → narrowing".
+ */
+export const FORGE_PIPELINE_FILTERS = ['all', 'failure', 'running'] as const
+export type ForgePipelineFilter = typeof FORGE_PIPELINE_FILTERS[number]
+
+/**
+ * useForgePipelines lists CI runs for the project's bound repository.
+ *
+ * Mirrors useForgeItems' shape (paging, loading/error state, a seq guard so
+ * only the latest request writes) but is a separate composable because the
+ * filter vocabulary and the row data are entirely different from issues/PRs.
+ *
+ * The default filter is "all": the list is a history, and hiding runs by default
+ * made the tab look empty (or stale) whenever nothing happened to be failing.
+ * A user who wants only the breakage picks "failure" explicitly.
+ */
+export function useForgePipelines(getProjectPath: () => string) {
+    const pipelines = ref<ForgePipelineRun[]>([])
+    const loading = ref(false)
+    const loadingMore = ref(false)
+    const error = ref<{ message: string; code: string } | null>(null)
+    const filter = ref<ForgePipelineFilter>('all')
+    const hasMore = ref(false)
+    const nextPage = ref(1)
+
+    let requestSeq = 0
+    let abort: AbortController | null = null
+
+    /** The `status` query value; "all" means no filter. */
+    function statusParam(): ForgePipelineStatus | undefined {
+        return filter.value === 'all' ? undefined : filter.value
+    }
+
+    async function load() {
+        const project = getProjectPath()
+        if (!project) {
+            pipelines.value = []
+            return
+        }
+        const seq = ++requestSeq
+        abort?.abort()
+        abort = new AbortController()
+
+        loading.value = true
+        error.value = null
+        // A reload supersedes any in-flight append: that append will bail on the
+        // seq check without clearing its flag, so clear it here or the spinner
+        // would stay on and loadMore would refuse to run again.
+        loadingMore.value = false
+        try {
+            const res = await fetchForgePipelines({
+                status: statusParam(),
+                page: 1,
+                signal: abort.signal,
+            })
+            if (seq !== requestSeq) return
+            pipelines.value = res.pipelines
+            hasMore.value = res.hasMore
+            nextPage.value = res.nextPage
+        } catch (err) {
+            if (seq !== requestSeq) return
+            pipelines.value = []
+            if (err instanceof ForgeApiError) {
+                error.value = { message: err.message, code: err.code }
+            } else {
+                error.value = { message: String(err), code: 'ForgeError' }
+            }
+        } finally {
+            if (seq === requestSeq) loading.value = false
+        }
+    }
+
+    /** Append the next page (infinite scroll). */
+    async function loadMore() {
+        if (!hasMore.value || loadingMore.value || loading.value) return
+        if (!getProjectPath()) return
+
+        // Capture the sequence BEFORE awaiting. A filter change (or any reload)
+        // bumps requestSeq, and an in-flight append must not then land in the
+        // new list — it was fetched for the previous filter, so its rows belong
+        // to a result set the user has already navigated away from.
+        const seq = requestSeq
+        loadingMore.value = true
+        try {
+            const res = await fetchForgePipelines({
+                status: statusParam(),
+                page: nextPage.value,
+            })
+            if (seq !== requestSeq) return
+            pipelines.value = [...pipelines.value, ...res.pipelines]
+            hasMore.value = res.hasMore
+            nextPage.value = res.nextPage
+        } catch (err) {
+            if (seq !== requestSeq) return
+            appLog.w(TAG, 'loadMore pipelines failed', err)
+        } finally {
+            // Only clear the flag for the request that still owns the list;
+            // otherwise a stale response would clear a newer request's spinner.
+            if (seq === requestSeq) loadingMore.value = false
+        }
+    }
+
+    function setFilter(f: ForgePipelineFilter) {
+        if (filter.value === f) return
+        filter.value = f
+        void load()
+    }
+
+    /** Mark one run read (what opening a row does). */
+    async function markItemRead(run: ForgePipelineRun): Promise<void> {
+        if (!run.unread) return
+        run.unread = false
+        try {
+            await markForgeRead(forgePipelineItemKey(run.id))
+            useForgeUnread().refresh()
+        } catch (err) {
+            appLog.w(TAG, 'markPipelineRead failed', err)
+            run.unread = true
+        }
+    }
+
+    /** Mark every run in the bound repository read. */
+    async function markAllRead(): Promise<void> {
+        const before = pipelines.value.map(r => r.unread)
+        for (const r of pipelines.value) r.unread = false
+        try {
+            await useForgeUnread().markAllRead()
+        } catch (err) {
+            appLog.w(TAG, 'markAllPipelinesRead failed', err)
+            pipelines.value.forEach((r, i) => { r.unread = before[i] })
+            return
+        }
+        void load()
+    }
+
+    return {
+        pipelines, loading, loadingMore, error, filter, hasMore, nextPage,
+        load, loadMore, setFilter,
+        markItemRead, markAllRead,
+    }
+}
+
+/**
+ * useForgePipelineDetail loads one run and its jobs.
+ *
+ * Jobs are best-effort server-side, so an empty list is a normal outcome rather
+ * than an error.
+ */
+export function useForgePipelineDetail() {
+    const run = ref<ForgePipelineRun | null>(null)
+    const jobs = ref<ForgePipelineJob[]>([])
+    const loading = ref(false)
+    const error = ref<{ message: string; code: string } | null>(null)
+    let abort: AbortController | null = null
+
+    async function open(id: number) {
+        abort?.abort()
+        abort = new AbortController()
+        loading.value = true
+        error.value = null
+        run.value = null
+        jobs.value = []
+        try {
+            const res = await fetchForgePipeline(id, abort.signal)
+            run.value = res.pipeline
+            jobs.value = res.jobs ?? []
+        } catch (err) {
+            if (err instanceof ForgeApiError) {
+                error.value = { message: err.message, code: err.code }
+            } else {
+                error.value = { message: String(err), code: 'ForgeError' }
+            }
+        } finally {
+            loading.value = false
+        }
+    }
+
+    function close() {
+        abort?.abort()
+        run.value = null
+        jobs.value = []
+        error.value = null
+    }
+
+    return { run, jobs, loading, error, open, close }
+}
+
+/**
+ * useForgeUnreadItems lists the items with unread activity in the project's
+ * bound repository, for the unread-overview tab.
+ *
+ * Kept apart from useForgeUnread (which owns the dock badge): the badge is a
+ * single number refreshed on every live event, so it must stay a cheap count.
+ * These rows are only fetched while the overview is on screen.
+ */
+export function useForgeUnreadItems(getProjectPath: () => string) {
+    const items = ref<ForgeUnreadItem[]>([])
+    const loading = ref(false)
+    const error = ref<{ message: string; code: string } | null>(null)
+    /** False until the first load settles, so the panel can tell "empty" from
+     *  "not fetched yet" and avoid flashing the empty state. */
+    const loaded = ref(false)
+
+    let requestSeq = 0
+    let abort: AbortController | null = null
+
+    async function load() {
+        const project = getProjectPath()
+        if (!project) {
+            items.value = []
+            loaded.value = true
+            return
+        }
+        const seq = ++requestSeq
+        abort?.abort()
+        abort = new AbortController()
+
+        loading.value = true
+        error.value = null
+        try {
+            const res = await fetchForgeUnreadItems(abort.signal)
+            if (seq !== requestSeq) return
+            items.value = res.items ?? []
+            loaded.value = true
+        } catch (err) {
+            if (seq !== requestSeq) return
+            items.value = []
+            // A failed load must not look like "nothing unread".
+            loaded.value = false
+            if (err instanceof ForgeApiError) {
+                error.value = { message: err.message, code: err.code }
+            } else {
+                error.value = { message: String(err), code: 'ForgeError' }
+            }
+        } finally {
+            if (seq === requestSeq) loading.value = false
+        }
+    }
+
+    /**
+     * Mark every item read and clear the list.
+     *
+     * Delegates to the shared badge composable so the list and the dock badge
+     * settle from the same server response and cannot disagree.
+     */
+    async function markAllRead(): Promise<void> {
+        await useForgeUnread().markAllRead()
+        items.value = []
+    }
+
+    /**
+     * Mark one row read, server-side, without removing it.
+     *
+     * The key is passed through VERBATIM: a pipeline's number is 0, so rebuilding
+     * it from type+number would send "pipeline/0" and mark nothing.
+     *
+     * The row is greyed out rather than spliced: removing it would shift every
+     * row below the cursor mid-click. It drops on the next load().
+     */
+    async function markRowRead(itemKey: string) {
+        const row = items.value.find(r => r.itemKey === itemKey)
+        if (row) row.read = true
+        try {
+            await markForgeRead(itemKey)
+            // Re-derive the badge rather than decrementing, so a missed event
+            // cannot leave it permanently wrong.
+            useForgeUnread().refresh()
+        } catch (err) {
+            appLog.w(TAG, 'markRowRead failed', err)
+            // Restore, so the row does not claim it was seen.
+            if (row) row.read = false
+        }
+    }
+
+    return { items, loading, loaded, error, load, markAllRead, markRowRead }
 }

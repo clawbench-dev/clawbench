@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 
 	"clawbench/internal/service"
@@ -59,10 +61,14 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		// recommending an image-based upgrade. Self-replace still works in a
 		// container, but a later rebuild from the unchanged image reverts it.
 		"is_docker": upgradeIsDocker(),
-		// signature_warning is non-empty when the release signature could not
-		// be verified and the download will only be integrity-checked. The UI
-		// surfaces it before the user commits to the upgrade.
-		"signature_warning": info.SignatureWarning,
+		// verification_warning is the human-readable text shown to the user when
+		// this release cannot be fully verified. Display only.
+		"verification_warning": info.VerificationWarning,
+		// verification_issues is the stable identity of the same problems, as
+		// sorted issue codes. The client echoes this back on start; the service
+		// compares codes rather than the message, which varies with registry
+		// routing and error detail.
+		"verification_issues": info.VerificationIssues,
 	})
 }
 
@@ -70,6 +76,12 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 // Initiates the upgrade process. Returns error if already in progress.
 // Note: version verification is done inside PerformUpgrade(), so we don't
 // re-query the registry here (avoids TOCTOU race and redundant latency).
+//
+// The body carries verification_issues: the issue fingerprint the client
+// displayed and got consent for, or omitted/empty when the client saw none. The
+// service compares it against what the registry reports and refuses a mismatch,
+// so an unverified install cannot happen without a decision that matches the
+// metadata.
 func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -80,7 +92,19 @@ func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upgradePerformUpgrade()
+	// The body is optional: callers that saw no warning send none. An empty
+	// body is therefore valid, not a malformed request.
+	var req struct {
+		VerificationIssues string `json:"verification_issues"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+	}
+
+	upgradePerformUpgrade(req.VerificationIssues)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		jsonKeyStatus: upgradeStatusStarted,

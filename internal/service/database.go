@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,99 @@ var dbRead *sql.DB
 // locked — WAL mode allows reads and writes to proceed concurrently.
 var writeMu sync.Mutex
 
+// slowWriteThreshold is how long a write may wait for writeMu, or spend
+// executing, before it is reported. Every write in the process serializes on
+// writeMu, so one slow statement stalls every other writer — including the
+// Finalize path a user-cancel must finish before the UI can clear its
+// "stopping" state. Set well above normal SQLite latency so only pathological
+// writes are logged.
+const slowWriteThreshold = 200 * time.Millisecond
+
+// sqlTargetSkip holds the keywords that can sit between a statement's verb and
+// its target (table/index/view) name. writeOpLabel skips them so the label
+// keeps the target — without it "INSERT OR REPLACE INTO summaries" would
+// reduce to "INSERT OR REPLACE", which does not say what was written and so
+// cannot identify the slow statement.
+var sqlTargetSkip = map[string]bool{
+	"OR": true, "REPLACE": true, "IGNORE": true, "INTO": true, "FROM": true,
+	"TABLE": true, "INDEX": true, "VIEW": true, "TRIGGER": true,
+	"IF": true, "NOT": true, "EXISTS": true, "TEMPORARY": true, "TEMP": true,
+	"UNIQUE": true,
+}
+
+// writeOpLabel reduces a SQL statement to a short, log-safe label of the form
+// "<verb> <target>" ("UPDATE chat_history", "INSERT summaries",
+// "PRAGMA journal_mode=WAL"). Only the leading keywords are kept, so a
+// statement carrying user content can never leak it into the logs.
+func writeOpLabel(query string) string {
+	const maxLen = 48
+	fields := strings.Fields(query)
+	if len(fields) == 0 {
+		return ""
+	}
+	verb := fields[0]
+	for _, f := range fields[1:] {
+		if sqlTargetSkip[strings.ToUpper(f)] {
+			continue
+		}
+		label := verb + " " + f
+		if len(label) > maxLen {
+			label = label[:maxLen]
+		}
+		return label
+	}
+	if len(verb) > maxLen {
+		verb = verb[:maxLen]
+	}
+	return verb
+}
+
+// slowWrite captures a write worth reporting: how long it waited for writeMu
+// and how long the statement itself took.
+type slowWrite struct {
+	op   string
+	wait time.Duration
+	exec time.Duration
+}
+
+// reportSlowWrite logs a slow write, distinguishing the two axes: waiting for
+// writeMu means contention (another goroutine holds the global write lock),
+// while a slow exec means the statement itself (e.g. rewriting a
+// multi-megabyte content column). They call for opposite fixes, so a single
+// undifferentiated "slow write" line would not be actionable.
+//
+// Callers must have released writeMu: logging writes to a file, and doing that
+// under the global write lock would add log I/O to the very critical section
+// this instrumentation exists to measure.
+func reportSlowWrite(s slowWrite) {
+	if s.wait < slowWriteThreshold && s.exec < slowWriteThreshold {
+		return
+	}
+	slog.Warn("db: slow write",
+		slog.String("op", s.op),
+		slog.Duration("lock_wait", s.wait),
+		slog.Duration("exec", s.exec),
+	)
+}
+
+// timedWrite runs one write statement under writeMu, reporting it when either
+// the lock wait or the execution exceeds slowWriteThreshold.
+func timedWrite(query string, exec func() (sql.Result, error)) (sql.Result, error) {
+	// Derived before locking so the label work is not inside the critical
+	// section either.
+	op := writeOpLabel(query)
+
+	waitStart := time.Now()
+	writeMu.Lock()
+	lockedAt := time.Now()
+	result, err := exec()
+	wait, execDur := lockedAt.Sub(waitStart), time.Since(lockedAt)
+	writeMu.Unlock()
+
+	reportSlowWrite(slowWrite{op: op, wait: wait, exec: execDur})
+	return result, err
+}
+
 // WriteLock acquires the global write mutex.
 // Callers MUST call WriteUnlock after the write operation completes.
 // Use this for write transactions that span multiple SQL statements:
@@ -49,17 +143,13 @@ func WriteUnlock() { writeMu.Unlock() }
 // WriteExec executes a write statement on DB under the write mutex.
 // Use this for all INSERT/UPDATE/DELETE/DDL operations instead of DB.Exec directly.
 func WriteExec(query string, args ...any) (sql.Result, error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return db.Exec(query, args...)
+	return timedWrite(query, func() (sql.Result, error) { return db.Exec(query, args...) })
 }
 
 // WriteExecContext executes a write statement on DB under the write mutex with context support.
 // Use this instead of DB.ExecContext for writes that may need request-scoped cancellation.
 func WriteExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return db.ExecContext(ctx, query, args...)
+	return timedWrite(query, func() (sql.Result, error) { return db.ExecContext(ctx, query, args...) })
 }
 
 // WriteBegin starts a write transaction on DB under the write mutex.
@@ -71,8 +161,17 @@ func WriteExecContext(ctx context.Context, query string, args ...any) (sql.Resul
 //	defer writeMu.Unlock() // ensure mutex is released on any return path
 //	// ... tx.Exec, tx.Query ...
 //	if err := tx.Commit(); err != nil { return err }
+//
+// Only the lock wait is reported here: the transaction stays open for as long
+// as the caller keeps the mutex, so its execution time is not measurable at
+// this boundary. A long lock_wait still proves contention — some other writer
+// (or a previous multi-statement transaction) held writeMu.
 func WriteBegin() (*sql.Tx, error) {
+	waitStart := time.Now()
 	writeMu.Lock()
+	if wait := time.Since(waitStart); wait >= slowWriteThreshold {
+		slog.Warn("db: slow write", slog.String("op", "BEGIN tx"), slog.Duration("lock_wait", wait))
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		writeMu.Unlock()
@@ -109,15 +208,11 @@ func SetDBForTest(writeDB, readDB *sql.DB) func() {
 type mutexDBWriter struct{}
 
 func (mutexDBWriter) Exec(query string, args ...any) (sql.Result, error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return db.Exec(query, args...)
+	return timedWrite(query, func() (sql.Result, error) { return db.Exec(query, args...) })
 }
 
 func (mutexDBWriter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return db.ExecContext(ctx, query, args...)
+	return timedWrite(query, func() (sql.Result, error) { return db.ExecContext(ctx, query, args...) })
 }
 
 func (mutexDBWriter) Query(query string, args ...any) (*sql.Rows, error) {
@@ -227,6 +322,31 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 				return fmt.Errorf("failed to add queued column: %w", err)
 			}
 		}
+
+		// chat_history.completed_at — when the assistant reply finished streaming
+		// (streaming=1 -> 0). NULL for user messages and for rows finalized
+		// before this column existed.
+		//
+		// The unread check compares a reply's timestamp against
+		// chat_sessions.last_read_at. Using created_at is wrong for a reply:
+		// created_at is stamped when the turn STARTS (the streaming placeholder
+		// row is inserted up front), while the reply only becomes visible to the
+		// user minutes later when it is finalized. Reading the session while its
+		// turn is still running therefore pushes last_read_at past created_at,
+		// and the finished reply can never be unread again — the completion
+		// popup fires but no badge ever appears. completed_at fixes the
+		// comparison by timestamping the moment the reply actually landed.
+		//
+		// No backfill: rows predating the column keep completed_at NULL and the
+		// unread queries fall back to created_at via COALESCE, which is exactly
+		// the old behavior for them.
+		var hasCompletedAt int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='completed_at'").Scan(&hasCompletedAt)
+		if hasCompletedAt == 0 {
+			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN completed_at DATETIME"); err != nil {
+				return fmt.Errorf("failed to add completed_at column: %w", err)
+			}
+		}
 	}
 
 	// Pre-migration: rename chat_sessions.deleted to archived.
@@ -299,7 +419,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			external_message_id TEXT DEFAULT '',
 			queue_id TEXT DEFAULT '',
 			queued INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
@@ -623,8 +744,26 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := WriteExec(ProjectForgesDDL); err != nil {
 		return fmt.Errorf("failed to create project_forges table: %w", err)
 	}
-	// Forge sync state: snapshot rows, watermark, and derived events.
-	for _, ddl := range []string{ForgeItemsDDL, ForgeSyncStateDDL, ForgeEventDDL} {
+	// project_forges.scheme: the API scheme the binding's host is reached with.
+	//
+	// Existing rows backfill to '' (unknown) rather than 'https'. The distinction
+	// is load-bearing: '' means "the remote did not say", which lets the resolver
+	// fall back to the instance hint and then https, whereas writing 'https'
+	// would freeze a guess into the row and silently override a later http hint.
+	// No existing binding can have known its scheme — the column did not exist,
+	// and every remote parsed before this change dropped it.
+	{
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('project_forges') WHERE name='scheme'").Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec("ALTER TABLE project_forges ADD COLUMN scheme TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add project_forges.scheme column: %w", err)
+			}
+		}
+	}
+	// Forge sync state: snapshot rows, watermark, derived events, and the CI
+	// run ledger.
+	for _, ddl := range []string{ForgeItemsDDL, ForgeSyncStateDDL, ForgeEventDDL, ForgePipelineRunsDDL} {
 		if _, err := WriteExec(ddl); err != nil {
 			return fmt.Errorf("failed to create forge sync tables: %w", err)
 		}
@@ -645,6 +784,49 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			if _, err := WriteExec("UPDATE forge_items SET comments_baselined = 1 WHERE last_comment_id > 0"); err != nil {
 				return fmt.Errorf("failed to backfill forge_items.comments_baselined: %w", err)
 			}
+		}
+	}
+	// forge_events.item_key: identifies the item an event is about, so the unread
+	// badge can count distinct ITEMS rather than raw events (and so a row can be
+	// marked read on its own). It cannot be derived from (item_type, number)
+	// because pipeline events carry Number 0 for every run.
+	//
+	// The backfill reconstructs the key from the columns that are already there.
+	// A pipeline row's run id only exists inside its dedupe_key ("...|run:<id>"),
+	// so it is parsed out; if that parse fails the row is marked read rather than
+	// given a junk key, since a wrong key would create a phantom unread item that
+	// the user could never clear by opening anything.
+	{
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_events') WHERE name='item_key'").Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec("ALTER TABLE forge_events ADD COLUMN item_key TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add forge_events.item_key column: %w", err)
+			}
+			if _, err := WriteExec(
+				"UPDATE forge_events SET item_key = item_type || '/' || number WHERE item_type != 'pipeline'",
+			); err != nil {
+				return fmt.Errorf("failed to backfill forge_events.item_key: %w", err)
+			}
+			if _, err := WriteExec(
+				`UPDATE forge_events SET item_key = 'pipeline/run:' || substr(dedupe_key, instr(dedupe_key, 'run:') + 4)
+				 WHERE item_type = 'pipeline' AND instr(dedupe_key, 'run:') > 0`,
+			); err != nil {
+				return fmt.Errorf("failed to backfill forge_events.item_key (pipeline): %w", err)
+			}
+			// Rows whose key could not be reconstructed are retired instead of
+			// left with an empty key (they would be invisible to the badge but
+			// permanently unread).
+			if _, err := WriteExec(
+				"UPDATE forge_events SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE item_key = ''",
+			); err != nil {
+				return fmt.Errorf("failed to retire keyless forge_events rows: %w", err)
+			}
+		}
+		// The index is created AFTER the column exists (on a fresh database the
+		// column is already in the CREATE TABLE, so this is a no-op there).
+		if _, err := WriteExec(ForgeEventItemIndexDDL); err != nil {
+			return fmt.Errorf("failed to create forge_events item index: %w", err)
 		}
 	}
 
@@ -678,6 +860,56 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasReadAt == 0 {
 		if _, err := WriteExec("ALTER TABLE task_executions ADD COLUMN read_at DATETIME"); err != nil {
 			return fmt.Errorf("failed to add read_at column: %w", err)
+		}
+	}
+
+	// Unread became per-execution: scheduled_tasks.last_read_at is no longer
+	// consulted, so a task's watermark can no longer suppress anything.
+	//
+	// That REMOVES a suppression, which would otherwise inflate the badge on
+	// upgrade: executions that finished before the user last opened the task and
+	// were never individually opened were counted read only by virtue of the
+	// watermark. Without this backfill a long-lived task would suddenly report
+	// every run it ever made as unread.
+	//
+	// So the exact set that the watermark was suppressing is marked read once,
+	// and then the watermark is cleared. Clearing it is what makes the step
+	// one-time: a second boot finds nothing to migrate (and would otherwise be
+	// harmless, since read_at is already set).
+	//
+	// Only executions strictly at or before the watermark are touched; anything
+	// after it was already unread and must stay that way.
+	//
+	// Guarded on the column existing: `last_read_at` is declared in the
+	// scheduled_tasks CREATE TABLE, so a database old enough to predate it has
+	// no watermark to migrate at all (CREATE TABLE IF NOT EXISTS leaves such a
+	// table untouched).
+	var hasTaskLastRead int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='last_read_at'").Scan(&hasTaskLastRead)
+	if hasTaskLastRead > 0 {
+		var pending int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM task_executions e
+			 JOIN scheduled_tasks s ON s.id = e.task_id
+			 WHERE e.read_at IS NULL AND e.status != 'running' AND s.last_read_at IS NOT NULL`,
+		).Scan(&pending); err != nil {
+			return fmt.Errorf("failed to count executions pending the unread migration: %w", err)
+		}
+		if pending > 0 {
+			if _, err := WriteExec(
+				`UPDATE task_executions SET read_at = CURRENT_TIMESTAMP
+				 WHERE read_at IS NULL AND status != 'running'
+				   AND task_id IN (SELECT id FROM scheduled_tasks WHERE last_read_at IS NOT NULL)
+				   AND created_at <= (SELECT last_read_at FROM scheduled_tasks WHERE id = task_id)`,
+			); err != nil {
+				return fmt.Errorf("failed to backfill per-execution read state: %w", err)
+			}
+			if _, err := WriteExec(
+				"UPDATE scheduled_tasks SET last_read_at = NULL WHERE last_read_at IS NOT NULL",
+			); err != nil {
+				return fmt.Errorf("failed to clear the retired last_read_at watermark: %w", err)
+			}
+			slog.Info("migrated task unread state to per-execution", slog.Int("executions", pending))
 		}
 	}
 
@@ -853,6 +1085,42 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, created_at DESC, id DESC)"); err != nil {
 			return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
 		}
+	}
+
+	// Migrate: create session tag registry + session↔tag links.
+	//
+	// Tags are a separate registry (not a JSON column on chat_sessions) so a
+	// label can be deleted globally and so the candidate list for a project is
+	// a cheap indexed lookup. `scope` is 'project' or 'global':
+	//   - project tags are visible/selectable only inside their project_path
+	//   - global tags are visible/selectable in every project (project_path='')
+	//
+	// Uniqueness is (name, project_path), NOT name alone: two projects may each
+	// own a label called "bug" without one leaking into the other's candidate
+	// list. Global tags live at project_path='' and therefore never collide with
+	// a project row.
+	// Both tables are created unconditionally (CREATE TABLE IF NOT EXISTS), so
+	// existing databases pick them up on the next startup.
+	if _, err := WriteExec(`
+		CREATE TABLE IF NOT EXISTS session_tags (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			scope TEXT NOT NULL DEFAULT 'project',
+			project_path TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(name, project_path)
+		);
+		CREATE TABLE IF NOT EXISTS session_tag_links (
+			session_id TEXT NOT NULL,
+			tag_id INTEGER NOT NULL REFERENCES session_tags(id) ON DELETE CASCADE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(session_id, tag_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_session_tags_project ON session_tags(project_path, name);
+		CREATE INDEX IF NOT EXISTS idx_session_tag_links_session ON session_tag_links(session_id);
+		CREATE INDEX IF NOT EXISTS idx_session_tag_links_tag ON session_tag_links(tag_id);
+	`); err != nil {
+		return fmt.Errorf("failed to create session tag tables: %w", err)
 	}
 
 	// Migrate: add host column to forwarded_ports for custom target host
@@ -1042,7 +1310,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 				contentMap["blocks"] = blocks
 			}
 			updatedContent, _ := json.Marshal(contentMap)
-			if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0 WHERE id = ?", string(updatedContent), m.id); err != nil {
+			// completed_at is stamped even for a restart-interrupted reply: the
+			// row becomes visible (streaming=0) and the user has not seen it, so
+			// it must be able to register as unread. Falling back to created_at
+			// (turn start, possibly before last_read_at) would hide it.
+			if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0, completed_at = CURRENT_TIMESTAMP WHERE id = ?", string(updatedContent), m.id); err != nil {
 				slog.Error("failed to finalize orphaned streaming message", slog.Int64("id", m.id), slog.String("err", err.Error()))
 			}
 		}
@@ -1079,6 +1351,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_config_options TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add acp_config_options column: %w", err)
+		}
+	}
+
+	// Migrate: add the ACP-reported model list column. Without it the ACP model
+	// list lives only in memory, so an agent's selectable models change across a
+	// restart (CLI list before the first ACP session, ACP list after) until a new
+	// session repopulates the registry.
+	var hasACPModels int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_available_models'").Scan(&hasACPModels)
+	if hasACPModels == 0 {
+		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_available_models TEXT NOT NULL DEFAULT '[]'"); err != nil {
+			return fmt.Errorf("failed to add acp_available_models column: %w", err)
 		}
 	}
 

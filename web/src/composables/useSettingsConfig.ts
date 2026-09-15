@@ -3,7 +3,7 @@ import { apiGet, apiPatch, apiPost } from '@/utils/api'
 import i18n, { STORAGE_KEY as LOCALE_KEY, setLocaleCookie } from '@/i18n'
 import { useAgents } from '@/composables/useAgents'
 import { getNative } from '@/utils/clawbenchNative'
-import { resolveThemeId, applyThemeAttributes } from '@/utils/themeMeta'
+import { resolveThemeId, applyThemeAttributes, onSystemColorSchemeChange } from '@/utils/themeMeta'
 import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
 import { applyServerLimits } from '@/stores/app.ts'
@@ -411,7 +411,8 @@ const serverDefaults: Record<string, unknown> = {
   'chat.system_prompt_interval': 10,
   'chat.recommend_enabled': false,
   'chat.recommend_context_messages': 3,
-  'session.max_count': 10,
+  'chat.fork_context_budget': 100000,
+  'session.max_count': 15,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,
   'recent_projects.max_count': 10,
@@ -592,6 +593,52 @@ function applyResolvedTheme(themeId: string): void {
   const resolved = resolveThemeId(themeId)
   applyThemeAttributes(resolved)
   window.dispatchEvent(new CustomEvent('clawbench-theme-change', { detail: resolved }))
+}
+
+/**
+ * Apply the persisted theme at startup and return the resolved theme ID.
+ *
+ * Never persists. `localConfig.theme` may legitimately be `'auto'`, and writing
+ * the *resolved* ID back would overwrite it with a concrete theme — pinning the
+ * app to whatever the system scheme happened to be at first launch, so it
+ * would never follow the system again (issue #458).
+ *
+ * Deliberately does not dispatch `clawbench-theme-change`: at mount time
+ * App.vue's listener is not registered yet (it is installed later in
+ * initializeApp), so the caller applies the native shell + diagrams itself.
+ */
+export function applyStoredTheme(): string {
+  const resolved = resolveThemeId(String(localConfig.theme ?? 'auto'))
+  applyThemeAttributes(resolved)
+  return resolved
+}
+
+/**
+ * Re-resolve the theme when the system light/dark preference changes.
+ *
+ * Only a stored `'auto'` follows the system — an explicit theme choice must
+ * survive a scheme change. The current `data-theme` attribute is the
+ * idempotency guard: the watcher also fires on resume events where nothing
+ * actually changed (and it can fire before App.vue has mounted), so a no-op
+ * re-apply must not be reported to listeners.
+ */
+export function syncThemeFromSystem(): void {
+  if (String(localConfig.theme ?? 'auto') !== 'auto') return
+  const resolved = resolveThemeId('auto')
+  if (document.documentElement.getAttribute('data-theme') === resolved) return
+  applyResolvedTheme('auto')
+}
+
+let stopSystemThemeWatcher: (() => void) | null = null
+
+/**
+ * Start following the system color scheme for the lifetime of the page.
+ * Idempotent — a second call is a no-op (App.vue's listener registration can
+ * run more than once across login).
+ */
+export function startSystemThemeWatcher(): void {
+  if (stopSystemThemeWatcher) return
+  stopSystemThemeWatcher = onSystemColorSchemeChange(syncThemeFromSystem)
 }
 
 /** Whether the user has ever stored a theme (canonical or legacy key). */

@@ -102,6 +102,11 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		}
 		cursor := r.URL.Query().Get("cursor")
 		cursorID := r.URL.Query().Get("cursor_id")
+		// Optional tag filter: restricts the page to sessions carrying this tag
+		// (visible in this project). Applied server-side so pagination and
+		// hasMore stay correct — filtering only the loaded page client-side
+		// would show "no matches" until the user scrolled far enough.
+		tagName := strings.TrimSpace(r.URL.Query().Get("tag"))
 		// cursor_pinned completes the keyset: the list is ordered by
 		// (pinned DESC, created_at DESC, id DESC), so paging on created_at alone
 		// re-returns pinned rows on every page. Absent/empty keeps the legacy
@@ -124,10 +129,13 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		var err error
 
 		if limit > 0 {
-			sessions, hasMore, err = service.GetSessionsPaged(projectPath, "", limit, cursor, cursorID, cursorPinned)
+			sessions, hasMore, err = service.GetSessionsPaged(projectPath, "", limit, cursor, cursorID, cursorPinned, tagName)
 		} else {
 			sessions, err = service.GetSessions(projectPath, "")
 			hasMore = false
+			if err == nil && tagName != "" {
+				sessions, err = service.FilterSessionsByTag(sessions, projectPath, tagName)
+			}
 		}
 		if err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to load sessions")))
@@ -145,6 +153,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			sessions[i].Running = runningSet[sessions[i].ID]
 			sessions[i].PendingApproval = pendingApprovalSet[sessions[i].ID]
 		}
+		attachSessionTags(sessions)
 		totalCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"sessions":   sessions,
@@ -408,25 +417,40 @@ func getSessionID(r *http.Request) string {
 // cookie may point at a different session (another project, or a background
 // refresh). Falling back to the cookie there would rename the WRONG session,
 // leaving the intended one unlocked so its first message overwrites the title
-// — the "renamed title gets clobbered" bug. Returns ("", false) after writing
-// an error response when the target is missing or not owned by the project.
+// — the "renamed title gets clobbered" bug.
+//
+// Returns ("", false) after writing an error response when the target is
+// missing or not owned by the project.
+//
+// Ownership is enforced on BOTH paths. Previously only the body-sessionId path
+// was checked, so `?session_id=<id of another project's session>` bypassed the
+// guard entirely (requireSessionID only checks presence) and let a caller
+// rewrite or clear another project's session settings — most damagingly its
+// tags, which are the first project-visible data written through this endpoint.
+// The check is skipped when no project cookie is present, preserving the
+// historical lenient behavior for tests and pre-project callers.
 func resolveUpdateTargetSession(w http.ResponseWriter, r *http.Request, bodySessionID string) (string, bool) {
-	if bodySessionID == "" {
-		return requireSessionID(w, r)
+	sessionID := bodySessionID
+	if sessionID == "" {
+		var ok bool
+		sessionID, ok = requireSessionID(w, r)
+		if !ok {
+			return "", false
+		}
 	}
-	info := service.GetSessionFullInfo(bodySessionID)
-	if info == nil {
+
+	// GetSessionProjectPathAny (not GetSessionFullInfo) so an archived session
+	// still resolves to its owning project instead of an empty path.
+	projectPath, found := service.GetSessionProjectPathAny(sessionID)
+	if !found {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		return "", false
 	}
-	// Enforce project ownership when a project cookie is present (mirrors the
-	// GET/POST chat guards). Tests and pre-project callers without the cookie
-	// keep the historical lenient behavior.
-	if projectPath := middleware.GetProjectFromCookie(r); projectPath != "" && info.ProjectPath != projectPath {
+	if cookieProject := middleware.GetProjectFromCookie(r); cookieProject != "" && projectPath != cookieProject {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return "", false
 	}
-	return bodySessionID, true
+	return sessionID, true
 }
 
 // ServeAISessionUpdate handles PATCH /api/ai/session — immediately persists
@@ -445,6 +469,11 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
 		Title          string `json:"title"`
 		Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
+		// Tags replaces the session's full tag set when non-nil. A pointer is
+		// required here: `"tags": []` (clear all) must be distinguishable from
+		// the field being absent (leave tags untouched), which a plain slice
+		// cannot express.
+		Tags *[]service.SessionTagRef `json:"tags"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -457,36 +486,19 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		// Persist mode change to DB context_state so it survives restarts
 		persistContextStateModeChange(sessionID, req.ModeID)
 		// Forward mode change to ACP agent so it updates its runtime state.
-		// Run asynchronously — the RPC can block for up to 30s if the agent
-		// is slow (e.g., Claude bridge adapter starting its CLI subprocess).
-		// Blocking the HTTP handler would tie up a browser HTTP/1.1 connection
-		// and prevent other requests (like session list) from being served.
 		// The internal category key is passed ("mode"); SetSessionConfigOption
 		// resolves it to the config-option id the agent advertised (issue #429).
-		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				conn.SetSessionConfigOption(ctx, "mode", req.ModeID)
-			}()
-		}
+		forwardSessionConfigOption(sessionID, "mode", req.ModeID)
 	}
 	if req.ThinkingEffort != "" {
 		// Persist thinking effort change to DB context_state so it survives restarts
 		persistContextStateThinkingEffortChange(sessionID, req.ThinkingEffort)
-		// Forward thinking effort change to ACP agent — same async pattern as mode.
 		// "thought_level" is the internal category key; SetSessionConfigOption
 		// resolves it to the agent-advertised id (claude-agent-acp: "effort"),
 		// falling back to the historical "thinkingEffort" when unadvertised —
 		// otherwise the effort selector silently fails for agents whose id
 		// naming differs from ours (issue #429).
-		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				conn.SetSessionConfigOption(ctx, "thought_level", req.ThinkingEffort)
-			}()
-		}
+		forwardSessionConfigOption(sessionID, "thought_level", req.ThinkingEffort)
 	}
 	if req.ModelID != "" {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
@@ -518,7 +530,136 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
 		service.UpdateSessionPinned(sessionID, *req.Pinned)
 	}
+	if req.Tags != nil {
+		// Tag writes can genuinely fail (e.g. a conflicting definition), and
+		// unlike the settings above the frontend has no optimistic copy to fall
+		// back on — so surface the error instead of reporting a silent ok.
+		if err := applySessionTags(sessionID, *req.Tags); err != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("failed to save session tags")))
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// applySessionTags replaces a session's tag set, filing any brand-new labels
+// under the session's OWN project.
+//
+// The session's project — not the request cookie — is authoritative: filing the
+// new label under the cookie's project would drop it from the session's own
+// project candidate list whenever the cookie points elsewhere (e.g. tagging
+// from the floating window or a cross-project view).
+//
+// Uses GetSessionProjectPathAny rather than GetSessionFullInfo: the latter
+// filters archived=0, so a session archived while the dialog was open would
+// resolve to "" and its new tags would be filed under project_path=” — a
+// definition no project's candidate list matches, making the tag permanently
+// invisible and undeletable from the UI.
+func applySessionTags(sessionID string, tags []service.SessionTagRef) error {
+	projectPath, found := service.GetSessionProjectPathAny(sessionID)
+	if !found {
+		// The caller already validated the session exists; reaching here means
+		// it was deleted between validation and write. Refuse rather than
+		// creating link rows for a session that no longer exists.
+		return fmt.Errorf("session %s no longer exists", sessionID)
+	}
+	return service.SetSessionTags(sessionID, projectPath, tags)
+}
+
+// forwardSessionConfigOption pushes a config-option change to the session's ACP
+// agent, if one is connected.
+//
+// Run asynchronously: the RPC can block for up to 30s if the agent is slow
+// (e.g., the Claude bridge adapter starting its CLI subprocess). Blocking the
+// HTTP handler would tie up a browser HTTP/1.1 connection and prevent other
+// requests (like the session list) from being served.
+func forwardSessionConfigOption(sessionID, category, value string) {
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		conn.SetSessionConfigOption(ctx, category, value)
+	}()
+}
+
+// attachSessionTags batch-loads tags for a page of sessions and sets them in
+// place. Failures are logged and swallowed: tags are decoration, so a tag
+// lookup error must not take down the whole session list.
+func attachSessionTags(sessions []model.ChatSession) {
+	if len(sessions) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(sessions))
+	for i := range sessions {
+		ids = append(ids, sessions[i].ID)
+	}
+	tagsBySession, err := service.GetTagsForSessions(ids)
+	if err != nil {
+		slog.Warn("failed to load session tags", "error", err)
+		return
+	}
+	for i := range sessions {
+		for _, t := range tagsBySession[sessions[i].ID] {
+			sessions[i].Tags = append(sessions[i].Tags, model.SessionTag{Name: t.Name, Scope: t.Scope})
+		}
+	}
+}
+
+// ServeSessionTags handles GET/DELETE /api/ai/session/tags.
+//
+//	GET    → tag candidates for the current project
+//	         (?inUse=1 narrows to tags actually carried by a session here,
+//	          which is what the session-list filter bar shows)
+//	DELETE → delete a tag definition everywhere
+//	         (name + optional scope in the query string)
+func ServeSessionTags(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Two distinct views share this endpoint: the dialog needs every
+		// selectable candidate (including unused global tags), while the filter
+		// bar must not offer a tag that would always yield an empty list.
+		inUse := r.URL.Query().Get("inUse") == "1"
+		var tags []service.SessionTag
+		var err error
+		if inUse {
+			tags, err = service.ListProjectTagsInUse(projectPath)
+		} else {
+			tags, err = service.ListSessionTags(projectPath)
+		}
+		if err != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("failed to load session tags")))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"tags": tags})
+
+	case http.MethodDelete:
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		if name == "" {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TagNameRequired")
+			return
+		}
+		// The scope the client saw identifies WHICH definition to delete when
+		// the same name exists both globally and as a project tag. Without it,
+		// deleting a project-scoped label could destroy a global label shared
+		// by every project. Empty scope keeps the legacy global-first fallback.
+		scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+		if err := service.DeleteSessionTag(name, projectPath, scope); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TagDeleteFailed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+
+	default:
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+	}
 }
 
 // persistContextStateModeChange updates the mode currentModeId in DB context_state
@@ -554,15 +695,20 @@ func setSessionID(w http.ResponseWriter, r *http.Request, sessionID string) {
 
 // ServeForkSession handles POST /api/ai/session/fork — creates a new chat session
 // by copying all messages from the current session (without external_session_id).
+//
+// The body's sessionId is authoritative; the query param / chat_session_id cookie
+// is only a fallback. This matters because the cookie is cleared whenever the
+// user switches project (see ServeProject), so a client that switched projects
+// and forked immediately would otherwise be rejected with SessionIdRequired even
+// though it sent a perfectly good sessionId in the body. Reading the body first
+// also mirrors resolveUpdateTargetSession, which made the same choice for the
+// same reason: the cookie may point at a different session than the one the user
+// acted on.
 func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-	sessionID, ok := requireSessionID(w, r)
 	if !ok {
 		return
 	}
@@ -575,10 +721,10 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	// Use body sessionId if provided, otherwise fall back to query/cookie
+	// Body sessionId wins; fall back to query/cookie for clients that omit it.
 	sourceID := req.SessionID
 	if sourceID == "" {
-		sourceID = sessionID
+		sourceID = getSessionID(r)
 	}
 	if sourceID == "" {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")

@@ -180,3 +180,21 @@ func TestStateRank(t *testing.T) {
 	assert.Greater(t, StateRank(StateMerged), StateRank(StateClosed))
 	assert.Greater(t, StateRank(StateClosed), StateRank(StateOpen))
 }
+
+// TestParsePipelineRunID is the inverse of PipelineItemKey: a pipeline's run id
+// is only recoverable from its item key, so this must round-trip and must not
+// accept any other key shape.
+func TestParsePipelineRunID(t *testing.T) {
+	// Round trip.
+	id, ok := ParsePipelineRunID(PipelineItemKey(555))
+	require.True(t, ok)
+	assert.Equal(t, int64(555), id)
+
+	// Non-pipeline keys must be rejected rather than parsed as a run id — a
+	// caller that accepted "pr/455" here would look up run 0.
+	for _, key := range []string{"pr/455", "issue/1", "", "pipeline/run:", "pipeline/run:abc", "pipeline/0"} {
+		got, ok := ParsePipelineRunID(key)
+		assert.False(t, ok, "must reject %q", key)
+		assert.Zero(t, got)
+	}
+}

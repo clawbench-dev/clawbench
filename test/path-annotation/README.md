@@ -35,6 +35,75 @@ in the web frontend. These files are **not** meant to be compiled or executed.
 - `internal/config/settings.json` → 相对当前目录
 - `../README.md` → 项目根 README.md
 
+### 文件夹路径（无扩展名）
+
+文件夹没有扩展名，两个分支的判据不同（下表结论均为实测）：
+
+| 分支 | 判据 | 无扩展名的文件夹 |
+|---|---|---|
+| Step 2（行内代码） | `looksLikeFilePath`：含 `/` 即可 | **能**标注 |
+| Step 3（普通文本） | `FILE_PATH_RE`：需形如 `…/x.ext` | **不能**标注 |
+
+所以文件夹**必须写成行内代码**才有效：
+
+- `web/src/composables`
+- `web/src/components/chat`
+- `web/src/stores`
+- `internal/rag`
+- `docs/spec`
+- `test/path-annotation`
+- `web/src` — 只有两段也照样进入标注；主候选是相对本目录的
+  `test/path-annotation/web/src`（不存在），靠回退候选 `web/src` 落到真实目录
+
+以下写法**不会**被标注（Step 3 的反例对照，无扩展名不匹配）：
+
+- web/src/composables
+- internal/rag
+- docs/spec
+
+以本文件所在目录（`test/path-annotation/`）为基准的相对文件夹：
+
+- `../path-annotation` → 主候选 `test/path-annotation`，回退 `path-annotation`
+- `./..` → `test`（纯 `..` 段，主/回退相同）
+- `../..` → 逸出项目根，解析为 `null`，不标注
+
+项目内绝对路径（归一化为项目相对路径，仍为蓝色）：
+
+- `/home/xulongzhe/projects/clawbench/web/src/composables` → `web/src/composables`
+- `/home/xulongzhe/projects/clawbench/internal/rag` → `internal/rag`
+
+末尾带斜杠（既有行为：斜杠不被消费，`data-file-path` 落回去掉斜杠的部分）：
+
+- `web/src/composables/` → 标注 `web/src/composables`
+
+名称含点号、易被误判为文件的文件夹（靠「后接 `/segment` 抑制」兜底）：
+
+- 反例对照：`/home/user/project/.worktrees/gitgraph-fix` — `.worktrees` 会被当成
+  「扩展名」前缀匹配，但后面还跟着 `/gitgraph-fix`，整段被抑制，**不标注**
+- 反例对照：`/home/user/project/.worktrees` — 无后续 `/segment`，是合法文件夹，
+  应标注（可导航进入）
+
+### 项目外文件夹（橙色，但校验后会被撤销）
+
+只有**文件**才保留项目外标注；项目外**目录**在 `verifyFilePaths` 收到
+`dir` 后会被摘掉标注（`openFilePath` 点击时也会弹「不支持外部路径」）。
+另注意文本分支同样要求扩展名，`/var/log` 这类无扩展名的外部目录只有
+**行内代码**形式才会先被标注、再被校验撤销：
+
+- `/home/xulongzhe/.codebuddy` — 行内代码标注后撤销（末段 `.codebuddy` 像扩展名，文本形式也会先标注）
+- `/home/xulongzhe/.codebuddy/plugins`
+- `/var/log` — 仅行内代码形式进入标注，随后撤销
+- `~/.codebuddy` → 展开为 `/home/xulongzhe/.codebuddy`
+- `/var/log/syslog` 的上级 `/var/log`（对照：`/var/log/syslog` 是文件，保留橙色）
+
+### 文件夹 + 行号（无意义，不应出现）
+
+行号后缀对目录不生效，以下写法即便解析出行号也不会跳转高亮，
+仅作「不该这么写」的记录（实测仍会标注为文件夹）：
+
+- `web/src/composables:10` — 目录带行号，跳转时仍按目录处理
+- `internal/rag:1-5`
+
 ### 不应标注
 
 - fmt

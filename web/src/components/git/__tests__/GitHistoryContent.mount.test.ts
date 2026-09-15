@@ -12,9 +12,18 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-const { mockLoadGitBranch, mockGitFetch } = vi.hoisted(() => ({
+const { mockLoadGitBranch, mockGitFetch, mockGitState } = vi.hoisted(() => ({
   mockLoadGitBranch: vi.fn().mockResolvedValue(undefined),
   mockGitFetch: vi.fn(),
+  // Shared mutable store state so tests can simulate the workspace changing
+  // between tab activations (loadGitBranch updates these in production).
+  mockGitState: {
+    projectRoot: '/project',
+    gitBranch: 'main',
+    gitHead: 'abc',
+    gitDirty: false,
+    gitWorkingTreeChangeCount: 0,
+  },
 }))
 // gitFetch is what GitHistoryContent actually uses for its git API calls
 // (project-history, working-tree, commit-files, …). Mock it so mounting does
@@ -39,13 +48,7 @@ vi.mock('@/utils/gitApi', () => ({
 }))
 vi.mock('@/stores/app', () => ({
   store: {
-    state: {
-      projectRoot: '/project',
-      gitBranch: 'main',
-      gitHead: 'abc',
-      gitDirty: false,
-      gitWorkingTreeChangeCount: 0,
-    },
+    state: mockGitState,
     loadGitBranch: mockLoadGitBranch,
     loadFiles: vi.fn().mockResolvedValue(undefined),
   },
@@ -79,6 +82,10 @@ vi.mock('lucide-vue-next', () => ({
   ChevronUp: { template: '<div />' },
   ChevronDown: { template: '<div />' },
   LoaderCircle: { template: '<div />' },
+  RefreshCw: { template: '<svg />' },
+  RotateCw: { template: '<svg />' },
+  RotateCcw: { template: '<svg />' },
+  CheckCircle2: { template: '<svg />' },
 }))
 vi.mock('@/composables/useEdgeSwipeBack', () => ({
   useFeatureBackHandler: vi.fn(),
@@ -113,7 +120,47 @@ beforeEach(() => {
   mockGitFetch.mockResolvedValue({ ok: false })
   mockLoadGitBranch.mockClear()
   mockLoadGitBranch.mockResolvedValue(undefined)
+  Object.assign(mockGitState, {
+    projectRoot: '/project',
+    gitBranch: 'main',
+    gitHead: 'abc',
+    gitDirty: false,
+    gitWorkingTreeChangeCount: 0,
+  })
 })
+
+/**
+ * Route gitFetch by endpoint so a test can serve a realistic history + working
+ * tree. Returns a mutable `wt` holder so the workspace contents can change
+ * between calls (simulating edits while the user is on another tab).
+ */
+function routeGitFetch(init: {
+  commits?: Array<Record<string, unknown>>
+  wt?: Array<Record<string, unknown>>
+}) {
+  const wt = { files: init.wt ?? [] }
+  const commits = init.commits ?? [
+    { sha: 'c0ffee1', msg: 'first', date: '2026-01-01T00:00:00Z', author: 'a' },
+  ]
+  mockGitFetch.mockImplementation((url: string) => {
+    if (url.startsWith('/api/git/project-history')) {
+      return Promise.resolve({ ok: true, json: async () => ({ isGit: true, commits, hasMore: false }) })
+    }
+    if (url.startsWith('/api/git/working-tree')) {
+      return Promise.resolve({ ok: true, json: async () => ({ files: wt.files }) })
+    }
+    return Promise.resolve({ ok: false, json: async () => ({}) })
+  })
+  return { wt, commits }
+}
+
+/** Make loadGitBranch mirror the real store: it writes the fetched values into state. */
+function stubLoadGitBranch(overrides: Partial<typeof mockGitState>) {
+  mockLoadGitBranch.mockImplementation(async () => {
+    Object.assign(mockGitState, overrides)
+    return { isGit: true, ...mockGitState }
+  })
+}
 
 describe('GitHistoryContent dock badge refresh', () => {
   it('refreshes git branch/change state on mount (first open of history tab)', async () => {
@@ -187,6 +234,165 @@ describe('GitHistoryContent — files view rendering', () => {
     const item = wrapper.find('.drilldown-item')
     expect(item.find('.git-file-name').text()).toBe('README.md')
     expect(item.find('.git-file-dir').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+// Regression: entering the working-tree view after the workspace changed used
+// to render an empty list. `loadProjectHistory()` clears files/wtFiles but
+// leaves `currentView` on 'files', and the WT view was a pure cache read.
+describe('GitHistoryContent — working tree view stays fresh', () => {
+  function mountActive() {
+    return mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
+    })
+  }
+
+  it('re-fetches the working tree when the WT row is selected (not the stale snapshot)', async () => {
+    const { wt } = routeGitFetch({ wt: [{ path: 'old.ts', type: 'M', staged: false }] })
+    const wrapper = mountActive()
+    await flushPromises()
+    const vm = wrapper.vm as any
+
+    // Workspace changes while the user is elsewhere.
+    wt.files = [{ path: 'new.ts', type: 'A', staged: false }]
+
+    vm.onCommitSelect({ sha: 'HEAD', isWT: true })
+    await flushPromises()
+
+    expect(vm.currentView).toBe('files')
+    expect(vm.files.map((f: any) => f.path)).toEqual(['new.ts'])
+    expect(wrapper.find('.drilldown-item .git-file-name').text()).toBe('new.ts')
+    wrapper.unmount()
+  })
+
+  it('re-entering the tab on the working-tree view refreshes instead of rendering blank', async () => {
+    const { wt } = routeGitFetch({ wt: [{ path: 'old.ts', type: 'M', staged: false }] })
+    const wrapper = mountActive()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    stubLoadGitBranch({ gitDirty: true, gitWorkingTreeChangeCount: 1 })
+
+    vm.onCommitSelect({ sha: 'HEAD', isWT: true })
+    await flushPromises()
+    expect(vm.files.map((f: any) => f.path)).toEqual(['old.ts'])
+
+    // Leave the tab, change the workspace, come back.
+    await wrapper.setProps({ active: false })
+    wt.files = [{ path: 'changed.ts', type: 'M', staged: false }]
+    stubLoadGitBranch({ gitDirty: true, gitWorkingTreeChangeCount: 2 })
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+
+    expect(vm.currentView).toBe('files')
+    expect(vm.files.map((f: any) => f.path)).toEqual(['changed.ts'])
+    // The list is rendered, not the empty state.
+    expect(wrapper.find('.git-history-empty').exists()).toBe(false)
+    expect(wrapper.find('.drilldown-item .git-file-name').text()).toBe('changed.ts')
+    wrapper.unmount()
+  })
+
+  it('falls back to the commit list when the workspace becomes clean', async () => {
+    const { wt } = routeGitFetch({ wt: [{ path: 'old.ts', type: 'M', staged: false }] })
+    const wrapper = mountActive()
+    await flushPromises()
+    const vm = wrapper.vm as any
+
+    // 1st re-entry: workspace is dirty → the working-tree row exists and the
+    // refresh is recorded, so lastGitState now holds dirty/1.
+    stubLoadGitBranch({ gitDirty: true, gitWorkingTreeChangeCount: 1 })
+    await wrapper.setProps({ active: false })
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+
+    vm.onCommitSelect({ sha: 'HEAD', isWT: true })
+    await flushPromises()
+    expect(vm.currentView).toBe('files')
+
+    // 2nd re-entry: everything got committed → no working-tree row any more.
+    wt.files = []
+    stubLoadGitBranch({ gitDirty: false, gitWorkingTreeChangeCount: 0 })
+    await wrapper.setProps({ active: false })
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+
+    expect(vm.currentView).toBe('commits')
+    expect(vm.selectedSHA).toBeNull()
+    wrapper.unmount()
+  })
+})
+
+describe('GitHistoryContent — files view refresh button', () => {
+  it('renders a refresh button in the files-view header', async () => {
+    routeGitFetch({ wt: [{ path: 'a.ts', type: 'M', staged: false }] })
+    const wrapper = mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
+    })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.onCommitSelect({ sha: 'HEAD', isWT: true })
+    await flushPromises()
+
+    const btn = wrapper.find('.drilldown-header .drilldown-refresh-btn')
+    expect(btn.exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('the refresh button re-fetches the working tree and picks up new changes', async () => {
+    const { wt } = routeGitFetch({ wt: [{ path: 'a.ts', type: 'M', staged: false }] })
+    const wrapper = mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
+    })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.onCommitSelect({ sha: 'HEAD', isWT: true })
+    await flushPromises()
+
+    wt.files = [{ path: 'b.ts', type: 'A', staged: false }]
+    await wrapper.find('.drilldown-header .drilldown-refresh-btn').trigger('click')
+    await flushPromises()
+
+    expect(vm.files.map((f: any) => f.path)).toEqual(['b.ts'])
+    expect(wrapper.find('.drilldown-item .git-file-name').text()).toBe('b.ts')
+    wrapper.unmount()
+  })
+
+  it('spins (and disables) while the in-place working-tree refresh is in flight', async () => {
+    const { wt } = routeGitFetch({ wt: [{ path: 'a.ts', type: 'M', staged: false }] })
+    const wrapper = mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
+    })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.onCommitSelect({ sha: 'HEAD', isWT: true })
+    await flushPromises()
+
+    // Hold the working-tree response open so the in-flight state is observable.
+    let release: (v: unknown) => void = () => {}
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/working-tree')) {
+        return new Promise(resolve => {
+          release = () => resolve({ ok: true, json: async () => ({ files: wt.files }) })
+        })
+      }
+      return Promise.resolve({ ok: false, json: async () => ({}) })
+    })
+
+    vm.onFilesRefresh()
+    await flushPromises()
+
+    const btn = wrapper.find('.drilldown-header .drilldown-refresh-btn')
+    expect(btn.attributes('disabled')).toBeDefined()
+    // The existing list stays on screen during the refresh (no empty state).
+    expect(wrapper.find('.drilldown-item').exists()).toBe(true)
+
+    release(null)
+    await flushPromises()
+    expect(wrapper.find('.drilldown-header .drilldown-refresh-btn').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 })

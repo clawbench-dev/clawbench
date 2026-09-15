@@ -197,6 +197,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Ship the same shape as GET /api/agents: the raw ACP list plus the
+			// CLI list and the resolved list. Without this the client would have
+			// to merge the two itself, and a consumer that only has the ACP half
+			// (this endpoint's modelListState.models) would drop the CLI models.
+			if ml, ok := modelListState.(*ai.ModelListState); ok && ml != nil && sessionAgentID != "" {
+				if enriched := ai.EnrichModelList(sessionAgentID, ml); enriched != nil {
+					modelListState = enriched
+				}
+			}
+
 			// DB fallback: if any state is still nil after in-memory lookups,
 			// try to restore from persisted context_state (survives server restart).
 			if modeState == nil || thinkingEffortState == nil || usageState == nil {
@@ -361,30 +371,15 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Derive file/dir paths from validatedFileEntries for prompt prefixing,
-	// excluding entries already covered by filePaths (cross-deduplication).
+	// Derive file/dir/link buckets from validatedFileEntries for prompt
+	// prefixing, excluding entries already covered by filePaths
+	// (cross-deduplication).
 	filePathsSet := make(map[string]struct{}, len(validatedFilePaths)+len(validatedDirPaths))
 	for _, p := range append(validatedFilePaths, validatedDirPaths...) {
 		filePathsSet[p] = struct{}{}
 	}
 
-	fileEntryFileLabels := make([]string, 0) // "path" or "path:startLine-endLine"
-	fileEntryDirPaths := make([]string, 0)
-	for _, f := range validatedFileEntries {
-		// URL entries are not filesystem paths and must not be prefixed onto
-		// the prompt as if they were local files.
-		if f.IsURL() {
-			continue
-		}
-		if _, exists := filePathsSet[f.Path]; exists {
-			continue // already covered by filePaths
-		}
-		if f.IsDir {
-			fileEntryDirPaths = append(fileEntryDirPaths, f.Path)
-		} else {
-			fileEntryFileLabels = append(fileEntryFileLabels, fileEntryLabel(f))
-		}
-	}
+	attachmentParts := model.ClassifyAttachments(validatedFileEntries, filePathsSet)
 
 	prompt := req.Message
 	// Slash commands (e.g. /reload-plugins, /compact) must be sent as-is to ACP
@@ -394,18 +389,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// commands: they are injected locally below and must keep file prefixes.
 	isSlashCmd := ai.IsACPSlashCommand(req.Message) && !IsClawbenchCommand(req.Message)
 	if !isSlashCmd {
-		if len(validatedFilePaths) > 0 {
-			prompt = fmt.Sprintf("[Current file: %s]\n%s", strings.Join(validatedFilePaths, ", "), req.Message)
-		}
-		if len(validatedDirPaths) > 0 {
-			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(validatedDirPaths, ", "), prompt)
-		}
-		if len(fileEntryFileLabels) > 0 {
-			prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileEntryFileLabels), strings.Join(fileEntryFileLabels, ", "), prompt)
-		}
-		if len(fileEntryDirPaths) > 0 {
-			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(fileEntryDirPaths, ", "), prompt)
-		}
+		prompt = model.ApplyAttachmentPrefixes(prompt, validatedFilePaths, validatedDirPaths, attachmentParts)
 	}
 
 	// ClawBench built-in command injection: detect on raw req.Message, prepend
@@ -730,20 +714,18 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 }
 
 // buildForkContext delegates to the service layer's single implementation.
+//
+// The header/footer and capitalized roles are handler-specific presentation; the
+// rendering and budget enforcement live in service so both the web chat path and
+// the task engine path share one implementation.
 func buildForkContext(sessionID string) string {
-	return service.BuildForkContext(sessionID)
-}
-
-// fileEntryLabel returns a prompt label for a FileEntry, appending line info
-// when present: "path", "path:10", or "path:10-20".
-func fileEntryLabel(f model.FileEntry) string {
-	if f.StartLine > 0 && f.EndLine > 0 && f.StartLine != f.EndLine {
-		return fmt.Sprintf("%s:%d-%d", f.Path, f.StartLine, f.EndLine)
-	}
-	if f.StartLine > 0 {
-		return fmt.Sprintf("%s:%d", f.Path, f.StartLine)
-	}
-	return f.Path
+	return service.BuildForkContextWithOptions(sessionID, service.ForkContextOptions{
+		Header:            "[Below is the conversation history from before this session. Continue based on this context.]\n\n",
+		Footer:            "[End of conversation history. Now answer the user's new question.]\n\n",
+		CapitalizeRoles:   true,
+		PlainTextFallback: true,
+		BudgetChars:       model.ChatForkContextBudget,
+	})
 }
 
 // buildChatRequestFromQueue constructs an ai.ChatRequest from a queued message.
@@ -751,9 +733,9 @@ func fileEntryLabel(f model.FileEntry) string {
 // reference cannot be rendered from the embedded spec.
 func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath, backendName, agentID, fileDir string) (ai.ChatRequest, error) {
 	prompt := qMsg.Text
+	var filePaths, dirPaths []string
 	if len(qMsg.FilePaths) > 0 {
 		basePath, _ := filepath.Abs(projectPath)
-		var filePaths, dirPaths []string
 		for _, fp := range qMsg.FilePaths {
 			absPath, ok := model.ValidatePath(basePath, fp)
 			if !ok {
@@ -771,37 +753,18 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 				filePaths = append(filePaths, absPath)
 			}
 		}
-		if len(filePaths) > 0 {
-			prompt = fmt.Sprintf("[Current file: %s]\n%s", strings.Join(filePaths, ", "), qMsg.Text)
-		}
-		if len(dirPaths) > 0 {
-			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(dirPaths, ", "), prompt)
-		}
 	}
-	if len(qMsg.Files) > 0 {
-		// Build line-number-aware labels, excluding files already in filePaths
-		filePathsLookup := make(map[string]struct{}, len(qMsg.FilePaths))
-		for _, p := range qMsg.FilePaths {
-			filePathsLookup[p] = struct{}{}
-		}
-		var fileLabels, dirPaths []string
-		for _, f := range qMsg.Files {
-			if _, exists := filePathsLookup[f.Path]; exists {
-				continue
-			}
-			if f.IsDir {
-				dirPaths = append(dirPaths, f.Path)
-			} else {
-				fileLabels = append(fileLabels, fileEntryLabel(f))
-			}
-		}
-		if len(fileLabels) > 0 {
-			prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileLabels), strings.Join(fileLabels, ", "), prompt)
-		}
-		if len(dirPaths) > 0 {
-			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(dirPaths, ", "), prompt)
-		}
+	// Classify the structured entries through the same helper as the direct
+	// send path, so a URL attachment reaches the AI as a link here too. This
+	// path previously had no URL branch at all: the label was emitted as a
+	// [User uploaded ...] file path the AI could never read, while the real
+	// address was dropped.
+	lookup := make(map[string]struct{}, len(qMsg.FilePaths))
+	for _, p := range qMsg.FilePaths {
+		lookup[p] = struct{}{}
 	}
+	parts := model.ClassifyAttachments(qMsg.Files, lookup)
+	prompt = model.ApplyAttachmentPrefixes(prompt, filePaths, dirPaths, parts)
 
 	// ClawBench built-in command injection for queued messages (same logic as
 	// the primary message path). A render failure means the embedded spec is
@@ -905,7 +868,31 @@ func MarkChatRead(w http.ResponseWriter, r *http.Request) {
 // executable link long after the request that created it. Rejecting it at the
 // boundary keeps every renderer safe without each one having to remember a
 // guard.
+// isSafeExternalURL reports whether an external URL attachment may be persisted
+// and later rendered as a clickable link, and injected into the AI's prompt.
+//
+// Two separate risks are covered here, both because the value is persisted once
+// and then reused long after the request that created it:
+//
+//  1. Scheme. Only http(s) is allowed. The value is re-rendered as an anchor
+//     href on every subsequent load, so a javascript:/data: entry would become
+//     an executable link forever. Rejecting it at the boundary keeps every
+//     renderer safe without each one having to remember a guard.
+//
+//  2. Tag forgery. The address is injected into the prompt inside a single-line
+//     machine header (`[Referenced external link: <url>]`), and other code
+//     scans the prompt for `[Current file` / `[User uploaded` ANYWHERE in the
+//     text (see internal/ai/acp_conn_state.go extractImagesFromPrompt). A URL
+//     containing whitespace or square brackets — `https://x/a] [Current file:
+//     /etc/passwd` parses fine and has a valid host — could therefore smuggle a
+//     fake attachment tag into the prompt. Rejecting whitespace and brackets
+//     removes the structural characters those tags are built from. No real
+//     http(s) URL contains them unencoded (RFC 3986 requires percent-encoding),
+//     and forge URLs come from the provider's own html_url/WebURL field.
 func isSafeExternalURL(raw string) bool {
+	if strings.ContainsAny(raw, " \t\r\n[]") {
+		return false
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return false

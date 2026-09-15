@@ -36,6 +36,13 @@ import shareChromeCss from '../../css/share-chrome.css?raw'
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Max paths per `/api/file/batch-base64` request. `ServeFileBatchBase64` rejects
+ * more than 50 with 400 TooManyPaths, so image inlining is chunked to stay under
+ * it. (Note: the sibling `/api/file/batch-exists` limit is 100, not 50.)
+ */
+const MAX_BATCH_BASE64_PATHS = 50
+
 export interface ExportOptions {
     /** Raw markdown content of the file being exported. */
     content: string
@@ -134,7 +141,11 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
 
     if (pathToImg.size === 0) return { skipped: 0, external, issues }
 
-    // Batch fetch base64
+    // Batch fetch base64. Chunked because the endpoint rejects more than
+    // MAX_BATCH_BASE64_PATHS with 400 TooManyPaths — and a document can easily
+    // reference more images than that. Un-chunked, a single oversized request
+    // failed the WHOLE batch, so every local image kept its `/api/local-file/...`
+    // src and showed up broken in the standalone export.
     const paths = Array.from(pathToImg.keys())
     let skipped = 0
 
@@ -143,23 +154,8 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
         issues.push({ path, reason, kind: 'skipped' })
     }
 
-    try {
-        const resp = await fetch('/api/file/batch-base64', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths }),
-        })
-
-        if (!resp.ok) {
-            // API failed — all local images keep original src
-            for (const p of paths) addSkipped(p, 'api_error')
-            return { skipped, external, issues }
-        }
-
-        const data: BatchBase64Response = await resp.json()
-
-        // Apply results
-        for (const [imgPath, result] of Object.entries(data.results || {})) {
+    const applyResults = (results: BatchBase64Response['results']) => {
+        for (const [imgPath, result] of Object.entries(results || {})) {
             const imgsForPath = pathToImg.get(imgPath)
             if (!imgsForPath) continue
             for (const img of imgsForPath) {
@@ -168,16 +164,38 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
             }
             pathToImg.delete(imgPath)
         }
+    }
 
-        // Remaining in pathToImg are paths that weren't in results (server skipped).
-        // Use the server-reported reason when available.
-        const skippedByPath = new Map((data.skipped || []).map(s => [s.path, s.reason]))
-        for (const p of pathToImg.keys()) {
-            addSkipped(p, skippedByPath.get(p) || 'unknown')
+    for (let i = 0; i < paths.length; i += MAX_BATCH_BASE64_PATHS) {
+        const chunk = paths.slice(i, i + MAX_BATCH_BASE64_PATHS)
+        try {
+            const resp = await fetch('/api/file/batch-base64', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paths: chunk }),
+            })
+
+            if (!resp.ok) {
+                // API failed — this chunk's images keep their original src.
+                for (const p of chunk) addSkipped(p, 'api_error')
+                continue
+            }
+
+            const data: BatchBase64Response = await resp.json()
+            applyResults(data.results)
+
+            // Remaining in this chunk are paths the server skipped. Use the
+            // server-reported reason when available.
+            const skippedByPath = new Map((data.skipped || []).map(s => [s.path, s.reason]))
+            for (const p of chunk) {
+                if (pathToImg.has(p)) addSkipped(p, skippedByPath.get(p) || 'unknown')
+            }
+        } catch {
+            // Network error — this chunk's images keep their original src.
+            for (const p of chunk) {
+                if (pathToImg.has(p)) addSkipped(p, 'network_error')
+            }
         }
-    } catch {
-        // Network error — images keep original src
-        for (const p of paths) addSkipped(p, 'network_error')
     }
 
     return { skipped, external, issues }

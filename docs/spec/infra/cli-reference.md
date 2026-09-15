@@ -6,6 +6,8 @@ ClawBench 二进制兼具双重角色：无子命令时启动 Web 服务器；�
 
 > **历史**：曾提供 `clawbench task` 与 `clawbench rag` 两个业务子命令，供 AI 智能体自助管理任务、检索历史对话。它们本质是 REST 端点的 HTTP 薄封装（业务逻辑全在服务端 handler）。现已移除——内置斜杠命令改为让 AI 直接调用本地 HTTP API，接口说明由嵌入的 OpenAPI 规格渲染（见 [API 文档](../api/README.md)）。这样消除了「提示词描述接口」与「CLI 定义接口」两处手写描述必然脱节的根因。
 
+AI 调用本地 API 时需携带内置斜杠命令签发的短时令牌（`X-ClawBench-AI-Token`，30 分钟有效）。回环地址本身不再免密，详见[认证与中间件](auth-and-middleware.md)。
+
 ## 流程图
 
 ### upgrade-replace 执行链路

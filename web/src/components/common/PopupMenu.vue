@@ -111,6 +111,16 @@ watch(() => props.show, (val) => {
   }
 })
 
+// A consumer may swap the anchor element while the menu is open — the Android
+// input recovery rebuilds the chat textarea (:key) and rebinds the ref, and the
+// terminal swaps between two buttons for PC/mobile layouts. Position is only
+// recomputed on `show` changes, scroll and resize, so without this the menu
+// stays anchored to the removed element's rect. Defer one frame for the same
+// reason schedulePosition does: let layout settle before reading geometry.
+watch(() => props.targetElement, () => {
+  if (props.show) schedulePosition()
+})
+
 // A parent may mount this component with `show` already true (e.g. a menu whose
 // own `v-if` is driven by the same condition that opens it). The `show` watcher
 // above only fires on a *change*, so without this the menu would render

@@ -144,6 +144,15 @@ public class MainActivity extends AppCompatActivity {
     private Runnable connectionTimeoutRunnable;
     private static final int CONNECTION_TIMEOUT_MS = 90_000;
 
+    // Splash fail-safe runnable: armed in onPageFinished() once the remote page has
+    // loaded. The JS app normally calls ClawBenchNative.dismissSplash() as soon as
+    // Vue mounts; if that never arrives (JS init threw, or the bridge is missing on
+    // an exotic WebView build) the splash would cover the app forever — the user
+    // sees "正在初始化应用…" with no way out. This timer force-hides the splash so
+    // the app is at least reachable, and logs the failure for diagnosis.
+    private Runnable splashFailSafeRunnable;
+    private static final int SPLASH_FAILSAFE_MS = 15_000;
+
     // Pending error message to deliver to the login page once it finishes loading.
     // Replaces the old fixed 300ms delay — see showLoginPage() and onPageFinished().
     private String pendingLoginErrorMessage = null;
@@ -618,6 +627,7 @@ public class MainActivity extends AppCompatActivity {
      * or from JS via ClawBenchNative.dismissSplash() when Vue finishes mounting.
      */
     private void dismissSplash() {
+        cancelSplashFailSafe();
         if (splashScreen == null || splashScreen.getVisibility() != View.VISIBLE) return;
         if (sweepAnimator != null) {
             sweepAnimator.cancel();
@@ -634,6 +644,38 @@ public class MainActivity extends AppCompatActivity {
                 .setDuration(200)
                 .withEndAction(() -> splashScreen.setVisibility(View.GONE))
                 .start();
+    }
+
+    /**
+     * Arm the splash fail-safe. Called from onPageFinished() when a remote page has
+     * loaded: the JS app should dismiss the splash on its own, but if it never does
+     * (init threw before reaching dismissSplash, or the bridge is unavailable) the
+     * user would be stuck on the splash with no way forward. The timer force-hides
+     * the splash and logs the failure so it surfaces in client.log.
+     */
+    private void startSplashFailSafe() {
+        cancelSplashFailSafe();
+        splashFailSafeRunnable = () -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (splashScreen == null || splashScreen.getVisibility() != View.VISIBLE) return;
+            AppLog.w(TAG, "Splash fail-safe fired after " + SPLASH_FAILSAFE_MS
+                    + "ms — JS never called dismissSplash(); forcing splash hidden");
+            webView.setVisibility(View.VISIBLE);
+            dismissSplash();
+        };
+        webView.postDelayed(splashFailSafeRunnable, SPLASH_FAILSAFE_MS);
+    }
+
+    /**
+     * Cancel any pending splash fail-safe timer. Called whenever the splash is
+     * dismissed (JS-driven or forced) so a later page load doesn't inherit a
+     * stale timer.
+     */
+    private void cancelSplashFailSafe() {
+        if (splashFailSafeRunnable != null) {
+            webView.removeCallbacks(splashFailSafeRunnable);
+            splashFailSafeRunnable = null;
+        }
     }
 
     /**
@@ -1226,6 +1268,7 @@ public class MainActivity extends AppCompatActivity {
         loadErrorPending = false;
         sslCertTrustedByUser = false;
         cancelConnectionTimeout();
+        cancelSplashFailSafe();
         // Store error message for delivery after login page finishes loading.
         // See onPageFinished() where pendingLoginErrorMessage is consumed.
         pendingLoginErrorMessage = errorMessage;
@@ -2437,8 +2480,11 @@ public class MainActivity extends AppCompatActivity {
                 // Note: do NOT dismiss native splash here; the JS app will call
                 // ClawBenchNative.dismissSplash() once Vue finishes mounting,
                 // so the splash covers the full gap from cold start to app ready.
+                // Arm a fail-safe so a JS init failure can't leave the splash up
+                // forever (see startSplashFailSafe).
                 webViewConnected = true;
                 cancelConnectionTimeout();
+                startSplashFailSafe();
                 view.setVisibility(View.VISIBLE);
             }
         }
@@ -2565,6 +2611,7 @@ public class MainActivity extends AppCompatActivity {
             webViewConnected = false;
             loadErrorPending = false;
             cancelConnectionTimeout();
+            cancelSplashFailSafe();
             // The WebView is in an unusable state — destroy and recreate it.
             // Simply showing the login page won't work because the renderer is dead.
             runOnUiThread(() -> recreateWebViewAfterCrash(view));

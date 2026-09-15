@@ -1,6 +1,18 @@
 <template>
   <div class="session-list">
-    <!-- ── Project pane: pinned + recent sections, infinite-scrolling ── -->
+    <!-- Tag filter bar. Sits above the scroll area (not inside the pane) so it
+         stays visible while the list scrolls, and is shared by both hosts
+         (pinned sidebar and mobile drawer) since they both render SessionList.
+         Only meaningful on the project pane — the cross pane lists other
+         projects' sessions, which this project's tags do not describe. -->
+    <SessionTagFilterBar
+      v-if="activeTab === 'project'"
+      :tags="filterTags"
+      :active-tag="activeTag"
+      @toggle="toggleTagFilter"
+    />
+
+    <!-- ── Project pane: one flat, infinite-scrolling list ── -->
     <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen spinner on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
@@ -8,94 +20,51 @@
       <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
-        <!-- Pinned section: only shown when there are pinned sessions -->
-        <section v-if="pinnedSessions.length > 0" class="session-section">
-          <SessionGroupHeader
-            :title="t('common.pinnedSection')"
-            :count="pinnedSessions.length"
-            :collapsed="pinnedCollapsed"
-            @toggle="pinnedCollapsed = !pinnedCollapsed"
+        <!-- Single flat list. Pinned sessions stay first (the backend returns
+             them in that order, so this array order is authoritative) but are no
+             longer split into their own section — a pinned row is marked with a
+             corner wedge plus a small pin glyph at the end of its title. -->
+        <TransitionGroup name="session-list" tag="div" class="session-rows">
+          <div
+            v-for="(session, idx) in sessionsWithStatus"
+            :key="session.id"
+            :data-session-id="session.id"
+            class="session-row"
+            :class="{ pinned: session.pinned, active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
+            @contextmenu.prevent="showContextMenu($event, session)"
+            v-long-press="onSessionLongPress"
           >
-            <template #icon><Pin :size="12" class="session-group-pin-icon" /></template>
-          </SessionGroupHeader>
-          <TransitionGroup v-show="!pinnedCollapsed" name="session-list" tag="div" class="session-rows">
+            <span v-if="session.running" class="session-running-line"></span>
             <div
-              v-for="(session, idx) in pinnedSessions"
-              :key="session.id"
-              :data-session-id="session.id"
-              class="session-row pinned"
-              :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
-              @contextmenu.prevent="showContextMenu($event, session)"
-              v-long-press="onSessionLongPress"
+              class="session-item"
+              :class="{ active: session.id === currentSessionId }"
+              @click="selectSession(session.id, session.backend)"
             >
-              <span v-if="session.running" class="session-running-line"></span>
-              <div
-                class="session-item"
-                :class="{ active: session.id === currentSessionId }"
-                @click="selectSession(session.id, session.backend)"
-              >
-                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-                <div class="session-item-info">
-                  <div class="session-item-header">
-                    <span class="session-item-title">{{ session.title }}</span>
-                  </div>
-                  <div class="session-item-meta">
-                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
-                  </div>
+              <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+              <div class="session-item-info">
+                <div class="session-item-header">
+                  <span class="session-item-title">{{ session.title }}</span>
+                </div>
+                <div class="session-item-meta">
+                  <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                  <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                  <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                </div>
+                <div v-if="session.tags && session.tags.length" class="session-item-tags">
+                  <span
+                    v-for="tag in session.tags"
+                    :key="tag.name"
+                    class="session-tag"
+                    :style="tagAccentStyle(tag.name)"
+                  >{{ tag.name }}</span>
                 </div>
               </div>
-              <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-                <Archive :size="15" />
-              </button>
             </div>
-          </TransitionGroup>
-        </section>
-
-        <!-- Recent (unpinned) section -->
-        <section class="session-section">
-          <SessionGroupHeader
-            v-if="pinnedSessions.length > 0"
-            :title="t('common.recentSection')"
-            :count="unpinnedSessions.length"
-            :collapsed="recentCollapsed"
-            @toggle="recentCollapsed = !recentCollapsed"
-          />
-          <TransitionGroup v-show="!recentCollapsed" name="session-list" tag="div" class="session-rows">
-            <div
-              v-for="(session, idx) in unpinnedSessions"
-              :key="session.id"
-              :data-session-id="session.id"
-              class="session-row"
-              :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === unpinnedIndexOffset + idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
-              @contextmenu.prevent="showContextMenu($event, session)"
-              v-long-press="onSessionLongPress"
-            >
-              <span v-if="session.running" class="session-running-line"></span>
-              <div
-                class="session-item"
-                :class="{ active: session.id === currentSessionId }"
-                @click="selectSession(session.id, session.backend)"
-              >
-                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-                <div class="session-item-info">
-                  <div class="session-item-header">
-                    <span class="session-item-title">{{ session.title }}</span>
-                  </div>
-                  <div class="session-item-meta">
-                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
-                  </div>
-                </div>
-              </div>
-              <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-                <Archive :size="15" />
-              </button>
-            </div>
-          </TransitionGroup>
-        </section>
+            <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
+              <Archive :size="15" />
+            </button>
+          </div>
+        </TransitionGroup>
 
         <div ref="sentinelRef" class="session-list-sentinel"></div>
         <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
@@ -157,6 +126,10 @@
           <PencilLine :size="14" />
           {{ t('common.renameSession') }}
         </div>
+        <div class="context-menu-item" @click.stop="openTagDialogFromMenu(contextMenu.sessionId)">
+          <Tags :size="14" />
+          {{ t('common.setTags') }}
+        </div>
         <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
           <Archive :size="14" />
           {{ t('common.archive') }}
@@ -167,16 +140,26 @@
            working while the menu is open (mirrors FileManagerContent). -->
       <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" @contextmenu.prevent="handleOverlayContextMenu" />
     </Teleport>
+
+    <SessionTagDialog
+      :open="tagDialog.open"
+      :session-id="tagDialog.sessionId"
+      :initial-tags="tagDialog.initialTags"
+      @close="tagDialog.open = false"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Pin, PinOff, PencilLine } from 'lucide-vue-next'
+import { Archive, Pin, PinOff, PencilLine, Tags } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
+import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
+import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import { tagAccentStyle } from '@/utils/tagColor.ts'
 import { useAgents } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
@@ -185,7 +168,7 @@ import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useS
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
-import { apiPatch } from '@/utils/api.ts'
+import { apiGet, apiPatch } from '@/utils/api.ts'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -210,6 +193,13 @@ const loading = ref(false)
 const loadingMore = ref(false)
 const refreshing = ref(false) // a reload (loadSessions) is in flight
 const hasMore = ref(false)
+// Tag filter. Single-select: '' means no filter. The value is sent to the
+// server (see buildListQuery) rather than applied to the loaded page, so
+// pagination and hasMore stay consistent — client-side filtering would show
+// "no matches" until the user happened to scroll far enough.
+const activeTag = ref('')
+// Tags in use in the current project (with session counts), for the filter bar.
+const filterTags = ref([])
 const listRef = ref(null)
 const sentinelRef = ref(null)
 let observer = null
@@ -226,16 +216,9 @@ const sessionsWithStatus = computed(() => {
 })
 
 // Display order is pinned-first, then the rest — matching the backend's
-// `ORDER BY pinned DESC, created_at DESC`. Both sections are derived from the
-// same source array so the rendered DOM order equals sessionsWithStatus order,
-// which is what useListNav indexes into.
-const pinnedSessions = computed(() => sessionsWithStatus.value.filter(s => s.pinned))
-const unpinnedSessions = computed(() => sessionsWithStatus.value.filter(s => !s.pinned))
-// Global nav index of the first unpinned row: pinned rows occupy [0, n).
-const unpinnedIndexOffset = computed(() => pinnedSessions.value.length)
-
-const pinnedCollapsed = ref(false)
-const recentCollapsed = ref(false)
+// `ORDER BY pinned DESC, created_at DESC`. Rendered as one flat list, so the
+// rendered DOM order equals sessionsWithStatus order, which is what useListNav
+// indexes into.
 
 // Cross-project group collapse state, keyed by absolute project path. In-memory
 // only: the pane is v-show'd (never unmounted) while the app runs, so the state
@@ -308,7 +291,7 @@ async function fetchSessionsUpTo(minCount) {
   let serverHasMore
   let pages = 0
   for (;;) {
-    let url = `/api/ai/sessions?limit=${limit}`
+    let url = `/api/ai/sessions?limit=${limit}${buildTagQuery()}`
     if (cursor) url += buildCursorQuery(cursor)
     const resp = await fetch(url)
     const data = await resp.json()
@@ -345,6 +328,48 @@ function buildCursorQuery(row) {
     + `&cursor_pinned=${row.pinned ? 1 : 0}`
 }
 
+/**
+ * The tag filter must be part of EVERY list request (including each paginated
+ * page), otherwise page 2 would silently fall back to the unfiltered set.
+ */
+function buildTagQuery() {
+  return activeTag.value ? `&tag=${encodeURIComponent(activeTag.value)}` : ''
+}
+
+/**
+ * Load the tags in use in the current project for the filter bar. Tags that no
+ * session here uses are excluded server-side, so every chip yields a result.
+ *
+ * Also clears the applied filter when its tag is no longer in use (deleted, or
+ * its last session dropped it) — otherwise the list stays constrained by a
+ * condition whose chip no longer exists, which the user cannot clear. Callers
+ * that may have already issued a request with the old tag must await this
+ * before fetching (see the sessionListVersion watcher).
+ */
+async function loadFilterTags() {
+  let tags
+  try {
+    const res = await apiGet('/api/ai/session/tags?inUse=1')
+    tags = res.tags || []
+  } catch (err) {
+    // Keep the previous chips on failure. Treating an error as "no tags" would
+    // both hide the bar and drop the user's filter, so a transient failure
+    // would silently widen the list with no way back to the filter.
+    appLog.e('SessionList', 'Failed to load project tags:', err)
+    return
+  }
+  filterTags.value = tags
+  if (activeTag.value && !tags.some(tg => tg.name === activeTag.value)) {
+    activeTag.value = ''
+  }
+}
+
+/** Apply/clear the tag filter from a chip click (single-select toggle). */
+function toggleTagFilter(name) {
+  activeTag.value = activeTag.value === name ? '' : name
+  loadSessions()
+}
+
 async function loadMoreSessions() {
   if (loadingMore.value || !hasMore.value || refreshing.value) return
   loadingMore.value = true
@@ -359,7 +384,7 @@ async function loadMoreSessions() {
       return
     }
     // Cursor = the last row's full sort key (pinned, createdAt, id).
-    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}${buildCursorQuery(last)}`)
+    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}${buildCursorQuery(last)}${buildTagQuery()}`)
     const data = await resp.json()
     const more = data.sessions || []
     if (more.length > 0) sessions.value = [...sessions.value, ...more]
@@ -540,6 +565,19 @@ function archiveFromMenu(sessionId) {
   emit('archive', sessionId, session?.backend)
 }
 
+// Tag dialog state. `initialTags` seeds the checkboxes from the already-loaded
+// list so the dialog paints instantly; the PATCH on save is authoritative.
+const tagDialog = reactive({ open: false, sessionId: '', initialTags: [] })
+
+function openTagDialogFromMenu(sessionId) {
+  closeContextMenu()
+  const session = sessions.value.find(s => s.id === sessionId)
+  if (!session) return
+  tagDialog.sessionId = sessionId
+  tagDialog.initialTags = (session.tags || []).map(tag => tag.name)
+  tagDialog.open = true
+}
+
 function addSessionLocally(session) {
   if (!session) return
   if (sessions.value.some(s => s.id === session.id)) return
@@ -562,10 +600,8 @@ function reload() {
 }
 
 // Keyboard navigation indexes sessionsWithStatus, whose order (pinned first,
-// then newest-first) is exactly the rendered DOM order. Both sections bind
-// `session-row-active` against that same global index — the unpinned section
-// offsets by the pinned count — so the highlight and Enter target stay aligned
-// with what the user sees.
+// then newest-first) is exactly the rendered DOM order. The list is flat, so
+// the nav index maps straight onto the rows — no section offset to apply.
 const listNav = useListNav({
   getCount: () => sessionsWithStatus.value.length,
   onConfirm: (idx) => {
@@ -606,6 +642,10 @@ watch(() => props.activeTab, async (tab) => {
 // project list, not hidden behind the cross tab.
 watch(() => store.state.projectRoot, () => {
   if (props.activeTab !== 'project') emit('update:activeTab', 'project')
+  // Tags are per-project: a filter carried across a project switch would hide
+  // the new project's sessions behind a tag it may not even have.
+  activeTag.value = ''
+  loadFilterTags()
 })
 
 // Bring the active session into view after a cross-project jump. The row may
@@ -634,7 +674,15 @@ function scrollActiveRowIntoView() {
 // after create/archive/destroy/read/completion — including cases that don't emit
 // a WS session_update event (e.g. mark-as-read, archive). Combined with the WS
 // subscription below, the drawer/sidebar list stays fresh without manual refresh.
-watch(() => store.state.sessionListVersion, () => {
+//
+// Tag edits and archive/destroy also change which tags are still in use, so the
+// chip set is refreshed FIRST and awaited. Order matters: if that refresh clears
+// the applied filter (its tag was deleted, or its last session dropped it), the
+// reload must observe the cleared value — reloading first would send the dead
+// tag and leave the list showing nothing behind a filter bar that has already
+// disappeared, with no chip left to clear it.
+watch(() => store.state.sessionListVersion, async () => {
+  await loadFilterTags()
   reload()
 })
 
@@ -642,6 +690,7 @@ defineExpose({ loadSessions, addSessionLocally, reload })
 
 onMounted(() => {
   loadSessions()
+  loadFilterTags()
   // Real-time: keep the list in sync with session lifecycle events (running,
   // completed, cancelled, permission, title updates). Debounced so a stream
   // of events (e.g. running→completed) triggers one refresh.
@@ -842,6 +891,58 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+/* ── Tag row: the bottom line of each session entry ──
+   Accent comes from --tag-accent-{light,dark}, set inline per tag by
+   tagAccentStyle() (same palette as tool calls). --tag-accent resolves the
+   theme-appropriate one; color-mix tints background/border from it.
+
+   Wraps onto extra lines rather than the old nowrap + overflow:hidden, which
+   silently clipped every tag past the row's width — invisible AND unclickable.
+   The row is auto-height inside a scrolling list, so growing is safe; no cap is
+   needed here because a session carries only its own handful of tags.
+
+   The extra top margin is what separates the tag row from the meta line above.
+   The parent's uniform gap is var(--space-1) (2px), which reads correctly
+   between the title and the meta line because both are text with line-height
+   half-leading padding them out — but the chips are bordered boxes with no such
+   leading, so the same 2px put them visibly flush against the meta line and
+   they read as a continuation of it rather than their own row. Adding
+   var(--space-2) brings the visual gap to roughly the title→meta one, so all
+   three lines share a rhythm. Whitespace alone: a divider here would double up
+   with the row separator ~10px below it, and since tags are optional the list
+   would alternate between one and two rules per row. */
+.session-item-tags {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+.session-tag {
+  --tag-accent: var(--tag-accent-light);
+  /* shrink allowed so a very long name ellipsises on its own line instead of
+     forcing the row wider than the pane */
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 var(--space-3);
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  color: var(--tag-accent);
+  background: color-mix(in srgb, var(--tag-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag-accent) 30%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-theme-base="dark"] .session-tag {
+  --tag-accent: var(--tag-accent-dark);
+}
+
 .session-item.active .session-item-title {
   color: var(--accent-color, #0066cc);
 }
@@ -946,22 +1047,44 @@ onUnmounted(() => {
   height: 0;
 }
 
-/* ── Pinned / section grouping ── */
+/* ── Pinned marker ──
+   Pinned sessions are no longer split into their own section; the only marker
+   is a wedge in the row's top-right corner.
 
-/* Section groups. The collapsible header itself is the shared
-   SessionGroupHeader component; only the wrapper layout lives here. */
-.session-section {
-  display: flex;
-  flex-direction: column;
+   Drawn as a clip-path triangle rather than the old border trick: a border
+   triangle can only be one flat colour, while a real box supports the gradient
+   + drop shadow that give the wedge its depth. The clip shape is exactly the
+   triangle the border version produced — vertices at top-left, top-right and
+   bottom-right.
+
+   The gradient runs 225deg, i.e. from the outer tip (top-right) toward the
+   hypotenuse, so the facet reads as lit from outside and darkening into the
+   crease; the drop shadow lifts it off the row. Both shades are mixed from the
+   theme accent, so the whole thing follows the user's colour. The shadow is
+   offset inward (down-left) because the pane clips overflow at the right edge.
+   `.session-row` is already position:relative, so the wedge anchors to it. */
+.session-row.pinned::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  background: linear-gradient(
+    225deg,
+    color-mix(in srgb, var(--accent-color, #0066cc) 60%, #fff) 0%,
+    var(--accent-color, #0066cc) 55%,
+    color-mix(in srgb, var(--accent-color, #0066cc) 78%, #000) 100%
+  );
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+  filter: drop-shadow(-1px 1px 1.5px rgba(0, 0, 0, 0.35));
+  pointer-events: none;
+  z-index: 1;
 }
 
-/* Slot content passed into SessionGroupHeader is compiled in THIS component's
-   scope, so its styling must live here — the child's scoped rules do not reach
-   it. */
-.session-group-pin-icon {
-  color: #f59e0b;
-  flex-shrink: 0;
-}
+/* The unread badge lives at the top-right of `.session-item`, which ends where
+   the 34px archive cell begins — so it already sits clear of the wedge in the
+   row's own top-right corner and needs no offset. */
 
 /* ── Long-press feedback ── */
 

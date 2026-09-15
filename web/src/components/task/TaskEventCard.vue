@@ -76,11 +76,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, Braces, Zap } from 'lucide-vue-next'
 import { eventChips, eventKindLabel, type EventChip } from '@/utils/forgeEventLabels'
-import { fetchForgeBinding } from '@/utils/forgeApi'
+import { useForgeBinding } from '@/composables/useForgeBinding'
 import { formatDateTimeWithYear } from '@/utils/format'
 
 const { t } = useI18n()
@@ -119,18 +119,17 @@ const groupedChips = computed(() => {
 // Every event task watches its project's bound repository, so the binding is
 // resolved for display. An unbound project shows the "no repository" label —
 // the task can never fire, which the form warns about at creation time.
-const boundRepoLabel = ref('')
-onMounted(async () => {
-    try {
-        const res = await fetchForgeBinding()
-        const b = res?.binding
-        if (b) boundRepoLabel.value = `${b.owner}/${b.repo}`
-    } catch {
-        // Best-effort: fall back to the generic label below.
-    }
-})
+//
+// The shared store coalesces this with the other consumers, and `resolved`
+// separates "not fetched yet" from "confirmed unbound": without it the card
+// flashes a false "no repository bound" while the lookup is in flight.
+const { slug: boundRepoLabel, resolved: bindingResolved, refresh: refreshBinding } = useForgeBinding()
+onMounted(() => { void refreshBinding() })
 
-const repoLabel = computed(() => boundRepoLabel.value || t('task.form.eventRepoUnbound'))
+const repoLabel = computed(() => {
+    if (boundRepoLabel.value) return boundRepoLabel.value
+    return bindingResolved.value ? t('task.form.eventRepoUnbound') : t('common.loading')
+})
 
 // ── Event context preview ──
 // Mirrors the backend's EventPromptTemplate ordering, but substitutes sample
@@ -140,13 +139,33 @@ const subscribedTransitions = computed(() => new Set(eventChips(eventTypes.value
 
 // The sample item is whichever kind the task actually subscribes to, so an
 // issue-only task does not show a "pr #123" sample it will never receive.
-const sampleKind = computed<'issue' | 'pr'>(() => {
+//
+// A repository-targeted subscription (a pipeline) has no item kind at all: its
+// chips carry the "repo" pseudo-kind. Defaulting to 'pr' there made every
+// pipeline task advertise a "pr #123" sample it can never receive, so the
+// absence of a real kind is represented explicitly rather than folded into 'pr'.
+const sampleKind = computed<'issue' | 'pr' | ''>(() => {
     const kinds = eventChips(eventTypes.value).map(c => c.kind)
-    if (kinds.includes('issue') && !kinds.includes('pr')) return 'issue'
-    return 'pr'
+    if (kinds.includes('issue')) return 'issue'
+    if (kinds.includes('pr')) return 'pr'
+    return ''
 })
 
-const sampleItemPath = computed(() => (sampleKind.value === 'pr' ? 'pull' : 'issues'))
+// Only meaningful for an issue/PR subscription; a pipeline has no item URL, so
+// the sample falls back to the repository's own URL.
+const sampleItemPath = computed(() => (sampleKind.value === 'issue' ? 'issues' : 'pull'))
+
+/**
+ * True when every subscribed transition is repository-targeted (a pipeline).
+ *
+ * Such a task never receives an item, so the sample block must not promise an
+ * `ITEM_TYPE #ITEM_NUMBER` row — that would describe a payload the task can
+ * never get.
+ */
+const repoTargetedOnly = computed(() => {
+    const chips = eventChips(eventTypes.value)
+    return chips.length > 0 && chips.every(c => c.kind === 'repo')
+})
 
 const sampleState = computed(() => {
     const transitions = subscribedTransitions.value
@@ -172,18 +191,33 @@ const contextRows = computed<ContextRow[]>(() => {
     const rows: ContextRow[] = [
         { label: t('task.form.varEventType'), placeholder: 'EVENT_TYPE', value: sampleEventType.value },
         { label: t('task.form.varRepo'), placeholder: 'REPO', value: sampleRepo.value },
-        { label: t('task.form.varItem'), placeholder: 'ITEM_TYPE #ITEM_NUMBER', value: `${sampleKind.value} #123` },
+    ]
+    if (!repoTargetedOnly.value) {
+        rows.push({ label: t('task.form.varItem'), placeholder: 'ITEM_TYPE #ITEM_NUMBER', value: `${sampleKind.value} #123` })
+    }
+    rows.push(
         { label: t('task.form.varTitle'), placeholder: 'TITLE', value: t('task.overview.eventSampleTitle') },
-        { label: t('task.form.varUrl'), placeholder: 'URL', value: `https://${sampleRepo.value}/${sampleItemPath.value}/123` },
+        {
+            label: t('task.form.varUrl'),
+            placeholder: 'URL',
+            // A pipeline task has no item to point at, so the sample is the
+            // repository root rather than a fabricated issue/PR link.
+            value: sampleKind.value === ''
+                ? `https://${sampleRepo.value}`
+                : `https://${sampleRepo.value}/${sampleItemPath.value}/123`,
+        },
         { label: t('task.form.varAuthor'), placeholder: 'AUTHOR', value: 'octocat' },
         { label: t('task.form.varState'), placeholder: 'STATE', value: sampleState.value },
-    ]
+    )
     if (show('commented')) {
         rows.push({ label: t('task.form.varCommentBody'), placeholder: 'COMMENT_BODY', value: t('task.overview.eventSampleComment') })
     }
     if (show('pipeline_done')) {
         rows.push({ label: t('task.form.varPipelineStatus'), placeholder: 'PIPELINE_STATUS', value: 'success' })
         rows.push({ label: t('task.form.varPipelineUrl'), placeholder: 'PIPELINE_URL', value: 'https://ci.example.com/run/42' })
+        // The value is the backend's literal rendering (是 / 否), not a
+        // translated string: the sample mirrors exactly what will be injected.
+        rows.push({ label: t('task.form.varActorIsSelf'), placeholder: 'ACTOR_IS_SELF', value: '否' })
     }
     return rows
 })

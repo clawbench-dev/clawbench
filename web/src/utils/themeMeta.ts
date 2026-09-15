@@ -97,6 +97,47 @@ export function resolveThemeId(value: string): string {
   return value
 }
 
+// ── System color-scheme observation ───────────────────────────────────────────
+
+/**
+ * Subscribe to system light/dark preference changes; returns an unsubscribe fn.
+ *
+ * `matchMedia('change')` is the primary signal. It is not sufficient on its own
+ * for an iOS home-screen PWA: the app resumes from the background without a
+ * page load, so a scheme change that happened while suspended is never
+ * delivered. `visibilitychange` / `pageshow` re-check the live value to cover
+ * that. The callback may therefore fire when nothing changed — consumers must
+ * be idempotent (see syncThemeFromSystem).
+ */
+export function onSystemColorSchemeChange(callback: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  const removers: Array<() => void> = []
+
+  if (typeof window.matchMedia === 'function') {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    // Safari < 14 only implements the deprecated addListener/removeListener.
+    if (typeof mql.addEventListener === 'function') {
+      mql.addEventListener('change', callback)
+      removers.push(() => mql.removeEventListener('change', callback))
+    } else if (typeof (mql as { addListener?: unknown }).addListener === 'function') {
+      ;(mql as { addListener: (cb: () => void) => void }).addListener(callback)
+      removers.push(() => (mql as { removeListener: (cb: () => void) => void }).removeListener(callback))
+    }
+  }
+
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') callback()
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  removers.push(() => document.removeEventListener('visibilitychange', onVisibilityChange))
+
+  // pageshow also fires on bfcache restores, which skip visibilitychange.
+  window.addEventListener('pageshow', callback)
+  removers.push(() => window.removeEventListener('pageshow', callback))
+
+  return () => { for (const remove of removers) remove() }
+}
+
 // ── i18n label keys ────────────────────────────────────────────────────────────
 
 /** Derive the i18n key for a theme's display label (e.g. 'github-light' → 'settings.items.themeGithubLight'). */

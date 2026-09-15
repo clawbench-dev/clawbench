@@ -112,6 +112,9 @@ var clientInjectedStripRules = []stripRule{
 	{"[Current file: ", stripToNewline, ""},
 	{"[Current directory: ", stripToNewline, ""},
 	{"[User uploaded ", stripToNewline, ""},
+	// Referenced from model so the injected header and its strip rule cannot
+	// drift apart (a header with no rule would become the session title).
+	{model.ReferencedLinkPrefix, stripToNewline, ""},
 }
 
 // claudeNativeStripRules are the claude-code CLI's own machine headers

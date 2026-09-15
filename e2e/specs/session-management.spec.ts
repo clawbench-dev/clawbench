@@ -1,6 +1,6 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
-import { getServerURL } from '../helpers/server'
+import { apiFetch } from '../helpers/auth'
 
 /**
  * E2E tests for session management: resume, continue conversation.
@@ -13,11 +13,11 @@ test.describe.serial('Session Management', () => {
   const taskIds: number[] = []
 
   test.afterAll(async () => {
-    // Clean up any tasks created during tests using Node.js fetch (localhost bypasses auth)
-    const baseURL = getServerURL()
+    // Clean up any tasks created during tests using Node.js fetch with an
+    // explicit session cookie.
     for (const taskId of taskIds) {
       try {
-        await fetch(`${baseURL}/api/tasks/${taskId}`, { method: 'DELETE' })
+        await apiFetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
       } catch {
         // Best effort cleanup — server may be down during teardown
       }

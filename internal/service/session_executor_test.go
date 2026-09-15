@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -351,9 +352,61 @@ func TestSessionExecutor_Finalize_DrainsUntilChannelCloses(t *testing.T) {
 	}
 }
 
+// TestSessionExecutor_Finalize_UserCancelLeavesCompletedAtNull guards the
+// routing branch inside Finalize: a user-cancelled turn must go through
+// FinalizeCancelledStreamingMessage (completed_at stays NULL) rather than the
+// normal finalize. Stamping the landing time here would flip a session the user
+// was watching back to unread — see TestUnread_CancelledTurnTheUserWasWatchingStaysRead.
+func TestSessionExecutor_Finalize_UserCancelLeavesCompletedAtNull(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	eventCh := make(chan ai.StreamEvent, 2)
+	eventCh <- ai.StreamEvent{Type: "content", Content: "partial"}
+	close(eventCh)
+
+	// buildResult (called inside RunWithChannel) reads and clears the cancel
+	// reason, so it must be recorded before the run.
+	sessionCancelReasons.Store(sid, cancelReasonUser)
+	defer sessionCancelReasons.Delete(sid)
+
+	runResult := executor.RunWithChannel(eventCh)
+	if runResult.CancelReason != cancelReasonUser {
+		t.Fatalf("precondition: expected CancelReason=%q, got %q", cancelReasonUser, runResult.CancelReason)
+	}
+
+	finalized := executor.Finalize(runResult, eventCh)
+	if finalized.MsgID == 0 {
+		t.Fatal("expected the streaming row to be finalized")
+	}
+
+	var completed sql.NullTime
+	if err := dbRead.QueryRow(
+		"SELECT completed_at FROM chat_history WHERE session_id = ? AND role = 'assistant'", sid).Scan(&completed); err != nil {
+		t.Fatalf("query completed_at: %v", err)
+	}
+	if completed.Valid {
+		t.Fatalf("a user-cancelled finalize must leave completed_at NULL, got %v", completed.Time)
+	}
+}
+
 func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
-	// Verify Finalize works with minimal metadata — the function accesses
-	// responseMetadata fields directly, so nil is not supported.
 	// Instead test with an empty Metadata struct.
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{

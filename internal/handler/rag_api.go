@@ -98,16 +98,17 @@ func normalizeTimeBound(value string, endOfDay bool) string {
 var ragResetting atomic.Bool
 
 // ServeRAGSearch handles POST /api/rag/search — hybrid/FTS/vector search.
-// Auth: localhost bypasses auth (CLI); remote requires cookie.
-// Project isolation: remote requests require project cookie; localhost (CLI) may omit it for global search.
+// Auth: a local AI token bypasses auth; remote requires cookie.
+// Project isolation: remote requests require the project cookie; a local AI
+// token may omit it for global search.
 func ServeRAGSearch(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
-	// Remote requests require project cookie; localhost (CLI) may omit it for global search.
+	// Remote requests require the project cookie; a local AI token may omit it for global search.
 	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" && !middleware.IsLocalhost(r) {
+	if projectPath == "" && !middleware.IsAITokenRequest(r) {
 		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
 		return
 	}
@@ -137,7 +138,7 @@ func ServeRAGSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Project isolation: use cookie-derived project path when set.
-	// Empty projectPath (CLI global search) searches across all projects.
+	// Empty projectPath (AI-token global search) searches across all projects.
 	params := rag.SearchParams{
 		Query:            req.Query,
 		ProjectPath:      projectPath,
@@ -163,15 +164,15 @@ func ServeRAGSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeRAGMessage handles GET /api/rag/message?id=<id> — get full message by ID.
-// Project isolation: remote requires project cookie; localhost may omit it for cross-project access.
+// Project isolation: remote requires the project cookie; a local AI token may omit it for cross-project access.
 func ServeRAGMessage(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
-	// Remote requests require project cookie; localhost (CLI) may omit it.
+	// Remote requests require the project cookie; a local AI token may omit it.
 	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" && !middleware.IsLocalhost(r) {
+	if projectPath == "" && !middleware.IsAITokenRequest(r) {
 		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
 		return
 	}
@@ -193,7 +194,7 @@ func ServeRAGMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the message belongs to the authenticated project (skip for localhost global access)
+	// Verify the message belongs to the authenticated project (skip for AI-token global access)
 	if projectPath != "" && msg.ProjectPath != projectPath {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
@@ -204,15 +205,15 @@ func ServeRAGMessage(w http.ResponseWriter, r *http.Request) {
 
 // ServeMessageSummarize handles POST /api/rag/message/summarize?id=<id> —
 // generates a reading summary for a chat message on demand and returns it.
-// Project isolation: remote requires project cookie; localhost may omit it.
+// Project isolation: remote requires the project cookie; a local AI token may omit it.
 func ServeMessageSummarize(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
-	// Remote requests require project cookie; localhost (CLI) may omit it.
+	// Remote requests require the project cookie; a local AI token may omit it.
 	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" && !middleware.IsLocalhost(r) {
+	if projectPath == "" && !middleware.IsAITokenRequest(r) {
 		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
 		return
 	}
@@ -234,7 +235,7 @@ func ServeMessageSummarize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the message belongs to the authenticated project (skip for localhost global access)
+	// Verify the message belongs to the authenticated project (skip for AI-token global access)
 	if projectPath != "" && msg.ProjectPath != projectPath {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
@@ -255,14 +256,14 @@ func ServeMessageSummarize(w http.ResponseWriter, r *http.Request) {
 
 // ServeRAGMessageIndexStatus handles GET /api/rag/message-index-status?id=<id> —
 // returns FTS and vector embedding status for a specific message.
-// Project isolation: remote requires project cookie; localhost may omit it for cross-project access.
+// Project isolation: remote requires the project cookie; a local AI token may omit it for cross-project access.
 func ServeRAGMessageIndexStatus(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
 	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" && !middleware.IsLocalhost(r) {
+	if projectPath == "" && !middleware.IsAITokenRequest(r) {
 		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
 		return
 	}
@@ -307,15 +308,15 @@ func ServeRAGMessageIndexStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeRAGSession handles GET /api/rag/session?id=<id> — get all messages in a session.
-// Project isolation: remote requires project cookie; localhost may omit it for cross-project access.
+// Project isolation: remote requires the project cookie; a local AI token may omit it for cross-project access.
 func ServeRAGSession(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
-	// Remote requests require project cookie; localhost (CLI) may omit it.
+	// Remote requests require the project cookie; a local AI token may omit it.
 	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" && !middleware.IsLocalhost(r) {
+	if projectPath == "" && !middleware.IsAITokenRequest(r) {
 		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
 		return
 	}
@@ -326,7 +327,7 @@ func ServeRAGSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the session belongs to the authenticated project (skip for localhost global access)
+	// Verify the session belongs to the authenticated project (skip for AI-token global access)
 	if projectPath != "" {
 		if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != projectPath {
 			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
@@ -508,7 +509,7 @@ func ServeRAGSessionFirstMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" && !middleware.IsLocalhost(r) {
+	if projectPath == "" && !middleware.IsAITokenRequest(r) {
 		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
 		return
 	}
@@ -520,7 +521,7 @@ func ServeRAGSessionFirstMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the session belongs to the authenticated project (skip for
-	// localhost global access). Archived sessions are allowed.
+	// AI-token global access). Archived sessions are allowed.
 	if projectPath != "" {
 		sessionProject := service.GetSessionProjectPathIncludeArchived(sessionID)
 		if sessionProject == "" || sessionProject != projectPath {
@@ -558,7 +559,7 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" && !middleware.IsLocalhost(r) {
+	if projectPath == "" && !middleware.IsAITokenRequest(r) {
 		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
 		return
 	}

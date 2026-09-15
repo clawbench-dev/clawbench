@@ -46,9 +46,11 @@ function show(latest: string, current: string) {
   visible.value = true
 }
 
-function upgradeNow() {
+async function upgradeNow() {
   visible.value = false
-  startUpgrade()
+  // startUpgrade may open a confirmation dialog for an unverified release
+  // before it does anything, so await it rather than firing and forgetting.
+  await startUpgrade()
 }
 
 function skipVersion() {

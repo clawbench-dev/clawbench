@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import TaskFormPage from '../TaskFormPage.vue'
+import { resetForgeBindingState } from '@/composables/useForgeBinding'
 
 // The real composable returns `form` as a ref. The template auto-unwraps it
 // (`form.triggerMode`) while the script reads `form.value.agentId`, so the mock
@@ -41,13 +42,13 @@ const i18n = createI18n({
   locale: 'en',
   messages: {
     en: {
-      common: { cancel: 'Cancel', save: 'Save' },
+      common: { cancel: 'Cancel', save: 'Save', loading: 'Loading…' },
       task: {
         form: {
           name: 'Name', prompt: 'Prompt', agent: 'Agent', triggerMode: 'Trigger',
           triggerCron: 'Schedule', triggerEvent: 'Event',
           eventTypes: 'Events to watch', eventTypesRequired: 'pick one',
-          eventKindIssue: 'Issues', eventKindPr: 'Pull requests',
+          eventKindIssue: 'Issues', eventKindPr: 'Pull requests', eventKindRepo: 'Repository pipelines',
           eventOpened: 'Opened', eventClosed: 'Closed', eventMerged: 'Merged',
           eventReopened: 'Reopened', eventCommented: 'Commented', eventPipeline: 'Pipeline finished',
           eventRepo: 'Repo', eventRepoHint: 'Watched repo',
@@ -56,6 +57,7 @@ const i18n = createI18n({
           eventContextHeader: 'Context', varEventType: 'event', varRepo: 'repo',
           varItem: 'item', varTitle: 'title', varUrl: 'url', varAuthor: 'author',
           varState: 'state', varCommentBody: 'comment', varPipelineStatus: 'ps', varPipelineUrl: 'pu',
+          varActorIsSelf: 'self',
           repeatMode: 'Repeat', presets: {},
         },
       },
@@ -77,12 +79,12 @@ describe('TaskFormPage event type grouping', () => {
     mockFetchForgeBinding.mockResolvedValue({ binding: null })
   })
 
-  it('groups events under Issues and Pull requests', () => {
+  it('groups events under Issues, Pull requests and Repository pipelines', () => {
     const wrapper = mountForm()
     const groups = wrapper.findAll('.event-type-group')
-    expect(groups.length, 'two kind groups').toBe(2)
+    expect(groups.length, 'two kind groups plus the repository-level group').toBe(3)
     const labels = wrapper.findAll('.event-type-group-label').map(g => g.text())
-    expect(labels).toEqual(['Issues', 'Pull requests'])
+    expect(labels).toEqual(['Issues', 'Pull requests', 'Repository pipelines'])
   })
 
   it('emits kind-scoped keys so issue and PR events are independent', () => {
@@ -105,14 +107,28 @@ describe('TaskFormPage event type grouping', () => {
     expect(values).not.toContain('issue.merged')
   })
 
-  it('does not offer pipeline_done, which nothing can trigger yet', () => {
-    // No code path derives a pipeline event, so offering it would create a
-    // subscription that can never fire.
+  it('offers pipeline_done as a bare repository-level key', () => {
+    // A pipeline is triggered by a push, a tag or a schedule — none of which is
+    // an issue or a PR — so it is offered in its own group under the BARE key,
+    // which is also how the backend matches it.
     const wrapper = mountForm()
     const values = wrapper.findAll('.event-type-group input[type=checkbox]')
       .map(i => (i.element as HTMLInputElement).value)
+    expect(values).toContain('pipeline_done')
+    // The kind-scoped spellings must NOT be offered: an issue has no CI, and a
+    // PR-scoped pipeline would imply a run belongs to a change request.
     expect(values).not.toContain('pr.pipeline_done')
     expect(values).not.toContain('issue.pipeline_done')
+    expect(values).not.toContain('pipeline.pipeline_done')
+  })
+
+  it('renders the repository pipeline group last', () => {
+    const wrapper = mountForm()
+    const groups = wrapper.findAll('.event-type-group')
+    const repoGroup = groups[groups.length - 1]
+    expect(repoGroup.find('.event-type-group-label').text()).toBe('Repository pipelines')
+    const values = repoGroup.findAll('input[type=checkbox]').map(i => (i.element as HTMLInputElement).value)
+    expect(values).toEqual(['pipeline_done'])
   })
 
   it('gives Issues fewer options than Pull requests', () => {
@@ -181,6 +197,9 @@ describe('TaskFormPage watched repository', () => {
   beforeEach(() => {
     formRef.value.eventTypes = ''
     mockFetchForgeBinding.mockReset()
+    // The binding singleton (and its TTL cache) survives between tests; reset it
+    // so each case performs its own lookup, as a real project switch would.
+    resetForgeBindingState()
   })
 
   it('shows the project-bound repository as read-only text, with no selector', async () => {
@@ -209,5 +228,28 @@ describe('TaskFormPage watched repository', () => {
     expect(wrapper.find('.form-warning').text()).toContain('never fire')
     const save = wrapper.find('button.primary-btn, button[type=submit]')
     if (save.exists()) expect(save.attributes('disabled')).toBeUndefined()
+  })
+
+  // Regression: the repository row read `boundRepoLabel || unbound` with the
+  // label starting at '', so an in-flight lookup rendered the "no repository
+  // bound — this task will never fire" warning. Users saw a red warning for a
+  // project that was in fact bound, for as long as the request took.
+  it('does not warn while the binding lookup is still in flight', async () => {
+    let release: (v: unknown) => void = () => {}
+    mockFetchForgeBinding.mockReturnValue(new Promise(resolve => { release = resolve }))
+
+    const wrapper = mountForm()
+    await wrapper.vm.$nextTick()
+
+    // The lookup has not answered yet: no unbound claim, no warning.
+    expect(wrapper.find('.form-warning').exists()).toBe(false)
+    expect(wrapper.find('.event-repo-readonly').text()).not.toContain('No repository bound')
+
+    // Once it answers "bound", the real repository appears and still no warning.
+    release({ binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' } })
+    await vi.waitFor(() => {
+      expect(wrapper.find('.event-repo-readonly').text()).toContain('acme/widgets')
+    })
+    expect(wrapper.find('.form-warning').exists()).toBe(false)
   })
 })

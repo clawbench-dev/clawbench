@@ -454,7 +454,17 @@ func finalizeOrphanedStreamingMessages(sessionID string, cancelReason string) {
 			}
 		}
 		updatedContent, _ := json.Marshal(contentMap)
-		if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0 WHERE id = ?", string(updatedContent), m.id); err != nil {
+		// completed_at mirrors FinalizeStreamingMessage's rule: a normal
+		// finalize records when the reply landed, while a user cancel leaves it
+		// NULL so the unread query falls back to created_at. The user was
+		// watching the session when they cancelled, and the frontend marked it
+		// read before this finalize ran — stamping the landing time would flip it
+		// back to unread. See FinalizeCancelledStreamingMessage.
+		completedAtSet := "completed_at = CURRENT_TIMESTAMP"
+		if cancelReason == cancelReasonUser {
+			completedAtSet = "completed_at = NULL"
+		}
+		if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0, "+completedAtSet+" WHERE id = ?", string(updatedContent), m.id); err != nil {
 			slog.Error("failed to finalize orphaned streaming message on session stop",
 				slog.Int64("id", m.id),
 				slog.String("session", sessionID),
@@ -725,6 +735,8 @@ func GetCancelReason(sessionID string) string {
 // CancelSession cancels an ongoing AI stream for a session.
 // Returns true if session was found and cancelled, or if session is already not running (idempotent).
 func CancelSession(sessionID string) bool {
+	began := time.Now()
+
 	// Take the runner out of the registry atomically. Removing it is what marks
 	// the session as not running, and the entry always carries a cancel func, so
 	// the old "running but nothing to cancel" branch is no longer reachable.
@@ -770,6 +782,12 @@ func CancelSession(sessionID string) bool {
 	// cancel branch collects the queueIDs, clears them and emits queue_cancel
 	// itself. Clearing first would lose the queue_cancel event.
 	cancel()
+	// Everything past cancel() runs on the caller's goroutine (the WS read
+	// loop) and must finish before the handler returns. CancelSession itself
+	// does not wait for the agent, so a slow return here is pure bookkeeping —
+	// emitSessionEvent stores a pending event (write mutex) and may push to
+	// DingTalk/Feishu with a 15s timeout per subscriber.
+	afterCancel := time.Now()
 
 	// Claim the terminal push slot BEFORE emitting. If a concurrent terminal path
 	// (the goroutine's done) already claimed it, we lose the guard — suppress the
@@ -784,6 +802,15 @@ func CancelSession(sessionID string) bool {
 	// The runner was already removed by takeRunner above, which is what marks
 	// the session not-running. No separate SetSessionRunning call is needed (and
 	// calling it would cancel the context a second time).
+
+	if elapsed := time.Since(began); elapsed >= slowCancelThreshold {
+		slog.Warn("cancel: slow CancelSession",
+			slog.String("session", sessionID),
+			slog.Bool("won_terminal_push", wonPush),
+			slog.Duration("to_cancel_call", afterCancel.Sub(began)),
+			slog.Duration("emit_events", time.Since(afterCancel)),
+			slog.Duration("total", elapsed))
+	}
 
 	return true
 }
@@ -833,13 +860,16 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 	if dbRead == nil {
 		return
 	}
+	began := time.Now()
 	projectPath := GetSessionProjectPath(sessionID)
 	messages, err := GetMessagesBySessionID(sessionID)
 	if err != nil || len(messages) == 0 {
 		return
 	}
+	readElapsed := time.Since(began)
 
 	lastAssistant := (*model.ChatMessage)(nil)
+	summarized := 0
 	for i := range messages {
 		if messages[i].Role != "assistant" {
 			continue
@@ -853,6 +883,22 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 			continue
 		}
 		summarizeMessageOnce(messages[i].ID, blocks, projectPath, sessionID)
+		summarized++
+	}
+
+	// This loop runs synchronously inside Finalize, on the path a user cancel
+	// must complete before the UI can clear its "stopping" state. Each missing
+	// summary costs a read plus a write on the shared write mutex, so a long
+	// session with many unsummarized replies turns one cancel into many
+	// serialized writes. Report the cost so the contribution is measurable
+	// rather than inferred.
+	if elapsed := time.Since(began); elapsed >= slowSummarizeThreshold {
+		slog.Warn("summarize: slow",
+			slog.String("session", sessionID),
+			slog.Int("messages", len(messages)),
+			slog.Int("summarized", summarized),
+			slog.Duration("read_messages", readElapsed),
+			slog.Duration("total", elapsed))
 	}
 
 	// 推荐回复: only for the last assistant message. If enabled, generate a

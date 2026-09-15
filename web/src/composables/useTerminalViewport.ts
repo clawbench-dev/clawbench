@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import type { Terminal } from '@xterm/xterm'
 import { useTerminalKeyboard } from './useTerminalKeyboard'
 
@@ -84,8 +84,9 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
     // Only schedule fit() when the keyboard height actually changed or when
     // this is the first call. The 300ms poll timer fires updateViewport
     // repeatedly; calling fit() on every tick is wasteful and can cause
-    // excessive PTY resizes. Container ResizeObserver and window resize
-    // events already cover layout changes that need a refit.
+    // excessive PTY resizes. Layout-only changes (e.g. dragging the pane
+    // divider) do not alter the keyboard height, so they are handled by the
+    // container ResizeObserver below, which schedules its own fit().
     if (keyboardHeight.value !== prevShared || prevShared === undefined) {
       lastSharedKeyboardHeight = keyboardHeight.value
       scheduleFit()
@@ -111,18 +112,45 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
   }
 
   let resizeObserver: ResizeObserver | null = null
+  let watching = false
+
+  function observeContainer(el: HTMLElement | null) {
+    resizeObserver?.disconnect()
+    resizeObserver = null
+    if (!el) return
+    resizeObserver = new ResizeObserver(() => {
+      updateViewport()
+      // updateViewport() only schedules fit() when the *keyboard* height
+      // changed, so a pure layout change (dragging the pane divider, which
+      // only alters width) would never refit: xterm keeps its old cols, no
+      // onResize fires, and the PTY keeps wrapping at the stale width. A
+      // ResizeObserver callback only fires on a real size change, so it is
+      // exactly the signal a layout-driven refit needs (the 100ms debounce
+      // absorbs the drag's callback burst).
+      scheduleFit()
+    })
+    resizeObserver.observe(el)
+  }
+
+  // The container is bound to `activeTab.container`, which is only assigned by
+  // mountTabXterm() — and TerminalPanelContent calls startWatching() BEFORE
+  // mountTabToContainer(). So at startWatching() time the container is usually
+  // still null and a one-shot observe() there would silently never attach,
+  // leaving layout-driven refits (divider drag) with no signal at all. Observe
+  // reactively instead, so the observer follows whichever tab is active and
+  // attaches as soon as the element exists.
+  watch(containerRef, (el) => {
+    if (!watching) return
+    observeContainer(el)
+  })
 
   function startWatching() {
+    watching = true
     updateViewport()
 
     // Watch container size changes (e.g. the container shrinks when the soft
     // keyboard opens and the app container is compensated).
-    if (containerRef.value) {
-      resizeObserver = new ResizeObserver(() => {
-        updateViewport()
-      })
-      resizeObserver.observe(containerRef.value)
-    }
+    observeContainer(containerRef.value)
 
     // Watch visualViewport for keyboard changes.
     if (window.visualViewport) {
@@ -140,6 +168,7 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
   }
 
   function stopWatching() {
+    watching = false
     if (fitTimer) {
       clearTimeout(fitTimer)
       fitTimer = null

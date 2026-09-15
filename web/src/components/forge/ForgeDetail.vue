@@ -188,9 +188,17 @@ onMounted(() => {
 // Re-render and re-verify whenever the loaded item or its comments change.
 // renderId guards against a slow verification pass from a previous item
 // mutating the container after the user has moved on.
+//
+// `loading` MUST be a dependency. The detail body only exists once loading is
+// false (the template shows a spinner branch while it is true), and `open()`
+// sets item/comments *before* clearing loading. Watching only item/comments
+// therefore fired while bodyRef was still null — verifyAnnotations() bailed on
+// its `if (!el) return` guard — and nothing ran again when the body finally
+// mounted, so no path in an issue/PR body was ever verified and every
+// annotation stayed data-path-type-less and unclickable.
 let renderId = 0
 watch(
-  () => [detail.item.value, detail.comments.value] as const,
+  () => [detail.item.value, detail.comments.value, detail.loading.value] as const,
   async () => {
     const id = ++renderId
     await nextTick()
@@ -309,153 +317,7 @@ function formatTime(iso: string): string {
 }
 </script>
 
-<style scoped>
-.forge-detail {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  background: var(--bg-primary);
-}
-
-/* ── Header — same 36px bar as every other drill-down page ── */
-.forge-detail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: var(--header-height);
-  padding:0 var(--space-2) 0 var(--space-3);
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  flex-shrink: 0;
-  gap: var(--space-4);
-}
-.forge-back {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  background: transparent;
-  border: none;
-  color: var(--accent-color);
-  cursor: pointer;
-  font-size: var(--font-size-md);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  transition: background var(--duration-base) ease;
-}
-@media (hover: hover) {
-  .forge-back:hover { background: var(--bg-secondary); }
-}
-.forge-back:active { background: var(--bg-tertiary); }
-.forge-detail-actions { display: flex; align-items: center; gap: var(--space-2); }
-/* Round icon button, styled after the per-component .header-btn used across the
-   app (there is no shared global class — each panel defines its own).
-   `border: none` is required: this class is used by BOTH <a> and <button>, and
-   a bare <button> keeps the UA's default border, which shows up as a stray ring
-   around the round icon. (<a> has no default border, which is why the gap only
-   appeared once a <button> used this class.) */
-.forge-icon-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-lg);
-  border: none;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  cursor: pointer;
-  text-decoration: none;
-  transition: background var(--duration-slow) ease, color var(--duration-slow) ease;
-}
-@media (hover: hover) {
-  .forge-icon-btn:hover {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
-  }
-}
-
-.forge-loading {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* ── Error ── */
-.forge-error-card {
-  margin: var(--space-6);
-  padding: var(--space-6);
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  border: 1px solid color-mix(in srgb, var(--color-red) 35%, var(--border-color));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-red) 6%, var(--bg-secondary));
-}
-.forge-error-icon { color: var(--color-red); flex-shrink: 0; }
-.forge-error-text { flex: 1; min-width: 0; }
-.forge-error-title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); margin-bottom: var(--space-1); }
-.forge-error-body { color: var(--text-secondary); font-size: var(--font-size-sm); }
-
-/* ── Body ── */
-.forge-detail-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 14px;
-}
-.forge-detail-title-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-}
-.forge-detail-title-main { flex: 1; min-width: 0; }
-.forge-detail-title {
-  font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-semibold);
-  margin: 0;
-  line-height: 1.35;
-  color: var(--text-primary);
-}
-.forge-detail-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
-.forge-detail-number {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-.forge-meta-sep { opacity: var(--opacity-muted); }
-/* State badge — tinted pill instead of bare coloured text. */
-.forge-state-badge {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  padding:1px var(--space-4);
-  border-radius: var(--radius-full);
-  border: 1px solid transparent;
-}
-.forge-state-badge.state-open {
-  color: var(--color-success);
-  background: color-mix(in srgb, var(--color-success) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
-}
-.forge-state-badge.state-closed {
-  color: var(--color-red);
-  background: color-mix(in srgb, var(--color-red) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-red) 35%, transparent);
-}
-.forge-state-badge.state-merged {
-  color: var(--color-purple);
-  background: color-mix(in srgb, var(--color-purple) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-purple) 35%, transparent);
-}
-.forge-detail-content {
+<style scoped>.forge-detail-content {
   margin-top: 14px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border-color);
@@ -515,16 +377,4 @@ function formatTime(iso: string): string {
   background: var(--bg-primary);
 }
 
-/* Status dot — baseline-aligned with the title's first line. */
-.forge-state-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  display: inline-block;
-  margin-top: var(--space-3);
-}
-.forge-state-dot.state-open { background: var(--color-success); }
-.forge-state-dot.state-closed { background: var(--color-red); }
-.forge-state-dot.state-merged { background: var(--color-purple); }
 </style>

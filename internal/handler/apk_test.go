@@ -12,6 +12,8 @@ import (
 	"testing/fstest"
 
 	"clawbench/internal/frontend"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // apkFS builds an in-memory FS containing the APK at the embed path, so tests
@@ -231,5 +233,31 @@ func TestReaderSeeker_SeekInvalid(t *testing.T) {
 	// Negative resulting offset → fs.ErrInvalid.
 	if _, err := rs.Seek(-1, io.SeekStart); !errors.Is(err, fs.ErrInvalid) {
 		t.Errorf("negative offset: expected fs.ErrInvalid, got %v", err)
+	}
+}
+
+// The APK is a read-only resource. Previously any verb reached the handler;
+// only GET/HEAD are meaningful (http.ServeContent handles ranges and HEAD).
+func TestServeAPK_RejectsNonReadMethods(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/apk", http.NoBody)
+			w := httptest.NewRecorder()
+			ServeAPK(w, req)
+			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		})
+	}
+}
+
+func TestServeAPK_AllowsGetAndHead(t *testing.T) {
+	// The embedded FS may not contain an APK in a plain unit-test build, so a
+	// 404 is acceptable here; what matters is that the method is not rejected.
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/apk", http.NoBody)
+			w := httptest.NewRecorder()
+			ServeAPK(w, req)
+			assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code)
+		})
 	}
 }

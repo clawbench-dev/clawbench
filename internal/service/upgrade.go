@@ -135,11 +135,16 @@ type UpgradeInfo struct {
 	Integrity      string // SRI string, e.g. "sha512-abcdef..."
 	Shasum         string // legacy hex-encoded sha1, used when Integrity is absent
 	HasUpgrade     bool
-	// SignatureWarning is non-empty when the release signature could not be
-	// verified and the upgrade was downgraded to the integrity check alone. It
-	// is surfaced to the user, since an unauthenticated install is materially
-	// weaker than a verified one.
-	SignatureWarning string
+	// VerificationWarning is the human-readable text shown to the user when this
+	// release cannot be fully verified, or "" when it verifies. Presentation
+	// only — it embeds the registry base and error detail, so it must never be
+	// used as an identity.
+	VerificationWarning string
+	// VerificationIssues is the stable identity of the same problems, as
+	// sorted issue codes. This is what the client echoes back and the service
+	// compares, because it is independent of wording, registry routing and
+	// failure mode. Empty when the release verifies.
+	VerificationIssues string
 }
 
 // getPlatformPkg returns the npm platform package name for the current OS/arch.
@@ -245,9 +250,9 @@ func CheckForUpgrade() (string, string, error) {
 }
 
 // CheckForUpgradeInfo queries the registry and returns the full result,
-// including SignatureWarning when the release signature could not be verified.
-// The warning lets the UI tell the user before they start an upgrade that the
-// download will only be checked against its integrity hash.
+// including VerificationWarning when this release cannot be fully verified.
+// The warning lets the UI ask the user before they start, and is the same value
+// the start request must echo back.
 func CheckForUpgradeInfo() (*UpgradeInfo, error) {
 	return fetchUpgradeInfo()
 }
@@ -318,23 +323,40 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 	// Verify npm's registry signature before trusting any of the metadata
 	// above. This is the trust anchor: integrity alone is useless against a
 	// malicious registry, because it supplies the hash and the tarball URL from
-	// the same response. The signature is checked for every candidate, even
-	// when no upgrade is available, so a tampered response is rejected rather
-	// than silently reported as "already up to date".
-	sigWarning, sigErr := verifyRegistrySignature(ctx, pkg, npmResp.Version, npmResp.Dist.Integrity,
+	// the same response.
+	//
+	// A failed check yields issues rather than an error — the upgrade proceeds
+	// with the integrity check alone, and the messages are surfaced to the user.
+	// See verifyRegistrySignature for why this does not abort.
+	sigIssues := verifyRegistrySignature(ctx, pkg, npmResp.Version, npmResp.Dist.Integrity,
 		npmResp.Dist.Signatures, registryBase)
-	if sigErr != nil {
-		return nil, sigErr
-	}
+
+	// Resolve the hash here too, even though the download happens later. Both
+	// reasons an install can be unverified — an uncheckable signature and a
+	// missing hash — must be known to /api/upgrade/check, because the client
+	// asks the user to confirm *before* starting. Discovering the missing hash
+	// only at download time would let the install proceed with no confirmation.
+	//
+	// A malformed hash yields an error here and is ignored: performUpgrade
+	// resolves it again at the point of use and aborts there, which keeps this
+	// endpoint from failing on metadata the upgrade will reject anyway.
+	_, digestIssues, _ := parseExpectedDigest(npmResp.Dist.Integrity, npmResp.Dist.Shasum)
+
+	// Build a fresh slice rather than appending to sigIssues: append may write
+	// into that slice's backing array, which both aliases and mutates it.
+	issues := make([]verificationIssue, 0, len(sigIssues)+len(digestIssues))
+	issues = append(issues, sigIssues...)
+	issues = append(issues, digestIssues...)
 
 	return &UpgradeInfo{
-		CurrentVersion:   currentVer,
-		LatestVersion:    npmResp.Version,
-		TarballURL:       tarballURL,
-		Integrity:        npmResp.Dist.Integrity,
-		Shasum:           npmResp.Dist.Shasum,
-		HasUpgrade:       hasUpgrade,
-		SignatureWarning: sigWarning,
+		CurrentVersion:      currentVer,
+		LatestVersion:       npmResp.Version,
+		TarballURL:          tarballURL,
+		Integrity:           npmResp.Dist.Integrity,
+		Shasum:              npmResp.Dist.Shasum,
+		HasUpgrade:          hasUpgrade,
+		VerificationWarning: verificationMessages(issues),
+		VerificationIssues:  verificationFingerprint(issues),
 	}, nil
 }
 
@@ -380,10 +402,17 @@ func rewriteTarballURL(tarball, base string) string {
 }
 
 // PerformUpgrade executes the full upgrade flow in a background goroutine.
-func PerformUpgrade() {
+//
+// acknowledgedIssues is the verification issue fingerprint the client showed
+// the user and received consent for, or "" when the client saw none.
+// performUpgrade recomputes it from the registry and refuses the upgrade when
+// it differs, so an unverified install cannot proceed without a decision that
+// matches the metadata actually being installed. Compared by exact value; the
+// value is a sorted list of issue codes, not user-facing text.
+func PerformUpgrade(acknowledgedIssues string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	upgradeCancel = cancel
-	go performUpgrade(ctx)
+	go performUpgrade(ctx, acknowledgedIssues)
 }
 
 // CancelUpgrade cancels the current upgrade process.
@@ -393,7 +422,7 @@ func CancelUpgrade() {
 	}
 }
 
-func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is inherently multi-step
+func performUpgrade(ctx context.Context, acknowledgedIssues string) { //nolint:gocyclo // upgrade flow is inherently multi-step
 	ResetUpgradeState()
 
 	// 1. Check for upgrade (single registry query)
@@ -410,14 +439,40 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 	slog.Info("upgrade: version check", "current", info.CurrentVersion, "latest", info.LatestVersion,
 		"compare", version.CompareVersions(info.CurrentVersion, info.LatestVersion), "isDev", version.IsDevBuild(info.CurrentVersion))
 
-	// Record a signature-verification downgrade so the WS update stream carries
-	// it too, not just the /check response.
-	if info.SignatureWarning != "" {
-		SetUpgradeSignatureWarning(info.SignatureWarning)
+	// Record the verification downgrade so the WS update stream carries it too,
+	// not just the /check response. This covers both reasons an install can be
+	// unverified: an uncheckable signature and a missing hash.
+	if info.VerificationWarning != "" {
+		SetUpgradeVerificationWarning(info.VerificationWarning, info.VerificationIssues)
 	}
 
+	// "Nothing to upgrade" is checked before the acknowledgment: when there is
+	// no upgrade to install, that is the accurate answer, and reporting a
+	// verification mismatch instead would be confusing and untrue.
 	if !info.HasUpgrade {
 		SetUpgradeError("Already on the latest version")
+		broadcastUpgradeUpdate()
+		return
+	}
+
+	// Refuse an unverified install the user was not asked about for *this*
+	// metadata. The client sends back the issue fingerprint it displayed;
+	// recomputing it here from the same single fetch means the two can only
+	// disagree when the registry changed in between, in which case the decision
+	// no longer applies. Comparing against a fresh second query would just move
+	// the race.
+	//
+	// The comparison is on codes, not on the message: the message embeds the
+	// registry base and error detail, so identical problems can render
+	// differently across two fetches and would otherwise make the confirmation
+	// impossible to satisfy.
+	if info.VerificationIssues != acknowledgedIssues {
+		slog.Warn("upgrade: refusing unverified upgrade without matching acknowledgment",
+			"registry_issues", info.VerificationIssues, "acknowledged", acknowledgedIssues,
+			"warning", info.VerificationWarning)
+		SetUpgradeErrorCode(UpgradeErrUnverifiedNotConfirmed,
+			"This release cannot be fully verified, and the confirmation did not match what "+
+				"the registry currently reports. Re-run the check and confirm again.")
 		broadcastUpgradeUpdate()
 		return
 	}
@@ -482,10 +537,14 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 		return
 	}
 
-	// 1e. Resolve the expected digest before downloading anything: a registry
-	// response with no usable hash must abort the upgrade rather than produce a
-	// binary that was never verified.
-	digest, digestErr := resolveExpectedDigest(info.Integrity, info.Shasum)
+	// 1e. Resolve the expected digest before downloading anything. A malformed
+	// hash aborts (the metadata is broken); a missing one only warns, so the
+	// upgrade still proceeds.
+	//
+	// info.VerificationWarning already carries this warning — fetchUpgradeInfo
+	// resolves the same fields so /api/upgrade/check can report it before the
+	// user starts — so there is nothing to add to the state here.
+	digest, _, digestErr := resolveExpectedDigest(info.Integrity, info.Shasum)
 	if digestErr != nil {
 		slog.Warn("upgrade: unusable registry integrity metadata", "error", digestErr)
 		SetUpgradeError(fmt.Sprintf("Refusing to install an unverified binary: %v", digestErr))
@@ -636,10 +695,21 @@ func tryShortCircuitRestart(currentBin, targetVersion string) bool {
 	return true
 }
 
+// Limits on what an upgrade download may expand to. The archive is fetched from
+// a registry, so these bound the damage a hostile or broken mirror can do. The
+// binary limit is generous next to the real artifact (tens of MB) and the
+// archive limit leaves room for the npm package's other files.
+const (
+	maxBinarySize  = 512 << 20 // 512 MiB extracted binary
+	maxArchiveSize = 1 << 30   // 1 GiB decompressed stream
+)
+
 // downloadAndExtract downloads the npm tarball, verifies it against digest, and
-// extracts the binary. ctx provides timeout and cancellation. The tarball is
-// always verified: digest comes from resolveExpectedDigest, which fails the
-// upgrade before any download when the registry supplied no usable hash.
+// extracts the binary. ctx provides timeout and cancellation.
+//
+// Verification is attempted whenever the digest carries a hash. A digest with
+// no hash (the registry supplied none) extracts without comparison and logs
+// that fact, rather than reporting a verification that did not happen.
 func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedDigest, destPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tarballURL, http.NoBody)
 	if err != nil {
@@ -700,17 +770,36 @@ func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedD
 			if err != nil {
 				return fmt.Errorf("failed to create output file: %w", err)
 			}
-			//nolint:gosec // G110: tarball size verified by integrity hash
-			if _, copyErr := io.Copy(outFile, tarReader); copyErr != nil {
+			// Bound the extracted size: the archive comes from the network and,
+			// when no hash is available, nothing else constrains it. A
+			// high-ratio gzip would otherwise decompress without limit and fill
+			// the disk.
+			//nolint:gosec // G110: bounded by maxBinarySize below
+			if _, copyErr := io.Copy(outFile, io.LimitReader(tarReader, maxBinarySize+1)); copyErr != nil {
 				_ = outFile.Close()
+				_ = os.Remove(destPath)
 				return fmt.Errorf("failed to write binary: %w", copyErr)
+			}
+			if info, statErr := outFile.Stat(); statErr == nil && info.Size() > maxBinarySize {
+				_ = outFile.Close()
+				_ = os.Remove(destPath)
+				return fmt.Errorf("binary exceeds the %d-byte limit; refusing to extract", maxBinarySize)
 			}
 			_ = outFile.Close()
 			_ = os.Chmod(destPath, 0o755) //nolint:gosec // G302: binary must be executable
 
-			// Verify the tarball before the extracted binary can be used.
-			// Read remaining data to ensure hasher has full tarball content
-			_, _ = io.Copy(io.Discard, gzr) //nolint:gosec // G110: integrity hash validates tarball
+			// Drain the remaining stream so the hasher sees the whole tarball,
+			// also bounded so a decompression bomb cannot run away.
+			_, _ = io.Copy(io.Discard, io.LimitReader(gzr, maxArchiveSize)) //nolint:gosec // G110: bounded by maxArchiveSize
+
+			// An unverified digest has no hash to compare against. Say so
+			// explicitly rather than falling through to the success log, which
+			// would report an algorithm that was never applied.
+			if digest.unverified {
+				slog.Warn("upgrade: installed without integrity verification — the registry supplied no hash",
+					"path", destPath)
+				return nil
+			}
 
 			if verifyErr := digest.verify(hasher); verifyErr != nil {
 				_ = os.Remove(destPath)
@@ -726,15 +815,24 @@ func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedD
 }
 
 // expectedDigest is the algorithm and hash a downloaded tarball must match. It
-// is resolved from the registry response *before* the download starts, so an
-// unusable response fails the upgrade outright rather than reaching the
-// extraction step where verification could be skipped.
+// is resolved from the registry response *before* the download starts.
+//
+// When the registry supplies no usable hash, the returned digest carries
+// unverified=true instead of an error: the upgrade proceeds with a warning
+// rather than being refused. A digest that *is* present and simply does not
+// match the downloaded bytes still aborts the upgrade — that is a corrupt or
+// wrong download, not an unverifiable one.
 type expectedDigest struct {
 	algorithm string // "sha512" or "sha1"
 	hash      []byte
+	// unverified means no usable hash was available, so verify() cannot check
+	// anything and the caller must have surfaced a warning.
+	unverified bool
 }
 
-// newHasher returns a hash.Hash for the digest's algorithm.
+// newHasher returns a hash.Hash for the digest's algorithm. An unverified
+// digest still hashes the stream so progress accounting stays uniform; the
+// result is discarded.
 func (d expectedDigest) newHasher() hash.Hash {
 	if d.algorithm == sha1Name {
 		return sha1.New() //nolint:gosec // G401: legacy npm dist.shasum compatibility, see resolveExpectedDigest
@@ -743,7 +841,13 @@ func (d expectedDigest) newHasher() hash.Hash {
 }
 
 // verify compares the hasher's accumulated sum against the expected hash.
+//
+// An unverified digest has nothing to compare against and always passes: the
+// absence of a hash was already reported as a warning when it was resolved.
 func (d expectedDigest) verify(hasher hash.Hash) error {
+	if d.unverified {
+		return nil
+	}
 	actual := hasher.Sum(nil)
 	if !equalHashes(actual, d.hash) {
 		return fmt.Errorf("hash mismatch: expected %x, got %x", shortHash(d.hash), shortHash(actual))
@@ -776,15 +880,29 @@ func truncateForLog(s string) string {
 // It mirrors npm's own behavior (pacote): dist.integrity is the SRI string and
 // is preferred, falling back to the legacy hex-encoded sha1 dist.shasum when
 // integrity is absent — npm's spec makes dist.tarball the only required field,
-// and integrity "may not be present for older packages". A response carrying
-// neither field, or one using an algorithm we cannot compute, is an error:
-// installing a binary that was never verified is worse than refusing the
-// upgrade.
-func resolveExpectedDigest(integrity, shasum string) (expectedDigest, error) {
+// and integrity "may not be present for older packages".
+//
+// A *malformed* hash is an error: the registry claimed to provide one and it
+// cannot be parsed, so the metadata is broken and its value cannot be trusted.
+// A *missing* hash yields an unverified digest plus an issue, so the upgrade
+// proceeds unverified rather than being refused.
+func resolveExpectedDigest(integrity, shasum string) (expectedDigest, []verificationIssue, error) {
+	digest, issues, err := parseExpectedDigest(integrity, shasum)
+	if digest.unverified && err == nil {
+		slog.Warn("upgrade: registry supplied no integrity hash — installing without verification")
+	}
+	return digest, issues, err
+}
+
+// parseExpectedDigest is the side-effect-free core of resolveExpectedDigest,
+// shared with fetchUpgradeInfo so /api/upgrade/check can report a missing hash
+// before the user starts. Splitting it out keeps that probe from logging the
+// warning a second time.
+func parseExpectedDigest(integrity, shasum string) (expectedDigest, []verificationIssue, error) {
 	if integrity = strings.TrimSpace(integrity); integrity != "" {
 		algorithm, encoded, ok := strings.Cut(integrity, "-")
 		if !ok {
-			return expectedDigest{}, fmt.Errorf("malformed integrity string %q: missing algorithm prefix",
+			return expectedDigest{}, nil, fmt.Errorf("malformed integrity string %q: missing algorithm prefix",
 				truncateForLog(integrity))
 		}
 
@@ -795,33 +913,40 @@ func resolveExpectedDigest(integrity, shasum string) (expectedDigest, error) {
 		case sha1Name:
 			size = sha1.Size
 		default:
-			return expectedDigest{}, fmt.Errorf("unsupported integrity algorithm %q: only sha512 and sha1 can be verified",
+			return expectedDigest{}, nil, fmt.Errorf("unsupported integrity algorithm %q: only sha512 and sha1 can be verified",
 				algorithm)
 		}
 
 		decoded, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {
-			return expectedDigest{}, fmt.Errorf("failed to decode integrity hash: %w", err)
+			return expectedDigest{}, nil, fmt.Errorf("failed to decode integrity hash: %w", err)
 		}
 		if len(decoded) != size {
-			return expectedDigest{}, fmt.Errorf("integrity hash for %s is %d bytes, want %d", algorithm, len(decoded), size)
+			return expectedDigest{}, nil, fmt.Errorf("integrity hash for %s is %d bytes, want %d", algorithm, len(decoded), size)
 		}
-		return expectedDigest{algorithm: algorithm, hash: decoded}, nil
+		return expectedDigest{algorithm: algorithm, hash: decoded}, nil, nil
 	}
 
 	if shasum = strings.TrimSpace(shasum); shasum != "" {
 		decoded, err := hex.DecodeString(shasum)
 		if err != nil {
-			return expectedDigest{}, fmt.Errorf("failed to decode shasum %q: %w", truncateForLog(shasum), err)
+			return expectedDigest{}, nil, fmt.Errorf("failed to decode shasum %q: %w", truncateForLog(shasum), err)
 		}
 		if len(decoded) != sha1.Size {
-			return expectedDigest{}, fmt.Errorf("shasum is %d bytes, want %d", len(decoded), sha1.Size)
+			return expectedDigest{}, nil, fmt.Errorf("shasum is %d bytes, want %d", len(decoded), sha1.Size)
 		}
-		return expectedDigest{algorithm: sha1Name, hash: decoded}, nil
+		return expectedDigest{algorithm: sha1Name, hash: decoded}, nil, nil
 	}
 
-	return expectedDigest{}, errors.New("registry response has neither dist.integrity nor dist.shasum; " +
-		"refusing to install an unverified binary")
+	// No hash at all. Proceed unverified and warn: the download cannot be
+	// checked, but refusing would block upgrades from registries that omit
+	// these fields entirely.
+	return expectedDigest{algorithm: "sha512", unverified: true},
+		[]verificationIssue{{
+			Code: VerifyIssueNoIntegrityHash,
+			Message: "The registry supplied no integrity hash for this release, so the download could not be " +
+				"checked for corruption or tampering before installing.",
+		}}, nil
 }
 
 func equalHashes(a, b []byte) bool {

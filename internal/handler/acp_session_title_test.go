@@ -348,6 +348,17 @@ func TestMachinePrefixesMatchStrip(t *testing.T) {
 			wantOK:  true,
 			wantRem: "用户问题",
 		},
+		{
+			rule:   stripRule{model.ReferencedLinkPrefix, stripToNewline, ""},
+			input:  "[Referenced external link: https://github.com/acme/widgets/issues/7]",
+			wantOK: false, // no newline → no user text
+		},
+		{
+			rule:    stripRule{model.ReferencedLinkPrefix, stripToNewline, ""},
+			input:   "[Referenced external link: https://github.com/acme/widgets/issues/7]\n这个 issue 怎么修",
+			wantOK:  true,
+			wantRem: "这个 issue 怎么修",
+		},
 	}
 
 	// Test whole-turn markers.

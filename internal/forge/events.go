@@ -2,6 +2,8 @@ package forge
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -69,6 +71,11 @@ type Change struct {
 	// PipelineStatus / PipelineURL describe a finished CI run (pipeline_done).
 	PipelineStatus string
 	PipelineURL    string
+	// PipelineRunID is the platform's run identity for a pipeline event. It is
+	// the revision discriminator in DedupeKey: without it two successful runs on
+	// the same repository would collide on "state:success" and the second would
+	// be dropped as a duplicate.
+	PipelineRunID int64
 }
 
 // DeriveChanges compares a stored snapshot with the freshly fetched item state
@@ -176,11 +183,65 @@ func DedupeKey(repo Remote, itemType ItemType, number int, ev Change) string {
 	switch ev.Type {
 	case EventCommented:
 		revision = fmt.Sprintf("comment:%d", ev.CommentID)
+	case EventPipeline:
+		// A CI event has no item number and its NewState is only success or
+		// failure, so a state-based revision would make every successful run on
+		// a repository collide with the previous one. The run id is the only
+		// value that distinguishes two runs.
+		revision = fmt.Sprintf("run:%d", ev.PipelineRunID)
 	default:
 		revision = fmt.Sprintf("state:%s", ev.NewState)
 	}
 	return fmt.Sprintf("%s|%s|%s|%s|%d|%s|%s|%s",
 		repo.Platform, repo.Host, repo.Owner, repo.Repo, number, itemType, string(ev.Type), revision)
+}
+
+// ItemKeyForNumber identifies a numbered item (an issue or a change request).
+//
+// Use this where the item is known to be numbered, so no synthetic Change is
+// needed and a pipeline can never be passed by accident.
+func ItemKeyForNumber(itemType ItemType, number int) string {
+	return fmt.Sprintf("%s/%d", itemType, number)
+}
+
+// pipelineKeyPrefix is the fixed part of a pipeline item key. Kept beside
+// PipelineItemKey so the format and its inverse cannot drift apart.
+const pipelineKeyPrefix = "pipeline/run:"
+
+// PipelineItemKey identifies one CI run, which has no item number.
+func PipelineItemKey(runID int64) string {
+	return fmt.Sprintf("%s%d", pipelineKeyPrefix, runID)
+}
+
+// ParsePipelineRunID recovers the run id from a pipeline item key.
+//
+// Returns ok=false for any other key, so callers never mistake an issue/PR key
+// for a pipeline. This exists because a pipeline event stores Number 0 for every
+// run: the run id is only recoverable from the key, and a caller that re-derived
+// it from (type, number) would produce a run id of 0.
+func ParsePipelineRunID(itemKey string) (int64, bool) {
+	rest, ok := strings.CutPrefix(itemKey, pipelineKeyPrefix)
+	if !ok || rest == "" {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// ItemKey identifies the thing an event is about, for grouping events into
+// "items with new activity".
+//
+// It cannot be derived from (itemType, number) alone: a pipeline event carries
+// Number 0 for every run, because a CI run is not an item and has no number. The
+// run id is what distinguishes two runs, so it becomes the key.
+func ItemKey(itemType ItemType, number int, ev Change) string {
+	if itemType == ItemTypePipeline {
+		return PipelineItemKey(ev.PipelineRunID)
+	}
+	return ItemKeyForNumber(itemType, number)
 }
 
 // StateRank orders terminal states so a multi-transition interval can pick the

@@ -62,7 +62,7 @@ func TestListItems_IssuesUsesOpenedState(t *testing.T) {
 		assert.Equal(t, "/api/v4/projects/group%2Fwidgets/issues", r.URL.EscapedPath())
 		// GitLab uses "opened", not "open".
 		assert.Equal(t, "opened", r.URL.Query().Get("state"))
-		assert.Equal(t, "updated", r.URL.Query().Get("order_by"))
+		assert.Equal(t, "updated_at", r.URL.Query().Get("order_by"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[
 			{"iid":1,"title":"bug","description":"body","state":"opened",
@@ -244,6 +244,54 @@ func TestStateParam(t *testing.T) {
 	assert.Equal(t, "opened", stateParam(""))
 	assert.Equal(t, "all", stateParam("all"))
 	assert.Equal(t, "closed", stateParam("closed"))
+	// GitLab reports merged as its own MR state. It must pass through, not be
+	// folded into "closed" or dropped to the "opened" default.
+	assert.Equal(t, "merged", stateParam("merged"))
+}
+
+// TestListItems_MergedFilterReachesTheApiForMergeRequests pins the merge-request
+// half of the merged filter: GitLab reports merged as its own state, so the
+// value must be forwarded verbatim.
+func TestListItems_MergedFilterReachesTheApiForMergeRequests(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v4/projects/group%2Fwidgets/merge_requests", r.URL.EscapedPath())
+		assert.Equal(t, "merged", r.URL.Query().Get("state"))
+		assert.Equal(t, "updated_at", r.URL.Query().Get("order_by"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"iid":7,"title":"done","state":"merged","merged_at":"2026-09-09T12:00:00Z",
+			 "author":{"username":"bob"},
+			 "web_url":"https://gitlab.com/group/widgets/-/merge_requests/7",
+			 "updated_at":"2026-09-09T12:00:00Z"}
+		]`))
+	}), "group", "widgets")
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, State: string(forge.StateMerged), Page: 1, PerPage: 30,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, forge.StateMerged, res.Items[0].State)
+}
+
+// TestListItems_MergedFilterOnIssuesIsEmptyNotAnError covers the impossible
+// query: GitLab issues have no merged lifecycle and the issues endpoint rejects
+// state=merged with 400. Answering locally keeps a valid empty result from
+// surfacing as a platform error the user cannot act on.
+func TestListItems_MergedFilterOnIssuesIsEmptyNotAnError(t *testing.T) {
+	called := false
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"order_by does not have a valid value"}`))
+	}), "group", "widgets")
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, State: string(forge.StateMerged), Page: 1, PerPage: 30,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.Items)
+	assert.False(t, called, "an impossible filter must not reach the API at all")
 }
 
 func mustParse(t *testing.T, s string) (tt time.Time) {
@@ -385,18 +433,28 @@ func TestConvertAssignees(t *testing.T) {
 	assert.Equal(t, "Alice", out[0].Name)
 }
 
-// TestOrderByParamAndDirectionParam covers the query builders: only "created"
-// is honored (anything else falls back to "updated"), and only an explicit
-// "asc" flips the direction.
+// TestOrderByParamAndDirectionParam covers the query builders.
+//
+// orderByParam MUST emit GitLab's `_at` spelling: the API rejects the generic
+// "updated"/"created" with 400 `{"error":"order_by does not have a valid
+// value"}`, which is what broke the issues and merge-request tabs. An unknown
+// value falls back to updated_at, which is always accepted.
 func TestOrderByParamAndDirectionParam(t *testing.T) {
-	assert.Equal(t, "created", orderByParam("created"))
-	assert.Equal(t, "updated", orderByParam("updated"))
-	assert.Equal(t, "updated", orderByParam("bogus"))
-	assert.Equal(t, "updated", orderByParam(""))
+	assert.Equal(t, "created_at", orderByParam("created"))
+	assert.Equal(t, "updated_at", orderByParam("updated"))
+	assert.Equal(t, "updated_at", orderByParam("bogus"))
+	assert.Equal(t, "updated_at", orderByParam(""))
 
 	assert.Equal(t, "asc", directionParam("asc"))
 	assert.Equal(t, "desc", directionParam("desc"))
 	assert.Equal(t, "desc", directionParam(""))
+
+	// Guard the specific regression: no generic value may leak through.
+	for _, generic := range []string{"updated", "created", "comments", "popularity"} {
+		got := orderByParam(generic)
+		assert.NotEqual(t, generic, got, "orderByParam(%q) must be translated", generic)
+		assert.Contains(t, got, "_at", "orderByParam(%q) must use GitLab's _at spelling", generic)
+	}
 }
 
 // TestGetItem_MergeRequest covers the MR branch of GetItem.

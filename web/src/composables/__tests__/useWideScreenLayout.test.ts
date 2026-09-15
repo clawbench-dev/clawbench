@@ -22,6 +22,8 @@ import {
   wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
 import { DOCK_TABS, DOCK_TAB_IDS, isDockTabId, secondaryDockTabs } from '@/composables/dockTabs'
+import enMessages from '@/i18n/locales/en'
+import zhMessages from '@/i18n/locales/zh'
 import { DOCK_TABS_WITH_ICONS } from '@/composables/dockTabMeta'
 
 beforeEach(() => {
@@ -317,6 +319,21 @@ describe('dock tab registry (single source of truth)', () => {
   it('every registry entry carries an i18n title key', () => {
     for (const tab of DOCK_TABS) {
       expect(tab.titleKey, `${tab.id} has no titleKey`).toMatch(/^[a-z]+\.[A-Za-z]/)
+    }
+  })
+
+  it('every title key actually RESOLVES in both locales', () => {
+    // The shape check above passes for a typo'd key like "nav.overveiw", which
+    // would render the raw key as the tab's tooltip with no error anywhere.
+    for (const [locale, messages] of Object.entries({ en: enMessages, zh: zhMessages })) {
+      for (const tab of DOCK_TABS) {
+        const value = tab.titleKey.split('.').reduce<unknown>(
+          (acc, part) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined),
+          messages,
+        )
+        expect(typeof value, `${tab.titleKey} missing in ${locale}`).toBe('string')
+        expect(value, `${tab.titleKey} is empty in ${locale}`).not.toBe('')
+      }
     }
   })
 

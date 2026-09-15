@@ -64,3 +64,49 @@ describe('SessionList selected-row tint covers the archive button', () => {
     }
   })
 })
+
+describe('SessionList pinned marker', () => {
+  it('paints the corner wedge from the .pinned row modifier', async () => {
+    const src = await sessionListSource()
+    // The wedge is a clipped square on the row. jsdom has no CSS engine, so this
+    // asserts the declarations survive: without the clip-path the box renders as
+    // a full square instead of a triangle, and a zero width/height would make it
+    // vanish entirely.
+    const rule = src.match(/\.session-row\.pinned::after\s*\{[^}]*\}/)?.[0]
+    expect(rule, '.session-row.pinned::after should exist').toBeTruthy()
+    // Three vertices, one of them the top-right corner the box is anchored to.
+    expect(rule).toMatch(/clip-path:\s*polygon\(\s*0\s+0\s*,\s*100%\s+0\s*,\s*100%\s+100%\s*\)/)
+    expect(rule).toMatch(/width:\s*12px/)
+    expect(rule).toMatch(/height:\s*12px/)
+    // Anchored to the row's own top-right corner.
+    expect(rule).toMatch(/top:\s*0/)
+    expect(rule).toMatch(/right:\s*0/)
+    // Decorative only — must not swallow clicks meant for the archive button.
+    expect(rule).toMatch(/pointer-events:\s*none/)
+  })
+
+  it('keeps the wedge on the theme accent and shades it for depth', async () => {
+    const src = await sessionListSource()
+    const rule = src.match(/\.session-row\.pinned::after\s*\{[^}]*\}/)?.[0]
+    expect(rule).toBeTruthy()
+    // Colour must follow the theme (a hardcoded amber ignored the user's accent).
+    expect(rule).toMatch(/var\(--accent-color/)
+    expect(rule).not.toMatch(/#f59e0b/)
+    // The gradient + drop shadow are what give the flat triangle its depth;
+    // both shades are mixed from the accent so they track the theme too.
+    expect(rule).toMatch(/background:\s*linear-gradient\(/)
+    expect(rule).toMatch(/color-mix\(in srgb, var\(--accent-color[^)]*\)/)
+    expect(rule).toMatch(/filter:\s*drop-shadow\(/)
+  })
+
+  it('has no leftover pinned/recent section wrapper styles or inline pin glyph', async () => {
+    const src = await sessionListSource()
+    // The grouping is gone; a stray .session-section rule would mean the layout
+    // wrapper outlived its markup.
+    expect(src).not.toMatch(/\.session-section\s*\{/)
+    expect(src).not.toMatch(/\.session-group-pin-icon/)
+    // The pin glyph was dropped in favour of the wedge alone — a leftover class
+    // rule would mean a dead style outlived the markup.
+    expect(src).not.toMatch(/\.session-pin-icon\s*\{/)
+  })
+})

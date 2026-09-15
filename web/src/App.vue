@@ -50,14 +50,14 @@
               <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
-              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
+              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
             <!-- Secondary tabs (always shown inline; the dock scrolls if too short) -->
             <div v-for="tab in overflowTabs" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
-              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
+              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
           </div>
           <!-- Chat visibility toggle pinned to the bottom of the vertical dock -->
@@ -367,7 +367,7 @@
               <button class="dock-btn" :class="{ active: activeTab === 'chat', 'has-unread': store.state.chatUnreadCount > 0 && activeTab !== 'chat', 'has-running': sessionIdentity.runningSessions.value.size > 0 && activeTab !== 'chat' }" @click.stop="switchTab('chat')" :title="t('nav.chat')">
                 <MessageSquare />
               </button>
-              <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': chatBadgeAnim }" @animationend="chatBadgeAnim = false">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
+              <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': chatBadgeAnim }" @animationend="chatBadgeAnim = false">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
             </div>
             <button class="dock-btn" :class="{ active: activeTab === 'browse' }" @click.stop="switchTab('browse')" :title="t('nav.fileManager')">
               <FolderOpen />
@@ -379,27 +379,27 @@
               <button class="dock-btn" :class="{ active: activeTab === 'history' }" @click.stop="switchTab('history')" :title="t('git.history.projectHistory')">
                 <GitBranch />
               </button>
-              <span v-if="store.state.gitWorkingTreeChangeCount > 0 && activeTab !== 'history'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': historyBadgeAnim }" @animationend="historyBadgeAnim = false">{{ formatBadgeCount(store.state.gitWorkingTreeChangeCount) }}</span>
+              <span v-if="store.state.gitWorkingTreeChangeCount > 0 && activeTab !== 'history'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': historyBadgeAnim }" @animationend="historyBadgeAnim = false">{{ formatBadgeCount(store.state.gitWorkingTreeChangeCount) }}</span>
             </div>
             <!-- Inline overflow tabs (rendered in overflowTabs order — settings always last) -->
             <div v-for="tab in inlineOverflowTabs" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="dockTabIcon(tab)" />
               </button>
-              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
-              <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
-              <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
-              <span v-if="tab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
+              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
+              <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
+              <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
+              <span v-if="tab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
             </div>
             <!-- Single remaining popup item shown directly (no overflow menu) -->
             <div v-if="singleDirectTab" :key="'single-' + singleDirectTab" class="dock-btn-wrap">
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(singleDirectTab)" @click.stop="handleInlineOverflowClick(singleDirectTab)" :title="dockTabTitle(singleDirectTab)">
                 <component :is="dockTabIcon(singleDirectTab)" />
               </button>
-              <span v-if="singleDirectTab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
-              <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
-              <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
-              <span v-if="singleDirectTab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
+              <span v-if="singleDirectTab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
+              <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
+              <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
+              <span v-if="singleDirectTab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
             </div>
             <!-- Overflow button (popup has >1 items) -->
             <div v-if="showOverflowButton" class="dock-overflow-wrapper">
@@ -414,7 +414,7 @@
               >
                 <component :is="overflowButtonIcon" />
               </button>
-              <span v-if="overflowBadgeCount > 0 && !isOverflowTabActive" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': overflowBadgeAnim }" @animationend="overflowBadgeAnim = false">{{ formatBadgeCount(overflowBadgeCount) }}</span>
+              <span v-if="overflowBadgeCount > 0 && !isOverflowTabActive" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': overflowBadgeAnim }" @animationend="overflowBadgeAnim = false">{{ formatBadgeCount(overflowBadgeCount) }}</span>
             </div>
           </div>
         </div>
@@ -436,7 +436,7 @@
             <span>{{ dockTabTitle(tab) }}</span>
             <span
               v-if="dockTabBadgeCount(tab) > 0"
-              class="dock-overflow-count"
+              class="dock-overflow-count count-badge count-badge--md"
               :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }"
               @animationend="dockTabBadgeAnimEnd(tab)"
             >{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
@@ -461,7 +461,7 @@ import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePane
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
-import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
 import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
@@ -548,6 +548,7 @@ import { useDirectoryReturn } from './composables/useDirectoryReturn'
 import { store } from './stores/app.ts'
 import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
 import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
+import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
 import { fileSupportsToc } from './utils/tocSupport.ts'
@@ -816,10 +817,10 @@ const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
 
 function switchTab(tab: string, force = false) {
-  // Opening the Issues & PRs tab clears its unread badge.
-  if (tab === 'forge') {
-    void markForgeRead()
-  }
+  // Opening the Issues & PRs tab does NOT clear its unread badge. Read state is
+  // per item now: opening a row clears that row, and the "mark all read" button
+  // clears the rest. Clearing on tab open is what made the badge number
+  // meaningless — it vanished before the user could find what it referred to.
   // The user reached the surface a jump started from without using Back, so
   // the return target is spent — settle it (skip when returnToOrigin() is
   // driving the switch). Single implementation: useNavigationCoordinator.
@@ -848,9 +849,11 @@ function switchTab(tab: string, force = false) {
     loadSessionsOnce()
   }
   if (tab === 'tasks') {
-    // Only stop dock button flash — don't clear per-task unread badges.
-    // Per-task badges are cleared when the user enters that task's execution history.
-    store.state.taskUnreadCount = 0
+    // Opening the tab deliberately does NOT zero the badge. Read state is per
+    // execution now: opening a run clears that run, and "mark all read" clears
+    // the rest. Zeroing here also stuck permanently whenever loadTasks() failed
+    // (it returns early on a non-OK response), leaving a badge that said "all
+    // read" while unread runs were still there.
     loadTasks()
   }
   // Close overflow menu on any tab switch
@@ -1484,6 +1487,10 @@ function registerAppEventListeners() {
       if (detail.field !== undefined) sortField.value = detail.field
       if (detail.dir !== undefined) sortDir.value = detail.dir
   })
+  // Follow the system light/dark preference while the theme is 'auto'.
+  // Registered here (not in onMounted) because it is part of the global
+  // listener set that both cold start and post-login initialization install.
+  startSystemThemeWatcher()
 }
 
 /**
@@ -1492,6 +1499,10 @@ function registerAppEventListeners() {
  * Must complete BEFORE isAuthenticated is set to true (which triggers
  * ChatPanelContent mount and loadHistory).
  * Returns false if a fatal error occurred (callers should not set isAuthenticated).
+ *
+ * Callers must route this through guardStartupWithSplash(): an exception thrown
+ * here would otherwise reject the caller's async onMounted handler before it
+ * reaches dismissSplash(), leaving the native splash overlay up forever.
  */
 async function initializeApp() {
   // 1. Prerequisite data — must complete before UI renders
@@ -1535,15 +1546,29 @@ async function initializeApp() {
   return true
 }
 
+/** Report a fatal startup error to the user and to the client log relay. */
+function reportStartupFailure(context: string, err: unknown) {
+  appLog.e(TAG, `[${context}] app initialization failed:`, err)
+  toast.show(t('toast.initFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+}
+
 async function handleLoginSuccess() {
     // Full initialization BEFORE setting isAuthenticated — ensures
     // clawbench_project cookie, session identity, and all infrastructure
     // are ready before ChatPanelContent mounts and calls loadHistory().
-    if (!(await initializeApp())) return
+    // The guard dismisses the native splash on every exit path, so a failure
+    // can't strand the user on the splash overlay.
+    const ok = await guardStartupWithSplash({
+      initialize: initializeApp,
+      dismissSplash,
+      onError: (err) => reportStartupFailure('handleLoginSuccess', err),
+      // Flip auth before the splash fades so the app UI is already mounted
+      // behind it (the original ordering).
+      onReady: () => { isAuthenticated.value = true },
+    })
+    if (!ok) return
     // Clean up legacy localStorage keys (no longer used)
     Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
-    isAuthenticated.value = true
-    dismissSplash()
     await nextTick()
     applyUIScale(Number(localConfig.uiScale ?? 1))
     applyFontConfig()
@@ -2025,7 +2050,9 @@ registerWideScreenCallbacks({
   setActiveTab: (tab) => { activeTab.value = tab },
   sideEffects: (tab) => {
     if (tab === 'browse') store.loadFiles(store.state.currentDir, false, 0, true)
-    if (tab === 'tasks') { store.state.taskUnreadCount = 0; loadTasks() }
+    // No zeroing here: see the narrow-mode switchTab note. The badge is
+    // re-derived from the server by loadTasks().
+    if (tab === 'tasks') loadTasks()
   },
 })
 
@@ -2049,7 +2076,7 @@ function handleWideDockTabClick(tab: string) {
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
 const { addAttachedFile } = useChatContext()
-const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead } = useForgeUnread()
+const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
@@ -2058,12 +2085,14 @@ const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBindi
 // default — the user selects the part they care about, then types their message.
 // The bar is global (position: fixed), so no tab switch is needed on open; the
 // add path switches to chat via onAdd.
-function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number } } | null) {
+function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
   const it = payload?.item
   if (!it) return
   quoteQuestion.openComposer({
     url: it.url,
-    label: `${it.slug}#${it.number}`,
+    // A pipeline run has no issue/PR number, so its caller supplies a label
+    // that names the run; otherwise `slug#number` would read like a PR number.
+    label: it.label ?? `${it.slug}#${it.number}`,
     onAdd: () => switchTab('chat'),
   })
 }
@@ -2443,10 +2472,19 @@ function escAttr(value: string) {
 
 
 
-async function applyTheme(t: string) {
-    const resolved = resolveThemeId(t)
-    applyThemeAttributes(resolved)
-    setSetting('theme', t)
+/**
+ * Mount-time theme application.
+ *
+ * Applies the *stored* value (which may be 'auto') and syncs the native shell
+ * and mermaid to the resolved ID. Deliberately does not persist — the stored
+ * value is owned by useSettingsConfig (`setLocalConfig('theme', …)` → side
+ * effect → the `clawbench-theme-change` listener below). Persisting the
+ * resolved ID here would overwrite a stored 'auto' with 'github-light' /
+ * 'github-dark' and permanently pin the theme, so the app would never follow
+ * the system again (issue #458).
+ */
+async function applyStoredThemeOnMount() {
+    const resolved = applyStoredTheme()
     const palette = buildThemePalette(resolved)
     getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
     const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
@@ -2460,7 +2498,6 @@ function dismissSplash() {
 }
 
 provide('theme', theme)
-provide('applyTheme', applyTheme)
 provide('activeTab', activeTab)
 provide('switchTab', switchTab)
 provide('hotSwitchProject', hotSwitchProject)
@@ -2540,8 +2577,16 @@ function playQuoteEmitAnimation(e?: Event) {
   requestAnimationFrame(animate)
 }
 
+// The forge badge is scoped to the project's bound repository, so it must be
+// re-derived when the project changes — otherwise the previous project's count
+// would linger over a panel showing a different repository.
+watch(() => store.state.projectRoot, () => {
+    void refreshForgeUnread()
+    void refreshForgePlatform()
+})
+
 onMounted(async () => {
-    applyTheme(theme.value)
+    applyStoredThemeOnMount()
     // Prime the forge unread badge (server-authoritative; independent of the
     // notification toggles) and the bound platform (drives the dock icon).
     void refreshForgeUnread()
@@ -2556,6 +2601,8 @@ onMounted(async () => {
         } else {
             toast.show(t('toast.serverUnreachableWeb'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
         }
+        // Login view stays mounted — drop the native splash so it can't cover it.
+        dismissSplash()
         return
     }
     if (!resp.ok) {
@@ -2567,10 +2614,10 @@ onMounted(async () => {
                         const loginRes = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: savedPwd }) })
                         if (loginRes.ok) {
                             await getNative()?.setSSHPassword?.(savedPwd)
-                        } else { isAuthenticated.value = false; return }
-                    } catch { isAuthenticated.value = false; return }
-                } else { isAuthenticated.value = false; return }
-            } else { isAuthenticated.value = false; return }
+                        } else { isAuthenticated.value = false; dismissSplash(); return }
+                    } catch { isAuthenticated.value = false; dismissSplash(); return }
+                } else { isAuthenticated.value = false; dismissSplash(); return }
+            } else { isAuthenticated.value = false; dismissSplash(); return }
         } else {
             isAuthenticated.value = false
             if (isAppMode.value) {
@@ -2578,6 +2625,7 @@ onMounted(async () => {
             } else {
                 toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
             }
+            dismissSplash()
             return
         }
     }
@@ -2587,9 +2635,17 @@ onMounted(async () => {
     // so that ChatPanelContent mounts only when the clawbench_project cookie
     // and session identity are already available. This prevents loadHistory()
     // from firing with missing cookies (Android first-login bug).
-    if (!(await initializeApp())) return
-    isAuthenticated.value = true
-    dismissSplash()
+    // The guard dismisses the native splash on every exit path, so a failure
+    // can't strand the user on the splash overlay.
+    const initOk = await guardStartupWithSplash({
+        initialize: initializeApp,
+        dismissSplash,
+        onError: (err) => reportStartupFailure('onMounted', err),
+        // Flip auth before the splash fades so the app UI is already mounted
+        // behind it (the original ordering).
+        onReady: () => { isAuthenticated.value = true },
+    })
+    if (!initOk) return
     await nextTick()
     applyUIScale(Number(localConfig.uiScale ?? 1))
     applyFontConfig()
@@ -3317,16 +3373,16 @@ onUnmounted(() => {
     pointer-events: none;
 }
 
+/* Shape/geometry comes from the shared .count-badge; this rule keeps only the
+   dot-reset (the base .dock-badge is an 8px circle) and the corner offset.
+   The pill radius is re-declared on purpose: the scoped `.dock-badge` rule above
+   sets `border-radius: 50%`, and a scoped selector outranks the global
+   `.count-badge`, so without this the badge would render as an ellipse. */
 .dock-badge-count {
     width: auto;
     height: auto;
-    min-width: 16px;
-    padding:0 var(--space-2);
-    border-radius: var(--radius-sm);
-    font-size: var(--font-size-2xs);
+    border-radius: var(--radius-full);
     font-weight: var(--font-weight-bold);
-    line-height: 16px;
-    text-align: center;
     color: #fff;
     top: -4px;
     right: -6px;
@@ -3476,16 +3532,9 @@ onUnmounted(() => {
 
 .dock-overflow-count {
     margin-left: auto;
-    min-width: 18px;
-    padding: 0 5px;
-    border-radius: var(--radius-md);
     background: var(--accent-color);
     color: #fff;
-    font-size: var(--font-size-xs);
     font-weight: var(--font-weight-bold);
-    line-height: 18px;
-    text-align: center;
-    flex-shrink: 0;
 }
 
 

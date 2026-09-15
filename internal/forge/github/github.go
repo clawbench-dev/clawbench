@@ -106,6 +106,13 @@ func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge
 }
 
 func (p *Provider) listIssues(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
+	// Issues have no merged lifecycle on either platform, and the GitHub list
+	// endpoint does not reject the value — stateParam falls through to "open",
+	// so forwarding it would return OPEN issues under a "merged" filter. Answer
+	// the impossible query locally, mirroring the GitLab adapter.
+	if opts.State == string(forge.StateMerged) {
+		return forge.ListResult{Items: []forge.Item{}}, nil
+	}
 	if opts.Query != "" {
 		return p.searchItems(ctx, opts, false)
 	}
@@ -148,8 +155,20 @@ func (p *Provider) searchItems(ctx context.Context, opts forge.ListOptions, isPR
 		kind = "is:pr"
 	}
 	q := fmt.Sprintf("%s repo:%s/%s %s", kind, p.owner, p.repo, opts.Query)
-	if s := stateParam(opts.State); s != "" && s != "all" {
-		q += " state:" + s
+	// The search API needs the merged/closed split spelled out as qualifiers,
+	// because state:closed there also matches merged pull requests.
+	switch opts.State {
+	case string(forge.StateMerged):
+		if isPR {
+			q += " is:merged"
+		}
+	case string(forge.StateClosed):
+		q += " state:closed"
+		if isPR {
+			q += " is:unmerged"
+		}
+	case "open":
+		q += " state:open"
 	}
 
 	so := &gogithub.SearchOptions{
@@ -187,7 +206,30 @@ func searchSortParam(sort string) string {
 }
 
 func (p *Provider) listPulls(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
-	if opts.Query != "" {
+	// Two state filters cannot be served by the list endpoint:
+	//
+	//   - "merged" is not a value it understands. GitHub does not reject it —
+	//     it silently falls back to OPEN pull requests.
+	//   - "closed" must EXCLUDE merged PRs to match GitLab, but the list
+	//     endpoint folds the two together and offers no way to separate them.
+	//
+	// Both go to the search API, which can express them (is:merged /
+	// is:unmerged). Filtering merged rows out locally instead would be wrong in
+	// a way the UI cannot recover from: a page whose PRs are all merged comes
+	// back empty while hasMore stays true, and an empty list has no scrollable
+	// area, so the infinite scroll never fires and later pages are unreachable.
+	//
+	// Two costs are accepted here, both preferable to the above:
+	//
+	//   - The search API is rate-limited far below the REST list endpoint
+	//     (~30/min authenticated). This only applies when the user explicitly
+	//     selects Closed or Merged; Open and All keep using the list endpoint.
+	//   - Search serves at most 1000 results, so a very old closed PR can be
+	//     unreachable. The list endpoint has no such cap, which is why it is
+	//     still preferred wherever it can answer the query at all.
+	if opts.State == string(forge.StateMerged) ||
+		opts.State == string(forge.StateClosed) ||
+		opts.Query != "" {
 		return p.searchItems(ctx, opts, true)
 	}
 	lo := &gogithub.PullRequestListOptions{
@@ -320,9 +362,20 @@ func convertPull(pr *gogithub.PullRequest) forge.Item {
 // search API returns both under the issue shape, which omits the merged flag,
 // so a merged PR surfaces as "closed" here — acceptable for list rendering,
 // and the detail view re-fetches via GetItem for exact state.
+// convertIssueAsPull re-types an issue-shaped payload as a change request.
+//
+// The search API returns pull requests through the Issue shape, where the merge
+// state lives in the nested pull_request object (the list endpoint's PullRequest
+// type has no equivalent here). Without reading it, a merged PR found via search
+// would normalize to "closed" and be indistinguishable from an unmerged one.
 func convertIssueAsPull(iss *gogithub.Issue) forge.Item {
 	item := convertIssue(iss)
 	item.Type = forge.ItemTypeChangeRequest
+	if links := iss.PullRequestLinks; links != nil && links.MergedAt != nil {
+		merged := links.MergedAt.Time
+		item.State = forge.StateMerged
+		item.MergedAt = &merged
+	}
 	return item
 }
 

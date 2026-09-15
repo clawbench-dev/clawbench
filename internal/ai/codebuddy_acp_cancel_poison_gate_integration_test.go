@@ -25,16 +25,16 @@ import (
 // stopReason=cancelled / finishReason=tool_calls / outcome=CANCELLED 结束，Meta
 // 显示"结束原因: tool_calls / 结果: CANCELLED"。根因链：
 //
-//	1. 前一 turn (43594) 被用户取消时，CancelSession 实际产生了**两次**
-//	   session/cancel：`cancel()` 让 SDK Prompt 在 ctx.Err 时自动补发一次，随后
-//	   `ACPConnManager.CancelTurn` 又显式发送一次（CodeBuddy 侧收到 .547/.587
-//	   两个 cancel，间隔 ~40ms）。
-//	2. 第一个 cancel 中止了正在 model_requesting 的 run；CodeBuddy 自动重启了
-//	   一个新 run；第二个 cancel 打到这个 preparing run 上并被 force-idle 掉 ——
-//	   run-result 解析路径被跳过，pendingCancellations 集合残留。
-//	3. 下一 turn（43596）的第一个 permission gate 命中残留标记，CodeBuddy 走
-//	   "interceptorGate willRetry=true but user cancelled — resolving with
-//	   cancelled"，turn 被误判为用户取消而提前结束。
+//  1. 前一 turn (43594) 被用户取消时，CancelSession 实际产生了**两次**
+//     session/cancel：`cancel()` 让 SDK Prompt 在 ctx.Err 时自动补发一次，随后
+//     `ACPConnManager.CancelTurn` 又显式发送一次（CodeBuddy 侧收到 .547/.587
+//     两个 cancel，间隔 ~40ms）。
+//  2. 第一个 cancel 中止了正在 model_requesting 的 run；CodeBuddy 自动重启了
+//     一个新 run；第二个 cancel 打到这个 preparing run 上并被 force-idle 掉 ——
+//     run-result 解析路径被跳过，pendingCancellations 集合残留。
+//  3. 下一 turn（43596）的第一个 permission gate 命中残留标记，CodeBuddy 走
+//     "interceptorGate willRetry=true but user cancelled — resolving with
+//     cancelled"，turn 被误判为用户取消而提前结束。
 //
 // 修复：CancelSession 不再显式调用 CancelTurn —— ACP 的 session/cancel 只由 SDK
 // 的 ctx 取消自动路径发送（恰好一次）。本测试验证修复后：

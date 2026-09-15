@@ -189,6 +189,11 @@ type LaunchConfig struct {
 	BackendName string
 	AgentID     string
 	Message     string
+	// Files are the message's attachments. They MUST be carried here: this
+	// engine builds its own prompt (executeStreamRunShared) and does not go
+	// through the handler's prompt builder, so omitting them silently drops
+	// every attachment — the URL of a quoted issue/PR and ordinary files alike.
+	Files []model.FileEntry
 	// QueueID is the queue_id of the queued user message this execution answers
 	// (set when draining a queued message). It is recorded on the reply row so
 	// the frontend can anchor the reply to its own question when multiple
@@ -262,6 +267,10 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
 				cfg.Message = msg.Content
 				cfg.QueueID = msg.QueueID
+				// Carry the drained row's own attachments, replacing whatever the
+				// previous turn carried — otherwise turn N's files would be
+				// re-prefixed onto turn N+1's prompt.
+				cfg.Files = msg.Files
 				nextResult := executeStreamRunShared(ctx, cfg)
 				return DrainResult{
 					CancelReason: nextResult.cancelReason,
@@ -366,6 +375,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 			BackendName: cfg.BackendName,
 			AgentID:     cfg.AgentID,
 			Message:     cfg.Message,
+			Files:       cfg.Files,
 			QueueID:     cfg.QueueID,
 			RunCtx:      runCtx,
 		})
@@ -374,7 +384,8 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 
 	// A runner already exists and has been woken; its loop will dequeue this
 	// message. No signal or delayed re-check is needed — the wake flag set by
-	// TrySetSessionRunning is what the runner consults before exiting.
+	// TryClaimSessionRun is what the runner consults before exiting (retireRunner
+	// re-checks for late work under the same lock).
 	return false, false, msgID, nil
 }
 
@@ -512,7 +523,19 @@ type streamRunResultShared struct {
 // Uses the correct SessionExecutor API: NewSessionExecutor(ctx, RunConfig) -> RunWithChannel(eventCh) -> Finalize(result, eventCh)
 func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResultShared {
 	fileDir := resolveFileDir(cfg.ProjectPath)
-	chatReq := BuildChatRequest(cfg.Message, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, false)
+
+	// Prefix the attachments onto the prompt. runTurn is the single turn
+	// implementation, but the prompt itself is built here, so the attachment
+	// classification must happen on this side too — otherwise every attachment
+	// is silently dropped (both an ordinary file's path and a quoted issue/PR's
+	// URL). Paths arrive already resolved/validated (the handler resolves them
+	// before persisting, and the drain loop reads them back from the DB), so
+	// there is no legacy filePaths channel to de-duplicate against.
+	prompt := cfg.Message
+	parts := model.ClassifyAttachments(cfg.Files, nil)
+	prompt = model.ApplyAttachmentPrefixes(prompt, nil, nil, parts)
+
+	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))
 
 	// The one AI-turn implementation — shared with the /api/ai/chat handler and
 	// the scheduler so a fix can no longer land in only one copy.

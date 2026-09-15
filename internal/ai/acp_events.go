@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/model"
 )
 
 // mapACPSessionUpdate converts an ACP SessionUpdate to StreamEvent(s) and
@@ -325,7 +327,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 						if reg.HasNewAvailableModels(agentID, modelList.Models) {
 							// Update agent-level models in registry
 							reg.UpdateModels(agentID, modelList.Models)
-							forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelList})
+							forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: enrichModelList(conn, modelList)})
 						}
 						conn.SetCachedModelListState(modelList)
 					} else {
@@ -894,6 +896,60 @@ func mapACPError(code int, message string) StreamEvent {
 // so a panic from sending to a closed channel is safe to ignore.
 func forwardACPEvent(ch chan<- StreamEvent, event StreamEvent) {
 	emitStreamEvent(ch, "acp", event)
+}
+
+// enrichModelList attaches the CLI-discovered list and the resolved list to a
+// model_list_update so the client can render either view without holding its own
+// baseline.
+//
+// The connection's agent carries the CLI list that was discovered at startup or
+// refresh time. When it is unavailable (no agent bound, or discovery produced
+// nothing) the fields stay empty and the client falls back to Models.
+func enrichModelList(conn *ACPConn, modelList *ModelListState) *ModelListState {
+	if conn == nil || modelList == nil {
+		return modelList
+	}
+	// Resolve through the registry rather than conn.Agent(): a refresh replaces
+	// the whole Agents map with fresh pointers, so the pointer captured at
+	// connection creation goes stale and would ship an outdated CLI list.
+	agent := model.GetAgent(conn.AgentID())
+	if agent == nil {
+		agent = conn.Agent()
+	}
+	if agent == nil {
+		return modelList
+	}
+	if enriched := EnrichModelListWith(agent, modelList); enriched != nil {
+		return enriched
+	}
+	return modelList
+}
+
+// EnrichModelList attaches the CLI-discovered list and the resolved list to a
+// model list state for the given agent, so every channel that ships model state
+// (WS model_list_update, GET /api/agents, GET /api/ai/chat) delivers the same
+// shape and the client can render either view without merging.
+//
+// Returns nil when the agent is unknown or has no CLI list to resolve against —
+// callers then fall back to the raw ACP list rather than dropping the state.
+func EnrichModelList(agentID string, modelList *ModelListState) *ModelListState {
+	if modelList == nil {
+		return nil
+	}
+	return EnrichModelListWith(model.GetAgent(agentID), modelList)
+}
+
+// EnrichModelListWith is EnrichModelList against an already-resolved agent.
+// Exported so callers that hold an agent pointer (the ACP connection path) avoid
+// a second map lookup.
+func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelListState {
+	if agent == nil || modelList == nil || len(agent.Models) == 0 {
+		return nil
+	}
+	enriched := *modelList
+	enriched.CLIModels = agent.Models
+	enriched.ResolvedModels = model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID)
+	return &enriched
 }
 
 // MapACPSessionUpdateForTest exports mapACPSessionUpdate for use in handler-level

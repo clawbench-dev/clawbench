@@ -71,7 +71,7 @@
     <button v-if="msg.role === 'assistant' && !msg.streaming && hasFileChanges" class="chat-file-changes-banner" @click="fileChangesDrawer.open()">
       <FileDiff :size="14" />
       <span>{{ t('chat.fileChanges.title') }}</span>
-      <span class="chat-file-changes-count">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
+      <span class="chat-file-changes-count count-badge count-badge--md">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
     </button>
 
     <!-- Cancelled marker: shown after file changes banner, hidden when last block is thinking (shown inline in thinking-header instead) -->
@@ -111,11 +111,11 @@
           <span v-if="copied" class="chat-copy-copied-text">{{ t('common.copied') }}</span>
           <Copy v-else :size="14" />
         </button>
-        <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
+        <button v-if="!msg.streaming && !hideSessionActions" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
           <Split :size="14" />
         </button>
         <button
-          v-if="!msg.streaming"
+          v-if="!msg.streaming && !hideSessionActions"
           class="chat-action-btn"
           :disabled="isLastMessage"
           :title="isLastMessage ? t('chat.session.nothingToRewind') : t('chat.actions.rewindSession')"
@@ -197,6 +197,11 @@ const props = defineProps({
   midTurnSupported: { type: Boolean, default: false },
   /** True while this bubble's action request is in flight (disables the button). */
   pendingActionBusy: { type: Boolean, default: false },
+  /** Read-only hosts (task execution detail) hide the fork/rewind pair: those
+   *  two actions need a live session to branch or truncate, which a finished
+   *  execution record does not have. The rest of the bar (summary toggle,
+   *  speak, copy, details) stays useful there. */
+  hideSessionActions: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'pending-action', 'fork-from-message', 'rewind-from-message', 'reset-session'])
@@ -463,14 +468,8 @@ function handleCopyMessage() {
 
 .chat-file-changes-count {
     margin-left: auto;
-    font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
     background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
-    border-radius: var(--radius-xs);
-    padding:0 var(--space-3);
-    min-width: 18px;
-    text-align: center;
-    line-height: 18px;
 }
 
 /* Chat Meta Bar — contains model/duration info + detail button */

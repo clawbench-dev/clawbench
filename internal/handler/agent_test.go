@@ -64,9 +64,13 @@ func setupAgentTestEnv(t *testing.T) func() {
 	require.NoError(t, service.SaveAgent(db, codebuddyAgent))
 	require.NoError(t, service.SaveAgent(db, claudeAgent))
 
-	// Register discovery functions for test backends (CanDiscoverModels checks the registry)
-	model.RegisterDiscoverModelsFunc("codebuddy", func() []model.AgentModel { return nil })
-	model.RegisterDiscoverModelsFunc("claude", func() []model.AgentModel { return nil })
+	// Register model sources for test backends (CanDiscoverModels checks the registry).
+	// These override the real backend registrations for the duration of the test
+	// and are restored by teardown.
+	prevCodebuddy, hadCodebuddy := model.LookupModelSource("codebuddy")
+	prevClaude, hadClaude := model.LookupModelSource("claude")
+	model.RegisterModelSource(model.StaticSource("codebuddy", "", nil))
+	model.RegisterModelSource(model.StaticSource("claude", "", nil))
 
 	// Load agents into memory
 	model.Agents = map[string]*model.Agent{
@@ -78,6 +82,12 @@ func setupAgentTestEnv(t *testing.T) func() {
 	teardown := func() {
 		model.Agents = origAgents
 		model.AgentList = origAgentList
+		if hadCodebuddy {
+			model.RegisterModelSource(prevCodebuddy)
+		}
+		if hadClaude {
+			model.RegisterModelSource(prevClaude)
+		}
 		cleanup()
 		_ = db.Close()
 	}
@@ -101,12 +111,14 @@ func TestAgentGet(t *testing.T) {
 	assert.Contains(t, resp, "defaultAgent")
 }
 
-// TestAgentGet_ModelsNotOverriddenByACP verifies that GET /api/agents does NOT
-// replace an agent's CLI-discovered models with the ACP model list, even when
-// cached ACP state is present. The agent's models must always stay the pure
-// CLI-discovered list so the frontend can merge ACP models by ID on top of it.
-// Regression test for issue #404.
-func TestAgentGet_ModelsNotOverriddenByACP(t *testing.T) {
+// TestAgentGet_ModelsResolvedFromACP verifies that GET /api/agents merges the
+// ACP-reported model list over the CLI-discovered skeleton, and reports both the
+// resolved list (models) and the pure CLI list (cliModels).
+//
+// This merge used to happen in the frontend, which needed to keep a CLI baseline
+// and re-run a tier-alias pass for claude-style agents. It now happens here, so
+// the response is directly renderable.
+func TestAgentGet_ModelsResolvedFromACP(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	// claude must support ACP transport so cached ACP state is attached to it.
@@ -114,8 +126,8 @@ func TestAgentGet_ModelsNotOverriddenByACP(t *testing.T) {
 	claudeAgent.AcpCommand = "claude --acp"
 	t.Cleanup(func() { claudeAgent.AcpCommand = "" })
 
-	// Seed the capability registry with ACP models (friendly display names)
-	// for the claude agent, as if an ACP session had reported them.
+	// The CLI list has one model; ACP reports two, one of which the CLI does not
+	// know about. ACP membership wins, so the CLI-only model must be dropped.
 	reg := ai.GetAgentCapabilityRegistry()
 	reg.UpdateModels("claude", []model.AgentModel{
 		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
@@ -125,8 +137,8 @@ func TestAgentGet_ModelsNotOverriddenByACP(t *testing.T) {
 		reg.UpdateModels("claude", nil)
 	})
 
-	// Inject a live ACP connection with a currently-selected model so the
-	// response's acpStates[].modelListState.currentModelId reflects it.
+	// A live ACP connection with a selected model, so the response reflects the
+	// session's current model rather than the CLI default.
 	mgr := ai.GetACPConnManager()
 	mgr.CloseConnsByAgentID("claude")
 	conn := ai.NewACPConnForTest(&model.Agent{ID: "claude", Backend: "claude", AcpCommand: "claude --acp"}, "sid-404-current-model")
@@ -139,26 +151,24 @@ func TestAgentGet_ModelsNotOverriddenByACP(t *testing.T) {
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgents, req)
-
 	require.Equal(t, http.StatusOK, w.Code)
 
 	var resp struct {
 		Agents []struct {
-			ID     string             `json:"id"`
-			Models []model.AgentModel `json:"models"`
+			ID        string             `json:"id"`
+			Models    []model.AgentModel `json:"models"`
+			CLIModels []model.AgentModel `json:"cliModels"`
 		} `json:"agents"`
 		ACPStates map[string]struct {
 			ModelList *ai.ModelListState `json:"modelListState"`
 		} `json:"acpStates"`
 	}
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	// The agent's models must remain the CLI-discovered list (provider/model IDs),
-	// NOT the ACP friendly-name list.
 	var claude *struct {
-		ID     string             `json:"id"`
-		Models []model.AgentModel `json:"models"`
+		ID        string             `json:"id"`
+		Models    []model.AgentModel `json:"models"`
+		CLIModels []model.AgentModel `json:"cliModels"`
 	}
 	for i := range resp.Agents {
 		if resp.Agents[i].ID == "claude" {
@@ -167,20 +177,27 @@ func TestAgentGet_ModelsNotOverriddenByACP(t *testing.T) {
 		}
 	}
 	require.NotNil(t, claude, "claude agent should be present")
-	require.Len(t, claude.Models, 1)
-	assert.Equal(t, "claude-sonnet-4-6", claude.Models[0].ID)
-	assert.Equal(t, "Claude Sonnet", claude.Models[0].Name)
 
-	// ACP model list must still be delivered separately via acpStates.
+	// The resolved list follows the ACP runtime's membership.
+	require.Len(t, claude.Models, 2)
+	assert.Equal(t, "claude-sonnet-4-6", claude.Models[0].ID)
+	assert.Equal(t, "Claude Sonnet 4.6", claude.Models[0].Name, "the ACP display name wins")
+	assert.Equal(t, "claude-opus-4-5", claude.Models[1].ID)
+	assert.True(t, claude.Models[1].Default, "the session's current model is the default")
+
+	// The untouched CLI list is reported alongside for the CLI transport view.
+	require.Len(t, claude.CLIModels, 1)
+	assert.Equal(t, "claude-sonnet-4-6", claude.CLIModels[0].ID)
+	assert.Equal(t, "Claude Sonnet", claude.CLIModels[0].Name, "the CLI list keeps its own name")
+
+	// ACP state is still delivered separately, now carrying both lists.
 	acpState, ok := resp.ACPStates["claude"]
 	require.True(t, ok, "claude should have cached ACP state")
-	require.NotNil(t, acpState.ModelList, "acpStates.claude.modelListState should be present")
+	require.NotNil(t, acpState.ModelList)
 	require.Len(t, acpState.ModelList.Models, 2)
-	assert.Equal(t, "Claude Sonnet 4.6", acpState.ModelList.Models[0].Name)
-
-	// The live connection's current model ID must be reflected so the frontend
-	// can mark the correct default model on the merged list.
 	assert.Equal(t, "claude-opus-4-5", acpState.ModelList.CurrentModelID)
+	require.Len(t, acpState.ModelList.ResolvedModels, 2, "the resolved list travels with the ACP state")
+	require.Len(t, acpState.ModelList.CLIModels, 1)
 }
 
 func TestAgentPatch_PreferredModel(t *testing.T) {
@@ -652,18 +669,18 @@ func TestAgentPatch_MethodNotAllowed(t *testing.T) {
 func TestAgentRefreshModels_Success(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	// Override DiscoverModels for testing
-	origDiscover := model.DiscoverModels
-	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel {
-		if spec.Backend == "codebuddy" {
+	// Override discovery for testing
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(backend string) ([]model.AgentModel, string) {
+		if backend == "codebuddy" {
 			return []model.AgentModel{
 				{ID: "glm-6", Name: "GLM 6", Default: true},
 				{ID: "glm-5.1", Name: "GLM 5.1"},
-			}
+			}, ""
 		}
-		return nil
+		return nil, ""
 	}
-	defer func() { model.DiscoverModels = origDiscover }()
+	defer func() { model.DiscoverWithDetail = origDiscover }()
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -711,12 +728,10 @@ func TestAgentRefreshModels_DiscoveryNotSupported(t *testing.T) {
 func TestAgentRefreshModels_DiscoveryFails(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	// Override DiscoverModels to return nil (simulating discovery failure)
-	origDiscover := model.DiscoverModels
-	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel {
-		return nil
-	}
-	defer func() { model.DiscoverModels = origDiscover }()
+	// Override discovery to return nil (simulating discovery failure)
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(string) ([]model.AgentModel, string) { return nil, "" }
+	defer func() { model.DiscoverWithDetail = origDiscover }()
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -740,22 +755,17 @@ func TestAgentRefreshModels_DiscoveryFails(t *testing.T) {
 func TestAgentRefreshModels_DiscoveryFailedIncludesDetail(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	origDiscover := model.DiscoverModels
-	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel {
-		return nil
+	const detail = "no CodeBuddy model list found; tried: /x/product.cloudhosted.json"
+
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(string) ([]model.AgentModel, string) {
+		return nil, detail
 	}
-	defer func() { model.DiscoverModels = origDiscover }()
+	defer func() { model.DiscoverWithDetail = origDiscover }()
 
 	origCLICheck := model.CheckCLIExistsErr
 	model.CheckCLIExistsErr = func(string) error { return nil } // CLI present
 	defer func() { model.CheckCLIExistsErr = origCLICheck }()
-
-	const detail = "no CodeBuddy model list found; tried: /x/product.cloudhosted.json"
-	// Save and restore the previously registered func — overwriting it with an
-	// empty stub would leak into other tests in this package.
-	prevDetail := model.DiscoveryFailureDetail(model.BackendSpec{Backend: "codebuddy"})
-	model.RegisterDiscoverModelsDetailFunc("codebuddy", func() string { return detail })
-	defer model.RegisterDiscoverModelsDetailFunc("codebuddy", func() string { return prevDetail })
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -774,13 +784,13 @@ func TestAgentRefreshModels_DiscoveryFailedIncludesDetail(t *testing.T) {
 }
 
 // TestAgentRefreshModels_DiscoveryFailedWithoutDetail verifies the 500 path
-// still works when a backend registers no detail function.
+// still works when a backend offers no explanation for the empty result.
 func TestAgentRefreshModels_DiscoveryFailedWithoutDetail(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	origDiscover := model.DiscoverModels
-	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel { return nil }
-	defer func() { model.DiscoverModels = origDiscover }()
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(string) ([]model.AgentModel, string) { return nil, "" }
+	defer func() { model.DiscoverWithDetail = origDiscover }()
 
 	origCLICheck := model.CheckCLIExistsErr
 	model.CheckCLIExistsErr = func(string) error { return nil }
@@ -804,15 +814,15 @@ func TestAgentRefreshModels_DiscoveryFailedWithoutDetail(t *testing.T) {
 func TestServeAgentSubRoutes_RefreshModels(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	// Override DiscoverModels for testing
-	origDiscover := model.DiscoverModels
-	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel {
-		if spec.Backend == "codebuddy" {
-			return []model.AgentModel{{ID: "glm-6", Name: "GLM 6", Default: true}}
+	// Override discovery for testing
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(backend string) ([]model.AgentModel, string) {
+		if backend == "codebuddy" {
+			return []model.AgentModel{{ID: "glm-6", Name: "GLM 6", Default: true}}, ""
 		}
-		return nil
+		return nil, ""
 	}
-	defer func() { model.DiscoverModels = origDiscover }()
+	defer func() { model.DiscoverWithDetail = origDiscover }()
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -865,14 +875,12 @@ func TestServeAgentRefreshModels_InvalidAgentID(t *testing.T) {
 func TestServeAgentRefreshModels_CLINotFound(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	// Override DiscoverModels to return nil, simulating CLI not available
-	origDiscover := model.DiscoverModels
-	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel {
-		return nil
-	}
-	defer func() { model.DiscoverModels = origDiscover }()
+	// Override discovery to return nil, simulating CLI not available
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(string) ([]model.AgentModel, string) { return nil, "" }
+	defer func() { model.DiscoverWithDetail = origDiscover }()
 
-	// Use claude agent (which has DiscoverModelsFunc) — CLI likely not on CI
+	// Use claude agent (which has a model source) — CLI likely not on CI
 	req := newRequest(t, http.MethodPost, "/api/agents/claude/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgentRefreshModels, req)
@@ -931,15 +939,15 @@ func TestAgentPatch_PreferredModelEmptyString(t *testing.T) {
 func TestServeAgentRefreshModels_SaveAgentDBError(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	// Override DiscoverModels for testing
-	origDiscover := model.DiscoverModels
-	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel {
-		if spec.Backend == "codebuddy" {
-			return []model.AgentModel{{ID: "glm-6", Name: "GLM 6", Default: true}}
+	// Override discovery for testing
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(backend string) ([]model.AgentModel, string) {
+		if backend == "codebuddy" {
+			return []model.AgentModel{{ID: "glm-6", Name: "GLM 6", Default: true}}, ""
 		}
-		return nil
+		return nil, ""
 	}
-	defer func() { model.DiscoverModels = origDiscover }()
+	defer func() { model.DiscoverWithDetail = origDiscover }()
 
 	// Delete agents table to cause SaveAgent to fail
 	_, _ = service.UnsafeDBForTest().Exec("DROP TABLE agents")
@@ -968,12 +976,10 @@ func TestServeAgentRefreshModels_CLINotFoundSpecificError(t *testing.T) {
 	model.AgentList = append(model.AgentList, model.Agents["fake-cli"])
 	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), model.Agents["fake-cli"]))
 
-	// Override DiscoverModels to return nil — will hit "no models" path
-	origDiscover := model.DiscoverModels
-	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel {
-		return nil
-	}
-	defer func() { model.DiscoverModels = origDiscover }()
+	// Override discovery to return nil — will hit the "no models" path
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(string) ([]model.AgentModel, string) { return nil, "" }
+	defer func() { model.DiscoverWithDetail = origDiscover }()
 
 	req := newRequest(t, http.MethodPost, "/api/agents/fake-cli/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -1205,8 +1211,12 @@ func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
 	require.True(t, ok, "state should contain modelListState")
 	assert.Equal(t, "", mlState["currentModelId"]) // no session context
 
-	// Verify agent.models are NOT overridden by the ACP model list — they must
-	// stay the CLI-discovered list. ACP models flow through acpStates only.
+	// Verify agent.models carries the RESOLVED list: the ACP-reported models
+	// merged over the CLI skeleton. The merge happens in the backend now, so the
+	// frontend receives a ready-to-render list.
+	//
+	// The ACP list here names only "acp-m1", so the CLI-only "m1" is dropped —
+	// the agent's runtime view is authoritative for which models it can run.
 	agents, ok := resp["agents"].([]any)
 	require.True(t, ok)
 	for _, a := range agents {
@@ -1215,7 +1225,9 @@ func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
 			models := agent["models"].([]any)
 			require.Len(t, models, 1)
 			m := models[0].(map[string]any)
-			assert.Equal(t, "m1", m["id"], "agent.models must stay the CLI-discovered list")
+			assert.Equal(t, "acp-m1", m["id"], "the resolved list follows the ACP runtime's membership")
+			assert.Equal(t, "ACP Model 1", m["name"])
+			assert.Equal(t, true, m["default"])
 		}
 	}
 }
@@ -1435,14 +1447,17 @@ func TestServeAgentsGet_NonACPAgentNoACPState(t *testing.T) {
 	assert.False(t, hasClaude, "CLI agent should not have ACP state")
 }
 
-// TestServeAgentsGet_ACPModelListDoesNotOverrideModels verifies that cached ACP
-// models in the capability registry do NOT replace the agent's CLI-discovered
-// models in the /api/agents response. The ACP list is delivered separately via
-// acpStates[].modelListState. Regression test for issue #404.
-func TestServeAgentsGet_ACPModelListDoesNotOverrideModels(t *testing.T) {
+// TestServeAgentsGet_ACPModelListIsResolvedIntoModels verifies that cached ACP
+// models in the capability registry are merged into the agent's model list in
+// the /api/agents response.
+//
+// The merge used to happen in the frontend, which needed a CLI baseline, a tier
+// alias pass and a merge function to do it. It now happens here, so the response
+// carries a single ready-to-render list. The raw ACP list is still exposed via
+// acpStates[].modelListState for consumers that need the unresolved view.
+func TestServeAgentsGet_ACPModelListIsResolvedIntoModels(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	// Add an ACP agent with CLI-discovered models
 	acpAgent := &model.Agent{
 		ID:         "acp-ml-override",
 		Name:       "ACP ML Override",
@@ -1455,7 +1470,8 @@ func TestServeAgentsGet_ACPModelListDoesNotOverrideModels(t *testing.T) {
 	model.AgentList = append(model.AgentList, acpAgent)
 	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), acpAgent))
 
-	// Inject agent-level models in the registry (as if ACP had reported them)
+	// Inject agent-level models in the registry (as if ACP had reported them).
+	// "cli-model" is deliberately absent: the ACP runtime says it cannot run it.
 	ai.GetAgentCapabilityRegistry().UpdateModels("acp-ml-override", []model.AgentModel{
 		{ID: "acp-model-1", Name: "ACP Model 1", Default: true},
 		{ID: "acp-model-2", Name: "ACP Model 2"},
@@ -1464,26 +1480,30 @@ func TestServeAgentsGet_ACPModelListDoesNotOverrideModels(t *testing.T) {
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgents, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	// agent.models must remain the CLI-discovered list (not overridden).
 	agents, ok := resp["agents"].([]any)
 	require.True(t, ok)
 	for _, a := range agents {
 		agent := a.(map[string]any)
-		if agent["id"] == "acp-ml-override" {
-			models := agent["models"].([]any)
-			require.Len(t, models, 1)
-			m0 := models[0].(map[string]any)
-			assert.Equal(t, "cli-model", m0["id"], "agent.models must stay the CLI-discovered list")
+		if agent["id"] != "acp-ml-override" {
+			continue
 		}
+		models := agent["models"].([]any)
+		require.Len(t, models, 2, "the resolved list contains exactly what the ACP runtime reports")
+		ids := make([]string, 0, len(models))
+		for _, m := range models {
+			ids = append(ids, m.(map[string]any)["id"].(string))
+		}
+		assert.Contains(t, ids, "acp-model-1")
+		assert.Contains(t, ids, "acp-model-2")
+		assert.NotContains(t, ids, "cli-model", "a model the ACP runtime does not report must be dropped")
 	}
 
-	// ACP models must still be exposed via acpStates[].modelListState.
+	// The unresolved ACP list remains available via acpStates.
 	acpStates, ok := resp["acpStates"].(map[string]any)
 	require.True(t, ok)
 	state, ok := acpStates["acp-ml-override"].(map[string]any)
@@ -1705,4 +1725,164 @@ func TestAgentDelete_EmptyID(t *testing.T) {
 	w := callHandler(ServeAgents, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// --- Backend-side model resolution (GET /api/agents) ---
+//
+// The frontend used to merge the CLI list with the ACP list. That merge now
+// happens here, so these tests pin the observable contract: agents[].models is
+// the resolved list, and the shared Agent must not be mutated in the process.
+
+func TestServeAgentsGet_ResolvesACPModelsIntoAgentList(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels("acp-agent", []model.AgentModel{
+		{ID: "acp-m1", Name: "ACP Model 1"},
+		{ID: "acp-only", Name: "ACP Only"},
+	})
+
+	acpAgent := &model.Agent{
+		ID: "acp-agent", Name: "ACP Agent", Backend: "acp-backend",
+		AcpCommand: "acp-server",
+		Models: []model.AgentModel{
+			{ID: "acp-m1", Name: "CLI Name", Default: true},
+			{ID: "cli-stale", Name: "Stale CLI Model"},
+		},
+	}
+	model.Agents["acp-agent"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Agents []model.Agent `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	var got *model.Agent
+	for i := range resp.Agents {
+		if resp.Agents[i].ID == "acp-agent" {
+			got = &resp.Agents[i]
+		}
+	}
+	require.NotNil(t, got)
+
+	ids := make([]string, len(got.Models))
+	for i, m := range got.Models {
+		ids[i] = m.ID
+	}
+	assert.Contains(t, ids, "acp-only", "ACP-only models must be offered")
+	assert.Contains(t, ids, "acp-m1")
+	assert.NotContains(t, ids, "cli-stale", "a CLI model the ACP runtime does not report must be dropped")
+	assert.Equal(t, "ACP Model 1", got.Models[0].Name, "the ACP display name wins for a matching ID")
+}
+
+func TestServeAgentsGet_DoesNotMutateSharedAgent(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels("acp-agent", []model.AgentModel{{ID: "acp-only", Name: "ACP Only"}})
+
+	acpAgent := &model.Agent{
+		ID: "acp-agent", Name: "ACP Agent", Backend: "acp-backend",
+		AcpCommand: "acp-server",
+		Models:     []model.AgentModel{{ID: "cli-m1", Name: "CLI Model", Default: true}},
+	}
+	model.Agents["acp-agent"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	_ = callHandler(ServeAgents, req)
+
+	require.Len(t, acpAgent.Models, 1, "the stored CLI list must stay the CLI list")
+	assert.Equal(t, "cli-m1", acpAgent.Models[0].ID,
+		"resolution must not write the merged list back onto the shared agent")
+}
+
+func TestServeAgentsGet_NoACPStateKeepsCLIModels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	cliAgent := &model.Agent{
+		ID: "cli-only", Name: "CLI Only", Backend: "cli-backend",
+		Models: []model.AgentModel{
+			{ID: "m1", Name: "M1", Default: true},
+			{ID: "m2", Name: "M2"},
+		},
+	}
+	model.Agents["cli-only"] = cliAgent
+	model.AgentList = append(model.AgentList, cliAgent)
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Agents []model.Agent `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	for _, a := range resp.Agents {
+		if a.ID != "cli-only" {
+			continue
+		}
+		require.Len(t, a.Models, 2, "an agent with no ACP state keeps its full CLI list")
+		assert.True(t, a.Models[0].Default)
+		return
+	}
+	t.Fatal("cli-only agent missing from response")
+}
+
+// The claude ACP agent reports tier aliases whose names carry the redirected real
+// model. GET /api/agents must surface the concrete CLI IDs with those names, not
+// a list of alias entries all showing the same name.
+func TestAgentGet_ClaudeTierAliasesAlignOntoConcreteModels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	claudeAgent := model.Agents["claude"]
+	claudeAgent.AcpCommand = "claude --acp"
+	claudeAgent.Models = []model.AgentModel{
+		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Default: true},
+		{ID: "claude-opus-4-5", Name: "Claude Opus 4.5"},
+	}
+	t.Cleanup(func() { claudeAgent.AcpCommand = "" })
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels("claude", []model.AgentModel{
+		{ID: "opus", Name: "glm-5.3[1m]"},
+		{ID: "sonnet", Name: "glm-5.3[1m]"},
+		{ID: "default", Name: "claude-sonnet-4-6"},
+	})
+	t.Cleanup(func() { reg.UpdateModels("claude", nil) })
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Agents []struct {
+			ID     string             `json:"id"`
+			Models []model.AgentModel `json:"models"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	for _, a := range resp.Agents {
+		if a.ID != "claude" {
+			continue
+		}
+		require.Len(t, a.Models, 2, "the concrete CLI models must survive; the meta 'default' tier must not appear")
+		assert.Equal(t, "claude-sonnet-4-6", a.Models[0].ID)
+		assert.Equal(t, "glm-5.3[1m]", a.Models[0].Name)
+		assert.Equal(t, "claude-opus-4-5", a.Models[1].ID)
+		assert.Equal(t, "glm-5.3[1m]", a.Models[1].Name)
+		return
+	}
+	t.Fatal("claude agent missing from response")
 }

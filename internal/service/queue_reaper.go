@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -161,7 +162,7 @@ func (w *QueueReaper) reap() {
 func findStrandedQueuedSessions(grace time.Duration) ([]string, error) {
 	cutoff := time.Now().UTC().Add(-grace).Format("2006-01-02 15:04:05")
 
-	rows, err := dbRead.Query(`
+	rows, err := dbRead.QueryContext(context.Background(), `
 		SELECT DISTINCT h.session_id
 		FROM chat_history h
 		JOIN chat_sessions s ON s.id = h.session_id
@@ -173,7 +174,7 @@ func findStrandedQueuedSessions(grace time.Duration) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ids []string
 	for rows.Next() {

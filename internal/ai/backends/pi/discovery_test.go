@@ -3,6 +3,8 @@ package pi
 import (
 	"testing"
 
+	"clawbench/internal/model"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +16,7 @@ openai          gpt-4o                      128K     4.1K     no        yes
 google          gemini-2.5-pro              1M       64K      yes       yes
 `
 
-	models := ParsePiModels(output)
+	models := model.ParseTabular(output)
 	require.Len(t, models, 3)
 
 	assert.Equal(t, "anthropic/claude-sonnet-4-6", models[0].ID)
@@ -29,39 +31,20 @@ google          gemini-2.5-pro              1M       64K      yes       yes
 }
 
 func TestParsePiModels_EmptyOutput(t *testing.T) {
-	models := ParsePiModels("")
-	assert.Nil(t, models)
+	assert.Nil(t, model.ParseTabular(""))
 }
 
 func TestParsePiModels_HeaderOnly(t *testing.T) {
 	output := `provider        model                       context  max-out  thinking  images`
-	models := ParsePiModels(output)
-	assert.Nil(t, models, "should skip header line")
+	assert.Nil(t, model.ParseTabular(output), "should skip header line")
 }
 
 func TestParsePiModels_SingleModel(t *testing.T) {
 	output := `anthropic       claude-sonnet-4-6           1M       64K      yes       yes`
-	models := ParsePiModels(output)
+	models := model.ParseTabular(output)
 	require.Len(t, models, 1)
 	assert.Equal(t, "anthropic/claude-sonnet-4-6", models[0].ID)
 	assert.True(t, models[0].Default)
-}
-
-func TestParsePiModels_ProviderPrefixFormat(t *testing.T) {
-	output := `anthropic       claude-sonnet-4-6
-openai          gpt-4o
-`
-	models := ParsePiModels(output)
-	require.Len(t, models, 2)
-
-	// Verify provider/model format
-	assert.Contains(t, models[0].ID, "/")
-	assert.Contains(t, models[1].ID, "/")
-
-	// Verify the provider is correctly extracted
-	parts := splitID(models[0].ID)
-	assert.Equal(t, "anthropic", parts[0])
-	assert.Equal(t, "claude-sonnet-4-6", parts[1])
 }
 
 func TestParsePiModels_BlankLines(t *testing.T) {
@@ -71,51 +54,22 @@ anthropic       claude-sonnet-4-6
 openai          gpt-4o
 
 `
-	models := ParsePiModels(output)
+	models := model.ParseTabular(output)
 	require.Len(t, models, 2)
 }
 
-func TestPiModelLineRe(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{"anthropic       claude-sonnet-4-6           1M", true},
-		{"provider        model                       context", true}, // regex matches, but ParsePiModels filters it
-		{"", false},
-		{"   ", false},
-		{"single", false}, // only one field
-	}
+func TestParsePiModels_ProviderPrefixInID(t *testing.T) {
+	models := model.ParseTabular("anthropic       claude-sonnet-4-6\n")
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			assert.Equal(t, tt.expected, piModelLineRe.MatchString(tt.input))
-		})
-	}
+	require.Len(t, models, 1)
+	assert.Contains(t, models[0].ID, "/", "provider must be part of the ID")
 }
 
-func TestPiModelLineRe_ExtractsFields(t *testing.T) {
-	m := piModelLineRe.FindStringSubmatch("anthropic       claude-sonnet-4-6           1M")
-	require.Len(t, m, 3)
-	assert.Equal(t, "anthropic", m[1])
-	assert.Equal(t, "claude-sonnet-4-6", m[2])
-}
+func TestPiSource_Registered(t *testing.T) {
+	spec := model.BackendSpec{ID: "pi", Backend: "pi", DefaultCmd: "pi"}
+	assert.True(t, model.CanDiscoverModels(spec), "pi should support model discovery")
 
-func TestDiscoverPiModels_NoCLI(t *testing.T) {
-	models := DiscoverPiModels()
-	// Result depends on installation; just verify no panic
-	_ = models
-}
-
-// splitID splits a "provider/model" ID into [provider, model]
-func splitID(id string) [2]string {
-	parts := [2]string{}
-	for i := 0; i < len(id); i++ { //nolint:intrange // index used for string indexing
-		if id[i] == '/' {
-			parts[0] = id[:i]
-			parts[1] = id[i+1:]
-			break
-		}
-	}
-	return parts
+	src, ok := model.LookupModelSource("pi")
+	require.True(t, ok)
+	assert.Equal(t, model.SourceKindCLI, src.Kind())
 }

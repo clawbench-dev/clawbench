@@ -23,9 +23,10 @@ describe('forge locale values', () => {
     // These are the visible tab labels; leaving them English was the bug.
     expect(zh.forge.type.issues).not.toBe('Issues')
     expect(zh.forge.type.prs).not.toBe('Pull Requests')
-    // The chosen Chinese terms. 合并请求 covers a GitHub PR and a GitLab MR.
+    // The chosen Chinese terms, kept SHORT because they are tab labels. 合并
+    // covers a GitHub PR and a GitLab MR.
     expect(zh.forge.type.issues).toBe('议题')
-    expect(zh.forge.type.prs).toBe('合并请求')
+    expect(zh.forge.type.prs).toBe('合并')
   })
 
   it('translates the state filter chips in zh', () => {
@@ -35,6 +36,10 @@ describe('forge locale values', () => {
     expect(zh.forge.state.open).toBe('开启')
     expect(zh.forge.state.closed).toBe('已关闭')
     expect(zh.forge.state.all).toBe('全部')
+    // "merged" is a first-class filter for change requests, not just a display
+    // state: GitLab's state=closed excludes merged MRs, so the two must be
+    // separately selectable for the platforms to agree.
+    expect(zh.forge.state.merged).toBe('已合并')
   })
 
   it('translates the dock nav label in zh', () => {

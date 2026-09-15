@@ -121,6 +121,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 
 vi.mock('@/composables/useAgents', () => ({
   updateACPModelList: vi.fn(),
+  applyResolvedModelList: vi.fn(),
 }))
 
 vi.mock('@/composables/usePlanProgress', async (importOriginal) => {
@@ -1261,6 +1262,44 @@ describe('useChatStream', () => {
 
       expect(options.onStreamEnd).not.toHaveBeenCalled()
     })
+
+    it('clears loading when cancelled arrives with no streaming placeholder', () => {
+      // Reproduces the "spinner never stops" hang: if the assistant placeholder
+      // is gone by the time the terminal event arrives (e.g. a reload replaced
+      // the array, or the placeholder was already finalized by an earlier
+      // path), findStreamingMsg returns undefined. Returning early there
+      // skipped loading.value = false, so the stop button stayed armed and the
+      // loading indicator never cleared until the user switched sessions.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      // Simulate the placeholder being absent when the event is handled.
+      options.messages.value = []
+
+      simulateWsEvent('cancelled', {})
+
+      expect(options.loading.value).toBe(false)
+      expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled')
+    })
+
+    it('clears loading when done arrives with no streaming placeholder', () => {
+      // The same hang would exist on the completion path if a placeholder were
+      // absent. 'done' has no placeholder guard, so this pins the behavior both
+      // terminal events must share.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.messages.value = []
+
+      simulateWsEvent('done', {})
+
+      expect(options.loading.value).toBe(false)
+      expect(options.onStreamEnd).toHaveBeenCalledWith('done')
+    })
   })
 
   describe('WS event handling — error', () => {
@@ -1719,11 +1758,43 @@ describe('useChatStream', () => {
         pending: true, seq: 12,
       } })
 
-      simulateWsEvent('user_message', { messageId: 99, content: '2', queueId: 'pending-2', senderClientId: 'my-device-456' })
+      // `queued: true` is what the backend actually sends for a message that is
+      // still waiting for the drain loop — both emitters that pair a
+      // senderClientId with a queued bubble set it (chat.go "enqueued" path and
+      // queue.go's explicit enqueue). Without the flag the client reads the
+      // message as having joined the running turn and adopts it, which is
+      // correct for that case but not this one.
+      simulateWsEvent('user_message', { messageId: 99, content: '2', queueId: 'pending-2', senderClientId: 'my-device-456', queued: true })
 
       const msg2 = options.messages.value.find((m: any) => m.role === 'user')
       expect(msg2.id).toBe('pending-2')
       expect(msg2.pending).toBe(true)
+      localStorage.removeItem('clawbench_client_id')
+    })
+
+    it('self-echo with queued:false adopts the pending bubble and clears pending', () => {
+      // Counterpart to the case above. `queued: false` means the message joined
+      // the RUNNING turn (mid-turn injection) instead of waiting for the drain
+      // loop, so no queue_drain will ever arrive for it. The bubble must shed
+      // `pending` here or it spins forever — see the clearPending branch in
+      // chatStreamUtils. Without the flag reaching the reducer, the guard
+      // `if (target.pending && !action.clearPending) return state` bails out
+      // and the bubble stays pending.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      localStorage.setItem('clawbench_client_id', 'my-device-456')
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-3', content: '3', blocks: [{ type: 'text', text: '3' }],
+        pending: true, seq: 13,
+      } })
+
+      simulateWsEvent('user_message', { messageId: 100, content: '3', queueId: 'pending-3', senderClientId: 'my-device-456', queued: false })
+
+      const msg3 = options.messages.value.find((m: any) => m.role === 'user')
+      expect(msg3.id).toBe(100)            // adopted the DB id
+      expect(msg3.queueId).toBe('pending-3') // old id preserved for the reply anchor
+      expect(msg3.pending).toBeUndefined()
       localStorage.removeItem('clawbench_client_id')
     })
 

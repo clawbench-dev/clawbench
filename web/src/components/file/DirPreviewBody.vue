@@ -4,13 +4,28 @@
        scrolls under the fixed toolbar. -->
   <div class="dir-preview-body" :class="{ 'is-loading': loading }">
     <!-- Toolbar: same metrics/colors as .code-preview-meta so the two pane
-         bodies read as one component. -->
-    <div class="dir-preview-meta">
+         bodies read as one component. Suppressed with `chromeless` when the
+         host already renders a title/meta row (the floating preview card does),
+         which would otherwise stack a third, redundant row. -->
+    <div v-if="!chromeless" class="dir-preview-meta">
       <div class="dir-preview-meta-info">
         <span class="dir-preview-title">{{ dirName }}</span>
         <span class="dir-preview-count">{{ t('file.dirPreview.count', { n: shown.length }) }}</span>
       </div>
       <div class="dir-preview-actions">
+        <!-- Open directory: same icon as the file card's "open file" control
+             (ExternalLink), so the two panes' primary action reads the same.
+             The listing is already the directory, so this opens the directory
+             ITSELF in the file manager rather than revealing its parent. -->
+        <button
+          type="button"
+          class="dir-preview-btn"
+          :title="t('file.codePreview.revealInTree')"
+          :aria-label="t('file.codePreview.revealInTree')"
+          @click="emit('open-self')"
+        >
+          <ExternalLink :size="12" />
+        </button>
         <button
           type="button"
           class="dir-preview-btn"
@@ -51,10 +66,22 @@
           :title="entry.name"
           @click="onEntryClick(entry)"
         >
+          <!-- Thumbable images get a real thumbnail from the same endpoint the
+               file manager list uses; everything else (and any image whose
+               thumbnail fails) falls back to the type icon. -->
+          <img
+            v-if="isThumbLoaded(entry)"
+            class="dir-preview-thumb"
+            :src="thumbUrlFor(entry)"
+            :alt="entry.name"
+            loading="lazy"
+            @error="onThumbError(entry)"
+          />
           <FileIcon
+            v-else
             :path="entry.name"
             :is-dir="entry.type === 'dir'"
-            :size="16"
+            :size="20"
             class="dir-preview-icon"
           />
           <span class="dir-preview-name">{{ entry.name }}</span>
@@ -68,11 +95,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, FolderOpen, Link2, X } from 'lucide-vue-next'
+import { AlertTriangle, ExternalLink, FolderOpen, Link2, X } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { buildThumbUrl, isThumbable } from '@/utils/fileManager'
 import type { DirPreviewEntry } from '@/composables/useDirPreview'
 
 const props = defineProps<{
@@ -83,6 +111,18 @@ const props = defineProps<{
   visible: (entry: DirPreviewEntry) => boolean
   /** Display name of the directory being listed (its own base name). */
   dirName: string
+  /**
+   * Project-relative path of the directory being listed. Needed to build
+   * thumbnail URLs (`/api/file/thumb?path=…`); when absent, entries fall back to
+   * type icons instead of thumbnails.
+   */
+  dirPath?: string
+  /**
+   * Render only the listing, without this component's own toolbar. Set by hosts
+   * that already show a title/meta row (the floating preview card), so the pane
+   * doesn't end up with three stacked bars.
+   */
+  chromeless?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -90,6 +130,9 @@ const emit = defineEmits<{
   (e: 'open-file', name: string): void
   /** A directory was clicked — the caller navigates the main list into it. */
   (e: 'open-dir', name: string): void
+  /** "Open directory" was pressed — the caller opens the listed directory
+   *  itself (not a child), matching the file card's reveal-in-tree action. */
+  (e: 'open-self'): void
   /** The pane's close control was pressed. */
   (e: 'closed'): void
 }>()
@@ -97,6 +140,31 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const shown = computed(() => props.entries.filter(e => props.visible(e)))
+
+// ── Thumbnails ──
+// Same mechanism as the file manager list: ask /api/file/thumb for decodable
+// raster images and remember failures so a 404 isn't re-requested on every
+// re-render. Keyed by the FULL path (not the bare name) — two directories can
+// both hold `logo.png`, and a name-only key would suppress a valid thumbnail
+// after the pane moves to a sibling directory.
+const thumbErrors = reactive(new Set<string>())
+
+function thumbKey(entry: DirPreviewEntry): string {
+  return `${props.dirPath || ''}/${entry.name}`
+}
+
+function thumbUrlFor(entry: DirPreviewEntry): string {
+  return buildThumbUrl(props.dirPath || '', entry.name)
+}
+
+function onThumbError(entry: DirPreviewEntry) {
+  thumbErrors.add(thumbKey(entry))
+}
+
+function isThumbLoaded(entry: DirPreviewEntry): boolean {
+  if (!props.dirPath) return false
+  return isThumbable(entry) && !thumbErrors.has(thumbKey(entry))
+}
 
 function onEntryClick(entry: DirPreviewEntry) {
   if (entry.type === 'dir') {
@@ -218,7 +286,7 @@ function onEntryClick(entry: DirPreviewEntry) {
    from the pane width; no JS measurement or ResizeObserver needed. */
 .dir-preview-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: var(--space-1);
 }
 
@@ -227,12 +295,12 @@ function onEntryClick(entry: DirPreviewEntry) {
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-primary, #222);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-md);
   text-align: left;
   cursor: pointer;
 }
@@ -243,6 +311,17 @@ function onEntryClick(entry: DirPreviewEntry) {
 
 .dir-preview-icon {
   flex-shrink: 0;
+}
+
+/* Image thumbnails, from the same endpoint the file manager list uses. Sized
+   to the icon it replaces so rows keep a uniform height. */
+.dir-preview-thumb {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs);
+  object-fit: cover;
+  background: var(--bg-secondary, #f8f9fa);
 }
 
 /* Long names truncate instead of widening the track (which would push the

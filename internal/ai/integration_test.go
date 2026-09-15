@@ -130,7 +130,6 @@ func init() {
 		return NewVeCLIBackend()
 	})
 
-
 	// copilot — CLI backend
 	RegisterBackend("copilot", func() AIBackend {
 		return &CLIBackend{
@@ -418,20 +417,20 @@ type cliTestConfig struct {
 // which test points exist.
 
 const (
-	TestNewSession                 = "NewSession"
-	TestStreamEvents               = "StreamEvents"
-	TestResumeSession              = "ResumeSession"
-	TestCancelMidStream            = "CancelMidStream"
-	TestInvalidWorkDir             = "InvalidWorkDir"
-	TestCodexInvalidCommand        = "CodexInvalidCommand"
-	TestSystemPromptInjection      = "SystemPromptInjection"
-	TestMultiTurnResume            = "MultiTurnResume"
-	TestResumeSessionIDConsistency = "ResumeSessionIDConsistency"
-	TestResumeAfterCancel          = "ResumeAfterCancel"
-	TestResumeMetadataCapture      = "ResumeMetadataCapture"
-	TestForkSessionAmnesia         = "ForkSessionAmnesia"
-	TestForkAcrossBackends         = "ForkAcrossBackends"
-	TestForkResumeVsNewSession     = "ForkResumeVsNewSession"
+	TestNewSession                    = "NewSession"
+	TestStreamEvents                  = "StreamEvents"
+	TestResumeSession                 = "ResumeSession"
+	TestCancelMidStream               = "CancelMidStream"
+	TestInvalidWorkDir                = "InvalidWorkDir"
+	TestCodexInvalidCommand           = "CodexInvalidCommand"
+	TestSystemPromptInjection         = "SystemPromptInjection"
+	TestMultiTurnResume               = "MultiTurnResume"
+	TestResumeSessionIDConsistency    = "ResumeSessionIDConsistency"
+	TestResumeAfterCancel             = "ResumeAfterCancel"
+	TestResumeMetadataCapture         = "ResumeMetadataCapture"
+	TestForkSessionAmnesia            = "ForkSessionAmnesia"
+	TestForkAcrossBackends            = "ForkAcrossBackends"
+	TestForkResumeVsNewSession        = "ForkResumeVsNewSession"
 	TestFirstMessageInterruptedResume = "FirstMessageInterruptedResume"
 )
 
@@ -477,7 +476,7 @@ var cliBackends = []cliTestConfig{
 		HasSessionIDInMeta:  true,
 		HasTokenUsageInMeta: true,
 		SupportsResume:      true,
-		SupportedTests: withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir, TestForkSessionAmnesia, TestForkResumeVsNewSession, TestResumeSessionIDConsistency),
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir, TestForkSessionAmnesia, TestForkResumeVsNewSession, TestResumeSessionIDConsistency),
 	},
 	{
 		Backend:             "codebuddy",
@@ -488,19 +487,19 @@ var cliBackends = []cliTestConfig{
 		HasSessionIDInMeta:  true,
 		HasTokenUsageInMeta: true,
 		SupportsResume:      true,
-		SupportedTests: withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir, TestResumeSessionIDConsistency),
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir, TestResumeSessionIDConsistency),
 	},
 	{
-		Backend:            "opencode",
-		CLIName:            "opencode",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		SkipNewSessionID:     true,
-		EmitsSessionCapture:  true,
-		HasSessionIDInMeta:   true,
-		HasTokenUsageInMeta:  false, // OpenCodeStreamParser does not always report InputTokens
+		Backend:             "opencode",
+		CLIName:             "opencode",
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		SkipNewSessionID:    true,
+		EmitsSessionCapture: true,
+		HasSessionIDInMeta:  true,
+		HasTokenUsageInMeta: false, // OpenCodeStreamParser does not always report InputTokens
 		SupportsResume:      true,
-		SupportedTests: withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir),
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir),
 	},
 	{
 		Backend:             "codex",
@@ -528,31 +527,31 @@ var cliBackends = []cliTestConfig{
 		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestResumeSessionIDConsistency),
 	},
 	{
-		Backend:            "deepseek",
-		CLIName:            "codewhale",
-		AltCLIName:         "deepseek", // legacy shim (removed in CodeWhale v0.9.0)
-		Timeout:            120 * time.Second,
-		CollectTimeout:     150 * time.Second,
-		HasModelInMeta:     true,
-		SkipNewSessionID:     true,   // CodeWhale generates own session IDs
-		EmitsSessionCapture:  true,
-		HasSessionIDInMeta:   true,   // Reports session ID in metadata
+		Backend:             "deepseek",
+		CLIName:             "codewhale",
+		AltCLIName:          "deepseek", // legacy shim (removed in CodeWhale v0.9.0)
+		Timeout:             120 * time.Second,
+		CollectTimeout:      150 * time.Second,
+		HasModelInMeta:      true,
+		SkipNewSessionID:    true, // CodeWhale generates own session IDs
+		EmitsSessionCapture: true,
+		HasSessionIDInMeta:  true,  // Reports session ID in metadata
 		HasTokenUsageInMeta: false, // CodeWhale mode doesn't reliably report tokens
-		SupportsResume:     true,
-		SupportedTests:     withResumeTestPoints(allCLITestPoints(), TestCancelMidStream),
+		SupportsResume:      true,
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestCancelMidStream),
 	},
 	{
-		Backend:          "vecli",
-		CLIName:          "vecli",
-		Timeout:          60 * time.Second,
-		CollectTimeout:   90 * time.Second,
-		HasModelInMeta:   true,
+		Backend:        "vecli",
+		CLIName:        "vecli",
+		Timeout:        60 * time.Second,
+		CollectTimeout: 90 * time.Second,
+		HasModelInMeta: true,
 		// VeCLI: no session_capture, no session ID in metadata, no resume support
-		HasSessionIDInMeta:   false,
-		HasTokenUsageInMeta:  false,
-		SkipNewSessionID:     true,
-		EmitsSessionCapture:  false,
-		SupportedTests:       withTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir),
+		HasSessionIDInMeta:  false,
+		HasTokenUsageInMeta: false,
+		SkipNewSessionID:    true,
+		EmitsSessionCapture: false,
+		SupportedTests:      withTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir),
 	},
 
 	{
@@ -589,17 +588,17 @@ var cliBackends = []cliTestConfig{
 		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestResumeSessionIDConsistency),
 	},
 	{
-		Backend:            "pi",
-		CLIName:            "pi",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		SkipNewSessionID:     true,
-		EmitsSessionCapture:  true,
-		HasModelInMeta:       true,
-		HasSessionIDInMeta:   true,
-		HasTokenUsageInMeta:  true,
-		SupportsResume:       true,
-		SupportedTests:       withResumeTestPoints(allCLITestPoints()),
+		Backend:             "pi",
+		CLIName:             "pi",
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		SkipNewSessionID:    true,
+		EmitsSessionCapture: true,
+		HasModelInMeta:      true,
+		HasSessionIDInMeta:  true,
+		HasTokenUsageInMeta: true,
+		SupportsResume:      true,
+		SupportedTests:      withResumeTestPoints(allCLITestPoints()),
 	},
 }
 
@@ -908,8 +907,8 @@ func skipIfVeCLINoContent(t *testing.T, cfg cliTestConfig, events []StreamEvent)
 
 // cliTestCase describes one test point for table-driven CLI integration tests.
 type cliTestCase struct {
-	Name      string                        // Test point name (also used as t.Run label)
-	ShouldRun func(cfg cliTestConfig) bool   // Returns true if this backend should run this test
+	Name      string                                // Test point name (also used as t.Run label)
+	ShouldRun func(cfg cliTestConfig) bool          // Returns true if this backend should run this test
 	Run       func(t *testing.T, cfg cliTestConfig) // The test logic
 }
 

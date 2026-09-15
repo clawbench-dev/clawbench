@@ -18,11 +18,15 @@ vi.mock('@/composables/useSettingsConfig', async (importOriginal) => {
   }
 })
 
-const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState } = vi.hoisted(() => {
+const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState } = await vi.hoisted(async () => {
+  // The real store exposes a reactive() state, so tests that mutate
+  // state.projectRoot (or sessionListVersion) must trigger the component's
+  // watchers. A plain object would silently not, making such a test vacuous.
+  const { reactive } = await import('vue')
   // projectRoot/homeDir are required by useCrossProjectSessions' "exclude the
   // current project" filter — without them the filter compares against
   // undefined and the test can never exercise the exclusion.
-  const mockStore = { state: { chatSessionPageSize: 10, sessionListVersion: 0, sessionCount: 0, projectRoot: '/proj/current', homeDir: '/home/u' } }
+  const mockStore = { state: reactive({ chatSessionPageSize: 10, sessionListVersion: 0, sessionCount: 0, projectRoot: '/proj/current', homeDir: '/home/u' }) }
   const mockCrossState: {
     groups: any
     loading: any
@@ -104,6 +108,15 @@ vi.mock('@/components/common/LoadingIndicator.vue', () => ({
 }))
 vi.mock('@/components/common/ModalDialog.vue', () => ({
   default: { name: 'ModalDialog', template: '<div class="modal-stub" />' },
+}))
+// The tag dialog owns its own API calls; stub it so these tests exercise the
+// list's wiring (open/seed) without hitting fetch for the candidate list.
+vi.mock('@/components/session/SessionTagDialog.vue', () => ({
+  default: {
+    name: 'SessionTagDialog',
+    props: ['open', 'sessionId', 'initialTags'],
+    template: '<div class="tag-dialog-stub" />',
+  },
 }))
 class MockIntersectionObserver {
   callback: any
@@ -435,26 +448,43 @@ describe('SessionList', () => {
     expect(wrapper.vm.hasMore).toBe(false)
   })
 
-  describe('pinned section grouping and keyboard nav', () => {
+  describe('pinned marker and keyboard nav', () => {
     // Backend returns pinned DESC, created_at DESC. The component must render in
     // that same order so useListNav's index maps onto the visible rows.
     const pinnedOld = { id: 'p-old', title: 'Pinned Old', pinned: true, createdAt: '2024-01-01', updatedAt: '2024-01-01', agentId: 'agent-1', backend: 'cli' }
     const newest = { id: 'n-new', title: 'Newest', pinned: false, createdAt: '2025-06-01', updatedAt: '2025-06-01', agentId: 'agent-1', backend: 'cli' }
     const middle = { id: 'n-mid', title: 'Middle', pinned: false, createdAt: '2025-05-01', updatedAt: '2025-05-01', agentId: 'agent-1', backend: 'cli' }
 
-    it('renders pinned sessions in a pinned section before the recent section', async () => {
+    it('renders one flat list — no pinned/recent section headers', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedOld, newest, middle], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      const sections = wrapper.findAll('.session-section')
-      expect(sections.length).toBe(2)
-      // Pinned row sits in the first section, unpinned rows in the second.
-      expect(sections[0].findAll('.session-row.pinned').length).toBe(1)
-      expect(sections[0].find('[data-session-id="p-old"]').exists()).toBe(true)
-      expect(sections[1].findAll('.session-row').length).toBe(2)
-      expect(sections[1].find('[data-session-id="p-old"]').exists()).toBe(false)
+      // The section split is gone: a single .session-rows container holds all
+      // three rows, and no group header is rendered in the project pane.
+      expect(wrapper.findAll('.session-section').length).toBe(0)
+      const rows = wrapper.findAll('.session-rows > .session-row')
+      expect(rows.length).toBe(3)
+      expect(wrapper.findAll('.session-group-header').length).toBe(0)
+    })
+
+    it('marks the pinned row with the row modifier only (no inline glyph)', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedOld, newest, middle], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // The wedge is a CSS pseudo-element, so the DOM carries only the modifier
+      // class — no extra glyph element in the row or its title line.
+      const pinnedRow = wrapper.find('[data-session-id="p-old"]')
+      expect(pinnedRow.classes()).toContain('pinned')
+      expect(pinnedRow.find('.session-pin-icon').exists()).toBe(false)
+
+      // Unpinned rows carry no modifier either.
+      for (const id of ['n-new', 'n-mid']) {
+        expect(wrapper.find(`[data-session-id="${id}"]`).classes()).not.toContain('pinned')
+      }
     })
 
     it('DOM order matches sessionsWithStatus order (pinned first, then newest)', async () => {
@@ -474,7 +504,7 @@ describe('SessionList', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
     }
 
-    it('highlights the pinned row at nav index 0 and unpinned rows after it', async () => {
+    it('highlights rows in flat DOM order, pinned row first', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedOld, newest, middle], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
@@ -487,8 +517,7 @@ describe('SessionList', () => {
       expect(highlighted.length).toBe(1)
       expect(highlighted[0].attributes('data-session-id')).toBe('p-old')
 
-      // Next is the first unpinned row — this is the offset the unpinned section
-      // must apply (unpinnedIndexOffset) to stay aligned with the nav index.
+      // The flat list means index 1 is simply the next row — no section offset.
       pressKey('ArrowDown')
       await nextTick()
       highlighted = wrapper.findAll('.session-row.session-row-active')
@@ -535,14 +564,14 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
-    it('renders no pinned section when nothing is pinned', async () => {
+    it('renders no pinned marker when nothing is pinned', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [newest, middle], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
 
       expect(wrapper.findAll('.session-row.pinned').length).toBe(0)
-      expect(wrapper.findAll('.session-section').length).toBe(1)
+      expect(wrapper.findAll('.session-row').length).toBe(2)
     })
 
     it('togglePin sends the pinned flag for the long-pressed session and bumps the list version', async () => {
@@ -856,7 +885,7 @@ describe('SessionList', () => {
       const menu = menus[menus.length - 1]
       expect(menu).toBeTruthy()
       // Reuses the file manager's item class + icon-left layout.
-      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(3)
+      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(4)
       expect(document.body.querySelector('.session-context-menu')).toBeNull()
       wrapper.unmount()
     })
@@ -931,13 +960,381 @@ describe('SessionList', () => {
       await flushPromises()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
 
-      // Archive item (index 2) — dismisses and emits.
+      // Set-tags item (index 2) — dismisses and opens the tag dialog.
       openFor(wrapper.vm.sessions[0])
       await nextTick()
       clickLastMenu(2)
       await nextTick()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
+      expect(wrapper.vm.tagDialog.open).toBe(true)
+
+      // Archive item (index 3) — dismisses and emits.
+      openFor(wrapper.vm.sessions[0])
+      await nextTick()
+      clickLastMenu(3)
+      await nextTick()
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
       expect(wrapper.emitted('archive')).toBeTruthy()
+      wrapper.unmount()
+    })
+
+    it('opens the tag dialog seeded with the session tags', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ ...sessionsFixture().s1, tags: [{ name: 'bug' }, { name: 'urgent' }] }],
+          hasMore: false,
+        }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      wrapper.vm.openTagDialogFromMenu('s1')
+      expect(wrapper.vm.tagDialog.open).toBe(true)
+      expect(wrapper.vm.tagDialog.sessionId).toBe('s1')
+      // Seeded from the already-loaded list so the checkboxes paint instantly.
+      expect(wrapper.vm.tagDialog.initialTags).toEqual(['bug', 'urgent'])
+      wrapper.unmount()
+    })
+
+    it('does not open the tag dialog for an unknown session', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      wrapper.vm.openTagDialogFromMenu('nope')
+      expect(wrapper.vm.tagDialog.open).toBe(false)
+      wrapper.unmount()
+    })
+  })
+
+  describe('session tag row', () => {
+    it('renders one chip per tag with a stable accent variable', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ ...sessionsFixture().s1, tags: [{ name: 'bug' }, { name: 'urgent' }] }],
+          hasMore: false,
+        }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const chips = wrapper.findAll('.session-tag')
+      expect(chips.length).toBe(2)
+      expect(chips.map(c => c.text())).toEqual(['bug', 'urgent'])
+      // The accent is carried inline (light+dark) so the CSS can pick per theme.
+      expect(chips[0].attributes('style')).toContain('--tag-accent-light')
+      wrapper.unmount()
+    })
+
+    it('omits the tag row entirely when the session has no tags', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // An empty tag row would still consume the info column's gap and shift
+      // the meta line, so the wrapper must not render at all.
+      expect(wrapper.find('.session-item-tags').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('separates the tag row from the meta line above it', async () => {
+      // The parent's uniform gap (2px) reads fine between two text lines, whose
+      // line-height half-leading pads them out, but leaves the bordered chips
+      // visually flush against the meta line — they read as its continuation
+      // rather than a row of their own. The tag row must add its own spacing.
+      const src = String((await import('@/components/session/SessionList.vue?raw')).default)
+      const rule = src.replace(/\/\*[\s\S]*?\*\//g, '')
+        .match(/\.session-item-tags\s*\{[^}]*\}/)?.[0]
+      expect(rule, '.session-item-tags should exist').toBeTruthy()
+      expect(rule).toMatch(/margin-top:\s*var\(--space-2\)/)
+      // Whitespace only: a border/background here would double up with the row
+      // separator just below and fight the active/running row backgrounds.
+      expect(rule).not.toMatch(/border/)
+      expect(rule).not.toMatch(/background/)
+    })
+
+    it('wraps the tag row instead of clipping the overflow', async () => {
+      // The row was nowrap + overflow:hidden, so any tag past the row's width
+      // was invisible and unclickable — the tags existed but could not be read.
+      // jsdom has no layout engine, so assert the declarations that allow
+      // wrapping rather than a rendered geometry.
+      const src = String((await import('@/components/session/SessionList.vue?raw')).default)
+      const rule = src.replace(/\/\*[\s\S]*?\*\//g, '')
+        .match(/\.session-item-tags\s*\{[^}]*\}/)?.[0]
+      expect(rule, '.session-item-tags should exist').toBeTruthy()
+      expect(rule).toMatch(/flex-wrap:\s*wrap/)
+      expect(rule).not.toMatch(/overflow:\s*hidden/)
+    })
+
+    it('lets a long tag name ellipsise instead of widening the row', async () => {
+      const src = String((await import('@/components/session/SessionList.vue?raw')).default)
+      const rule = src.replace(/\/\*[\s\S]*?\*\//g, '')
+        .match(/\.session-tag\s*\{[^}]*\}/)?.[0]
+      expect(rule, '.session-tag should exist').toBeTruthy()
+      // flex-shrink:0 with a long name would push the chip past the pane edge;
+      // min-width:0 is what actually lets text-overflow engage in a flex child.
+      expect(rule).toMatch(/flex-shrink:\s*1/)
+      expect(rule).toMatch(/min-width:\s*0/)
+      expect(rule).toMatch(/text-overflow:\s*ellipsis/)
+    })
+
+    it('gives the same tag the same color across sessions', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [
+            { ...sessionsFixture().s1, tags: [{ name: 'shared' }] },
+            { ...sessionsFixture().s2, tags: [{ name: 'shared' }] },
+          ],
+          hasMore: false,
+        }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const chips = wrapper.findAll('.session-tag')
+      expect(chips.length).toBe(2)
+      // Same name ⇒ same color, regardless of which session it sits on.
+      expect(chips[0].attributes('style')).toBe(chips[1].attributes('style'))
+      wrapper.unmount()
+    })
+  })
+  describe('tag filter bar', () => {
+    // The filter bar fetches its own chip set via apiGet (global fetch) while
+    // the list uses fetch directly — route by URL so each call gets the right
+    // payload.
+    function routeFetch({ sessions = [], hasMore = false, tags = [] } = {}) {
+      mockFetch.mockImplementation((url: string) => {
+        if (String(url).includes('/api/ai/session/tags')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ tags }) })
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions, hasMore }) })
+      })
+    }
+
+    it('hides the filter bar when the project has no tags in use', async () => {
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [] })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      expect(wrapper.find('.session-tag-filter').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('renders one chip per in-use tag and requests only in-use tags', async () => {
+      routeFetch({
+        sessions: [sessionsFixture().s1],
+        tags: [{ name: 'bug', scope: 'project', count: 2 }, { name: 'urgent', scope: 'global', count: 1 }],
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const chips = wrapper.findAll('.session-tag-filter-chip')
+      expect(chips.length).toBe(2)
+      expect(chips[0].text()).toContain('bug')
+      // The unused-global case is excluded server-side; assert the client asks
+      // for that view rather than the full candidate list.
+      const tagCall = mockFetch.mock.calls.find(c => String(c[0]).includes('/api/ai/session/tags'))
+      expect(String(tagCall![0])).toContain('inUse=1')
+      wrapper.unmount()
+    })
+
+    it('clicking a chip sends the tag to the server and marks it active', async () => {
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      mockFetch.mockClear()
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+
+      const listCall = mockFetch.mock.calls.find(c => String(c[0]).includes('/api/ai/sessions'))
+      expect(String(listCall![0])).toContain('tag=bug')
+      expect(wrapper.find('.session-tag-filter-chip').classes()).toContain('active')
+      wrapper.unmount()
+    })
+
+    it('clicking the active chip again clears the filter', async () => {
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.session-tag-filter-chip').classes()).toContain('active')
+
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.session-tag-filter-chip').classes()).not.toContain('active')
+      wrapper.unmount()
+    })
+
+    it('paginated pages keep the tag filter', async () => {
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+
+      mockFetch.mockClear()
+      routeFetch({ sessions: [sessionsFixture().s2], hasMore: false, tags: [] })
+      // Pretend the first filtered page reported more rows so loadMore runs.
+      wrapper.vm.hasMore = true
+      await wrapper.vm.loadMoreSessions()
+      await flushPromises()
+
+      const moreCall = mockFetch.mock.calls.find(c => String(c[0]).includes('/api/ai/sessions'))
+      expect(String(moreCall![0])).toContain('tag=bug')
+      wrapper.unmount()
+    })
+
+    it('clears the filter when the applied tag disappears from the in-use list', async () => {
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.session-tag-filter-chip').classes()).toContain('active')
+
+      // The tag is deleted (or its last session dropped it): the bar would
+      // vanish, so the filter must not stay applied invisibly.
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [] })
+      await wrapper.vm.loadFilterTags()
+      await flushPromises()
+
+      expect(wrapper.find('.session-tag-filter').exists()).toBe(false)
+      // And the list is no longer constrained by the dead tag.
+      mockFetch.mockClear()
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [] })
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      const listCall = mockFetch.mock.calls.find(c => String(c[0]).includes('/api/ai/sessions'))
+      expect(String(listCall![0])).not.toContain('tag=')
+      wrapper.unmount()
+    })
+
+    it('clears the filter when the project changes, even if the tag name exists there too', async () => {
+      // The new project deliberately also has a "bug" tag in use. Without the
+      // explicit clear in the projectRoot watcher, loadFilterTags would find the
+      // name present and keep the filter — carrying project A's selection into a
+      // different project, where it means nothing. (If the new project had no
+      // tags, the auto-clear would mask this and the test would pass either way.)
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.session-tag-filter-chip').classes()).toContain('active')
+
+      mockStore.state.projectRoot = '/proj/other'
+      routeFetch({ sessions: [], tags: [{ name: 'bug', scope: 'project', count: 4 }] })
+      await nextTick()
+      await flushPromises()
+
+      // The chip is still offered (the tag exists here) but must be INACTIVE.
+      const chip = wrapper.find('.session-tag-filter-chip')
+      expect(chip.exists()).toBe(true)
+      expect(chip.classes()).not.toContain('active')
+      wrapper.unmount()
+    })
+
+
+    it('re-fetches the list after the applied tag disappears (no dead filter)', async () => {
+      // Regression: the chip set and the list are refreshed by the same watcher,
+      // but the list request captures activeTag synchronously. If the tag is
+      // cleared AFTER that request is issued, the list stays filtered by a tag
+      // whose chip is already gone — the user cannot clear it from the UI.
+      const route = (sessions: any[], tags: any[]) => {
+        mockFetch.mockImplementation((url: string) => {
+          if (String(url).includes('/api/ai/session/tags')) {
+            return Promise.resolve({ ok: true, json: () => Promise.resolve({ tags }) })
+          }
+          const u = String(url)
+          const filtered = u.includes('tag=bug') ? sessions.filter((x: any) => x.tagged) : sessions
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: filtered, hasMore: false }) })
+        })
+      }
+      const all = [
+        { id: 's1', title: 'A', createdAt: '2025-01-01', updatedAt: '2025-01-01', tagged: true },
+        { id: 's2', title: 'B', createdAt: '2025-01-02', updatedAt: '2025-01-02', tagged: false },
+      ]
+      route(all, [{ name: 'bug', scope: 'project', count: 1 }])
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+      expect(wrapper.vm.sessions.length).toBe(1)
+
+      // The tag is deleted elsewhere: the version bump drives the refresh.
+      route(all, [])
+      mockStore.state.sessionListVersion++
+      await nextTick()
+      await flushPromises()
+      await flushPromises()
+
+      // Bar is gone AND the list is no longer constrained by the dead tag.
+      expect(wrapper.find('.session-tag-filter').exists()).toBe(false)
+      expect(wrapper.vm.sessions.length).toBe(2)
+      wrapper.unmount()
+    })
+
+    it('keeps chips and filter when the tag fetch fails', async () => {
+      // A transient API failure must not be read as "this project has no tags":
+      // that would hide the bar and silently drop the user's filter, with no way
+      // to restore it.
+      let failTags = false
+      mockFetch.mockImplementation((url: string) => {
+        if (String(url).includes('/api/ai/session/tags')) {
+          if (failTags) return Promise.reject(new Error('network'))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ tags: [{ name: 'bug', scope: 'project', count: 1 }] }) })
+        }
+        const u = String(url)
+        const all = [
+          { id: 's1', title: 'A', createdAt: '2025-01-01', updatedAt: '2025-01-01', tagged: true },
+          { id: 's2', title: 'B', createdAt: '2025-01-02', updatedAt: '2025-01-02', tagged: false },
+        ]
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: u.includes('tag=bug') ? all.filter(x => x.tagged) : all, hasMore: false }) })
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+
+      failTags = true
+      await wrapper.vm.loadFilterTags()
+      await flushPromises()
+
+      expect(wrapper.find('.session-tag-filter').exists()).toBe(true)
+      expect(wrapper.find('.session-tag-filter-chip').classes()).toContain('active')
+      wrapper.unmount()
+    })
+
+    it('hides the filter bar on the cross-project tab', async () => {
+      routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+      const wrapper = await mountList({ activeTab: 'project' })
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      expect(wrapper.find('.session-tag-filter').exists()).toBe(true)
+
+      await wrapper.setProps({ activeTab: 'cross' })
+      await nextTick()
+      expect(wrapper.find('.session-tag-filter').exists()).toBe(false)
       wrapper.unmount()
     })
   })

@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"database/sql"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
 // resetGlobalRegistryForTest resets the global capability registry so each test
@@ -754,4 +756,98 @@ func TestGetAgentCapabilityRegistry_Singleton(t *testing.T) {
 	r1 := GetAgentCapabilityRegistry()
 	r2 := GetAgentCapabilityRegistry()
 	assert.Same(t, r1, r2, "GetAgentCapabilityRegistry must return the same instance")
+}
+
+// ── ACP model persistence ───────────────────────────────────────────────────
+//
+// The ACP-reported model list must survive a restart. Before it was persisted,
+// the list lived only in memory, so an agent's selectable models changed across
+// a restart: the CLI-discovered list before the first ACP session, the ACP list
+// after.
+
+func setupCapabilityDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(`CREATE TABLE agents (
+		id TEXT PRIMARY KEY,
+		transport TEXT NOT NULL DEFAULT 'cli',
+		acp_available_modes TEXT NOT NULL DEFAULT '[]',
+		acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
+		acp_available_commands TEXT NOT NULL DEFAULT '[]',
+		acp_available_models TEXT NOT NULL DEFAULT '[]',
+		acp_config_options TEXT NOT NULL DEFAULT '',
+		acp_load_session BOOLEAN NOT NULL DEFAULT false,
+		acp_list_sessions BOOLEAN NOT NULL DEFAULT false,
+		updated_at DATETIME
+	)`)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func TestRegistry_ModelsSurviveSaveAndLoad(t *testing.T) {
+	db := setupCapabilityDB(t)
+	origDB := getRegistryDB()
+	t.Cleanup(func() { SetRegistryDB(origDB) })
+	SetRegistryDB(db)
+
+	_, err := db.Exec("INSERT INTO agents (id, transport) VALUES ('acp-agent', 'acp-stdio')")
+	require.NoError(t, err)
+
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdateModels("acp-agent", []model.AgentModel{
+		{ID: "glm-5.3", Name: "GLM 5.3", Default: true},
+		{ID: "glm-5.2", Name: "GLM 5.2"},
+	})
+
+	// persistAsync runs in a goroutine; wait for the write to land.
+	require.Eventually(t, func() bool {
+		var raw string
+		if err := db.QueryRow("SELECT acp_available_models FROM agents WHERE id = 'acp-agent'").Scan(&raw); err != nil {
+			return false
+		}
+		return raw != "" && raw != "[]"
+	}, 2*time.Second, 20*time.Millisecond, "the ACP model list must be persisted")
+
+	// Simulate a restart: clear memory, load from the database.
+	restarted := resetGlobalRegistryForTest(t)
+	restarted.LoadFromDB(db)
+
+	got := restarted.Get("acp-agent")
+	require.NotNil(t, got, "capability must be restored from the database")
+	require.Len(t, got.AvailableModels, 2)
+	assert.Equal(t, "glm-5.3", got.AvailableModels[0].ID)
+	assert.True(t, got.AvailableModels[0].Default, "the default flag must survive the round-trip")
+}
+
+func TestRegistry_LoadFromDB_EmptyModelList(t *testing.T) {
+	db := setupCapabilityDB(t)
+	_, err := db.Exec(`INSERT INTO agents (id, transport, acp_available_models, acp_available_modes)
+		VALUES ('empty-models', 'acp-stdio', '[]', '[{"id":"ask","name":"Ask"}]')`)
+	require.NoError(t, err)
+
+	reg := resetGlobalRegistryForTest(t)
+	reg.LoadFromDB(db)
+
+	got := reg.Get("empty-models")
+	require.NotNil(t, got, "other capability data still loads")
+	assert.Empty(t, got.AvailableModels)
+	assert.Len(t, got.AvailableModes, 1)
+}
+
+func TestRegistry_LoadFromDB_MalformedModelsIgnored(t *testing.T) {
+	db := setupCapabilityDB(t)
+	_, err := db.Exec(`INSERT INTO agents (id, transport, acp_available_models, acp_available_modes)
+		VALUES ('bad-models', 'acp-stdio', '{not json', '[{"id":"ask","name":"Ask"}]')`)
+	require.NoError(t, err)
+
+	reg := resetGlobalRegistryForTest(t)
+	reg.LoadFromDB(db)
+
+	got := reg.Get("bad-models")
+	require.NotNil(t, got)
+	assert.Empty(t, got.AvailableModels, "unparseable JSON must be ignored, not fatal")
+	assert.Len(t, got.AvailableModes, 1)
 }

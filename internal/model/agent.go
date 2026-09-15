@@ -36,14 +36,23 @@ type Agent struct {
 	CustomSystemPrompt string `json:"customSystemPrompt"`
 
 	// ModelsAutoDetected indicates whether Models were filled by auto-discovery
-	// (from cache) rather than user-defined. Used by AsyncRefreshModelCache
-	// to know which agents should have their models updated.
+	// rather than user-defined. RefreshAgents uses it to decide which agents
+	// should have their models updated by discovery.
 	ModelsAutoDetected bool `json:"-"`
 
 	// CanRefreshModels indicates whether this agent supports model refresh via the API.
 	// Computed from BackendRegistry at load time based on whether the backend spec
-	// has model discovery capability (registered via RegisterDiscoverModelsFunc).
+	// has model discovery capability (registered via RegisterModelSource).
 	CanRefreshModels bool `json:"canRefreshModels"`
+
+	// CLIModels is the pure CLI-discovered list, without any ACP merge. It is
+	// populated only in API responses, so a client can show the CLI view when the
+	// agent is switched to CLI transport without re-deriving it.
+	//
+	// Models, by contrast, carries the resolved list (ACP membership applied).
+	// Keeping both on the wire is what lets the transport toggle be a plain field
+	// read on the client instead of a merge.
+	CLIModels []AgentModel `json:"cliModels,omitempty"`
 
 	// SupportsCLI indicates whether this agent's backend has a CLI implementation
 	// (a registered CLI backend factory). Backends like grok are ACP-only and
@@ -118,6 +127,19 @@ var (
 	Agents    map[string]*Agent // indexed by ID
 	AgentList []*Agent          // ordered list for API responses
 )
+
+// GetAgent returns the current in-memory agent for an ID, or nil.
+//
+// RefreshAgents replaces the whole Agents map with freshly loaded pointers, so a
+// long-lived holder (an ACP connection, for example) that captured an *Agent at
+// creation time would keep reading a stale model list after a refresh. Resolve
+// through this accessor at use time instead of caching the pointer.
+func GetAgent(id string) *Agent {
+	if id == "" {
+		return nil
+	}
+	return Agents[id]
+}
 
 // GetDefaultAgentID returns the default agent ID for new sessions.
 // Priority: configured DefaultAgentID > first agent in AgentList > empty string.

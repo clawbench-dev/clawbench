@@ -2,7 +2,7 @@ package qoder
 
 import (
 	"encoding/json"
-	"log/slog"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,11 +12,11 @@ import (
 )
 
 func init() {
-	model.RegisterDiscoverModelsFunc("qoder", DiscoverQoderModels)
+	model.RegisterModelSource(model.PluginSource("qoder", discoverQoderModels))
 }
 
-// qoderSkipModels are model IDs in the dynamic-texts.json that are tier-based
-// selectors or routing aliases, not actual models.
+// qoderSkipModels are keys in dynamic-texts.json that are tier selectors or
+// routing aliases rather than concrete models.
 var qoderSkipModels = map[string]bool{
 	"auto":        true,
 	"ultimate":    true,
@@ -25,102 +25,102 @@ var qoderSkipModels = map[string]bool{
 	"lite":        true,
 }
 
-// qoderModelKeyRe matches keys like "modelSelector.item.qmodel" in the dynamic-texts JSON.
+// qoderModelKeyRe matches keys like "modelSelector.item.qmodel".
 var qoderModelKeyRe = regexp.MustCompile(`^modelSelector\.item\.(.+)$`)
 
-// DiscoverQoderModels discovers Qoder model IDs by reading the cached model catalog
-// from ~/.qoder/.auth/dynamic-texts.json.
-func DiscoverQoderModels() []model.AgentModel { //nolint:gocyclo // JSON-based model discovery
-	homeDir, err := os.UserHomeDir()
+// qoderTextsPath is overridable in tests.
+var qoderTextsPath = func() (string, error) {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		slog.Debug("qoder model discovery: cannot determine home directory", "error", err)
-		return nil
+		return "", err
+	}
+	return filepath.Join(home, ".qoder", ".auth", "dynamic-texts.json"), nil
+}
+
+// discoverQoderModels reads Qoder's cached model catalog from
+// ~/.qoder/.auth/dynamic-texts.json. The file is written by the Qoder CLI on
+// login, so its absence means the CLI has never authenticated.
+func discoverQoderModels() ([]model.AgentModel, string) {
+	path, err := qoderTextsPath()
+	if err != nil {
+		return nil, fmt.Sprintf("qoder: cannot determine home directory: %v", err)
 	}
 
-	jsonPath := filepath.Join(homeDir, ".qoder", ".auth", "dynamic-texts.json")
-	data, err := os.ReadFile(jsonPath)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		slog.Debug("qoder model discovery: dynamic-texts.json not found", "path", jsonPath, "error", err)
-		return nil
+		return nil, fmt.Sprintf("qoder: %s not found (log in with the qoder CLI first)", path)
 	}
 
 	var raw struct {
 		Texts map[string]interface{} `json:"texts"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Debug("qoder model discovery: failed to parse JSON", "error", err)
-		return nil
+		return nil, fmt.Sprintf("qoder: %s is not valid JSON: %v", path, err)
 	}
-
 	if len(raw.Texts) == 0 {
-		slog.Debug("qoder model discovery: empty texts in JSON")
-		return nil
+		return nil, fmt.Sprintf("qoder: %s contains no texts", path)
 	}
 
-	type modelInfo struct {
-		id   string
-		name string
-	}
-	var modelEntries []modelInfo
+	type entry struct{ id, name string }
+	var entries []entry
 
 	for key, val := range raw.Texts {
 		m := qoderModelKeyRe.FindStringSubmatch(key)
 		if len(m) < 2 {
 			continue
 		}
-		modelID := m[1]
-
-		// Skip description/markdown suffixes
-		if strings.HasSuffix(modelID, ".description") || strings.HasSuffix(modelID, ".markdownDescription") {
+		id := m[1]
+		if !isQoderModelID(id) {
 			continue
 		}
-
-		// Skip known tier/alias IDs
-		if qoderSkipModels[modelID] {
-			continue
+		name := id
+		if s, ok := val.(string); ok && s != "" {
+			name = s
 		}
-
-		// Skip experts-* entries
-		if strings.HasPrefix(modelID, "experts-") {
-			continue
-		}
-
-		// Skip quest-* entries
-		if strings.HasPrefix(modelID, "quest-") {
-			continue
-		}
-
-		// Skip internal preview/dogfooding models
-		if strings.HasSuffix(modelID, "_preview") {
-			continue
-		}
-
-		// Skip keys with dots in the remaining part (metadata like "lite.description.quest")
-		if strings.Contains(modelID, ".") {
-			continue
-		}
-
-		name := modelID
-		if strVal, ok := val.(string); ok && strVal != "" {
-			name = strVal
-		}
-
-		modelEntries = append(modelEntries, modelInfo{id: modelID, name: name})
+		entries = append(entries, entry{id: id, name: name})
 	}
 
-	if len(modelEntries) == 0 {
-		return nil
+	if len(entries) == 0 {
+		return nil, fmt.Sprintf("qoder: no model entries under modelSelector.item.* in %s", path)
 	}
 
-	var models []model.AgentModel
-	for i, e := range modelEntries {
-		models = append(models, model.AgentModel{
-			ID:      e.id,
-			Name:    e.name,
-			Default: i == 0,
-		})
+	models := make([]model.AgentModel, 0, len(entries))
+	for _, e := range entries {
+		models = append(models, model.AgentModel{ID: e.id, Name: e.name})
 	}
+	return models, ""
+}
 
-	slog.Info("qoder model discovery succeeded", "models", len(models))
-	return models
+// isQoderModelID filters out the keys that share the modelSelector.item.*
+// prefix but are not selectable models: description variants, tier aliases,
+// internal preview builds and metadata keys.
+//
+// The metadata check looks for a KNOWN metadata suffix rather than any dot:
+// real model IDs contain dots too ("gpt-4.1"), so a blanket dot rule would drop
+// them. Metadata keys observed in the wild: "lite.description.quest",
+// "auto.markdownDescription".
+func isQoderModelID(id string) bool {
+	if strings.Contains(id, ".") {
+		for _, suffix := range qoderMetadataSuffixes {
+			if strings.HasSuffix(id, suffix) {
+				return false
+			}
+		}
+	}
+	switch {
+	case strings.HasPrefix(id, "experts-"),
+		strings.HasPrefix(id, "quest-"),
+		strings.HasSuffix(id, "_preview"):
+		return false
+	}
+	return !qoderSkipModels[id]
+}
+
+// qoderMetadataSuffixes are the key suffixes that mark a metadata entry rather
+// than a model.
+var qoderMetadataSuffixes = []string{
+	".description",
+	".markdownDescription",
+	".quest",
+	".lite",
 }

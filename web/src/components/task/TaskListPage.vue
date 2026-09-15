@@ -40,7 +40,7 @@
               >{{ task.triggerMode === 'event' ? t('task.form.triggerEvent') : t('task.form.triggerCron') }}</span>
               <span class="task-item-name">{{ task.name }}</span>
               <span v-if="task.runningCount > 0" class="task-item-running-dot" :title="t('task.exec.running')"></span>
-              <span v-if="task.unreadCount > 0" class="task-item-unread">{{ task.unreadCount }}</span>
+              <span v-if="task.unreadCount > 0" class="task-item-unread count-badge">{{ task.unreadCount }}</span>
             </div>
             <!-- Schedule + repeat. Cron-only, for two reasons:
                  - An event task has no schedule, and its repeat mode is inert —
@@ -77,7 +77,7 @@
                  (scheduler.go's event-task branch). -->
             <div v-if="task.triggerMode === 'event'" class="task-item-next">
               <GitBranch class="meta-icon" :size="12" />
-              <span class="task-item-repo" :title="boundRepoLabel">{{ boundRepoLabel || t('task.form.eventRepoUnbound') }}</span>
+              <span class="task-item-repo" :title="repoRowLabel">{{ repoRowLabel }}</span>
             </div>
             <div v-else class="task-item-next">
               <Clock class="meta-icon" :size="12" />
@@ -101,7 +101,7 @@ import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useAgents } from '@/composables/useAgents'
 import { humanizeCron, repeatLabel, statusLabel, formatDateTimeWithYear } from '@/utils/format'
-import { fetchForgeBinding } from '@/utils/forgeApi'
+import { useForgeBinding } from '@/composables/useForgeBinding'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -128,20 +128,18 @@ interface TaskItem {
   triggerMode?: string
 }
 
-// Every event task watches its project's bound repository, so one binding
-// lookup covers the whole list — the repository is a property of the project,
-// not of each row.
-const boundRepoLabel = ref('')
+// Every event task watches its project's bound repository, so one shared
+// binding lookup covers the whole list — the repository is a property of the
+// project, not of each row. The shared store coalesces this with the lookups
+// the detail/form views and the dock icon perform.
+const { slug: boundRepoLabel, resolved: bindingResolved, refresh: refreshBinding } = useForgeBinding()
 
-async function loadBoundRepo() {
-  try {
-    const res = await fetchForgeBinding()
-    const b = res.binding
-    boundRepoLabel.value = b ? `${b.owner}/${b.repo}` : ''
-  } catch {
-    boundRepoLabel.value = ''
-  }
-}
+// Before the binding resolves, the row must not claim the project is unbound:
+// "" is a real answer (confirmed unbound), a pending lookup is not.
+const repoRowLabel = computed(() => {
+  if (boundRepoLabel.value) return boundRepoLabel.value
+  return bindingResolved.value ? t('task.form.eventRepoUnbound') : t('common.loading')
+})
 
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])
 const hasUnread = computed(() => store.state.taskUnreadCount > 0)
@@ -159,7 +157,7 @@ async function refresh() {
     // Minimum spin duration so the refresh animation is always visible,
     // even when the API responds almost instantly.
     await Promise.all([
-      Promise.all([loadTasks(), loadAgents(), loadBoundRepo()]),
+      Promise.all([loadTasks(), loadAgents(), refreshBinding()]),
       new Promise(resolve => setTimeout(resolve, 600)),
     ])
   } finally {
@@ -382,16 +380,9 @@ onMounted(refresh)
 }
 
 .task-item-unread {
-  font-size: var(--font-size-2xs);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
   font-weight: var(--font-weight-semibold);
   background: var(--accent-color, #0066cc);
   color: #fff;
-  flex-shrink: 0;
-  min-width: 16px;
-  text-align: center;
-  line-height: var(--line-height-tight);
 }
 
 .task-item.has-unread {

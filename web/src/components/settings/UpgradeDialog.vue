@@ -53,14 +53,14 @@
           <p class="ug-warn-hint">{{ t('upgrade.installDirNotWritableHint') }}</p>
         </div>
 
-        <!-- Signature-verification downgrade: the release signature could not
-             be verified, so the download will only be checked against its
-             integrity hash. Shown prominently before the user commits, since
-             an unauthenticated install is materially weaker. -->
-        <div v-if="showSignatureWarning && !isCompleted" class="ug-warn ug-warn-signature">
-          <p class="ug-warn-title">{{ t('upgrade.signatureWarningTitle') }}</p>
-          <p class="ug-warn-body">{{ signatureWarning }}</p>
-          <p class="ug-warn-hint">{{ t('upgrade.signatureWarningHint') }}</p>
+        <!-- Verification downgrade: this release cannot be fully verified, for
+             any of the reasons the server lists (an uncheckable signature, a
+             missing integrity hash). Shown prominently before the user commits,
+             since an unverified install is materially weaker. -->
+        <div v-if="showVerificationWarning && !isCompleted" class="ug-warn ug-warn-verification">
+          <p class="ug-warn-title">{{ t('upgrade.verificationWarningTitle') }}</p>
+          <p class="ug-warn-body">{{ verificationWarning }}</p>
+          <p class="ug-warn-hint">{{ t('upgrade.verificationWarningHint') }}</p>
         </div>
 
         <!-- Docker advisory: a container CAN self-upgrade, but a later rebuild
@@ -110,6 +110,11 @@
             <p class="ug-error">{{ t('upgrade.restartFailedBody') }}</p>
             <p class="ug-error-hint">{{ t('upgrade.restartFailedHint') }}</p>
           </template>
+          <template v-else-if="state.error_code === ERR_UNVERIFIED_NOT_CONFIRMED">
+            <p class="ug-error-title">{{ t('upgrade.unverifiedNotConfirmedTitle') }}</p>
+            <p class="ug-error">{{ t('upgrade.unverifiedNotConfirmedBody') }}</p>
+            <p class="ug-error-hint">{{ t('upgrade.unverifiedNotConfirmedHint') }}</p>
+          </template>
           <template v-else>
             <p>{{ t('upgrade.failed') }}</p>
             <p class="ug-error">{{ state.error }}</p>
@@ -135,7 +140,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { useUpgrade, ERR_INSTALL_DIR_NOT_WRITABLE, ERR_SELF_PATH_UNRESOLVED, ERR_RESTART_FAILED } from '@/composables/useUpgrade'
+import { useUpgrade, ERR_INSTALL_DIR_NOT_WRITABLE, ERR_SELF_PATH_UNRESOLVED, ERR_RESTART_FAILED, ERR_UNVERIFIED_NOT_CONFIRMED } from '@/composables/useUpgrade'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import '@/assets/modal-footer-btn.css'
 
@@ -146,7 +151,7 @@ defineExpose({ show })
 const { t } = useI18n()
 const {
   state, checking, hasUpgrade, isInProgress, isRestarting, isCompleted, isFailed,
-  installWritable, installDir, isDocker, signatureWarning, checkUpgrade, startUpgrade, releaseNotesUrl,
+  installWritable, installDir, isDocker, verificationWarning, checkUpgrade, startUpgrade, releaseNotesUrl,
 } = useUpgrade()
 
 /**
@@ -165,12 +170,12 @@ const showWritableWarning = computed(() =>
 )
 
 /**
- * Signature-verification warning — shown whenever the server reports that the
- * release signature could not be verified. Unlike the writability and Docker
- * notices this stays visible during the upgrade too: the user should be able to
- * see, while the download is running, that it is only integrity-checked.
+ * Verification warning — shown whenever the server reports that this release
+ * cannot be fully verified, for any of the reasons it lists. Unlike the
+ * writability and Docker notices this stays visible during the upgrade too, so
+ * the user can still see, while the download runs, that it was not verified.
  */
-const showSignatureWarning = computed(() => signatureWarning.value !== '')
+const showVerificationWarning = computed(() => verificationWarning.value !== '')
 
 /**
  * Docker advisory — same visibility window as the writability warning: only
@@ -412,13 +417,13 @@ watch(visible, (v) => {
 
 /* Signature-verification downgrade: security-relevant, so it uses the danger
    palette rather than the ordinary warning orange, and stays visible during
-   the upgrade (see showSignatureWarning). */
-.ug-warn-signature {
+   the upgrade (see showVerificationWarning). */
+.ug-warn-verification {
   background: color-mix(in srgb, var(--color-red) 12%, transparent);
   border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
 }
 
-.ug-warn-signature .ug-warn-title {
+.ug-warn-verification .ug-warn-title {
   color: var(--color-red);
 }
 

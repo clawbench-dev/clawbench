@@ -7,6 +7,10 @@
     <div v-for="host in hosts" :key="host" class="forge-cred-host">
       <div class="forge-cred-host-head">
         <span class="forge-cred-host-name">{{ host }}</span>
+        <!-- The scheme the host is reached with. Shown because an http-only
+             internal instance looks identical to an https one otherwise, and a
+             wrong scheme surfaces as an opaque connection error. -->
+        <span v-if="schemes[host]" class="forge-cred-scheme">{{ schemes[host] }}</span>
         <span class="forge-cred-badge">
           <Check :size="12" />
           {{ t('settings.items.forgeTokenSet') }}
@@ -88,6 +92,15 @@ const TAG = 'ForgeCredentials'
 const { t } = useI18n()
 
 const hosts = ref<string[]>([])
+/**
+ * Resolved API scheme per host, from the config response.
+ *
+ * Kept beside `hosts` rather than folded into it because the host is the
+ * identity (it is what the token and the binding are keyed by) while the scheme
+ * is how that host happens to be reached. The server resolves it, so the UI
+ * never has to guess.
+ */
+const schemes = ref<Record<string, string>>({})
 const newHost = ref('')
 const newToken = ref('')
 const saving = ref(false)
@@ -105,9 +118,16 @@ interface VerifyResult {
 }
 
 /** Render a verify response as a human-readable outcome. */
-function toResult(res: { ok: boolean; identity?: string; code?: string; error?: string }): VerifyResult {
+function toResult(res: { ok: boolean; identity?: string; scheme?: string; code?: string; error?: string }): VerifyResult {
   if (res.ok) {
-    return { ok: true, text: t('settings.items.forgeVerifyOk', { identity: res.identity || '' }) }
+    // The scheme is part of the outcome: it is what the server actually used,
+    // so a check that passed over http says so rather than leaving the user to
+    // wonder which scheme the stored host resolved to.
+    const identity = res.identity || ''
+    const text = res.scheme
+      ? t('settings.items.forgeVerifyOkScheme', { identity, scheme: res.scheme })
+      : t('settings.items.forgeVerifyOk', { identity })
+    return { ok: true, text }
   }
   // Distinguish a rejected token from an unreachable host: the latter is not
   // proof the token is bad, so the wording must not claim it is.
@@ -133,7 +153,9 @@ async function verifyDraft() {
   error.value = ''
   try {
     const res = await verifyForgeToken({
-      host: newHost.value.trim().toLowerCase(),
+      // The host is sent as typed. The server splits the scheme from the host,
+      // so a URL pasted from a browser works and also records the scheme.
+      host: newHost.value.trim(),
       token: newToken.value,
     })
     draftResult.value = toResult(res)
@@ -165,6 +187,8 @@ async function loadHosts() {
     const cfg = await res.json()
     const list = cfg?.forge?.credential_hosts
     hosts.value = Array.isArray(list) ? list : []
+    const schemeMap = cfg?.forge?.credential_schemes
+    schemes.value = schemeMap && typeof schemeMap === 'object' ? schemeMap : {}
   } catch (err) {
     appLog.w(TAG, 'load hosts failed', err)
   }
@@ -174,7 +198,9 @@ async function saveToken() {
   saving.value = true
   error.value = ''
   try {
-    await setForgeToken(newHost.value.trim().toLowerCase(), newToken.value)
+    // Sent as typed: the server normalizes the host and records the scheme a URL
+    // names, so "http://gitlab.internal" configures an http instance in one step.
+    await setForgeToken(newHost.value.trim(), newToken.value)
     newHost.value = ''
     newToken.value = ''
     draftResult.value = null
@@ -237,6 +263,17 @@ onMounted(loadHosts)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The API scheme this host is reached with. Muted rather than accented: it is
+   reference information, not a status. */
+.forge-cred-scheme {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
 }
 .forge-cred-host-actions {
   display: flex;

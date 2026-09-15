@@ -1187,7 +1187,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 			JOIN chat_sessions s2 ON s2.id = h.session_id
 			WHERE h.project_path = ?
 			  AND h.role = 'assistant' AND h.streaming = 0
-			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
+			  AND (s2.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s2.last_read_at)
 			GROUP BY h.session_id
 		) unread ON unread.session_id = s.id
 		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
@@ -1236,7 +1236,7 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 			FROM chat_history h
 			JOIN chat_sessions s2 ON s2.id = h.session_id AND s2.project_path = h.project_path
 			WHERE h.role = 'assistant' AND h.streaming = 0
-			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
+			  AND (s2.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s2.last_read_at)
 			GROUP BY h.session_id, h.project_path
 		) unread ON unread.session_id = s.id AND unread.project_path = s.project_path
 		WHERE s.archived = 0 AND s.session_type = 'chat'
@@ -1282,12 +1282,21 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 // created_at-only predicate is used, so older clients keep working unchanged.
 //
 // Returns sessions and hasMore flag.
-func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cursorID string, cursorPinned *bool) ([]model.ChatSession, bool, error) {
+// GetSessionsPaged returns a keyset-paginated page of active chat sessions for
+// projectPath. tagName, when non-empty, restricts the page to sessions carrying
+// a tag of that name visible in this project (global, or this project's own).
+func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cursorID string, cursorPinned *bool, tagName string) ([]model.ChatSession, bool, error) {
 	// No limit: return all sessions
 	if limit <= 0 {
 		sessions, err := GetSessions(projectPath, backend)
 		if err != nil {
 			return nil, false, err
+		}
+		if tagName != "" {
+			sessions, err = FilterSessionsByTag(sessions, projectPath, tagName)
+			if err != nil {
+				return nil, false, err
+			}
 		}
 		return sessions, false, nil
 	}
@@ -1302,7 +1311,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 			JOIN chat_sessions s2 ON s2.id = h.session_id
 			WHERE h.project_path = ?
 			  AND h.role = 'assistant' AND h.streaming = 0
-			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
+			  AND (s2.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s2.last_read_at)
 			GROUP BY h.session_id
 		) unread ON unread.session_id = s.id
 		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
@@ -1310,6 +1319,19 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 	if backend != "" {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
+	}
+	if tagName != "" {
+		// EXISTS rather than a JOIN: a join would multiply rows per tag and
+		// break the LIMIT/keyset arithmetic below. The visibility predicate
+		// mirrors ListSessionTags so a session can only be matched by a
+		// definition it can actually see (global, or its own project's).
+		query += ` AND EXISTS (
+			SELECT 1 FROM session_tag_links l
+			JOIN session_tags t ON t.id = l.tag_id
+			WHERE l.session_id = s.id
+			  AND t.name = ? COLLATE NOCASE
+			  AND (t.scope = 'global' OR t.project_path = ?))`
+		args = append(args, tagName, projectPath)
 	}
 	if cursor != "" && cursorID != "" {
 		if cursorPinned != nil {
@@ -1366,6 +1388,86 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 	return sessions, hasMore, nil
 }
 
+// FilterSessionsByTag narrows an in-memory session slice to those carrying a
+// tag of the given name visible in projectPath. Only used by the unpaginated
+// path (limit <= 0); the paged path pushes the same predicate into SQL.
+func FilterSessionsByTag(sessions []model.ChatSession, projectPath, tagName string) ([]model.ChatSession, error) {
+	if len(sessions) == 0 {
+		return sessions, nil
+	}
+	ids := make([]string, 0, len(sessions))
+	for i := range sessions {
+		ids = append(ids, sessions[i].ID)
+	}
+	m, err := GetTagsForSessions(ids)
+	if err != nil {
+		return nil, err
+	}
+	out := sessions[:0:0]
+	for i := range sessions {
+		for _, t := range m[sessions[i].ID] {
+			if strings.EqualFold(t.Name, tagName) && (t.Scope == SessionTagScopeGlobal || t.ProjectPath == projectPath) {
+				out = append(out, sessions[i])
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// ListProjectTagsInUse returns the tags actually carried by at least one active
+// chat session in projectPath, most-used first, then by name.
+//
+// This is what the session-list filter bar shows: unlike ListSessionTags (the
+// dialog's candidate list, which includes every global tag), a tag nobody in
+// this project uses would be a filter that always yields an empty list.
+//
+// Grouping is by NAME (COLLATE NOCASE), not by definition id, and the count is
+// the number of DISTINCT sessions carrying any visible definition of that name.
+// That mirrors the filter's predicate exactly (`t.name = ? COLLATE NOCASE AND
+// (t.scope='global' OR t.project_path=?)`), so the count on a chip always equals
+// the number of sessions clicking it returns. Grouping by t.id instead would
+// report one definition's count while the filter returned the union of both —
+// a chip reading "2" that lists 3 sessions.
+func ListProjectTagsInUse(projectPath string) ([]SessionTag, error) {
+	rows, err := dbRead.Query(`
+		SELECT MIN(t.name) AS name,
+		       MIN(CASE WHEN t.scope = 'global' THEN 0 ELSE 1 END) AS is_project,
+		       COUNT(DISTINCT s.id) AS cnt
+		FROM session_tags t
+		JOIN session_tag_links l ON l.tag_id = t.id
+		JOIN chat_sessions s ON s.id = l.session_id
+		WHERE (t.scope = 'global' OR t.project_path = ?)
+		  AND s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'
+		GROUP BY t.name COLLATE NOCASE
+		ORDER BY cnt DESC, name COLLATE NOCASE`, projectPath, projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	tags := []SessionTag{}
+	for rows.Next() {
+		var t SessionTag
+		var isProject int
+		if err := rows.Scan(&t.Name, &isProject, &t.Count); err != nil {
+			return nil, err
+		}
+		// One chip per name. When a global and a project definition share the
+		// name, report the global scope — matching ListSessionTags, which
+		// prefers the global definition (ORDER BY ... scope ASC).
+		if isProject == 0 {
+			t.Scope = SessionTagScopeGlobal
+			t.ProjectPath = ""
+		} else {
+			t.Scope = SessionTagScopeProject
+			t.ProjectPath = projectPath
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
+}
+
 // UpdateLastRead sets the last_read_at timestamp for a session to now.
 // Must run synchronously so that subsequent GetSessions queries (triggered by
 // loadSessionsOnce after switchSession) see the updated last_read_at.
@@ -1373,12 +1475,14 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 // list still showed unread messages after the user opened the session.
 func UpdateLastRead(sessionID string) {
 	// Set last_read_at to at least the newest finalized assistant message's
-	// created_at, but never below now. The unread query compares
-	// h.created_at > s2.last_read_at with second-precision SQLite DATETIME — if
-	// a message finalized in the same second as the mark-read call,
-	// CURRENT_TIMESTAMP would still leave it "unread". Anchoring last_read_at to
-	// the newest message created_at makes the comparison robust
-	// (last_read_at >= created_at ⇒ not unread).
+	// timestamp, but never below now. The unread query compares
+	// COALESCE(h.completed_at, h.created_at) > s2.last_read_at with
+	// second-precision SQLite DATETIME — if a message finalized in the same
+	// second as the mark-read call, CURRENT_TIMESTAMP would still leave it
+	// "unread". Anchoring last_read_at to the newest message timestamp makes the
+	// comparison robust (last_read_at >= that timestamp ⇒ not unread). The
+	// subquery MUST use the same COALESCE expression as the unread queries, or
+	// the two sides disagree about which replies have been seen.
 	//
 	// MAX(CURRENT_TIMESTAMP, ...) is essential: on the cancel path the frontend
 	// marks the session read when the "cancelled" session_update arrives, which
@@ -1389,12 +1493,17 @@ func UpdateLastRead(sessionID string) {
 	// to unread as soon as it is finalized, even though the user is looking at
 	// it. Taking the max with CURRENT_TIMESTAMP keeps the anchor monotonic.
 	// Falls back to CURRENT_TIMESTAMP when no finalized assistant message exists.
+	//
+	// Note this anchors at most to "now": a reply still streaming when the read
+	// happens is excluded (streaming = 0), so it will legitimately register as
+	// unread once it lands. That is intended — the frontend re-marks the session
+	// read on the completion event when the user is actually looking at it.
 	WriteExec(`
 		UPDATE chat_sessions
 		SET last_read_at = MAX(
 			CURRENT_TIMESTAMP,
 			COALESCE(
-				(SELECT MAX(created_at) FROM chat_history
+				(SELECT MAX(COALESCE(completed_at, created_at)) FROM chat_history
 				 WHERE session_id = ? AND role = 'assistant' AND streaming = 0),
 				CURRENT_TIMESTAMP
 			)
@@ -2345,6 +2454,25 @@ func GetSessionFullInfo(sessionID string) *SessionInfo {
 	return info
 }
 
+// GetSessionProjectPathAny returns a session's project_path whether or not the
+// session is archived, plus whether the session exists at all.
+//
+// This exists for ownership/attribution checks that must still work on an
+// archived session: GetSessionFullInfo filters archived=0, so using it to
+// resolve "which project owns this session" would silently degrade to an empty
+// path for an archived row (which is how a tag could get filed under no project
+// at all and become unreachable).
+func GetSessionProjectPathAny(sessionID string) (string, bool) {
+	var projectPath string
+	err := dbRead.QueryRow(
+		`SELECT project_path FROM chat_sessions WHERE id = ?`, sessionID,
+	).Scan(&projectPath)
+	if err != nil {
+		return "", false
+	}
+	return projectPath, true
+}
+
 // GetSessionAgentID returns the agent_id of an active (non-archived) session.
 func GetSessionAgentID(sessionID string) string {
 	var agentID string
@@ -2436,9 +2564,52 @@ func CreateStreamingMessage(projectPath, backend, sessionID, queueID string) (in
 // Uses subquery with ORDER BY id DESC LIMIT 1 to target only the most recent streaming=1 row,
 // preventing accidental finalization of stale streaming rows left by previous failed finalizations.
 // Returns the message ID of the finalized message (0 if not found).
+//
+// Stamps completed_at with CURRENT_TIMESTAMP — the moment the reply actually
+// landed. created_at cannot serve that purpose: it is written when the turn
+// starts, so a session read mid-turn would have last_read_at past created_at
+// and the finished reply would never register as unread. See the column's
+// comment in database.go.
+//
+// A user-cancelled turn must NOT take this path — see
+// FinalizeCancelledStreamingMessage.
 func FinalizeStreamingMessage(projectPath, backend, sessionID, content string) (int64, error) {
+	return finalizeStreamingMessage(projectPath, backend, sessionID, content, true)
+}
+
+// FinalizeCancelledStreamingMessage finalizes a reply the user cancelled while
+// watching it. Identical to FinalizeStreamingMessage except that it leaves
+// completed_at NULL.
+//
+// Why the distinction: the cancel action lives in the session the user is
+// looking at, so the frontend marks that session read as soon as the
+// "cancelled" event arrives — BEFORE the executor finalizes the interrupted
+// reply (the agent process has to tear down first, which can take seconds).
+// Stamping completed_at at finalize time would move the reply's timestamp past
+// that read and flip the session back to unread even though the user is staring
+// at it — reintroducing exactly the bug e76a6d960 fixed. Leaving completed_at
+// NULL lets the unread query fall back to created_at (the turn start, which
+// precedes the cancel-time read), so the session stays read.
+//
+// A normal completion must not take this path: there the user may well have
+// switched away before the reply landed, so the landing time is what decides
+// whether it is unread.
+func FinalizeCancelledStreamingMessage(projectPath, backend, sessionID, content string) (int64, error) {
+	return finalizeStreamingMessage(projectPath, backend, sessionID, content, false)
+}
+
+// finalizeStreamingMessage performs the shared finalize write. stampCompletedAt
+// selects whether the row records the moment it landed (normal completion) or
+// stays NULL (user cancel, so the unread query falls back to created_at).
+func finalizeStreamingMessage(projectPath, backend, sessionID, content string, stampCompletedAt bool) (int64, error) {
+	// Both values are compile-time constants chosen by the branch below, never
+	// caller input, so building the SET clause by concatenation is safe.
+	completedAtSet := "completed_at = CURRENT_TIMESTAMP"
+	if !stampCompletedAt {
+		completedAtSet = "completed_at = NULL"
+	}
 	result, err := WriteExec(
-		`UPDATE chat_history SET content = ?, streaming = 0, indexed = 0 WHERE id = (
+		`UPDATE chat_history SET content = ?, streaming = 0, indexed = 0, `+completedAtSet+` WHERE id = (
 			SELECT id FROM chat_history
 			WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
 			ORDER BY id DESC LIMIT 1
@@ -2714,6 +2885,12 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 	// Delete task_executions for purged scheduled sessions
 	_, _ = tx.Exec("DELETE FROM task_executions WHERE session_id IN ("+placeholders+")", args...)
 
+	// Delete session tag links for purged sessions. The link table has no FK to
+	// chat_sessions, so without this the rows survive the purge forever and the
+	// tag's session count stays permanently inflated (HardDeleteSession does the
+	// same cleanup; this retention path was missed).
+	_, _ = tx.Exec("DELETE FROM session_tag_links WHERE session_id IN ("+placeholders+")", args...)
+
 	// Delete the session records
 	result, err = tx.Exec("DELETE FROM chat_sessions WHERE id IN ("+placeholders+") AND archived = 1", args...)
 	if err != nil {
@@ -2753,6 +2930,10 @@ func HardDeleteSession(sessionID string) error {
 	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_history WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM task_executions WHERE session_id = ?", sessionID)
+	// Drop the session's tag links too: the link table has no FK to
+	// chat_sessions, so without this the rows would linger forever. The tag
+	// definitions themselves are preserved (other sessions may use them).
+	_, _ = tx.Exec("DELETE FROM session_tag_links WHERE session_id = ?", sessionID)
 	_, err = tx.Exec("DELETE FROM chat_sessions WHERE id = ?", sessionID)
 	if err != nil {
 		return err

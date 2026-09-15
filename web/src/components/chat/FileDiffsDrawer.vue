@@ -15,7 +15,7 @@
           <ExternalLink :size="14" />
         </button>
         <span class="fd-header-badge">{{ badgeLabel }}</span>
-        <span v-if="diffItems.length > 0" class="fd-header-count">{{ diffItems.length }}</span>
+        <span v-if="diffItems.length > 0" class="fd-header-count count-badge">{{ diffItems.length }}</span>
       </div>
       <div v-if="diffItems.length" class="fd-diffs">
         <div v-for="item in diffItems" :key="item.key" class="fd-diff-item">
@@ -375,13 +375,8 @@ function handleBodyInput(event) {
 }
 
 .fd-header-count {
-  flex-shrink: 0;
-  font-size: var(--font-size-2xs);
-  padding: 1px 5px;
-  border-radius: var(--radius-xs);
   background: var(--bg-tertiary);
   color: var(--text-muted);
   font-weight: var(--font-weight-semibold);
-  font-variant-numeric: tabular-nums;
 }
 </style>

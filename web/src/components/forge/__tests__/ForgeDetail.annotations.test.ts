@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { mount } from '@vue/test-utils'
+import { mount, enableAutoUnmount } from '@vue/test-utils'
 import { ref } from 'vue'
+
+// The forge detail composable is a shared mock whose refs every mounted
+// instance watches. Without unmounting, a component from an earlier test keeps
+// reacting to later ref changes and re-running verification, which pollutes
+// per-test call counts.
+enableAutoUnmount(afterEach)
 
 // ── Mocks ────────────────────────────────────────────────────
 // The regression this file pins: the forge detail body used to be rendered
@@ -86,22 +92,35 @@ vi.mock('@/composables/useCodeBlockHeader', () => ({
   handleTableBlockClick: vi.fn().mockReturnValue(false),
 }))
 
+// Real refs, not plain `{ value }` objects: the component's verification
+// watcher must actually re-run when loading/item/comments change. With plain
+// objects Vue has no dependency to track, so the watcher would fire once and
+// never again — which is precisely the class of bug these tests guard.
 const { mockDetail } = vi.hoisted(() => ({
   mockDetail: {
-    item: { value: null as unknown },
-    comments: { value: [] as unknown[] },
-    loading: { value: false },
-    loadingComments: { value: false },
-    error: { value: null as unknown },
-    hasMoreComments: { value: false },
+    item: null as unknown,
+    comments: null as unknown,
+    loading: null as unknown,
+    loadingComments: null as unknown,
+    error: null as unknown,
+    hasMoreComments: null as unknown,
     open: vi.fn(),
     loadOlderComments: vi.fn(),
   },
 }))
 
-vi.mock('@/composables/useForge', () => ({
-  useForgeDetail: () => mockDetail,
-}))
+vi.mock('@/composables/useForge', async () => {
+  const { ref } = await import('vue')
+  Object.assign(mockDetail, {
+    item: ref(null),
+    comments: ref([]),
+    loading: ref(false),
+    loadingComments: ref(false),
+    error: ref(null),
+    hasMoreComments: ref(false),
+  })
+  return { useForgeDetail: () => mockDetail }
+})
 
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', template: '<div class="loading-stub" />' },
@@ -171,6 +190,46 @@ describe('ForgeDetail file-path annotations', () => {
     // Scoped to the detail body, not a global container: chat verifies against
     // #aiChatMessages, which the forge panel is not part of.
     expect((container as HTMLElement).classList.contains('forge-detail-body')).toBe(true)
+  })
+
+  it('verifies after the async load lands (body mounts only once loading ends)', async () => {
+    // The real sequence: open() sets loading=true, then item/comments, and only
+    // clears loading at the very end. The body — and therefore bodyRef — does
+    // not exist until loading is false. Watching only item/comments fired while
+    // bodyRef was still null, so verification silently never happened and every
+    // path in an issue/PR body stayed unclickable.
+    mockDetail.loading.value = true
+    mockDetail.item.value = null
+    mockDetail.comments.value = []
+
+    const wrapper = mountDetail()
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.vm.$nextTick()
+
+    // Nothing to verify yet — the body is not rendered, so there is no
+    // container to scan. (Verification may still have run earlier in the suite;
+    // what matters is that it runs AGAIN once the body exists.)
+    expect(wrapper.find('.forge-detail-body').exists()).toBe(false)
+    const callsBeforeBody = mockVerifyFilePaths.mock.calls.length
+
+    // The item arrives while still loading (as open() does), then loading ends.
+    mockDetail.item.value = {
+      type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice',
+      url: 'https://example.com/7', slug: 'a/b', body: 'see src/real.ts',
+      createdAt: '2026-09-10T00:00:00Z', updatedAt: '2026-09-10T00:00:00Z',
+      commentCount: 0, platform: 'github', host: 'github.com', owner: 'a', repo: 'b',
+    }
+    await wrapper.vm.$nextTick()
+    mockDetail.loading.value = false
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.vm.$nextTick()
+    await new Promise(r => setTimeout(r, 0))
+
+    // The body is now rendered AND its paths were handed to verification.
+    expect(wrapper.find('.forge-detail-body').exists()).toBe(true)
+    expect(mockVerifyFilePaths.mock.calls.length).toBeGreaterThan(callsBeforeBody)
+    const [paths] = mockVerifyFilePaths.mock.calls.at(-1)!
+    expect(paths).toContain('src/real.ts')
   })
 
   it('deduplicates paths before verifying', async () => {
@@ -395,29 +454,44 @@ describe('ForgeDetail double-click copy → quote', () => {
 // <button>'s default border cannot be observed by mounting. Sniff the source
 // instead — the same pattern the repo's other CSS guard tests use.
 describe('ForgeDetail icon button styling', () => {
-  function readComponent(): string {
+  /**
+   * Read the source that declares `.forge-icon-btn`.
+   *
+   * The rule is shared chrome: ForgePipelineDetail renders the same round icon
+   * buttons, so the declaration moved to the shared stylesheet. This still
+   * asserts the same behavior (the UA border must be cleared) — it just no
+   * longer pins which file happens to hold it.
+   */
+  function readIconBtnSource(): string {
+    const candidates = [
+      'src/components/forge/ForgeDetail.vue',
+      'css/components.css',
+    ]
     for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
-      try {
-        return readFileSync(join(base, 'src/components/forge/ForgeDetail.vue'), 'utf8')
-      } catch {
-        // try the next candidate
+      for (const rel of candidates) {
+        try {
+          const src = readFileSync(join(base, rel), 'utf8')
+          if (/\.forge-icon-btn\s*\{/.test(src)) return src
+        } catch {
+          // try the next candidate
+        }
       }
     }
-    throw new Error('ForgeDetail.vue not found from cwd: ' + process.cwd())
+    throw new Error('.forge-icon-btn declaration not found from cwd: ' + process.cwd())
   }
 
   it('clears the UA border on .forge-icon-btn', () => {
     // The class is used by BOTH <a> and <button>. A bare <button> keeps the
     // UA's default border, which renders as a stray ring around the round icon
     // — visible only after a <button> started using this class.
-    const src = readComponent()
+    const src = readIconBtnSource()
     const rule = src.match(/\.forge-icon-btn\s*\{([\s\S]*?)\}/)
     expect(rule, '.forge-icon-btn rule must exist').toBeTruthy()
     expect(rule![1]).toMatch(/^\s*border:\s*none\s*;?\s*$/m)
   })
 
   it('keeps the round shape the border would otherwise distort', () => {
-    const src = readComponent()
+    const src = readIconBtnSource()
     const rule = src.match(/\.forge-icon-btn\s*\{([\s\S]*?)\}/)![1]
     expect(rule).toContain('border-radius: var(--radius-lg)')
     expect(rule).toContain('width: 28px')

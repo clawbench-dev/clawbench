@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
@@ -86,7 +87,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			external_message_id TEXT DEFAULT '',
 			queue_id TEXT DEFAULT '',
 			queued INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
@@ -285,6 +287,20 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		);
 		CREATE INDEX IF NOT EXISTS idx_thinking_message ON chat_thinking(message_id);
 		CREATE INDEX IF NOT EXISTS idx_thinking_session ON chat_thinking(session_id, created_at DESC);
+		CREATE TABLE IF NOT EXISTS session_tags (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			scope TEXT NOT NULL DEFAULT 'project',
+			project_path TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(name, project_path)
+		);
+		CREATE TABLE IF NOT EXISTS session_tag_links (
+			session_id TEXT NOT NULL,
+			tag_id INTEGER NOT NULL REFERENCES session_tags(id) ON DELETE CASCADE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(session_id, tag_id)
+		);
 		CREATE TABLE IF NOT EXISTS message_clusters_cache (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			representative TEXT NOT NULL,
@@ -321,7 +337,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	}
 
 	// Create forge binding + sync tables
-	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL} {
+	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL, service.ForgePipelineRunsDDL} {
 		if _, err := db.Exec(ddl); err != nil {
 			t.Fatalf("failed to create forge tables: %v", err)
 		}
@@ -394,6 +410,14 @@ func withAuthCookie(req *http.Request, token string) *http.Request {
 		Value: token,
 	})
 	return req
+}
+
+// withAIToken adds a freshly signed AI token header to the request, modeling a
+// local AI subprocess calling back into the API. The caller must have set
+// model.CookieToken, since that is the signing key. The request is mutated in
+// place; callers pass the same request on to the handler.
+func withAIToken(req *http.Request) {
+	req.Header.Set(model.AITokenHeader, model.SignAIToken(time.Now()))
 }
 
 // withSessionCookie adds the chat_session_id cookie to the request.

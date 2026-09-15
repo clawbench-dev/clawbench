@@ -1,10 +1,13 @@
 package service_test
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
+	"clawbench/internal/forge"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -19,7 +22,7 @@ func setupTestDBForForgeSync(t *testing.T) *sql.DB {
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
 
-	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL} {
+	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL, service.ForgePipelineRunsDDL} {
 		_, err := db.Exec(ddl)
 		require.NoError(t, err)
 	}
@@ -143,7 +146,7 @@ func TestForgeEvents_InsertDedupesAndCountsUnread(t *testing.T) {
 
 	ev := service.ForgeEvent{
 		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
-		ItemType: "issue", Number: 1, EventType: "closed", DedupeKey: "k1",
+		ItemType: "issue", Number: 1, ItemKey: "issue/1", EventType: "closed", DedupeKey: "k1",
 	}
 	fresh, err := service.InsertForgeEvent(ev)
 	require.NoError(t, err)
@@ -154,24 +157,198 @@ func TestForgeEvents_InsertDedupesAndCountsUnread(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, fresh, "a duplicate dedupe key must be ignored")
 
-	n, err := service.CountUnreadForgeEvents()
+	repo := testRepoKey()
+	n, err := service.CountUnreadForgeEvents(repo)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 
-	require.NoError(t, service.MarkForgeEventsRead())
-	n, err = service.CountUnreadForgeEvents()
+	require.NoError(t, service.MarkForgeEventsRead(repo, ""))
+	n, err = service.CountUnreadForgeEvents(repo)
 	require.NoError(t, err)
-	assert.Equal(t, 0, n, "opening the tab clears the unread count")
+	assert.Equal(t, 0, n, "marking read clears the unread count")
 
 	// A new event is unread again.
 	_, err = service.InsertForgeEvent(service.ForgeEvent{
 		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
-		ItemType: "issue", Number: 1, EventType: "reopened", DedupeKey: "k2",
+		ItemType: "issue", Number: 1, ItemKey: "issue/1", EventType: "reopened", DedupeKey: "k2",
 	})
 	require.NoError(t, err)
-	n, err = service.CountUnreadForgeEvents()
+	n, err = service.CountUnreadForgeEvents(repo)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
+}
+
+// TestForgeEvents_CountsDistinctItemsNotEvents: the badge answers "how many
+// items have new activity", so several events on one item must count once.
+// Counting raw events is what made the badge number match nothing the user could
+// see in the panel.
+func TestForgeEvents_CountsDistinctItemsNotEvents(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repo := testRepoKey()
+
+	insert := func(number int, eventType, key string) {
+		t.Helper()
+		_, err := service.InsertForgeEvent(service.ForgeEvent{
+			Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+			ItemType: "issue", Number: number, ItemKey: fmt.Sprintf("issue/%d", number),
+			EventType: eventType, DedupeKey: key,
+		})
+		require.NoError(t, err)
+	}
+
+	// Three changes to issue 1, one to issue 2.
+	insert(1, "opened", "a")
+	insert(1, "commented", "b")
+	insert(1, "closed", "c")
+	insert(2, "opened", "d")
+
+	n, err := service.CountUnreadForgeEvents(repo)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "four events across two items is two unread items")
+}
+
+// TestForgeEvents_PipelineRunsDoNotCollapse: every CI run carries number 0, so a
+// key built from (item_type, number) would fold all of them into one bucket and
+// undercount. The run id must be part of the key.
+//
+// The keys are built via forge.ItemKey — the function production uses — rather
+// than hardcoded, so this actually exercises the key derivation instead of
+// asserting that two distinct literals are distinct.
+func TestForgeEvents_PipelineRunsDoNotCollapse(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repo := testRepoKey()
+
+	for _, runID := range []int64{100, 101} {
+		change := forge.Change{Type: forge.EventPipeline, PipelineRunID: runID}
+		key := forge.ItemKey(forge.ItemTypePipeline, 0, change)
+		_, err := service.InsertForgeEvent(service.ForgeEvent{
+			Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+			ItemType: "pipeline", Number: 0, ItemKey: key,
+			EventType: "pipeline_done", DedupeKey: fmt.Sprintf("run-%d", runID),
+		})
+		require.NoError(t, err)
+	}
+
+	n, err := service.CountUnreadForgeEvents(repo)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "two runs are two unread items, not one")
+}
+
+// TestItemKey_Shape pins the key format, so a change to it cannot silently
+// invalidate stored rows.
+func TestItemKey_Shape(t *testing.T) {
+	assert.Equal(t, "issue/42", forge.ItemKeyForNumber(forge.ItemTypeIssue, 42))
+	assert.Equal(t, "pr/7", forge.ItemKeyForNumber(forge.ItemTypeChangeRequest, 7))
+
+	// A pipeline has no item number: the run id must carry the identity.
+	assert.Equal(t, "pipeline/run:555",
+		forge.ItemKey(forge.ItemTypePipeline, 0, forge.Change{PipelineRunID: 555}))
+	assert.NotEqual(t,
+		forge.ItemKey(forge.ItemTypePipeline, 0, forge.Change{PipelineRunID: 1}),
+		forge.ItemKey(forge.ItemTypePipeline, 0, forge.Change{PipelineRunID: 2}),
+		"two runs must not share a key")
+}
+
+// TestForgeEvents_ScopedToRepo: the badge points at one project's repository, so
+// another repository's activity must not inflate it.
+func TestForgeEvents_ScopedToRepo(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 1, ItemKey: "issue/1", EventType: "opened", DedupeKey: "mine",
+	})
+	require.NoError(t, err)
+	_, err = service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "other",
+		ItemType: "issue", Number: 9, ItemKey: "issue/9", EventType: "opened", DedupeKey: "theirs",
+	})
+	require.NoError(t, err)
+
+	n, err := service.CountUnreadForgeEvents(testRepoKey())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "only the requested repository counts")
+}
+
+// TestForgeEvents_MarkOneItemRead: opening one row must leave the others unread.
+func TestForgeEvents_MarkOneItemRead(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repo := testRepoKey()
+
+	for i, key := range []string{"issue/1", "issue/2"} {
+		_, err := service.InsertForgeEvent(service.ForgeEvent{
+			Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+			ItemType: "issue", Number: i + 1, ItemKey: key, EventType: "opened",
+			DedupeKey: key,
+		})
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, service.MarkForgeEventsRead(repo, "issue/1"))
+
+	n, err := service.CountUnreadForgeEvents(repo)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "marking one item read must not clear the other")
+
+	keys, err := service.UnreadForgeItemKeys(repo)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"issue/2": true}, keys)
+}
+
+// TestForgeEvents_ReArmsAfterNewActivity: marking read only touches existing
+// rows, so later activity on the same item goes unread again with no watermark.
+func TestForgeEvents_ReArmsAfterNewActivity(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repo := testRepoKey()
+
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 1, ItemKey: "issue/1", EventType: "opened", DedupeKey: "a",
+	})
+	require.NoError(t, err)
+	require.NoError(t, service.MarkForgeEventsRead(repo, "issue/1"))
+
+	_, err = service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 1, ItemKey: "issue/1", EventType: "commented", DedupeKey: "b",
+	})
+	require.NoError(t, err)
+
+	n, err := service.CountUnreadForgeEvents(repo)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "new activity on a read item is unread again")
+}
+
+// TestPruneForgeEvents_KeepsUnread: an unread row is the user's only record that
+// something changed, so pruning must never drop one.
+func TestPruneForgeEvents_KeepsUnread(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repo := testRepoKey()
+	old := time.Now().Add(-90 * 24 * time.Hour)
+
+	insert := func(key, dedupe string) {
+		t.Helper()
+		_, err := service.InsertForgeEvent(service.ForgeEvent{
+			Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+			ItemType: "issue", Number: 1, ItemKey: key, EventType: "opened", DedupeKey: dedupe,
+		})
+		require.NoError(t, err)
+	}
+	insert("issue/1", "read-old")
+	insert("issue/2", "unread-old")
+
+	// Age both rows, then mark only the first read.
+	require.NoError(t, service.SetForgeEventCreatedAtForTest(repo, "issue/1", old))
+	require.NoError(t, service.SetForgeEventCreatedAtForTest(repo, "issue/2", old))
+	require.NoError(t, service.MarkForgeEventsRead(repo, "issue/1"))
+
+	removed, err := service.PruneForgeEvents(repo, time.Now().Add(-30*24*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), removed, "only the old read row is eligible")
+
+	n, err := service.CountUnreadForgeEvents(repo)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "the old UNREAD row must survive")
 }
 
 // TestSchema_ForgeSyncTablesExist verifies InitDB creates the sync tables.
@@ -224,11 +401,11 @@ func TestForgeSync_NilDBGuards(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, fresh)
 
-	count, err := service.CountUnreadForgeEvents()
+	count, err := service.CountUnreadForgeEvents(repo)
 	require.NoError(t, err)
 	assert.Zero(t, count)
 
-	assert.NoError(t, service.MarkForgeEventsRead())
+	assert.NoError(t, service.MarkForgeEventsRead(repo, ""))
 }
 
 // TestForgeSync_QueryErrors covers the error branches: a query against a
@@ -254,14 +431,14 @@ func TestForgeSync_QueryErrors(t *testing.T) {
 	_, err = service.GetForgeSyncWatermark(repo)
 	require.Error(t, err)
 
-	_, err = service.CountUnreadForgeEvents()
+	_, err = service.CountUnreadForgeEvents(repo)
 	require.Error(t, err)
 
 	_, err = service.PruneForgeItems(repo, time.Now())
 	require.Error(t, err)
 
 	assert.Error(t, service.SetForgeSyncWatermark(repo, time.Now()))
-	assert.Error(t, service.MarkForgeEventsRead())
+	assert.Error(t, service.MarkForgeEventsRead(repo, ""))
 }
 
 // TestForgeSnapshot_NullableTimestamps covers the NullTime handling: a snapshot
@@ -309,4 +486,271 @@ func TestForgeSnapshot_NullableTimestamps(t *testing.T) {
 			assert.True(t, s.ItemUpdatedAt.IsZero())
 		}
 	}
+}
+
+// TestPruneForgeEvents_RespectsCutoff: only rows older than the cutoff go.
+func TestPruneForgeEvents_RespectsCutoff(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repo := testRepoKey()
+	now := time.Now()
+
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 1, ItemKey: "issue/1", EventType: "opened", DedupeKey: "recent",
+	})
+	require.NoError(t, err)
+	require.NoError(t, service.MarkForgeEventsRead(repo, ""))
+
+	// A recent read row survives a 30-day cutoff.
+	removed, err := service.PruneForgeEvents(repo, now.Add(-30*24*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), removed, "a recent row must not be pruned")
+
+	// Backdated past the cutoff, it goes.
+	require.NoError(t, service.SetForgeEventCreatedAtForTest(repo, "issue/1", now.Add(-90*24*time.Hour)))
+	removed, err = service.PruneForgeEvents(repo, now.Add(-30*24*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), removed)
+}
+
+// TestForgeSyncer_WritesItemKey is the guard for the ONLY production writer of
+// item_key (forge_syncer.go's persistAndDispatch).
+//
+// Every other event test builds service.ForgeEvent{ItemKey: "..."} by hand, so
+// they exercise the read side against a literal the writer is never proven to
+// produce. Deleting the writer's ItemKey line left the whole suite green while
+// every row got item_key = ”, which both CountUnreadForgeEvents and
+// UnreadForgeItemKeys filter out — the badge would read 0 forever and no row
+// would ever show a dot, i.e. exactly the bug this feature fixed.
+//
+// So this drives the real SyncRepo path and asserts on the stored column.
+func TestForgeSyncer_WritesItemKey(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	t0 := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+
+	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
+		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("open", t0)}}},
+	}}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, &fakeSink{})
+	binding := testBinding()
+
+	// First pass establishes the baseline (no events), second emits a close.
+	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
+	provider.pages[forge.ItemTypeIssue] = map[int]forge.ListResult{
+		1: {Items: []forge.Item{issue("closed", t1)}},
+	}
+	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
+
+	var key string
+	require.NoError(t, service.ReadDB().QueryRow(
+		`SELECT item_key FROM forge_events WHERE number = 1`,
+	).Scan(&key))
+	assert.Equal(t, "issue/1", key,
+		"the syncer must store the item key; an empty key makes the row invisible to the badge")
+
+	// And it must be countable through the same query the badge uses.
+	n, err := service.CountUnreadForgeEvents(testRepoKey())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+}
+
+// TestForgeSyncer_WritesPipelineItemKey: a pipeline event has number 0, so its
+// key must carry the run id. Every run must land in its own bucket.
+//
+// Uses the pipelineProvider fake (which implements the optional PipelineLister)
+// and drives the real sync path, so it fails if persistAndDispatch stops writing
+// the key for the synthetic pipeline item.
+func TestForgeSyncer_WritesPipelineItemKey(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	t0 := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+
+	provider := &pipelineProvider{runs: []forge.PipelineRun{pipelineRun(100, forge.PipelineSuccess, t0)}}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, &fakeSink{})
+
+	// First pass baselines the run (recorded, not dispatched).
+	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), testBinding(), pipelineSyncOptions()))
+
+	// A second run appears.
+	provider.runs = append(provider.runs, pipelineRun(101, forge.PipelineSuccess, t1))
+	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), testBinding(), pipelineSyncOptions()))
+
+	rows, err := service.ReadDB().Query(
+		`SELECT item_key FROM forge_events WHERE item_type = 'pipeline' ORDER BY item_key`,
+	)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var keys []string
+	for rows.Next() {
+		var k string
+		require.NoError(t, rows.Scan(&k))
+		keys = append(keys, k)
+	}
+	require.NoError(t, rows.Err())
+
+	// Run 100 was baselined on the first pass, so only 101 dispatched.
+	require.Len(t, keys, 1, "only the run that appeared after the baseline fires")
+	assert.Equal(t, "pipeline/run:101", keys[0],
+		"the key must carry the run id, not a shared number-0 bucket")
+
+	n, err := service.CountUnreadForgeEvents(testRepoKey())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+}
+
+// ── UnreadForgeItems ──
+
+// insertEvent stores one forge event for the overview tests.
+//
+// It deliberately does not backdate anything: the query orders by
+// `created_at DESC, id DESC`, and a later insert always has a >= timestamp with a
+// higher id, so reverse-insertion order holds without fiddling with clocks.
+func insertEvent(t *testing.T, itemKey, itemType string, number int, eventType, dedupe string) {
+	t.Helper()
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: itemType, Number: number, ItemKey: itemKey,
+		EventType: eventType, DedupeKey: dedupe,
+	})
+	require.NoError(t, err)
+}
+
+// TestUnreadForgeItems_GroupsByItemAndReportsNewestEvent is the core contract:
+// one row per item, labelled by its NEWEST event, with the total event count.
+//
+// The newest-event half is the mutation-sensitive part: a query that just did
+// `SELECT DISTINCT item_key` (or grouped without pinning the row) would report
+// whichever event_type SQLite happened to pick, so this asserts the exact value
+// rather than merely "non-empty".
+func TestUnreadForgeItems_GroupsByItemAndReportsNewestEvent(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	// Three events on one PR: the newest is the comment.
+	insertEvent(t, "pr/7", "pr", 7, "opened", "k1")
+	insertEvent(t, "pr/7", "pr", 7, "reopened", "k2")
+	insertEvent(t, "pr/7", "pr", 7, "commented", "k3")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "three events on one item are ONE row")
+
+	it := got[0]
+	assert.Equal(t, "pr/7", it.ItemKey)
+	assert.Equal(t, "pr", it.ItemType)
+	assert.Equal(t, 7, it.Number)
+	assert.Equal(t, 3, it.EventCount)
+	assert.Equal(t, "commented", it.EventType,
+		"the label must come from the NEWEST event, not an arbitrary one")
+	assert.Zero(t, it.RunID, "a PR has no run id")
+}
+
+// TestUnreadForgeItems_ReportsUnreadEventNotOlderReadOne: an item whose older
+// events were read and which then got a new one must be labelled by the new one.
+func TestUnreadForgeItems_ReportsUnreadEventNotOlderReadOne(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "pr/9", "pr", 9, "opened", "k1")
+	// Read the item, then a fresh event arrives.
+	require.NoError(t, service.MarkForgeEventsRead(testRepoKey(), "pr/9"))
+	insertEvent(t, "pr/9", "pr", 9, "commented", "k2")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "commented", got[0].EventType,
+		"the item is unread because of the NEW event, so that is what labels it")
+	assert.Equal(t, 2, got[0].EventCount, "the count spans all its events")
+}
+
+// TestUnreadForgeItems_PipelineCarriesRunID: a pipeline stores Number 0 for
+// every run, so the run id is only recoverable from the key.
+func TestUnreadForgeItems_PipelineCarriesRunID(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, forge.PipelineItemKey(555), "pipeline", 0, "pipeline_done", "p555")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+
+	it := got[0]
+	assert.Equal(t, "pipeline/run:555", it.ItemKey)
+	assert.Equal(t, "pipeline", it.ItemType)
+	assert.Zero(t, it.Number, "a pipeline has no item number")
+	assert.Equal(t, int64(555), it.RunID, "the run id must be recovered from the key")
+}
+
+// TestUnreadForgeItems_TwoPipelineRunsDoNotCollapse: each run is its own row.
+func TestUnreadForgeItems_TwoPipelineRunsDoNotCollapse(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, forge.PipelineItemKey(100), "pipeline", 0, "pipeline_done", "p100")
+	insertEvent(t, forge.PipelineItemKey(101), "pipeline", 0, "pipeline_done", "p101")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 2, "two runs are two items, not one")
+	// Newest activity first.
+	assert.Equal(t, int64(101), got[0].RunID)
+	assert.Equal(t, int64(100), got[1].RunID)
+}
+
+// TestUnreadForgeItems_ExcludesFullyReadItems
+func TestUnreadForgeItems_ExcludesFullyReadItems(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "pr/1", "pr", 1, "closed", "k1")
+	insertEvent(t, "pr/2", "pr", 2, "closed", "k2")
+	require.NoError(t, service.MarkForgeEventsRead(testRepoKey(), "pr/1"))
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "pr/2", got[0].ItemKey)
+}
+
+// TestUnreadForgeItems_ScopesToRepo: another repository's events must not leak.
+func TestUnreadForgeItems_ScopesToRepo(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "pr/1", "pr", 1, "closed", "k1")
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "other", Repo: "thing",
+		ItemType: "pr", Number: 1, ItemKey: "pr/1",
+		EventType: "closed", DedupeKey: "k1",
+	})
+	require.NoError(t, err)
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "only this repo's events count")
+}
+
+// TestUnreadForgeItems_ExcludesEmptyItemKey: legacy rows with no key cannot be
+// acted on (there is nothing to pass back to the read endpoint), so they must
+// not appear as phantom rows.
+func TestUnreadForgeItems_ExcludesEmptyItemKey(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "", "pr", 3, "closed", "k1")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestUnreadForgeItems_RespectsLimit
+func TestUnreadForgeItems_RespectsLimit(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	for i := 1; i <= 5; i++ {
+		insertEvent(t, fmt.Sprintf("pr/%d", i), "pr", i, "closed", fmt.Sprintf("k%d", i))
+	}
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 2)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	// Newest first: 5 then 4.
+	assert.Equal(t, "pr/5", got[0].ItemKey)
+	assert.Equal(t, "pr/4", got[1].ItemKey)
 }

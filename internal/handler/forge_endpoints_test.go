@@ -125,21 +125,16 @@ func TestServeForgeBinding_AutoBindsOfficialRemote(t *testing.T) {
 	assert.Equal(t, "acme/widgets", pf.Slug())
 }
 
-// TestServeForgeBinding_DoesNotAutoBindNonOfficialHost pins the security
-// boundary: a self-hosted host still needs the user's explicit confirmation, so
-// it comes back as a suggestion rather than being persisted.
+// TestServeForgeBinding_DoesNotAutoBindNonOfficialHost pins the boundary: a
+// self-hosted host is bound only by an explicit user action, so it comes back
+// as a suggestion rather than being persisted. Auto-binding it would send the
+// credential before the user ever saw the non-official-host warning.
 func TestServeForgeBinding_DoesNotAutoBindNonOfficialHost(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
-	// A self-hosted host must be resolvable to survive the SSRF guard and reach
-	// the official/non-official decision; stub the guard so the test does not
-	// depend on DNS (the same override forge_credentials_test.go uses).
-	orig := forgeHostGuard
-	forgeHostGuard = func(string) error { return nil }
-	t.Cleanup(func() { forgeHostGuard = orig })
 
 	runGitInDir(t, env.ProjectDir, "init")
 	runGitInDir(t, env.ProjectDir, "remote", "add", "origin", "https://gitlab.example.com/acme/widgets.git")
@@ -228,7 +223,14 @@ func TestServeForgeBinding_ExplicitBindClearsOptOut(t *testing.T) {
 	assert.False(t, opted, "an explicit bind must clear the opt-out")
 }
 
-func TestServeForgeBinding_RejectsUnsafeHost(t *testing.T) {
+// TestServeForgeBinding_AcceptsPrivateHost is the regression pin for
+// self-hosted instances on private networks.
+//
+// Binding used to be refused outright for any loopback/private/unresolvable
+// host, which made an internal GitLab impossible to use. The server no longer
+// gates on the address at all; the UI warns instead. A loopback host is the
+// sharpest case, since it is the one the old guard rejected hardest.
+func TestServeForgeBinding_AcceptsPrivateHost(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
@@ -238,12 +240,14 @@ func TestServeForgeBinding_RejectsUnsafeHost(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeForgeBinding, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code, "binding a loopback host must be refused")
-	assert.Contains(t, w.Body.String(), "UnsafeHost")
+	assert.Equal(t, http.StatusOK, w.Code, "binding a private host must be allowed")
+	assert.NotContains(t, w.Body.String(), "UnsafeHost")
 
 	pf, err := service.GetProjectForge(env.ProjectDir)
 	require.NoError(t, err)
-	assert.Nil(t, pf, "no binding may be stored for an unsafe host")
+	require.NotNil(t, pf, "the binding must be persisted")
+	assert.Equal(t, "127.0.0.1", pf.Host)
+	assert.Equal(t, "acme/widgets", pf.Slug())
 }
 
 func TestServeForgeBinding_RejectsInvalidURL(t *testing.T) {
@@ -278,6 +282,124 @@ func TestServeForgeBinding_AcceptsExplicitFields(t *testing.T) {
 	require.NotNil(t, pf)
 	assert.Equal(t, "example.com", pf.Host)
 	assert.Equal(t, "group/sub", pf.Owner)
+}
+
+// TestServeForgeBinding_PersistsSchemeFromHostField covers the explicit-fields
+// path: a client may send the scheme either inside the host field or as its own
+// field, and a self-hosted http instance must survive as http — not be silently
+// upgraded to https, which is what made an internal instance unreachable.
+func TestServeForgeBinding_PersistsSchemeFromHostField(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"platform": "gitlab", "host": "http://gitlab.internal:8080",
+		"owner": "group", "repo": "widgets",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "gitlab.internal:8080", pf.Host,
+		"the scheme must not leak into the host key")
+	assert.Equal(t, "http", pf.Scheme)
+
+	// The response reports the resolved scheme so the UI can display it.
+	assert.Contains(t, w.Body.String(), `"scheme":"http"`)
+}
+
+// TestServeForgeBinding_SchemeFieldHonored covers the split form, where the
+// client sends the scheme separately rather than inside the host.
+func TestServeForgeBinding_SchemeFieldHonored(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"platform": "gitlab", "host": "gitlab.internal:8080", "scheme": "http",
+		"owner": "group", "repo": "widgets",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "http", pf.Scheme)
+}
+
+// TestServeForgeBinding_SchemeInHostWinsOverField pins the precedence when a
+// client sends both: the host field is what the user actually typed, so it is
+// the more specific statement.
+func TestServeForgeBinding_SchemeInHostWinsOverField(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"platform": "gitlab", "host": "http://gitlab.internal", "scheme": "https",
+		"owner": "group", "repo": "widgets",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "http", pf.Scheme, "the scheme in the host field is the more specific statement")
+}
+
+// TestServeForgeBinding_URLSchemePersists covers the URL path: an http clone URL
+// must bind over http rather than defaulting to https.
+func TestServeForgeBinding_URLSchemePersists(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"url": "http://gitlab.internal/group/widgets.git",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "gitlab.internal", pf.Host)
+	assert.Equal(t, "http", pf.Scheme)
+}
+
+// TestServeForgeBinding_SSHRemoteLeavesSchemeEmpty pins the distinction between
+// "no scheme stated" and "https". An ssh remote says nothing about the API
+// scheme, so the binding must record nothing and let the credential's hint
+// decide — writing https here would override an http-only instance.
+func TestServeForgeBinding_SSHRemoteLeavesSchemeEmpty(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"url": "git@gitlab.internal:group/widgets.git",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Empty(t, pf.Scheme, "ssh does not imply an API scheme")
+
+	// The response still reports the resolved scheme, so the UI can show which
+	// one requests will actually use.
+	assert.Contains(t, w.Body.String(), `"scheme":"https"`)
 }
 
 func TestServeForgeItems_NoBindingReturns404(t *testing.T) {
@@ -476,45 +598,303 @@ func runGitInDir(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// seedUnreadEvent writes an unread event for the repo bindProject creates
+// (acme/widgets).
+func seedUnreadEvent(t *testing.T, itemKey string, number int, dedupe string) {
+	t.Helper()
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: number, ItemKey: itemKey,
+		EventType: "closed", DedupeKey: dedupe,
+	})
+	require.NoError(t, err)
+}
+
+// seedEvent writes one unread event for the repo bindProject creates
+// (acme/widgets), letting the caller choose the item type — seedUnreadEvent
+// above is fixed to issues.
+func seedEvent(t *testing.T, ev service.ForgeEvent) {
+	t.Helper()
+	ev.Platform = "github"
+	ev.Host = "github.com"
+	ev.Owner = "acme"
+	ev.Repo = "widgets"
+	_, err := service.InsertForgeEvent(ev)
+	require.NoError(t, err)
+}
+
 func TestServeForgeUnreadAndMarkRead(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	bindProject(t, env.ProjectDir, "github", "github.com")
+
+	seedUnreadEvent(t, "issue/1", 1, "k1")
+
+	unread := func() float64 {
+		t.Helper()
+		req := newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+		withAuthCookie(req, model.SessionToken)
+		withProjectCookie(req, env.ProjectDir)
+		w := callHandler(ServeForgeUnread, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return resp["count"].(float64)
+	}
+
+	assert.Equal(t, float64(1), unread())
+
+	// Mark all read.
+	req := newRequest(t, http.MethodPost, "/api/forge/read", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeMarkRead, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.Equal(t, float64(0), unread())
+}
+
+// TestServeForgeMarkRead_OneItem: the per-item path is what opening a row uses,
+// and it must leave the other rows unread.
+func TestServeForgeMarkRead_OneItem(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	bindProject(t, env.ProjectDir, "github", "github.com")
+
+	seedUnreadEvent(t, "issue/1", 1, "k1")
+	seedUnreadEvent(t, "issue/2", 2, "k2")
+
+	req := newRequest(t, http.MethodPost, "/api/forge/read",
+		map[string]string{"itemKey": "issue/1"})
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeMarkRead, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(1), resp["count"], "the response reports what is still unread")
+
+	// issue/2 is still unread.
+	req = newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeForgeUnread, req)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(1), resp["count"])
+}
+
+// TestServeForgeUnread_RequiresProject: the badge points at one project's repo,
+// so an unscoped call must not silently report a global number.
+func TestServeForgeUnread_RequiresProject(t *testing.T) {
 	_, teardown := setupForgeEnv(t)
 	defer teardown()
 
-	// Seed an unread event.
+	req := newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeUnread, req)
+	assert.NotEqual(t, http.StatusOK, w.Code, "a missing project must be rejected, not answered globally")
+}
+
+// TestServeForgeUnread_UnboundProjectIsZero: an unbound project has nothing to be
+// unread about. This is a normal state (the panel shows its bind prompt), so it
+// must be a 200 with zero rather than an error the UI would surface.
+func TestServeForgeUnread_UnboundProjectIsZero(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeUnread, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(0), resp["count"])
+}
+
+// TestServeForgeUnread_ScopedToBoundRepo: another repository's activity must not
+// inflate this project's badge.
+func TestServeForgeUnread_ScopedToBoundRepo(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	bindProject(t, env.ProjectDir, "github", "github.com")
+
+	seedUnreadEvent(t, "issue/1", 1, "mine")
+	// A different repo's event.
 	_, err := service.InsertForgeEvent(service.ForgeEvent{
-		Platform: "github", Host: "github.com", Owner: "a", Repo: "b",
-		ItemType: "issue", Number: 1, EventType: "closed", DedupeKey: "k1",
+		Platform: "github", Host: "github.com", Owner: "other", Repo: "repo",
+		ItemType: "issue", Number: 9, ItemKey: "issue/9",
+		EventType: "closed", DedupeKey: "theirs",
 	})
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/forge/unread", nil)
 	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeForgeUnread, req)
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, float64(1), resp["count"])
-
-	// Mark read.
-	req = newRequest(t, http.MethodPost, "/api/forge/read", nil)
-	withAuthCookie(req, model.SessionToken)
-	w = callHandler(ServeForgeMarkRead, req)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// Now zero.
-	req = newRequest(t, http.MethodGet, "/api/forge/unread", nil)
-	withAuthCookie(req, model.SessionToken)
-	w = callHandler(ServeForgeUnread, req)
-	require.Equal(t, http.StatusOK, w.Code)
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, float64(0), resp["count"])
+	assert.Equal(t, float64(1), resp["count"], "only the bound repository counts")
 }
 
 func TestServeForgeUnread_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupForgeEnv(t)
+	env, teardown := setupForgeEnv(t)
 	defer teardown()
 	req := newRequest(t, http.MethodPost, "/api/forge/unread", nil)
 	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeForgeUnread, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestServeForgeUnreadItems covers the unread-overview endpoint: the response
+// shape, the newest-event label, and the pipeline run id (which is only
+// recoverable from the item key).
+func TestServeForgeUnreadItems(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	bindProject(t, env.ProjectDir, "github", "github.com")
+
+	// Two events on one PR (newest = commented) plus one pipeline run.
+	seedEvent(t, service.ForgeEvent{
+		ItemType: "pr", Number: 455, ItemKey: "pr/455",
+		EventType: "closed", DedupeKey: "k1",
+	})
+	seedEvent(t, service.ForgeEvent{
+		ItemType: "pr", Number: 455, ItemKey: "pr/455",
+		EventType: "commented", DedupeKey: "k2",
+	})
+	seedEvent(t, service.ForgeEvent{
+		ItemType: "pipeline", Number: 0, ItemKey: forge.PipelineItemKey(555),
+		EventType: "pipeline_done", DedupeKey: "k3",
+	})
+
+	req := newRequest(t, http.MethodGet, "/api/forge/unread-items", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeUnreadItems, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Count int `json:"count"`
+		Items []struct {
+			ItemKey    string `json:"itemKey"`
+			Type       string `json:"type"`
+			Number     int    `json:"number"`
+			RunID      int64  `json:"runId"`
+			EventType  string `json:"eventType"`
+			EventCount int    `json:"eventCount"`
+			URL        string `json:"url"`
+			Slug       string `json:"slug"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	require.Equal(t, 2, resp.Count, "one PR + one pipeline run")
+	require.Len(t, resp.Items, 2)
+
+	byKey := map[string]int{}
+	for i, it := range resp.Items {
+		byKey[it.ItemKey] = i
+	}
+
+	pr := resp.Items[byKey["pr/455"]]
+	assert.Equal(t, "pr", pr.Type)
+	assert.Equal(t, 455, pr.Number)
+	assert.Equal(t, "commented", pr.EventType, "labelled by the newest event")
+	assert.Equal(t, 2, pr.EventCount)
+	assert.Equal(t, "acme/widgets", pr.Slug)
+
+	pipe := resp.Items[byKey["pipeline/run:555"]]
+	assert.Equal(t, "pipeline", pipe.Type)
+	assert.Zero(t, pipe.Number, "a pipeline has no item number")
+	assert.Equal(t, int64(555), pipe.RunID, "the run id must come from the key")
+	assert.Equal(t, "pipeline_done", pipe.EventType)
+}
+
+// TestServeForgeUnreadItems_UnboundReturnsEmpty: an unbound project is a normal
+// state, not an error — the panel shows its bind prompt.
+func TestServeForgeUnreadItems_UnboundReturnsEmpty(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/forge/unread-items", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeUnreadItems, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(0), resp["count"])
+	assert.Equal(t, []any{}, resp["items"], "items must be an array, never null")
+}
+
+// TestServeForgeUnreadItems_RequiresProject
+func TestServeForgeUnreadItems_RequiresProject(t *testing.T) {
+	_, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/forge/unread-items", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeUnreadItems, req)
+
+	assert.NotEqual(t, http.StatusOK, w.Code)
+}
+
+// TestServeForgeUnreadItems_MethodNotAllowed
+func TestServeForgeUnreadItems_MethodNotAllowed(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/unread-items", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeUnreadItems, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestServeForgeUnreadItems_ExcludesReadItems ties the endpoint to the read
+// action: after marking an item read it must drop out of the list.
+func TestServeForgeUnreadItems_ExcludesReadItems(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	bindProject(t, env.ProjectDir, "github", "github.com")
+
+	seedEvent(t, service.ForgeEvent{
+		ItemType: "pr", Number: 1, ItemKey: "pr/1", EventType: "closed", DedupeKey: "k1",
+	})
+	seedEvent(t, service.ForgeEvent{
+		ItemType: "pr", Number: 2, ItemKey: "pr/2", EventType: "closed", DedupeKey: "k2",
+	})
+
+	count := func() int {
+		t.Helper()
+		req := newRequest(t, http.MethodGet, "/api/forge/unread-items", nil)
+		withAuthCookie(req, model.SessionToken)
+		withProjectCookie(req, env.ProjectDir)
+		w := callHandler(ServeForgeUnreadItems, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp struct {
+			Count int `json:"count"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return resp.Count
+	}
+	require.Equal(t, 2, count())
+
+	// Mark just pr/1 read via the real endpoint. newRequest JSON-marshals the
+	// body, so pass a struct — a pre-encoded reader would be double-encoded.
+	req := newRequest(t, http.MethodPost, "/api/forge/read",
+		map[string]string{"itemKey": "pr/1"})
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	require.Equal(t, http.StatusOK, callHandler(ServeForgeMarkRead, req).Code)
+
+	assert.Equal(t, 1, count(), "the read item drops out of the overview")
 }

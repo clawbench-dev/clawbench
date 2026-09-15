@@ -5,12 +5,13 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useAppForeground, onAppForeground } from '@/composables/useAppForeground'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { appLog } from '@/utils/appLog'
+import { reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
 
 const TAG = 'ChatSession'
 import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
-import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
@@ -206,6 +207,31 @@ export function useChatSession(options: UseChatSessionOptions) {
     currentSessionTitle.value = (sessionData.sessionTitle as string) || ''
     currentBackend.value = (sessionData.backend as string) || ''
     currentAgentId.value = (sessionData.agentId as string) || ''
+    // ── ACP model list ──
+    // Must run BEFORE syncModelFromData below, which resolves the display name
+    // from agent.models: an ACP-only modelId would otherwise render as its raw id
+    // instead of its name.
+    //
+    // A brand-new session never talks to ACP, so this is the only way its model
+    // list can include ACP-only models (e.g. "Auto"): the backend resolves them
+    // from the agent-level capability registry and returns them here.
+    //
+    // Prefer the backend-resolved list — it already applied ACP membership over
+    // the CLI skeleton, and cliModels comes with it for the transport switch.
+    // The raw `models` fallback covers a backend too old to send resolvedModels.
+    const modelListState = sessionData.modelListState as {
+      models?: Array<{ id: string; name: string }>
+      resolvedModels?: Array<{ id: string; name: string; default: boolean }>
+      cliModels?: Array<{ id: string; name: string; default: boolean }>
+      currentModelId?: string
+    } | undefined
+    if (currentAgentId.value) {
+      if (modelListState?.resolvedModels && modelListState.resolvedModels.length > 0) {
+        applyResolvedModelList(currentAgentId.value, modelListState.resolvedModels, modelListState.cliModels)
+      } else if (modelListState?.models && modelListState.models.length > 0) {
+        updateACPModelList(currentAgentId.value, modelListState.models, modelListState.currentModelId)
+      }
+    }
     syncModelFromData(currentAgentId.value, sessionData.modelId as string)
     syncThinkingEffortFromData((sessionData.thinkingEffortState as Record<string, unknown>)?.currentId as string || '')
     syncModeFromData(
@@ -1091,6 +1117,21 @@ export function useChatSession(options: UseChatSessionOptions) {
       loadSessionsOnce()
     } else {
       if (sid) { runningSessions.value.delete(sid); runningSessionsVersion.value++ }
+      // A rewind truncated this session's history in place — either from this
+      // client (which already cleared the plan in rewindSession) or from
+      // another one. Plan progress is not persisted: it lived only on the ACP
+      // connection the rewind destroyed, so whatever is cached describes a
+      // conversation that no longer exists. Clear it here so a client that did
+      // NOT issue the rewind drops the stale plan too. Guarded on the current
+      // session because planEntries is a single module-level singleton: an
+      // event for another session must not wipe the plan being displayed.
+      // No replay guard: a replayed rewound means this client was disconnected
+      // when the truncation happened, so its plan is stale in exactly the same
+      // way, and buffered events replay in order (any plan_update that follows
+      // re-populates the panel afterwards).
+      if (data.status === 'rewound' && sid === currentSessionId.value) {
+        clearPlanState()
+      }
       // Safety net: if the session completed/cancelled but loading is still true,
       // it means the chat_stream 'done'/'cancelled' event was missed or its
       // handler failed (e.g., sessionChanged() guard returned early, or the WS
@@ -1100,6 +1141,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       // This is the root cause of the "stuck in progress" bug.
       if (sid === currentSessionId.value && loading.value && (data.status === 'completed' || data.status === 'cancelled')) {
         appLog.w(TAG, `session_update ${data.status} received but loading still true — cleaning up stuck loading state`)
+        // This is the other path that clears the stop-button spinner, so it
+        // must also close out a pending cancel measurement (whichever of the
+        // two paths arrives first reports it; the second is a no-op).
+        reportCancelRoundTrip(`session_update:${data.status}`)
         onDisconnectStream()
         forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
         loading.value = false
@@ -1454,6 +1499,17 @@ export function useChatSession(options: UseChatSessionOptions) {
         toast.show(gt('chat.session.rewindFailed'), { icon: '⚠️', type: 'error' })
         return ''
       }
+      // Plan progress is NOT persisted: it lives only on the ACP connection
+      // object, and the rewind destroyed that connection (the handler removes
+      // it from the pool before responding). The reload below therefore gets
+      // planState=null, and syncSessionState only overwrites plan entries when
+      // the response carries a non-empty list ("absent" is indistinguishable
+      // from "empty") — without this clear, the panel would keep showing the
+      // pre-rewind plan, including steps already marked completed.
+      // Same reasoning as switchSession's clearPlanState: entries produced
+      // after the anchor must not survive. Clear BEFORE the reload so a plan
+      // the reload does report (not possible today, but cheap insurance) wins.
+      clearPlanState()
       // Reload the message list in place (skipIfUnchanged=false forces an
       // authoritative refresh that rebuilds from the truncated DB snapshot).
       // Unlike switchSession this keeps the identity, cookie, WS subscription

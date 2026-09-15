@@ -72,17 +72,18 @@ Call the HTTP API directly:
 # Semantic / full-text hybrid search (POST; the query field is named q)
 curl -X POST http://localhost:20000/api/rag/search \
   -H 'Content-Type: application/json' \
+  -H 'X-ClawBench-AI-Token: <token>' \
   -b 'clawbench_project=/path/to/project' \
   -d '{"q":"SSH tunnel keepalive","limit":20,"exclude_session_id":"abc-123"}'
 
 # Fetch a full message by ID (includes thinking / tool_use blocks)
-curl 'http://localhost:20000/api/rag/message?id=42'
+curl -H 'X-ClawBench-AI-Token: <token>' 'http://localhost:20000/api/rag/message?id=42'
 
 # Fetch every message in a session
-curl 'http://localhost:20000/api/rag/session?id=abc-123'
+curl -H 'X-ClawBench-AI-Token: <token>' 'http://localhost:20000/api/rag/session?id=abc-123'
 ```
 
-`POST /api/rag/search` accepts `q`, `limit`, `backend`, `role`, `session_id`, `exclude_session_id`, `from`, and `to`. Project scope travels in the `clawbench_project` cookie; localhost requests skip authentication per the auth middleware rules.
+`POST /api/rag/search` accepts `q`, `limit`, `backend`, `role`, `session_id`, `exclude_session_id`, `from`, and `to`. Project scope travels in the `clawbench_project` cookie. Authentication uses the session cookie or a short-lived `X-ClawBench-AI-Token` from a local AI subprocess; a loopback address alone no longer bypasses auth, so the examples above need a token (the built-in slash commands inject one for the AI — call manually after logging in and use the session cookie).
 
 ## Deletion and Maintenance
 

@@ -13,12 +13,15 @@
           <div class="dlg-msg">{{ dlg.state.value.message }}</div>
           <textarea
             v-if="dlg.state.value.type === 'prompt'"
+            :key="inputEpoch"
             ref="inputRef"
             v-model="inputVal"
             class="dlg-input dlg-textarea"
             :placeholder="dlg.state.value.placeholder"
             rows="3"
             @keydown.enter.prevent="handleConfirm"
+            @beforeinput="onBeforeInput"
+            @input="onInput"
           ></textarea>
           <div class="dlg-actions">
             <button
@@ -50,6 +53,7 @@ import { useI18n } from 'vue-i18n'
 import { Info, MessageSquareText } from 'lucide-vue-next'
 import { useDialog } from '@/composables/useDialog'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import { useSelectAllDeleteRecovery } from '@/composables/useSelectAllDeleteRecovery'
 
 const { t } = useI18n()
 const dlg = useDialog()
@@ -59,8 +63,18 @@ const overlayRef = ref<HTMLElement | null>(null)
 const extraPrimed = ref(false)
 let unregisterBack: (() => void) | null = null
 
+// Android WebView: deleting the whole selection (which `select()` below creates)
+// kills the IME's InputConnection, so the field stops accepting input until the
+// textarea is rebuilt. See the composable for the mechanism and the timing rules.
+const { inputEpoch, onBeforeInput, onInput, reset: resetInputRecovery } = useSelectAllDeleteRecovery({
+  getElement: () => inputRef.value,
+})
+
 watch(() => dlg.state.value.visible, async (v) => {
   if (!v) {
+    // Drop any detection that never got its matching input event, so a stale
+    // flag cannot make the next dialog's first keystroke rebuild the element.
+    resetInputRecovery()
     if (unregisterBack) { unregisterBack(); unregisterBack = null }
     return
   }

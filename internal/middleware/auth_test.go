@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
@@ -43,33 +44,129 @@ func TestAuth_NoPassword_PassThrough(t *testing.T) {
 	})
 }
 
-// --- Auth: localhost bypass ---
+// --- Auth: localhost WITHOUT a token must not bypass ---
 
-func TestAuth_Localhost_IPv4_BypassesAuth(t *testing.T) {
+// The core of the change: a loopback address alone no longer grants access.
+// This is what closes the FRP hole, since frpc also dials in from 127.0.0.1.
+func TestAuth_LocalhostWithoutToken_Rejected(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"
+		model.CookieToken = "instance-key"
+
+		for _, remote := range []string{"127.0.0.1:12345", "[::1]:12345"} {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+			req.RemoteAddr = remote
+
+			middleware.Auth(okHandler).ServeHTTP(rec, req)
+
+			assert.Equalf(t, http.StatusUnauthorized, rec.Code,
+				"loopback %s without a token must be rejected", remote)
+		}
+	})
+}
+
+// --- Auth: localhost WITH a valid AI token bypasses ---
+
+func TestAuth_LocalhostWithAIToken_PassThrough(t *testing.T) {
+	withSavedToken(func() {
+		model.SessionToken = "valid-token"
+		model.CookieToken = "instance-key"
+
+		for _, remote := range []string{"127.0.0.1:12345", "[::1]:12345"} {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+			req.RemoteAddr = remote
+			req.Header.Set(model.AITokenHeader, model.SignAIToken(time.Now()))
+
+			middleware.Auth(okHandler).ServeHTTP(rec, req)
+
+			assert.Equalf(t, http.StatusOK, rec.Code,
+				"loopback %s with a valid token must pass", remote)
+		}
+	})
+}
+
+// A leaked token must not be replayable from off-machine: the address half of
+// IsAITokenRequest is what makes the token non-transferable.
+func TestAuth_RemoteWithValidAIToken_Rejected(t *testing.T) {
+	withSavedToken(func() {
+		model.SessionToken = "valid-token"
+		model.CookieToken = "instance-key"
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.RemoteAddr = "192.168.1.100:12345"
+		req.Header.Set(model.AITokenHeader, model.SignAIToken(time.Now()))
+
+		middleware.Auth(okHandler).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+}
+
+func TestAuth_LocalhostWithExpiredAIToken_Rejected(t *testing.T) {
+	withSavedToken(func() {
+		model.SessionToken = "valid-token"
+		model.CookieToken = "instance-key"
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		req.RemoteAddr = "127.0.0.1:12345"
+		req.Header.Set(model.AITokenHeader, model.SignAIToken(time.Now().Add(-2*model.AITokenTTL)))
 
 		middleware.Auth(okHandler).ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 }
 
-func TestAuth_Localhost_IPv6_BypassesAuth(t *testing.T) {
+func TestAuth_LocalhostWithGarbageAIToken_Rejected(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"
+		model.CookieToken = "instance-key"
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.RemoteAddr = "[::1]:12345"
+		req.RemoteAddr = "127.0.0.1:12345"
+		req.Header.Set(model.AITokenHeader, "not-a-real-token")
 
 		middleware.Auth(okHandler).ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+}
+
+// --- IsAITokenRequest: direct unit coverage ---
+
+func TestIsAITokenRequest(t *testing.T) {
+	withSavedToken(func() {
+		model.CookieToken = "instance-key"
+		valid := model.SignAIToken(time.Now())
+
+		cases := []struct {
+			name       string
+			remote     string
+			token      string
+			wantBypass bool
+		}{
+			{"loopback with valid token", "127.0.0.1:12345", valid, true},
+			{"loopback no token", "127.0.0.1:12345", "", false},
+			{"loopback garbage token", "127.0.0.1:12345", "garbage", false},
+			{"remote with valid token", "192.168.1.100:12345", valid, false},
+			{"remote no token", "192.168.1.100:12345", "", false},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+				req.RemoteAddr = tc.remote
+				if tc.token != "" {
+					req.Header.Set(model.AITokenHeader, tc.token)
+				}
+				assert.Equal(t, tc.wantBypass, middleware.IsAITokenRequest(req))
+			})
+		}
 	})
 }
 
@@ -124,26 +221,6 @@ func TestAuth_MissingCookie_Returns401(t *testing.T) {
 		middleware.Auth(okHandler).ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-	})
-}
-
-// --- Auth: localhost + bad cookie still passes (localhost wins) ---
-
-func TestAuth_LocalhostWithBadCookie_StillPasses(t *testing.T) {
-	withSavedToken(func() {
-		model.SessionToken = "valid-token"
-
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.RemoteAddr = "127.0.0.1:12345"
-		req.AddCookie(&http.Cookie{
-			Name:  model.SessionCookie,
-			Value: "wrong-token",
-		})
-
-		middleware.Auth(okHandler).ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 }
 

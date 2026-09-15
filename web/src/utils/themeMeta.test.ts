@@ -13,6 +13,7 @@ import {
   getThemePreviewColor,
   applyThemeAttributes,
   buildThemePalette,
+  onSystemColorSchemeChange,
 } from '@/utils/themeMeta'
 
 function stubMatchMedia(matches: boolean): void {
@@ -33,6 +34,9 @@ afterEach(() => {
   document.documentElement.removeAttribute('data-theme')
   document.documentElement.removeAttribute('data-theme-base')
   document.documentElement.removeAttribute('data-hljs-theme')
+  // The visibilitychange tests redefine this; drop the override so later
+  // files/describe blocks see jsdom's real value.
+  delete (document as unknown as Record<string, unknown>).visibilityState
 })
 
 describe('themeMeta registry', () => {
@@ -95,6 +99,97 @@ describe('resolveThemeId', () => {
     stubMatchMedia(true)
     expect(resolveThemeId('nord')).toBe('nord')
     expect(resolveThemeId('github-light')).toBe('github-light')
+  })
+})
+
+describe('onSystemColorSchemeChange', () => {
+  /** A matchMedia stub whose listeners can be fired and whose removal is observable. */
+  function installControllableMatchMedia(opts: { legacyAddListener?: boolean } = {}) {
+    const listeners = new Set<() => void>()
+    const removed: Array<() => void> = []
+    let addedViaLegacy = 0
+    const mql: Record<string, unknown> = {
+      matches: false,
+      media: '(prefers-color-scheme: dark)',
+      onchange: null,
+      addEventListener: (_: string, cb: () => void) => { listeners.add(cb) },
+      removeEventListener: (_: string, cb: () => void) => { listeners.delete(cb); removed.push(cb) },
+      dispatchEvent: vi.fn(),
+    }
+    if (opts.legacyAddListener) {
+      delete mql.addEventListener
+      delete mql.removeEventListener
+      mql.addListener = (cb: () => void) => { listeners.add(cb); addedViaLegacy++ }
+      mql.removeListener = (cb: () => void) => { listeners.delete(cb); removed.push(cb) }
+    }
+    vi.stubGlobal('matchMedia', vi.fn(() => mql))
+    return {
+      /** Simulate the OS flipping light/dark. */
+      fireChange: () => { for (const cb of [...listeners]) cb() },
+      listenerCount: () => listeners.size,
+      removedCount: () => removed.length,
+      legacyAdds: () => addedViaLegacy,
+    }
+  }
+
+  it('invokes the callback on a prefers-color-scheme change', () => {
+    const mm = installControllableMatchMedia()
+    const cb = vi.fn()
+    onSystemColorSchemeChange(cb)
+    expect(mm.listenerCount()).toBe(1)
+
+    mm.fireChange()
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the legacy addListener API (Safari < 14)', () => {
+    const mm = installControllableMatchMedia({ legacyAddListener: true })
+    const cb = vi.fn()
+    onSystemColorSchemeChange(cb)
+
+    expect(mm.legacyAdds()).toBe(1)
+    mm.fireChange()
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-checks on visibilitychange only when the page becomes visible', () => {
+    installControllableMatchMedia()
+    const cb = vi.fn()
+    onSystemColorSchemeChange(cb)
+
+    // Hiding the page is not a signal — the OS value may not have changed yet.
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(cb).not.toHaveBeenCalled()
+
+    // Resuming is: iOS PWAs never get a matchMedia change event for a scheme
+    // flip that happened while suspended.
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-checks on pageshow (bfcache restore skips visibilitychange)', () => {
+    installControllableMatchMedia()
+    const cb = vi.fn()
+    onSystemColorSchemeChange(cb)
+
+    window.dispatchEvent(new Event('pageshow'))
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+
+  it('unsubscribe detaches the matchMedia, visibility and pageshow listeners', () => {
+    const mm = installControllableMatchMedia()
+    const cb = vi.fn()
+    const stop = onSystemColorSchemeChange(cb)
+    stop()
+
+    expect(mm.listenerCount()).toBe(0)
+    mm.fireChange()
+    window.dispatchEvent(new Event('pageshow'))
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(cb).not.toHaveBeenCalled()
   })
 })
 

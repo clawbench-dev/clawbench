@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	external_message_id TEXT DEFAULT '',
 	queue_id TEXT DEFAULT '',
 	queued INTEGER NOT NULL DEFAULT 0,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	completed_at DATETIME
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
@@ -186,6 +187,20 @@ CREATE TABLE IF NOT EXISTS chat_thinking (
 	text TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(think_id, message_id, seq)
+);
+CREATE TABLE IF NOT EXISTS session_tags (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL,
+	scope TEXT NOT NULL DEFAULT 'project',
+	project_path TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(name, project_path)
+);
+CREATE TABLE IF NOT EXISTS session_tag_links (
+	session_id TEXT NOT NULL,
+	tag_id INTEGER NOT NULL REFERENCES session_tags(id) ON DELETE CASCADE,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(session_id, tag_id)
 );
 `
 
@@ -1578,7 +1593,8 @@ func TestUpdateLastRead_AnchorsToNewestAssistantMessage(t *testing.T) {
 	const msgCreated = "2025-01-01 10:00:00"
 	_, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, ?, ?, 'assistant', 'final', 0, ?)",
-		"/project", "claude", sid, msgCreated)
+		"/project", "claude", sid, msgCreated,
+	)
 	assert.NoError(t, err)
 
 	service.UpdateLastRead(sid)
@@ -1625,21 +1641,24 @@ func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) 
 	// Previous turn: a finalized assistant reply from an earlier time.
 	_, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 10:00:00')",
-		"/project", sid)
+		"/project", sid,
+	)
 	require.NoError(t, err)
 
 	// Current turn: user cancelled while the reply row is still streaming=1 —
 	// exactly the state mark-read sees before FinalizeStreamingMessage runs.
 	_, err = service.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial reply', 1, '2025-01-01 10:05:00')",
-		"/project", sid)
+		"/project", sid,
+	)
 	require.NoError(t, err)
 
 	service.UpdateLastRead(sid)
 
 	// The executor finalizes the interrupted reply immediately after.
 	_, err = service.UnsafeDBForTest().Exec(
-		"UPDATE chat_history SET streaming = 0 WHERE session_id = ? AND streaming = 1", sid)
+		"UPDATE chat_history SET streaming = 0 WHERE session_id = ? AND streaming = 1", sid,
+	)
 	require.NoError(t, err)
 
 	sessions, err := service.GetSessions("/project", "")
@@ -1647,6 +1666,226 @@ func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) 
 	require.Len(t, sessions, 1)
 	assert.Equal(t, 0, sessions[0].UnreadCount,
 		"the interrupted reply the user was watching must not become unread")
+}
+
+// TestUnread_ReplyReadMidTurnStillBecomesUnread is the core regression for the
+// "completion popup fires but no unread badge" bug.
+//
+// The streaming placeholder row is inserted when the turn STARTS, so its
+// created_at is the turn start, not the moment the reply landed. Reading the
+// session while the turn is still running therefore pushes last_read_at past
+// created_at, and with created_at semantics the finished reply could never
+// register as unread again. completed_at timestamps the actual landing, so the
+// reply still surfaces.
+//
+// The test models the real time gap explicitly: the read happens mid-turn and
+// the reply lands later. (UpdateLastRead anchors to CURRENT_TIMESTAMP, and
+// FinalizeStreamingMessage also stamps CURRENT_TIMESTAMP, so driving both back
+// to back would land them in the same second and mask the behavior under test.)
+func TestUnread_ReplyReadMidTurnStillBecomesUnread(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Mid-turn Read")
+
+	// Previous turn, finalized long ago.
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at, completed_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 09:00:00', '2025-01-01 09:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	// Current turn starts at 10:00:00 — the streaming placeholder is created
+	// then, so created_at is the TURN START (the bug's premise).
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	// The user opens the session mid-turn at 10:00:30. The frontend always marks
+	// the current session read on open, so last_read_at becomes that instant.
+	// UpdateLastRead itself is exercised, then rewound to the mid-turn moment to
+	// represent the minutes the turn still had left to run.
+	service.UpdateLastRead(sid)
+	_, err = service.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET last_read_at = '2025-01-01 10:00:30' WHERE id = ?", sid)
+	require.NoError(t, err)
+
+	// Precondition: while the reply is still streaming it is not counted.
+	sessions, err := service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	require.Equal(t, 0, sessions[0].UnreadCount, "a still-streaming reply must not count as unread")
+
+	// The turn finishes minutes later and the reply is finalized for real.
+	msgID, err := service.FinalizeStreamingMessage("/project", "claude", sid, `{"blocks":[]}`)
+	require.NoError(t, err)
+	require.NotZero(t, msgID, "the streaming row must have been finalized")
+
+	sessions, err = service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 1, sessions[0].UnreadCount,
+		"a reply that landed after the user last read it must be unread — otherwise the completion popup shows with no badge")
+}
+
+// TestUnread_MarkReadAfterCompletionClearsBadge is the counterpart: once the
+// user is actually looking at the session when it completes, marking read must
+// clear the badge. This is what keeps the fix from turning every reply into a
+// permanent unread.
+func TestUnread_MarkReadAfterCompletionClearsBadge(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Read After Completion")
+
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	// The reply lands while the user is viewing the session (the completion
+	// event path then calls mark-read, as it does in the browser).
+	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, `{"blocks":[]}`)
+	require.NoError(t, err)
+
+	sessions, err := service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 1, sessions[0].UnreadCount, "precondition: the fresh reply is unread")
+
+	service.UpdateLastRead(sid)
+
+	sessions, err = service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 0, sessions[0].UnreadCount,
+		"marking read after the reply landed must clear the badge")
+}
+
+// TestUnread_LegacyRowWithoutCompletedAtFallsBackToCreatedAt covers rows written
+// before the completed_at column existed. They must keep behaving exactly as
+// before (created_at semantics), which the COALESCE fallback provides.
+func TestUnread_LegacyRowWithoutCompletedAtFallsBackToCreatedAt(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Legacy Row")
+
+	// Legacy finalized row: completed_at is NULL.
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'legacy reply', 0, '2025-01-01 10:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	// Never read → unread (last_read_at NULL).
+	sessions, err := service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 1, sessions[0].UnreadCount, "an unread legacy row must still count as unread")
+
+	// Read after it landed → not unread.
+	service.UpdateLastRead(sid)
+	sessions, err = service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 0, sessions[0].UnreadCount, "a read legacy row must not count as unread")
+}
+
+// TestFinalizeStreamingMessage_StampsCompletedAt pins the invariant the whole
+// fix rests on: finalizing is what records when the reply landed, and that
+// timestamp must not be the turn-start created_at.
+func TestFinalizeStreamingMessage_StampsCompletedAt(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Completed At")
+
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, `{"blocks":[]}`)
+	require.NoError(t, err)
+
+	var created, completed sql.NullTime
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT created_at, completed_at FROM chat_history WHERE session_id = ? AND role = 'assistant'",
+		sid).Scan(&created, &completed)
+	require.NoError(t, err)
+	require.True(t, completed.Valid, "finalize must stamp completed_at")
+	require.True(t, created.Valid)
+	assert.True(t, completed.Time.After(created.Time),
+		"completed_at (%s) must be later than the turn-start created_at (%s)", completed.Time, created.Time)
+}
+
+// TestUnread_CancelledTurnTheUserWasWatchingStaysRead guards e76a6d960 against
+// the completed_at change.
+//
+// A user cancel happens IN the session the user is looking at, and the frontend
+// marks it read as soon as the "cancelled" event arrives — which is emitted
+// before the executor finalizes the interrupted reply (the agent process has to
+// tear down first). If that finalize stamped completed_at, the reply's
+// timestamp would land after the read and the session would flip back to
+// unread even though the user is staring at it. The cancelled finalize must
+// therefore leave completed_at NULL so the unread query falls back to
+// created_at (the turn start, which precedes the cancel-time read).
+func TestUnread_CancelledTurnTheUserWasWatchingStaysRead(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Cancelled Watching")
+
+	// The interrupted reply, created at turn start (10:00:00).
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial', 1, '2025-01-01 10:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	// The user cancels at 10:00:05 while watching; the frontend marks read then.
+	_, err = service.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET last_read_at = '2025-01-01 10:00:05' WHERE id = ?", sid)
+	require.NoError(t, err)
+
+	// The executor finalizes the interrupted reply after the agent tears down.
+	_, err = service.FinalizeCancelledStreamingMessage("/project", "claude", sid, `{"blocks":[]}`)
+	require.NoError(t, err)
+
+	var completed sql.NullTime
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT completed_at FROM chat_history WHERE session_id = ? AND role = 'assistant'", sid).Scan(&completed)
+	require.NoError(t, err)
+	assert.False(t, completed.Valid, "a user-cancelled finalize must not stamp completed_at")
+
+	sessions, err := service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 0, sessions[0].UnreadCount,
+		"cancelling a session the user is watching must not make it unread again")
+}
+
+// TestUnread_CompletedTurnWhileAwayIsUnread is the mirror case that makes the
+// completed_at distinction necessary: a turn that completes while the user has
+// switched to another session must surface as unread, even though its
+// created_at (turn start) predates the last read.
+func TestUnread_CompletedTurnWhileAwayIsUnread(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Completed While Away")
+
+	// Previous reply, finalized and read.
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at, completed_at) VALUES (?, 'claude', ?, 'assistant', 'old', 0, '2025-01-01 09:00:00', '2025-01-01 09:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+	_, err = service.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET last_read_at = '2025-01-01 09:30:00' WHERE id = ?", sid)
+	require.NoError(t, err)
+
+	// A new turn starts at 10:00:00 and the user stays on it briefly, then
+	// switches away. The turn keeps running and only lands at 10:05:00.
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, `{"blocks":[]}`)
+	require.NoError(t, err)
+
+	sessions, err := service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 1, sessions[0].UnreadCount,
+		"a reply that landed after the user left must be unread — this is the badge the completion popup announces")
 }
 
 // ---------- GetSessionAgentID ----------
@@ -1874,6 +2113,41 @@ func TestPurgeArchivedData_HardDeletesSessions(t *testing.T) {
 	assert.Equal(t, 0, count)
 }
 
+// TestPurgeArchivedData_CleansSessionTagLinks guards the retention path: the
+// link table has no FK to chat_sessions, so without an explicit delete the rows
+// survive the purge forever and the tag's session count stays inflated.
+// HardDeleteSession does this cleanup; this path was missed.
+func TestPurgeArchivedData_CleansSessionTagLinks(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Tagged")
+	keep := helperCreateSession(t, "/project", "claude", "Keep")
+	require.NoError(t, service.SetSessionTags(sid, "/project", []service.SessionTagRef{{Name: "bug"}}))
+	require.NoError(t, service.SetSessionTags(keep, "/project", []service.SessionTagRef{{Name: "bug"}}))
+	_ = service.ArchiveSession("/project", "claude", sid)
+
+	_, _, err := service.PurgeArchivedData([]string{sid})
+	assert.NoError(t, err)
+
+	// No orphan link row for the purged session.
+	var count int
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM session_tag_links WHERE session_id = ?", sid,
+	).Scan(&count)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, count, "purge must not leave orphan tag links")
+
+	// The surviving session keeps its link, and the count is now accurate (1).
+	tags, err := service.GetSessionTags(keep)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bug"}, namesOf(tags))
+
+	all, err := service.ListSessionTags("/project")
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, 1, all[0].Count, "tag count must reflect only live sessions")
+}
+
 func TestPurgeArchivedData_DoesNotPurgeActiveSession(t *testing.T) {
 	setupDB(t)
 
@@ -2075,7 +2349,7 @@ func TestGetSessionsPaged_NoLimit_ReturnsAll(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S2")
 	helperCreateSession(t, "/project", "claude", "S3")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 0, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 0, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.False(t, hasMore)
@@ -2087,7 +2361,7 @@ func TestGetSessionsPaged_LimitGreaterThanTotal(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S1")
 	helperCreateSession(t, "/project", "claude", "S2")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.False(t, hasMore)
@@ -2100,7 +2374,7 @@ func TestGetSessionsPaged_LimitEqualsTotal(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S2")
 	helperCreateSession(t, "/project", "claude", "S3")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.False(t, hasMore) // limit+1=4, only 3 exist, so no more
@@ -2113,7 +2387,7 @@ func TestGetSessionsPaged_LimitLessThanTotal_HasMore(t *testing.T) {
 		helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
 	}
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.True(t, hasMore)
@@ -2370,7 +2644,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	}
 
 	// First page: limit=2, no cursor
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.True(t, hasMore)
@@ -2381,7 +2655,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	cursorID := lastSession.ID
 
 	// Second page: cursor from last session of first page
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil)
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 2)
 	assert.True(t, hasMore2)
@@ -2406,7 +2680,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 	}
 
 	// First page: limit=3
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.True(t, hasMore)
 
@@ -2415,7 +2689,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID, nil)
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 2) // only 2 remaining
 	assert.False(t, hasMore2)
@@ -2424,7 +2698,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 func TestGetSessionsPaged_EmptyProject(t *testing.T) {
 	setupDB(t)
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Empty(t, sessions)
 	assert.False(t, hasMore)
@@ -2437,7 +2711,7 @@ func TestGetSessionsPaged_FiltersByProject(t *testing.T) {
 	helperCreateSession(t, "/proj1", "claude", "P1-S2")
 	helperCreateSession(t, "/proj2", "claude", "P2-S1")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/proj1", "", 10, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/proj1", "", 10, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.False(t, hasMore)
@@ -2451,7 +2725,7 @@ func TestGetSessionsPaged_ExcludesDeletedSessions(t *testing.T) {
 	err := service.ArchiveSession("/project", "claude", archivedSID)
 	assert.NoError(t, err)
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.False(t, hasMore)
@@ -2464,7 +2738,7 @@ func TestGetSessionsPaged_ExcludesScheduledSessions(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "Chat")
 	helperCreateScheduledSession(t, "/project", "claude", "Scheduled")
 
-	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
+	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.Equal(t, "Chat", sessions[0].Title)
@@ -2486,7 +2760,7 @@ func TestGetSessionsPaged_OrderedByCreatedDesc(t *testing.T) {
 	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
-	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
+	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.Equal(t, sid2, sessions[0].ID) // most recently created first
@@ -2513,7 +2787,7 @@ func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 	page := 0
 
 	for {
-		sessions, hasMore, err := service.GetSessionsPaged("/project", "", limit, cursor, cursorID, nil)
+		sessions, hasMore, err := service.GetSessionsPaged("/project", "", limit, cursor, cursorID, nil, "")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, sessions, "page %d should not be empty", page)
 
@@ -2567,7 +2841,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	assert.NoError(t, err)
 
 	// First page: limit=2 — should get sid3 (newest) and one of sid1/sid2
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.True(t, hasMore)
@@ -2577,7 +2851,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil)
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 1) // only 1 remaining
 	assert.False(t, hasMore2)
@@ -2608,7 +2882,8 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	for id, offset := range map[string]int{sidOld: -120, sidMid: -60, sidNew: 0} {
 		_, err := service.UnsafeDBForTest().Exec(
 			"UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?",
-			fmt.Sprintf("%d", offset), id)
+			fmt.Sprintf("%d", offset), id,
+		)
 		assert.NoError(t, err)
 	}
 
@@ -2616,11 +2891,12 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// were updated_at, page 2 would re-return it (and its neighbors) because
 	// their created_at is < that future timestamp.
 	_, err := service.UnsafeDBForTest().Exec(
-		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", sidOld)
+		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", sidOld,
+	)
 	assert.NoError(t, err)
 
 	// Page 1 (limit=1) → newest session.
-	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "", nil)
+	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "", nil, "")
 	assert.NoError(t, err)
 	require.Len(t, page1, 1)
 	assert.Equal(t, sidNew, page1[0].ID)
@@ -2629,7 +2905,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// Page 2 uses the created_at cursor — must be the middle session, NOT a
 	// repeat of page 1.
 	cursor := page1[0].CreatedAt.Format("2006-01-02 15:04:05")
-	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID, nil)
+	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID, nil, "")
 	assert.NoError(t, err)
 	require.Len(t, page2, 1)
 	assert.Equal(t, sidMid, page2[0].ID)
@@ -2639,9 +2915,10 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// the exact duplicate-producing behavior this contract guards against.
 	var oldUpdatedAt string
 	err = service.UnsafeDBForTest().QueryRow(
-		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld).Scan(&oldUpdatedAt)
+		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld,
+	).Scan(&oldUpdatedAt)
 	require.NoError(t, err)
-	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID, nil)
+	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID, nil, "")
 	assert.NoError(t, err)
 	require.Len(t, badCursor, 1)
 	assert.Equal(t, sidNew, badCursor[0].ID,
@@ -3303,7 +3580,7 @@ func TestGetSessionsPaged_UnreadCount(t *testing.T) {
 
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "msg", nil, false, "")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.Equal(t, 1, sessions[0].UnreadCount)
@@ -5590,7 +5867,8 @@ func TestPinnedSessionSortOrder(t *testing.T) {
 	// which drives the relative-time label and GetLatestSessionID's "most recent"
 	// pick. Backdate updated_at first so a bump would be visible.
 	_, err := service.WriteExec(
-		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s2)
+		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s2,
+	)
 	require.NoError(t, err)
 
 	// Pin the second session (oldest by creation)
@@ -5669,7 +5947,7 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	// smallest — exactly the case that broke the created_at-only cursor.
 	require.NoError(t, service.UpdateSessionPinned(ids[0], true))
 
-	page1, hasMore, err := service.GetSessionsPaged(projectPath, "", 3, "", "", nil)
+	page1, hasMore, err := service.GetSessionsPaged(projectPath, "", 3, "", "", nil, "")
 	require.NoError(t, err)
 	require.True(t, hasMore, "there are more rows after page 1")
 	require.Len(t, page1, 3)
@@ -5680,7 +5958,7 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	last1 := page1[len(page1)-1]
 	page2, _, err := service.GetSessionsPaged(
 		projectPath, "", 3,
-		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, &last1.Pinned,
+		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, &last1.Pinned, "",
 	)
 	require.NoError(t, err)
 
@@ -5700,7 +5978,7 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	// silent regression.
 	legacyPage2, _, err := service.GetSessionsPaged(
 		projectPath, "", 3,
-		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, nil,
+		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, nil, "",
 	)
 	require.NoError(t, err)
 	require.NotEmpty(t, legacyPage2)

@@ -11,7 +11,7 @@
       >
         <component :is="tab.icon" :size="14" />
         <span>{{ tab.label }}</span>
-        <span v-if="tab.count > 0" class="tab-count">{{ tab.count }}</span>
+        <span v-if="tab.count > 0" class="tab-count count-badge">{{ tab.count }}</span>
       </button>
     </div>
 
@@ -485,12 +485,9 @@ defineExpose({
 }
 
 .tab-count {
-  font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
-  padding: 1px 5px;
-  border-radius: var(--radius-md);
 }
 
 .manage-tab.active .tab-count {
