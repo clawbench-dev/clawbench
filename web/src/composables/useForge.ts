@@ -551,14 +551,27 @@ export function useForgeUnreadItems(getProjectPath: () => string) {
     }
 
     /**
-     * Mark one row read locally without removing it.
+     * Mark one row read, server-side, without removing it.
+     *
+     * The key is passed through VERBATIM: a pipeline's number is 0, so rebuilding
+     * it from type+number would send "pipeline/0" and mark nothing.
      *
      * The row is greyed out rather than spliced: removing it would shift every
      * row below the cursor mid-click. It drops on the next load().
      */
-    function markRowRead(itemKey: string) {
+    async function markRowRead(itemKey: string) {
         const row = items.value.find(r => r.itemKey === itemKey)
         if (row) row.read = true
+        try {
+            await markForgeRead(itemKey)
+            // Re-derive the badge rather than decrementing, so a missed event
+            // cannot leave it permanently wrong.
+            useForgeUnread().refresh()
+        } catch (err) {
+            appLog.w(TAG, 'markRowRead failed', err)
+            // Restore, so the row does not claim it was seen.
+            if (row) row.read = false
+        }
     }
 
     return { items, loading, loaded, error, load, markAllRead, markRowRead }

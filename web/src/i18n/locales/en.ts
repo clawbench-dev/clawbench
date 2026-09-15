@@ -88,8 +88,8 @@ export default {
       title: 'Unread overview',
       empty: 'Nothing unread',
       emptyHint: 'Issues, pull requests and pipelines with new activity show up here',
-      markAllRead: 'Mark all read',
       pipelineRef: 'Pipeline run {runId}',
+      eventCount: '{count} events',
       reason: {
         opened: 'Opened',
         closed: 'Closed',

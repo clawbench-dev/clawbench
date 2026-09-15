@@ -88,8 +88,8 @@ export default {
       title: '未读总览',
       empty: '没有未读内容',
       emptyHint: '有新动态的议题、合并请求与流水线会出现在这里',
-      markAllRead: '全部标为已读',
       pipelineRef: '流水线 run:{runId}',
+      eventCount: '{count} 条动态',
       reason: {
         opened: '新开',
         closed: '已关闭',

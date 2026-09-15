@@ -111,11 +111,40 @@ describe('useForgeUnreadItems', () => {
     const u = useForgeUnreadItems(() => '/proj')
     await u.load()
 
-    u.markRowRead('pr/1')
+    await u.markRowRead('pr/1')
 
     expect(u.items.value).toHaveLength(2)
     expect(u.items.value[0].read).toBe(true)
     expect(u.items.value[1].read).toBeUndefined()
+  })
+
+  it('markRowRead persists the read server-side with the key verbatim', async () => {
+    // A local-only flag would leave the badge wrong and the item unread on
+    // reload. The key must be passed through untouched: a pipeline's number is
+    // 0, so a rebuilt key would be "pipeline/0" and mark nothing.
+    mockFetchForgeUnreadItems.mockResolvedValue({
+      count: 1,
+      items: [row('pipeline/run:555', { type: 'pipeline', number: 0, runId: 555 })],
+    })
+    mockMarkForgeRead.mockResolvedValue({ count: 0 })
+    const u = useForgeUnreadItems(() => '/proj')
+    await u.load()
+
+    await u.markRowRead('pipeline/run:555')
+
+    expect(mockMarkForgeRead).toHaveBeenCalledWith('pipeline/run:555')
+  })
+
+  it('markRowRead restores the row when the write fails', async () => {
+    mockFetchForgeUnreadItems.mockResolvedValue({ count: 1, items: [row('pr/1')] })
+    mockMarkForgeRead.mockRejectedValue(new Error('offline'))
+    const u = useForgeUnreadItems(() => '/proj')
+    await u.load()
+
+    await u.markRowRead('pr/1')
+
+    expect(u.items.value[0].read).toBe(false,
+      'a failed mark must not leave the row claiming it was seen')
   })
 
   it('ignores an unknown item key', async () => {
@@ -123,7 +152,7 @@ describe('useForgeUnreadItems', () => {
     const u = useForgeUnreadItems(() => '/proj')
     await u.load()
 
-    u.markRowRead('pr/999')
+    await u.markRowRead('pr/999')
 
     expect(u.items.value).toHaveLength(1)
     expect(u.items.value[0].read).toBeUndefined()

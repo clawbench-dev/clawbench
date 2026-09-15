@@ -115,10 +115,11 @@ function dotClass(row: ForgeUnreadItem): string {
 }
 
 function onRowClick(row: ForgeUnreadItem) {
-  // Mark read locally so the dot clears at once, then open. The row stays in the
-  // list (greyed out) rather than being spliced — removing it would shift every
-  // row below the cursor as the user clicks. It disappears on the next reload.
-  unread.markRowRead(row.itemKey)
+  // Mark read (locally AND server-side) so the dot clears at once and the badge
+  // settles, then open. The row stays in the list (greyed out) rather than being
+  // spliced — removing it would shift every row below the cursor as the user
+  // clicks. It disappears on the next reload.
+  void unread.markRowRead(row.itemKey)
   emit('open-item', {
     type: row.type,
     number: row.number,

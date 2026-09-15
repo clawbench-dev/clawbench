@@ -453,9 +453,11 @@ function setActiveTab(key: ForgeTabKey) {
   if (key === 'pipeline') {
     void pipelines.load()
   } else if (key === 'unread') {
-    // The unread list owns its own composable and loads on activation; it must
-    // NOT be passed to items.setType, which only accepts an item type.
-    overviewListRef.value?.reload()
+    // Nothing to load here: the list remounts (its branch was just un-hidden)
+    // and its own immediate watcher fetches on first activation. Calling
+    // reload() now would be a no-op — the template ref is still null until the
+    // DOM updates. Critically, it must NOT reach items.setType, which only
+    // accepts an item type.
   } else {
     // The issue/PR list shares one composable; changing the type reloads it.
     items.setType(key)
@@ -472,8 +474,11 @@ function setActiveTab(key: ForgeTabKey) {
 async function refresh(force = false) {
   await items.loadBinding(force)
   if (!items.isBound.value) return
-  // Only the visible tab has data worth reloading; the other loads on switch.
+  // Only the visible tab has data worth reloading; the others load on switch.
+  // The unread tab has its own composable, so it must be named explicitly —
+  // otherwise the header button would reload an invisible list and appear dead.
   if (activeTab.value === 'pipeline') await pipelines.load()
+  else if (activeTab.value === 'unread') overviewListRef.value?.reload()
   else await items.load()
 }
 
@@ -542,9 +547,9 @@ const overviewListRef = ref<{ reload: () => void; clearLocal: () => void } | nul
  * Open the item an unread row points at.
  *
  * In-component, so no cross-component seam is needed: the detail refs are right
- * here. The row's own mark-read already happened in the list (it passes the
- * opaque itemKey straight to the read endpoint), so nothing is lost by not
- * routing through items.markItemRead / pipelines.markItemRead here.
+ * here. Read state is NOT handled here — the list already marked the row read
+ * server-side using the opaque itemKey, which is the only form that works for a
+ * pipeline (its number is 0, so a rebuilt key would be "pipeline/0").
  */
 function onOverviewOpenItem(payload: {
   type: 'issue' | 'pr' | 'pipeline'
@@ -555,6 +560,10 @@ function onOverviewOpenItem(payload: {
     activeTab.value = 'pipeline'
     detailNumber.value = 0
     pipelineDetailId.value = payload.runId
+    // Load the list behind the detail. Without this, closing the detail lands on
+    // the Pipelines tab with nothing in it (its own loader only runs on tab
+    // switch or on activation, neither of which happened).
+    void pipelines.load()
   } else {
     activeTab.value = payload.type
     // Keep the item list's own type in sync so closing the detail shows the

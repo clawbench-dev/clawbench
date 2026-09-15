@@ -907,6 +907,71 @@ describe('ForgePanelContent unread tab', () => {
     expect(state.markAllRead).toHaveBeenCalled()
     expect(cleared).toEqual(['cleared'], 'the unread rows must be cleared too')
   })
+
+  it('passes active=false through the composite when the dock tab is inactive', async () => {
+    // The composite is `props.active && activeTab === 'unread'`. The tab half is
+    // covered above; without this the `active &&` half could be dropped silently
+    // and the list would fetch while the whole panel is off-screen.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: false, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'ForgeOverviewList' }).props('active')).toBe(false)
+  })
+
+  it('loads the pipeline list when opening a pipeline row', async () => {
+    // Otherwise closing the detail lands on the Pipelines tab with an empty list
+    // ("No matching pipelines") for a repository that has runs.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+    mockPipelinesLoad.mockClear()
+
+    wrapper.findComponent({ name: 'ForgeOverviewList' }).vm.$emit('open-item', {
+      type: 'pipeline', number: 0, runId: 555, itemKey: 'pipeline/run:555',
+    })
+    await flushPromises()
+
+    expect(mockPipelinesLoad).toHaveBeenCalled()
+  })
+
+  it('header refresh reloads the unread list, not an invisible one', async () => {
+    // On the default unread tab the old code reloaded the issue/PR list, so the
+    // button appeared dead.
+    const reloaded: string[] = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: {
+        ...opts,
+        stubs: {
+          ...opts.stubs,
+          ForgeOverviewList: {
+            name: 'ForgeOverviewList',
+            props: ['active', 'projectPath'],
+            emits: ['open-item'],
+            template: '<div class="overview-stub" />',
+            methods: { reload() { reloaded.push('reload') }, clearLocal() {} },
+          },
+        },
+      },
+    })
+    await flushPromises()
+    mockLoad.mockClear()
+
+    // The header refresh button is the last one in the header row.
+    const refresh = wrapper.findAll('.forge-header-btn').at(-1)!
+    await refresh.trigger('click')
+    await flushPromises()
+
+    // At least once (the click); mounting may add another. What matters is that
+    // the VISIBLE list was reloaded and the invisible one was not.
+    expect(reloaded.length).toBeGreaterThan(0)
+    expect(mockLoad).not.toHaveBeenCalled()
+  })
 })
 
 /**
