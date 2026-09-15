@@ -154,6 +154,10 @@ vi.mock('lucide-vue-next', () => ({
   Plus: { template: '<svg />' },
   Minus: { template: '<svg />' },
   LoaderCircle: { template: '<svg />' },
+  RefreshCw: { template: '<svg />' },
+  RotateCw: { template: '<svg />' },
+  RotateCcw: { template: '<svg />' },
+  CheckCircle2: { template: '<svg />' },
 }))
 
 import { createI18n } from 'vue-i18n'
@@ -178,6 +182,7 @@ const i18n = createI18n({
           unstaged: 'Unstaged',
           fileCount: '{count} files',
           workingTreeChanges: 'Working tree',
+          refresh: 'Refresh change list',
         },
         fileType: {
           added: 'added', modified: 'modified', deleted: 'deleted',
@@ -261,404 +266,25 @@ describe('GitHistoryDrawer — loading states', () => {
   })
 })
 
-describe('GitHistoryDrawer — navigation', () => {
-  it('drillBack("commits") resets selection state', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedSHA = 'abc123'
-    vm.drillBack('commits')
-    expect(vm.selectedSHA).toBe(null)
-    expect(vm.currentView).toBe('commits')
-    expect(mockHandleDrillBackToCommits).toHaveBeenCalled()
-  })
-
-  it('drillBack("files") resets file path', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedFilePath = 'src/foo.ts'
-    vm.currentView = 'diff'
-    vm.drillBack('files')
-    expect(vm.selectedFilePath).toBe(null)
-    expect(vm.currentView).toBe('files')
-  })
-
-  it('drillToFile sets file path and switches to diff view', async () => {
-    mockGitFetch.mockResolvedValue(okJson({ diff: 'sample diff' }))
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.drillToFile({ path: 'src/foo.ts', type: 'M' })
-    expect(vm.selectedFilePath).toBe('src/foo.ts')
-    expect(vm.currentView).toBe('diff')
-  })
-
-  it('onCommitSelect for project HEAD commits uses wtFiles', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.wtFiles = [{ path: 'foo', type: 'M' }]
-    vm.onCommitSelect({ sha: 'HEAD', isWT: true })
-    expect(vm.currentView).toBe('files')
-    expect(vm.files).toEqual([{ path: 'foo', type: 'M' }])
-  })
-
-  it('onCommitSelect for project non-HEAD calls loadCommitFiles', async () => {
-    mockGitFetch.mockResolvedValue(okJson([{ path: 'src/x', type: 'M' }]))
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.onCommitSelect({ sha: 'abc123' })
-    expect(vm.currentView).toBe('files')
-  })
-
-  it('onCommitSelect for file mode switches to diff', async () => {
-    mockGitFetch.mockResolvedValue(okJson({ diff: 'data' }))
-    const wrapper = mountDrawer({ mode: 'file', file: { path: 'src/x.ts' } })
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.onCommitSelect({ sha: 'abc123' })
-    expect(vm.currentView).toBe('diff')
-  })
-})
-
-describe('GitHistoryDrawer — helpers', () => {
-  it('fileTypeLabel returns i18n key for known types', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    expect(vm.fileTypeLabel('A', false)).toBe('git.fileType.added')
-    expect(vm.fileTypeLabel('M', true)).toContain('git.fileType.stagedPrefix')
-    expect(vm.fileTypeLabel('Q', false)).toBe('Q')
-  })
-
-  it('badgeClass maps type to class name', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    expect(vm.badgeClass({ type: 'A' })).toBe('badge-A')
-    expect(vm.badgeClass({ type: 'M' })).toBe('badge-M')
-    expect(vm.badgeClass({ type: 'D' })).toBe('badge-D')
-    expect(vm.badgeClass({ type: 'R' })).toBe('badge-R')
-    expect(vm.badgeClass({ type: '?' })).toBe('badge-U')
-    expect(vm.badgeClass({ type: 'Q' })).toBe('badge-M')
-    expect(vm.badgeClass({ type: 'M', staged: true })).toBe('badge-M badge-staged')
-  })
-
-  it('resetState clears all state', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.commits = [{ sha: 'a' }]
-    vm.error = 'oops'
-    vm.resetState()
-    expect(vm.commits).toEqual([])
-    expect(vm.error).toBe('')
-    expect(vm.currentView).toBe('commits')
-  })
-})
-
-describe('GitHistoryDrawer — loadMoreCommits', () => {
-  it('loadMoreCommits skips when not hasMore', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.hasMore = false
-    await vm.loadMoreCommits()
-    expect(mockGitFetch).not.toHaveBeenCalledWith(expect.stringContaining('skip='), expect.anything())
-  })
-
-  it('loadMoreCommits fetches and appends commits', async () => {
-    mockGitFetch.mockResolvedValue(okJson({ commits: [{ sha: 'new1' }], hasMore: false }))
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.commits = [{ sha: 'a' }]
-    vm.hasMore = true
-    vm.isGit = true
-    await vm.loadMoreCommits()
-    expect(vm.commits.length).toBe(2)
-    expect(vm.hasMore).toBe(false)
-  })
-})
-
-describe('GitHistoryDrawer — computed properties', () => {
-  it('selectedCommit returns matching commit or null', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.commits = [{ sha: 'a' }, { sha: 'b' }]
-    vm.selectedSHA = 'b'
-    expect(vm.selectedCommit).toEqual({ sha: 'b' })
-    vm.selectedSHA = 'missing'
-    expect(vm.selectedCommit).toBe(null)
-  })
-
-  it('isWorkingTree is true only for HEAD', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedSHA = 'HEAD'
-    expect(vm.isWorkingTree).toBe(true)
-    vm.selectedSHA = 'abc'
-    expect(vm.isWorkingTree).toBe(false)
-  })
-
-  it('totalFileCount sums merge groups', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.mergeGroups = [{ label: 'A', files: [{ path: 'x' }, { path: 'y' }] }]
-    expect(vm.totalFileCount).toBe(2)
-    vm.mergeGroups = []
-    vm.files = [{ path: 'z' }]
-    expect(vm.totalFileCount).toBe(1)
-  })
-
-  it('hasStaged/hasUnstaged reflect stagedFiles/unstagedFiles', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.files = [{ path: 'a', type: 'M', staged: true }]
-    expect(vm.hasStaged).toBe(true)
-    expect(vm.hasUnstaged).toBe(false)
-    vm.files = [{ path: 'a', type: 'M', staged: false }]
-    expect(vm.hasStaged).toBe(false)
-    expect(vm.hasUnstaged).toBe(true)
-  })
-
-  it('sortedFiles sorts by type order', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.files = [{ path: 'a', type: 'D' }, { path: 'b', type: 'A' }, { path: 'c', type: 'M' }]
-    expect(vm.sortedFiles.map((f: any) => f.path)).toEqual(['c', 'b', 'a'])
-  })
-
-  it('mode computed reflects props.mode', async () => {
-    const wrapper = mountDrawer({ mode: 'file' })
-    expect((wrapper.vm as any).mode).toBe('file')
-  })
-})
-
-describe('GitHistoryDrawer — loadProjectHistory', () => {
-  it('loads commits and prepends WT entry when working tree exists', async () => {
-    let callIdx = 0
-    mockGitFetch.mockImplementation(() => {
-      callIdx++
-      if (callIdx === 1) return Promise.resolve(okJson({ isGit: true, commits: [{ sha: 'a' }], hasMore: false }))
-      if (callIdx === 2) return Promise.resolve(okJson({ files: [{ path: 'x', type: 'M' }] }))
-      return Promise.resolve(okJson({}))
-    })
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    await vm.loadProjectHistory()
-    await flushPromises()
-    expect(vm.commits[0].sha).toBe('HEAD')
-    expect(vm.commits[0].isWT).toBe(true)
-    expect(vm.commits.length).toBe(2)
-  })
-
-  it('handles isGit=false response', async () => {
-    mockGitFetch.mockResolvedValueOnce(okJson({ isGit: false }))
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    await vm.loadProjectHistory()
-    expect(vm.isGit).toBe(false)
-    expect(vm.commits).toEqual([])
-  })
-
-  it('handles error response', async () => {
-    mockGitFetch.mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: 'failed' }) })
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    await vm.loadProjectHistory()
-    expect(vm.error).toBe('failed')
-  })
-
-  it('handles GitTimeoutError', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    const { GitTimeoutError } = await import('@/utils/gitApi')
-    mockGitFetch.mockImplementationOnce(() => { throw new GitTimeoutError('url') })
-    await vm.loadProjectHistory()
-    expect(vm.error).toBe('git.history.loadTimeout')
-  })
-
-  it('handles generic error', async () => {
-    mockGitFetch.mockImplementationOnce(() => { throw new Error('net') })
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    await vm.loadProjectHistory()
-    expect(vm.error).toBe('git.history.loadError')
-  })
-})
-
-describe('GitHistoryDrawer — loadFileHistory', () => {
-  it('loads commits for file with uncommitted changes', async () => {
-    let callIdx = 0
-    mockGitFetch.mockImplementation(() => {
-      callIdx++
-      if (callIdx === 1) return Promise.resolve(okJson({ isGit: true, commits: [{ sha: 'a' }] }))
-      if (callIdx === 2) return Promise.resolve(okJson({ hasUncommitted: true }))
-      return Promise.resolve(okJson({}))
-    })
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    await vm.loadFileHistory('src/foo.ts')
-    expect(vm.commits[0].sha).toBe('HEAD')
-    expect(vm.isGit).toBe(true)
-  })
-
-  it('handles not a git repo', async () => {
-    mockGitFetch.mockResolvedValueOnce(okJson({ isGit: false }))
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    await vm.loadFileHistory('src/foo.ts')
-    expect(vm.isGit).toBe(false)
-  })
-})
-
-describe('GitHistoryDrawer — loadCommitFiles', () => {
-  it('sets files when array response', async () => {
-    mockGitFetch.mockResolvedValueOnce(okJson([{ path: 'a', type: 'M' }]))
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    await vm.loadCommitFiles('abc')
-    expect(vm.files.length).toBe(1)
-  })
-
-  it('sets mergeGroups when merge response', async () => {
-    mockGitFetch.mockResolvedValueOnce(okJson({ merge: true, groups: [{ label: 'main', files: [{ path: 'a' }] }] }))
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    await vm.loadCommitFiles('abc')
-    expect(vm.mergeGroups.length).toBe(1)
-  })
-
-  it('handles error response', async () => {
-    mockGitFetch.mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({}) })
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    await vm.loadCommitFiles('abc')
-    expect(vm.files).toEqual([])
-  })
-})
-
-describe('GitHistoryDrawer — loadDiff', () => {
-  it('project mode: renders html from diff response', async () => {
-    mockGitFetch.mockResolvedValueOnce(okJson({ diff: '+added', empty: false }))
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedSHA = 'abc'
-    vm.selectedFilePath = 'src/foo.ts'
-    await vm.loadDiff()
-    expect(vm.diffState.html).toContain('added')
-    expect(vm.diffState.empty).toBe(false)
-  })
-
-  it('sets empty when diff is empty', async () => {
-    mockGitFetch.mockResolvedValueOnce(okJson({ empty: true }))
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedSHA = 'abc'
-    vm.selectedFilePath = 'src/foo.ts'
-    await vm.loadDiff()
-    expect(vm.diffState.empty).toBe(true)
-  })
-
-  it('sets empty when response is not ok', async () => {
-    mockGitFetch.mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({}) })
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedSHA = 'abc'
-    vm.selectedFilePath = 'src/foo.ts'
-    await vm.loadDiff()
-    expect(vm.diffState.empty).toBe(true)
-  })
-
-  it('file mode uses different endpoint', async () => {
-    mockGitFetch.mockResolvedValueOnce(okJson({ diff: 'data', empty: false }))
-    const wrapper = mountDrawer({ mode: 'file', file: { path: 'src/main.ts' } })
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedSHA = 'abc'
-    await vm.loadDiff()
-    expect(mockGitFetch).toHaveBeenCalledWith(expect.stringContaining('/api/git/diff'))
-  })
-})
-
-describe('GitHistoryDrawer — onRefresh', () => {
-  it('refetches project history', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.commits = [{ sha: 'a' }]
-    mockGitFetch.mockClear()
-    mockGitFetch.mockResolvedValue(okJson({ isGit: true, commits: [], hasMore: false }))
-    await vm.onRefresh()
-    await flushPromises()
-    expect(mockGitFetch).toHaveBeenCalledWith('/api/git/project-history')
-  })
-
-  it('refetches file history when in file mode', async () => {
-    mockGitFetch.mockResolvedValue(okJson({ isGit: true, commits: [] }))
-    const wrapper = mountDrawer({ mode: 'file', file: { path: 'src/foo.ts' } })
-    await flushPromises()
-    const vm = wrapper.vm as any
-    mockGitFetch.mockClear()
-    await vm.onRefresh()
-    await flushPromises()
-    expect(mockGitFetch).toHaveBeenCalledWith(expect.stringContaining('/api/git/history'))
-  })
-})
-
-describe('GitHistoryDrawer — onSearch', () => {
-  it('does nothing for empty query', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    mockGitFetch.mockClear()
-    await vm.onSearch('   ')
-    expect(mockGitFetch).not.toHaveBeenCalled()
-  })
-
-  it('does nothing in file mode', async () => {
-    const wrapper = mountDrawer({ mode: 'file', file: { path: 'src/foo.ts' } })
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.isGit = true
-    mockGitFetch.mockClear()
-    await vm.onSearch('foo')
-    expect(mockGitFetch).not.toHaveBeenCalled()
-  })
-})
-
 describe('GitHistoryDrawer — files view rendering', () => {
-  it('renders files view when currentView=files and files present', async () => {
+  /** Serve a commit-files response and open that commit's file list. */
+  async function showCommitFiles(payload: unknown) {
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/commit-files')) return Promise.resolve(okJson(payload))
+      return Promise.resolve(okJson({}))
+    })
     const wrapper = mountDrawer()
     await flushPromises()
     const vm = wrapper.vm as any
-    vm.selectedSHA = 'abc123'
-    vm.currentView = 'files'
-    vm.files = [{ path: 'src/foo.ts', type: 'M', staged: false }]
-    vm.selectedCommit = { sha: 'abc123' }
-    vm.totalFileCount = 1
+    const commit = { sha: 'abc123', msg: 'm', date: '', author: '' }
+    vm.commits = [commit]
+    vm.onCommitSelect(commit)
     await flushPromises()
+    return wrapper
+  }
+
+  it('renders files view when currentView=files and files present', async () => {
+    const wrapper = await showCommitFiles([{ path: 'src/foo.ts', type: 'M', staged: false }])
     expect(wrapper.find('.drilldown-page').exists()).toBe(true)
     // Two-line item: bare name on top, parent directory (no file name) below.
     const item = wrapper.find('.drilldown-item')
@@ -667,15 +293,10 @@ describe('GitHistoryDrawer — files view rendering', () => {
   })
 
   it('renders merge-group files as two-line items', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedSHA = 'abc123'
-    vm.currentView = 'files'
-    vm.mergeGroups = [{ label: 'main', files: [{ path: 'web/src/a.ts', type: 'M' }] }]
-    vm.selectedCommit = { sha: 'abc123' }
-    vm.totalFileCount = 1
-    await flushPromises()
+    const wrapper = await showCommitFiles({
+      merge: true,
+      groups: [{ label: 'main', files: [{ path: 'web/src/a.ts', type: 'M' }] }],
+    })
     const item = wrapper.find('.merge-group .drilldown-item')
     expect(item.find('.git-file-name').text()).toBe('a.ts')
     expect(item.find('.git-file-dir').text()).toBe('web/src')
@@ -683,16 +304,7 @@ describe('GitHistoryDrawer — files view rendering', () => {
   })
 
   it('shows empty state when no file changes', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedSHA = 'abc123'
-    vm.currentView = 'files'
-    vm.files = []
-    vm.mergeGroups = []
-    vm.selectedCommit = { sha: 'abc123' }
-    vm.totalFileCount = 0
-    await flushPromises()
+    const wrapper = await showCommitFiles([])
     expect(wrapper.find('.git-history-empty').exists()).toBe(true)
   })
 
@@ -703,22 +315,15 @@ describe('GitHistoryDrawer — files view rendering', () => {
     vm.selectedSHA = 'abc123'
     vm.currentView = 'files'
     vm.filesLoading = true
-    vm.selectedCommit = { sha: 'abc123' }
-    vm.totalFileCount = 0
     await flushPromises()
     expect(wrapper.find('.git-history-loading').exists()).toBe(true)
   })
 
   it('shows merge groups when present', async () => {
-    const wrapper = mountDrawer()
-    await flushPromises()
-    const vm = wrapper.vm as any
-    vm.selectedSHA = 'abc123'
-    vm.currentView = 'files'
-    vm.mergeGroups = [{ label: 'main', files: [{ path: 'src/a', type: 'M' }] }]
-    vm.selectedCommit = { sha: 'abc123' }
-    vm.totalFileCount = 1
-    await flushPromises()
+    const wrapper = await showCommitFiles({
+      merge: true,
+      groups: [{ label: 'main', files: [{ path: 'src/a', type: 'M' }] }],
+    })
     expect(wrapper.find('.merge-group').exists()).toBe(true)
   })
 })
@@ -741,5 +346,149 @@ describe('GitHistoryDrawer — file mode rendering', () => {
     const wrapper = mountDrawer({ mode: 'file', file: { path: 'src/foo.ts' } })
     await flushPromises()
     expect(wrapper.find('.bs-header-description').exists()).toBe(true)
+  })
+})
+
+// Regression: re-opening the drawer while drilled into the working-tree file
+// list used to render an empty list. The open watcher reloads history, which
+// clears files/wtFiles but leaves currentView on 'files'; the WT view was a
+// pure cache read with no on-demand re-fetch.
+//
+// These assert on the rendered DOM (not on component state) because the state
+// now lives in useGitHistoryView — the component-level contract is "the list
+// the user sees is fresh".
+describe('GitHistoryDrawer — working tree view stays fresh', () => {
+  /** Route gitFetch so the workspace contents can change between calls. */
+  function routeGitFetch(wt: { files: Array<Record<string, unknown>> }) {
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/project-history')) {
+        return Promise.resolve(okJson({ isGit: true, commits: [], hasMore: false }))
+      }
+      if (url.startsWith('/api/git/working-tree')) {
+        return Promise.resolve(okJson({ files: wt.files }))
+      }
+      return Promise.resolve(okJson([]))
+    })
+  }
+
+  /**
+   * The drawer is mounted closed in production (FileOverlay renders it with
+   * :open="fileHistoryOpen"), and lastProjectRoot is only seeded inside the
+   * open watcher — so the FIRST open always counts as an identity change and
+   * resets state. Model the real cycle: mount closed, then open.
+   */
+  async function mountAndOpen(wt: { files: Array<Record<string, unknown>> }) {
+    routeGitFetch(wt)
+    const wrapper = mountDrawer({ open: false })
+    await flushPromises()
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+    return wrapper
+  }
+
+  /** Open the synthetic working-tree row through the commit list. */
+  async function selectWorkingTree(wrapper: ReturnType<typeof mountDrawer>) {
+    const vm = wrapper.vm as any
+    vm.commits = [{ sha: 'HEAD', msg: 'wt', date: '', author: '', isWT: true }]
+    vm.onCommitSelect({ sha: 'HEAD', msg: 'wt', date: '', author: '', isWT: true })
+    await flushPromises()
+  }
+
+  it('re-fetches the working tree when the WT row is selected (not the stale snapshot)', async () => {
+    const wt = { files: [{ path: 'old.ts', type: 'M', staged: false }] }
+    const wrapper = await mountAndOpen(wt)
+
+    // Workspace changes while the user is looking at something else.
+    wt.files = [{ path: 'new.ts', type: 'A', staged: false }]
+    await selectWorkingTree(wrapper)
+
+    expect(wrapper.find('.drilldown-item .git-file-name').text()).toBe('new.ts')
+    wrapper.unmount()
+  })
+
+  it('re-opening on the working-tree view refreshes instead of rendering blank', async () => {
+    const wt = { files: [{ path: 'old.ts', type: 'M', staged: false }] }
+    const wrapper = await mountAndOpen(wt)
+    await selectWorkingTree(wrapper)
+    expect(wrapper.find('.drilldown-item .git-file-name').text()).toBe('old.ts')
+
+    // Close, change the workspace, re-open.
+    await wrapper.setProps({ open: false })
+    wt.files = [{ path: 'changed.ts', type: 'M', staged: false }]
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    expect(wrapper.find('.git-history-empty').exists()).toBe(false)
+    expect(wrapper.find('.drilldown-item .git-file-name').text()).toBe('changed.ts')
+    wrapper.unmount()
+  })
+
+  it('falls back to the commit list when the workspace becomes clean', async () => {
+    const wt = { files: [{ path: 'old.ts', type: 'M', staged: false }] }
+    const wrapper = await mountAndOpen(wt)
+    await selectWorkingTree(wrapper)
+    expect(wrapper.find('.drilldown-page').exists()).toBe(true)
+
+    // Everything got committed → no working-tree row any more.
+    await wrapper.setProps({ open: false })
+    wt.files = []
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).currentView).toBe('commits')
+    expect((wrapper.vm as any).selectedSHA).toBeNull()
+    wrapper.unmount()
+  })
+})
+
+describe('GitHistoryDrawer — files view refresh button', () => {
+  function routeGitFetch(wt: { files: Array<Record<string, unknown>> }) {
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/project-history')) {
+        return Promise.resolve(okJson({ isGit: true, commits: [], hasMore: false }))
+      }
+      if (url.startsWith('/api/git/working-tree')) {
+        return Promise.resolve(okJson({ files: wt.files }))
+      }
+      return Promise.resolve(okJson([]))
+    })
+  }
+
+  async function mountAndOpen(wt: { files: Array<Record<string, unknown>> }) {
+    routeGitFetch(wt)
+    const wrapper = mountDrawer({ open: false })
+    await flushPromises()
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+    return wrapper
+  }
+
+  async function selectWorkingTree(wrapper: ReturnType<typeof mountDrawer>) {
+    const vm = wrapper.vm as any
+    const row = { sha: 'HEAD', msg: 'wt', date: '', author: '', isWT: true }
+    vm.commits = [row]
+    vm.onCommitSelect(row)
+    await flushPromises()
+  }
+
+  it('renders a refresh button in the files-view header', async () => {
+    const wrapper = await mountAndOpen({ files: [{ path: 'a.ts', type: 'M', staged: false }] })
+    await selectWorkingTree(wrapper)
+
+    expect(wrapper.find('.drilldown-header .drilldown-refresh-btn').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('the refresh button re-fetches the working tree and picks up new changes', async () => {
+    const wt = { files: [{ path: 'a.ts', type: 'M', staged: false }] }
+    const wrapper = await mountAndOpen(wt)
+    await selectWorkingTree(wrapper)
+
+    wt.files = [{ path: 'b.ts', type: 'A', staged: false }]
+    await wrapper.find('.drilldown-header .drilldown-refresh-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.drilldown-item .git-file-name').text()).toBe('b.ts')
+    wrapper.unmount()
   })
 })

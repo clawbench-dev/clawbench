@@ -1585,6 +1585,7 @@ export default {
       loadError: '加载历史记录失败',
       loadTimeout: '加载历史记录超时，请重试',
       workingTreeChanges: '工作区变更',
+      refresh: '刷新变更列表',
       prevFile: '上一个文件',
       nextFile: '下一个文件',
     },

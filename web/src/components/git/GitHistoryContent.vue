@@ -43,6 +43,13 @@
           @navigate="drillBack"
         />
         <span class="drilldown-count count-badge">{{ t('git.history.fileCount', { count: totalFileCount }) }}</span>
+        <RefreshButton
+          class="drilldown-refresh-btn"
+          :loading="filesLoading || filesRefreshing"
+          :disabled="filesLoading || filesRefreshing"
+          :title="t('git.history.refresh')"
+          @click.stop="onFilesRefresh"
+        />
       </div>
       <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" />
       <div class="drilldown-body">
@@ -176,27 +183,21 @@
 import { Plus, Minus, ChevronUp, ChevronDown } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitCommitList from './GitCommitList.vue'
 import GitCommitMeta from './GitCommitMeta.vue'
 import GitDiffView from './GitDiffView.vue'
 import GitBreadcrumb from './GitBreadcrumb.vue'
 import GitManageContent from './GitManageContent.vue'
-import { renderDiff } from '@/utils/diff.ts'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import { store } from '@/stores/app.ts'
-import { useCommitNavigation, consumePendingCommitNavigation, pendingSha as pendingCommitSha, consumePendingManageNavigation, pendingManageView } from '@/composables/useCommitNavigation.ts'
+import { consumePendingCommitNavigation, pendingSha as pendingCommitSha, consumePendingManageNavigation, pendingManageView } from '@/composables/useCommitNavigation.ts'
 import { useDiffNavigation } from '@/composables/useDiffNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
-import { gitFetch, GitTimeoutError, createSeqGuard } from '@/utils/gitApi'
-import { shouldShowFullLoading, splitGitFilePath } from '@/utils/gitFileHistory'
-import { appLog } from '@/utils/appLog'
+import { shouldShowFullLoading } from '@/utils/gitFileHistory'
+import { useGitHistoryView } from '@/composables/useGitHistoryView'
 const { t } = useI18n()
-
-// Sequence guard to suppress stale concurrent loads. A refresh, tab
-// re-activation, or load-more can overlap an in-flight request; only the
-// latest call may write data and reset the loading flag.
-const historySeq = createSeqGuard()
 
 const props = defineProps({
   mode: {
@@ -217,60 +218,52 @@ function onOpenFile(path) {
   emit('open-file', path)
 }
 
-// ─── Unified state ─────────────────────────────────────────────────────────
+// ─── Shared git-history logic ───────────────────────────────────────────────
+// State, loading and drill-down navigation are shared with GitHistoryDrawer —
+// see useGitHistoryView. This host contributes only the tab-activation
+// trigger, the manage view, diff prev/next, search, and its own chrome.
 
-const loading = ref(false)
-// True while a full reload is in flight WITHOUT the full-screen spinner (i.e.
-// a background refresh that keeps the existing list). loadMore must not run
-// concurrently with it — it would paginate the old commits with stale counts.
-const fullReloading = ref(false)
-const error = ref('')
-const commits = ref([])
-const hasMore = ref(false)
-const searchLoading = ref(false)
-const loadingMore = ref(false)
-const isGit = ref(false)
-const untracked = ref(false)
+// Track git state so a tab re-entry can tell whether anything changed.
+const lastGitState = ref({ branch: '', head: '', dirty: false, changeCount: 0 })
+// Identity tracking for project hot-switches.
+const lastProjectRoot = ref(null)
+const lastFilePath = ref(null)
 
-const currentView = ref('commits') // 'commits' | 'files' | 'diff' | 'manage'
-const selectedSHA = ref(null)
-
-// Files view (project mode only)
-const filesLoading = ref(false)
-const files = ref([])
-const mergeGroups = ref([])
-const selectedFilePath = ref(null)
-
-// Unified diff state
-const diffState = ref({ loading: false, empty: false, html: '' })
-
-// Working tree
-const wtFiles = ref([])
-
-const commitListRef = ref(null)
-
-const selectedCommit = computed(() => {
-  return commits.value.find(c => c.sha === selectedSHA.value) || null
+const {
+  loading, error, commits, hasMore, searchLoading, loadingMore, isGit, untracked,
+  currentView, selectedSHA, filesLoading, filesRefreshing, files, mergeGroups,
+  selectedFilePath, diffState, hasLoadedMore, refreshHint,
+  commitListRef,
+  selectedCommit, isWorkingTree, mode, stagedFiles, unstagedFiles,
+  hasStaged, hasUnstaged, totalFileCount,
+  fileTypeLabel, fileSplit, badgeClass, resetListState,
+  loadProjectHistory, loadFileHistory, loadMoreCommits, onSearch, onRefresh,
+  loadDiff, onFilesRefresh,
+  reloadPreservingDrillDown,
+  onCommitSelect, drillBack, drillToFile, navigateToCommit,
+} = useGitHistoryView({
+  t,
+  mode: () => props.mode,
+  filePath: () => props.file?.path,
+  useAbortSignal: true,
+  onProjectHistoryLoaded: () => {
+    // Record git state after a successful load so the active watcher can tell
+    // whether a later re-entry needs a reload.
+    lastGitState.value = {
+      branch: store.state.gitBranch,
+      head: store.state.gitHead,
+      dirty: store.state.gitDirty,
+      changeCount: store.state.gitWorkingTreeChangeCount,
+    }
+    refreshHint.value = false
+  },
 })
-const isWorkingTree = computed(() => selectedSHA.value === 'HEAD')
 
-const mode = computed(() => props.mode)
-
-const sortedFiles = computed(() => {
-  const order = { M: 0, A: 1, D: 2, R: 3, '?': 4 }
-  return [...files.value].sort((a, b) => (order[a.type] ?? 5) - (order[b.type] ?? 5))
-})
-const stagedFiles = computed(() => sortedFiles.value.filter(f => f.staged))
-const unstagedFiles = computed(() => sortedFiles.value.filter(f => !f.staged))
-const hasStaged = computed(() => stagedFiles.value.length > 0)
-const hasUnstaged = computed(() => unstagedFiles.value.length > 0)
-
-const totalFileCount = computed(() => {
-  if (mergeGroups.value.length > 0) {
-    return mergeGroups.value.reduce((sum, g) => sum + g.files.length, 0)
-  }
-  return files.value.length
-})
+function resetState() {
+  resetListState()
+  lastProjectRoot.value = null
+  lastFilePath.value = null
+}
 
 // Diff prev/next navigation: flat ordered list + prev/next helpers so the
 // user can hop between file diffs without returning to the file list.
@@ -283,250 +276,11 @@ const diffNav = useDiffNavigation({
 const diffNavTotal = diffNav.total
 const diffNavIndex = diffNav.index
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Manage view (this host only) ───────────────────────────────────────────
 
-function fileTypeLabel(type, staged) {
-  const keys = { A: 'git.fileType.added', M: 'git.fileType.modified', D: 'git.fileType.deleted', R: 'git.fileType.renamed', '?': 'git.fileType.untracked' }
-  const base = t(keys[type] || type)
-  return staged ? t('git.fileType.stagedPrefix') + base : base
+function navigateToManage() {
+  currentView.value = 'manage'
 }
-
-function fileSplit(f) {
-  return splitGitFilePath(f?.path || '')
-}
-
-function badgeClass(f) {
-  const typeMap = { A: 'A', M: 'M', D: 'D', R: 'R', '?': 'U' }
-  const cls = typeMap[f.type] || 'M'
-  return 'badge-' + cls + (f.staged ? ' badge-staged' : '')
-}
-
-function resetState() {
-  commits.value = []
-  files.value = []
-  mergeGroups.value = []
-  hasMore.value = false
-  selectedSHA.value = null
-  selectedFilePath.value = null
-  diffState.value = { loading: false, empty: false, html: '' }
-  currentView.value = 'commits'
-  error.value = ''
-  commitSearch.value = ''
-  isGit.value = false
-  untracked.value = false
-  wtFiles.value = []
-  lastProjectRoot.value = null
-  lastFilePath.value = null
-  hasLoadedMore.value = false
-  refreshHint.value = false
-}
-
-// Expose commitSearch for the search watcher
-const commitSearch = ref('')
-
-// ─── Data loading ───────────────────────────────────────────────────────────
-
-async function loadProjectHistory() {
-  const seq = historySeq.token()
-  // Keep the existing list visible during background refreshes — only show the
-  // full-screen spinner when there is nothing to render yet (first load/empty),
-  // so the refresh button stays mounted and its spin feedback is visible.
-  const isFirstLoad = shouldShowFullLoading(commits.value, error.value)
-  loading.value = isFirstLoad
-  fullReloading.value = !isFirstLoad
-  error.value = ''
-  if (isFirstLoad) commits.value = []
-  hasMore.value = false
-  selectedSHA.value = null
-  files.value = []
-  mergeGroups.value = []
-  selectedFilePath.value = null
-  wtFiles.value = []
-  isGit.value = true
-
-  try {
-    const resp = await gitFetch('/api/git/project-history', { signal: seq.signal })
-    if (!historySeq.isCurrent(seq)) return // superseded by a newer load
-    if (!resp.ok) {
-      const data = await resp.json()
-      commits.value = []
-      error.value = data.error || t('git.history.loadError')
-      return
-    }
-    const data = await resp.json()
-
-    if (!data.isGit) {
-      commits.value = []
-      isGit.value = false
-      return
-    }
-
-    isGit.value = true
-
-    // Check working tree changes
-    const wtResp = await gitFetch('/api/git/working-tree', { signal: seq.signal })
-    let loadedWtFiles = []
-    if (wtResp.ok) {
-      const wt = await wtResp.json()
-      loadedWtFiles = wt.files || []
-      wtFiles.value = loadedWtFiles
-    }
-
-    if (!historySeq.isCurrent(seq)) return // superseded while working-tree was in flight
-
-    const histCommits = data.commits || []
-
-    // Prepend working tree entry if there are uncommitted changes
-    if (loadedWtFiles.length > 0) {
-      commits.value = [{ sha: 'HEAD', msg: t('git.history.workingTreeChanges'), date: '', author: '', isWT: true }, ...histCommits]
-    } else {
-      commits.value = histCommits
-    }
-    hasMore.value = data.hasMore
-    // Record git state after successful load
-    lastGitState.value = { branch: store.state.gitBranch, head: store.state.gitHead, dirty: store.state.gitDirty, changeCount: store.state.gitWorkingTreeChangeCount }
-    refreshHint.value = false
-  } catch (err) {
-    // A superseded request's abort must not surface as an error.
-    if (err instanceof Error && err.name === 'AbortError') return
-    if (!historySeq.isCurrent(seq)) return
-    // Timeout: the request is not coming back — surface a distinct message
-    // so the user can retry instead of staring at an endless spinner.
-    commits.value = []
-    if (err instanceof GitTimeoutError) {
-      appLog.w('GitHistory', err.message)
-      error.value = t('git.history.loadTimeout')
-      return
-    }
-    error.value = t('git.history.loadError')
-  } finally {
-    // Only the latest request may clear the loading flag.
-    if (historySeq.isCurrent(seq)) {
-      loading.value = false
-      fullReloading.value = false
-    }
-  }
-}
-
-async function loadFileHistory(filePath) {
-  const seq = historySeq.token()
-  // Keep the existing list visible during background refreshes (see
-  // loadProjectHistory) so the refresh button's spin stays visible.
-  const isFirstLoad = shouldShowFullLoading(commits.value, error.value)
-  loading.value = isFirstLoad
-  fullReloading.value = !isFirstLoad
-  error.value = ''
-  if (isFirstLoad) commits.value = []
-  selectedSHA.value = null
-  isGit.value = true
-  untracked.value = false
-
-  try {
-    const resp = await gitFetch(`/api/git/history?path=${encodeURIComponent(filePath)}`, { signal: seq.signal })
-    if (!historySeq.isCurrent(seq)) return
-    if (!resp.ok) {
-      const data = await resp.json()
-      commits.value = []
-      error.value = data.error || t('git.history.loadError')
-      return
-    }
-    const hist = await resp.json()
-    if (!historySeq.isCurrent(seq)) return
-    if (!hist.isGit) {
-      commits.value = []
-      isGit.value = false
-      return
-    }
-    isGit.value = true
-    untracked.value = !!hist.untracked
-    commits.value = hist.commits || []
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') return
-    if (!historySeq.isCurrent(seq)) return
-    commits.value = []
-    if (err instanceof GitTimeoutError) {
-      appLog.w('GitHistory', err.message)
-      error.value = t('git.history.loadTimeout')
-      return
-    }
-    error.value = t('git.history.loadError')
-  } finally {
-    if (historySeq.isCurrent(seq)) {
-      loading.value = false
-      fullReloading.value = false
-    }
-  }
-}
-
-async function loadMoreCommits() {
-  // Skip while a full reload is in flight: loading replaces the commit list
-  // and loadMore would paginate the OLD commits with stale skip counts.
-  if (loading.value || fullReloading.value || loadingMore.value || !hasMore.value || !isGit.value) return
-  loadingMore.value = true
-  hasLoadedMore.value = true
-  try {
-    // Count only git commits (exclude WT node) for the skip parameter,
-    // since WT is a frontend-only entry not present in git log output.
-    const gitCount = commits.value.filter(c => !c.isWT).length
-    const resp = await gitFetch(`/api/git/project-history?skip=${gitCount}`)
-    if (!resp.ok) return
-    const data = await resp.json()
-    commits.value.push(...(data.commits || []))
-    hasMore.value = data.hasMore
-  } catch {
-    // ignore
-  } finally {
-    loadingMore.value = false
-  }
-}
-
-// When searching, auto-load all commits so filtering covers the full history
-async function onSearch(q) {
-  if (!q.trim() || !isGit.value || props.mode === 'file') return
-  const seq = historySeq.token()
-  searchLoading.value = true
-  if (hasMore.value) hasLoadedMore.value = true
-  try {
-    while (hasMore.value) {
-      if (!historySeq.isCurrent(seq)) return // superseded by a refresh/load
-      const gitCount = commits.value.filter(c => !c.isWT).length
-const resp = await gitFetch(`/api/git/project-history?skip=${gitCount}`, { signal: seq.signal })
-      if (!resp.ok) break
-      const data = await resp.json()
-      commits.value.push(...(data.commits || []))
-      hasMore.value = data.hasMore
-    }
-  } catch (err) {
-    if (err instanceof GitTimeoutError) {
-      appLog.w('GitHistory', err.message)
-    }
-    // Search is best-effort: ignore failures, the already-loaded commits remain visible.
-  } finally {
-    searchLoading.value = false
-  }
-}
-
-async function onRefresh() {
-  commitSearch.value = ''
-  hasLoadedMore.value = false
-  refreshHint.value = false
-  if (commitListRef.value) commitListRef.value.commitSearch = ''
-  if (props.mode === 'file' && props.file?.path) {
-    await loadFileHistory(props.file.path)
-  } else {
-    await loadProjectHistory()
-  }
-}
-
-// ─── Shared commit navigation composable ─────────────────────────────────
-
-const { navigateToCommit, handleDrillBackToCommits } = useCommitNavigation({
-    commits,
-    selectedSHA,
-    currentView,
-    loadCommitFiles,
-    loadProjectHistory,
-})
 
 // Register back handler for git drill-down navigation
 // canGoBack: active tab AND not on the commit list (root view)
@@ -568,126 +322,7 @@ watch(pendingManageView, async (pending) => {
   }
 })
 
-// ─── Drill-down navigation ──────────────────────────────────────────────────
-
-function navigateToManage() {
-  currentView.value = 'manage'
-}
-
-function onCommitSelect(c) {
-  selectedSHA.value = c.sha
-
-  if (props.mode === 'project') {
-    // Project mode: commit → files list
-    currentView.value = 'files'
-    if (c.sha === 'HEAD') {
-      filesLoading.value = true
-      files.value = wtFiles.value
-      mergeGroups.value = []
-      filesLoading.value = false
-    } else {
-      loadCommitFiles(c.sha).catch(() => {})
-    }
-  } else {
-    // File mode: commit → diff
-    currentView.value = 'diff'
-    loadDiff()
-  }
-}
-
-function drillBack(view) {
-  if (view === 'commits') {
-    selectedSHA.value = null
-    files.value = []
-    mergeGroups.value = []
-    selectedFilePath.value = null
-    diffState.value = { loading: false, empty: false, html: '' }
-    handleDrillBackToCommits()
-  } else if (view === 'files') {
-    selectedFilePath.value = null
-    diffState.value = { loading: false, empty: false, html: '' }
-  }
-  currentView.value = view
-}
-
-function drillToFile(f) {
-  selectedFilePath.value = f.path
-  currentView.value = 'diff'
-  loadDiff()
-}
-
-// ─── Diff loading ───────────────────────────────────────────────────────────
-
-async function loadCommitFiles(sha) {
-  filesLoading.value = true
-  files.value = []
-  mergeGroups.value = []
-  try {
-    const resp = await gitFetch(`/api/git/commit-files?sha=${encodeURIComponent(sha)}`)
-    if (!resp.ok) { files.value = []; return }
-    const data = await resp.json()
-    if (data && data.merge === true && Array.isArray(data.groups)) {
-      mergeGroups.value = data.groups
-      files.value = []
-    } else if (Array.isArray(data)) {
-      files.value = data
-      mergeGroups.value = []
-    } else {
-      files.value = []
-      mergeGroups.value = []
-    }
-  } catch {
-    files.value = []
-    mergeGroups.value = []
-  } finally {
-    filesLoading.value = false
-  }
-}
-
-async function loadDiff() {
-  diffState.value = { loading: true, empty: false, html: '' }
-
-  try {
-    let resp
-    if (props.mode === 'project') {
-      resp = await gitFetch(
-        `/api/git/file-diff?sha=${encodeURIComponent(selectedSHA.value)}&path=${encodeURIComponent(selectedFilePath.value)}`
-      )
-    } else {
-      resp = await gitFetch(
-        `/api/git/diff?path=${encodeURIComponent(props.file.path)}&commit=${encodeURIComponent(selectedSHA.value)}`
-      )
-    }
-    if (!resp.ok) {
-      diffState.value = { loading: false, empty: true, html: '' }
-      return
-    }
-    const data = await resp.json()
-    if (data.empty) {
-      diffState.value = { loading: false, empty: true, html: '' }
-    } else {
-      const filePath = props.mode === 'project' ? selectedFilePath.value : props.file.path
-      diffState.value = { loading: false, empty: false, html: renderDiff(data.diff || '', filePath) }
-    }
-  } catch {
-    diffState.value = { loading: false, empty: true, html: '' }
-  }
-}
-
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
-
-// Track previous identity to detect actual changes
-const lastProjectRoot = ref(null)
-const lastFilePath = ref(null)
-
-// Track git state for auto-refresh on tab re-entry
-const lastGitState = ref({ branch: '', head: '', dirty: false, changeCount: 0 })
-
-// Whether the refresh button should pulse to indicate stale data
-const refreshHint = ref(false)
-
-// Whether the user has loadMore'd beyond the first page
-const hasLoadedMore = ref(false)
 
 // When tab becomes active, check if git state changed or pending navigation
 watch(() => props.active, async (nowActive) => {
@@ -718,8 +353,10 @@ watch(() => props.active, async (nowActive) => {
       // User has extra data loaded — don't auto-refresh, just hint
       refreshHint.value = true
     } else {
-      // Only first page — safe to auto-refresh
-      await loadProjectHistory()
+      // Only first page — safe to auto-refresh. reloadPreservingDrillDown
+      // restores the drill-down that the reload clears, so re-entering the tab
+      // while sitting on the working-tree file list no longer renders blank.
+      await reloadPreservingDrillDown()
     }
   }
   lastGitState.value = { ...cur }
@@ -829,6 +466,40 @@ onMounted(async () => {
   font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
+}
+
+/* Matches GitCommitList's refresh button so both headers look identical.
+   Kept local because that component's styles are scoped to itself. */
+.drilldown-refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--bg-tertiary, #e9ecef);
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--text-muted, #999);
+  flex-shrink: 0;
+  padding: 0;
+  transition: background var(--duration-base), color var(--duration-base), transform 0.3s;
+}
+
+@media (hover: hover) {
+  .drilldown-refresh-btn:hover:not(:disabled) {
+    background: var(--accent-color, #4a90d9);
+    color: #fff;
+  }
+}
+
+.drilldown-refresh-btn:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.drilldown-refresh-btn:disabled {
+  opacity: var(--opacity-muted);
+  cursor: not-allowed;
 }
 
 .diff-nav {

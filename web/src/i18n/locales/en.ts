@@ -1585,6 +1585,7 @@ export default {
       loadError: 'Failed to load history',
       loadTimeout: 'Timed out loading history, please retry',
       workingTreeChanges: 'Working tree changes',
+      refresh: 'Refresh change list',
       prevFile: 'Previous file',
       nextFile: 'Next file',
     },
