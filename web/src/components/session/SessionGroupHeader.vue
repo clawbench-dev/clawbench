@@ -2,7 +2,7 @@
   <div class="session-group-header" @click="$emit('toggle')">
     <slot name="icon" />
     <span class="session-group-title">{{ title }}</span>
-    <span v-if="count !== null" class="session-group-count">{{ count }}</span>
+    <span v-if="count !== null" class="session-group-count count-badge">{{ count }}</span>
     <span v-if="subtitle" class="session-group-subtitle" :title="subtitleTitle || subtitle">{{ subtitle }}</span>
     <ChevronDown :size="14" class="session-group-chevron" :class="{ collapsed }" />
   </div>
@@ -66,13 +66,8 @@ defineEmits(['toggle'])
 }
 
 .session-group-count {
-  font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #e9ecef);
-  border-radius: var(--radius-sm);
-  padding: 0 5px;
-  line-height: 16px;
-  flex-shrink: 0;
 }
 
 .session-group-subtitle {

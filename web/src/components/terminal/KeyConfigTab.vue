@@ -4,7 +4,7 @@
     <div class="kcf-selected">
       <div class="kcf-selected-header">
         <span class="kcf-section-title">{{ t('terminal.keyConfigSelected') }}</span>
-        <span class="kcf-count">{{ localSelected.length }}</span>
+        <span class="kcf-count count-badge count-badge--md">{{ localSelected.length }}</span>
         <div class="kcf-selected-actions">
           <button class="kcf-action-btn" @click="resetToDefault">{{ t('terminal.keyConfigReset') }}</button>
           <button class="kcf-action-btn kcf-action-btn-danger" @click="clearAll">{{ t('terminal.keyConfigClear') }}</button>
@@ -166,13 +166,8 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-count {
-  font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #eee);
-  border-radius: var(--radius-md);
-  padding:0 var(--space-3);
-  min-width: 18px;
-  text-align: center;
 }
 
 .kcf-selected-grid {

@@ -3,7 +3,7 @@
     <template #header>
       <span class="bs-header-icon"><MessagesSquare :size="16" /></span>
       <span class="bs-header-title">{{ t('chat.messageList.conversationIndexTitle') }}</span>
-      <span class="panel-count">{{ isSearching ? `${filteredMessages.length}/${messages.length}` : messages.length }}</span>
+      <span class="panel-count count-badge count-badge--md">{{ isSearching ? `${filteredMessages.length}/${messages.length}` : messages.length }}</span>
     </template>
     <LoadingIndicator v-if="loading" size="md" :label="t('chat.messageList.loadingMore')" />
     <LoadingIndicator v-else-if="jumping" size="md" :label="t('chat.messageList.loadingMore')" />
@@ -189,14 +189,10 @@ onUnmounted(() => {
 /* ── Count badge ── */
 .panel-count {
   margin-left: auto;
-  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color) 22%, transparent);
-  border-radius: var(--radius-md);
-  padding:1px var(--space-4);
-  line-height: var(--line-height-normal);
 }
 
 /* ── Search row (below header, above the list) ── */

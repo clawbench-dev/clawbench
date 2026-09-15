@@ -152,18 +152,17 @@ describe('dock badge change animation', () => {
 // ────────────────────────────────────────────────────────────
 // Dock badge shape contract
 //
-// The count badge is a 16px-tall box (min-width 16px / line-height 16px).
-// A square-ish radius (the old `--radius-sm` = 6px) read as a blocky chip;
-// it must be a pill — radius at least half the box height, i.e. the two
-// vertical edges are full semicircles. jsdom has no CSS engine, so this is
-// a source-contract check.
+// Shape/geometry now comes from the shared `.count-badge` class (see
+// countBadge.css.test.ts for the class's own contract). What this file guards is
+// the dock-specific override: `.dock-badge` — the base class on the same element
+// — is an 8px circle with `border-radius: 50%`, and a scoped selector outranks
+// the global `.count-badge`. So `.dock-badge-count` must re-declare the pill
+// radius, or the number renders as an ellipse.
+//
+// jsdom has no CSS engine, so this is a source-contract check.
 // ────────────────────────────────────────────────────────────
-describe('dock count badge is a pill', () => {
+describe('dock count badge keeps the pill radius over the dot base', () => {
   const appVue = readFileSync(join(__dirname, '..', '..', 'App.vue'), 'utf8')
-  const variables = readFileSync(
-    join(__dirname, '..', '..', '..', 'css', 'variables.css'),
-    'utf8',
-  )
 
   /** Declarations of the first `.dock-badge-count {` rule. */
   function badgeCountDecls(): string {
@@ -172,18 +171,20 @@ describe('dock count badge is a pill', () => {
     return m![1]
   }
 
-  it('uses the pill radius token, not a fixed corner radius', () => {
+  it('re-declares the pill radius to beat the .dock-badge circle', () => {
+    // Without this the scoped `.dock-badge { border-radius: 50% }` wins and the
+    // 16px-wide badge becomes a squashed ellipse.
     expect(badgeCountDecls()).toMatch(/border-radius:\s*var\(--radius-full\)/)
   })
 
-  it('radius token is at least half the badge height', () => {
-    // Guards the shape, not the name: redefining --radius-full to something
-    // small would silently square the badge off again.
-    const radius = Number(
-      variables.match(/--radius-full:\s*(\d+)px/)?.[1] ?? NaN,
-    )
-    const height = Number(badgeCountDecls().match(/line-height:\s*(\d+)px/)?.[1])
-    expect(height).toBeGreaterThan(0)
-    expect(radius).toBeGreaterThanOrEqual(height / 2)
+  it('still applies the shared count badge class in the template', () => {
+    // The geometry (min-width, padding, font-size, line-height, centering) is
+    // owned by .count-badge now; dropping the class would leave the badge with
+    // no size at all.
+    const tags = appVue.match(/class="dock-badge dock-badge-count[^"]*"/g) ?? []
+    expect(tags.length).toBeGreaterThan(0)
+    for (const tag of tags) {
+      expect(tag).toContain('count-badge')
+    }
   })
 })

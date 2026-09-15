@@ -42,7 +42,7 @@
           :selected-commit="selectedCommit"
           @navigate="drillBack"
         />
-        <span class="drilldown-count">{{ t('git.history.fileCount', { count: totalFileCount }) }}</span>
+        <span class="drilldown-count count-badge">{{ t('git.history.fileCount', { count: totalFileCount }) }}</span>
       </div>
       <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" />
       <div class="drilldown-body">
@@ -826,13 +826,9 @@ onMounted(async () => {
 }
 
 .drilldown-count {
-  font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
-  padding:1px var(--space-3);
-  border-radius: var(--radius-md);
-  flex-shrink: 0;
 }
 
 .diff-nav {

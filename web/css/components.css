@@ -3,6 +3,60 @@
    ========================================================================== */
 
 /* ==========================================================================
+   Shared count badge
+   Used by: the dock tabs, session tabs/group headers, git lists, stats tables,
+   task list, chat drawers — anywhere a small numeric count sits next to a label.
+
+   Declared GLOBALLY, not in a component's <style scoped> block, for the same
+   reason as the forge list chrome below: the shape is shared by ~17 call sites
+   across as many components, and a scoped rule only applies to the component
+   that declares it.
+
+   What lives here is shape + geometry + font size — the parts that must look
+   identical everywhere. What stays at the call site is the part that is
+   genuinely per-badge: colour (solid accent vs. muted grey) and font weight.
+
+   Two size tiers, because the call sites already used two:
+     .count-badge      16px tall / --font-size-2xs  (the common case)
+     .count-badge--md  18px tall / --font-size-xs   (dock overflow, file changes)
+
+   Height comes from `line-height` rather than a fixed `height`, so a single
+   line of text is exactly the tier height (same as the dock badge) while a
+   badge that wraps richer content — `.drilldown-count` can hold a spinner plus
+   a label — grows instead of clipping.
+
+   The pill radius is deliberate: a count badge is a single short number, and
+   --radius-full turns the two vertical edges into full semicircles. A corner
+   radius (--radius-sm and friends) read as a blocky chip at these sizes.
+
+   IMPORTANT for call sites: `border-radius` and the geometry below must NOT be
+   re-declared in a component's scoped rule. A scoped rule compiles to
+   `.foo[data-v-xxx]`, which outranks this single global class — re-adding a
+   radius there silently wins and the badge goes square again. Keep only colour
+   and font-weight in the scoped rule.
+   ========================================================================== */
+
+.count-badge {
+    display: inline-block;
+    min-width: 16px;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-full);
+    font-size: var(--font-size-2xs);
+    line-height: 16px;
+    text-align: center;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.count-badge--md {
+    min-width: 18px;
+    padding: 0 var(--space-3);
+    font-size: var(--font-size-xs);
+    line-height: 18px;
+}
+
+/* ==========================================================================
    Shared Context Menu
    Used by: FileManager.vue, ProjectDialog.vue
    ========================================================================== */

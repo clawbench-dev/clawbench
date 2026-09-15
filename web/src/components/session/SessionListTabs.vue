@@ -20,7 +20,7 @@
       @click="$emit('update:activeTab', 'cross')"
     >
       {{ t('session.tabCross') }}
-      <span class="session-tab-badge">{{ total }}</span>
+      <span class="session-tab-badge count-badge">{{ total }}</span>
     </button>
   </div>
 </template>
@@ -94,14 +94,8 @@ watch(total, (n) => {
 }
 
 .session-tab-badge {
-  min-width: 16px;
-  padding:0 var(--space-2);
-  border-radius: var(--radius-sm);
   background: var(--accent-color, #0066cc);
   color: #fff;
-  font-size: var(--font-size-2xs);
-  line-height: 16px;
-  text-align: center;
 }
 
 @media (hover: hover) {

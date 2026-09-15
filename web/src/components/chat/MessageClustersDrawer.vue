@@ -43,7 +43,7 @@
         <div class="mc-cluster-list">
           <div v-for="cluster in clusters" :key="cluster.id" class="mc-cluster-item" @click="showVariants(cluster)">
             <span class="mc-cluster-representative">{{ cluster.representative }}</span>
-            <span class="mc-cluster-count">{{ cluster.total_count }}</span>
+            <span class="mc-cluster-count count-badge count-badge--md">{{ cluster.total_count }}</span>
           </div>
         </div>
       </div>
@@ -342,11 +342,7 @@ defineExpose({ open })
 }
 
 .mc-cluster-count {
-  flex-shrink: 0;
   background: var(--bg-tertiary, #e5e5e5);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--font-size-xs);
   color: var(--text-secondary, #666);
 }
 

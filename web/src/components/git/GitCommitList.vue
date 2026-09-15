@@ -2,7 +2,7 @@
   <div class="drilldown-page">
     <div v-if="!(commits.length === 0 && untracked) && isGit" class="drilldown-header">
       <div class="drilldown-title">
-        <span v-if="commits.length > 0" class="drilldown-count">
+        <span v-if="commits.length > 0" class="drilldown-count count-badge">
           <template v-if="searchLoading">
             <LoadingIndicator size="sm" inline />
             {{ t('git.commitList.loadingAll') }}
@@ -11,8 +11,8 @@
             {{ filteredCommits.filter(c => !c.isWT).length + (hasMore && !commitSearch ? '+' : '') + t('git.commitList.countUnit') + countLabel }}
           </template>
         </span>
-        <span v-else-if="!isGit" class="drilldown-count">{{ t('git.commitList.notInitialized') }}</span>
-        <span v-else-if="!untracked" class="drilldown-count">{{ t('git.commitList.loading') }}</span>
+        <span v-else-if="!isGit" class="drilldown-count count-badge">{{ t('git.commitList.notInitialized') }}</span>
+        <span v-else-if="!untracked" class="drilldown-count count-badge">{{ t('git.commitList.loading') }}</span>
       </div>
       <SearchInput v-if="commits.length > 0" v-model="commitSearch" :placeholder="searchPlaceholder" class="commit-search-input" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
       <RefreshButton
@@ -299,13 +299,9 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .drilldown-count {
-  font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
-  padding:1px var(--space-3);
-  border-radius: var(--radius-md);
-  flex-shrink: 0;
 }
 
 .commit-search-input {

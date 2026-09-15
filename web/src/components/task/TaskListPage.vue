@@ -40,7 +40,7 @@
               >{{ task.triggerMode === 'event' ? t('task.form.triggerEvent') : t('task.form.triggerCron') }}</span>
               <span class="task-item-name">{{ task.name }}</span>
               <span v-if="task.runningCount > 0" class="task-item-running-dot" :title="t('task.exec.running')"></span>
-              <span v-if="task.unreadCount > 0" class="task-item-unread">{{ task.unreadCount }}</span>
+              <span v-if="task.unreadCount > 0" class="task-item-unread count-badge">{{ task.unreadCount }}</span>
             </div>
             <!-- Schedule + repeat. Cron-only, for two reasons:
                  - An event task has no schedule, and its repeat mode is inert —
@@ -380,16 +380,9 @@ onMounted(refresh)
 }
 
 .task-item-unread {
-  font-size: var(--font-size-2xs);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
   font-weight: var(--font-weight-semibold);
   background: var(--accent-color, #0066cc);
   color: #fff;
-  flex-shrink: 0;
-  min-width: 16px;
-  text-align: center;
-  line-height: var(--line-height-tight);
 }
 
 .task-item.has-unread {
