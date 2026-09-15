@@ -44,7 +44,7 @@ flowchart LR
 - **Block 提取算法**：`ExtractLastAnswerFromBlocks` 跳过中间推理，提取最后一个 tool_use 之后的文本作为 AI 结论。无后续文本时回退到最长的文本块——AI Agent 的对话模式通常在工具调用后给出最终综合回答
 - **Markdown 清理**：TTS 模式的 `StripMarkdown` 多阶段清理：代码块移除、行内代码按长度保留或删除（短变量名保留，长代码片段移除）、粗体/标题/列表/表格/脚注剥离、AskUserQuestion 块转为自然语言朗读格式
 - **热重载**：语音摘要配置（`summarize.tts_backend`）通过 PATCH 端点即时生效，TTS 摘要器原子重建，进行中的调用继续使用旧实例
-- **推荐回复**：会话完成后可选生成下一步建议（`chat.recommend_enabled`），由 `RecommendNextStep` 调用 LLM 生成。Payload 分为 stable（项目上下文 + 快捷指令，可缓存）和 rolling（对话 + 结论，每轮变化）两部分，支持 prompt caching。结果通过 `chat_recommendation` WS 事件推送，持久化到 `chat_recommendations` 表。详见 [推荐回复](features/chat-recommendation.md)
+- **推荐回复**：会话完成后可选生成下一步建议（`chat.recommend_enabled`），由 `RecommendNextStep` 调用 LLM 生成。Payload 分为 stable（项目上下文 + 快捷指令，可缓存）和 rolling（对话 + 结论，每轮变化）两部分，支持 prompt caching。结果通过 `chat_recommendation` WS 事件推送，持久化到 `chat_recommendations` 表。详见 [推荐回复](../features/chat-recommendation.md)
 
 ### 设计要点
 
