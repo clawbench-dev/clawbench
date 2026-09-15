@@ -250,3 +250,81 @@ describe('useToolDetailDrawer', () => {
     })
   })
 })
+
+// ── Ask-card identity in the drawer ──
+//
+// The drawer renders the same AskUserQuestion body as the chat list, so it must
+// pass the SAME askKey — otherwise an answer typed in the drawer and one typed
+// in the list become two divergent copies of the same question, and only one of
+// them survives a reload.
+describe('useToolDetailDrawer — ask-card identity', () => {
+  it('passes a session-scoped tool askKey when formatting a tool body', () => {
+    const formatToolInput = vi.fn((_input: unknown, _name: string) => '<div class="ask-question-view"></div>')
+    const d = useToolDetailDrawer({
+      chatRender: { formatToolInput, toolCallSummary: () => 'summary' },
+      sessionId: () => 'sess-1',
+    })
+
+    d.handleShowToolDetail({
+      name: 'AskUserQuestion',
+      id: 'ask-xyz',
+      input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] },
+      output: 'ok',
+      msgId: 1,
+      blockIdx: 0,
+    })
+
+    expect(formatToolInput).toHaveBeenCalledWith(
+      expect.anything(),
+      'AskUserQuestion',
+      expect.objectContaining({ askKey: 'sess-1|tool:ask-xyz' }),
+    )
+  })
+
+  it('falls back to tool_id when the block carries no id', () => {
+    const formatToolInput = vi.fn((_input: unknown, _name: string) => '<div class="ask-question-view"></div>')
+    const d = useToolDetailDrawer({
+      chatRender: { formatToolInput, toolCallSummary: () => 'summary' },
+      sessionId: () => 'sess-1',
+    })
+
+    d.handleShowToolDetail({
+      name: 'AskUserQuestion',
+      tool_id: 'ask-legacy',
+      input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] },
+      output: 'ok',
+      msgId: 1,
+      blockIdx: 0,
+    })
+
+    expect(formatToolInput).toHaveBeenCalledWith(
+      expect.anything(),
+      'AskUserQuestion',
+      expect.objectContaining({ askKey: 'sess-1|tool:ask-legacy' }),
+    )
+  })
+
+  it('uses the same no-session fallback the chat list uses', () => {
+    // A card with no session id must still key consistently across both views,
+    // or the drawer and the list would disagree about which card this is.
+    const formatToolInput = vi.fn((_input: unknown, _name: string) => '<div class="ask-question-view"></div>')
+    const d = useToolDetailDrawer({
+      chatRender: { formatToolInput, toolCallSummary: () => 'summary' },
+    })
+
+    d.handleShowToolDetail({
+      name: 'AskUserQuestion',
+      id: 'ask-1',
+      input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] },
+      output: 'ok',
+      msgId: 1,
+      blockIdx: 0,
+    })
+
+    expect(formatToolInput).toHaveBeenCalledWith(
+      expect.anything(),
+      'AskUserQuestion',
+      expect.objectContaining({ askKey: 'no-session|tool:ask-1' }),
+    )
+  })
+})

@@ -3750,3 +3750,78 @@ describe('AskUserQuestion answer state persistence', () => {
     })
   })
 })
+
+// ── Ask-card key travels with the answer ──
+//
+// The submit emit carries the card key as a second value so the caller can undo
+// a submission whose send failed (see revertAskSubmission). Losing the key
+// would leave a failed answer permanently marked submitted with no way to retry.
+describe('AskUserQuestion submit carries the card key', () => {
+  function createKeyedCard(key: string): { container: HTMLDivElement; view: HTMLElement; emit: any } {
+    const emit = vi.fn() as any
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="ask-question-view" data-ask-key="${key}">
+        <div class="ask-question-item" data-multi="false">
+          <div class="ask-question-options">
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
+              <span class="ask-option-indicator">◯</span>
+            </div>
+          </div>
+        </div>
+        <div class="ask-question-supplementary"><input class="ask-supplementary-input" type="text" /></div>
+        <button class="ask-question-submit" disabled>Submit</button>
+      </div>
+    `
+    document.body.appendChild(container)
+    return { container, view: container.querySelector('.ask-question-view') as HTMLElement, emit }
+  }
+
+  function clickOn(el: Element, emit: any) {
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'target', { value: el, writable: false })
+    handleToolAction('AskUserQuestion', ev, emit)
+  }
+
+  beforeEach(() => {
+    _resetAskStatesForTesting()
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('emits the key alongside the answer text', () => {
+    const { container, view, emit } = createKeyedCard('sess-1|tool:ask-1')
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+
+    expect(emit).toHaveBeenCalledWith('send-message', 'Option A', 'sess-1|tool:ask-1')
+    container.remove()
+  })
+
+  it('keeps the single-argument shape for a card with no key', () => {
+    // A card rendered without a key (e.g. a caller that does not supply one)
+    // must not start emitting a spurious second argument.
+    const emit = vi.fn() as any
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="ask-question-view">
+        <div class="ask-question-item" data-multi="false">
+          <div class="ask-question-options">
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A"><span class="ask-option-indicator">◯</span></div>
+          </div>
+        </div>
+        <button class="ask-question-submit" disabled>Submit</button>
+      </div>
+    `
+    document.body.appendChild(container)
+    const view = container.querySelector('.ask-question-view') as HTMLElement
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+
+    expect(emit).toHaveBeenCalledWith('send-message', 'Option A')
+    expect(emit.mock.calls[0]).toHaveLength(2)
+    container.remove()
+  })
+})

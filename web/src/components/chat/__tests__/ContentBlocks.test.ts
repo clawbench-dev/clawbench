@@ -5,7 +5,7 @@ import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 import { apiGet } from '@/utils/api'
 import { store } from '@/stores/app.ts'
-import { updateAskSubmitState, handleToolAction } from '@/utils/renderToolDetail.ts'
+import { updateAskSubmitState, handleToolAction, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
 
 // ── Mocks ──
 
@@ -1868,5 +1868,193 @@ describe('ContentBlocks — sub-agent grouping', () => {
     // gets the exact same .chat-tool-call pill as a top-level tool.
     const group = wrapper.find('.subagent-group')
     expect(group.find('.chat-tool-call').exists()).toBe(true)
+  })
+})
+
+// ── Ask-card identity (data-ask-key) ──
+//
+// Every ask card must carry an askKey. Without it the card body — rendered
+// through v-html — has no identity, so restoreAskStateFromStore cannot find the
+// user's stored answer and the card comes back blank after a re-render. These
+// tests pin the key at each of the four render sites; dropping the askKey from
+// any one of them makes exactly one of these tests fail.
+describe('AskUserQuestion card identity', () => {
+  it('passes a tool-scoped askKey for a single tool_use card', async () => {
+    const formatToolInput = vi.fn(() => '<div class="ask-question-view"></div>')
+    mountBlocks({
+      sessionId: 'sess-1',
+      blocks: [{
+        type: 'tool_use',
+        name: 'AskUserQuestion',
+        id: 'ask-abc',
+        input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] },
+        done: true,
+        status: 'success',
+      }],
+      formatToolInput,
+    })
+    await nextTick()
+
+    expect(formatToolInput).toHaveBeenCalledWith(
+      expect.objectContaining({ questions: expect.any(Array) }),
+      'AskUserQuestion',
+      expect.objectContaining({ askKey: 'sess-1|tool:ask-abc' }),
+    )
+  })
+
+  it('keys the merged card by message, not by the anchor block', async () => {
+    // Two answerable ask blocks in one message merge into a single card whose
+    // question set spans both. Keying it by the anchor's tool id would make the
+    // stored answer depend on which block happened to render first.
+    const formatToolInput = vi.fn(() => '<div class="ask-question-view"></div>')
+    mountBlocks({
+      sessionId: 'sess-1',
+      blocks: [
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', input: { questions: [{ header: 'Q1', options: [{ label: 'A' }] }] }, done: true, status: 'success' },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-2', input: { questions: [{ header: 'Q2', options: [{ label: 'B' }] }] }, done: true, status: 'success' },
+      ],
+      formatToolInput,
+    })
+    await nextTick()
+
+    const keys = formatToolInput.mock.calls
+      .map((c: any[]) => (c[2] as any)?.askKey)
+      .filter(Boolean)
+    expect(keys).toContain('sess-1|msg:msg-1')
+  })
+
+  it('passes a text-scoped askKey for a text-mode <ask-question> card', async () => {
+    const formatToolInput = vi.fn(() => '<div class="ask-question-view"></div>')
+    mountBlocks({
+      sessionId: 'sess-1',
+      blocks: [{ type: 'text', text: 'hi <ask-question><item><question>Go?</question></item></ask-question>' }],
+      blockAskQuestions: {
+        'msg-1-0': { questions: [{ header: '', multiSelect: false, question: 'Go?', options: [{ label: 'Yes' }] }] },
+      },
+      formatToolInput,
+    })
+    await nextTick()
+
+    const keys = formatToolInput.mock.calls
+      .map((c: any[]) => (c[2] as any)?.askKey)
+      .filter(Boolean)
+    expect(keys).toContain('sess-1|text:msg-1-0')
+  })
+
+  it('keys a summary-view tool card by its tool id', async () => {
+    const formatToolInput = vi.fn(() => '<div class="ask-question-view"></div>')
+    mountBlocks({
+      sessionId: 'sess-1',
+      blocks: [],
+      summary: 'sum',
+      showingSummary: true,
+      summaryCards: {
+        tools: [{ name: 'AskUserQuestion', id: 'ask-s1', input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] } }],
+        taskIDs: [],
+        askQuestions: [],
+      },
+      formatToolInput,
+    })
+    await nextTick()
+
+    expect(formatToolInput).toHaveBeenCalledWith(
+      expect.anything(),
+      'AskUserQuestion',
+      expect.objectContaining({ askKey: 'sess-1|tool:ask-s1' }),
+    )
+  })
+
+  it('falls back to a positional key when a tool block carries no id', async () => {
+    // Slim blocks loaded before their input is fetched have no id yet. The card
+    // must still be keyed (and stay keyed consistently) rather than lose its
+    // identity entirely.
+    const formatToolInput = vi.fn(() => '<div class="ask-question-view"></div>')
+    mountBlocks({
+      sessionId: 'sess-1',
+      blocks: [{ type: 'tool_use', name: 'AskUserQuestion', input: {}, done: true, status: 'success' }],
+      formatToolInput,
+    })
+    await nextTick()
+
+    const keys = formatToolInput.mock.calls
+      .map((c: any[]) => (c[2] as any)?.askKey)
+      .filter(Boolean)
+    expect(keys.length).toBeGreaterThan(0)
+    expect(keys[0]).toMatch(/^sess-1\|tool:/)
+  })
+})
+
+// ── Ask-card restore hook ──
+//
+// The v-html body is rebuilt whenever the rendered string changes (a loadHistory
+// reload after switching tabs/backgrounding, a merged-card flip, a list
+// remount), which discards the user's selection/note/submitted flag. The
+// component re-applies the stored answer on every update. These tests pin that
+// the hook runs and that it is wired to the component's own root, so the fix
+// cannot be silently removed.
+describe('AskUserQuestion restore hook', () => {
+  it('re-applies stored answers after the component updates', async () => {
+    const restoreSpy = vi.mocked(restoreAskStatesInContainer)
+    restoreSpy.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{
+        type: 'tool_use',
+        name: 'AskUserQuestion',
+        id: 'ask-1',
+        input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] },
+        done: true,
+        status: 'success',
+      }],
+    })
+    await nextTick()
+
+    // A re-render — exactly what a reload/remount causes.
+    await wrapper.setProps({ msgIndex: 3 })
+    await nextTick()
+
+    expect(restoreSpy).toHaveBeenCalled()
+  })
+
+  it('passes the component root so the hook can find the cards it owns', async () => {
+    const restoreSpy = vi.mocked(restoreAskStatesInContainer)
+    restoreSpy.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] }, done: true, status: 'success' }],
+    })
+    await nextTick()
+    await wrapper.setProps({ msgIndex: 5 })
+    await nextTick()
+
+    expect(restoreSpy).toHaveBeenCalled()
+    const arg = restoreSpy.mock.calls[restoreSpy.mock.calls.length - 1][0] as HTMLElement
+    // The root carries .content-blocks — a wrong element would leave the cards
+    // outside the searched subtree and restore nothing.
+    expect(arg?.classList?.contains('content-blocks')).toBe(true)
+  })
+
+  it('routes supplementary input through the ask handler before the fallback', async () => {
+    const suppSpy = vi.mocked(handleAskSupplementaryInput)
+    suppSpy.mockClear()
+    suppSpy.mockReturnValue(true)
+    const submitSpy = vi.mocked(updateAskSubmitState)
+    submitSpy.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] }, done: true, status: 'success' }],
+      formatToolInput: () => '<div class="ask-question-view"><input class="ask-supplementary-input" /></div>',
+    })
+    await nextTick()
+
+    const inputEl = wrapper.element.querySelector('.ask-supplementary-input') as HTMLInputElement
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+
+    // The ask handler persists the note; the generic fallback must not also run.
+    expect(suppSpy).toHaveBeenCalled()
+    expect(submitSpy).not.toHaveBeenCalled()
+
+    suppSpy.mockReturnValue(false)
   })
 })
