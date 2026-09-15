@@ -176,7 +176,7 @@ func ServeForgePipelines(w http.ResponseWriter, r *http.Request) {
 	}
 	if pf == nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{
-			strReqError: "no repository bound to this project",
+			strReqError: errNoRepositoryBound,
 			jsonCode:    jsonNoForgeBinding,
 		})
 		return
@@ -272,7 +272,7 @@ func ServeForgeItemPipelines(w http.ResponseWriter, r *http.Request) {
 	}
 	if pf == nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{
-			strReqError: "no repository bound to this project",
+			strReqError: errNoRepositoryBound,
 			jsonCode:    jsonNoForgeBinding,
 		})
 		return
@@ -400,30 +400,8 @@ func ServeForgePipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pf, err := service.GetProjectForge(projectPath)
-	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-		return
-	}
-	if pf == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{
-			strReqError: "no repository bound to this project",
-			jsonCode:    jsonNoForgeBinding,
-		})
-		return
-	}
-
-	provider, err := newForgeProvider(pf)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{strReqError: err.Error()})
-		return
-	}
-	lister, ok := provider.(forge.PipelineLister)
+	pf, provider, lister, ok := resolvePipelineProvider(w, r, projectPath)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			strReqError: "this forge platform does not expose CI pipelines",
-			jsonCode:    "ForgeNoPipelines",
-		})
 		return
 	}
 
@@ -443,18 +421,7 @@ func ServeForgePipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs := []forgePipelineJobView{}
-	if jl, ok := provider.(forge.PipelineJobLister); ok {
-		raw, err := jl.ListPipelineJobs(forgeContext(r), runID)
-		if err != nil {
-			// Best-effort: log-and-continue is deliberate, see the doc comment.
-			jobs = []forgePipelineJobView{}
-		} else {
-			for i := range raw {
-				jobs = append(jobs, toPipelineJobView(raw[i]))
-			}
-		}
-	}
+	jobs := collectPipelineJobs(r, provider, runID)
 
 	// Resolve linked change requests for platforms that cannot report them
 	// inline (GitLab). This costs one request, which is why it lives HERE and
@@ -473,6 +440,58 @@ func ServeForgePipeline(w http.ResponseWriter, r *http.Request) {
 		"jobs":      jobs,
 		jsonBinding: bindingView(pf),
 	})
+}
+
+// resolvePipelineProvider loads the project's forge binding and narrows it to a
+// pipeline-capable provider. On any failure it has already written the error
+// response, so the caller only needs to check ok.
+func resolvePipelineProvider(w http.ResponseWriter, r *http.Request, projectPath string) (*service.ProjectForge, forge.Provider, forge.PipelineLister, bool) {
+	pf, err := service.GetProjectForge(projectPath)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return nil, nil, nil, false
+	}
+	if pf == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{
+			strReqError: errNoRepositoryBound,
+			jsonCode:    jsonNoForgeBinding,
+		})
+		return nil, nil, nil, false
+	}
+
+	provider, err := newForgeProvider(pf)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{strReqError: err.Error()})
+		return nil, nil, nil, false
+	}
+	lister, ok := provider.(forge.PipelineLister)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			strReqError: "this forge platform does not expose CI pipelines",
+			jsonCode:    "ForgeNoPipelines",
+		})
+		return nil, nil, nil, false
+	}
+	return pf, provider, lister, true
+}
+
+// collectPipelineJobs lists the run's jobs, best-effort: a platform without the
+// optional interface, or a failed listing, yields an empty list rather than an
+// error, because the run's own metadata is the primary payload.
+func collectPipelineJobs(r *http.Request, provider forge.Provider, runID int64) []forgePipelineJobView {
+	jobs := []forgePipelineJobView{}
+	jl, ok := provider.(forge.PipelineJobLister)
+	if !ok {
+		return jobs
+	}
+	raw, err := jl.ListPipelineJobs(forgeContext(r), runID)
+	if err != nil {
+		return jobs
+	}
+	for i := range raw {
+		jobs = append(jobs, toPipelineJobView(raw[i]))
+	}
+	return jobs
 }
 
 // findPipelineRun scans pages for one run id, bounded so a bogus id cannot make

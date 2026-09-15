@@ -47,7 +47,7 @@ func TestSubmitRunner_ConcurrentCreatesExactlyOne(t *testing.T) {
 	)
 	start := make(chan struct{})
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			<-start
@@ -163,7 +163,7 @@ func TestFinishSessionRun_ConcurrentWithCancel(t *testing.T) {
 	cleanupAllSessionState()
 	t.Cleanup(cleanupAllSessionState)
 
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		sessionID := "runner-race"
 		TryClaimSessionRun(sessionID)
 
@@ -216,7 +216,7 @@ func TestRegisterExternalExecution_IsCancelable(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	RegisterExternalExecution(sessionID, ctx, cancel)
+	RegisterExternalExecution(ctx, cancel, sessionID)
 	require.True(t, IsSessionRunning(sessionID))
 
 	require.True(t, CancelSession(sessionID))
@@ -319,7 +319,7 @@ func TestInterruptSessionTurnIfCurrent_OnlyOneWinner(t *testing.T) {
 	)
 	start := make(chan struct{})
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			<-start

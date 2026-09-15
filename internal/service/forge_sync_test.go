@@ -617,7 +617,7 @@ func insertEvent(t *testing.T, itemKey, itemType string, number int, eventType, 
 }
 
 // TestUnreadForgeItems_GroupsByItemAndReportsNewestEvent is the core contract:
-// one row per item, labelled by its NEWEST event, with the total event count.
+// one row per item, labeled by its NEWEST event, with the total event count.
 //
 // The newest-event half is the mutation-sensitive part: a query that just did
 // `SELECT DISTINCT item_key` (or grouped without pinning the row) would report
@@ -646,7 +646,7 @@ func TestUnreadForgeItems_GroupsByItemAndReportsNewestEvent(t *testing.T) {
 }
 
 // TestUnreadForgeItems_ReportsUnreadEventNotOlderReadOne: an item whose older
-// events were read and which then got a new one must be labelled by the new one.
+// events were read and which then got a new one must be labeled by the new one.
 func TestUnreadForgeItems_ReportsUnreadEventNotOlderReadOne(t *testing.T) {
 	setupTestDBForForgeSync(t)
 

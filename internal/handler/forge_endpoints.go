@@ -29,6 +29,10 @@ const (
 	// value from tripping it.
 	codeForgeNeedsAuth = "ForgeNoCredential"
 	jsonCode           = "code"
+	// errNoRepositoryBound is the message every forge endpoint returns when the
+	// project has no repository binding. Spelled once so the pipeline endpoints
+	// and the item endpoints cannot drift apart.
+	errNoRepositoryBound = "no repository bound to this project"
 	// jsonCount is the response key for a numeric total (the unread count).
 	jsonCount = "count"
 	// jsonSlug and jsonScheme are response keys spelled the same way in several
@@ -126,7 +130,7 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 	}
 	if pf == nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{
-			strReqError: "no repository bound to this project",
+			strReqError: errNoRepositoryBound,
 			jsonCode:    jsonNoForgeBinding,
 		})
 		return

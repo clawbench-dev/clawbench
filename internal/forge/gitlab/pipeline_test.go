@@ -244,7 +244,8 @@ func TestListPipelinesForItem_IgnoresIssues(t *testing.T) {
 	assert.Empty(t, runs)
 }
 
-// TestListPipelinesForItem_NoRunsIsNotAnError.
+// TestListPipelinesForItem_NoRunsIsNotAnError: an empty pipeline list is a valid
+// answer, not a failure — the item simply has no runs yet.
 func TestListPipelinesForItem_NoRunsIsNotAnError(t *testing.T) {
 	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -257,7 +258,8 @@ func TestListPipelinesForItem_NoRunsIsNotAnError(t *testing.T) {
 	assert.Empty(t, runs)
 }
 
-// TestListPipelinesForItem_RespectsLimit.
+// TestListPipelinesForItem_RespectsLimit: the caller's limit is forwarded as
+// per_page and also caps the returned slice.
 func TestListPipelinesForItem_RespectsLimit(t *testing.T) {
 	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "1", r.URL.Query().Get("per_page"))

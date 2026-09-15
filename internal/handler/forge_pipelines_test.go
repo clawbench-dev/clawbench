@@ -524,7 +524,9 @@ func TestServeForgeItemPipelines_ValidatesInput(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, callHandler(ServeForgeItemPipelines, req).Code)
 }
 
-// TestServeForgeItemPipelines_UnboundReturnsNotFound.
+// TestServeForgeItemPipelines_UnboundReturnsNotFound: a project with no forge
+// binding has no pipelines to report, so the endpoint answers 404 rather than an
+// empty list that would look like "the pipeline never ran".
 func TestServeForgeItemPipelines_UnboundReturnsNotFound(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
@@ -533,6 +535,54 @@ func TestServeForgeItemPipelines_UnboundReturnsNotFound(t *testing.T) {
 	withProjectCookie(req, env.ProjectDir)
 	withAuthCookie(req, model.SessionToken)
 	assert.Equal(t, http.StatusNotFound, callHandler(ServeForgeItemPipelines, req).Code)
+}
+
+// TestServeForgePipeline_UnboundProjectIsNotFound: the detail endpoint must
+// answer 404 for a project with no forge binding, exactly like the list
+// endpoint. Without this the binding lookup would fall through to a provider
+// built from a nil binding.
+func TestServeForgePipeline_UnboundProjectIsNotFound(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/forge/pipeline?id=47", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgePipeline, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "NoForgeBinding", resp["code"])
+}
+
+// TestServeForgePipeline_UnsupportedPlatformIsInternalError: a binding whose
+// platform no adapter supports must surface as a 500, not reach the provider
+// assertion and panic.
+func TestServeForgePipeline_UnsupportedPlatformIsInternalError(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	bindProject(t, env.ProjectDir, "bitbucket", "bitbucket.example.com")
+
+	req := newRequest(t, http.MethodGet, "/api/forge/pipeline?id=47", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgePipeline, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+}
+
+// TestServeForgePipeline_RejectsNonGet keeps the method contract for the detail
+// endpoint, which the list endpoint's test does not cover.
+func TestServeForgePipeline_RejectsNonGet(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/pipeline?id=47", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	assert.Equal(t, http.StatusMethodNotAllowed, callHandler(ServeForgePipeline, req).Code)
 }
 
 // TestServeForgePipeline_ResolvesBranchPushMergeRequest: the branch-push case,

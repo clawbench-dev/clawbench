@@ -18,12 +18,12 @@ import (
 // and the copies drifted. The drift is not hypothetical: the enqueue self-heal
 // was added to only one copy, and the chat handler's request builder carried a
 // resume guard the queue path lacked. A fix applied to one copy silently missed
-// the others, so every behavioural guarantee had to be re-established per copy.
+// the others, so every behavioral guarantee had to be re-established per copy.
 //
 // The API is deliberately two-phase (start + finalize) because the scheduler
 // must handle an aborted turn specially: on cancel it flushes, finalizes orphan
 // rows, and unregisters the active stream itself instead of calling Finalize.
-// Exposing the executor handle lets that caller keep its behaviour while still
+// Exposing the executor handle lets that caller keep its behavior while still
 // sharing the whole start-up path.
 
 // TurnSpec describes one AI turn to execute.
@@ -71,8 +71,8 @@ type TurnSpec struct {
 	// scheduler historically passed nil, skipping the drain.
 	//
 	// NOTE: this preserves the pre-existing difference rather than silently
-	// changing scheduled-task behaviour. The two should probably be unified —
-	// see the follow-up noted in the plan — but that is a behaviour change and
+	// changing scheduled-task behavior. The two should probably be unified —
+	// see the follow-up noted in the plan — but that is a behavior change and
 	// does not belong in a pure dedupe.
 	DrainOnFinalize bool
 
@@ -404,7 +404,7 @@ func resolveFileDir(projectPath string) string {
 
 // RunTurn executes one complete AI turn. Exported entry point for
 // internal/handler, which needs to run a turn with its own i18n localizer;
-// behaviourally identical to the internal runTurn.
+// behaviorally identical to the internal runTurn.
 func RunTurn(spec TurnSpec) TurnResult {
 	return runTurn(spec)
 }

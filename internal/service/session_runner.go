@@ -71,7 +71,7 @@ func submitRunner(sessionID string) (ctx context.Context, created bool) {
 // adoptRunner registers an externally-managed execution (the scheduler) so it is
 // cancellable through CancelSession like any other session. The caller keeps
 // ownership of ctx/cancel and must still call SetSessionRunning(false) when done.
-func adoptRunner(sessionID string, ctx context.Context, cancel context.CancelFunc) {
+func adoptRunner(ctx context.Context, cancel context.CancelFunc, sessionID string) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	registry[sessionID] = &sessionRunner{sessionID: sessionID, ctx: ctx, cancel: cancel}
@@ -238,6 +238,6 @@ func FinishSessionRun(sessionID string) {
 // outside the interactive runner (the scheduler). It becomes cancellable through
 // CancelSession, and the caller remains responsible for clearing the running
 // state when the execution ends.
-func RegisterExternalExecution(sessionID string, ctx context.Context, cancel context.CancelFunc) {
-	adoptRunner(sessionID, ctx, cancel)
+func RegisterExternalExecution(ctx context.Context, cancel context.CancelFunc, sessionID string) {
+	adoptRunner(ctx, cancel, sessionID)
 }

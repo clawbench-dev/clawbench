@@ -2918,7 +2918,7 @@ func TestBuildChatRequest_ModelOverride_FromSession(t *testing.T) {
 	// direct-send half of the divergence: the handler passed the session model
 	// in explicitly while the queue path did not, so an identical message could
 	// run on a different model depending on whether it was queued. The lookup now
-	// lives in the shared builder, so both paths honour the session's model.
+	// lives in the shared builder, so both paths honor the session's model.
 	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
 	assert.Equal(t, "claude-sonnet-4-6", req.Model,
 		"without an explicit override, the session's persisted model must be used")

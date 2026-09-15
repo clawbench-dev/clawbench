@@ -129,15 +129,7 @@ func TestWriteBegin_ReleasesLockOnPanic(t *testing.T) {
 		_, _ = WriteBegin()
 	})
 
-	acquired := make(chan struct{})
-	go func() {
-		writeMu.Lock()
-		writeMu.Unlock()
-		close(acquired)
-	}()
-	select {
-	case <-acquired:
-	case <-time.After(2 * time.Second):
+	if !writeMuAcquirable(2 * time.Second) {
 		t.Fatal("writeMu is still held after db.Begin() panicked — every later writer would block forever")
 	}
 }
@@ -160,16 +152,8 @@ func TestWriteBegin_KeepsLockOnSuccess(t *testing.T) {
 		t.Fatal("WriteBegin returned a nil tx with a nil error")
 	}
 	// Held if a concurrent acquisition cannot complete.
-	acquired := make(chan struct{})
-	go func() {
-		writeMu.Lock()
-		writeMu.Unlock()
-		close(acquired)
-	}()
-	select {
-	case <-acquired:
+	if writeMuAcquirable(300 * time.Millisecond) {
 		t.Fatal("writeMu was released on the success path — the caller's transaction is no longer protected")
-	case <-time.After(300 * time.Millisecond):
 	}
 
 	_ = tx.Rollback()

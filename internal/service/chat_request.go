@@ -20,7 +20,7 @@ import (
 //     assistant message was an empty interrupted placeholder; the queue path
 //     resumed it anyway, handing the CLI an ID it had never seen (context
 //     amnesia).
-//  2. persisted model — the handler honoured the session's saved model; the
+//  2. persisted model — the handler honored the session's saved model; the
 //     queue path ignored it and fell back to the agent default.
 //  3. persisted transport — same split for the session's CLI/ACP override.
 //  4. fork envelope — the handler wrapped injected history in an explanatory
@@ -36,13 +36,10 @@ import (
 //
 // The override arguments come from the request (a frontend model/mode pick);
 // when empty, the session's persisted choice is used before falling back to the
-// agent's default. That ordering is why a queued message now honours the model
+// agent's default. That ordering is why a queued message now honors the model
 // the user selected in the session, instead of silently reverting to the
 // agent default.
 func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
-	systemPrompt := ""
-	agentModel := ""
-	agentCommand := ""
 	effectiveThinkingEffort := thinkingEffortOverride // Explicit pick takes priority
 	effectiveMode := modeOverride                     // Explicit pick takes priority
 
@@ -64,29 +61,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		transportOverride = sessionTransport
 	}
 
-	if agent, ok := model.Agents[agentID]; ok {
-		systemPrompt = agent.SystemPrompt
-		// Replace {{PROJECT_PATH}} per-request with the actual project path from cookie
-		if projectPath != "" {
-			systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)
-		}
-		if modelOverride != "" {
-			agentModel = modelOverride
-		} else if defaultID := agent.DefaultModelID(); defaultID != "" {
-			agentModel = defaultID
-		}
-		if agent.Command != "" {
-			agentCommand = agent.Command
-		}
-		// Fall back to agent's effective thinking effort when nothing was specified
-		if effectiveThinkingEffort == "" && agent.EffectiveThinkingEffort() != "" {
-			effectiveThinkingEffort = agent.EffectiveThinkingEffort()
-		}
-		// Fall back to agent's preferred mode when nothing was specified
-		if effectiveMode == "" && agent.EffectiveModeID() != "" {
-			effectiveMode = agent.EffectiveModeID()
-		}
-	}
+	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, effectiveMode)
 
 	// Resolve effective session ID for CLI.
 	// All backends store their CLI-identifiable session ID in external_session_id:
@@ -97,17 +72,11 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	// EXCEPTION: ACP-backed agents manage their own session mapping internally
 	// via ACPConnectionPool (clawbench UUID → ACP session ID). For ACP agents,
 	// always use the ClawBench UUID as the session ID — the pool handles the rest.
-	effectiveSessionID := sessionID
 	resumeStart := time.Now()
 	resume := SessionHasAssistant(sessionID)
 	slog.Info("acp perf: buildChatRequest.SessionHasAssistant", "session_id", sessionID, "resume", resume, "elapsed", time.Since(resumeStart))
 
-	isACP := false
-	if transportOverride != "" {
-		isACP = transportOverride == transportACPStdio
-	} else if agent, ok := model.Agents[agentID]; ok {
-		isACP = agent.Transport == transportACPStdio
-	}
+	isACP := resolveIsACP(agentID, transportOverride)
 
 	// Resolve external_session_id for fork detection (used by both CLI resume and fork context injection).
 	var resolvedExtID string
@@ -117,46 +86,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		slog.Info("acp perf: buildChatRequest.GetExternalSessionID", "session_id", sessionID, "ext_id", resolvedExtID, "elapsed", time.Since(extStart))
 	}
 
-	if resume && !isACP {
-		if resolvedExtID != "" {
-			effectiveSessionID = resolvedExtID
-			slog.Info("session resume: resolved external_session_id",
-				slog.String("session", sessionID),
-				slog.String("external_session_id", resolvedExtID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID),
-				slog.Bool("ext_id_is_clawbench_uuid", resolvedExtID == sessionID))
-		} else if !SessionHasRealAssistantContent(sessionID) {
-			// The first assistant message is an empty cancel/warning placeholder
-			// (no text/tool_use/thinking blocks). This means the AI never responded
-			// with real content — the stream was interrupted before the CLI
-			// established a session. Resume with any ID would fail because the AI
-			// never saw this session. Clear effectiveSessionID and set resume=false
-			// so the backend starts a completely fresh session (no --resume, proper
-			// system prompt injection).
-			effectiveSessionID = ""
-			resume = false
-			slog.Info("session resume: external_session_id is empty and no real AI content (first message interrupted), starting fresh",
-				slog.String("session", sessionID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID))
-		} else {
-			// No external session ID available — the CLI cannot resume a session
-			// it has never seen. Clear effectiveSessionID so the backend does not
-			// pass an invalid ID to --resume. This results in a fresh CLI session
-			// (context amnesia). Log a warning for diagnosis.
-			effectiveSessionID = ""
-			slog.Warn("session resume: external_session_id is empty, CLI will start a new session (context amnesia)",
-				slog.String("session", sessionID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID))
-		}
-	} else if !resume {
-		slog.Info("session: new conversation (no resume)",
-			slog.String("session", sessionID),
-			slog.String("backend", backendName),
-			slog.String("agent", agentID))
-	}
+	effectiveSessionID, resume := resolveResumeSessionID(sessionID, backendName, agentID, resume, isACP, resolvedExtID)
 
 	// Detect fork session first message: resume=true (has copied assistant messages)
 	// but no external_session_id (AI side has no context). This happens after
@@ -224,6 +154,115 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		HasConversationHistory: hasConversationHistory,
 		ForkContext:            forkContext,
 	}
+}
+
+// resolveAgentConfig looks up the agent and derives the prompt, model, command,
+// thinking effort and mode from it. Overrides win over the agent's defaults;
+// an unknown agent id yields empty fields rather than an error, so a stale
+// agent reference degrades to a plain turn instead of failing the send.
+func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, mode string) (systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode string) {
+	effectiveThinkingEffort = thinkingEffort
+	effectiveMode = mode
+
+	agent, ok := model.Agents[agentID]
+	if !ok {
+		return "", "", "", effectiveThinkingEffort, effectiveMode
+	}
+
+	systemPrompt = agent.SystemPrompt
+	// Replace {{PROJECT_PATH}} per-request with the actual project path from cookie
+	if projectPath != "" {
+		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)
+	}
+	if modelOverride != "" {
+		agentModel = modelOverride
+	} else if defaultID := agent.DefaultModelID(); defaultID != "" {
+		agentModel = defaultID
+	}
+	if agent.Command != "" {
+		agentCommand = agent.Command
+	}
+	// Fall back to agent's effective thinking effort when nothing was specified
+	if effectiveThinkingEffort == "" && agent.EffectiveThinkingEffort() != "" {
+		effectiveThinkingEffort = agent.EffectiveThinkingEffort()
+	}
+	// Fall back to agent's preferred mode when nothing was specified
+	if effectiveMode == "" && agent.EffectiveModeID() != "" {
+		effectiveMode = agent.EffectiveModeID()
+	}
+	return systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode
+}
+
+// resolveIsACP decides whether this turn goes over ACP. An explicit transport
+// override is authoritative; otherwise the agent's configured transport wins.
+func resolveIsACP(agentID, transportOverride string) bool {
+	if transportOverride != "" {
+		return transportOverride == transportACPStdio
+	}
+	agent, ok := model.Agents[agentID]
+	if !ok {
+		return false
+	}
+	return agent.Transport == transportACPStdio
+}
+
+// resolveResumeSessionID picks the session id to hand the CLI and the final
+// resume flag.
+//
+// A returned session id of "" means the CLI cannot be given one. The resume flag
+// distinguishes the two reasons, and the difference is deliberate:
+//
+//   - The first assistant message was an empty cancel/warning placeholder, so no
+//     CLI-side session was ever created: resume becomes false, because the turn
+//     must start a completely fresh session (no --resume, proper system prompt
+//     injection).
+//   - The session does have real content but the CLI has no external session id:
+//     the id is cleared so the CLI does not receive one it never saw, but resume
+//     stays TRUE so the fork-context path below still injects the history
+//     (context amnesia is mitigated, not accepted).
+//
+// ACP turns always use the ClawBench UUID — the ACP pool owns the mapping — and
+// keep resume as-is.
+func resolveResumeSessionID(sessionID, backendName, agentID string, resume, isACP bool, resolvedExtID string) (string, bool) {
+	if !resume {
+		slog.Info("session: new conversation (no resume)",
+			slog.String("session", sessionID),
+			slog.String("backend", backendName),
+			slog.String("agent", agentID))
+		return sessionID, false
+	}
+
+	if isACP {
+		return sessionID, true
+	}
+
+	if resolvedExtID != "" {
+		slog.Info("session resume: resolved external_session_id",
+			slog.String("session", sessionID),
+			slog.String("external_session_id", resolvedExtID),
+			slog.String("backend", backendName),
+			slog.String("agent", agentID),
+			slog.Bool("ext_id_is_clawbench_uuid", resolvedExtID == sessionID))
+		return resolvedExtID, true
+	}
+
+	if !SessionHasRealAssistantContent(sessionID) {
+		slog.Info("session resume: external_session_id is empty and no real AI content (first message interrupted), starting fresh",
+			slog.String("session", sessionID),
+			slog.String("backend", backendName),
+			slog.String("agent", agentID))
+		return "", false
+	}
+
+	// No external session ID available — the CLI cannot resume a session it has
+	// never seen. Clear the id so the backend does not pass an invalid one to
+	// --resume; resume stays true so the fork-context injection still runs. Log a
+	// warning for diagnosis.
+	slog.Warn("session resume: external_session_id is empty, CLI will start a new session (context amnesia)",
+		slog.String("session", sessionID),
+		slog.String("backend", backendName),
+		slog.String("agent", agentID))
+	return "", true
 }
 
 // BuildForkContext reads a session's history and formats it as a text block that

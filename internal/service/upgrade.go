@@ -766,31 +766,13 @@ func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedD
 
 		// Look for the binary in package/bin/
 		if filepath.Base(header.Name) == binName && strings.Contains(header.Name, "bin/") {
-			outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-			if err != nil {
-				return fmt.Errorf("failed to create output file: %w", err)
+			if err := extractBinaryFromTar(tarReader, destPath); err != nil {
+				return err
 			}
-			// Bound the extracted size: the archive comes from the network and,
-			// when no hash is available, nothing else constrains it. A
-			// high-ratio gzip would otherwise decompress without limit and fill
-			// the disk.
-			//nolint:gosec // G110: bounded by maxBinarySize below
-			if _, copyErr := io.Copy(outFile, io.LimitReader(tarReader, maxBinarySize+1)); copyErr != nil {
-				_ = outFile.Close()
-				_ = os.Remove(destPath)
-				return fmt.Errorf("failed to write binary: %w", copyErr)
-			}
-			if info, statErr := outFile.Stat(); statErr == nil && info.Size() > maxBinarySize {
-				_ = outFile.Close()
-				_ = os.Remove(destPath)
-				return fmt.Errorf("binary exceeds the %d-byte limit; refusing to extract", maxBinarySize)
-			}
-			_ = outFile.Close()
-			_ = os.Chmod(destPath, 0o755) //nolint:gosec // G302: binary must be executable
 
 			// Drain the remaining stream so the hasher sees the whole tarball,
 			// also bounded so a decompression bomb cannot run away.
-			_, _ = io.Copy(io.Discard, io.LimitReader(gzr, maxArchiveSize)) //nolint:gosec // G110: bounded by maxArchiveSize
+			_, _ = io.Copy(io.Discard, io.LimitReader(gzr, maxArchiveSize))
 
 			// An unverified digest has no hash to compare against. Say so
 			// explicitly rather than falling through to the success log, which
@@ -812,6 +794,33 @@ func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedD
 	}
 
 	return fmt.Errorf("binary '%s' not found in tarball", binName)
+}
+
+// extractBinaryFromTar writes the binary entry currently positioned in tarReader
+// to destPath, bounded by maxBinarySize so a decompression bomb cannot fill the
+// disk. It removes a partial destPath on every failure, so a failed extraction
+// never leaves a half-written binary in place.
+func extractBinaryFromTar(tarReader *tar.Reader, destPath string) error {
+	outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	// Bound the extracted size: the archive comes from the network and, when no
+	// hash is available, nothing else constrains it. A high-ratio gzip would
+	// otherwise decompress without limit and fill the disk.
+	if _, copyErr := io.Copy(outFile, io.LimitReader(tarReader, maxBinarySize+1)); copyErr != nil {
+		_ = outFile.Close()
+		_ = os.Remove(destPath)
+		return fmt.Errorf("failed to write binary: %w", copyErr)
+	}
+	if info, statErr := outFile.Stat(); statErr == nil && info.Size() > maxBinarySize {
+		_ = outFile.Close()
+		_ = os.Remove(destPath)
+		return fmt.Errorf("binary exceeds the %d-byte limit; refusing to extract", maxBinarySize)
+	}
+	_ = outFile.Close()
+	_ = os.Chmod(destPath, 0o755) //nolint:gosec // G302: binary must be executable
+	return nil
 }
 
 // expectedDigest is the algorithm and hash a downloaded tarball must match. It

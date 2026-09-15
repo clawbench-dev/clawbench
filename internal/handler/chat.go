@@ -707,7 +707,7 @@ func executeStreamRun(
 // buildChatRequest delegates to the service layer's single implementation.
 //
 // Kept as a thin wrapper (rather than updating the ~30 call sites and tests that
-// use it) so the unification lands as one behavioural change: the handler no
+// use it) so the unification lands as one behavioral change: the handler no
 // longer has its own copy to drift from the queue/push path.
 func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
 	return service.BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir, hasAttachments)
@@ -779,7 +779,7 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	}
 
 	// No explicit model/transport overrides: the shared builder reads the
-	// session's persisted choices itself, so a queued message honours the same
+	// session's persisted choices itself, so a queued message honors the same
 	// model and transport a direct send would. Passing them here as well would
 	// duplicate that lookup and invite the two paths to drift again.
 	hasAttachments := len(qMsg.FilePaths) > 0 || len(qMsg.Files) > 0

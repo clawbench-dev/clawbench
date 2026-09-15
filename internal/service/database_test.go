@@ -3831,15 +3831,7 @@ func TestTimedWrite_ReleasesLockOnPanic(t *testing.T) {
 	})
 
 	// The lock must be free again: acquiring it with a deadline is the assertion.
-	acquired := make(chan struct{})
-	go func() {
-		writeMu.Lock()
-		writeMu.Unlock()
-		close(acquired)
-	}()
-	select {
-	case <-acquired:
-	case <-time.After(2 * time.Second):
+	if !writeMuAcquirable(2 * time.Second) {
 		t.Fatal("writeMu is still held after exec panicked — later writers would block forever")
 	}
 }

@@ -805,7 +805,7 @@ func TestServeForgeUnreadItems(t *testing.T) {
 	pr := resp.Items[byKey["pr/455"]]
 	assert.Equal(t, "pr", pr.Type)
 	assert.Equal(t, 455, pr.Number)
-	assert.Equal(t, "commented", pr.EventType, "labelled by the newest event")
+	assert.Equal(t, "commented", pr.EventType, "labeled by the newest event")
 	assert.Equal(t, 2, pr.EventCount)
 	assert.Equal(t, "acme/widgets", pr.Slug)
 

@@ -220,7 +220,7 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 	ctx := cfg.RunCtx
 	if ctx == nil {
 		// Defensive: a caller that bypassed TryClaimSessionRun. Fall back to the
-		// registry so behaviour is unchanged for such callers, and warn because
+		// registry so behavior is unchanged for such callers, and warn because
 		// it re-opens the window this field exists to close.
 		ctx = runnerContext(sessionID)
 	}

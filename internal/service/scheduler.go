@@ -937,7 +937,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// skipEvent semantics: the scheduler emits its own task events, so no
 	// session_update is broadcast here (ISS-128 also requires no "running" event
 	// for a task that fails before it starts).
-	RegisterExternalExecution(sessionID, ctx, cancel)
+	RegisterExternalExecution(ctx, cancel, sessionID)
 
 	// Clear the running state when this execution ends.
 	defer func() {
@@ -960,7 +960,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Run the turn through the shared implementation. The scheduler emits its
 	// own stream_start (its subscribers assert on the exact id), and it handles
 	// the abort/terminal branches below itself because a task failure must also
-	// update the execution row and emit task events — behaviour the interactive
+	// update the execution row and emit task events — behavior the interactive
 	// paths do not have.
 	//
 	// The "running" event rides OnStarted rather than being emitted after this

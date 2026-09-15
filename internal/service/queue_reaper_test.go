@@ -268,7 +268,7 @@ func TestQueueReaper_ConcurrentStopClosesOnce(t *testing.T) {
 	const callers = 8
 	var wg sync.WaitGroup
 	wg.Add(callers)
-	for i := 0; i < callers; i++ {
+	for range callers {
 		go func() {
 			defer wg.Done()
 			assert.NotPanics(t, func() { w.Stop() })
@@ -300,7 +300,7 @@ func TestQueueReaper_RestartAfterStop(t *testing.T) {
 // two panics above interact: a Start racing a Stop must never leave the worker
 // running=true with closed channels, nor close a channel twice.
 func TestQueueReaper_ConcurrentStartStop(t *testing.T) {
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		w := &QueueReaper{
 			grace:    time.Minute,
 			interval: time.Hour,

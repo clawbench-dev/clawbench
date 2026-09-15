@@ -1992,7 +1992,7 @@ func TestGetFileLineWindow(t *testing.T) {
 		assert.Equal(t, "", fc.Content)
 		assert.True(t, fc.WindowTruncated)
 		assert.Equal(t, 1, fc.WindowStart)
-		assert.Less(t, fc.WindowEnd, fc.WindowStart, "empty window must be signalled")
+		assert.Less(t, fc.WindowEnd, fc.WindowStart, "empty window must be signaled")
 	})
 
 	t.Run("BareCarriageReturnIsASeparator", func(t *testing.T) {

@@ -301,7 +301,7 @@ func TestListRecentSessions(t *testing.T) {
 //
 // These used to call resolveAgentConfig / resolveIsACP / resolveSessionState
 // directly. Those helpers were folded into BuildChatRequest when the handler and
-// service implementations were unified, so the same behaviours are now asserted
+// service implementations were unified, so the same behaviors are now asserted
 // through the public API — which is also what production calls.
 // ============================================================================
 
