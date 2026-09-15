@@ -894,19 +894,26 @@ onUnmounted(() => {
 /* ── Tag row: the bottom line of each session entry ──
    Accent comes from --tag-accent-{light,dark}, set inline per tag by
    tagAccentStyle() (same palette as tool calls). --tag-accent resolves the
-   theme-appropriate one; color-mix tints background/border from it. */
+   theme-appropriate one; color-mix tints background/border from it.
+
+   Wraps onto extra lines rather than the old nowrap + overflow:hidden, which
+   silently clipped every tag past the row's width — invisible AND unclickable.
+   The row is auto-height inside a scrolling list, so growing is safe; no cap is
+   needed here because a session carries only its own handful of tags. */
 .session-item-tags {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  flex-wrap: nowrap;
-  overflow: hidden;
+  flex-wrap: wrap;
 }
 
 .session-tag {
   --tag-accent: var(--tag-accent-light);
-  flex-shrink: 0;
+  /* shrink allowed so a very long name ellipsises on its own line instead of
+     forcing the row wider than the pane */
+  flex-shrink: 1;
+  min-width: 0;
   max-width: 100%;
   padding: 0 var(--space-3);
   border-radius: 999px;
@@ -1030,19 +1037,35 @@ onUnmounted(() => {
 
 /* ── Pinned marker ──
    Pinned sessions are no longer split into their own section; the only marker
-   is a wedge in the row's top-right corner. Painted with border-color (not an
-   SVG) so it needs no extra DOM, and coloured with the theme accent so it
-   follows the user's chosen colour. `.session-row` is already
-   position:relative, so the wedge anchors to it directly. */
+   is a wedge in the row's top-right corner.
+
+   Drawn as a clip-path triangle rather than the old border trick: a border
+   triangle can only be one flat colour, while a real box supports the gradient
+   + drop shadow that give the wedge its depth. The clip shape is exactly the
+   triangle the border version produced — vertices at top-left, top-right and
+   bottom-right.
+
+   The gradient runs 225deg, i.e. from the outer tip (top-right) toward the
+   hypotenuse, so the facet reads as lit from outside and darkening into the
+   crease; the drop shadow lifts it off the row. Both shades are mixed from the
+   theme accent, so the whole thing follows the user's colour. The shadow is
+   offset inward (down-left) because the pane clips overflow at the right edge.
+   `.session-row` is already position:relative, so the wedge anchors to it. */
 .session-row.pinned::after {
   content: '';
   position: absolute;
   top: 0;
   right: 0;
-  width: 0;
-  height: 0;
-  border-top: 12px solid var(--accent-color, #0066cc);
-  border-left: 12px solid transparent;
+  width: 12px;
+  height: 12px;
+  background: linear-gradient(
+    225deg,
+    color-mix(in srgb, var(--accent-color, #0066cc) 60%, #fff) 0%,
+    var(--accent-color, #0066cc) 55%,
+    color-mix(in srgb, var(--accent-color, #0066cc) 78%, #000) 100%
+  );
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+  filter: drop-shadow(-1px 1px 1.5px rgba(0, 0, 0, 0.35));
   pointer-events: none;
   z-index: 1;
 }

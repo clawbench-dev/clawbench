@@ -1043,6 +1043,31 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
+    it('wraps the tag row instead of clipping the overflow', async () => {
+      // The row was nowrap + overflow:hidden, so any tag past the row's width
+      // was invisible and unclickable — the tags existed but could not be read.
+      // jsdom has no layout engine, so assert the declarations that allow
+      // wrapping rather than a rendered geometry.
+      const src = String((await import('@/components/session/SessionList.vue?raw')).default)
+      const rule = src.replace(/\/\*[\s\S]*?\*\//g, '')
+        .match(/\.session-item-tags\s*\{[^}]*\}/)?.[0]
+      expect(rule, '.session-item-tags should exist').toBeTruthy()
+      expect(rule).toMatch(/flex-wrap:\s*wrap/)
+      expect(rule).not.toMatch(/overflow:\s*hidden/)
+    })
+
+    it('lets a long tag name ellipsise instead of widening the row', async () => {
+      const src = String((await import('@/components/session/SessionList.vue?raw')).default)
+      const rule = src.replace(/\/\*[\s\S]*?\*\//g, '')
+        .match(/\.session-tag\s*\{[^}]*\}/)?.[0]
+      expect(rule, '.session-tag should exist').toBeTruthy()
+      // flex-shrink:0 with a long name would push the chip past the pane edge;
+      // min-width:0 is what actually lets text-overflow engage in a flex child.
+      expect(rule).toMatch(/flex-shrink:\s*1/)
+      expect(rule).toMatch(/min-width:\s*0/)
+      expect(rule).toMatch(/text-overflow:\s*ellipsis/)
+    })
+
     it('gives the same tag the same color across sessions', async () => {
       mockFetch.mockResolvedValue({
         ok: true,

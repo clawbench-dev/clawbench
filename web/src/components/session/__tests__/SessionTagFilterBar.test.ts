@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
 
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { sessionTags: { filterLabel: 'Filter sessions by tag' } } },
+  messages: {
+    en: {
+      sessionTags: {
+        filterLabel: 'Filter sessions by tag',
+        filterTitle: 'Filter by tag',
+        filterClear: 'Clear tag filter',
+      },
+    },
+  },
 })
 
 function mountBar(props: Record<string, unknown> = {}) {
@@ -14,6 +24,25 @@ function mountBar(props: Record<string, unknown> = {}) {
     props: { tags: [], activeTag: '', ...props },
     global: { plugins: [i18n] },
   })
+}
+
+function source(): string {
+  return readFileSync(
+    resolve(process.cwd(), 'src/components/session/SessionTagFilterBar.vue'),
+    'utf8',
+  )
+}
+
+/**
+ * The SFC's raw text with CSS comments stripped.
+ *
+ * These source-sniffing assertions are about declarations, but the surrounding
+ * prose frequently names the very thing being asserted away ("rather than the
+ * old nowrap + overflow-x:auto") — matching against comments made the
+ * not-toMatch guards fail on their own explanation.
+ */
+function sourceDeclarations(): string {
+  return source().replace(/\/\*[\s\S]*?\*\//g, '')
 }
 
 describe('SessionTagFilterBar', () => {
@@ -70,5 +99,51 @@ describe('SessionTagFilterBar', () => {
     const style = wrapper.find('.session-tag-filter-chip').attributes('style') || ''
     expect(style).toContain('--tag-accent-light')
     expect(style).toContain('--tag-accent-dark')
+  })
+
+  it('renders a caption naming the control', () => {
+    // Without a caption the chips read as decoration floating between the
+    // header and the list rather than as a filter.
+    const wrapper = mountBar({ tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+    expect(wrapper.find('.session-tag-filter-label').text()).toBe('Filter by tag')
+  })
+
+  it('wraps chips instead of clipping the overflow', () => {
+    // The bar used to be nowrap + overflow-x:auto, so every tag past the first
+    // row was unreachable — not merely invisible, but unclickable. jsdom has no
+    // layout engine, so assert the declarations that make wrapping possible.
+    const css = sourceDeclarations()
+    const chipsRule = /\.session-tag-filter-chips\s*\{[^}]*\}/.exec(css)?.[0]
+    expect(chipsRule, '.session-tag-filter-chips should exist').toBeTruthy()
+    expect(chipsRule).toMatch(/flex-wrap:\s*wrap/)
+    expect(chipsRule).not.toMatch(/overflow-x:\s*auto/)
+    // Growth is capped so a long tag list cannot push the session list away.
+    expect(chipsRule).toMatch(/max-height:/)
+  })
+
+  it('only offers the clear button while a filter is applied', async () => {
+    const tags = [{ name: 'bug', scope: 'project', count: 1 }]
+
+    const idle = mountBar({ tags })
+    expect(idle.find('.session-tag-filter-clear').exists()).toBe(false)
+
+    const filtered = mountBar({ tags, activeTag: 'bug' })
+    const clear = filtered.find('.session-tag-filter-clear')
+    expect(clear.exists()).toBe(true)
+    expect(clear.attributes('aria-label')).toBe('Clear tag filter')
+
+    // Clearing emits the same toggle the active chip would, so the parent's
+    // single-select logic stays the one place that owns the state.
+    await clear.trigger('click')
+    expect(filtered.emitted('toggle')).toEqual([['bug']])
+  })
+
+  it('keeps the chips aligned with the session rows below', () => {
+    // The chip row must share `.session-item`'s horizontal padding, otherwise
+    // it sits flush against the panel edge while every row is indented.
+    const css = sourceDeclarations()
+    const barRule = /\.session-tag-filter\s*\{[^}]*\}/.exec(css)?.[0]
+    expect(barRule, '.session-tag-filter should exist').toBeTruthy()
+    expect(barRule).toMatch(/padding:\s*var\(--space-4\)\s+var\(--space-6\)/)
   })
 })

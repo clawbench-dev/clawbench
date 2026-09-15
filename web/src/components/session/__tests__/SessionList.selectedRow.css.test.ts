@@ -68,20 +68,35 @@ describe('SessionList selected-row tint covers the archive button', () => {
 describe('SessionList pinned marker', () => {
   it('paints the corner wedge from the .pinned row modifier', async () => {
     const src = await sessionListSource()
-    // The wedge is a border-triangle pseudo-element on the row. jsdom has no CSS
-    // engine, so this asserts the declaration survives — a `width`/`height` of
-    // non-zero (or a missing border) would render a box instead of a wedge.
+    // The wedge is a clipped square on the row. jsdom has no CSS engine, so this
+    // asserts the declarations survive: without the clip-path the box renders as
+    // a full square instead of a triangle, and a zero width/height would make it
+    // vanish entirely.
     const rule = src.match(/\.session-row\.pinned::after\s*\{[^}]*\}/)?.[0]
     expect(rule, '.session-row.pinned::after should exist').toBeTruthy()
-    expect(rule).toMatch(/border-top:\s*12px solid var\(--accent-color/)
-    expect(rule).toMatch(/border-left:\s*12px solid transparent/)
-    expect(rule).toMatch(/width:\s*0/)
-    expect(rule).toMatch(/height:\s*0/)
+    // Three vertices, one of them the top-right corner the box is anchored to.
+    expect(rule).toMatch(/clip-path:\s*polygon\(\s*0\s+0\s*,\s*100%\s+0\s*,\s*100%\s+100%\s*\)/)
+    expect(rule).toMatch(/width:\s*12px/)
+    expect(rule).toMatch(/height:\s*12px/)
     // Anchored to the row's own top-right corner.
     expect(rule).toMatch(/top:\s*0/)
     expect(rule).toMatch(/right:\s*0/)
     // Decorative only — must not swallow clicks meant for the archive button.
     expect(rule).toMatch(/pointer-events:\s*none/)
+  })
+
+  it('keeps the wedge on the theme accent and shades it for depth', async () => {
+    const src = await sessionListSource()
+    const rule = src.match(/\.session-row\.pinned::after\s*\{[^}]*\}/)?.[0]
+    expect(rule).toBeTruthy()
+    // Colour must follow the theme (a hardcoded amber ignored the user's accent).
+    expect(rule).toMatch(/var\(--accent-color/)
+    expect(rule).not.toMatch(/#f59e0b/)
+    // The gradient + drop shadow are what give the flat triangle its depth;
+    // both shades are mixed from the accent so they track the theme too.
+    expect(rule).toMatch(/background:\s*linear-gradient\(/)
+    expect(rule).toMatch(/color-mix\(in srgb, var\(--accent-color[^)]*\)/)
+    expect(rule).toMatch(/filter:\s*drop-shadow\(/)
   })
 
   it('has no leftover pinned/recent section wrapper styles or inline pin glyph', async () => {
