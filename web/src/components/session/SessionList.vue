@@ -899,13 +899,25 @@ onUnmounted(() => {
    Wraps onto extra lines rather than the old nowrap + overflow:hidden, which
    silently clipped every tag past the row's width — invisible AND unclickable.
    The row is auto-height inside a scrolling list, so growing is safe; no cap is
-   needed here because a session carries only its own handful of tags. */
+   needed here because a session carries only its own handful of tags.
+
+   The extra top margin is what separates the tag row from the meta line above.
+   The parent's uniform gap is var(--space-1) (2px), which reads correctly
+   between the title and the meta line because both are text with line-height
+   half-leading padding them out — but the chips are bordered boxes with no such
+   leading, so the same 2px put them visibly flush against the meta line and
+   they read as a continuation of it rather than their own row. Adding
+   var(--space-2) brings the visual gap to roughly the title→meta one, so all
+   three lines share a rhythm. Whitespace alone: a divider here would double up
+   with the row separator ~10px below it, and since tags are optional the list
+   would alternate between one and two rules per row. */
 .session-item-tags {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
   flex-wrap: wrap;
+  margin-top: var(--space-2);
 }
 
 .session-tag {

@@ -13,22 +13,40 @@
           v-for="tag in candidates"
           :key="tag.name"
           class="st-candidate"
-          :class="{ selected: isSelected(tag.name) }"
+          :class="{ selected: isSelected(tag.name), pending: tag.pending }"
         >
-          <label class="st-candidate-main">
-            <input
-              type="checkbox"
-              class="st-checkbox"
-              :style="{ '--st-tick': checkboxTickColor }"
-              :checked="isSelected(tag.name)"
-              @change="toggleTag(tag.name)"
+          <!-- The chip itself is the toggle. It replaced a checkbox + label pair:
+               the checkbox duplicated what the chip already said, and the filled
+               style below states the selection on its own. -->
+          <button
+            type="button"
+            class="st-chip"
+            :class="{ active: isSelected(tag.name) }"
+            :style="chipStyle(tag.name)"
+            :aria-pressed="isSelected(tag.name)"
+            :title="tag.name"
+            @click="toggleTag(tag.name)"
+          >
+            <!-- role="img" is required for the label to be announced: a bare
+                 <svg> is exposed as a generic graphic and its aria-label is
+                 dropped, so screen readers would announce an unnamed icon.
+                 Same pattern as AgentIcon.vue. -->
+            <Globe
+              v-if="tag.scope === 'global'"
+              :size="11"
+              class="st-chip-scope"
+              role="img"
+              :aria-label="t('sessionTags.scopeGlobal')"
             />
-            <span class="st-chip" :style="tagAccentStyle(tag.name)">
-              <span class="st-chip-name">{{ tag.name }}</span>
-            </span>
-            <span v-if="tag.scope === 'global'" class="st-scope-badge">{{ t('sessionTags.scopeGlobal') }}</span>
-          </label>
-          <!-- Deleting removes the label from every session; confirm first. -->
+            <span class="st-chip-name">{{ tag.name }}</span>
+          </button>
+          <!-- Deleting removes the label from every session; confirm first.
+               A SIBLING of the chip, not a child: a <button> inside a <button> is
+               invalid HTML and the parser would break the nesting. It is
+               positioned over the chip's right edge so the two never fight for
+               width, and stays permanently visible rather than appearing on
+               hover — a hover-only control is undiscoverable and does not exist
+               on touch at all. -->
           <button
             class="st-delete-btn"
             type="button"
@@ -36,7 +54,7 @@
             :aria-label="t('sessionTags.deleteTag')"
             @click.stop="requestDelete(tag)"
           >
-            <Trash2 :size="14" />
+            <Trash2 :size="12" />
           </button>
         </div>
       </div>
@@ -74,13 +92,13 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Trash2 } from 'lucide-vue-next'
+import { Globe, Plus, Trash2 } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiDelete, apiPatch } from '@/utils/api.ts'
-import { tagAccentStyle, readableTextOn } from '@/utils/tagColor.ts'
+import { tagAccent, readableTextOn } from '@/utils/tagColor.ts'
 import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
 
@@ -104,31 +122,27 @@ const newTagName = ref('')
 const newTagScope = ref('project')
 
 /**
- * Tick colour for the checked checkbox.
+ * Inline style for a chip: the per-theme accent, plus — when the chip is filled
+ * (selected) — the label colour that stays readable on that fill.
  *
- * The box is filled with the theme's --accent-color and the tick sits on top,
- * so the tick has to contrast with the ACCENT, not the dialog surface. A fixed
- * white fails on most themes — the accents are mid-to-light blues, and white
- * scored as low as 1.69:1, below 4.5:1 on 28 of 36 themes. Resolving the accent
- * and picking the better of near-black/white puts every theme at or above
- * 4.5:1, which no static CSS rule can do because it cannot evaluate luminance.
- *
- * Recomputed when `store.state.theme` changes; the CSS variable is read after
- * the theme attribute has been applied, so `nextTick` is required for the new
- * value to be visible.
+ * The fill colour is the tag's own accent, so the label must be chosen per tag.
+ * `readableTextOn` picks the better of black/white by WCAG luminance, which is
+ * what the hardcoded per-theme rule in SessionTagFilterBar cannot do: several
+ * palette entries are dark enough that white looks right but scores below
+ * 4.5:1. Tag accents come from TAG_PALETTE as literal hex, so this needs no
+ * getComputedStyle / theme watcher — the light and dark variants are handed to
+ * CSS and it picks one via [data-theme-base], the same way the border colour
+ * already worked.
  */
-const checkboxTickColor = ref('#ffffff')
-watch(
-  () => store.state.theme,
-  async () => {
-    await nextTick()
-    const accent = getComputedStyle(document.documentElement)
-      .getPropertyValue('--accent-color')
-      .trim()
-    if (accent) checkboxTickColor.value = readableTextOn(accent)
-  },
-  { immediate: true },
-)
+function chipStyle(name) {
+  const { light, dark } = tagAccent(name)
+  return {
+    '--tag-accent-light': light,
+    '--tag-accent-dark': dark,
+    '--st-chip-text-light': readableTextOn(light),
+    '--st-chip-text-dark': readableTextOn(dark),
+  }
+}
 
 /**
  * Normalize a tag name the same way the backend does (`strings.Fields` + join,
@@ -325,127 +339,152 @@ watch(() => props.open, (open) => {
   border-radius: var(--radius-sm);
 }
 
+/* Chips flow at their natural width and wrap onto the next line when the row
+   fills up. An even-width grid (minmax(120px, 1fr)) was tried first and
+   rejected: it stretched short tags like "bug" out to a fixed 120px, so every
+   chip was mostly empty padding and the row read as a table of boxes rather
+   than a cluster of labels. Sizing to content keeps the pill shape proportional
+   to its text, which is what the filter bar does too. */
 .st-candidate-list {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
   max-height: 220px;
   overflow-y: auto;
 }
 
+/* The cell shrink-wraps its chip (inline-flex, so it takes the chip's width
+   rather than a column's) and is a positioning context for the overlaid delete
+   button. It carries no surface of its own: with the chip stating the selection
+   by fill, a tinted cell would be a second, differently-shaped block around it.
+   max-width:100% keeps an over-long name from pushing the chip past the row —
+   the name span ellipsises instead. */
 .st-candidate {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-}
-
-.st-candidate:hover {
-  background: var(--bg-tertiary);
-}
-
-.st-candidate.selected {
-  background: var(--bg-tertiary);
-  border-color: var(--border-color);
-}
-
-.st-candidate-main {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex: 1;
-  min-width: 0;
-  cursor: pointer;
-}
-
-/* Custom-drawn checkbox: the native control renders at its own weight and
-   corner radius, which reads as crude next to the pill chips. Same recipe as
-   .form-checkbox in QuickCommandEditModal.vue, so both dialogs match.
-   The checked colour stays the single accent rather than the tag's own colour:
-   tag hues come from a hash palette and the pale ones (yellow, light green)
-   would leave a white tick with almost no contrast. */
-.st-checkbox {
-  -webkit-appearance: none;
-  appearance: none;
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  margin: 0;
   position: relative;
-  /* --border-color is too faint against the dialog surface for an unchecked
-     box to read as a control, so darken it toward the text colour. */
-  border: 1.5px solid color-mix(in srgb, var(--text-muted) 60%, transparent);
-  border-radius: var(--radius-xs, 3px);
-  background: var(--bg-primary, #fff);
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* The chip is the toggle. A <button> so it is keyboard-reachable and announces
+   pressed state; the checkbox it replaced provided both for free. */
+.st-chip {
+  --tag-accent: var(--tag-accent-light);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  /* No flex-grow: the chip is only as wide as its label needs, so the cell that
+     shrink-wraps it ends up content-sized too. */
+  min-width: 0;
+  /* Room for the overlaid delete button, which is permanently visible and sits
+     at right:3px with an 18px width — i.e. its left edge is 21px in from the
+     chip's right border. Absolute offsets are measured from the padding box, so
+     padding-right must clear 21px or a long tag name ellipsises underneath the
+     icon. --space-8 (20px) is a pixel short, hence the +4px of slack. */
+  padding: 4px calc(var(--space-8) + 4px) 4px var(--space-3);
+  /* Reset UA button chrome: without an explicit border and background the
+     browser paints its own. */
+  border: 1px solid color-mix(in srgb, var(--tag-accent) 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tag-accent) 12%, transparent);
+  color: var(--tag-accent);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  line-height: 16px;
   cursor: pointer;
-  transition: background var(--duration-base), border-color var(--duration-base);
+  transition: background var(--duration-fast, 120ms) ease, color var(--duration-fast, 120ms) ease;
 }
 
-.st-checkbox:checked {
-  background: var(--accent-color, #0066cc);
-  border-color: var(--accent-color, #0066cc);
+/* Selected = filled with the tag's own accent, matching the filter bar's active
+   chip so the same tag looks the same in both places.
+ *
+ * The label colour is resolved per theme from --st-chip-text-{light,dark}, set
+ * inline by chipStyle() via readableTextOn. A hardcoded #fff would sit as low as
+ * 1.67:1 on the light-theme palette entries (see tagColor.ts). */
+.st-chip.active {
+  background: var(--tag-accent);
+  border-color: var(--tag-accent);
+  color: var(--st-chip-text-light);
 }
 
-/* The tick, drawn as two borders of a rotated box. Centred by transform rather
-   than by hand-tuned offsets: absolute left/top values depend on the border
-   width and box-sizing and drift as soon as either changes (the copied
-   left:4px/top:1px put the tick 0.1px from the right edge).
-   45% rather than 50% on the vertical axis: the rotated glyph's bounding box
-   is taller than its visual mass, so 50% sits ~0.75px low. Measured on an 8x
-   render, 44-46% all land within 0.25px of centred. */
-.st-checkbox:checked::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 45%;
-  width: 4px;
-  height: 8px;
-  /* --st-tick is resolved per theme in JS (see checkboxTickColor): a fixed
-     white sits at 1.69:1 on the lightest accents. */
-  border: solid var(--st-tick, #fff);
-  border-width: 0 2px 2px 0;
-  transform: translate(-50%, -50%) rotate(45deg);
+[data-theme-base="dark"] .st-chip {
+  --tag-accent: var(--tag-accent-dark);
 }
 
-.st-checkbox:focus-visible {
+[data-theme-base="dark"] .st-chip.active {
+  color: var(--st-chip-text-dark);
+}
+
+/* Hover on an unselected chip deepens its own tint — the same recipe the filter
+   bar uses. The cell stays transparent so the only thing that reacts is the
+   pill the pointer is actually over. */
+.st-chip:hover:not(.active) {
+  background: color-mix(in srgb, var(--tag-accent) 22%, transparent);
+}
+
+.st-chip:focus-visible {
   outline: 2px solid var(--accent-color, #0066cc);
   outline-offset: 1px;
 }
 
-/* Unchecked rows dim slightly on hover so the row reads as one click target. */
-.st-candidate:hover .st-checkbox:not(:checked) {
-  border-color: var(--accent-color, #0066cc);
+/* A tag typed in this dialog but not yet saved. Dashed rather than a colour or
+   badge: it needs no width and reuses the chip's own border. It also explains
+   why deleting this one skips the confirmation — there is nothing server-side
+   to destroy yet. */
+.st-candidate.pending .st-chip {
+  border-style: dashed;
 }
 
-.st-scope-badge {
+.st-chip-scope {
   flex-shrink: 0;
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-2);
+  /* Inherits the chip's label colour so it stays readable on both the outlined
+     and the filled state. */
+  opacity: 0.75;
 }
 
+.st-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Overlaid on the chip's right edge, vertically centred, and always visible.
+ *
+ * It is a sibling of the chip (nesting buttons is invalid), so it must be
+ * positioned rather than laid out, and @click.stop keeps a tap on it from also
+ * toggling the chip. Always shown rather than revealed on hover: a control that
+ * only appears on hover is undiscoverable, and on touch there is no hover at
+ * all. The chip reserves room for it via its right padding, so it never covers
+ * the label. */
 .st-delete-btn {
-  flex-shrink: 0;
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 50%;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+  transition: color var(--duration-fast, 120ms) ease, background var(--duration-fast, 120ms) ease;
 }
 
 .st-delete-btn:hover {
   color: var(--color-red, #ef4444);
-  background: var(--bg-secondary);
+  background: var(--bg-tertiary);
+}
+
+.st-delete-btn:focus-visible {
+  outline: 2px solid var(--accent-color, #0066cc);
+  outline-offset: 1px;
 }
 
 .st-add-row {
@@ -530,31 +569,5 @@ watch(() => props.open, (open) => {
 .st-scope-hint {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
-}
-
-/* ── Tag chip: accent comes from --tag-accent-{light,dark} set inline by
-   tagAccentStyle(), so the same palette as tool calls is used and the color is
-   stable per tag name. The theme picks which variable wins. ── */
-.st-chip {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  padding: 1px var(--space-3);
-  border-radius: 999px;
-  font-size: var(--font-size-xs);
-  --tag-accent: var(--tag-accent-light);
-  color: var(--tag-accent);
-  background: color-mix(in srgb, var(--tag-accent) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--tag-accent) 30%, transparent);
-}
-
-[data-theme-base="dark"] .st-chip {
-  --tag-accent: var(--tag-accent-dark);
-}
-
-.st-chip-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

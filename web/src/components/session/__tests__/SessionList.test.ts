@@ -1043,6 +1043,22 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
+    it('separates the tag row from the meta line above it', async () => {
+      // The parent's uniform gap (2px) reads fine between two text lines, whose
+      // line-height half-leading pads them out, but leaves the bordered chips
+      // visually flush against the meta line — they read as its continuation
+      // rather than a row of their own. The tag row must add its own spacing.
+      const src = String((await import('@/components/session/SessionList.vue?raw')).default)
+      const rule = src.replace(/\/\*[\s\S]*?\*\//g, '')
+        .match(/\.session-item-tags\s*\{[^}]*\}/)?.[0]
+      expect(rule, '.session-item-tags should exist').toBeTruthy()
+      expect(rule).toMatch(/margin-top:\s*var\(--space-2\)/)
+      // Whitespace only: a border/background here would double up with the row
+      // separator just below and fight the active/running row backgrounds.
+      expect(rule).not.toMatch(/border/)
+      expect(rule).not.toMatch(/background/)
+    })
+
     it('wraps the tag row instead of clipping the overflow', async () => {
       // The row was nowrap + overflow:hidden, so any tag past the row's width
       // was invisible and unclickable — the tags existed but could not be read.

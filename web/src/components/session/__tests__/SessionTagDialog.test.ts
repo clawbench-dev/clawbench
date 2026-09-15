@@ -96,6 +96,77 @@ describe('SessionTagDialog', () => {
     expect(wrapper.vm.selected).toEqual([])
   })
 
+  it('toggles by clicking the chip itself, and reports pressed state', async () => {
+    // The chip is the toggle now. It replaced a checkbox, which had supplied
+    // keyboard access and the checked semantics for free — aria-pressed is what
+    // carries that over, so it must track the selection both ways.
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    const chip = wrapper.find('.st-chip')
+    expect(chip.attributes('aria-pressed')).toBe('false')
+
+    await chip.trigger('click')
+    expect(wrapper.vm.selected).toEqual(['bug'])
+    expect(wrapper.find('.st-chip').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('.st-chip').classes()).toContain('active')
+
+    await wrapper.find('.st-chip').trigger('click')
+    expect(wrapper.vm.selected).toEqual([])
+    expect(wrapper.find('.st-chip').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('keeps the delete button a sibling of the chip, never a child', async () => {
+    // Nested <button> is invalid HTML and the parser would break the nesting,
+    // so the two must be siblings inside the cell.
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    const cell = wrapper.find('.st-candidate')
+    expect(cell.find('.st-chip').exists()).toBe(true)
+    expect(cell.find('.st-delete-btn').exists()).toBe(true)
+    expect(cell.find('.st-chip .st-delete-btn').exists()).toBe(false)
+  })
+
+  it('marks a just-created tag as pending', async () => {
+    mockGet.mockResolvedValue({ tags: [] })
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    await wrapper.find('.st-input').setValue('fresh')
+    await wrapper.find('.st-add-btn').trigger('click')
+    await nextTick()
+
+    // Dashed border is what tells the user it has not been saved yet — and why
+    // deleting it skips the confirmation.
+    expect(wrapper.find('.st-candidate').classes()).toContain('pending')
+  })
+
+  it('leaves an already-registered tag unmarked', async () => {
+    const wrapper = await mountDialog()
+    await flushPromises()
+    for (const cell of wrapper.findAll('.st-candidate')) {
+      expect(cell.classes()).not.toContain('pending')
+    }
+  })
+
+  it('gives each chip its own readable label colour for the filled state', async () => {
+    // Filling with the tag's accent means the label must be chosen per tag: a
+    // fixed white scores as low as 1.67:1 on the pale palette entries. Both
+    // theme variants are handed to CSS, which picks one via [data-theme-base].
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    const styles = wrapper.findAll('.st-chip').map(c => c.attributes('style') || '')
+    for (const style of styles) {
+      expect(style).toContain('--st-chip-text-light')
+      expect(style).toContain('--st-chip-text-dark')
+      expect(style).toMatch(/--st-chip-text-light:\s*#(000000|ffffff)/)
+    }
+    // Distinct tags are not forced to the same label colour.
+    expect(styles.length).toBe(2)
+  })
+
   it('saves the selection as name+scope pairs', async () => {
     const wrapper = await mountDialog({ initialTags: ['bug'] })
     await flushPromises()
@@ -302,13 +373,20 @@ describe('SessionTagDialog', () => {
     expect(wrapper.vm.selected).toEqual(['shared'])
   })
 
-  it('renders a global scope badge only for global tags', async () => {
+  it('marks global tags with a globe icon instead of a text badge', async () => {
     const wrapper = await mountDialog()
     await flushPromises()
     await nextTick()
 
-    const badges = wrapper.findAll('.st-scope-badge')
-    expect(badges.length).toBe(1)
+    // A text badge would have to fit inside a 120px grid cell alongside the
+    // name and the delete button; an icon costs no width. The accessible name
+    // still has to say "global" — an unlabelled icon reads as nothing.
+    const marks = wrapper.findAll('.st-chip-scope')
+    expect(marks.length).toBe(1)
+    expect(marks[0].attributes('aria-label')).toBe('sessionTags.scopeGlobal')
+    // role="img" is what makes the label announced at all — a bare <svg> is
+    // exposed as a generic graphic and drops its aria-label.
+    expect(marks[0].attributes('role')).toBe('img')
     expect(wrapper.findAll('.st-candidate').length).toBe(2)
   })
 
@@ -364,28 +442,14 @@ describe('SessionTagDialog', () => {
       expect(rule).toMatch(/padding:/)
     })
 
-    it('.st-checkbox is custom-drawn, not left to the UA', () => {
-      const rule = ruleFor('.st-checkbox')
-      expect(rule).toMatch(/width:/)
-      expect(rule).toMatch(/height:/)
-      // Without appearance:none the UA paints its own chrome and the size and
-      // radius below are ignored, so the control reverts to looking crude.
-      expect(rule).toMatch(/appearance:\s*none/)
-      expect(rule).toMatch(/border-radius:/)
-    })
-
-    it('.st-checkbox centres its tick instead of using hand-tuned offsets', () => {
-      // The tick is a rotated ::after box. Fixed left/top offsets depend on the
-      // border width and box-sizing and silently drift; centring by transform
-      // keeps it correct. (The copied left:4px/top:1px sat 0.1px off the right
-      // edge at 16px.)
-      const m = /:checked::after\s*\{([^}]*)\}/.exec(src)
-      expect(m, 'the tick rule must exist').not.toBeNull()
-      const rule = m![1]
-      expect(rule).toMatch(/left:\s*50%/)
-      expect(rule).toMatch(/top:\s*\d+%/)
-      expect(rule).toMatch(/translate\(-50%,\s*-50%\)/)
-      expect(rule).toMatch(/rotate\(45deg\)/)
+    it('.st-chip declares a button surface, not just layout', () => {
+      const rule = ruleFor('.st-chip')
+      expect(rule).not.toBe('')
+      // A <button> with no border declaration keeps the UA border, which reads
+      // as an unstyled element next to the input.
+      expect(rule).toMatch(/border:/)
+      expect(rule).toMatch(/background:/)
+      expect(rule).toMatch(/padding:/)
     })
 
     it('.session-tags-dialog insets its content from the card edge', () => {
@@ -396,6 +460,128 @@ describe('SessionTagDialog', () => {
       const rule = ruleFor('.session-tags-dialog')
       expect(rule).not.toBe('')
       expect(rule).toMatch(/padding:/)
+    })
+  })
+
+  describe('candidate grid', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/components/session/SessionTagDialog.vue'), 'utf8')
+    const decls = src.replace(/\/\*[\s\S]*?\*\//g, '')
+    const ruleFor = (selector: string) => {
+      const m = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(decls)
+      return m ? m[1] : ''
+    }
+
+    it('flows the candidates at their natural width', () => {
+      // Several tags per row, each only as wide as its own label. An even-width
+      // grid (minmax(120px, 1fr)) was tried and rejected: it stretched short
+      // tags like "bug" out to a fixed column, so every chip was mostly empty
+      // padding. The filter bar sizes chips to content too.
+      const list = ruleFor('.st-candidate-list')
+      expect(list).not.toBe('')
+      expect(list).toMatch(/display:\s*flex/)
+      expect(list).toMatch(/flex-wrap:\s*wrap/)
+      expect(list).not.toMatch(/display:\s*grid/)
+
+      // The cell must shrink-wrap the chip rather than claim a column width, and
+      // the chip must not grow to fill one.
+      const cell = ruleFor('.st-candidate')
+      expect(cell).toMatch(/display:\s*inline-flex/)
+      const chip = ruleFor('.st-chip')
+      expect(chip).toMatch(/display:\s*inline-flex/)
+      expect(chip).not.toMatch(/flex:\s*1\b/)
+      expect(chip).not.toMatch(/flex-grow:\s*[1-9]/)
+    })
+
+    it('still caps a very long name at the row width', () => {
+      // Content sizing must not let a long name push the chip past the dialog.
+      // The cell caps at 100% and the name span ellipsises inside it.
+      const cell = ruleFor('.st-candidate')
+      expect(cell).toMatch(/max-width:\s*100%/)
+      const name = ruleFor('.st-chip-name')
+      expect(name).toMatch(/text-overflow:\s*ellipsis/)
+      expect(name).toMatch(/overflow:\s*hidden/)
+    })
+
+    it('gives the cell no surface of its own', () => {
+      // The old row tint (selected background + border) was removed: with one
+      // tag per cell a tinted row is a block whose shape fights the pill inside
+      // it, and the filled chip already states the selection.
+      const rule = ruleFor('.st-candidate')
+      expect(rule).not.toBe('')
+      expect(rule).toMatch(/position:\s*relative/)
+      expect(rule).not.toMatch(/background/)
+      expect(rule).not.toMatch(/border/)
+    })
+
+    it('fills the selected chip with the tag accent', () => {
+      // Same treatment as the filter bar's active chip, so one tag looks the
+      // same in both places. The label colour must come from the per-tag
+      // readable value rather than a fixed white (1.67:1 on pale accents).
+      const rule = ruleFor('.st-chip.active')
+      expect(rule).not.toBe('')
+      expect(rule).toMatch(/background:\s*var\(--tag-accent\)/)
+      expect(rule).toMatch(/color:\s*var\(--st-chip-text-light\)/)
+      const darkRule = /\[data-theme-base="dark"\]\s*\.st-chip\.active\s*\{([^}]*)\}/.exec(decls)
+      expect(darkRule, 'dark themes must use their own label colour').not.toBeNull()
+      expect(darkRule![1]).toMatch(/color:\s*var\(--st-chip-text-dark\)/)
+    })
+
+    it('overlays the delete button instead of nesting it in the chip', () => {
+      // A <button> inside a <button> is invalid HTML; the parser would break the
+      // nesting. So it is a sibling, positioned over the chip's right edge.
+      const rule = ruleFor('.st-delete-btn')
+      expect(rule).not.toBe('')
+      expect(rule).toMatch(/position:\s*absolute/)
+      expect(rule).toMatch(/right:/)
+    })
+
+    it('keeps the delete button permanently visible', () => {
+      // It must not be hidden behind a hover reveal: a hover-only control is
+      // undiscoverable, and touch devices have no hover at all.
+      const rule = ruleFor('.st-delete-btn')
+      expect(rule).not.toMatch(/opacity:\s*0/)
+      expect(rule).not.toMatch(/display:\s*none/)
+      expect(rule).not.toMatch(/visibility:\s*hidden/)
+      // No rule anywhere may hide it pending hover either.
+      expect(decls).not.toMatch(/\.st-candidate:hover\s+\.st-delete-btn[^{]*\{[^}]*opacity/)
+    })
+
+    it('reserves room in the chip for the overlaid button', () => {
+      // The button is permanently visible and overlays the chip's right edge, so
+      // the chip must reserve at least that much padding or a long label runs
+      // underneath the icon. Button = right:3px + width:18px => 21px.
+      const chip = ruleFor('.st-chip')
+      const btn = ruleFor('.st-delete-btn')
+      // padding is the 4-value shorthand (top right bottom left); take the right.
+      const shorthand = /padding:\s*([^;]+);/.exec(chip)?.[1]?.trim()
+      expect(shorthand, 'the chip must declare padding').toBeTruthy()
+      const right = shorthand!.split(/\s+(?![^(]*\))/)[1]
+      // Accept a bare token or calc(token + Npx) — the chip needs a little slack
+      // over the token value, since absolute offsets are measured from the
+      // padding box and --space-8 (20px) alone is a pixel short of 21px.
+      const m = /var\(--space-(\d+)\)(?:\s*\+\s*(\d+)px)?/.exec(right)
+      expect(m, `right padding should be a space token, got "${right}"`).not.toBeNull()
+      const SPACE_PX: Record<string, number> = { '6': 12, '7': 16, '8': 20 }
+      const base = SPACE_PX[m![1]]
+      expect(base, `unmapped --space-${m![1]}`).toBeDefined()
+      const padRightPx = base + Number(m![2] || 0)
+      const inset = Number(/right:\s*(\d+)px/.exec(btn)?.[1])
+      const width = Number(/width:\s*(\d+)px/.exec(btn)?.[1])
+      expect(inset + width).toBeLessThanOrEqual(padRightPx)
+    })
+  })
+
+  describe('pending tag', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/components/session/SessionTagDialog.vue'), 'utf8')
+    const decls = src.replace(/\/\*[\s\S]*?\*\//g, '')
+
+    it('marks a not-yet-saved tag with a dashed border', () => {
+      // A tag typed in this dialog has no server-side definition yet, and
+      // deleting it skips the confirmation for that reason. Dashed states that
+      // without costing width or introducing another colour.
+      const m = /\.st-candidate\.pending\s+\.st-chip\s*\{([^}]*)\}/.exec(decls)
+      expect(m, 'the pending rule must exist').not.toBeNull()
+      expect(m![1]).toMatch(/border-style:\s*dashed/)
     })
   })
 
