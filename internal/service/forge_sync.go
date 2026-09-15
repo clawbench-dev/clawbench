@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"clawbench/internal/forge"
 )
 
 // ForgeItemsDDL creates the forge_items snapshot table.
@@ -519,6 +521,91 @@ func UnreadForgeItemKeys(repo ForgeRepoKey) (map[string]bool, error) {
 			return nil, err
 		}
 		out[key] = true
+	}
+	return out, rows.Err()
+}
+
+// UnreadForgeItem is one row of the unread overview: a single thing (issue, PR
+// or CI run) with at least one unread event.
+type UnreadForgeItem struct {
+	// ItemKey is the identity the read endpoint expects. Callers must pass it
+	// back verbatim rather than rebuilding it from Type/Number: a pipeline's
+	// Number is 0, so a rebuilt key would be "pipeline/0" and match nothing.
+	ItemKey string
+	// ItemType is "issue", "pr" (change_request) or "pipeline".
+	ItemType string
+	// Number is the issue/PR number. It is ALWAYS 0 for a pipeline.
+	Number int
+	// RunID is the CI run id, parsed from ItemKey. Only set for pipelines.
+	RunID int64
+	// EventType is the newest event's type ("commented", "closed",
+	// "pipeline_done", …), used to label why the row is unread.
+	EventType string
+	// Payload is the item URL.
+	Payload string
+	// EventCount is how many events this item has in total.
+	EventCount int
+	CreatedAt  time.Time
+}
+
+// UnreadForgeItems lists the items with unread activity in one repository,
+// newest activity first, for the unread-overview panel.
+//
+// This is a separate query from CountUnreadForgeEvents on purpose: the count is
+// fetched on every live event and on every project switch, so it must stay O(1);
+// the rows are only needed while the overview is on screen.
+//
+// The newest event per item is selected with a MAX(id) self-join rather than a
+// bare MAX(id) alongside the other columns — SQLite does not define which row's
+// non-aggregated columns a bare MAX returns. The join is exact, and MAX(id) is
+// guaranteed to be an unread row: MarkForgeEventsRead sets read_at on every
+// unread row of an item at once, and ids only grow, so if the newest row were
+// read the item would have no unread rows left and be excluded by the HAVING.
+func UnreadForgeItems(repo ForgeRepoKey, limit int) ([]UnreadForgeItem, error) {
+	out := []UnreadForgeItem{}
+	if dbRead == nil {
+		return out, nil
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := dbRead.Query(
+		`SELECT e.item_key, e.item_type, e.number, e.event_type, e.payload,
+		        e.created_at, g.event_count
+		   FROM forge_events e
+		   JOIN (
+		         SELECT item_key, COUNT(*) AS event_count, MAX(id) AS last_id
+		           FROM forge_events
+		          WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
+		            AND item_key != ''
+		          GROUP BY item_key
+		         HAVING SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) > 0
+		        ) g
+		     ON g.item_key = e.item_key AND e.id = g.last_id
+		  WHERE e.platform = ? AND e.host = ? AND e.owner = ? AND e.repo = ?
+		  ORDER BY e.created_at DESC, e.id DESC
+		  LIMIT ?`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var it UnreadForgeItem
+		if err := rows.Scan(&it.ItemKey, &it.ItemType, &it.Number, &it.EventType,
+			&it.Payload, &it.CreatedAt, &it.EventCount); err != nil {
+			return nil, err
+		}
+		// The run id only exists inside the key, and only for pipelines.
+		if it.ItemType == string(forge.ItemTypePipeline) {
+			if id, ok := forge.ParsePipelineRunID(it.ItemKey); ok {
+				it.RunID = id
+			}
+		}
+		out = append(out, it)
 	}
 	return out, rows.Err()
 }

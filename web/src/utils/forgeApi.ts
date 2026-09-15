@@ -313,6 +313,43 @@ export function fetchForgeUnread(signal?: AbortSignal): Promise<{ count: number 
 }
 
 /**
+ * One unread item in the overview panel.
+ *
+ * `itemKey` is opaque and must be passed back verbatim to markForgeRead: a
+ * pipeline's `number` is always 0, so rebuilding the key from type+number would
+ * produce "pipeline/0" and silently match nothing.
+ */
+export interface ForgeUnreadItem {
+    itemKey: string
+    type: 'issue' | 'pr' | 'pipeline'
+    /** Issue/PR number. Always 0 for a pipeline. */
+    number: number
+    /** CI run id; 0 for anything that is not a pipeline. */
+    runId: number
+    /** Newest event type: opened / closed / merged / reopened / commented / pipeline_done. */
+    eventType: string
+    /** Total events for this item, not just the unread ones. */
+    eventCount: number
+    url: string
+    /** owner/repo */
+    slug: string
+    updatedAt: string
+    /**
+     * Set locally after the user opens the row, so it can be greyed out without
+     * being removed (removing it would shift the rows below mid-click). Never
+     * sent by the server — the endpoint only returns unread items.
+     */
+    read?: boolean
+}
+
+export function fetchForgeUnreadItems(signal?: AbortSignal): Promise<{
+    count: number
+    items: ForgeUnreadItem[]
+}> {
+    return forgeFetch('/api/forge/unread-items', { signal })
+}
+
+/**
  * Mark forge activity read.
  *
  * With no itemKey the whole bound repository is marked read (the "mark all

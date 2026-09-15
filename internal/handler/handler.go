@@ -356,6 +356,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/forge/remotes", ServeForgeRemotes)
 	register("/api/forge/test", ServeForgeTest)
 	register("/api/forge/unread", ServeForgeUnread)
+	register("/api/forge/unread-items", ServeForgeUnreadItems)
 	register("/api/forge/read", ServeForgeMarkRead)
 
 	// Public file-share links. Management endpoints are auth-protected; the

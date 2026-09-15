@@ -5,10 +5,12 @@ import {
     fetchForgeComments,
     fetchForgePipelines,
     fetchForgePipeline,
+    fetchForgeUnreadItems,
     markForgeRead,
     type ForgeItem,
     type ForgeComment,
     type ForgePipelineRun,
+    type ForgeUnreadItem,
     type ForgePipelineJob,
     type ForgePipelineStatus,
     ForgeApiError,
@@ -483,4 +485,81 @@ export function useForgePipelineDetail() {
     }
 
     return { run, jobs, loading, error, open, close }
+}
+
+/**
+ * useForgeUnreadItems lists the items with unread activity in the project's
+ * bound repository, for the unread-overview tab.
+ *
+ * Kept apart from useForgeUnread (which owns the dock badge): the badge is a
+ * single number refreshed on every live event, so it must stay a cheap count.
+ * These rows are only fetched while the overview is on screen.
+ */
+export function useForgeUnreadItems(getProjectPath: () => string) {
+    const items = ref<ForgeUnreadItem[]>([])
+    const loading = ref(false)
+    const error = ref<{ message: string; code: string } | null>(null)
+    /** False until the first load settles, so the panel can tell "empty" from
+     *  "not fetched yet" and avoid flashing the empty state. */
+    const loaded = ref(false)
+
+    let requestSeq = 0
+    let abort: AbortController | null = null
+
+    async function load() {
+        const project = getProjectPath()
+        if (!project) {
+            items.value = []
+            loaded.value = true
+            return
+        }
+        const seq = ++requestSeq
+        abort?.abort()
+        abort = new AbortController()
+
+        loading.value = true
+        error.value = null
+        try {
+            const res = await fetchForgeUnreadItems(abort.signal)
+            if (seq !== requestSeq) return
+            items.value = res.items ?? []
+            loaded.value = true
+        } catch (err) {
+            if (seq !== requestSeq) return
+            items.value = []
+            // A failed load must not look like "nothing unread".
+            loaded.value = false
+            if (err instanceof ForgeApiError) {
+                error.value = { message: err.message, code: err.code }
+            } else {
+                error.value = { message: String(err), code: 'ForgeError' }
+            }
+        } finally {
+            if (seq === requestSeq) loading.value = false
+        }
+    }
+
+    /**
+     * Mark every item read and clear the list.
+     *
+     * Delegates to the shared badge composable so the list and the dock badge
+     * settle from the same server response and cannot disagree.
+     */
+    async function markAllRead(): Promise<void> {
+        await useForgeUnread().markAllRead()
+        items.value = []
+    }
+
+    /**
+     * Mark one row read locally without removing it.
+     *
+     * The row is greyed out rather than spliced: removing it would shift every
+     * row below the cursor mid-click. It drops on the next load().
+     */
+    function markRowRead(itemKey: string) {
+        const row = items.value.find(r => r.itemKey === itemKey)
+        if (row) row.read = true
+    }
+
+    return { items, loading, loaded, error, load, markAllRead, markRowRead }
 }

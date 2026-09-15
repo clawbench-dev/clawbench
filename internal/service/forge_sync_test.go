@@ -598,3 +598,159 @@ func TestForgeSyncer_WritesPipelineItemKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 }
+
+// ── UnreadForgeItems ──
+
+// insertEvent stores one forge event for the overview tests.
+//
+// It deliberately does not backdate anything: the query orders by
+// `created_at DESC, id DESC`, and a later insert always has a >= timestamp with a
+// higher id, so reverse-insertion order holds without fiddling with clocks.
+func insertEvent(t *testing.T, itemKey, itemType string, number int, eventType, dedupe string) {
+	t.Helper()
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: itemType, Number: number, ItemKey: itemKey,
+		EventType: eventType, DedupeKey: dedupe,
+	})
+	require.NoError(t, err)
+}
+
+// TestUnreadForgeItems_GroupsByItemAndReportsNewestEvent is the core contract:
+// one row per item, labelled by its NEWEST event, with the total event count.
+//
+// The newest-event half is the mutation-sensitive part: a query that just did
+// `SELECT DISTINCT item_key` (or grouped without pinning the row) would report
+// whichever event_type SQLite happened to pick, so this asserts the exact value
+// rather than merely "non-empty".
+func TestUnreadForgeItems_GroupsByItemAndReportsNewestEvent(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	// Three events on one PR: the newest is the comment.
+	insertEvent(t, "pr/7", "pr", 7, "opened", "k1")
+	insertEvent(t, "pr/7", "pr", 7, "reopened", "k2")
+	insertEvent(t, "pr/7", "pr", 7, "commented", "k3")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "three events on one item are ONE row")
+
+	it := got[0]
+	assert.Equal(t, "pr/7", it.ItemKey)
+	assert.Equal(t, "pr", it.ItemType)
+	assert.Equal(t, 7, it.Number)
+	assert.Equal(t, 3, it.EventCount)
+	assert.Equal(t, "commented", it.EventType,
+		"the label must come from the NEWEST event, not an arbitrary one")
+	assert.Zero(t, it.RunID, "a PR has no run id")
+}
+
+// TestUnreadForgeItems_ReportsUnreadEventNotOlderReadOne: an item whose older
+// events were read and which then got a new one must be labelled by the new one.
+func TestUnreadForgeItems_ReportsUnreadEventNotOlderReadOne(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "pr/9", "pr", 9, "opened", "k1")
+	// Read the item, then a fresh event arrives.
+	require.NoError(t, service.MarkForgeEventsRead(testRepoKey(), "pr/9"))
+	insertEvent(t, "pr/9", "pr", 9, "commented", "k2")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "commented", got[0].EventType,
+		"the item is unread because of the NEW event, so that is what labels it")
+	assert.Equal(t, 2, got[0].EventCount, "the count spans all its events")
+}
+
+// TestUnreadForgeItems_PipelineCarriesRunID: a pipeline stores Number 0 for
+// every run, so the run id is only recoverable from the key.
+func TestUnreadForgeItems_PipelineCarriesRunID(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, forge.PipelineItemKey(555), "pipeline", 0, "pipeline_done", "p555")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+
+	it := got[0]
+	assert.Equal(t, "pipeline/run:555", it.ItemKey)
+	assert.Equal(t, "pipeline", it.ItemType)
+	assert.Zero(t, it.Number, "a pipeline has no item number")
+	assert.Equal(t, int64(555), it.RunID, "the run id must be recovered from the key")
+}
+
+// TestUnreadForgeItems_TwoPipelineRunsDoNotCollapse: each run is its own row.
+func TestUnreadForgeItems_TwoPipelineRunsDoNotCollapse(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, forge.PipelineItemKey(100), "pipeline", 0, "pipeline_done", "p100")
+	insertEvent(t, forge.PipelineItemKey(101), "pipeline", 0, "pipeline_done", "p101")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 2, "two runs are two items, not one")
+	// Newest activity first.
+	assert.Equal(t, int64(101), got[0].RunID)
+	assert.Equal(t, int64(100), got[1].RunID)
+}
+
+// TestUnreadForgeItems_ExcludesFullyReadItems
+func TestUnreadForgeItems_ExcludesFullyReadItems(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "pr/1", "pr", 1, "closed", "k1")
+	insertEvent(t, "pr/2", "pr", 2, "closed", "k2")
+	require.NoError(t, service.MarkForgeEventsRead(testRepoKey(), "pr/1"))
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "pr/2", got[0].ItemKey)
+}
+
+// TestUnreadForgeItems_ScopesToRepo: another repository's events must not leak.
+func TestUnreadForgeItems_ScopesToRepo(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "pr/1", "pr", 1, "closed", "k1")
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "other", Repo: "thing",
+		ItemType: "pr", Number: 1, ItemKey: "pr/1",
+		EventType: "closed", DedupeKey: "k1",
+	})
+	require.NoError(t, err)
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "only this repo's events count")
+}
+
+// TestUnreadForgeItems_ExcludesEmptyItemKey: legacy rows with no key cannot be
+// acted on (there is nothing to pass back to the read endpoint), so they must
+// not appear as phantom rows.
+func TestUnreadForgeItems_ExcludesEmptyItemKey(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "", "pr", 3, "closed", "k1")
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestUnreadForgeItems_RespectsLimit
+func TestUnreadForgeItems_RespectsLimit(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	for i := 1; i <= 5; i++ {
+		insertEvent(t, fmt.Sprintf("pr/%d", i), "pr", i, "closed", fmt.Sprintf("k%d", i))
+	}
+
+	got, err := service.UnreadForgeItems(testRepoKey(), 2)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	// Newest first: 5 then 4.
+	assert.Equal(t, "pr/5", got[0].ItemKey)
+	assert.Equal(t, "pr/4", got[1].ItemKey)
+}

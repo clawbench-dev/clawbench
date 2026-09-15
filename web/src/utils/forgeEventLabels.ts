@@ -117,6 +117,59 @@ export function eventKindLabel(kind: string): string {
     return key ? i18n.global.t(key) : kind
 }
 
+/**
+ * Why an unread-overview row is unread.
+ *
+ * Deliberately separate from TRANSITION_LABEL_KEYS: those name a *subscription*
+ * ("Commented", as in the kind of event a task listens for), whereas this answers
+ * "what happened here" — "New comment". Reusing the subscription nouns would
+ * read as a category label rather than a reason.
+ */
+const OVERVIEW_REASON_KEYS: Record<string, string> = {
+    opened: 'forge.overview.reason.opened',
+    closed: 'forge.overview.reason.closed',
+    merged: 'forge.overview.reason.merged',
+    reopened: 'forge.overview.reason.reopened',
+    commented: 'forge.overview.reason.commented',
+    pipeline_done: 'forge.overview.reason.pipeline_done',
+}
+
+/** Localized reason for an unread row ("有新评论" / "New comment"). */
+export function unreadReasonLabel(eventType: string): string {
+    const key = OVERVIEW_REASON_KEYS[eventType]
+    // An unknown event type falls back to its raw token rather than an empty
+    // string, so a new backend event type degrades to something readable.
+    return key ? i18n.global.t(key) : eventType
+}
+
+/** The fields the overview label needs; a structural subset of ForgeUnreadItem. */
+export interface ForgeOverviewLabelInput {
+    type: string
+    number: number
+    runId: number
+    eventType: string
+    slug: string
+}
+
+/**
+ * One-line description of an unread item for the overview panel.
+ *
+ * Composed from what the event table actually stores — a slug, an item
+ * identity and the newest event type — rather than the item's real title, which
+ * is not persisted (forge_events.payload holds only the URL). The title is what
+ * the detail view is for.
+ *
+ * A pipeline has no item number, so it is identified by its run id: rendering
+ * `#0` would look like a broken PR reference.
+ */
+export function forgeOverviewLabel(row: ForgeOverviewLabelInput): string {
+    const reason = unreadReasonLabel(row.eventType)
+    const ref = row.type === 'pipeline'
+        ? i18n.global.t('forge.overview.pipelineRef', { runId: row.runId })
+        : `${row.type}#${row.number}`
+    return `${row.slug} ${ref} · ${reason}`
+}
+
 export interface EventChip {
     /** Raw stored key, e.g. "pr.merged" or a bare "pipeline_done". */
     key: string

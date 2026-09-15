@@ -346,9 +346,10 @@ func ServeForgeBinding(w http.ResponseWriter, r *http.Request) {
 			// clear it from the panel header.
 			//
 			// Non-official hosts (a self-hosted GitLab, say) are NOT auto-bound:
-			// the user's explicit confirmation is the SSRF guard's confirmation
-			// step for hosts whose endpoints we cannot vouch for, so those still
-			// come back as a suggestion for the UI to confirm.
+			// binding them sends credentials to a host we cannot vouch for, and
+			// auto-binding would do it without the user ever seeing the warning.
+			// Those come back as a suggestion instead, so the bind — and the
+			// warning that precedes it — stays an explicit user action.
 			if remote, _, ok := pickForgeRemote(projectPath); ok && isOfficialForgeHost(remote.Host) {
 				created, aerr := service.AutoBindProjectForge(projectPath, remote)
 				if aerr != nil {
@@ -430,12 +431,6 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 			Owner:    req.Owner,
 			Repo:     req.Repo,
 		}
-	}
-
-	// Refuse to bind a host that must never receive credentials.
-	if err := checkForgeHostAllowed(remote.Host); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: err.Error(), jsonCode: "UnsafeHost"})
-		return
 	}
 
 	source := req.Source
@@ -574,8 +569,7 @@ func atoiDefault(s string, def int) int {
 
 // pickForgeRemote derives the highest-priority candidate binding from the
 // project's git remotes. It prefers "origin", falls back to the first remote
-// that parses as a forge URL, and reports false when none qualifies. Hosts that
-// must never receive credentials are skipped.
+// that parses as a forge URL, and reports false when none qualifies.
 func pickForgeRemote(projectPath string) (forge.Remote, string, bool) {
 	remotes, err := listGitRemotes(projectPath)
 	if err != nil {
@@ -595,10 +589,6 @@ func pickForgeRemote(projectPath string) (forge.Remote, string, bool) {
 		if perr != nil {
 			continue
 		}
-		// Never suggest a host that must not receive credentials.
-		if checkForgeHostAllowed(parsed.Host) != nil {
-			continue
-		}
 		return parsed, rem.Name, true
 	}
 	return forge.Remote{}, "", false
@@ -616,8 +606,8 @@ func isOfficialForgeHost(host string) bool {
 }
 
 // suggestForgeBinding derives a candidate binding from the project's git
-// remotes. The result is a suggestion only — non-official hosts must not be
-// persisted without user confirmation (see ServeForgeBinding).
+// remotes. The result is a suggestion only — the UI presents it for explicit
+// user confirmation (see ServeForgeBinding).
 func suggestForgeBinding(projectPath string) map[string]any {
 	parsed, name, ok := pickForgeRemote(projectPath)
 	if !ok {
@@ -667,6 +657,64 @@ func ServeForgeUnread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{jsonCount: n})
+}
+
+// ServeForgeUnreadItems lists the items with unread activity in the project's
+// bound repository, for the unread-overview panel.
+//
+// Separate from /api/forge/unread on purpose: that one is the badge path and is
+// fetched on every live event, so it must stay a cheap count. These rows are
+// only needed while the overview is on screen.
+//
+//	GET /api/forge/unread-items
+func ServeForgeUnreadItems(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	// An unbound project has nothing to be unread about — a normal state, not an
+	// error. Same shape as the bound-but-empty case so the client has one path.
+	pf, err := service.GetProjectForge(projectPath)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	if pf == nil {
+		writeJSON(w, http.StatusOK, map[string]any{jsonCount: 0, jsonItems: []any{}})
+		return
+	}
+
+	items, err := service.UnreadForgeItems(pf.RepoKey(), 0)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+
+	slug := pf.Slug()
+	views := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		views = append(views, map[string]any{
+			// itemKey is echoed so the client can pass it straight back to
+			// /api/forge/read. A pipeline's number is 0, so a client that rebuilt
+			// the key from type+number would produce "pipeline/0".
+			"itemKey":    it.ItemKey,
+			"type":       it.ItemType,
+			"number":     it.Number,
+			"runId":      it.RunID,
+			"eventType":  it.EventType,
+			"eventCount": it.EventCount,
+			"url":        it.Payload,
+			"slug":       slug,
+			"updatedAt":  formatForgeTime(it.CreatedAt),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		jsonCount: len(views),
+		jsonItems: views,
+	})
 }
 
 // ServeForgeMarkRead marks unread forge activity as read.

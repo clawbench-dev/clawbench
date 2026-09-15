@@ -63,6 +63,7 @@ export default {
     fileView: 'File',
     history: 'History',
     forge: 'Issues & PRs',
+    overview: 'Unread overview',
     tasks: 'Tasks',
     portForward: 'Port Mapping',
     frp: 'NAT Traversal',
@@ -84,6 +85,21 @@ export default {
     markAllRead: 'Mark all read',
     unreadItem: 'New activity',
     retry: 'Retry',
+    overview: {
+      title: 'Unread overview',
+      empty: 'Nothing unread',
+      emptyHint: 'Issues, pull requests and pipelines with new activity show up here',
+      markAllRead: 'Mark all read',
+      pipelineRef: 'Pipeline run {runId}',
+      reason: {
+        opened: 'Opened',
+        closed: 'Closed',
+        merged: 'Merged',
+        reopened: 'Reopened',
+        commented: 'New comment',
+        pipeline_done: 'Pipeline finished',
+      },
+    },
     pipeline: {
       status: {
         success: 'Success',
@@ -128,7 +144,7 @@ export default {
       manual: 'Enter a repository URL',
       urlPlaceholder: 'https://github.com/owner/repo.git',
       submit: 'Bind',
-      unsafeHost: 'This address is not allowed (internal or unresolvable host)',
+      nonOfficialHost: 'Non-official host: binding will send your access token to it. Confirm this is your own GitLab / GitHub instance.',
       change: 'Change repository',
       unbind: 'Unbind',
     },

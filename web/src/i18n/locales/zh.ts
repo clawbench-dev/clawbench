@@ -63,6 +63,7 @@ export default {
     fileView: '文件',
     history: '历史',
     forge: '议题与合并请求',
+    overview: '未读总览',
     tasks: '任务',
     portForward: '端口映射',
     frp: '内网穿透',
@@ -84,6 +85,21 @@ export default {
     markAllRead: '全部标为已读',
     unreadItem: '有新动态',
     retry: '重试',
+    overview: {
+      title: '未读总览',
+      empty: '没有未读内容',
+      emptyHint: '有新动态的议题、合并请求与流水线会出现在这里',
+      markAllRead: '全部标为已读',
+      pipelineRef: '流水线 run:{runId}',
+      reason: {
+        opened: '新开',
+        closed: '已关闭',
+        merged: '已合并',
+        reopened: '重新打开',
+        commented: '有新评论',
+        pipeline_done: '流水线完成',
+      },
+    },
     pipeline: {
       status: {
         success: '成功',
@@ -128,7 +144,7 @@ export default {
       manual: '手动填写仓库地址',
       urlPlaceholder: 'https://github.com/owner/repo.git',
       submit: '绑定',
-      unsafeHost: '该地址不可用（内网或不可解析的主机）',
+      nonOfficialHost: '非官方主机：绑定后会向该主机发送访问令牌。确认这是你自己的 GitLab / GitHub 实例。',
       change: '更换仓库',
       unbind: '解绑',
     },

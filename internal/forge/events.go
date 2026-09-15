@@ -2,6 +2,8 @@ package forge
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -202,9 +204,31 @@ func ItemKeyForNumber(itemType ItemType, number int) string {
 	return fmt.Sprintf("%s/%d", itemType, number)
 }
 
+// pipelineKeyPrefix is the fixed part of a pipeline item key. Kept beside
+// PipelineItemKey so the format and its inverse cannot drift apart.
+const pipelineKeyPrefix = "pipeline/run:"
+
 // PipelineItemKey identifies one CI run, which has no item number.
 func PipelineItemKey(runID int64) string {
-	return fmt.Sprintf("pipeline/run:%d", runID)
+	return fmt.Sprintf("%s%d", pipelineKeyPrefix, runID)
+}
+
+// ParsePipelineRunID recovers the run id from a pipeline item key.
+//
+// Returns ok=false for any other key, so callers never mistake an issue/PR key
+// for a pipeline. This exists because a pipeline event stores Number 0 for every
+// run: the run id is only recoverable from the key, and a caller that re-derived
+// it from (type, number) would produce a run id of 0.
+func ParsePipelineRunID(itemKey string) (int64, bool) {
+	rest, ok := strings.CutPrefix(itemKey, pipelineKeyPrefix)
+	if !ok || rest == "" {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
 }
 
 // ItemKey identifies the thing an event is about, for grouping events into

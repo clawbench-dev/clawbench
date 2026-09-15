@@ -210,6 +210,16 @@
                   />
                 </TabPanel>
 
+                <!-- Unread overview Tab -->
+                <TabPanel tabId="overview" :activeTab="leftPanelActive" :noHeader="true">
+                  <ForgeOverviewPanel
+                    :active="panelIsActive('overview')"
+                    :project-path="store.state.projectRoot"
+                    @request-project="switchTab('chat')"
+                    @open-item="handleOpenForgeItem"
+                  />
+                </TabPanel>
+
                 <!-- Issues & PRs Tab -->
                 <TabPanel tabId="forge" :activeTab="leftPanelActive" :noHeader="true">
                   <ForgePanelContent
@@ -475,6 +485,7 @@ import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
+import ForgeOverviewPanel from './components/forge/ForgeOverviewPanel.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
 const TerminalPanelContent = defineAsyncComponent({
   loader: () => import('./components/terminal/TerminalPanelContent.vue'),
@@ -548,6 +559,7 @@ import { useDirectoryReturn } from './composables/useDirectoryReturn'
 import { store } from './stores/app.ts'
 import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
 import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
+import { setPendingForgeNavigation } from './composables/useForgeNavigation.ts'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
@@ -2081,6 +2093,23 @@ const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBindi
 // default — the user selects the part they care about, then types their message.
 // The bar is global (position: fixed), so no tab switch is needed on open; the
 // add path switches to chat via onAdd.
+/**
+ * Open a specific forge item from the unread overview.
+ *
+ * Switches to the forge tab (where the detail view lives) and leaves a
+ * module-level request for the panel to consume — the panel may not be mounted
+ * yet, and switchTab() no-ops if the tab is already active, so a reactive
+ * pending ref is what makes this work in both cases.
+ */
+function handleOpenForgeItem(payload: {
+  type: 'issue' | 'pr' | 'pipeline'
+  number: number
+  runId: number
+}) {
+  setPendingForgeNavigation({ type: payload.type, number: payload.number, runId: payload.runId })
+  switchTab('forge')
+}
+
 function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
   const it = payload?.item
   if (!it) return

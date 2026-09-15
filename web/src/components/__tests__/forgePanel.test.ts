@@ -1,8 +1,19 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { nextTick } from 'vue'
+import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ForgePanelContent from '@/components/forge/ForgePanelContent.vue'
 import { canNavigateBack, handleBackNavigation, _resetHandlers } from '@/composables/useBackHandler'
+import {
+  pendingForgeNavigation,
+  setPendingForgeNavigation,
+  _resetPendingForgeNavigationForTesting,
+} from '@/composables/useForgeNavigation'
+
+// Panels stay alive after a test and keep watching the module-level pending
+// deep-link ref, so a leftover panel would consume a request before the panel
+// under test ever sees it. Auto-unmount every wrapper after each test.
+enableAutoUnmount(afterEach)
 
 // ── Mocks ────────────────────────────────────────────────────
 const mockLoadBinding = vi.fn()
@@ -165,7 +176,7 @@ function makeI18n() {
             manual: 'Enter a repository URL',
             urlPlaceholder: 'https://...',
             submit: 'Bind',
-            unsafeHost: 'unsafe',
+            nonOfficialHost: 'non-official host',
             change: 'Change repository',
             unbind: 'Unbind',
           },
@@ -730,5 +741,282 @@ describe('ForgePanelContent unread rows', () => {
 
     await btn.trigger('click')
     expect(state.markAllRead).toHaveBeenCalled()
+  })
+})
+
+describe('ForgePanelContent deep-link (unread overview → item)', () => {
+  // `ForgeDetail: true` in globalOpts produces an ANONYMOUS stub, which
+  // findComponent({name}) cannot match — name them so the detail view is
+  // observable.
+  const deepLinkOpts = {
+    ...globalOpts,
+    stubs: {
+      ...globalOpts.stubs,
+      ForgeDetail: { name: 'ForgeDetail', props: ['type', 'number'], template: '<div />' },
+      ForgePipelineDetail: { name: 'ForgePipelineDetail', props: ['runId'], template: '<div />' },
+    },
+  }
+
+  beforeEach(() => {
+    _resetHandlers()
+    vi.clearAllMocks()
+    _resetPendingForgeNavigationForTesting()
+    state.items.value = []
+    state.binding.value = null
+    state.suggested.value = null
+    state.loading.value = false
+    state.error.value = null
+    state.isBound.value = false
+    state.type.value = 'issue'
+    state.state.value = 'open'
+    state.mineFilter.value = 'all'
+    // Default: the binding resolves on demand, as it does for a real project.
+    mockLoadBinding.mockImplementation(async () => {
+      state.binding.value = { slug: 'acme/widgets' }
+      state.isBound.value = true
+    })
+  })
+
+  it('opens the requested item once the panel becomes active', async () => {
+    // The request is made while the tab is inactive (the panel may not even be
+    // mounted yet), then the tab activates.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: false, projectPath: '/proj' },
+      global: deepLinkOpts,
+    })
+    await flushPromises()
+    setPendingForgeNavigation({ type: 'pr', number: 455, runId: 0 })
+    // Flush BEFORE activating: watchers run asynchronously, so without this the
+    // activation would land first and the watcher would read `active: true`
+    // immediately — which would hide a watcher that only observes the request.
+    await flushPromises()
+
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+
+    expect(state.type.value).toBe('pr')
+    // The request is one-shot: consuming it is what stops the same item from
+    // re-opening on every later activation.
+    expect(pendingForgeNavigation.value).toBeNull()
+  })
+
+  it('resolves the binding when it is not yet known, then opens the item', async () => {
+    // The template renders the bind card whenever the panel is unbound, which
+    // REPLACES the detail view. A deep-link that arrives before the binding is
+    // known must therefore resolve it first — otherwise the item is never shown.
+    let loadBindingCalls = 0
+    mockLoadBinding.mockImplementation(async () => {
+      loadBindingCalls++
+      state.binding.value = { slug: 'acme/widgets' }
+      state.isBound.value = true
+    })
+
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: false, projectPath: '/proj' },
+      global: deepLinkOpts,
+    })
+    await flushPromises()
+
+    // Pretend the panel has never resolved the binding (the real one resolves on
+    // mount, so this isolates the deep-link's own resolution path).
+    state.binding.value = null
+    state.isBound.value = false
+    loadBindingCalls = 0
+
+    setPendingForgeNavigation({ type: 'issue', number: 7, runId: 0 })
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+
+    expect(loadBindingCalls).toBeGreaterThan(0, 'the deep-link must resolve the binding')
+    expect(state.isBound.value).toBe(true)
+    expect(state.type.value).toBe('issue')
+  })
+
+  it('opens the item when the panel is ALREADY active', async () => {
+    // switchTab() no-ops when the target tab is already showing, so the request
+    // arrives with `active` unchanged. Watching only the pending ref would miss
+    // this entirely and the click would appear to do nothing.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: deepLinkOpts,
+    })
+    await flushPromises()
+    expect(state.type.value).toBe('issue')
+
+    setPendingForgeNavigation({ type: 'pr', number: 455, runId: 0 })
+    await flushPromises()
+
+    expect(state.type.value).toBe('pr')
+    expect(pendingForgeNavigation.value).toBeNull()
+  })
+
+  it('skips the binding round trip when it is already known', async () => {
+    // The common case: the panel is already bound, so opening an item must not
+    // re-fetch the binding.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: false, projectPath: '/proj' },
+      global: deepLinkOpts,
+    })
+    await flushPromises()
+    mockLoadBinding.mockClear()
+
+    setPendingForgeNavigation({ type: 'issue', number: 7, runId: 0 })
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+
+    expect(mockLoadBinding).not.toHaveBeenCalled()
+    expect(state.type.value).toBe('issue')
+  })
+
+  it('does nothing when the repository is not bound', async () => {
+    // An unbound project has nothing to open; the panel shows its bind prompt.
+    mockLoadBinding.mockImplementation(async () => {
+      state.binding.value = null
+      state.isBound.value = false
+    })
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: deepLinkOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    setPendingForgeNavigation({ type: 'pr', number: 455, runId: 0 })
+    await flushPromises()
+
+    // Nothing opened: the panel keeps showing its bind prompt.
+    expect(state.type.value).toBe('issue')
+  })
+
+  it('routes a pipeline request to the pipeline detail', async () => {
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: deepLinkOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    setPendingForgeNavigation({ type: 'pipeline', number: 0, runId: 555 })
+    await flushPromises()
+    await nextTick()
+
+    // The pipeline branch switches the internal tab and targets the run id; the
+    // detail component self-loads from that prop (see ForgePipelineDetail).
+  })
+})
+
+/**
+ * The bind dialog's pre-submit warning for non-official hosts.
+ *
+ * The server accepts any host, so an internal GitLab binds fine — which is the
+ * point, but it also means nothing else would tell the user their token is
+ * about to be sent to a host ClawBench does not vouch for. These tests pin that
+ * the warning appears BEFORE submit, and only when it is actually warranted.
+ *
+ * Mounts the real ModalDialog (the shared globalOpts stubs it away), the same
+ * way the dialog-rendering regression tests above do.
+ */
+describe('ForgePanelContent non-official host warning', () => {
+  const warningOpts = {
+    plugins: [makeI18n()],
+    stubs: {
+      LoadingIndicator: true,
+      RefreshButton: true,
+      ForgeDetail: true,
+      PopupMenu: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
+    },
+  }
+
+  beforeEach(() => {
+    _resetHandlers()
+    vi.clearAllMocks()
+    state.binding.value = null
+    state.isBound.value = false
+    state.loading.value = false
+    state.items.value = []
+    mockFetchRemotes.mockResolvedValue({ remotes: [] })
+  })
+
+  /** Mount the unbound panel and open the bind dialog. */
+  async function openDialog() {
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: warningOpts,
+      attachTo: document.body,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    const button = wrapper.findAll('.forge-card-options button')[0]
+    await button.trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  afterEach(() => {
+    document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
+    document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
+  })
+
+  it('warns while typing an internal GitLab URL, before submit', async () => {
+    const wrapper = await openDialog()
+    const input = document.body.querySelector('.forge-input') as HTMLInputElement
+    expect(input, 'the manual URL input must be rendered').not.toBeNull()
+
+    input.value = 'https://git.internal.corp:8443/acme/widgets.git'
+    input.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    const warning = document.body.querySelector('.forge-bind-warning')
+    expect(warning, 'a non-official host must warn before submit').not.toBeNull()
+    expect(warning!.textContent).toContain('non-official host')
+    // The bind button must stay enabled: this warns, it does not block.
+    const submit = document.body.querySelector('.fbtn-primary') as HTMLButtonElement
+    expect(submit.disabled, 'the warning must not block binding').toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('does not warn for github.com', async () => {
+    const wrapper = await openDialog()
+    const input = document.body.querySelector('.forge-input') as HTMLInputElement
+
+    input.value = 'https://github.com/acme/widgets.git'
+    input.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(document.body.querySelector('.forge-bind-warning')).toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('warns for an unparseable-to-official scp remote too', async () => {
+    // `git remote -v` shows this form for most SSH clones; missing it would
+    // silently skip the warning on a very common path.
+    const wrapper = await openDialog()
+    const input = document.body.querySelector('.forge-input') as HTMLInputElement
+
+    input.value = 'git@git.internal.corp:acme/widgets.git'
+    input.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(document.body.querySelector('.forge-bind-warning')).not.toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('hints on a non-official remote row, since rows bind on click', async () => {
+    mockFetchRemotes.mockResolvedValue({
+      remotes: [
+        { name: 'origin', url: 'https://git.internal.corp/acme/widgets.git', platform: 'gitlab', host: 'git.internal.corp', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' },
+        { name: 'upstream', url: 'https://github.com/acme/other.git', platform: 'github', host: 'github.com', owner: 'acme', repo: 'other', slug: 'acme/other' },
+      ],
+    })
+    const wrapper = await openDialog()
+
+    const rows = document.body.querySelectorAll('.forge-remote-row')
+    expect(rows.length).toBe(2)
+    // A row commits a binding on click, so the hint is the only pre-submit
+    // signal available on this path.
+    expect(rows[0].querySelector('.forge-remote-warning'), 'self-hosted row must hint').not.toBeNull()
+    expect(rows[1].querySelector('.forge-remote-warning'), 'github.com row must not hint').toBeNull()
+
+    wrapper.unmount()
   })
 })

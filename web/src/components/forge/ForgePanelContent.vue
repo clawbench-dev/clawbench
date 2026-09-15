@@ -308,6 +308,11 @@
               <span class="forge-remote-text">
                 <span class="forge-remote-name">{{ r.name }}</span>
                 <span class="forge-remote-url">{{ r.slug || r.url }}</span>
+                <!-- Rows bind on click, so this hint is the only pre-submit
+                     signal on this path. -->
+                <span v-if="r.host && !isOfficialForgeHost(r.host)" class="forge-remote-warning">
+                  {{ t('forge.bind.nonOfficialHost') }}
+                </span>
               </span>
               <ChevronRight :size="15" class="forge-remote-chevron" />
             </button>
@@ -324,6 +329,13 @@
             :placeholder="t('forge.bind.urlPlaceholder')"
             @keyup.enter="manualUrl && bindFromUrl()"
           />
+          <!-- Warn before submit, not after: the server accepts any host, so a
+               self-hosted instance would otherwise bind with no indication that
+               it will be sent the credential. -->
+          <div v-if="manualUrlNonOfficial" class="forge-bind-warning">
+            <AlertTriangle :size="14" />
+            <span>{{ t('forge.bind.nonOfficialHost') }}</span>
+          </div>
         </div>
 
         <div v-if="bindError" class="forge-bind-error">
@@ -342,11 +354,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Github, Inbox, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
-  ChevronRight, ChevronDown, AlertCircle, Unlink, CheckCheck,
+  ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Unlink, CheckCheck,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -358,7 +370,9 @@ import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
 import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
+import { isOfficialForgeHost, isNonOfficialRemote } from '@/utils/forgeHost'
 import { useForgeUnread } from '@/composables/useForgeUnread'
+import { pendingForgeNavigation, consumePendingForgeNavigation } from '@/composables/useForgeNavigation'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ForgePanel'
@@ -403,6 +417,15 @@ const bindDialogOpen = ref(false)
 const remotes = ref<ForgeRemote[]>([])
 const manualUrl = ref('')
 const bindError = ref('')
+
+/**
+ * Whether the typed URL points at a host the server will not vouch for.
+ *
+ * Derived rather than stored so the warning tracks the input live. Unparseable
+ * input is not flagged here — submitting it produces the backend's own
+ * invalid-URL error, which is the more accurate message.
+ */
+const manualUrlNonOfficial = computed(() => isNonOfficialRemote(manualUrl.value))
 const repoMenuOpen = ref(false)
 const repoBadgeRef = ref<HTMLElement | null>(null)
 
@@ -487,6 +510,45 @@ function closeDetail() {
   detailNumber.value = 0
   pipelineDetailId.value = 0
 }
+
+/**
+ * Open the item a deep-link asked for.
+ *
+ * The binding MUST be resolved first: the template's unbound branch
+ * (`!items.isBound.value && !items.loading.value`) renders the bind card and
+ * would swallow the detail view entirely.
+ */
+async function applyForgeDeepLink(req: { type: string; number: number; runId: number }) {
+  if (!items.binding.value) await items.loadBinding()
+  if (!items.isBound.value) return
+
+  if (req.type === 'pipeline') {
+    activeTab.value = 'pipeline'
+    detailNumber.value = 0
+    pipelineDetailId.value = req.runId
+  } else {
+    // Assign directly rather than via setActiveTab, which early-returns on an
+    // unchanged tab and calls closeDetail().
+    items.type.value = req.type as 'issue' | 'pr'
+    pipelineDetailId.value = 0
+    detailNumber.value = req.number
+    void items.load()
+  }
+  detailOpen.value = true
+}
+
+// Watch the pending request AND `active`: switchTab() no-ops when the forge tab
+// is already showing, so a request made while active would otherwise never be
+// consumed. The panel is also lazily mounted, hence `immediate`.
+watch(
+  [pendingForgeNavigation, () => props.active],
+  ([req, active]) => {
+    if (!req || !active) return
+    const consumed = consumePendingForgeNavigation()
+    if (consumed) void applyForgeDeepLink(consumed)
+  },
+  { immediate: true },
+)
 
 // Register the drill-down back handler so the edge-swipe gesture and the Android
 // hardware back button close the detail view (same contract as tasks/git).
@@ -576,11 +638,7 @@ async function submitBinding(input: { url?: string; platform?: string; host?: st
     // The binding just changed server-side, so bypass the cache.
     await refresh(true)
   } catch (err) {
-    if (err instanceof ForgeApiError) {
-      bindError.value = err.code === 'UnsafeHost' ? t('forge.bind.unsafeHost') : err.message
-    } else {
-      bindError.value = String(err)
-    }
+    bindError.value = err instanceof ForgeApiError ? err.message : String(err)
   }
 }
 
@@ -1053,6 +1111,15 @@ function formatTime(iso: string): string {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Non-official host hint inside a remote row. Amber, not red: binding is
+   allowed, the user just has to know where the credential is going. */
+.forge-remote-warning {
+  font-size: 11px;
+  color: var(--color-yellow);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .forge-remote-chevron {
   flex-shrink: 0;
   color: var(--text-muted);
@@ -1093,5 +1160,23 @@ function formatTime(iso: string): string {
   color: var(--color-red);
   font-size: 12.5px;
   line-height: var(--line-height-snug);
+}
+/* Pre-submit warning for a non-official host. Amber rather than red because it
+   does not block: the bind is allowed, it just needs to be a knowing choice. */
+.forge-bind-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--color-yellow) 35%, transparent);
+  background: color-mix(in srgb, var(--color-yellow) 12%, transparent);
+  color: var(--color-yellow);
+  font-size: 12.5px;
+  line-height: var(--line-height-snug);
+}
+.forge-bind-warning svg {
+  flex-shrink: 0;
 }
 </style>
