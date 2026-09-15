@@ -166,10 +166,27 @@ hasAskStatesForPrefix(prefix) / _resetAskStatesForTesting()
 
 | 文件 | 内容 |
 |---|---|
-| `askQuestionState.test.ts` | **新增** 15+ 用例：读写/合并/空态删除/key 构造/前缀批量清 |
-| `renderToolDetail.test.ts` | 新增约 25 用例：写入三类状态、DOM 重建后回填、失败回滚、`data-ask-key` 输出与转义、容器入口 |
-| `ContentBlocks.test.ts` | 更新 1 处既有断言（`formatToolInput` 现带 `askKey` 参数） |
+| `askQuestionState.test.ts` | **新增** 21 用例：读写/合并/空态删除/key 构造/前缀批量清 |
+| `renderToolDetail.test.ts` | 新增约 31 用例：写入三类状态、DOM 重建后回填、失败回滚、`data-ask-key` 输出与转义、容器入口、submit 携带 cardKey |
+| `ContentBlocks.test.ts` | 更新 1 处既有断言；新增 8 用例：四张卡的 askKey（tool/msg/text/summary 四种 kind + 无 id 兜底）、onUpdated 回填钩子与其根元素、输入路由 |
+| `ToolDetailDrawer.test.ts` | **新增文件**（此前无）：抽屉独立挂载点的回填钩子与输入路由 |
+| `useToolDetailDrawer.test.ts` | 新增 3 用例：抽屉与列表共用同一 askKey |
 | `useSessionManager.test.ts` | 新增归档/销毁的批量清用例 |
 | `ChatPanelContent.test.ts` | 新增失败回滚用例 |
+| `ChatMessageList.test.ts` | 新增 cardKey 转发链用例（三跳各一条） |
 
-**TDD 过程验证**：实现前 17 个用例失败（红）；临时把 `restoreAskStateFromStore` 改为空实现，6 个回填用例重新失败，确认测试真能捕获 bug；恢复后全绿。
+**TDD 过程验证**（每项都实测「删掉实现即变红」后还原，生产代码零改动）：
+
+| 移除的实现 | 变红的测试 |
+|---|---|
+| `restoreAskStateFromStore` 函数体 | 6 条回填用例 |
+| ContentBlocks 的 `onUpdated` 钩子 | 2 条钩子用例 |
+| `askKeyForBlock` 传递 | 2 条 identity 用例 |
+| `useToolDetailDrawer` 的 `askKey` | 3 条抽屉用例 |
+| ToolDetailDrawer 的 `onUpdated` 钩子 | 2 条抽屉组件用例 |
+| submit 的第三个 emit 参数 | 1 条 cardKey 用例 |
+| ChatMessageItem 的 cardKey 转发 | 1 条转发用例 |
+
+初版提交后审计发现 6 处缺口，其中最关键的是**核心修复机制本身无断言保护**（删掉 `onUpdated` 钩子或任一处 `askKey` 测试都不会红），已在第二提交补齐。
+
+全量受影响套件：`EXIT=0` / 1516 suites / 6966 tests / 0 failed。
