@@ -137,7 +137,21 @@ hasAskStatesForPrefix(prefix) / _resetAskStatesForTesting()
 
 2. **发送失败必须回滚。** 持久化 `submitted` 带来一个副作用：发送失败时卡片会永久卡在已提交、无法重试。因此 `sendMessage` 改为**返回布尔**（不抛异常，避免 fire-and-forget 调用点产生 unhandled rejection），`handleToolSendMessage(text, cardKey)` 据此调用 `revertAskSubmission`。
 
-### 4.5 已知边界：文本卡不跨 Finalize
+### 4.3 回填时机：更新 + 挂载，缺一不可
+
+初版只在 `onUpdated` 回填，**单元测试全绿但真实浏览器里答案依然丢失**。原因是
+`ChatMessageList` 绑定 `:key="listKey"`（`sessionId|msgs.length|first|last`），一条新消息到达
+就会让整个列表**重新挂载** —— 正是「切出去期间 AI 回复了，切回来」这条用户路径。
+而 `onUpdated` 在首次挂载时**不会触发**，`AskUserQuestion` 又是交互式工具、`input` 随块内联下发，
+没有任何后续更新会补触发一次，于是回填钩子从未运行。
+
+修复：`onMounted`（配合 `nextTick` 等 v-html 落地）与 `onUpdated` 都执行回填。
+`ContentBlocks` 与 `ToolDetailDrawer` 两处同改（抽屉每次打开都是新挂载）。
+
+**为什么单元测试没抓到**：它们只覆盖了「更新」路径（`setProps` 触发 `onUpdated`），
+没有覆盖「重挂载」路径。已补 mount 用例，并验证删掉 `onMounted` 即变红。
+
+### 4.4 已知边界：文本卡不跨 Finalize
 
 前端**不做** `<ask-question>` → `tool_use` 转换，转换在后端 Finalize（`session_executor.go:574-577`、`block_helpers.go:86-170`）。文本卡在 Finalize 后 key 从 `text:*` 变 `tool:*`，无天然映射。
 
@@ -168,8 +182,8 @@ hasAskStatesForPrefix(prefix) / _resetAskStatesForTesting()
 |---|---|
 | `askQuestionState.test.ts` | **新增** 21 用例：读写/合并/空态删除/key 构造/前缀批量清 |
 | `renderToolDetail.test.ts` | 新增约 31 用例：写入三类状态、DOM 重建后回填、失败回滚、`data-ask-key` 输出与转义、容器入口、submit 携带 cardKey |
-| `ContentBlocks.test.ts` | 更新 1 处既有断言；新增 8 用例：四张卡的 askKey（tool/msg/text/summary 四种 kind + 无 id 兜底）、onUpdated 回填钩子与其根元素、输入路由 |
-| `ToolDetailDrawer.test.ts` | **新增文件**（此前无）：抽屉独立挂载点的回填钩子与输入路由 |
+| `ContentBlocks.test.ts` | 更新 1 处既有断言；新增 10 用例：四张卡的 askKey（tool/msg/text/summary 四种 kind + 无 id 兜底）、更新回填钩子、**挂载回填钩子**、输入路由 |
+| `ToolDetailDrawer.test.ts` | **新增文件**（此前无）：抽屉的回填钩子（更新 + 挂载）、输入路由 |
 | `useToolDetailDrawer.test.ts` | 新增 3 用例：抽屉与列表共用同一 askKey |
 | `useSessionManager.test.ts` | 新增归档/销毁的批量清用例 |
 | `ChatPanelContent.test.ts` | 新增失败回滚用例 |
@@ -188,5 +202,31 @@ hasAskStatesForPrefix(prefix) / _resetAskStatesForTesting()
 | ChatMessageItem 的 cardKey 转发 | 1 条转发用例 |
 
 初版提交后审计发现 6 处缺口，其中最关键的是**核心修复机制本身无断言保护**（删掉 `onUpdated` 钩子或任一处 `askKey` 测试都不会红），已在第二提交补齐。
+
+## 6.1 端到端验证（真实浏览器 + 真实服务）
+
+单元测试全绿之后，仍在真实环境验证了一遍，并**发现了单元测试漏掉的真实缺陷**（见 §4.3）。
+
+做法：在独立端口（28080）与独立数据目录启动仓库构建的服务，用 Playwright/Chromium 驱动，
+**不触碰线上 20000 实例**。脚本流程：
+
+1. 向会话注入一条带 `AskUserQuestion` 卡片的助手消息
+2. 在真实输入框里填补充信息、点选选项
+3. 给活节点打标记，然后**制造真实重挂载**：向 DB 追加一条消息（模拟后台期间的回复）后触发
+   `hidden → visible`，走 `useAppForeground` → `handleManualRefresh` → `loadHistory` → `listKey` 变化 → 列表重挂载
+4. 断言：标记已消失（**证明 DOM 真的重建了**）＋ 答案仍在
+
+**关键设计：先证明 DOM 真的重建，否则断言无意义。** 早期版本没有这一步，跑出过一次
+「PASS」但实际 DOM 未变（Vue 在字符串未变时会跳过 innerHTML patch），属于假绿。
+
+**对照实验**：先构建「去修复」对照包，同一脚本复现出用户报告的现象 ——
+`input-replaced=true card-replaced=true` 且补充信息与勾选双双清空；修复后同脚本全绿。
+
+| 版本 | DOM 重建 | 补充信息 | 勾选 |
+|---|---|---|---|
+| 去修复对照 | ✅ 已重建 | ❌ 被清空 | ❌ 被清空 |
+| 修复后 | ✅ 已重建 | ✅ 保留 | ✅ 保留 |
+
+验证后已停用并清理隔离实例，线上 20000 实例全程未受影响。
 
 全量受影响套件：`EXIT=0` / 1516 suites / 6966 tests / 0 failed。
