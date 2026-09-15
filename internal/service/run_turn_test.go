@@ -355,3 +355,81 @@ func TestResolveFileDir(t *testing.T) {
 	assert.NotEmpty(t, abs)
 	assert.NotEqual(t, ".", abs, "a relative path must be resolved to an absolute one")
 }
+
+// TestRunTurnStart_OnStartedFiresBeforeEventLoop pins the scheduler's "running"
+// event ordering. runTurnStart's last step is the blocking RunWithChannel, so a
+// caller that emitted "running" after it returned sent the event once the task
+// had already finished — subscribers saw started → completed with no running in
+// between. OnStarted must therefore fire after the turn is genuinely under way
+// (placeholder exists) but before the event loop consumes anything.
+func TestRunTurnStart_OnStartedFiresBeforeEventLoop(t *testing.T) {
+	db, sessionID := setupRunTurnTest(t, []ai.StreamEvent{
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	})
+
+	var (
+		fired       bool
+		placeholder int
+		// The loop has not consumed the scripted content yet at hook time: the
+		// assistant row is still the empty streaming placeholder.
+		contentAtHook string
+	)
+	at := runTurnStart(TurnSpec{
+		Ctx:         context.Background(),
+		Mode:        ModeScheduled,
+		ProjectPath: "/tmp",
+		BackendName: "run-turn-test",
+		SessionID:   sessionID,
+		AgentID:     "run-turn-agent",
+		ChatReq:     ai.ChatRequest{Prompt: "hi"},
+		FileDir:     "/tmp",
+		OnStarted: func() {
+			fired = true
+			// The hook runs on the caller's goroutine, before RunWithChannel,
+			// so this read sees the placeholder exactly as created.
+			_ = db.QueryRow(
+				"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
+				sessionID).Scan(&placeholder)
+			_ = db.QueryRow(
+				"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant'",
+				sessionID).Scan(&contentAtHook)
+		},
+	})
+	defer at.release()
+	require.True(t, at.started(), "the turn must have started for this test to mean anything")
+
+	assert.True(t, fired, "OnStarted must have been invoked")
+	assert.Equal(t, 1, placeholder, "the placeholder must already exist when OnStarted fires")
+	assert.Contains(t, contentAtHook, `"blocks":[]`,
+		"OnStarted must fire BEFORE the event loop, so the placeholder is still empty")
+
+	// And the turn still completes normally afterwards.
+	res := at.runTurnFinalize()
+	assert.Empty(t, res.Err)
+}
+
+// TestRunTurnStart_OnStartedSkippedOnEarlyFailure verifies ISS-128 is preserved:
+// a turn that fails before starting must not fire OnStarted, so the scheduler
+// emits only "failed" and never a "running" state that immediately fails.
+func TestRunTurnStart_OnStartedSkippedOnEarlyFailure(t *testing.T) {
+	_, sessionID := setupRunTurnTest(t, nil)
+	setRunTurnScriptErr(fmt.Errorf("backend refused to start"))
+
+	fired := false
+	at := runTurnStart(TurnSpec{
+		Ctx:         context.Background(),
+		Mode:        ModeScheduled,
+		ProjectPath: "/tmp",
+		BackendName: "run-turn-test",
+		SessionID:   sessionID,
+		AgentID:     "run-turn-agent",
+		ChatReq:     ai.ChatRequest{Prompt: "hi"},
+		FileDir:     "/tmp",
+		OnStarted:   func() { fired = true },
+	})
+	defer at.release()
+
+	assert.False(t, at.started(), "a stream-start failure means the turn never started")
+	assert.False(t, fired, "OnStarted must not fire for a turn that failed to start")
+}

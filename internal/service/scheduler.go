@@ -962,6 +962,15 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// the abort/terminal branches below itself because a task failure must also
 	// update the execution row and emit task events — behaviour the interactive
 	// paths do not have.
+	//
+	// The "running" event rides OnStarted rather than being emitted after this
+	// call: runTurnStart's last step is the blocking event loop, so emitting it
+	// afterwards sent "running" once the task had already finished (subscribers
+	// saw started → completed with nothing in between). OnStarted fires after
+	// the backend and placeholder exist but before the loop, so the event is
+	// both truthful and correctly ordered. It also preserves ISS-128: a turn
+	// that fails before starting never reaches the hook, so no "running" event
+	// is emitted for it — only "failed".
 	at := runTurnStart(TurnSpec{
 		Ctx:         ctx,
 		Mode:        ModeScheduled,
@@ -974,13 +983,16 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		TaskID:      task.ID,
 		ExecutionID: executionID,
 		TriggerType: triggerType,
+		OnStarted: func() {
+			emitTaskEvent(fmt.Sprintf("%d", task.ID), "running", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+		},
 	})
 	defer at.release()
 
 	// Backend creation / stream start failed. ISS-128: no "running" event may be
 	// emitted for a task that fails before it starts, or the frontend shows a
 	// running state that immediately fails. So the failure branch comes first
-	// and emits only "failed".
+	// and emits only "failed". (OnStarted never ran in this case.)
 	if !at.started() {
 		slog.Error("failed to start task execution", slog.String("err", at.earlyFails.Err))
 		_ = UpdateExecutionStatus(sessionID, "failed")
@@ -989,9 +1001,6 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		return
 	}
-
-	// The turn is actually running — only now is a "running" event truthful.
-	emitTaskEvent(fmt.Sprintf("%d", task.ID), "running", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 
 	executor := at.executor
 	eventCh := at.eventCh

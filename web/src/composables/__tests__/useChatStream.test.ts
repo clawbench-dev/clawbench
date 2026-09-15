@@ -3072,6 +3072,42 @@ describe('useChatStream', () => {
       expect(text).not.toContain('belongs to session 1')
     })
 
+    it('does not replay a previous turn\'s buffer into the next turn (same session)', () => {
+      // The buffer exists for the case where stream_start is lost and no
+      // terminal event arrives. That same case leaves the buffer uncleared,
+      // because the only clears are session switch, disconnect, and terminal
+      // events. If the user then sends another message in the SAME session,
+      // connectStream must not let the previous turn's stale content replay
+      // into the new bubble when the new stream_start lands.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // Turn 1: content arrives with no placeholder, and no terminal event
+      // ever follows — exactly what the buffer is meant to survive.
+      options.messages.value = []
+      options.loading.value = true
+      simulateWsEvent('content', { content: 'turn one stale chunk' })
+
+      // The user sends another message in the same session. connectStream is
+      // the fresh-turn entry point.
+      connectStream('test-session-1')
+      options.messages.value = []
+      options.loading.value = true
+
+      // Turn 2's stream_start creates the new placeholder and triggers replay.
+      simulateWsEvent('stream_start', { message_id: 91 })
+      simulateWsEvent('content', { content: 'turn two chunk' })
+
+      const text = options.messages.value
+        .flatMap((m: any) => m.blocks || [])
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('')
+      expect(text).toContain('turn two chunk')
+      expect(text).not.toContain('turn one stale chunk')
+    })
+
     it('drops the buffer on session switch instead of carrying it over', async () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)

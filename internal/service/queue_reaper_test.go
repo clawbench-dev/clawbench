@@ -393,6 +393,42 @@ func TestEnsureConsumer_BackendInfoIsPassedThrough(t *testing.T) {
 	assert.Equal(t, "codebuddy", (*calls)[0].AgentID)
 }
 
+// TestEnsureConsumer_CarriesAttachments is the regression test for silently
+// dropped attachments on the recovery path: executeStreamRunShared builds its
+// own prompt and never goes through the handler's builder, so the recovered
+// message's files have to travel on LaunchConfig. Omitting them made the AI
+// answer as if the user had sent text only, while the bubble still showed the
+// files — no error, just a wrong answer.
+func TestEnsureConsumer_CarriesAttachments(t *testing.T) {
+	db := setupReaperTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+	cleanupAllSessionState()
+
+	calls := stubConsumer(t)
+	_, err := db.Exec(`INSERT INTO chat_sessions
+		(id, project_path, backend, title, agent_id, archived)
+		VALUES ('sess-files', '/proj/x', 'claude', 't', 'claude', 0)`)
+	require.NoError(t, err)
+
+	// Stored the way AddQueuedMessage stores them: a JSON array of FileEntry.
+	filesJSON := `[{"path":"/proj/x/a.png"},{"path":"/proj/x/b.go","startLine":3,"endLine":9}]`
+	createdAt := time.Now().UTC().Add(-time.Minute).Format("2006-01-02 15:04:05")
+	_, err = db.Exec(`INSERT INTO chat_history
+		(project_path, role, content, files, session_id, backend, streaming, indexed, queue_id, queued, created_at)
+		VALUES ('/proj/x', 'user', 'look at these', ?, 'sess-files', 'claude', 0, 1, 'q-files', 1, ?)`,
+		filesJSON, createdAt)
+	require.NoError(t, err)
+
+	require.True(t, EnsureConsumer("sess-files"))
+	require.Len(t, *calls, 1)
+	require.Len(t, (*calls)[0].Files, 2, "the recovered message's attachments must reach the execution")
+	assert.Equal(t, "/proj/x/a.png", (*calls)[0].Files[0].Path)
+	assert.Equal(t, "/proj/x/b.go", (*calls)[0].Files[1].Path)
+	assert.Equal(t, 3, (*calls)[0].Files[1].StartLine)
+	assert.Equal(t, 9, (*calls)[0].Files[1].EndLine)
+}
+
 // TestEnsureConsumer_NoDoubleConsumerWhenAlreadyRunning verifies the claim is
 // the serialization point: a concurrent consumer wins and the reaper stands down.
 func TestEnsureConsumer_NoDoubleConsumerWhenAlreadyRunning(t *testing.T) {

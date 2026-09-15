@@ -75,6 +75,20 @@ type TurnSpec struct {
 	// see the follow-up noted in the plan — but that is a behaviour change and
 	// does not belong in a pure dedupe.
 	DrainOnFinalize bool
+
+	// OnStarted is invoked once the turn is genuinely under way: the backend is
+	// created, the stream has started, the placeholder exists, and stream_start
+	// has been broadcast — but BEFORE the blocking event loop runs.
+	//
+	// The scheduler needs this hook: it emits a "running" task event, and that
+	// event is only truthful after the turn starts. runTurnStart cannot return
+	// early to let the caller emit it, because its final step is the blocking
+	// RunWithChannel; a caller that emitted "running" after runTurnStart returned
+	// would send it once the task had already finished, so subscribers saw
+	// started → completed with no running in between.
+	//
+	// Nil means no callback.
+	OnStarted func()
 }
 
 // TurnResult is the outcome of one AI turn.
@@ -296,6 +310,11 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 		TriggerType:        spec.TriggerType,
 	}
 	at.executor = NewSessionExecutor(turnCtx, execCfg)
+	// The turn is under way but not yet run. Fired before the blocking event
+	// loop so a caller's "started" notification precedes the work it describes.
+	if spec.OnStarted != nil {
+		spec.OnStarted()
+	}
 	at.runResult = at.executor.RunWithChannel(eventCh)
 	// The turn is over: its cancel reason has been read, so stop advertising it
 	// as interruptible. Anything arriving now belongs to the next turn.

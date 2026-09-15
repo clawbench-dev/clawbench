@@ -274,12 +274,19 @@ func EnsureConsumer(sessionID string) bool {
 	// We hold the claimed row, so hand it to the execution directly. Using
 	// LaunchSessionExecution (rather than letting the drain loop re-dequeue)
 	// avoids re-queueing it and keeps the reply anchored to this message.
+	//
+	// Files MUST be carried: executeStreamRunShared builds the prompt itself and
+	// never goes through the handler's builder, so a missing Files silently
+	// drops every attachment — the AI answers as if the user had sent text only,
+	// while the bubble still shows the files. The drain path sets the same field
+	// from its dequeued row (see RunDrainLoop).
 	launchConsumerExecution(LaunchConfig{
 		SessionID:   sessionID,
 		ProjectPath: info.ProjectPath,
 		BackendName: info.Backend,
 		AgentID:     info.AgentID,
 		Message:     msg.Content,
+		Files:       msg.Files,
 		QueueID:     msg.QueueID,
 		RunCtx:      runCtx,
 	})

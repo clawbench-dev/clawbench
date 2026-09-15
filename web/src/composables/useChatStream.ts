@@ -266,6 +266,15 @@ export function useChatStream(options: UseChatStreamOptions) {
   function connectStream(sessionId: string, options?: { reuseExistingStreaming?: boolean }) {
     // Stop any previous turn's stream state, then start a fresh one.
     stopStreaming()
+    // Discard events buffered for the PREVIOUS turn. They are replayed on the
+    // next stream_start (the only replay trigger), so leaving them here means
+    // that if the previous turn never got a placeholder — the very case the
+    // buffer exists for, and one where no terminal event arrives to clear it —
+    // its stale content gets replayed into THIS turn's bubble when the new
+    // stream_start lands. Same-session consecutive sends are the common path,
+    // so this is not a corner case. Session switches already clear the buffer
+    // via the watcher; this covers the case the watcher cannot see.
+    clearBufferedEvents()
     ensureStreamingPlaceholder(options)
     // Subscribe (deduped) — connectStream now guarantees the subscription
     // exists without tearing it down on stream end.
