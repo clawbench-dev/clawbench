@@ -11,9 +11,16 @@ var segmenter *gse.Segmenter
 
 // InitSegmenter initializes the gse segmenter for Chinese text segmentation.
 // Call once at startup. If it fails, SegmentText falls back to returning original text.
+//
+// LoadDictEmbed loads the dictionary embedded in the gse package at compile time.
+// The file-based seg.LoadDict() resolves its dictionary directory from the source
+// path baked into the binary at build time (runtime.Caller), so it only works on a
+// machine that still has that Go module cache. Released binaries, the Docker image
+// and the Android build all run without it, and silently lost Chinese segmentation
+// as a result — the embedded dictionary has no runtime dependency.
 func InitSegmenter() error {
 	var seg gse.Segmenter
-	if err := seg.LoadDict(); err != nil {
+	if err := seg.LoadDictEmbed("zh"); err != nil {
 		return fmt.Errorf("load gse dictionary: %w", err)
 	}
 	segmenter = &seg

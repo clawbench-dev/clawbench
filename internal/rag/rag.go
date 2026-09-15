@@ -45,9 +45,12 @@ func SetEmbedderHealthy(healthy bool) {
 
 // Init initializes the RAG subsystem with a SQLite-backed store.
 func Init(cfg model.RAGConfig) error {
-	// Initialize segmenter
+	// Initialize segmenter. The dictionary is embedded at compile time, so a
+	// failure here is unexpected; without it SegmentText returns the input
+	// unchanged and FTS5 (unicode61) indexes a whole CJK sentence as one token,
+	// leaving Chinese full-text search effectively unusable.
 	if err := InitSegmenter(); err != nil {
-		slog.Warn("rag: gse segmenter not available, Chinese segmentation disabled", slog.String("err", err.Error()))
+		slog.Error("rag: gse segmenter unavailable, Chinese FTS search will miss partial queries", slog.String("err", err.Error()))
 	}
 
 	// Determine database path

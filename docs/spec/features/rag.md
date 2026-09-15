@@ -61,5 +61,5 @@ flowchart TD
 - **优雅降级**：如果 `rag.vector_enabled` 为 false 或 OpenAI 兼容嵌入端点（默认 `http://localhost:11434` Ollama）不可用，退化为 FTS-only 索引和搜索。`BaseURL` 与 `Model` 由用户在 `rag.{base_url,model}` 配置；任何 OpenAI 兼容服务都可作为嵌入后端，后续嵌入 API 恢复后自动回填向量——嵌入服务不是强制依赖
 - **自适应嵌入维度**：从 API 响应自动检测向量维度，维度变化时重建表。支持切换嵌入模型而无需手动迁移
 - **分块使用结论提取**：助手消息分块前先经 `ExtractLastAnswerFromBlocks` 提取最终结论（与摘要管线共享算法），而非拼接所有文本块——工具调用前的中间推理对搜索无价值，只增加噪音和索引体积
-- **中文分词用 gse**：BM25 全文检索使用 gse 分词器处理中文文本，gse 不可用时退化为字符级分词——中文搜索不依赖外部分词服务
+- **中文分词用 gse**：BM25 全文检索使用 gse 分词器处理中文文本——中文搜索不依赖外部分词服务。分词器在启动时由 `InitSegmenter` 用 gse 编译期内嵌的 zh 词典初始化（`seg.LoadDictEmbed("zh")`）。**不可退回文件式 `seg.LoadDict()`**：它通过 `runtime.Caller` 用烧进二进制的构建期源码路径反推词典目录，只在仍保有该 Go module cache 的构建机上可用，发布二进制 / Docker 镜像 / Android 包一律加载失败并静默退化为 `segmenter == nil`。此时 `SegmentText` 返回原文、`SegmentTokens` 退化为空白切分，而 FTS5 建表用的是 `tokenize='unicode61'`——它不认识中文词边界，整句 CJK 会被索引成**单个 token**，导致任何短于整句的查询都无法命中（英文不受影响）。`TestSegmenter_UsesEmbeddedDictionary` 以源码级断言守住这一点，因为该失败在构建机上不可观测（路径恰好存在）
 - **占用查询必须走索引**：`IndexDiskUsage` 曾用 `SUM(CASE WHEN name LIKE 'prefix%')` 过滤 `dbstat`，该写法无法命中 dbstat 的名称索引，退化为对库内每个 page 的全扫描——实测 13.9GB 库单次查询约 57s，导致设置面板打开时 `/api/rag/status` 挂起近一分钟。改为 `WHERE name IN (SELECT name FROM sqlite_master WHERE name LIKE ...)` 后由名称索引驱动，57s → 0.28s。小库上看不出差异，因此用 EXPLAIN QUERY PLAN 断言查询计划防止回归
