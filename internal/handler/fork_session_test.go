@@ -155,6 +155,50 @@ func TestServeForkSession_UsesCookieSessionID(t *testing.T) {
 	assert.True(t, result["ok"].(bool))
 }
 
+// TestServeForkSession_BodySessionIDWithoutCookie is a regression test for
+// "分叉会话失败" reported after switching projects: ServeProject clears the
+// chat_session_id cookie, so the next fork has a body sessionId but no cookie.
+// The handler used to resolve the session id BEFORE decoding the body, so it
+// returned 400 SessionIdRequired and the UI showed the generic fork-failure
+// toast even though the client sent a valid sessionId.
+func TestServeForkSession_BodySessionIDWithoutCookie(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Original", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "Hello", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "assistant", "Hi!", nil, false, "")
+	require.NoError(t, err)
+
+	// Body carries the sessionId; NO chat_session_id cookie is present.
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{"sessionId": sessID})
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeForkSession, req)
+	require.Equal(t, http.StatusOK, w.Code, "body sessionId must be honored without a cookie: %s", w.Body.String())
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.True(t, result["ok"].(bool))
+	assert.NotEmpty(t, result["sessionId"])
+}
+
+// TestServeForkSession_EmptyBodyAndNoCookie confirms the guard still fires when
+// neither source supplies a session id — the fix must not make the endpoint
+// accept an anonymous fork.
+func TestServeForkSession_EmptyBodyAndNoCookie(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{})
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeForkSession, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestServeForkSession_SessionLimitReturns409(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

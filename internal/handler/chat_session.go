@@ -695,15 +695,20 @@ func setSessionID(w http.ResponseWriter, r *http.Request, sessionID string) {
 
 // ServeForkSession handles POST /api/ai/session/fork — creates a new chat session
 // by copying all messages from the current session (without external_session_id).
+//
+// The body's sessionId is authoritative; the query param / chat_session_id cookie
+// is only a fallback. This matters because the cookie is cleared whenever the
+// user switches project (see ServeProject), so a client that switched projects
+// and forked immediately would otherwise be rejected with SessionIdRequired even
+// though it sent a perfectly good sessionId in the body. Reading the body first
+// also mirrors resolveUpdateTargetSession, which made the same choice for the
+// same reason: the cookie may point at a different session than the one the user
+// acted on.
 func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-	sessionID, ok := requireSessionID(w, r)
 	if !ok {
 		return
 	}
@@ -716,10 +721,10 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	// Use body sessionId if provided, otherwise fall back to query/cookie
+	// Body sessionId wins; fall back to query/cookie for clients that omit it.
 	sourceID := req.SessionID
 	if sourceID == "" {
-		sourceID = sessionID
+		sourceID = getSessionID(r)
 	}
 	if sourceID == "" {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")

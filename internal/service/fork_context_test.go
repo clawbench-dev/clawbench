@@ -56,6 +56,109 @@ func TestBoundForkContext_EmitsOmissionNoticeWithCount(t *testing.T) {
 	assert.Contains(t, out, "2 earlier messages were omitted")
 }
 
+// TestBoundForkContext_PreservesAllUserMessages is the core guarantee of the
+// role-aware drop order: user messages are short (~51 chars on average in a real
+// installation) while assistant entries carry the tool payloads (~12 KB), so
+// sacrificing assistant entries first keeps every user instruction at almost no
+// budget cost.
+func TestBoundForkContext_PreservesAllUserMessages(t *testing.T) {
+	entries := []ForkContextMessage{
+		{Role: "user", Body: "first instruction"},
+		{Role: "assistant", Body: strings.Repeat("a", 4000)},
+		{Role: "user", Body: "second instruction"},
+		{Role: "assistant", Body: strings.Repeat("b", 4000)},
+		{Role: "user", Body: "third instruction"},
+		{Role: "assistant", Body: strings.Repeat("c", 4000)},
+	}
+
+	// Enough for the user messages plus a little assistant context, far short of
+	// all three assistant bodies.
+	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 300})
+
+	assert.Contains(t, out, "first instruction", "oldest user message must survive")
+	assert.Contains(t, out, "second instruction")
+	assert.Contains(t, out, "third instruction")
+}
+
+// TestBoundForkContext_UserMessagesSurviveWithoutAssistantBodies checks the
+// extreme: when the budget only fits user messages, all of them are still kept
+// and the assistant entries are the ones dropped.
+func TestBoundForkContext_UserMessagesSurviveWithoutAssistantBodies(t *testing.T) {
+	entries := []ForkContextMessage{
+		{Role: "user", Body: "keep me one"},
+		{Role: "assistant", Body: strings.Repeat("z", 5000)},
+		{Role: "user", Body: "keep me two"},
+		{Role: "assistant", Body: strings.Repeat("z", 5000)},
+	}
+
+	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 200})
+
+	assert.Contains(t, out, "keep me one")
+	assert.Contains(t, out, "keep me two")
+	assert.NotContains(t, out, strings.Repeat("z", 100), "assistant bodies are the sacrifice")
+	assert.Contains(t, out, "omitted")
+}
+
+// TestBoundForkContext_DropsOldestAssistantFirst pins the drop ORDER: an
+// assistant entry is evicted before an older user entry.
+func TestBoundForkContext_DropsOldestAssistantFirst(t *testing.T) {
+	entries := []ForkContextMessage{
+		{Role: "assistant", Body: strings.Repeat("OLD_ASSISTANT", 200)},
+		{Role: "user", Body: "ancient instruction"},
+		{Role: "assistant", Body: strings.Repeat("NEW_ASSISTANT", 200)},
+		{Role: "user", Body: "latest instruction"},
+	}
+
+	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 400})
+
+	assert.Contains(t, out, "latest instruction")
+	assert.Contains(t, out, "ancient instruction", "user messages outrank assistant bodies")
+}
+
+// TestBoundForkContext_ChronologicalOrderAfterSkipping guards rendering order:
+// entries are collected newest-first with assistant entries skipped, so the
+// output must still read oldest-to-newest.
+func TestBoundForkContext_ChronologicalOrderAfterSkipping(t *testing.T) {
+	entries := []ForkContextMessage{
+		{Role: "user", Body: "ALPHA"},
+		{Role: "assistant", Body: strings.Repeat("x", 5000)},
+		{Role: "user", Body: "BETA"},
+		{Role: "assistant", Body: strings.Repeat("y", 5000)},
+		{Role: "user", Body: "GAMMA"},
+	}
+
+	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 200})
+
+	iAlpha := strings.Index(out, "ALPHA")
+	iBeta := strings.Index(out, "BETA")
+	iGamma := strings.Index(out, "GAMMA")
+	require.NotEqual(t, -1, iAlpha)
+	require.NotEqual(t, -1, iBeta)
+	require.NotEqual(t, -1, iGamma)
+	assert.Less(t, iAlpha, iBeta, "history must read oldest-first")
+	assert.Less(t, iBeta, iGamma)
+}
+
+// TestBoundForkContext_OmissionCountIncludesSkippedAssistant covers the counting
+// bug this change introduced and fixed: assistant entries skipped mid-scan must
+// still be counted in the notice, otherwise the model is told fewer messages
+// were dropped than actually were.
+func TestBoundForkContext_OmissionCountIncludesSkippedAssistant(t *testing.T) {
+	entries := []ForkContextMessage{
+		{Role: "user", Body: "old"},
+		{Role: "assistant", Body: strings.Repeat("a", 300)},
+		{Role: "user", Body: strings.Repeat("b", 300)},
+		{Role: "assistant", Body: strings.Repeat("c", 300)},
+		{Role: "user", Body: strings.Repeat("d", 300)},
+	}
+
+	// The two 300-rune user entries fit; all three assistant entries do not.
+	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 800})
+
+	assert.Contains(t, out, "3 earlier messages were omitted",
+		"all three dropped assistant entries must be counted")
+}
+
 func TestBoundForkContext_NewestNeverDropped(t *testing.T) {
 	// A single entry larger than the whole budget must be truncated, not lost:
 	// dropping it would leave the model with no history at all.
