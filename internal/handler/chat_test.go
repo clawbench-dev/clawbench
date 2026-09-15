@@ -2912,12 +2912,16 @@ func TestBuildChatRequest_ModelOverride_FromSession(t *testing.T) {
 	// User explicitly selects a model → handler calls UpdateSessionModel
 	_ = service.UpdateSessionModel(sessionID, "claude-sonnet-4-6")
 
-	// buildChatRequest with no modelOverride should use agent default,
-	// NOT the session model (session model is for frontend display;
-	// buildChatRequest modelOverride comes from req.ModelID)
+	// With no explicit modelOverride, the session's persisted choice is used.
+	//
+	// This previously asserted the opposite (agent default wins) and was the
+	// direct-send half of the divergence: the handler passed the session model
+	// in explicitly while the queue path did not, so an identical message could
+	// run on a different model depending on whether it was queued. The lookup now
+	// lives in the shared builder, so both paths honour the session's model.
 	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
-	// Without modelOverride, agent default is used
-	assert.Equal(t, "glm-5.1", req.Model, "without modelOverride, agent default model should be used")
+	assert.Equal(t, "claude-sonnet-4-6", req.Model,
+		"without an explicit override, the session's persisted model must be used")
 }
 
 // TestBuildChatRequest_ModelOverride_ExplicitOverSession verifies that an
@@ -2956,6 +2960,46 @@ func TestBuildChatRequestFromQueue_UsesSessionModel(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", req.Model,
 		"queued message should use session-persisted model, not agent default")
+}
+
+// TestBuildChatRequest_DirectAndQueuePathsAgree is the guard against the
+// divergence that motivated unifying the builders.
+//
+// A direct send and a queued message for the same session must produce the same
+// request in every field except the prompt text (the queue path prefixes file
+// labels). When the two implementations drifted, an identical message could run
+// on a different model, transport, or resume state depending on whether it
+// happened to be queued — which is invisible to the user and near-impossible to
+// debug from logs.
+func TestBuildChatRequest_DirectAndQueuePathsAgree(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "path-parity", "codebuddy", "", "default", "chat")
+	require.NoError(t, err)
+
+	// Give the session a persisted model and transport so both paths have
+	// something to disagree about.
+	require.NoError(t, service.UpdateSessionModel(sessionID, "claude-sonnet-4-6"))
+	require.NoError(t, service.UpdateSessionTransport(sessionID, "acp-stdio"))
+
+	const text = "same message"
+
+	direct := buildChatRequest(text, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
+
+	qMsg := model.QueuedMessage{Text: text, CreatedAt: time.Now().Format(time.RFC3339)}
+	queued, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	require.NoError(t, err)
+
+	assert.Equal(t, direct.Model, queued.Model, "model must not depend on the send path")
+	assert.Equal(t, direct.ThinkingEffort, queued.ThinkingEffort, "thinking effort must not depend on the send path")
+	assert.Equal(t, direct.Mode, queued.Mode, "mode must not depend on the send path")
+	assert.Equal(t, direct.SessionID, queued.SessionID, "resolved session ID must not depend on the send path")
+	assert.Equal(t, direct.Resume, queued.Resume, "resume must not depend on the send path")
+	assert.Equal(t, direct.SystemPrompt, queued.SystemPrompt, "system prompt must not depend on the send path")
+	assert.Equal(t, direct.ForkContext, queued.ForkContext, "fork context must not depend on the send path")
+	assert.Equal(t, direct.HasConversationHistory, queued.HasConversationHistory)
+	assert.Equal(t, direct.AssistantMessageCount, queued.AssistantMessageCount)
 }
 
 func TestBuildChatRequestFromQueue_HasAttachments_WithFiles(t *testing.T) {

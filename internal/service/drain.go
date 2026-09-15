@@ -158,10 +158,19 @@ func retryDequeueAfterError(cfg DrainConfig, dequeueFailures *int, err error) bo
 	return true
 }
 
-// RunDrainLoop runs the complete drain loop after an initial stream execution.
+// RunDrainLoop runs the session's turn loop after an initial stream execution.
 // It checks terminal conditions, dequeues messages from chat_history (queued=1),
-// and executes them. The loop continues until the queue is empty or a terminal
-// condition is met.
+// and executes them, until the queue is empty or a terminal condition is met.
+//
+// Exiting is the delicate part. The loop must not decide "queue is empty" and
+// leave while a concurrent send is mid-flight: that send would have seen a live
+// runner, handed its message to this loop, and be left with nobody to run it —
+// the "message never gets an answer until I cancel and re-send" failure.
+//
+// That window is closed by retireRunner, which re-checks for late work under the
+// same lock the sender used to submit. This replaces the previous
+// SignalDrain/WaitForEnqueue dance plus a 100ms self-heal goroutine: the exit
+// decision and the late-work check are now one atomic step.
 func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 	// Consecutive dequeue failures since the last successful drain. Reset on
 	// every successful dequeue (or empty-queue done), so transient DB blips
@@ -182,20 +191,12 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 			continue
 		}
 		if !ok {
-			// Wait for enqueue signal instead of blind sleep
-			ok = WaitForEnqueue(cfg.SessionID, 100*time.Millisecond)
-			if ok {
-				msg, ok, err = dequeueQueuedMessage(cfg.SessionID)
-				if err != nil {
-					if !retryDequeueAfterError(cfg, &dequeueFailures, err) {
-						return
-					}
-					continue
-				}
+			// The queue looks empty. Retire the runner: if a message arrived
+			// since we looked, retireRunner reports it and we keep going rather
+			// than exit and strand it.
+			if !retireRunner(cfg.SessionID) {
+				continue
 			}
-		}
-		if !ok {
-			// Queue empty — truly done
 			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: eventTypeDone})
 			return
 		}

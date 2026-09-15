@@ -833,6 +833,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer rag.Shutdown()
 	defer service.StopSessionCleanupWorker()
+	defer service.StopQueueReaper()
 	defer service.StopForgePoller()
 	defer service.StopBingWallpaperWorker()
 
@@ -968,6 +969,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Start session archive cleanup worker
 	service.StartSessionCleanupWorker(cfg)
+
+	// Start the queue reaper: a safety net that recovers user messages left
+	// stranded at queued=1 by a lost consumer handoff (stale running flag,
+	// consumer exit race). Without it such a message gets no AI response until
+	// the user cancels and re-sends.
+	service.StartQueueReaper()
 
 	// Start the GitHub/GitLab change poller. It is read-only and only runs when
 	// at least one project is bound to a repository; the provider factory is

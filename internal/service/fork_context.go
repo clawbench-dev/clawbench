@@ -79,13 +79,6 @@ type ForkContextMessage struct {
 	Body string
 }
 
-// defaultForkContextOptions is the option set used by the service-layer
-// BuildForkContext: no wrapper text, raw lowercase roles, no plain-text
-// fallback — preserving the behavior of the original implementation.
-func defaultForkContextOptions() ForkContextOptions {
-	return ForkContextOptions{BudgetChars: model.ChatForkContextBudget}
-}
-
 // BuildForkContextWithOptions reads a session's history from the DB, renders it,
 // and bounds the result to the configured budget.
 func BuildForkContextWithOptions(sessionID string, o ForkContextOptions) string {

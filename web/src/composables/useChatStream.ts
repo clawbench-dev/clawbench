@@ -246,6 +246,10 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   function disconnectStream() {
     stopStreaming()
+    // Events buffered for a placeholder that never appeared belong to the
+    // stream being torn down; keeping them would replay stale content into the
+    // next stream this composable attaches to.
+    clearBufferedEvents()
     unsubscribe()
   }
 
@@ -268,12 +272,94 @@ export function useChatStream(options: UseChatStreamOptions) {
     subscribe(sessionId)
   }
 
+  // Diagnostic for stream events that arrive but are not applied.
+  //
+  // These drop points are all legitimate in themselves — events for another
+  // session, or for a turn whose placeholder is gone — so they must not be
+  // "fixed" by applying the event. But they were silent, which made the two
+  // very different causes indistinguishable in logs:
+  //   (a) the backend never sent the event, or
+  //   (b) it arrived and we discarded it.
+  // Only the second is ours to explain, and only while `loading` is true (we
+  // believe a turn is in flight) is discarding suspicious — background sessions
+  // legitimately have no placeholder here. So: log only in that state.
+  const noteDroppedEvent = (eventType: string, reason: string) => {
+    if (!loading.value) return
+    appLog.w(TAG, `dropped ${eventType} while loading (${reason}) session=${currentSessionId.value}`)
+  }
+
+  // Content events that arrived before their placeholder existed.
+  //
+  // `content` / `thinking` / tool events carry no message id, so the only way to
+  // apply them is to find the streaming message. When `stream_start` is delayed
+  // or lost, they used to be discarded — the user then saw an empty reply (or a
+  // reply missing its first chunks) even though the backend produced it.
+  //
+  // They are buffered instead and replayed once the placeholder exists. The
+  // buffer is bounded: if no placeholder ever appears (a genuinely lost
+  // stream_start), the run's events must not accumulate without limit.
+  type BufferedStreamEvent = { sessionId: string; eventType: string; payload: Record<string, unknown> }
+  const MAX_BUFFERED_EVENTS = 200
+  let pendingStreamEvents: BufferedStreamEvent[] = []
+  let isReplayingBuffered = false
+
+  const bufferEvent = (sessionId: string, eventType: string, payload: Record<string, unknown>) => {
+    if (pendingStreamEvents.length >= MAX_BUFFERED_EVENTS) {
+      // Drop the oldest: the newest events are what the user is about to see,
+      // and an unbounded buffer would leak for a stream that never starts.
+      pendingStreamEvents.shift()
+      appLog.w(TAG, `stream event buffer full (${MAX_BUFFERED_EVENTS}), dropped oldest before replay`)
+    }
+    pendingStreamEvents.push({ sessionId, eventType, payload })
+  }
+
+  // Buffered events belong to one session's in-flight turn, so they are
+  // meaningless after a switch — and replaying them into another session's
+  // placeholder would corrupt it.
+  const clearBufferedEvents = () => {
+    pendingStreamEvents = []
+  }
+
+  // Replay buffered events, in arrival order, once a placeholder exists.
+  //
+  // Re-invoking the same handler keeps ONE code path for applying an event, so
+  // replay cannot drift from live handling. The buffer is cleared first: an
+  // event that still cannot be applied must not be re-buffered and looped.
+  const replayBufferedEvents = () => {
+    if (pendingStreamEvents.length === 0 || isReplayingBuffered) return
+    if (!findStreamingMsg(messages.value)) return
+
+    const queued = pendingStreamEvents
+    pendingStreamEvents = []
+    isReplayingBuffered = true
+    try {
+      appLog.i(TAG, `replaying ${queued.length} buffered stream event(s) after placeholder appeared`)
+      for (const item of queued) {
+        handleChatStreamEvent('chat_stream', {
+          session_id: item.sessionId,
+          event_type: item.eventType,
+          payload: item.payload,
+        })
+      }
+    } finally {
+      isReplayingBuffered = false
+    }
+  }
+
   // ── WS event handler for chat_stream events ──
-  // All 21+ event types from the backend are dispatched through this single handler.
-  const unsubscribeFromWs = onEvent((event: string, data: unknown) => {
+  // All 21+ event types from the backend are dispatched through this single
+  // function. It is named (not an inline arrow) because replaying buffered
+  // events re-enters it, so live and replayed events share one apply path.
+  function handleChatStreamEvent(event: string, data: unknown) {
     if (event !== 'chat_stream') return
     const csData = data as ChatStreamEventData
-    if (csData.session_id !== currentSessionId.value) return
+    if (csData.session_id !== currentSessionId.value) {
+      // Not our session: dropping is correct, but record it when this session
+      // is mid-stream — that combination is what a lost/mismatched subscription
+      // looks like from here.
+      noteDroppedEvent(String(csData.event_type), `session mismatch (got ${csData.session_id})`)
+      return
+    }
 
     const sessionId = csData.session_id
     const payload = csData.payload as Record<string, unknown>
@@ -327,6 +413,10 @@ export function useChatStream(options: UseChatStreamOptions) {
           // recovery placeholder was anchored to a stale user message.
           dispatch({ type: 'ws_stream_start', messageId, answeredQueueId })
         }
+        // A placeholder now exists, so anything that arrived before it can be
+        // applied. Done after the dispatch above so the replayed events land on
+        // the real placeholder rather than being dropped again.
+        replayBufferedEvents()
         break
       }
 
@@ -346,7 +436,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'content_reset': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) return
+        if (!findStreamingMsg(messages.value)) { noteDroppedEvent('content_reset', 'no streaming placeholder'); return }
         dispatch({ type: 'ws_content_reset' })
         onRenderNeeded()
         break
@@ -354,7 +444,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'content': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) return
+        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'content', payload); noteDroppedEvent('content', 'buffered until placeholder'); return }
         const contentData = payload as unknown as ContentEventData
         dispatch({ type: 'ws_content', text: contentData.content ?? '', parentToolCallId: contentData.parent_tool_call_id })
         debouncedRender()
@@ -363,7 +453,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'thinking': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) return
+        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'thinking', payload); noteDroppedEvent('thinking', 'buffered until placeholder'); return }
         const thinkingData = payload as unknown as ThinkingEventData
         dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}`, parentToolCallId: thinkingData.parent_tool_call_id })
         // debouncedRender schedules the scroll pin in the same rAF — no
@@ -374,7 +464,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'thinking_done': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) return
+        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'thinking_done', payload); noteDroppedEvent('thinking_done', 'buffered until placeholder'); return }
         dispatch({ type: 'ws_thinking_done' })
         onRenderNeeded()
         break
@@ -382,7 +472,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'tool_use': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) return
+        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'tool_use', payload); noteDroppedEvent('tool_use', 'buffered until placeholder'); return }
         const data = payload as unknown as ToolUseEventData
         dispatch({ type: 'ws_tool_use', data })
         // Side effects that depend on the block's updated state.
@@ -422,7 +512,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'tool_result': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) return
+        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'tool_result', payload); noteDroppedEvent('tool_result', 'buffered until placeholder'); return }
         const data = payload as unknown as ToolUseEventData
         dispatch({ type: 'ws_tool_result', data })
         toolUseWatchdog.clear(data.id!)
@@ -438,13 +528,18 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'metadata': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) return
+        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'metadata', payload); noteDroppedEvent('metadata', 'buffered until placeholder'); return }
         dispatch({ type: 'ws_metadata', metadata: payload as Record<string, unknown> })
         break
       }
 
       case 'done': {
         if (sessionChanged()) return
+        // The turn is over. Anything still buffered belongs to a placeholder
+        // that never appeared; replaying it later (e.g. on a reconnect's stale
+        // stream_start) would build a zombie streaming bubble that never
+        // receives another terminal event.
+        clearBufferedEvents()
         stopStreaming()
 
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
@@ -514,6 +609,8 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'cancelled': {
         if (sessionChanged()) return
+        // Terminal: discard anything buffered for a placeholder that never came.
+        clearBufferedEvents()
         // Do NOT bail out when no streaming placeholder is found. The terminal
         // event's job is to end the turn; the placeholder is only an optional
         // artifact of it. Returning early here left loading.value = true
@@ -533,6 +630,8 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'error': {
         if (sessionChanged()) return
+        // Terminal: discard anything buffered for a placeholder that never came.
+        clearBufferedEvents()
         stopStreaming()
         const errorData = payload as unknown as ErrorEventData
         // Set the error block via the reducer's single write channel so the UI
@@ -555,7 +654,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'warning': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) return
+        if (!findStreamingMsg(messages.value)) { noteDroppedEvent('warning', 'no streaming placeholder'); return }
         const warningData = payload as { text?: string; reason?: string; error_code?: number; http_status?: number; error_source?: string }
         dispatch({ type: 'ws_warning', text: warningData.text || '', reason: warningData.reason, errorCode: warningData.error_code, httpStatus: warningData.http_status, errorSource: warningData.error_source })
         if (isOpen.value) {
@@ -741,7 +840,9 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
     }
-  })
+  }
+
+  const unsubscribeFromWs = onEvent(handleChatStreamEvent)
 
   async function cancelStream() {
     if (!currentSessionId.value || !loading.value) return
@@ -759,6 +860,9 @@ export function useChatStream(options: UseChatStreamOptions) {
   // user_message / queue_drain events for a live session are never missed.
   // subscribe() dedups: re-observing the same session is a no-op.
   const stopSessionWatch = watch(currentSessionId, (sid) => {
+    // Buffered events belong to the previous session's in-flight turn; applying
+    // them to the new session's placeholder would corrupt it.
+    clearBufferedEvents()
     if (sid) subscribe(sid)
   }, { immediate: true })
 

@@ -12,10 +12,32 @@ import (
 	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func setupDrainTest() {
+// setupDrainTest installs a ws manager for the drain tests and restores the
+// previous one when the test ends.
+//
+// The restore is not optional: the manager is a package-level global, and
+// leaving one installed leaks into every later test in the binary. Tests that
+// emit session events (via SetSessionRunning, CancelSession, …) then reach
+// emitSessionEvent → GetSessionTitle with no test DB configured, which
+// dereferences a nil pool and panics — taking down unrelated tests whose
+// failures look like real bugs.
+// SubmitRunForTest registers a live runner for a session so turn-scoped tests
+// have the execution a turn belongs to.
+func SubmitRunForTest(t *testing.T, sessionID string) {
+	t.Helper()
+	_, created := TryClaimSessionRun(sessionID)
+	require.True(t, created, "expected to claim an idle session")
+	t.Cleanup(func() { FinishSessionRun(sessionID) })
+}
+
+func setupDrainTest(t *testing.T) {
+	t.Helper()
+	prev := ws.GetManager()
 	ws.SetManagerForTest(ws.NewManagerForTest())
+	t.Cleanup(func() { ws.SetManagerForTest(prev) })
 }
 
 // drainTestSchema is the chat_history/chat_sessions schema used by drain tests
@@ -71,7 +93,7 @@ func setupDrainSession(t *testing.T, sessionID string) {
 }
 
 func TestDrainLoop_UserCancel_ClearsQueueAndEmitsCancel(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-user-cancel"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -101,7 +123,7 @@ func TestDrainLoop_UserCancel_ClearsQueueAndEmitsCancel(t *testing.T) {
 }
 
 func TestDrainLoop_UserCancel_WithQueueIDs_EmitsQueueCancel(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-queue-cancel-event"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -129,7 +151,7 @@ func TestDrainLoop_UserCancel_WithQueueIDs_EmitsQueueCancel(t *testing.T) {
 }
 
 func TestDrainLoop_UserCancel_NoQueueIDs_NoQueueCancelEvent(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-no-queue-ids"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -153,7 +175,7 @@ func TestDrainLoop_UserCancel_NoQueueIDs_NoQueueCancelEvent(t *testing.T) {
 }
 
 func TestDrainLoop_ErrorResult_EmitsErrorEvent(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-error"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -184,7 +206,7 @@ func TestDrainLoop_ErrorResult_EmitsErrorEvent(t *testing.T) {
 }
 
 func TestDrainLoop_EmptyResult_EmitsErrorWithReason(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-empty"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -213,7 +235,7 @@ func TestDrainLoop_EmptyResult_EmitsErrorWithReason(t *testing.T) {
 }
 
 func TestDrainLoop_NonUserCancelReason_EmitsCancelled(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-other-cancel"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -236,7 +258,7 @@ func TestDrainLoop_NonUserCancelReason_EmitsCancelled(t *testing.T) {
 }
 
 func TestDrainLoop_QueueEmpty_EmitsDone(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-empty-queue"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -259,7 +281,7 @@ func TestDrainLoop_QueueEmpty_EmitsDone(t *testing.T) {
 }
 
 func TestDrainLoop_QueueHasNextMessage_ExecutesAndLoops(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-next-msg"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -295,7 +317,7 @@ func TestDrainLoop_QueueHasNextMessage_ExecutesAndLoops(t *testing.T) {
 // remaining queued messages must be cleared (not left pending forever) and the
 // loop exits with an error event.
 func TestDrainLoop_QueueMessageReturnsError_StopsLoopAndClearsRest(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-msg-error"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -332,7 +354,7 @@ func TestDrainLoop_QueueMessageReturnsError_StopsLoopAndClearsRest(t *testing.T)
 }
 
 func TestDrainLoop_QueueMessageCancelled_StopsLoop(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-msg-cancel"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -357,7 +379,7 @@ func TestDrainLoop_QueueMessageCancelled_StopsLoop(t *testing.T) {
 }
 
 func TestDrainLoop_UserCancelWithQueueIDsOnly_IncludesOnlyNonEmptyQueueIDs(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-mixed-qids"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -384,29 +406,44 @@ func TestDrainLoop_UserCancelWithQueueIDsOnly_IncludesOnlyNonEmptyQueueIDs(t *te
 	assert.Equal(t, 0, GetQueuedCount(sessionID))
 }
 
-// TestWaitForEnqueue_SignaledBySignalDrain verifies a queued message signal
-// wakes WaitForEnqueue immediately (design plan: SignalDrain → WaitForEnqueue
-// returns true).
-func TestWaitForEnqueue_SignaledBySignalDrain(t *testing.T) {
-	sessionID := "drain-wait-signal"
-	started := make(chan struct{})
-	done := make(chan bool)
-	go func() {
-		close(started)
-		done <- WaitForEnqueue(sessionID, 500*time.Millisecond)
-	}()
-	<-started
-	SignalDrain(sessionID)
-	assert.True(t, <-done, "WaitForEnqueue must return true when signaled")
+// TestRetireRunner_KeepsGoingWhenWorkArrived verifies the exit decision cannot
+// strand a message. A send that lands after the loop last checked the queue must
+// keep the runner alive: retiring would leave that message with no consumer,
+// which is the "no answer until I cancel and re-send" bug this replaced the
+// SignalDrain/WaitForEnqueue dance to prevent.
+func TestRetireRunner_KeepsGoingWhenWorkArrived(t *testing.T) {
+	cleanupAllSessionState()
+	t.Cleanup(cleanupAllSessionState)
+
+	sessionID := "drain-retire-race"
+	_, created := TryClaimSessionRun(sessionID)
+	require.True(t, created)
+
+	// A concurrent send arrives: it sees the runner and marks it as having work.
+	_, createdAgain := TryClaimSessionRun(sessionID)
+	require.False(t, createdAgain, "the second submit must reuse the runner")
+
+	// The runner must NOT retire — the work has to be picked up.
+	assert.False(t, retireRunner(sessionID), "runner must keep going when work arrived")
+	assert.True(t, IsSessionRunning(sessionID), "session must still be running")
+
+	// Once the work is drained, the next retire succeeds.
+	assert.True(t, retireRunner(sessionID), "runner may exit when nothing is pending")
+	assert.False(t, IsSessionRunning(sessionID))
 }
 
-// TestWaitForEnqueue_Timeout verifies WaitForEnqueue returns false when no
-// signal arrives within the timeout.
-func TestWaitForEnqueue_Timeout(t *testing.T) {
-	sessionID := "drain-wait-timeout"
-	start := time.Now()
-	assert.False(t, WaitForEnqueue(sessionID, 50*time.Millisecond))
-	assert.GreaterOrEqual(t, time.Since(start), 40*time.Millisecond)
+// TestRetireRunner_ExitsWhenIdle verifies the plain exit path: no late work
+// means the runner retires and the session stops being reported as running.
+func TestRetireRunner_ExitsWhenIdle(t *testing.T) {
+	cleanupAllSessionState()
+	t.Cleanup(cleanupAllSessionState)
+
+	sessionID := "drain-retire-idle"
+	_, created := TryClaimSessionRun(sessionID)
+	require.True(t, created)
+
+	assert.True(t, retireRunner(sessionID))
+	assert.False(t, IsSessionRunning(sessionID))
 }
 
 // TestCancelQueuedMessage_DeletesRow verifies that canceling a queued message
@@ -415,7 +452,7 @@ func TestWaitForEnqueue_Timeout(t *testing.T) {
 // it only flipped queued=0, leaving an indistinguishable "no-reply user
 // message" that loadHistory resurrected).
 func TestCancelQueuedMessage_DeletesRow(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-cancel-delete"
 	setupDrainSession(t, sessionID)
 
@@ -441,7 +478,7 @@ func TestCancelQueuedMessage_DeletesRow(t *testing.T) {
 // TestCancelQueuedMessage_Idempotent verifies canceling a queueId that is no
 // longer queued (already drained or already canceled) is a no-op and harmless.
 func TestCancelQueuedMessage_Idempotent(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-cancel-idempotent"
 	setupDrainSession(t, sessionID)
 
@@ -455,7 +492,7 @@ func TestCancelQueuedMessage_Idempotent(t *testing.T) {
 // TestClearQueuedMessages_DeletesRows verifies clearing the queue (session
 // cancel / force-cancel) deletes the queued rows outright.
 func TestClearQueuedMessages_DeletesRows(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-clear-delete"
 	setupDrainSession(t, sessionID)
 
@@ -476,7 +513,7 @@ func TestClearQueuedMessages_DeletesRows(t *testing.T) {
 }
 
 func TestDrainLoop_PersistentDequeueError_AbortsAfterRetryWindow(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-persistent-err"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -517,7 +554,7 @@ func TestDrainLoop_PersistentDequeueError_AbortsAfterRetryWindow(t *testing.T) {
 }
 
 func TestDrainLoop_TransientDequeueError_RetriesAndRecovers(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-transient-err"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -564,7 +601,7 @@ func TestDrainLoop_TransientDequeueError_RetriesAndRecovers(t *testing.T) {
 // must NOT emit a terminal event, because the queued message is exactly what
 // should run next. Contrast with the user-cancel branch, which clears the queue.
 func TestDrainHandleTerminal_InterruptKeepsQueue(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-interrupt"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -599,7 +636,7 @@ func TestDrainHandleTerminal_InterruptKeepsQueue(t *testing.T) {
 // TestDrainHandleTerminal_UserCancelStillClearsQueue pins the contrast: the
 // existing cancel semantics must be unchanged by the interrupt branch above.
 func TestDrainHandleTerminal_UserCancelStillClearsQueue(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-cancel-contrast"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -631,6 +668,8 @@ func TestDrainHandleTerminal_UserCancelStillClearsQueue(t *testing.T) {
 // so the executor finalizes the turn without stamping it "cancelled".
 func TestInterruptSessionTurn(t *testing.T) {
 	sessionID := "interrupt-turn-test"
+	// Turn registration requires a live runner (a turn belongs to an execution).
+	SubmitRunForTest(t, sessionID)
 
 	// No turn registered → nothing to interrupt.
 	if InterruptSessionTurnIfCurrent(sessionID, 1) {
@@ -673,6 +712,7 @@ func TestInterruptSessionTurn(t *testing.T) {
 // messages would run against a cancelled session context.
 func TestInterruptSessionTurn_DoesNotClobberExistingReason(t *testing.T) {
 	sessionID := "interrupt-reason-ownership"
+	SubmitRunForTest(t, sessionID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -706,6 +746,7 @@ func TestInterruptSessionTurn_DoesNotClobberExistingReason(t *testing.T) {
 // never asked to stop, so the id check must refuse.
 func TestInterruptSessionTurnIfCurrent_RefusesReplacedTurn(t *testing.T) {
 	sessionID := "interrupt-replaced-turn"
+	SubmitRunForTest(t, sessionID)
 
 	// The turn the caller inspected (T1).
 	ctx1, cancel1 := context.WithCancel(context.Background())
@@ -740,6 +781,7 @@ func TestInterruptSessionTurnIfCurrent_RefusesReplacedTurn(t *testing.T) {
 // turn was redirected (not cancelled).
 func TestInterruptSessionTurn_ClaimsEmptySlot(t *testing.T) {
 	sessionID := "interrupt-claims-empty"
+	SubmitRunForTest(t, sessionID)
 
 	_, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

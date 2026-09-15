@@ -180,6 +180,38 @@ paths:
         "200":
           description: 指标快照
 
+  /api/ws/delivery-stats:
+    get:
+      tags: [System]
+      summary: WebSocket 事件投递丢弃计数
+      description: |
+        统计「已产生但未投递」的流式事件，按原因分组。
+
+        事件投递此前是静默失败的：会话没有活跃订阅者时事件被直接丢弃，
+        既无日志也无计数，导致「UI 卡在缺少终态事件」与「后端根本没发」
+        在日志上完全无法区分。此端点让这类丢失可观测。
+
+        **响应字段**：
+        - `no_subscribers`：为无活跃订阅者的会话发出的事件数。非 0 即值得
+          排查——通常意味着客户端订阅已丢失（WS 重连）而其 UI 仍认为在订阅中。
+        - `no_manager`：WS manager 不可用时丢弃的事件数（启动/关闭窗口内正常）。
+        - `total`：两者之和。
+      operationId: wsDeliveryStats
+      responses:
+        "200":
+          description: 丢弃计数快照
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  no_subscribers:
+                    type: integer
+                  no_manager:
+                    type: integer
+                  total:
+                    type: integer
+
   /api/roots:
     get:
       tags: [System]

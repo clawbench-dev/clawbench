@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useChatStream } from '@/composables/useChatStream'
 import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS, chatMessageReducer } from '@/utils/chatStreamUtils'
 
@@ -20,6 +20,19 @@ globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
   pendingIntervals.push(id)
   return id
 }) as typeof setInterval
+
+// ── Mock appLog ──
+//
+// The composable logs discarded stream events (see noteDroppedEvent). Those
+// logs are the only way to tell "the backend never sent it" from "we dropped
+// it", so the tests assert on them.
+// vi.mock is hoisted above this module's body, so the factory cannot close over
+// a plain `const` declared below it. vi.hoisted runs before the mock and gives
+// the factory something initialised to reference.
+const { mockAppLogW } = vi.hoisted(() => ({ mockAppLogW: vi.fn() }))
+vi.mock('@/utils/appLog', () => ({
+  appLog: { d: vi.fn(), i: vi.fn(), w: (...args: unknown[]) => mockAppLogW(...args), e: vi.fn() },
+}))
 
 // ── Mock useGlobalEvents (WS) ──
 
@@ -163,6 +176,7 @@ describe('useChatStream', () => {
     registeredEventHandler = null
     mockSendWsMessage = vi.fn()
     mockConnected = ref(true)
+    mockAppLogW.mockClear()
   })
 
   afterEach(() => {
@@ -2905,6 +2919,309 @@ describe('useChatStream', () => {
       expect(b.pending).toBe(true)
       const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
       expect(streaming.length).toBe(1)
+    })
+  })
+
+  // Discarded stream events are logged only while the UI believes a turn is in
+  // flight. Dropping is legitimate in both cases below, so the point is not to
+  // change behaviour but to make the discard visible: without these logs, "the
+  // backend never sent it" and "we threw it away" look identical in the logs.
+  describe('dropped event diagnostics', () => {
+    it('logs when content is dropped for lack of a streaming placeholder', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // connectStream creates a placeholder; simulate the state this diagnostic
+      // exists for — the placeholder is gone (e.g. a loadHistory rebuild that
+      // raced the stream) while the UI still believes a turn is in flight.
+      options.messages.value = []
+      options.loading.value = true
+
+      simulateWsEvent('content', { text: 'hello' })
+
+      expect(mockAppLogW).toHaveBeenCalled()
+      const logged = mockAppLogW.mock.calls.map(c => String(c[1])).join('\n')
+      expect(logged).toContain('content')
+      // Content is now buffered rather than discarded; the log says so, which
+      // is what distinguishes "held for replay" from "lost".
+      expect(logged).toContain('buffered until placeholder')
+    })
+
+    it('does not log the same drop when loading is false', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // Not loading: a session in the background legitimately has no
+      // placeholder, so discarding is expected and must not spam the log.
+      options.messages.value = []
+      options.loading.value = false
+      simulateWsEvent('content', { text: 'hello' })
+
+      expect(mockAppLogW).not.toHaveBeenCalled()
+    })
+
+    it('logs a cancelled event that arrives with no streaming message', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // Known symptom: the stop button keeps spinning because the cancelled
+      // event had no message to attach to. Log it so the case is identifiable.
+      options.messages.value = []
+      options.loading.value = true
+      simulateWsEvent('cancelled', {})
+
+      const logged = mockAppLogW.mock.calls.map(c => String(c[1])).join('\n')
+      expect(logged).toContain('cancelled')
+      expect(logged).toContain('no streaming message')
+    })
+
+    it('logs events for another session while the current one is loading', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.loading.value = true
+      simulateWsEvent('content', { text: 'elsewhere' }, 'OTHER-SESSION')
+
+      const logged = mockAppLogW.mock.calls.map(c => String(c[1])).join('\n')
+      expect(logged).toContain('session mismatch')
+    })
+
+    it('does not log another session\'s events while idle', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.loading.value = false
+      simulateWsEvent('content', { text: 'elsewhere' }, 'OTHER-SESSION')
+
+      expect(mockAppLogW).not.toHaveBeenCalled()
+    })
+  })
+
+  // Events that arrive before their placeholder are held and replayed, not
+  // dropped. Without this the user saw an empty (or truncated) reply whenever
+  // stream_start was delayed or lost, even though the backend produced it.
+  describe('buffered event replay', () => {
+    it('replays content that arrived before the placeholder existed', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // No placeholder yet (stream_start has not arrived) — content must be
+      // held rather than dropped.
+      options.messages.value = []
+      options.loading.value = true
+      simulateWsEvent('content', { content: 'first chunk' })
+
+      expect(options.messages.value).toHaveLength(0)
+
+      // stream_start arrives and creates the placeholder...
+      simulateWsEvent('stream_start', { message_id: 42 })
+
+      // ...and the held content is applied to it.
+      const streaming = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      expect(streaming).toBeTruthy()
+      const text = (streaming.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+      expect(text).toContain('first chunk')
+    })
+
+    it('preserves arrival order when replaying multiple events', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = []
+      options.loading.value = true
+      simulateWsEvent('content', { content: 'A' })
+      simulateWsEvent('content', { content: 'B' })
+      simulateWsEvent('content', { content: 'C' })
+
+      simulateWsEvent('stream_start', { message_id: 43 })
+
+      const streaming = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      const text = (streaming.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+      // Order is what makes the reply readable; a reordered replay would
+      // silently scramble the answer.
+      expect(text.indexOf('A')).toBeLessThan(text.indexOf('B'))
+      expect(text.indexOf('B')).toBeLessThan(text.indexOf('C'))
+    })
+
+    it('does not replay one session\'s buffered events into another session', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = []
+      options.loading.value = true
+      simulateWsEvent('content', { content: 'belongs to session 1' })
+
+      // Switch away, then let a stream_start arrive for the NEW session.
+      options.currentSessionId.value = 'test-session-2'
+      simulateWsEvent('stream_start', { message_id: 44 }, 'test-session-2')
+
+      const text = options.messages.value
+        .flatMap((m: any) => m.blocks || [])
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('')
+      expect(text).not.toContain('belongs to session 1')
+    })
+
+    it('drops the buffer on session switch instead of carrying it over', async () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = []
+      options.loading.value = true
+      // Fill the buffer with the old session's turn.
+      simulateWsEvent('content', { content: 'old session chunk' })
+
+      // Switch away and back. The watcher that clears the buffer is async, so
+      // let it flush before asserting — otherwise this would pass even without
+      // the clear (the buffer would simply not have been touched yet).
+      options.currentSessionId.value = 'test-session-2'
+      await nextTick()
+      options.currentSessionId.value = 'test-session-1'
+      await nextTick()
+
+      options.messages.value = []
+      options.loading.value = true
+      simulateWsEvent('stream_start', { message_id: 47 })
+
+      const text = options.messages.value
+        .flatMap((m: any) => m.blocks || [])
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('')
+      expect(text).not.toContain('old session chunk')
+    })
+
+    it('bounds the buffer instead of growing without limit', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = []
+      options.loading.value = true
+
+      // Far more events than the buffer holds, with no placeholder ever
+      // appearing. The buffer must not grow unbounded (it would leak for a
+      // stream whose stream_start is lost).
+      for (let i = 0; i < 500; i++) {
+        simulateWsEvent('content', { content: `chunk-${i}` })
+      }
+
+      // A placeholder finally appears; replay must not throw and the newest
+      // chunks must be the ones retained.
+      simulateWsEvent('stream_start', { message_id: 45 })
+
+      const streaming = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      expect(streaming).toBeTruthy()
+      const text = (streaming.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+      expect(text).toContain('chunk-499')
+      expect(text).not.toContain('chunk-0')
+    })
+
+    it('does not replay a stale buffer after done arrived first', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = []
+      options.loading.value = true
+      // Deltas arrive with no placeholder, so they buffer.
+      simulateWsEvent('content', { content: 'orphan' })
+      // The turn then ends. `done` is not gated on stream_start, so it can
+      // arrive first.
+      simulateWsEvent('done', {})
+
+      // A late stream_start (WS reconnect replay, or a backend retry) creates a
+      // fresh placeholder. The stale buffer must NOT be replayed into it: the
+      // previous turn's text would appear inside a bubble that will never
+      // receive another terminal event, leaving the UI streaming forever.
+      simulateWsEvent('stream_start', { message_id: 90 })
+
+      const allText = options.messages.value
+        .flatMap((m: any) => m.blocks || [])
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('')
+      expect(allText).not.toContain('orphan')
+    })
+
+    it('discards the buffer on error and on cancel', () => {
+      for (const terminal of ['error', 'cancelled']) {
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        options.messages.value = []
+        options.loading.value = true
+        simulateWsEvent('content', { content: `orphan-${terminal}` })
+        simulateWsEvent(terminal, {})
+
+        simulateWsEvent('stream_start', { message_id: 91 })
+
+        const allText = options.messages.value
+          .flatMap((m: any) => m.blocks || [])
+          .filter((b: any) => b.type === 'text')
+          .map((b: any) => b.text)
+          .join('')
+        expect(allText).not.toContain(`orphan-${terminal}`)
+      }
+    })
+
+    it('does not buffer content_reset, which is order-sensitive', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = []
+      options.loading.value = true
+      // content_reset clears accumulated content. Replaying it after a
+      // placeholder appears could wipe content that arrived live in between,
+      // so it must be dropped rather than buffered.
+      simulateWsEvent('content_reset', {})
+      simulateWsEvent('content', { content: 'kept' })
+      simulateWsEvent('stream_start', { message_id: 92 })
+
+      const streaming = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      const text = (streaming.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+      expect(text).toContain('kept')
+    })
+
+    it('does not re-buffer an event that still cannot be applied during replay', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = []
+      options.loading.value = true
+      simulateWsEvent('content', { content: 'held' })
+
+      // stream_start creates the placeholder, replaying the held content.
+      simulateWsEvent('stream_start', { message_id: 46 })
+      const afterFirst = options.messages.value
+        .flatMap((m: any) => m.blocks || [])
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('')
+      expect(afterFirst).toContain('held')
+
+      // A second stream_start must be a no-op for replay: the buffer was
+      // cleared, so the content is not applied twice.
+      simulateWsEvent('stream_start', { message_id: 46 })
+      const text = options.messages.value
+        .flatMap((m: any) => m.blocks || [])
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('')
+      expect(text.match(/held/g)?.length).toBe(1)
     })
   })
 })
