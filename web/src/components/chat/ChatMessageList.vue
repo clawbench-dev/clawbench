@@ -1593,14 +1593,17 @@ defineExpose({
    bubble role mixes the accent over its own resting theme background
    (user: --user-msg-color / assistant: --bg-tertiary); the animation pulses
    once and fades out, then the class removal restores the base rule.
+   The highlight class lands on the .chat-message ROW, but the background now
+   lives on the .msg-card bubble — so the animation is anchored there (and the
+   row itself stays transparent).
    Timing mirrors the canonical `line-flash` (assets/code-viewer.css) via
    --flash-duration (0.7s) — keep in sync with LINE_FLASH_MS in
    web/src/utils/domFlash.ts. */
-:deep(.chat-message.user.chat-message-highlight) {
+:deep(.chat-message.user.chat-message-highlight .msg-card) {
   --msg-base-bg: var(--user-msg-color);
   animation: msg-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
 }
-:deep(.chat-message.assistant.chat-message-highlight) {
+:deep(.chat-message.assistant.chat-message-highlight .msg-card) {
   --msg-base-bg: var(--bg-tertiary);
   animation: msg-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
 }
@@ -1616,11 +1619,11 @@ defineExpose({
    REDUCED_FLASH_MS so the highlight never sticks. Each role mixes the accent
    over its own resting bubble background. */
 @media (prefers-reduced-motion: reduce) {
-  :deep(.chat-message.user.chat-message-highlight) {
+  :deep(.chat-message.user.chat-message-highlight .msg-card) {
     animation: none !important;
     background-color: color-mix(in srgb, var(--accent-color) 65%, var(--user-msg-color));
   }
-  :deep(.chat-message.assistant.chat-message-highlight) {
+  :deep(.chat-message.assistant.chat-message-highlight .msg-card) {
     animation: none !important;
     background-color: color-mix(in srgb, var(--accent-color) 35%, var(--bg-tertiary));
   }

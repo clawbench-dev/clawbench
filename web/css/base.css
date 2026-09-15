@@ -310,10 +310,10 @@ html.wallpaper-active .cm-viewer .code-editor-actions {
    (bg-tertiary) and the user bubble (--user-msg-color) at the panel opacity.
    Only the bubble body goes translucent: inner content canvases (code blocks,
    tool cards, markdown tables) keep their own solid fills for readability. */
-html.wallpaper-active .chat-message.assistant {
+html.wallpaper-active .chat-message.assistant .msg-card {
     background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
 }
-html.wallpaper-active .chat-message.user {
+html.wallpaper-active .chat-message.user .msg-card {
     background: color-mix(in srgb, var(--user-msg-color) var(--panel-alpha), transparent);
 }
 
