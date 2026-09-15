@@ -55,18 +55,21 @@ describe('useForgePipelines', () => {
     mockMarkForgeRead.mockResolvedValue({ count: 0 })
   })
 
-  it('defaults to the failure filter', async () => {
-    // A busy repository produces far more green runs than anyone wants to
-    // scroll, and the tab is usually opened to find out what broke.
+  it('defaults to the all filter', async () => {
+    // The list is a history. Defaulting to "failure" hid every successful run,
+    // so the tab looked empty whenever nothing was broken.
     mockFetchForgePipelines.mockResolvedValue({ pipelines: [run(1)], hasMore: false, nextPage: 2, binding })
     const p = useForgePipelines(() => '/proj')
 
-    expect(p.filter.value).toBe('failure')
+    expect(p.filter.value).toBe('all')
     await p.load()
 
+    // "all" means no status parameter at all.
     expect(mockFetchForgePipelines).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'failure', page: 1 }),
+      expect.objectContaining({ page: 1 }),
     )
+    const arg = mockFetchForgePipelines.mock.calls[0][0] as Record<string, unknown>
+    expect(arg.status).toBeUndefined()
     expect(p.pipelines.value).toHaveLength(1)
   })
 
@@ -74,12 +77,30 @@ describe('useForgePipelines', () => {
     mockFetchForgePipelines.mockResolvedValue({ pipelines: [], hasMore: false, nextPage: 2, binding })
     const p = useForgePipelines(() => '/proj')
 
+    // "all" is the default now, so switch away and back to force a reload —
+    // re-selecting the active filter is deliberately a no-op.
+    p.setFilter('failure')
+    await nextTick()
+    mockFetchForgePipelines.mockClear()
+
     p.setFilter('all')
     await nextTick()
     await vi.waitFor(() => expect(mockFetchForgePipelines).toHaveBeenCalled())
 
     const params = mockFetchForgePipelines.mock.calls[0][0]
     expect(params.status).toBeUndefined()
+  })
+
+  it('does not reload when re-selecting the active filter', async () => {
+    mockFetchForgePipelines.mockResolvedValue({ pipelines: [], hasMore: false, nextPage: 2, binding })
+    const p = useForgePipelines(() => '/proj')
+    await p.load()
+    mockFetchForgePipelines.mockClear()
+
+    p.setFilter('all')
+    await nextTick()
+
+    expect(mockFetchForgePipelines).not.toHaveBeenCalled()
   })
 
   it('clears the list without a request when no project is selected', async () => {

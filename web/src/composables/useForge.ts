@@ -294,8 +294,13 @@ export function useForgeDetail() {
     return { item, comments, loading, loadingComments, error, hasMoreComments, open, loadOlderComments, close }
 }
 
-/** Status filters offered on the Pipelines tab, in display order. */
-export const FORGE_PIPELINE_FILTERS = ['failure', 'running', 'all'] as const
+/**
+ * Status filters offered on the Pipelines tab, in display order.
+ *
+ * "all" comes first because it is the default: the active filter should be the
+ * leftmost chip, and the order reads as "everything → narrowing".
+ */
+export const FORGE_PIPELINE_FILTERS = ['all', 'failure', 'running'] as const
 export type ForgePipelineFilter = typeof FORGE_PIPELINE_FILTERS[number]
 
 /**
@@ -305,16 +310,16 @@ export type ForgePipelineFilter = typeof FORGE_PIPELINE_FILTERS[number]
  * only the latest request writes) but is a separate composable because the
  * filter vocabulary and the row data are entirely different from issues/PRs.
  *
- * The default filter is "failure": a busy repository produces far more green
- * runs than anyone wants to scroll through, and the reason to open this tab is
- * almost always to find out what broke.
+ * The default filter is "all": the list is a history, and hiding runs by default
+ * made the tab look empty (or stale) whenever nothing happened to be failing.
+ * A user who wants only the breakage picks "failure" explicitly.
  */
 export function useForgePipelines(getProjectPath: () => string) {
     const pipelines = ref<ForgePipelineRun[]>([])
     const loading = ref(false)
     const loadingMore = ref(false)
     const error = ref<{ message: string; code: string } | null>(null)
-    const filter = ref<ForgePipelineFilter>('failure')
+    const filter = ref<ForgePipelineFilter>('all')
     const hasMore = ref(false)
     const nextPage = ref(1)
 
