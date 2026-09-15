@@ -115,6 +115,28 @@ function onTaskCompleted(task: TaskItem) {
 
 // --- Module-level data methods ---
 
+/**
+ * Value-compare two task records from the list endpoint.
+ *
+ * The list payload is flat (primitives plus ISO time strings), so a field-by-
+ * field comparison is exact. Nested values are compared by value too, so a
+ * future array/object field cannot silently reintroduce the reference-equality
+ * blind spot.
+ */
+function sameTask(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+    if (a === b) return true
+    const aKeys = Object.keys(a)
+    if (aKeys.length !== Object.keys(b).length) return false
+    for (const key of aKeys) {
+        const av = a[key]
+        const bv = b[key]
+        if (av === bv) continue
+        if (typeof av !== 'object' || typeof bv !== 'object' || av === null || bv === null) return false
+        if (JSON.stringify(av) !== JSON.stringify(bv)) return false
+    }
+    return true
+}
+
 async function loadTasks() {
     // Abort previous in-flight request to prevent stale response overwriting fresh data
     if (loadTasksAbortController) {
@@ -168,10 +190,16 @@ async function loadTasks() {
             }
         }
 
-        // Skip store update if tasks are identical (same reference avoids unnecessary reactivity)
+        // Skip the store write only when every task is byte-for-byte equal to
+        // what is already there. Comparing a hand-picked subset of fields (as
+        // this did before) meant an edit to name/cronExpr/prompt/agentId/
+        // repeatMode/triggerMode/eventTypes produced a list that looked
+        // "unchanged", so the store kept the pre-edit objects and the detail
+        // view — which reads the task out of the store — showed stale values
+        // until a full page reload.
         const currentTasks = store.state.tasks as unknown as TaskItem[]
         const tasksUnchanged = currentTasks.length === newTasks.length &&
-            currentTasks.every((t, i) => t.id === newTasks[i].id && t.status === newTasks[i].status && t.runCount === newTasks[i].runCount && t.unreadCount === newTasks[i].unreadCount && t.runningCount === newTasks[i].runningCount)
+            currentTasks.every((t, i) => sameTask(t as unknown as Record<string, unknown>, newTasks[i] as unknown as Record<string, unknown>))
         if (!tasksUnchanged) {
             store.state.tasks = newTasks as unknown as Array<Record<string, unknown>>
         }

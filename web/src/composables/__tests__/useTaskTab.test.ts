@@ -256,6 +256,77 @@ describe('useTaskTab', () => {
       expect(store.state.tasks).toBe(originalTasksRef)
     })
 
+    it('skips store update when a structurally equal but distinct payload arrives', async () => {
+      // The API deserializes fresh objects on every poll, so "identical" must
+      // mean value-equal, not reference-equal. Otherwise every poll would
+      // replace the array and re-render every consumer.
+      const { loadTasks } = useTaskTab()
+      const task = makeTask({ id: 1, name: 'A', cronExpr: '0 9 * * *' })
+
+      mockTasksResponse([task])
+      await loadTasks()
+
+      const originalTasksRef = store.state.tasks
+
+      mockTasksResponse([{ ...task }])
+      await loadTasks()
+
+      expect(store.state.tasks).toBe(originalTasksRef)
+    })
+
+    // Editing a task in the form changes fields that the old subset guard
+    // (id/status/runCount/unreadCount/runningCount) never looked at, so the
+    // store kept the pre-edit objects and the detail view — which reads the
+    // task out of the store — showed stale values until a page reload.
+    it.each([
+      ['name', 'Renamed Task'],
+      ['cronExpr', '0 3 * * *'],
+      ['prompt', 'a brand new prompt'],
+      ['agentId', 'agent-2'],
+      ['repeatMode', 'limited'],
+      ['maxRuns', 7],
+      ['triggerMode', 'event'],
+      ['eventTypes', 'pr.opened'],
+      ['nextRunAt', '2026-01-01T00:00:00Z'],
+    ] as const)('updates store when the edited field %s changes', async (key, value) => {
+      const { loadTasks } = useTaskTab()
+
+      mockTasksResponse([makeTask({ id: 1, [key]: key === 'maxRuns' ? 0 : 'before' })])
+      await loadTasks()
+
+      mockTasksResponse([makeTask({ id: 1, [key]: value })])
+      await loadTasks()
+
+      expect((store.state.tasks[0] as any)[key]).toBe(value)
+    })
+
+    it('updates store when a nested field changes', async () => {
+      // Nested values must compare by value too — a reference compare on an
+      // object field would silently report "unchanged".
+      const { loadTasks } = useTaskTab()
+
+      mockTasksResponse([makeTask({ id: 1, runningExecutions: [{ id: 'e1' }] })])
+      await loadTasks()
+
+      mockTasksResponse([makeTask({ id: 1, runningExecutions: [{ id: 'e1' }, { id: 'e2' }] })])
+      await loadTasks()
+
+      expect((store.state.tasks[0] as any).runningExecutions).toHaveLength(2)
+    })
+
+    it('updates store when a field is removed from the payload', async () => {
+      const { loadTasks } = useTaskTab()
+
+      mockTasksResponse([makeTask({ id: 1, sessionId: 's-1' })])
+      await loadTasks()
+
+      const withoutField = makeTask({ id: 1 })
+      mockTasksResponse([withoutField])
+      await loadTasks()
+
+      expect((store.state.tasks[0] as any).sessionId).toBeUndefined()
+    })
+
     it('updates store when task status changes', async () => {
       const { loadTasks } = useTaskTab()
 
