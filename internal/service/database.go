@@ -178,14 +178,42 @@ func WriteExecContext(ctx context.Context, query string, args ...any) (sql.Resul
 func WriteBegin() (*sql.Tx, error) {
 	waitStart := time.Now()
 	writeMu.Lock()
-	if wait := time.Since(waitStart); wait >= slowWriteThreshold {
-		slog.Warn("db: slow write", slog.String("op", "BEGIN tx"), slog.Duration("lock_wait", wait))
-	}
+	lockedAt := time.Now()
+
+	// On success the lock is deliberately LEFT HELD: the caller runs a
+	// multi-statement transaction under it and registers its own
+	// `defer writeMu.Unlock()`. But db.Begin() panics when db is nil (the
+	// teardown condition the summary backfill path hits), and unlocking only on
+	// the returned-error path would skip that panic — leaving the global write
+	// mutex held forever, with every later writer blocked in Lock and no CPU use
+	// or error to explain it. Same wedge timedWrite was fixed for, so the panic
+	// path is covered by a guard that releases the lock unless the caller has
+	// taken ownership of it.
+	//
+	// A slow wait is still reported on the success path (as before): a BEGIN
+	// that queued behind writeMu is the contention worth seeing. It is logged
+	// synchronously and thus while the lock is held — accepted here because this
+	// path runs once per transaction rather than once per statement, so the
+	// added log I/O is not measurable against the wait it describes.
+	callerOwnsLock := false
+	defer func() {
+		if callerOwnsLock {
+			if wait := lockedAt.Sub(waitStart); wait >= slowWriteThreshold {
+				slog.Warn("db: slow write", slog.String("op", "BEGIN tx"), slog.Duration("lock_wait", wait))
+			}
+			return
+		}
+		wait, execDur := lockedAt.Sub(waitStart), time.Since(lockedAt)
+		writeMu.Unlock()
+		reportSlowWrite(slowWrite{op: "BEGIN tx", wait: wait, exec: execDur})
+	}()
+
 	tx, err := db.Begin()
 	if err != nil {
-		writeMu.Unlock()
+		return nil, err
 	}
-	return tx, err
+	callerOwnsLock = true
+	return tx, nil
 }
 
 // DBReady returns true if the database has been initialized.

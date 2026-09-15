@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // writeOpLabel must reduce a statement to a short label without leaking any
@@ -105,6 +107,107 @@ func (h *blockingLogHandler) unblock() { h.releaseOnce.Do(func() { close(h.relea
 
 func (h *blockingLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h *blockingLogHandler) WithGroup(string) slog.Handler      { return h }
+
+// WriteBegin must not leave writeMu held when db.Begin() panics.
+//
+// WriteBegin is the transaction twin of timedWrite: it locks writeMu and then
+// calls into database/sql. It released the lock only on the returned-error
+// path, so a panic inside db.Begin() (db is nil — the same teardown condition
+// that wedged timedWrite) skipped the unlock entirely. Its callers register
+// `defer writeMu.Unlock()` only AFTER WriteBegin returns, so they cannot cover
+// this window either: the global write mutex stays held forever, every later
+// writer blocks in Lock with no CPU and no error, and the process wedges.
+//
+// This asserts the lock is reacquirable after a panic, which no return value
+// exposes.
+func TestWriteBegin_ReleasesLockOnPanic(t *testing.T) {
+	origDB := db
+	db = nil // db.Begin() on a nil *sql.DB panics
+	t.Cleanup(func() { db = origDB })
+
+	assert.Panics(t, func() {
+		_, _ = WriteBegin()
+	})
+
+	acquired := make(chan struct{})
+	go func() {
+		writeMu.Lock()
+		writeMu.Unlock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("writeMu is still held after db.Begin() panicked — every later writer would block forever")
+	}
+}
+
+// WriteBegin must LEAVE writeMu held on success: the caller runs a
+// multi-statement transaction under it. This is the opposite direction of
+// TestWriteBegin_ReleasesLockOnPanic, and it is the reason the fix uses an
+// ownership flag rather than an unconditional deferred unlock — a plain
+// `defer writeMu.Unlock()` would release the lock before the caller's
+// transaction commits, silently destroying the mutual exclusion that
+// serializes every write in the process.
+func TestWriteBegin_KeepsLockOnSuccess(t *testing.T) {
+	setupExecutorDB(t)
+
+	tx, err := WriteBegin()
+	if err != nil {
+		t.Fatalf("WriteBegin: %v", err)
+	}
+	if tx == nil {
+		t.Fatal("WriteBegin returned a nil tx with a nil error")
+	}
+	// Held if a concurrent acquisition cannot complete.
+	acquired := make(chan struct{})
+	go func() {
+		writeMu.Lock()
+		writeMu.Unlock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+		t.Fatal("writeMu was released on the success path — the caller's transaction is no longer protected")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	_ = tx.Rollback()
+	writeMu.Unlock()
+}
+
+// WriteBegin must still report a slow wait on the success path.
+//
+// The panic fix routes the success path through an ownership flag, which makes
+// it easy to drop the report by accident (the first version of the fix did:
+// it returned early on the success path and a BEGIN that queued behind writeMu
+// for seconds became invisible). A slow BEGIN is the contention worth seeing —
+// it is the moment a user-cancel's Finalize transaction is stuck — so this
+// pins that the report survives.
+func TestWriteBegin_ReportsSlowWaitOnSuccess(t *testing.T) {
+	setupExecutorDB(t)
+
+	readLogs := captureLogs(t)
+
+	// Hold the lock past the threshold so the BEGIN below records a slow wait.
+	writeMu.Lock()
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		writeMu.Unlock()
+	}()
+
+	tx, err := WriteBegin()
+	if err != nil {
+		t.Fatalf("WriteBegin: %v", err)
+	}
+	logs := readLogs()
+	_ = tx.Rollback()
+	writeMu.Unlock()
+
+	if !strings.Contains(logs, "BEGIN tx") {
+		t.Fatalf("a BEGIN that waited past %v was not reported; logs:\n%s", slowWriteThreshold, logs)
+	}
+}
 
 // timedWrite must release writeMu before emitting its slow-write report.
 //
