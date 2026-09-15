@@ -145,3 +145,37 @@ describe('ToolDetailDrawer — restore on mount', () => {
     expect(arg?.classList?.contains('tool-detail-body')).toBe(true)
   })
 })
+
+// A closed drawer renders no body at all. The restore hook must tolerate that
+// rather than throw — onUpdated still fires on the component, and a non-null
+// assumption would break every update while the drawer is shut.
+describe('ToolDetailDrawer — restore with no rendered body', () => {
+  beforeEach(() => {
+    vi.mocked(restoreAskStatesInContainer).mockClear()
+  })
+
+  it('does not throw and does not restore when the body is absent', async () => {
+    // show=false → BottomSheet renders nothing, so bodyRef stays null.
+    const wrapper = mount(ToolDetailDrawer, {
+      props: { show: false, toolName: 'AskUserQuestion', toolInputHtml: '' },
+      global: {
+        plugins: [i18n],
+        stubs: {
+          BottomSheet: { template: '<div v-if="open"><slot /></div>', props: ['open'] },
+          LoadingIndicator: { template: '<span />' },
+          TableRowModal: { template: '<span />' },
+          CheckCircle2: LucideStub,
+          XCircle: LucideStub,
+        },
+      },
+    })
+    wrappers.push(wrapper)
+    await nextTick()
+
+    expect(wrapper.find('.tool-detail-body').exists()).toBe(false)
+    // A forced update while closed must be harmless.
+    await wrapper.setProps({ toolSummary: 'changed' })
+    await nextTick()
+    expect(restoreAskStatesInContainer).not.toHaveBeenCalled()
+  })
+})
