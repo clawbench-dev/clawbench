@@ -67,6 +67,44 @@ func TestListItems_IssuesExcludesPullRequests(t *testing.T) {
 	assert.Equal(t, "alice", res.Items[0].Author.Login)
 }
 
+// TestListItems_PullsCarryHeadBranch: the head branch is the key the CI lookup
+// uses, so a PR that arrives without it would silently show no pipelines.
+func TestListItems_PullsCarryHeadBranch(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"number":5,"title":"pr","state":"open","user":{"login":"carol"},
+			 "head":{"ref":"feat/login-fix"},
+			 "html_url":"https://github.com/acme/widgets/pull/5",
+			 "updated_at":"2026-09-09T12:00:00Z"}
+		]`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{Type: forge.ItemTypeChangeRequest})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, "feat/login-fix", res.Items[0].SourceBranch)
+}
+
+// TestListItems_IssuesHaveNoHeadBranch: an issue has no branch, and inventing one
+// would make the CI lookup query a branch that does not exist.
+func TestListItems_IssuesHaveNoHeadBranch(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"number":5,"title":"issue","state":"open","user":{"login":"carol"},
+			 "html_url":"https://github.com/acme/widgets/issues/5",
+			 "updated_at":"2026-09-09T12:00:00Z"}
+		]`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{Type: forge.ItemTypeIssue})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Empty(t, res.Items[0].SourceBranch)
+}
+
+// TestListItems_PullsMergedState covers the merged normalization.
 func TestListItems_PullsMergedState(t *testing.T) {
 	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "/repos/acme/widgets/pulls")

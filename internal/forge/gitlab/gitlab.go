@@ -339,6 +339,8 @@ type gitlabItem struct {
 	MergedAt       string       `json:"merged_at"`
 	// MR-only fields.
 	Draft bool `json:"draft"`
+	// SourceBranch is the MR's head branch. Issues omit it.
+	SourceBranch string `json:"source_branch"`
 }
 
 type gitlabUser struct {
@@ -373,6 +375,8 @@ func (g gitlabItem) toItem(typ forge.ItemType) forge.Item {
 		URL:          g.WebURL,
 		CreatedAt:    parseTime(g.CreatedAt),
 		UpdatedAt:    parseTime(g.UpdatedAt),
+		// MR-only; an issue payload leaves it empty.
+		SourceBranch: g.SourceBranch,
 	}
 	if state == forge.StateMerged && g.MergedAt != "" {
 		t := parseTime(g.MergedAt)

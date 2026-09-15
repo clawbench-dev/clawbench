@@ -57,6 +57,7 @@
         :number="detailNumber"
         @back="closeDetail"
         @quote="onQuote"
+        @open-pipeline="onOpenItemPipeline"
       />
 
       <template v-else>
@@ -636,6 +637,21 @@ function onOpenLinkedPr(number: number) {
   pipelineDetailId.value = 0
   detailNumber.value = number
   void items.load()
+}
+
+/**
+ * Open one of a change request's CI runs, from the PR detail's CI section.
+ *
+ * The reverse of onOpenLinkedPr: switch to the Pipelines tab and point the
+ * pipeline detail at that run. The pipeline list is loaded so closing the detail
+ * lands on a populated list rather than an empty one (the same reason
+ * onOverviewOpenItem loads it).
+ */
+function onOpenItemPipeline(runId: number) {
+  activeTab.value = 'pipeline'
+  detailNumber.value = 0
+  pipelineDetailId.value = runId
+  void pipelines.load()
 }
 
 // Register the drill-down back handler so the edge-swipe gesture and the Android

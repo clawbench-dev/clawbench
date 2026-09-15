@@ -2413,6 +2413,13 @@ paths:
       tags: [Forge]
       summary: 议题 / 合并请求详情
       operationId: forgeItem
+      description: |
+        返回单个条目（议题或合并请求）的详情。
+
+        响应中的 `sourceBranch` 是合并请求的**源分支**（head branch），议题为空。
+        它存在的原因是 CI 运行在 GitHub 侧按分支检索：没有它就无法定位该变更的
+        流水线。但**流水线列表本身不在这里返回**——见 `/api/forge/item-pipelines`，
+        那是一次单独的、按需的请求。
       parameters:
         - name: type
           in: query
@@ -2426,7 +2433,7 @@ paths:
             type: integer
       responses:
         "200":
-          description: 条目详情
+          description: 条目详情（`item` 含 `sourceBranch`，合并请求才有）
 
   /api/forge/comments:
     get:
@@ -2546,6 +2553,51 @@ paths:
           description: id 非法，或该平台不提供 CI 能力
         "404":
           description: 项目未绑定仓库，或运行不存在
+
+  /api/forge/item-pipelines:
+    get:
+      tags: [Forge]
+      summary: 某个变更请求的流水线列表
+      operationId: forgeItemPipelines
+      description: |
+        返回某个变更请求（PR / MR）关联的 CI 运行，供 PR 详情页的 CI 区块使用。
+        这是 `/api/forge/pipeline` 上「运行 → 关联 PR」的反方向：回答「这个变更
+        通过 CI 了吗」，即阅读 PR 时最关心的问题。
+
+        **为什么是独立端点而不是 `/api/forge/item` 的一个字段**：它每次调用都会
+        产生一次上游请求，因此只在用户真正展开 CI 区块时才应获取；并入条目载荷
+        会让每次打开 PR 都为一个多数人不会展开的列表付费。
+
+        平台差异：GitHub 用条目的源分支过滤运行列表（拿到完整字段）；GitLab 用
+        `/merge_requests/:iid/pipelines`（覆盖 fork 源分支的情形，但该端点返回
+        精简结构，**没有耗时、没有触发者**）。客户端应把缺失的耗时按「未提供」
+        处理，而不是当作 0。
+
+        平台不支持 CI、或该变更没有运行，均返回 200 且 `pipelines` 为空数组——
+        两者都不是错误。
+
+        `number` 非法或缺失返回 400；项目未绑定仓库返回 404 + `code=NoForgeBinding`。
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [issue, pr]
+          description: 只有 `pr` 会有流水线；`issue` 返回空列表
+        - name: number
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: 变更请求编号（GitHub PR number / GitLab merge-request iid）
+      responses:
+        "200":
+          description: 流水线列表（`pipelines`、`binding`）
+        "400":
+          description: number 非法或缺失
+        "404":
+          description: 项目未绑定仓库
 
   /api/forge/binding:
     get:

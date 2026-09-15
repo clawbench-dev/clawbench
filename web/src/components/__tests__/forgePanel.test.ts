@@ -980,6 +980,39 @@ describe('ForgePanelContent unread tab', () => {
     expect(tabs[3].classes()).not.toContain('active')
   })
 
+  it('opens a pipeline in-panel when the PR detail emits open-pipeline', async () => {
+    // The reverse of the linked-PR jump: the PR detail's CI section knows only
+    // the run id, so the host switches to the Pipelines tab and opens it.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    // Get into a PR detail first, as a user would.
+    wrapper.findComponent({ name: 'ForgeOverviewList' }).vm.$emit('open-item', {
+      type: 'pr', number: 455, runId: 0, itemKey: 'pr/455',
+    })
+    await flushPromises()
+    const prDetail = wrapper.findComponent({ name: 'ForgeDetail' })
+    expect(prDetail.exists()).toBe(true)
+
+    prDetail.vm.$emit('open-pipeline', 777)
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'ForgeDetail' }).exists()).toBe(false)
+    const pipeDetail = wrapper.findComponent({ name: 'ForgePipelineDetail' })
+    expect(pipeDetail.exists()).toBe(true)
+    expect(pipeDetail.props('runId')).toBe(777)
+    expect(mockPipelinesLoad).toHaveBeenCalled()
+
+    // Closing lands on the Pipelines tab, not back on the PR list.
+    await pipeDetail.vm.$emit('back')
+    await flushPromises()
+    const tabs = wrapper.findAll('.forge-tab')
+    expect(tabs[3].classes(), 'the Pipelines tab must be the selected one').toContain('active')
+  })
+
   it('header "mark all read" also clears the unread rows', async () => {
     // Without this the badge would hit zero while the unread rows kept their
     // dots — the list and the badge disagreeing, which is the bug this feature

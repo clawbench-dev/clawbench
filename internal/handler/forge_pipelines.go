@@ -230,6 +230,92 @@ func ServeForgePipelines(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ServeForgeItemPipelines lists the CI runs attached to one change request, for
+// the "CI" section of the PR detail view.
+//
+// This is the reverse of the linked-PR lookup on /api/forge/pipeline: it answers
+// "did this change pass CI?", which is what a reviewer wants while reading a PR.
+//
+// It is a separate endpoint rather than a field on /api/forge/item because it
+// costs a request per call, so it must only be fetched when the user actually
+// opens the CI section — folding it into the item payload would charge every PR
+// open for a list most users never expand.
+//
+//	GET /api/forge/item-pipelines?type=pr&number=N
+//
+// A platform without CI support, or a change request with no runs, both answer
+// 200 with an empty list: neither is an error.
+func ServeForgeItemPipelines(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	number := atoiDefault(r.URL.Query().Get("number"), 0)
+	if number <= 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
+		return
+	}
+	// Only a change request can have CI attached in this sense; an issue number
+	// would address a different resource.
+	typ := forge.ItemTypeIssue
+	if r.URL.Query().Get("type") == string(forge.ItemTypeChangeRequest) {
+		typ = forge.ItemTypeChangeRequest
+	}
+
+	pf, err := service.GetProjectForge(projectPath)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	if pf == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{
+			strReqError: "no repository bound to this project",
+			jsonCode:    jsonNoForgeBinding,
+		})
+		return
+	}
+
+	provider, err := newForgeProvider(pf)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{strReqError: err.Error()})
+		return
+	}
+	lister, ok := provider.(forge.PipelineItemLister)
+	if !ok {
+		// The platform has no CI surface. Not an error: the section is simply
+		// absent, which the client renders by hiding it.
+		writeJSON(w, http.StatusOK, map[string]any{
+			jsonPipelines: []forgePipelineRunView{},
+			jsonBinding:   bindingView(pf),
+		})
+		return
+	}
+
+	item, err := provider.GetItem(forgeContext(r), typ, number)
+	if err != nil {
+		writeForgeError(w, err, pf)
+		return
+	}
+
+	runs, err := lister.ListPipelinesForItem(forgeContext(r), item, 0)
+	if err != nil {
+		writeForgeError(w, err, pf)
+		return
+	}
+
+	views := make([]forgePipelineRunView, 0, len(runs))
+	for i := range runs {
+		views = append(views, toPipelineRunView(pf, runs[i]))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		jsonPipelines: views,
+		jsonBinding:   bindingView(pf),
+	})
+}
+
 // collectPipelineRuns returns one page of runs matching an optional status
 // filter, plus whether further pages may exist.
 //

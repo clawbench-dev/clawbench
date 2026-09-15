@@ -152,6 +152,37 @@ func TestGetItem_RejectsBadInput(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestGetItem_MergeRequestCarriesSourceBranch: the MR's head branch is what the
+// CI lookup keys on for GitHub, and the client displays it; an MR that arrived
+// without it would silently lose both.
+func TestGetItem_MergeRequestCarriesSourceBranch(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v4/projects/group%2Fwidgets/merge_requests/7", r.URL.EscapedPath())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"iid":7,"title":"mr","state":"opened",
+			"source_branch":"feat/login-fix","target_branch":"main",
+			"author":{"username":"a"},"updated_at":"2026-09-10T00:00:00Z"}`))
+	}), "group", "widgets")
+
+	item, err := p.GetItem(context.Background(), forge.ItemTypeChangeRequest, 7)
+	require.NoError(t, err)
+	assert.Equal(t, "feat/login-fix", item.SourceBranch)
+}
+
+// TestGetItem_IssueHasNoSourceBranch: GitLab omits source_branch for issues, and
+// the empty value must survive rather than being invented.
+func TestGetItem_IssueHasNoSourceBranch(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"iid":9,"title":"issue","state":"opened",
+			"author":{"username":"a"},"updated_at":"2026-09-10T00:00:00Z"}`))
+	}), "group", "widgets")
+
+	item, err := p.GetItem(context.Background(), forge.ItemTypeIssue, 9)
+	require.NoError(t, err)
+	assert.Empty(t, item.SourceBranch)
+}
+
 func TestListComments_SkipsSystemNotes(t *testing.T) {
 	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v4/projects/group%2Fwidgets/issues/7/notes", r.URL.EscapedPath())

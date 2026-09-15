@@ -265,11 +265,75 @@ func TestListPipelineJobs_InProgressHasNoConclusion(t *testing.T) {
 	assert.Zero(t, jobs[0].Duration, "a job still running has no duration")
 }
 
+// TestListPipelinesForItem_FiltersByHeadBranch: GitHub has no "runs for this PR"
+// endpoint, so the head branch from the item is the lookup key.
+func TestListPipelinesForItem_FiltersByHeadBranch(t *testing.T) {
+	var gotBranch string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBranch = r.URL.Query().Get("branch")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workflow_runs":[
+			{"id":7,"name":"CI","run_number":3,"status":"completed","conclusion":"failure",
+			 "head_branch":"feat/x","created_at":"2026-09-14T12:00:00Z",
+			 "updated_at":"2026-09-14T12:05:00Z"},
+			{"id":6,"name":"Lint","status":"completed","conclusion":"success",
+			 "head_branch":"feat/x","created_at":"2026-09-14T11:00:00Z",
+			 "updated_at":"2026-09-14T11:05:00Z"}
+		]}`))
+	}))
+
+	item := forge.Item{Type: forge.ItemTypeChangeRequest, Number: 455, SourceBranch: "feat/x"}
+	runs, err := p.ListPipelinesForItem(context.Background(), item, 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, "feat/x", gotBranch, "the item's head branch is the filter")
+	require.Len(t, runs, 2)
+	assert.Equal(t, int64(7), runs[0].ID)
+}
+
+// TestListPipelinesForItem_NoSourceBranchSkipsTheRequest: an item without a head
+// branch (an issue, or a payload that omitted it) has no CI to show, and issuing
+// an unfiltered request would return the whole repository's runs.
+func TestListPipelinesForItem_NoSourceBranchSkipsTheRequest(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("no request should be issued without a head branch")
+	}))
+
+	runs, err := p.ListPipelinesForItem(context.Background(), forge.Item{Number: 1}, 0)
+	require.NoError(t, err)
+	assert.Empty(t, runs)
+}
+
+// TestListPipelinesForItem_RespectsLimit: a long-lived PR accumulates runs, and
+// the caller renders a summary rather than a history.
+func TestListPipelinesForItem_RespectsLimit(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "2", r.URL.Query().Get("per_page"), "the limit is pushed to the API")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workflow_runs":[
+			{"id":3,"status":"completed","conclusion":"success","head_branch":"b",
+			 "created_at":"2026-09-14T12:00:00Z","updated_at":"2026-09-14T12:05:00Z"},
+			{"id":2,"status":"completed","conclusion":"success","head_branch":"b",
+			 "created_at":"2026-09-14T11:00:00Z","updated_at":"2026-09-14T11:05:00Z"},
+			{"id":1,"status":"completed","conclusion":"success","head_branch":"b",
+			 "created_at":"2026-09-14T10:00:00Z","updated_at":"2026-09-14T10:05:00Z"}
+		]}`))
+	}))
+
+	item := forge.Item{Type: forge.ItemTypeChangeRequest, Number: 1, SourceBranch: "b"}
+	runs, err := p.ListPipelinesForItem(context.Background(), item, 2)
+	require.NoError(t, err)
+	assert.Len(t, runs, 2, "the limit caps the result even if the API returns more")
+}
+
 // TestProviderSatisfiesPipelineInterfaces is the compile-time contract: the
 // adapter must be usable wherever the optional capabilities are expected.
 func TestProviderSatisfiesPipelineInterfaces(t *testing.T) {
 	var _ forge.PipelineLister = (*Provider)(nil)
 	var _ forge.PipelineJobLister = (*Provider)(nil)
+	// GitHub reports the run's PRs inline, so it must NOT need the resolver;
+	// but it can list a PR's runs by head branch.
+	var _ forge.PipelineItemLister = (*Provider)(nil)
 }
 
 // TestListPipelineRuns_AttachesLinkedPullRequests: GitHub reports the run's

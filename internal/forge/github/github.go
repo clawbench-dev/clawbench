@@ -348,6 +348,8 @@ func convertPull(pr *gogithub.PullRequest) forge.Item {
 		URL:          pr.GetHTMLURL(),
 		CreatedAt:    pr.GetCreatedAt().Time,
 		UpdatedAt:    pr.GetUpdatedAt().Time,
+		// The head branch is what the PR's CI runs are filtered by.
+		SourceBranch: pr.GetHead().GetRef(),
 	}
 	if merged {
 		if t := pr.GetMergedAt(); !t.IsZero() {

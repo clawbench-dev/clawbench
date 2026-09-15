@@ -5,6 +5,7 @@ import {
     fetchForgeComments,
     fetchForgePipelines,
     fetchForgePipeline,
+    fetchForgeItemPipelines,
     fetchForgeUnreadItems,
     markForgeRead,
     type ForgeItem,
@@ -502,6 +503,63 @@ export function useForgePipelineDetail() {
  * leftmost one, and the order reads as "what needs me → what I have seen".
  */
 export const FORGE_ACTIVITY_FILTERS: readonly ForgeActivityFilter[] = ['unread', 'read', 'all']
+
+/**
+ * useForgeItemPipelines lists the CI runs of one change request, for the PR
+ * detail's collapsible CI section.
+ *
+ * Loaded on demand (when the section is first expanded) rather than with the
+ * item, because it costs an upstream request and most PR opens do not expand it.
+ * The result is cached for the lifetime of the detail view so collapsing and
+ * re-expanding does not re-request.
+ */
+export function useForgeItemPipelines() {
+    const pipelines = ref<ForgePipelineRun[]>([])
+    const loading = ref(false)
+    const error = ref<{ message: string; code: string } | null>(null)
+    /** False until the first load settles, so the UI can tell "empty" from
+     *  "not fetched yet". */
+    const loaded = ref(false)
+
+    let abort: AbortController | null = null
+
+    async function load(type: 'issue' | 'pr', number: number) {
+        if (number <= 0) return
+        // Already fetched for this item: keep the cached rows.
+        if (loaded.value) return
+        abort?.abort()
+        abort = new AbortController()
+
+        loading.value = true
+        error.value = null
+        try {
+            const res = await fetchForgeItemPipelines(type, number, abort.signal)
+            pipelines.value = res.pipelines ?? []
+            loaded.value = true
+        } catch (err) {
+            pipelines.value = []
+            // A failed load must not read as "this change has no CI".
+            loaded.value = false
+            if (err instanceof ForgeApiError) {
+                error.value = { message: err.message, code: err.code }
+            } else {
+                error.value = { message: String(err), code: 'ForgeError' }
+            }
+        } finally {
+            loading.value = false
+        }
+    }
+
+    /** Reset for a different item, so the cache does not leak across items. */
+    function reset() {
+        abort?.abort()
+        pipelines.value = []
+        error.value = null
+        loaded.value = false
+    }
+
+    return { pipelines, loading, error, loaded, load, reset }
+}
 
 /**
  * useForgeUnreadItems lists the activity items for the project's bound

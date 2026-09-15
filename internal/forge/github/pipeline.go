@@ -91,6 +91,52 @@ func (p *Provider) ListPipelineJobs(ctx context.Context, runID int64) ([]forge.P
 	return out, nil
 }
 
+// ListPipelinesForItem returns the workflow runs attached to a change request,
+// newest first.
+//
+// The head branch is the lookup key: GitHub has no "runs for this PR" endpoint,
+// but every run carries its head branch and the list endpoint accepts a `branch`
+// filter, so one request answers it. The branch comes from the item itself, which
+// is why Item carries SourceBranch.
+//
+// `limit` caps the result because the caller renders a summary list, not a
+// history: a long-lived PR accumulates many runs and only the recent ones are
+// interesting. A limit <= 0 means the default.
+func (p *Provider) ListPipelinesForItem(ctx context.Context, item forge.Item, limit int) ([]forge.PipelineRun, error) {
+	if item.SourceBranch == "" {
+		// Nothing to filter on. An issue (or a payload that omitted the branch)
+		// has no CI to show; that is an empty result, not an error.
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = defaultItemPipelineLimit
+	}
+
+	runs, _, err := p.client.Actions.ListRepositoryWorkflowRuns(ctx, p.owner, p.repo, &gogithub.ListWorkflowRunsOptions{
+		Branch: item.SourceBranch,
+		ListOptions: gogithub.ListOptions{
+			Page:    1,
+			PerPage: perPageOrDefault(limit),
+		},
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	out := make([]forge.PipelineRun, 0, len(runs.WorkflowRuns))
+	for _, r := range runs.WorkflowRuns {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, convertWorkflowRun(r))
+	}
+	return out, nil
+}
+
+// defaultItemPipelineLimit bounds the per-item run list. A PR's CI history is
+// unbounded in principle, and the UI shows a short summary.
+const defaultItemPipelineLimit = 10
+
 // convertWorkflowRun normalizes one GitHub run.
 //
 // GitHub splits the outcome in two: `status` says where the run is

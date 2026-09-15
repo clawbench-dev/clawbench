@@ -203,6 +203,97 @@ func mergeRequestRef(iid int, title, webBase, projectPath string) forge.Pipeline
 	return pr
 }
 
+// gitlabMRPipeline is the subset of the MR-pipelines payload this package uses.
+//
+// It is deliberately a separate shape from gitlabPipeline: this endpoint returns
+// a REDUCED object — id, iid, project_id, sha, ref, status, source, web_url and
+// timestamps on newer instances — with no `user`, and no duration. Parsing it
+// with gitlabPipeline would silently yield empty fields for everything the
+// endpoint omits.
+type gitlabMRPipeline struct {
+	ID        int64  `json:"id"`
+	IID       int    `json:"iid"`
+	Status    string `json:"status"`
+	Ref       string `json:"ref"`
+	SHA       string `json:"sha"`
+	Source    string `json:"source"`
+	WebURL    string `json:"web_url"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// ListPipelinesForItem returns the pipelines of one merge request, newest first.
+//
+// GitLab has a dedicated endpoint for this, so unlike GitHub it does not filter
+// the repository-wide list by branch: `/merge_requests/:iid/pipelines` returns
+// exactly the pipelines GitLab associates with the MR, which also covers the case
+// a branch filter would miss (an MR whose source branch lives in a fork).
+//
+// The endpoint's payload is reduced, so the returned runs carry no actor and no
+// duration. Callers must render those as unknown rather than as zero — the
+// frontend already treats a zero duration as "not reported".
+func (p *Provider) ListPipelinesForItem(ctx context.Context, item forge.Item, limit int) ([]forge.PipelineRun, error) {
+	// Only a change request has pipelines in this sense; an issue number would
+	// address a different resource entirely.
+	if item.Type != forge.ItemTypeChangeRequest || item.Number <= 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = defaultItemPipelineLimit
+	}
+
+	q := url.Values{}
+	q.Set("per_page", strconv.Itoa(perPageOrDefault(limit)))
+
+	path := fmt.Sprintf("/projects/%s/merge_requests/%d/pipelines", p.project, item.Number)
+	var raw []gitlabMRPipeline
+	if err := p.get(ctx, path, q, &raw); err != nil {
+		return nil, err
+	}
+
+	out := make([]forge.PipelineRun, 0, len(raw))
+	for i := range raw {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, raw[i].toPipelineRun(p.webBase, p.projectPath))
+	}
+	return out, nil
+}
+
+// toPipelineRun normalizes one MR-pipeline entry.
+//
+// It reuses the same ref-based MR association as the full pipeline payload: an
+// MR pipeline's ref is `refs/merge-requests/<iid>/head`, so the run links back to
+// the MR it belongs to without any extra request.
+func (g gitlabMRPipeline) toPipelineRun(webBase, projectPath string) forge.PipelineRun {
+	run := forge.PipelineRun{
+		ID:        g.ID,
+		Name:      g.Ref,
+		Number:    g.IID,
+		Status:    forge.NormalizeConclusion(g.Status),
+		Ref:       g.Ref,
+		SHA:       g.SHA,
+		Event:     g.Source,
+		URL:       g.WebURL,
+		CreatedAt: parseTime(g.CreatedAt),
+		UpdatedAt: parseTime(g.UpdatedAt),
+		// This endpoint does not report a duration; the detail view shows none.
+		Duration: 0,
+	}
+	// The MR this run belongs to is the item being viewed, so the association is
+	// already known — but it is still filled in, because the run may be opened as
+	// a standalone detail view.
+	if iid, ok := mergeRequestRefIID(g.Ref); ok {
+		run.PullRequests = []forge.PipelinePullRequest{mergeRequestRef(iid, "", webBase, projectPath)}
+	}
+	return run
+}
+
+// defaultItemPipelineLimit bounds the per-item run list, matching the GitHub
+// adapter so the two platforms show a comparable number of rows.
+const defaultItemPipelineLimit = 10
+
 // ResolvePipelinePullRequests finds the open merge requests for a run's source
 // branch.
 //

@@ -70,6 +70,13 @@ type Item struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 	// MergedAt is set for merged change requests.
 	MergedAt *time.Time `json:"mergedAt,omitempty"`
+	// SourceBranch is the branch a change request proposes to merge FROM (its
+	// head branch). Empty for issues, which have no branch.
+	//
+	// It exists because CI runs are looked up by branch: without it, a change
+	// request's pipelines cannot be found without a platform-specific
+	// "pipelines for this MR" endpoint, which only some forges provide.
+	SourceBranch string `json:"sourceBranch,omitempty"`
 }
 
 // Comment is a single comment on an issue or change request.

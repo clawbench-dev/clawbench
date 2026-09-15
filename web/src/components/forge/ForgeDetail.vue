@@ -81,6 +81,55 @@
           v-html="renderedBody"
         ></div>
 
+        <!-- CI: the change's pipelines. Change requests only — an issue has no
+             branch and therefore no CI. Collapsed by default and fetched on
+             first expand, because the list costs an upstream request that most
+             PR opens do not need. -->
+        <div v-if="detail.item.value.type === 'pr'" class="forge-item-ci">
+          <button class="forge-item-ci-header" @click="toggleCi">
+            <ChevronRight :size="14" class="forge-item-ci-chevron" :class="{ open: ciOpen }" />
+            <Activity :size="14" />
+            <span class="forge-item-ci-title">{{ t('forge.detail.ci') }}</span>
+            <!-- The count is only known once loaded; showing "0" before the
+                 fetch would claim the change has no CI. -->
+            <span v-if="ci.loaded.value && ci.pipelines.value.length" class="forge-item-ci-count">
+              {{ ci.pipelines.value.length }}
+            </span>
+          </button>
+
+          <div v-if="ciOpen" class="forge-item-ci-body">
+            <div v-if="ci.error.value" class="forge-item-ci-error">
+              {{ t('forge.error.generic') }}
+            </div>
+            <div v-else-if="ci.loading.value" class="forge-item-ci-loading">
+              <LoadingIndicator size="sm" :label="t('forge.loading')" />
+            </div>
+            <div v-else-if="!ci.pipelines.value.length" class="forge-item-ci-empty">
+              {{ t('forge.detail.ciEmpty') }}
+            </div>
+            <template v-else>
+              <button
+                v-for="run in ci.pipelines.value"
+                :key="run.id"
+                class="forge-item-ci-row"
+                :title="run.name"
+                @click="emit('open-pipeline', run.id)"
+              >
+                <span class="forge-state-dot" :class="`pipeline-${run.status}`"></span>
+                <span class="forge-item-ci-name">{{ run.name }}</span>
+                <span class="forge-item-ci-meta">
+                  <!-- GitLab's MR-pipeline endpoint reports no duration or
+                       timestamp, so those cells are simply absent there rather
+                       than rendered as a misleading zero. -->
+                  <span v-if="run.ref" class="forge-item-ci-ref">{{ run.ref }}</span>
+                  <span v-if="run.updatedAt">{{ formatTime(run.updatedAt) }}</span>
+                </span>
+                <ChevronRight :size="13" class="forge-item-ci-row-chevron" />
+              </button>
+            </template>
+          </div>
+        </div>
+
         <!-- Comments -->
         <div class="forge-comments">
           <div v-if="detail.comments.value.length" class="forge-comments-title">
@@ -115,9 +164,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronLeft, ExternalLink, MessageSquare, AlertCircle } from 'lucide-vue-next'
+import {
+  ChevronLeft, ChevronRight, ExternalLink, MessageSquare, AlertCircle, Activity,
+} from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { useForgeDetail } from '@/composables/useForge'
+import { useForgeDetail, useForgeItemPipelines } from '@/composables/useForge'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation'
@@ -138,10 +189,33 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'back'): void
   (e: 'quote', payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string } }): void
+  /** Open one of the item's CI runs. The host owns navigation. */
+  (e: 'open-pipeline', runId: number): void
 }>()
 
 const { t } = useI18n()
 const detail = useForgeDetail()
+
+/**
+ * The change request's CI runs, for the collapsible section.
+ *
+ * Fetched on FIRST EXPAND, not with the item: it costs an upstream request and
+ * most PR opens never look at CI. `ciOpen` is the UI state; the composable
+ * caches the result so collapsing and re-expanding does not re-request.
+ */
+const ci = useForgeItemPipelines()
+const ciOpen = ref(false)
+
+function toggleCi() {
+  ciOpen.value = !ciOpen.value
+  if (ciOpen.value) void ci.load(props.type, props.number)
+}
+
+// A different item must not inherit the previous one's runs.
+watch(() => [props.type, props.number] as const, () => {
+  ci.reset()
+  ciOpen.value = false
+})
 const { verifyFilePaths, openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
@@ -375,6 +449,117 @@ function formatTime(iso: string): string {
 .forge-comment-body {
   padding: var(--space-5) var(--space-6);
   background: var(--bg-primary);
+}
+
+/* ── CI section ──
+   Collapsed by default: the list costs an upstream request, so it is fetched on
+   first expand. The rows mirror the pipeline list's rows (state dot + name +
+   meta) so a run looks the same wherever it appears. */
+.forge-item-ci {
+  margin: var(--space-4) var(--space-6) 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.forge-item-ci-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  border: none;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .forge-item-ci-header:hover {
+    color: var(--accent-color);
+  }
+}
+.forge-item-ci-chevron {
+  flex-shrink: 0;
+  transition: transform var(--duration-base) ease;
+}
+.forge-item-ci-chevron.open {
+  transform: rotate(90deg);
+}
+.forge-item-ci-title {
+  flex: 1;
+  min-width: 0;
+}
+.forge-item-ci-count {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+.forge-item-ci-body {
+  border-top: 1px solid var(--border-color);
+}
+.forge-item-ci-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  border: none;
+  border-bottom: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.forge-item-ci-row:last-child {
+  border-bottom: none;
+}
+@media (hover: hover) {
+  .forge-item-ci-row:hover {
+    background: var(--bg-secondary);
+  }
+  .forge-item-ci-row:hover .forge-item-ci-row-chevron {
+    color: var(--accent-color);
+  }
+}
+/* The dot is a status marker here, not a title-aligned bullet. */
+.forge-item-ci-row .forge-state-dot {
+  margin-top: 0;
+}
+.forge-item-ci-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.forge-item-ci-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+.forge-item-ci-row-chevron {
+  flex-shrink: 0;
+  color: var(--text-hint);
+}
+.forge-item-ci-empty,
+.forge-item-ci-error {
+  padding: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+.forge-item-ci-error {
+  color: var(--color-red);
+}
+.forge-item-ci-loading {
+  padding: var(--space-5);
+  display: flex;
+  justify-content: center;
 }
 
 </style>

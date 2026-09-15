@@ -201,13 +201,87 @@ func TestListPipelineJobs_RejectsInvalidID(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestListPipelinesForItem_UsesTheMergeRequestEndpoint: GitLab has a dedicated
+// endpoint, so it must NOT filter the repository-wide list by branch — the
+// dedicated one also covers an MR whose source branch lives in a fork.
+func TestListPipelinesForItem_UsesTheMergeRequestEndpoint(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v4/projects/acme%2Fwidgets/merge_requests/42/pipelines", r.URL.EscapedPath())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"id":77,"iid":12,"status":"success","ref":"refs/merge-requests/42/head",
+			 "sha":"959e04d","source":"merge_request_event",
+			 "created_at":"2026-09-14T10:00:00.000Z","updated_at":"2026-09-14T10:05:00.000Z"},
+			{"id":78,"iid":13,"status":"failed","ref":"refs/merge-requests/42/head",
+			 "sha":"aaa1111","source":"merge_request_event"}
+		]`))
+	}))
+
+	item := forge.Item{Type: forge.ItemTypeChangeRequest, Number: 42, SourceBranch: "feat/x"}
+	runs, err := p.ListPipelinesForItem(context.Background(), item, 0)
+	require.NoError(t, err)
+
+	require.Len(t, runs, 2)
+	assert.Equal(t, int64(77), runs[0].ID)
+	assert.Equal(t, forge.PipelineSuccess, runs[0].Status)
+	assert.Equal(t, forge.PipelineFailure, runs[1].Status)
+	// The MR association is recoverable from the ref, so the run still links
+	// back to its MR when opened standalone.
+	require.Len(t, runs[0].PullRequests, 1)
+	assert.Equal(t, 42, runs[0].PullRequests[0].Number)
+}
+
+// TestListPipelinesForItem_IgnoresIssues: the endpoint addresses merge requests,
+// so an issue number must not be sent to it.
+func TestListPipelinesForItem_IgnoresIssues(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("no request should be issued for an issue")
+	}))
+
+	runs, err := p.ListPipelinesForItem(context.Background(),
+		forge.Item{Type: forge.ItemTypeIssue, Number: 5}, 0)
+	require.NoError(t, err)
+	assert.Empty(t, runs)
+}
+
+// TestListPipelinesForItem_NoRunsIsNotAnError.
+func TestListPipelinesForItem_NoRunsIsNotAnError(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+
+	runs, err := p.ListPipelinesForItem(context.Background(),
+		forge.Item{Type: forge.ItemTypeChangeRequest, Number: 42}, 0)
+	require.NoError(t, err)
+	assert.Empty(t, runs)
+}
+
+// TestListPipelinesForItem_RespectsLimit.
+func TestListPipelinesForItem_RespectsLimit(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "1", r.URL.Query().Get("per_page"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"id":77,"iid":12,"status":"success","ref":"refs/merge-requests/42/head"},
+			{"id":78,"iid":13,"status":"failed","ref":"refs/merge-requests/42/head"}
+		]`))
+	}))
+
+	runs, err := p.ListPipelinesForItem(context.Background(),
+		forge.Item{Type: forge.ItemTypeChangeRequest, Number: 42}, 1)
+	require.NoError(t, err)
+	assert.Len(t, runs, 1, "the limit caps the result even if the API returns more")
+}
+
 // TestProviderSatisfiesPipelineInterfaces is the compile-time contract.
 func TestProviderSatisfiesPipelineInterfaces(t *testing.T) {
 	var _ forge.PipelineLister = (*Provider)(nil)
 	var _ forge.PipelineJobLister = (*Provider)(nil)
 	// GitLab cannot report the MR association inline for a branch push, so it
-	// must implement the on-demand resolver.
+	// must implement the on-demand resolver; it can also list an MR's pipelines.
 	var _ forge.PipelinePullRequestResolver = (*Provider)(nil)
+	var _ forge.PipelineItemLister = (*Provider)(nil)
 }
 
 // TestResolvePipelinePullRequests_FindsOpenMergeRequestForBranch: the branch-push

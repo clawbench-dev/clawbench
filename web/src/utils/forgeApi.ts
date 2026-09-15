@@ -42,6 +42,12 @@ export interface ForgeItem {
     slug: string
     /** True when this item has activity the user has not seen. */
     unread?: boolean
+    /**
+     * The branch a change request merges FROM (its head branch). Empty for
+     * issues. Present so the detail view can look up the item's CI runs, which
+     * are addressed by branch on GitHub.
+     */
+    sourceBranch?: string
 }
 
 export interface ForgeComment {
@@ -289,6 +295,23 @@ export function fetchForgePipelines(params: {
 /** Fetch one run and its jobs. Jobs are best-effort and may come back empty. */
 export function fetchForgePipeline(id: number, signal?: AbortSignal): Promise<ForgePipelineDetailResult> {
     return forgeFetch(`/api/forge/pipeline?id=${id}`, { signal })
+}
+
+/**
+ * List the CI runs attached to a change request, for the PR detail's CI section.
+ *
+ * Separate from the item payload on purpose: it costs an upstream request, so it
+ * is only fetched when the user expands the section.
+ */
+export function fetchForgeItemPipelines(
+    type: 'issue' | 'pr',
+    number: number,
+    signal?: AbortSignal,
+): Promise<{ pipelines: ForgePipelineRun[]; binding: ForgeBinding }> {
+    const q = new URLSearchParams()
+    q.set('type', type)
+    q.set('number', String(number))
+    return forgeFetch(`/api/forge/item-pipelines?${q.toString()}`, { signal })
 }
 
 /**

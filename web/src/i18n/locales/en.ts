@@ -163,6 +163,8 @@ export default {
       openBrowser: 'Open in browser',
       quote: 'Quote in chat',
       loadOlder: 'Load older comments',
+      ci: 'Pipelines',
+      ciEmpty: 'No pipelines for this change yet',
     },
     error: {
       auth: 'Authentication failed',

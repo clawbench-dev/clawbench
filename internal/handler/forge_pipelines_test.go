@@ -438,6 +438,103 @@ func TestServeForgePipeline_JobsFailureStillReturnsRun(t *testing.T) {
 	assert.Empty(t, resp["jobs"], "jobs fall back to an empty list, not an error")
 }
 
+// TestServeForgeItemPipelines_AgainstMockGitLab drives the whole path for the PR
+// detail's CI section: the MR's pipelines come from GitLab's dedicated endpoint.
+func TestServeForgeItemPipelines_AgainstMockGitLab(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/pipelines"):
+			_, _ = w.Write([]byte(`[
+				{"id":77,"iid":12,"status":"success","ref":"refs/merge-requests/42/head",
+				 "sha":"959e04d","source":"merge_request_event",
+				 "web_url":"https://gitlab.example.com/acme/widgets/-/pipelines/77",
+				 "created_at":"2026-09-14T10:00:00.000Z","updated_at":"2026-09-14T10:05:00.000Z"}
+			]`))
+		default:
+			// GetItem: the merge request itself.
+			_, _ = w.Write([]byte(`{"iid":42,"title":"Fix the thing","state":"opened",
+				"source_branch":"feat/x","web_url":"https://gitlab.example.com/acme/widgets/-/merge_requests/42"}`))
+		}
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/item-pipelines?type=pr&number=42", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeItemPipelines, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Pipelines []struct {
+			ID     int64  `json:"id"`
+			Status string `json:"status"`
+			Ref    string `json:"ref"`
+		} `json:"pipelines"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Pipelines, 1)
+	assert.Equal(t, int64(77), resp.Pipelines[0].ID)
+	assert.Equal(t, "success", resp.Pipelines[0].Status)
+}
+
+// TestServeForgeItemPipelines_EmptyIsNotAnError: a PR with no runs, or a platform
+// with no CI, both answer an empty list — the client hides the section.
+func TestServeForgeItemPipelines_EmptyIsNotAnError(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/pipelines") {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"iid":42,"title":"t","state":"opened"}`))
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/item-pipelines?type=pr&number=42", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeItemPipelines, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, []any{}, resp["pipelines"], "an empty list, never null")
+}
+
+// TestServeForgeItemPipelines_ValidatesInput covers the request guards.
+func TestServeForgeItemPipelines_ValidatesInput(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	// A missing/zero number must not reach the provider.
+	req := newRequest(t, http.MethodGet, "/api/forge/item-pipelines?type=pr", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	assert.Equal(t, http.StatusBadRequest, callHandler(ServeForgeItemPipelines, req).Code)
+
+	// POST is not this endpoint's method.
+	req = newRequest(t, http.MethodPost, "/api/forge/item-pipelines?type=pr&number=42", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	assert.Equal(t, http.StatusMethodNotAllowed, callHandler(ServeForgeItemPipelines, req).Code)
+}
+
+// TestServeForgeItemPipelines_UnboundReturnsNotFound.
+func TestServeForgeItemPipelines_UnboundReturnsNotFound(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/forge/item-pipelines?type=pr&number=42", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	assert.Equal(t, http.StatusNotFound, callHandler(ServeForgeItemPipelines, req).Code)
+}
+
 // TestServeForgePipeline_ResolvesBranchPushMergeRequest: the branch-push case,
 // where the pipeline payload carries no association and the detail view must
 // look it up. This is the whole point of the resolver — a push-to-branch run on

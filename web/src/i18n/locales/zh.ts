@@ -166,6 +166,8 @@ export default {
       openBrowser: '在浏览器打开',
       quote: '引用对话',
       loadOlder: '加载更早的评论',
+      ci: '流水线',
+      ciEmpty: '该变更暂无流水线',
     },
     error: {
       auth: '认证失败',

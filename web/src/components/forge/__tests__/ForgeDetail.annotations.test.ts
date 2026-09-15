@@ -34,9 +34,11 @@ vi.mock('lucide-vue-next', () => {
   const stub = (name: string) => ({ name, template: `<svg data-icon="${name}" />` })
   return {
     ChevronLeft: stub('ChevronLeft'),
+    ChevronRight: stub('ChevronRight'),
     ExternalLink: stub('ExternalLink'),
     MessageSquare: stub('MessageSquare'),
     AlertCircle: stub('AlertCircle'),
+    Activity: stub('Activity'),
   }
 })
 
@@ -119,7 +121,19 @@ vi.mock('@/composables/useForge', async () => {
     error: ref(null),
     hasMoreComments: ref(false),
   })
-  return { useForgeDetail: () => mockDetail }
+  return {
+    useForgeDetail: () => mockDetail,
+    // The CI section is a sibling of the body under test; it must exist for the
+    // component to mount, but these tests assert nothing about it.
+    useForgeItemPipelines: () => ({
+      pipelines: ref([]),
+      loading: ref(false),
+      error: ref(null),
+      loaded: ref(false),
+      load: vi.fn(),
+      reset: vi.fn(),
+    }),
+  }
 })
 
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({

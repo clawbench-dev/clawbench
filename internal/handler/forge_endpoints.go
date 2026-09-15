@@ -63,6 +63,10 @@ type forgeItemView struct {
 	// It is filled from the same rows the dock badge counts, so the badge and
 	// the per-row dot cannot disagree.
 	Unread bool `json:"unread,omitempty"`
+	// SourceBranch is the change request's head branch. Omitted for issues.
+	// The client needs it to open the item's CI runs, which GitHub addresses by
+	// branch — but the CI list itself is fetched separately, on demand.
+	SourceBranch string `json:"sourceBranch,omitempty"`
 }
 
 func toForgeItemView(pf *service.ProjectForge, item forge.Item) forgeItemView {
@@ -97,6 +101,7 @@ func toForgeItemView(pf *service.ProjectForge, item forge.Item) forgeItemView {
 		CreatedAt:    item.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:    item.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		Slug:         slug,
+		SourceBranch: item.SourceBranch,
 	}
 }
 

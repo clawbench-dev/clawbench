@@ -170,6 +170,27 @@ type PipelinePullRequestResolver interface {
 	ResolvePipelinePullRequests(ctx context.Context, run PipelineRun) ([]PipelinePullRequest, error)
 }
 
+// PipelineItemLister is the OPTIONAL capability for listing the CI runs of one
+// change request — the reverse of PipelinePullRequestResolver.
+//
+// It answers "did this change pass CI?", which is the question a reviewer asks
+// while looking at a PR. Both platforms need a request for it (neither reports
+// the association on the item payload), so like the resolver it is a detail-view
+// capability and must never be called while listing.
+//
+// An adapter that cannot answer it simply does not implement the interface; the
+// caller renders no CI section rather than an error.
+type PipelineItemLister interface {
+	// ListPipelinesForItem returns the runs attached to a change request, newest
+	// first, capped at limit.
+	//
+	// `item` is the whole change request because the lookup key differs per
+	// platform (GitHub matches on the head branch, GitLab on the item number).
+	//
+	// No association is an empty result, not an error.
+	ListPipelinesForItem(ctx context.Context, item Item, limit int) ([]PipelineRun, error)
+}
+
 // NormalizeConclusion maps a platform conclusion/status string to a
 // PipelineStatus. It is shared by both adapters so the mapping cannot drift
 // between them.
