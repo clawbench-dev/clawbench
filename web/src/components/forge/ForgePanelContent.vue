@@ -131,10 +131,10 @@
              `active` is a composite: the dock tab must be showing AND this
              internal tab selected, or switching to Issues would leave it
              fetching in the background. -->
-        <template v-if="activeTab === 'unread'">
+        <template v-if="activeTab === 'overview'">
           <ForgeOverviewList
             ref="overviewListRef"
-            :active="active && activeTab === 'unread'"
+            :active="active && activeTab === 'overview'"
             :project-path="projectPath"
             @open-item="onOverviewOpenItem"
           />
@@ -370,7 +370,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Github, Inbox, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
+  Github, Rss, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
   ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Unlink, CheckCheck,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -413,14 +413,14 @@ const { forgeUnreadCount } = useForgeUnread()
 const forgeTabs = [
   // First because it answers "what changed?" — the reason to open the panel —
   // and because it spans all three of the category tabs that follow.
-  { key: 'unread' as const, labelKey: 'forge.overview.title', icon: Inbox },
+  { key: 'overview' as const, labelKey: 'forge.overview.title', icon: Rss },
   { key: 'issue' as const, labelKey: 'forge.type.issues', icon: CircleQuestionMark },
   { key: 'pr' as const, labelKey: 'forge.type.prs', icon: GitPullRequest },
   { key: 'pipeline' as const, labelKey: 'forge.type.pipelines', icon: Activity },
 ]
 type ForgeTabKey = typeof forgeTabs[number]['key']
 
-const activeTab = ref<ForgeTabKey>('unread')
+const activeTab = ref<ForgeTabKey>('overview')
 
 const stateOptions: Array<'open' | 'closed' | 'all'> = ['open', 'closed', 'all']
 const mineOptions: Array<'all' | 'assigned' | 'created' | 'review'> = ['all', 'assigned', 'created', 'review']
@@ -452,7 +452,7 @@ function setActiveTab(key: ForgeTabKey) {
   activeTab.value = key
   if (key === 'pipeline') {
     void pipelines.load()
-  } else if (key === 'unread') {
+  } else if (key === 'overview') {
     // Nothing to load here: the list remounts (its branch was just un-hidden)
     // and its own immediate watcher fetches on first activation. Calling
     // reload() now would be a no-op — the template ref is still null until the
@@ -478,7 +478,7 @@ async function refresh(force = false) {
   // The unread tab has its own composable, so it must be named explicitly —
   // otherwise the header button would reload an invisible list and appear dead.
   if (activeTab.value === 'pipeline') await pipelines.load()
-  else if (activeTab.value === 'unread') overviewListRef.value?.reload()
+  else if (activeTab.value === 'overview') overviewListRef.value?.reload()
   else await items.load()
 }
 
@@ -813,13 +813,6 @@ function formatTime(iso: string): string {
 }
 
 /* ── Empty / unbound state cards ── */
-.forge-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding:40px var(--space-8);
-  flex: 1;
-}
 .forge-card {
   max-width: 340px;
   width: 100%;
@@ -981,28 +974,8 @@ function formatTime(iso: string): string {
   color: var(--text-primary);
 }
 
-.forge-empty-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-5);
-  padding: 32px 24px;
-}
-.forge-empty-icon {
-  color: var(--text-muted);
-  opacity: var(--opacity-muted);
-}
-.forge-empty-title {
-  font-size: var(--font-size-lg);
-  color: var(--text-muted);
-}
 
 /* ── List ── */
-.forge-list {
-  flex: 1;
-  overflow-y: auto;
-  border-top: 1px solid var(--border-color);
-}
 .forge-row {
   display: flex;
   align-items: flex-start;
@@ -1020,16 +993,6 @@ function formatTime(iso: string): string {
 .forge-row:active {
   background: var(--bg-tertiary);
 }
-.forge-row-main {
-  flex: 1;
-  min-width: 0;
-}
-.forge-row-title {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  min-width: 0;
-}
 .forge-row-number {
   color: var(--text-muted);
   font-family: var(--font-mono);
@@ -1046,23 +1009,10 @@ function formatTime(iso: string): string {
   white-space: nowrap;
   min-width: 0;
 }
-.forge-row-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  margin-top: var(--space-2);
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
 .forge-row-comments {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-}
-.forge-row-chevron {
-  color: var(--text-hint);
-  flex-shrink: 0;
-  align-self: center;
 }
 .forge-loading-more {
   padding: var(--space-6);

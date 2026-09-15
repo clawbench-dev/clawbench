@@ -48,6 +48,20 @@ const SHARED_CHROME = [
   'forge-pipeline-ref',
   'forge-pipeline-sha',
   'forge-pipeline-event',
+  // List chrome shared by the issue/PR list, the pipeline list and the
+  // overview list. All three render rows into the same panel shell.
+  'forge-list',
+  'forge-row-main',
+  'forge-row-title',
+  'forge-row-meta',
+  'forge-row-time',
+  'forge-row-chevron',
+  'forge-state',
+  'forge-empty-card',
+  'forge-empty-icon',
+  'forge-empty-title',
+  'forge-empty-hint',
+  'forge-overview-count-badge',
 ]
 
 /** `pipeline-<status>` modifiers, used by both the dot and the badge. */

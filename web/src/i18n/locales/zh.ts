@@ -85,8 +85,8 @@ export default {
     unreadItem: '有新动态',
     retry: '重试',
     overview: {
-      title: '未读',
-      empty: '没有未读内容',
+      title: '动态',
+      empty: '暂无动态',
       emptyHint: '有新动态的议题、合并请求与流水线会出现在这里',
       pipelineRef: '流水线 run:{runId}',
       eventCount: '{count} 条动态',

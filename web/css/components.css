@@ -186,6 +186,78 @@
 }
 .forge-error-body { color: var(--text-secondary); font-size: var(--font-size-sm); }
 
+/* ── Shared list chrome (rows, empty states, list scroller) ──
+   Declared GLOBALLY, not in a component's <style scoped> block.
+
+   Why: these class names are used by more than one component. A scoped rule only
+   applies to the component that declares it, so the moment the forge list was
+   split into its own component (ForgeOverviewList) every rule it shared with
+   ForgePanelContent silently stopped applying — the rows rendered unstyled.
+   Unit tests did not catch it because they assert text, not layout.
+
+   Keep any class used by two or more forge views here. */
+
+/* The scroller. flex:1 so it fills the panel between header and footer. */
+.forge-list {
+    flex: 1;
+    overflow-y: auto;
+    border-top: 1px solid var(--border-color);
+}
+
+.forge-row-main { flex: 1; min-width: 0; }
+
+.forge-row-title {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.forge-row-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+    margin-top: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+}
+
+/* The timestamp is the last thing to give up space, so it never wraps. */
+.forge-row-time { white-space: nowrap; flex-shrink: 0; }
+
+.forge-row-chevron {
+    color: var(--text-hint);
+    flex-shrink: 0;
+    align-self: center;
+}
+
+/* Centred empty-state block: icon over a title, optionally a hint line. */
+.forge-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px var(--space-8);
+    flex: 1;
+}
+
+.forge-empty-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-5);
+    padding: 32px 24px;
+}
+
+.forge-empty-icon { color: var(--text-muted); opacity: var(--opacity-muted); }
+.forge-empty-title { font-size: var(--font-size-lg); color: var(--text-muted); }
+.forge-empty-hint { font-size: var(--font-size-sm); color: var(--text-hint); text-align: center; }
+
+/* Event-count badge on an unread row (e.g. "3 events"). */
+.forge-overview-count-badge {
+    font-size: 11px;
+    color: var(--text-secondary, #6b7280);
+}
+
 /* ── Status dot: baseline-aligned with the title's first line ── */
 .forge-state-dot {
     width: 8px;

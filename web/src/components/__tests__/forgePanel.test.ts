@@ -151,7 +151,7 @@ function makeI18n() {
           markAllRead: 'Mark all read',
           unreadItem: 'New activity',
           overview: {
-            title: 'Unread',
+            title: 'Activity',
             empty: 'Nothing unread',
             emptyHint: 'New activity shows up here',
             markAllRead: 'Mark all read',
@@ -430,7 +430,7 @@ describe('ForgePanelContent', () => {
     expect(html).toContain('lucide-git-pull-request')
     expect(html).toContain('lucide-activity')
     const tabs = wrapper.findAll('.forge-tab')
-    expect(tabs[0].find('.lucide-inbox').exists(), 'unread tab uses the inbox glyph').toBe(true)
+    expect(tabs[0].find('.lucide-rss').exists(), 'overview tab uses the rss glyph').toBe(true)
     expect(tabs[1].find('.lucide-circle-question-mark').exists(), 'issues tab uses the question-mark glyph').toBe(true)
     expect(tabs[2].find('.lucide-git-pull-request').exists(), 'PR tab uses the pull-request glyph').toBe(true)
     expect(tabs[3].find('.lucide-activity').exists(), 'pipelines tab uses the activity glyph').toBe(true)
@@ -805,8 +805,8 @@ describe('ForgePanelContent unread tab', () => {
     expect(wrapper.findAll('.forge-tab')[0].classes()).toContain('active')
   })
 
-  it('switching to the unread tab does NOT pass it to items.setType', async () => {
-    // 'unread' is not an item type; feeding it to setType would corrupt the
+  it('switching to the overview tab does NOT pass it to items.setType', async () => {
+    // 'overview' is not an item type; feeding it to setType would corrupt the
     // issue/PR list's own state.
     const wrapper = mount(ForgePanelContent, {
       props: { active: true, projectPath: '/proj' },
@@ -909,7 +909,7 @@ describe('ForgePanelContent unread tab', () => {
   })
 
   it('passes active=false through the composite when the dock tab is inactive', async () => {
-    // The composite is `props.active && activeTab === 'unread'`. The tab half is
+    // The composite is `props.active && activeTab === 'overview'`. The tab half is
     // covered above; without this the `active &&` half could be dropped silently
     // and the list would fetch while the whole panel is off-screen.
     const wrapper = mount(ForgePanelContent, {

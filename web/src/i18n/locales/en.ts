@@ -85,8 +85,8 @@ export default {
     unreadItem: 'New activity',
     retry: 'Retry',
     overview: {
-      title: 'Unread',
-      empty: 'Nothing unread',
+      title: 'Activity',
+      empty: 'No activity yet',
       emptyHint: 'Issues, pull requests and pipelines with new activity show up here',
       pipelineRef: 'Pipeline run {runId}',
       eventCount: '{count} events',
