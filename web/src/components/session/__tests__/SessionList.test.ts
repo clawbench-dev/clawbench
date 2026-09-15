@@ -469,21 +469,21 @@ describe('SessionList', () => {
       expect(wrapper.findAll('.session-group-header').length).toBe(0)
     })
 
-    it('marks the pinned row with the corner wedge and pin glyph only', async () => {
+    it('marks the pinned row with the row modifier only (no inline glyph)', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedOld, newest, middle], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
 
+      // The wedge is a CSS pseudo-element, so the DOM carries only the modifier
+      // class — no extra glyph element in the row or its title line.
       const pinnedRow = wrapper.find('[data-session-id="p-old"]')
       expect(pinnedRow.classes()).toContain('pinned')
-      expect(pinnedRow.find('.session-pin-icon').exists()).toBe(true)
+      expect(pinnedRow.find('.session-pin-icon').exists()).toBe(false)
 
-      // Unpinned rows carry neither marker.
+      // Unpinned rows carry no modifier either.
       for (const id of ['n-new', 'n-mid']) {
-        const row = wrapper.find(`[data-session-id="${id}"]`)
-        expect(row.classes()).not.toContain('pinned')
-        expect(row.find('.session-pin-icon').exists()).toBe(false)
+        expect(wrapper.find(`[data-session-id="${id}"]`).classes()).not.toContain('pinned')
       }
     })
 
@@ -571,7 +571,6 @@ describe('SessionList', () => {
       await flushPromises()
 
       expect(wrapper.findAll('.session-row.pinned').length).toBe(0)
-      expect(wrapper.findAll('.session-pin-icon').length).toBe(0)
       expect(wrapper.findAll('.session-row').length).toBe(2)
     })
 

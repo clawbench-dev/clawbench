@@ -44,7 +44,6 @@
               <div class="session-item-info">
                 <div class="session-item-header">
                   <span class="session-item-title">{{ session.title }}</span>
-                  <Pin v-if="session.pinned" :size="11" class="session-pin-icon" />
                 </div>
                 <div class="session-item-meta">
                   <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
@@ -1030,11 +1029,11 @@ onUnmounted(() => {
 }
 
 /* ── Pinned marker ──
-   Pinned sessions are no longer split into their own section; a row is marked
-   by a small wedge in the top-right corner plus a pin glyph after the title.
-   The wedge is painted with border-color (not an SVG) so it scales with the
-   row and needs no extra DOM. Amber matches the pin glyph. `.session-row` is
-   already position:relative, so the wedge anchors to it directly. */
+   Pinned sessions are no longer split into their own section; the only marker
+   is a wedge in the row's top-right corner. Painted with border-color (not an
+   SVG) so it needs no extra DOM, and coloured with the theme accent so it
+   follows the user's chosen colour. `.session-row` is already
+   position:relative, so the wedge anchors to it directly. */
 .session-row.pinned::after {
   content: '';
   position: absolute;
@@ -1042,8 +1041,8 @@ onUnmounted(() => {
   right: 0;
   width: 0;
   height: 0;
-  border-top: 8px solid #f59e0b;
-  border-left: 8px solid transparent;
+  border-top: 12px solid var(--accent-color, #0066cc);
+  border-left: 12px solid transparent;
   pointer-events: none;
   z-index: 1;
 }
@@ -1051,11 +1050,6 @@ onUnmounted(() => {
 /* The unread badge lives at the top-right of `.session-item`, which ends where
    the 34px archive cell begins — so it already sits clear of the wedge in the
    row's own top-right corner and needs no offset. */
-
-.session-pin-icon {
-  color: #f59e0b;
-  flex-shrink: 0;
-}
 
 /* ── Long-press feedback ── */
 
