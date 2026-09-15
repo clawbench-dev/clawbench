@@ -108,7 +108,71 @@ const (
 	// Far below the 500ms flush window and the shutdown deadline, so it adds
 	// no meaningful latency to a graceful stop.
 	waitStreamsPollInterval = 25 * time.Millisecond
+
+	// slowFinalizeThreshold is how long Finalize may take before its phase
+	// breakdown is logged. Finalize sits between the agent stopping and the
+	// terminal WS event the frontend waits on, so a slow one is exactly the
+	// "cancel hangs for seconds" symptom. Normal finalize is well under this.
+	slowFinalizeThreshold = 500 * time.Millisecond
+
+	// slowSummarizeThreshold is how long triggerChatSummarization may take
+	// before it is reported. It is called synchronously from Finalize, so its
+	// duration is added directly to how long a cancel takes to appear finished.
+	slowSummarizeThreshold = 200 * time.Millisecond
+
+	// slowCancelThreshold is how long CancelSession may spend on the caller's
+	// goroutine (the WS read loop) before it is reported. Cancelling the agent
+	// context is instant; anything beyond that is event bookkeeping and push
+	// I/O, which is what makes the cancel request itself feel slow.
+	slowCancelThreshold = 200 * time.Millisecond
 )
+
+// finalizeTimer accumulates per-phase durations for one Finalize call and logs
+// them as a single structured line. Finalize runs on the critical path of a
+// user cancel: the UI cannot clear its "stopping" state until the terminal
+// event is emitted after Finalize returns. Splitting the phases is what
+// distinguishes "the agent ignored the cancel" from "the agent stopped
+// instantly and we then spent seconds writing to disk".
+//
+// Phases are recorded individually rather than as a running total so a caller
+// can add a new phase without renumbering the existing ones.
+type finalizeTimer struct {
+	sessionID string
+	start     time.Time
+	phases    []any // slog attrs, in execution order
+}
+
+func newFinalizeTimer(sessionID string) *finalizeTimer {
+	return &finalizeTimer{sessionID: sessionID, start: time.Now()}
+}
+
+// phase records the duration of one named step. The returned func is called
+// when the step finishes.
+func (ft *finalizeTimer) phase(name string) func() {
+	began := time.Now()
+	return func() {
+		ft.phases = append(ft.phases, slog.Duration(name, time.Since(began)))
+	}
+}
+
+// done logs the phase breakdown when the total exceeds slowFinalizeThreshold.
+// Below the threshold the log would be noise: Finalize is on every turn's
+// completion path, and a fast one needs no explanation.
+func (ft *finalizeTimer) done(cancelReason string, blockCount int) {
+	total := time.Since(ft.start)
+	if total < slowFinalizeThreshold {
+		return
+	}
+	attrs := make([]any, 0, 4+len(ft.phases))
+	attrs = append(attrs,
+		slog.String("session", ft.sessionID),
+		slog.String("cancel_reason", cancelReason),
+		slog.Int("blocks", blockCount),
+		slog.Duration("total", total),
+	)
+	attrs = append(attrs, ft.phases...)
+	slog.Warn("finalize: slow", attrs...)
+}
 
 // RunConfig configures a single SessionExecutor execution.
 type RunConfig struct {
@@ -1300,6 +1364,8 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent) {
 // This replaces the old finalizeStreamRun function from handler/chat.go.
 // The caller is still responsible for WS terminal events and drain loop logic.
 func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEvent) RunResult {
+	ft := newFinalizeTimer(e.cfg.SessionID)
+
 	// Drain remaining events first (tool calls flushed by debouncer after the
 	// main event loop exited on cancel). This updates e.blocks so that
 	// buildContentJSON includes the latest tool call data.
@@ -1308,7 +1374,12 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// producer closes the channel, and it takes e.mu itself around the
 	// AccumulateBlock calls. Holding e.mu across the blocking drain would
 	// deadlock against a producer goroutine that tries to take e.mu.
+	// This phase is the one that can block on a spawned child holding stdout
+	// open (see CLIBackend's streamDrainGrace / cmd.WaitDelay), so it is timed
+	// separately from the DB work below.
+	doneDrain := ft.phase("drain_events")
 	e.drainRemainingEvents(eventCh)
+	doneDrain()
 
 	// Use e.blocks (may have been updated by drain) instead of result.Blocks
 	// snapshot. Snapshot under lock so FlushStreamingNow (shutdown goroutine)
@@ -1323,7 +1394,9 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// (e.g. a tool event that arrived just before the terminal event). Without
 	// this, tool-call rows and context-state patches queued since the last flush
 	// would be lost once the streaming row is finalized and the executor exits.
+	doneFlush := ft.phase("flush_pending")
 	e.flushStreamingMessage()
+	doneFlush()
 
 	// Apply the same post-processing as buildResult.
 	// buildResult runs postProcessBlocks on a local copy of e.blocks,
@@ -1331,6 +1404,7 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// conversion must be applied here too, otherwise DB stores the original
 	// unconverted blocks and the frontend renders ask-question as plain text
 	// instead of an interactive card.
+	donePost := ft.phase("post_process")
 	blocks = e.postProcessBlocks(blocks)
 
 	// Persist converted AskUserQuestion tool calls to DB.
@@ -1339,18 +1413,23 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	e.persistAskToolCalls(blocks)
 
 	e.injectSessionMetadata(responseMetadata)
+	donePost()
 
+	doneBuild := ft.phase("build_content_json")
 	content, blocks := e.buildContentJSON(blocks, result, responseMetadata)
+	doneBuild()
 
 	// Split thinking text out of the DB content into chat_thinking (lazy-load).
 	// The WS terminal event keeps full blocks (result.Blocks); only the
 	// persisted content is slimmed. StreamingMessageID is the streaming row.
+	doneThinking := ft.phase("persist_thinking")
 	dbContent := persistThinkingToDB(content, e.cfg.StreamingMessageID, e.cfg.SessionID)
 	// Finalize is terminal: no rate-limited flush runs after this point. Clear
 	// the incremental cursor so a concurrent graceful-shutdown forced flush
 	// racing this Finalize cannot append stale chunks for think_ids whose rows
 	// persistThinkingToDB just rewrote.
 	e.thinkingFlushed = make(map[string]*thinkingFlushState)
+	doneThinking()
 
 	// A user-cancelled turn must not stamp completed_at: the user was looking at
 	// the session when they cancelled, so the frontend already marked it read
@@ -1359,11 +1438,13 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// FinalizeCancelledStreamingMessage.
 	var msgID int64
 	var err error
+	doneFinalize := ft.phase("finalize_row")
 	if result.CancelReason == cancelReasonUser {
 		msgID, err = FinalizeCancelledStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, dbContent)
 	} else {
 		msgID, err = FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, dbContent)
 	}
+	doneFinalize()
 	if err != nil {
 		slog.Error("failed to finalize streaming message",
 			slog.String("session", e.cfg.SessionID),
@@ -1375,16 +1456,20 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// (the caller emits its own terminal event), so triggerChatSummarization
 	// would never be reached via that path. Call it here instead, right after
 	// the message is finalized and streaming=0 is persisted.
+	doneSummarize := ft.phase("summarize")
 	if msgID > 0 {
 		triggerChatSummarization(e.ctx, e.cfg.SessionID)
 	}
+	doneSummarize()
 
 	// Save metadata to dedicated table for analytical queries
+	doneMeta := ft.phase("save_metadata")
 	if msgID > 0 && responseMetadata != nil {
 		if saveErr := SaveMetadata(msgID, responseMetadata); saveErr != nil {
 			slog.Warn("failed to save message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
 		}
 	}
+	doneMeta()
 
 	// Update result with finalized blocks and metadata
 	result.Blocks = blocks
@@ -1394,6 +1479,8 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// Stream is fully persisted — stop tracking it for graceful shutdown flushes.
 	// RunWithChannel may already have unregistered on its own exit; no-op there.
 	e.unregisterActiveStream()
+
+	ft.done(result.CancelReason, len(blocks))
 
 	return result
 }

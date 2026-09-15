@@ -1248,6 +1248,44 @@ describe('useChatStream', () => {
 
       expect(options.onStreamEnd).not.toHaveBeenCalled()
     })
+
+    it('clears loading when cancelled arrives with no streaming placeholder', () => {
+      // Reproduces the "spinner never stops" hang: if the assistant placeholder
+      // is gone by the time the terminal event arrives (e.g. a reload replaced
+      // the array, or the placeholder was already finalized by an earlier
+      // path), findStreamingMsg returns undefined. Returning early there
+      // skipped loading.value = false, so the stop button stayed armed and the
+      // loading indicator never cleared until the user switched sessions.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      // Simulate the placeholder being absent when the event is handled.
+      options.messages.value = []
+
+      simulateWsEvent('cancelled', {})
+
+      expect(options.loading.value).toBe(false)
+      expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled')
+    })
+
+    it('clears loading when done arrives with no streaming placeholder', () => {
+      // The same hang would exist on the completion path if a placeholder were
+      // absent. 'done' has no placeholder guard, so this pins the behavior both
+      // terminal events must share.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.messages.value = []
+
+      simulateWsEvent('done', {})
+
+      expect(options.loading.value).toBe(false)
+      expect(options.onStreamEnd).toHaveBeenCalledWith('done')
+    })
   })
 
   describe('WS event handling — error', () => {

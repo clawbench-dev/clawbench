@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,99 @@ var dbRead *sql.DB
 // locked — WAL mode allows reads and writes to proceed concurrently.
 var writeMu sync.Mutex
 
+// slowWriteThreshold is how long a write may wait for writeMu, or spend
+// executing, before it is reported. Every write in the process serializes on
+// writeMu, so one slow statement stalls every other writer — including the
+// Finalize path a user-cancel must finish before the UI can clear its
+// "stopping" state. Set well above normal SQLite latency so only pathological
+// writes are logged.
+const slowWriteThreshold = 200 * time.Millisecond
+
+// sqlTargetSkip holds the keywords that can sit between a statement's verb and
+// its target (table/index/view) name. writeOpLabel skips them so the label
+// keeps the target — without it "INSERT OR REPLACE INTO summaries" would
+// reduce to "INSERT OR REPLACE", which does not say what was written and so
+// cannot identify the slow statement.
+var sqlTargetSkip = map[string]bool{
+	"OR": true, "REPLACE": true, "IGNORE": true, "INTO": true, "FROM": true,
+	"TABLE": true, "INDEX": true, "VIEW": true, "TRIGGER": true,
+	"IF": true, "NOT": true, "EXISTS": true, "TEMPORARY": true, "TEMP": true,
+	"UNIQUE": true,
+}
+
+// writeOpLabel reduces a SQL statement to a short, log-safe label of the form
+// "<verb> <target>" ("UPDATE chat_history", "INSERT summaries",
+// "PRAGMA journal_mode=WAL"). Only the leading keywords are kept, so a
+// statement carrying user content can never leak it into the logs.
+func writeOpLabel(query string) string {
+	const maxLen = 48
+	fields := strings.Fields(query)
+	if len(fields) == 0 {
+		return ""
+	}
+	verb := fields[0]
+	for _, f := range fields[1:] {
+		if sqlTargetSkip[strings.ToUpper(f)] {
+			continue
+		}
+		label := verb + " " + f
+		if len(label) > maxLen {
+			label = label[:maxLen]
+		}
+		return label
+	}
+	if len(verb) > maxLen {
+		verb = verb[:maxLen]
+	}
+	return verb
+}
+
+// slowWrite captures a write worth reporting: how long it waited for writeMu
+// and how long the statement itself took.
+type slowWrite struct {
+	op   string
+	wait time.Duration
+	exec time.Duration
+}
+
+// reportSlowWrite logs a slow write, distinguishing the two axes: waiting for
+// writeMu means contention (another goroutine holds the global write lock),
+// while a slow exec means the statement itself (e.g. rewriting a
+// multi-megabyte content column). They call for opposite fixes, so a single
+// undifferentiated "slow write" line would not be actionable.
+//
+// Callers must have released writeMu: logging writes to a file, and doing that
+// under the global write lock would add log I/O to the very critical section
+// this instrumentation exists to measure.
+func reportSlowWrite(s slowWrite) {
+	if s.wait < slowWriteThreshold && s.exec < slowWriteThreshold {
+		return
+	}
+	slog.Warn("db: slow write",
+		slog.String("op", s.op),
+		slog.Duration("lock_wait", s.wait),
+		slog.Duration("exec", s.exec),
+	)
+}
+
+// timedWrite runs one write statement under writeMu, reporting it when either
+// the lock wait or the execution exceeds slowWriteThreshold.
+func timedWrite(query string, exec func() (sql.Result, error)) (sql.Result, error) {
+	// Derived before locking so the label work is not inside the critical
+	// section either.
+	op := writeOpLabel(query)
+
+	waitStart := time.Now()
+	writeMu.Lock()
+	lockedAt := time.Now()
+	result, err := exec()
+	wait, execDur := lockedAt.Sub(waitStart), time.Since(lockedAt)
+	writeMu.Unlock()
+
+	reportSlowWrite(slowWrite{op: op, wait: wait, exec: execDur})
+	return result, err
+}
+
 // WriteLock acquires the global write mutex.
 // Callers MUST call WriteUnlock after the write operation completes.
 // Use this for write transactions that span multiple SQL statements:
@@ -49,17 +143,13 @@ func WriteUnlock() { writeMu.Unlock() }
 // WriteExec executes a write statement on DB under the write mutex.
 // Use this for all INSERT/UPDATE/DELETE/DDL operations instead of DB.Exec directly.
 func WriteExec(query string, args ...any) (sql.Result, error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return db.Exec(query, args...)
+	return timedWrite(query, func() (sql.Result, error) { return db.Exec(query, args...) })
 }
 
 // WriteExecContext executes a write statement on DB under the write mutex with context support.
 // Use this instead of DB.ExecContext for writes that may need request-scoped cancellation.
 func WriteExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return db.ExecContext(ctx, query, args...)
+	return timedWrite(query, func() (sql.Result, error) { return db.ExecContext(ctx, query, args...) })
 }
 
 // WriteBegin starts a write transaction on DB under the write mutex.
@@ -71,8 +161,17 @@ func WriteExecContext(ctx context.Context, query string, args ...any) (sql.Resul
 //	defer writeMu.Unlock() // ensure mutex is released on any return path
 //	// ... tx.Exec, tx.Query ...
 //	if err := tx.Commit(); err != nil { return err }
+//
+// Only the lock wait is reported here: the transaction stays open for as long
+// as the caller keeps the mutex, so its execution time is not measurable at
+// this boundary. A long lock_wait still proves contention — some other writer
+// (or a previous multi-statement transaction) held writeMu.
 func WriteBegin() (*sql.Tx, error) {
+	waitStart := time.Now()
 	writeMu.Lock()
+	if wait := time.Since(waitStart); wait >= slowWriteThreshold {
+		slog.Warn("db: slow write", slog.String("op", "BEGIN tx"), slog.Duration("lock_wait", wait))
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		writeMu.Unlock()
@@ -109,15 +208,11 @@ func SetDBForTest(writeDB, readDB *sql.DB) func() {
 type mutexDBWriter struct{}
 
 func (mutexDBWriter) Exec(query string, args ...any) (sql.Result, error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return db.Exec(query, args...)
+	return timedWrite(query, func() (sql.Result, error) { return db.Exec(query, args...) })
 }
 
 func (mutexDBWriter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return db.ExecContext(ctx, query, args...)
+	return timedWrite(query, func() (sql.Result, error) { return db.ExecContext(ctx, query, args...) })
 }
 
 func (mutexDBWriter) Query(query string, args ...any) (*sql.Rows, error) {
@@ -651,7 +746,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 	// project_forges.scheme: the API scheme the binding's host is reached with.
 	//
-	// Existing rows backfill to '' (unknown) rather than 'https'.
+	// Existing rows backfill to '' (unknown) rather than 'https'. The distinction
+	// is load-bearing: '' means "the remote did not say", which lets the resolver
+	// fall back to the instance hint and then https, whereas writing 'https'
+	// would freeze a guess into the row and silently override a later http hint.
+	// No existing binding can have known its scheme — the column did not exist,
+	// and every remote parsed before this change dropped it.
 	{
 		var exists int
 		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('project_forges') WHERE name='scheme'").Scan(&exists)

@@ -5,6 +5,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useAppForeground, onAppForeground } from '@/composables/useAppForeground'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { appLog } from '@/utils/appLog'
+import { reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
 
 const TAG = 'ChatSession'
 import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
@@ -1125,6 +1126,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       // This is the root cause of the "stuck in progress" bug.
       if (sid === currentSessionId.value && loading.value && (data.status === 'completed' || data.status === 'cancelled')) {
         appLog.w(TAG, `session_update ${data.status} received but loading still true — cleaning up stuck loading state`)
+        // This is the other path that clears the stop-button spinner, so it
+        // must also close out a pending cancel measurement (whichever of the
+        // two paths arrives first reports it; the second is a no-op).
+        reportCancelRoundTrip(`session_update:${data.status}`)
         onDisconnectStream()
         forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
         loading.value = false

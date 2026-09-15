@@ -10,6 +10,7 @@ import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStream
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
+import { markCancelRequested, reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
 
 const TAG = 'ChatStream'
 
@@ -457,6 +458,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         // replaced. Moving them here eliminates that perceived lag.
         loading.value = false
         onMessage()
+        reportCancelRoundTrip('done')
         if (isOpen.value) {
           onScrollBottom(false)
         }
@@ -512,12 +514,19 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'cancelled': {
         if (sessionChanged()) return
+        // Do NOT bail out when no streaming placeholder is found. The terminal
+        // event's job is to end the turn; the placeholder is only an optional
+        // artifact of it. Returning early here left loading.value = true
+        // forever — the stop button stayed armed and the loading indicator
+        // never cleared until the user switched sessions. forceCleanupStreamingState
+        // already tolerates a missing placeholder, and 'done'/'error' have no
+        // such guard, so this path must not either.
         const sm = findStreamingMsg(messages.value)
-        if (!sm) return
         stopStreaming()
-        sm.cancelled = true
+        if (sm) sm.cancelled = true
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
         loading.value = false
+        reportCancelRoundTrip('cancelled')
         onStreamEnd?.('cancelled')
         break
       }
@@ -736,6 +745,9 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   async function cancelStream() {
     if (!currentSessionId.value || !loading.value) return
+    // Record the click before the send so the measured latency includes the
+    // WS round-trip, not just the backend's own work.
+    markCancelRequested()
     // Send cancel via WS
     sendWsMessage({ type: 'cancel', session_id: currentSessionId.value })
   }
