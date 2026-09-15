@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -350,10 +351,17 @@ func TestServiceLocalizeError_Wording(t *testing.T) {
 // resume fails when handed a relative cwd, so every entry point must resolve it
 // the same way.
 func TestResolveFileDir(t *testing.T) {
-	assert.Equal(t, "/tmp", resolveFileDir("/tmp"))
+	// An already-absolute path is returned unchanged. Use a real absolute path
+	// from this platform rather than the literal "/tmp": on Windows "/tmp" has
+	// no drive letter, so filepath.Abs resolves it against the current drive
+	// ("D:\tmp") and the identity assertion would be wrong, not the code.
+	dir := t.TempDir()
+	assert.Equal(t, dir, resolveFileDir(dir))
+
 	abs := resolveFileDir(".")
 	assert.NotEmpty(t, abs)
 	assert.NotEqual(t, ".", abs, "a relative path must be resolved to an absolute one")
+	assert.True(t, filepath.IsAbs(abs), "the resolved path must be absolute")
 }
 
 // TestRunTurnStart_OnStartedFiresBeforeEventLoop pins the scheduler's "running"
