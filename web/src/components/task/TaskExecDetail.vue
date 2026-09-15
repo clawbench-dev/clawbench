@@ -6,6 +6,13 @@
       <RefreshButton class="header-btn refresh-btn" :loading="refreshing" :disabled="refreshing" :title="t('common.refresh')" @click="onRefresh" />
     </div>
 
+    <!-- Summary / Original tabs — pinned directly under the header, OUTSIDE the
+         scroll container, so they stay put while the message scrolls. Hidden
+         while the run is still streaming (there is no final summary yet). -->
+    <div v-if="hasSummary && !execStream.isStreaming.value && !isRunning" class="exec-detail-tabs">
+      <SummaryToggle mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
+    </div>
+
     <!-- Scrollable message content -->
     <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onContentTouchStart" @touchend="onContentTouchEnd" @touchcancel="onContentTouchEnd" @scroll="handleScroll">
       <!-- Trigger source: links an event-triggered run back to its issue/PR and
@@ -27,8 +34,6 @@
         </button>
         <pre v-if="execDetail?.eventSummary && eventContextOpen" class="exec-event-context">{{ execDetail.eventSummary }}</pre>
       </div>
-      <!-- Summary / Original tab bar (hidden during live streaming) -->
-      <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value && !isRunning" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
         v-if="activeMsgData"
         :msg="activeMsgData"
@@ -36,6 +41,7 @@
         :expandedTools="expandedTools"
         :blockTasks="{}"
         :blockAskQuestions="{}"
+        hideSessionActions
         @toggle-tool="toggleTool"
         @show-tool-detail="handleShowToolDetail"
         @show-metadata="showMetadata"
@@ -684,17 +690,31 @@ onUnmounted(() => {
   transform: scale(0.9);
 }
 
+/* Pinned tab strip. Sits between the header and the scroller as a flex sibling
+   (not sticky inside the scroller) — the scroller's content includes the event
+   band, which is full-bleed and rendered above the message; a sticky bar inside
+   would start life below that band and never reach the header. As a sibling it
+   is flush against the header's bottom border with no gap, and the tab bar's
+   own margin-bottom is zeroed so the message starts right below it. */
+.exec-detail-tabs {
+  flex-shrink: 0;
+}
+
+.exec-detail-tabs :deep(.summary-toggle-bar) {
+  margin-bottom: 0;
+}
+
 .exec-detail-content {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-6) 0;
 }
 
-/* The event band belongs flush under the header — it is a header strip, not a
-   floating card — but the scroll container's top padding would otherwise leave
-   a 12px strip of page background above it, separating the band from the header
-   it annotates. Drop that padding only when the band is present; the
-   message-only case keeps its breathing room. */
+/* The event band belongs flush under whatever precedes it — the header, or the
+   pinned tab strip — because it is a header strip, not a floating card. The
+   scroll container's top padding would otherwise leave a 12px strip of page
+   background above it. Drop that padding only when the band is present; the
+   message-only case keeps its breathing room below the tabs / header. */
 .exec-detail-content:has(> .exec-event-card) {
   padding-top: 0;
 }

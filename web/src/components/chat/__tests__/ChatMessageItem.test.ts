@@ -958,6 +958,34 @@ describe('ChatMessageItem', () => {
     })
   })
 
+  // Read-only hosts (task execution detail) hide only the fork/rewind pair:
+  // branching or truncating a finished execution record has no session to act
+  // on. The rest of the bar (summary, speak, copy, details) stays.
+  describe('hideSessionActions', () => {
+    const assistantMsg = { id: 'hm1', role: 'assistant', content: 'response', blocks: [{ type: 'text', text: 'Hello world' }] }
+
+    it('hides the fork and rewind buttons when hideSessionActions is set', () => {
+      const wrapper = createWrapper({ msg: assistantMsg, hideSessionActions: true })
+      expect(wrapper.find('button[title="chat.actions.forkSession"]').exists()).toBe(false)
+      expect(wrapper.find('button[title="chat.actions.rewindSession"]').exists()).toBe(false)
+    })
+
+    it('keeps the meta bar and its remaining actions when hideSessionActions is set', () => {
+      const wrapper = createWrapper({ msg: assistantMsg, hideSessionActions: true })
+      expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
+      // Summary toggle, copy and details survive; only the two session actions go.
+      expect(wrapper.find('.summary-toggle-stub').exists()).toBe(true)
+      expect(wrapper.find('button[title="复制"]').exists()).toBe(true)
+      expect(wrapper.find('button[title="详情"]').exists()).toBe(true)
+    })
+
+    it('still renders both session actions by default (chat host unaffected)', () => {
+      const wrapper = createWrapper({ msg: assistantMsg })
+      expect(wrapper.find('button[title="chat.actions.forkSession"]').exists()).toBe(true)
+      expect(wrapper.find('button[title="chat.actions.rewindSession"]').exists()).toBe(true)
+    })
+  })
+
   describe('display mode and original lazy-load', () => {
     it('renders summary text when message has summary', async () => {
       const wrapper = createWrapper({
