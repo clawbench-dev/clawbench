@@ -146,4 +146,25 @@ describe('SessionTagFilterBar', () => {
     expect(barRule, '.session-tag-filter should exist').toBeTruthy()
     expect(barRule).toMatch(/padding:\s*var\(--space-4\)\s+var\(--space-6\)/)
   })
+
+  it('separates itself from the list surface below', () => {
+    // The bar used to have no background at all, so it read as a continuation
+    // of the list rather than a distinct control. The host pane is
+    // --bg-secondary, so the bar takes the next step in (--bg-tertiary).
+    const css = sourceDeclarations()
+    const barRule = /\.session-tag-filter\s*\{[^}]*\}/.exec(css)?.[0]
+    expect(barRule, '.session-tag-filter should exist').toBeTruthy()
+    expect(barRule).toMatch(/background:\s*var\(--bg-tertiary/)
+  })
+
+  it('keeps a bottom border even though it now has a fill', () => {
+    // Not decoration: --bg-tertiary is only ΔL 0.085+ from --bg-secondary on
+    // light themes but as little as 0.003 on dark ones (ayu-dark, github-dark,
+    // vitesse-dark), where the fill alone is invisible. Dropping the border
+    // would leave those themes with no separation at all.
+    const css = sourceDeclarations()
+    const barRule = /\.session-tag-filter\s*\{[^}]*\}/.exec(css)?.[0]
+    expect(barRule, '.session-tag-filter should exist').toBeTruthy()
+    expect(barRule).toMatch(/border-bottom:\s*1px solid/)
+  })
 })

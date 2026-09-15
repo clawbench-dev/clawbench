@@ -74,6 +74,16 @@ const { t } = useI18n()
      with the panel edge while every row below was indented, which is what made
      the bar look crammed against its own border. */
   padding: var(--space-4) var(--space-6) var(--space-5);
+  /* Layer the bar off the list below it. The host pane is --bg-secondary, so
+     the bar sits one step further in (--bg-tertiary) to read as a distinct
+     surface rather than a continuation of the list.
+   *
+   * The bottom border is load-bearing, not decoration: --bg-tertiary is only
+   * ΔL 0.085+ away from --bg-secondary on light themes, but as little as 0.003
+   * on dark ones (ayu-dark, github-dark, vitesse-dark…), where the fill alone
+   * is invisible. The border carries the separation on those themes, so it
+   * must stay even though the fill is doing most of the work on light ones. */
+  background: var(--bg-tertiary, var(--bg-secondary, #f1f3f5));
   border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
 }
 
