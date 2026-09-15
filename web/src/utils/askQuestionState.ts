@@ -26,6 +26,17 @@ export interface AskAnswerState {
   supplementary: string
   /** Whether the user already answered this card. */
   submitted: boolean
+  /**
+   * Which terminal path answered the card. The two render differently: a
+   * submit keeps the Submit button visible as "Submitted" and dims the options
+   * the user did NOT pick, while "Recommend" hides the Submit button entirely
+   * (no option was picked, so there is nothing to dim). Without recording the
+   * path a rebuild would have to guess, and a reverted recommend card would
+   * come back with its Submit button still hidden.
+   *
+   * Only meaningful while `submitted` is true — cleared on revert.
+   */
+  viaRecommend: boolean
 }
 
 /** A partial update; omitted keys keep their current value. */
@@ -86,10 +97,16 @@ export function getAskState(key: string): AskAnswerState | undefined {
 export function patchAskState(key: string, patch: AskAnswerPatch): void {
   if (!key) return
   const prev = answers.get(key)
+  const submitted = patch.submitted ?? prev?.submitted ?? false
   const next: AskAnswerState = {
     selected: patch.selected ?? prev?.selected ?? {},
     supplementary: patch.supplementary ?? prev?.supplementary ?? '',
-    submitted: patch.submitted ?? prev?.submitted ?? false,
+    submitted,
+    // `viaRecommend` describes a terminal look, so it is only meaningful while
+    // submitted. Forcing it false here makes the invariant structural: no
+    // caller can leave a stale flag behind and have a later rebuild re-apply
+    // the recommend styling to a card that is answerable again.
+    viaRecommend: submitted ? (patch.viaRecommend ?? prev?.viaRecommend ?? false) : false,
   }
   if (isEmpty(next)) answers.delete(key)
   else answers.set(key, next)

@@ -85,6 +85,29 @@ describe('askQuestionState', () => {
     expect(_askStateCountForTesting()).toBe(1)
   })
 
+  describe('viaRecommend only survives while submitted', () => {
+    it('records the recommend marker on a submitted card', () => {
+      patchAskState('tool:abc', { submitted: true, viaRecommend: true })
+      expect(getAskState('tool:abc')?.viaRecommend).toBe(true)
+    })
+
+    it('drops the marker when the card stops being submitted', () => {
+      // Enforced in the store, not by callers: a revert only has to clear
+      // `submitted`, and no path can leave a stale marker that would make a
+      // rebuilt card re-apply the recommend terminal look. The note keeps the
+      // entry alive so the marker is what is being asserted, not the deletion.
+      patchAskState('tool:abc', { supplementary: 'note', submitted: true, viaRecommend: true })
+      patchAskState('tool:abc', { submitted: false })
+      expect(getAskState('tool:abc')?.submitted).toBe(false)
+      expect(getAskState('tool:abc')?.viaRecommend).toBe(false)
+    })
+
+    it('ignores a marker set without being submitted', () => {
+      patchAskState('tool:abc', { supplementary: 'note', viaRecommend: true })
+      expect(getAskState('tool:abc')?.viaRecommend).toBe(false)
+    })
+  })
+
   it('clearAskState drops only the named card', () => {
     patchAskState('tool:a', { supplementary: 'A' })
     patchAskState('tool:b', { supplementary: 'B' })

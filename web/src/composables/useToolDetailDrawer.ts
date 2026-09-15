@@ -79,6 +79,10 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
    * typed in the drawer and one typed in the list are the same answer rather
    * than two divergent copies. Uses the tool call id (the backend's
    * `ask-<uuid>`, persisted to chat_tool_calls), which is stable across reloads.
+   *
+   * Callers MUST pass `sessionId`. Omitting it silently keys every card under
+   * the 'no-session' fallback, which the chat list (which has the real session)
+   * will never match — the two views would then hold separate answers.
    */
   function askKeyForToolBlock(block: ToolBlock | null | undefined): string {
     const id = block?.id ?? block?.tool_id

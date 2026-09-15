@@ -388,6 +388,10 @@ const {
     await openFilePath(path, lineStart, lineEnd, 'chat', lineRanges)
   },
   findLiveBlock: (ids) => findToolBlock(ids),
+  // Ask cards are keyed per (session, card) so an answer typed in the drawer and
+  // one typed in the list are the SAME answer. Without this the drawer falls back
+  // to the 'no-session' key and the two views would keep divergent copies.
+  sessionId: () => identity.currentSessionId.value,
 })
 
 // Thinking overlay removed — thinking blocks now expand/collapse inline

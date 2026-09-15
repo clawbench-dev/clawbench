@@ -554,7 +554,7 @@ describe('ChatPanelContent — send failure always toasts', () => {
     // threw, the error would skip to sendMessage's catch (which restores the
     // input) and the user would never see the failure toast. The toast must be
     // the FIRST statement of the catch so a failed send always surfaces.
-    const region = await sourceRegion('async function sendMessageNow(text, filePaths, files)', 'async function handleToolSendMessage(text)')
+    const region = await sourceRegion('async function sendMessageNow(text, filePaths, files)', 'async function handleToolSendMessage(text, cardKey)')
     const catchBody = region.slice(region.indexOf('} catch (err) {'), region.lastIndexOf('throw err'))
     expect(catchBody).toMatch(/toast\.show\(t\('toast\.sendFailed'\)/)
     const toastIdx = catchBody.indexOf("toast.show(t('toast.sendFailed')")
@@ -649,5 +649,30 @@ describe('ChatPanelContent — ask-card answer send failure', () => {
     expect(region).toMatch(/return false/)
     expect(region).toMatch(/return true/)
     expect(region).not.toMatch(/throw err/)
+  })
+})
+
+// ── The chat drawer must key ask cards by the REAL session ──
+//
+// useToolDetailDrawer builds its ask key from an optional `sessionId` option and
+// silently falls back to 'no-session' when it is absent. ContentBlocks keys the
+// same card by its `sessionId` prop (the real session), so a caller that omits
+// the option makes the two views disagree about which card an answer belongs to
+// — they would keep divergent copies. TaskExecDetail passes it; the chat panel
+// did not.
+
+describe('ChatPanelContent — tool detail drawer is session-scoped', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('passes sessionId to useToolDetailDrawer so ask keys match the chat list', async () => {
+    const src = await source()
+    const start = src.indexOf('= useToolDetailDrawer({')
+    expect(start).toBeGreaterThan(-1)
+    // Bound the region at the closing paren of the call.
+    const region = src.slice(start, src.indexOf('\n})', start))
+    expect(region).toMatch(/sessionId:\s*\(\)\s*=>/)
   })
 })

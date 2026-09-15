@@ -3475,6 +3475,36 @@ describe('AskUserQuestion answer state persistence', () => {
       container.remove()
     })
 
+    it('records the submitted flag when Recommend is used', () => {
+      // Recommend answers the card too (it sends a prompt and locks the card),
+      // so it must persist exactly like Submit — otherwise a re-render brings
+      // the card back answerable and the label reverts to "Recommend".
+      const { container, view, emit } = createCard('tool:tu-1')
+      clickOn(view.querySelector('.ask-question-recommend')!, emit)
+
+      expect(getAskState('tool:tu-1')?.submitted).toBe(true)
+      container.remove()
+    })
+
+    it('marks a recommend answer as coming from the recommend path', () => {
+      // The two terminal looks differ (Submit relabels and dims; Recommend
+      // hides Submit), so a rebuild has to know which one to reproduce.
+      const { container, view, emit } = createCard('tool:tu-1')
+      clickOn(view.querySelector('.ask-question-recommend')!, emit)
+
+      expect(getAskState('tool:tu-1')?.viaRecommend).toBe(true)
+      container.remove()
+    })
+
+    it('does not mark a plain submit as coming from the recommend path', () => {
+      const { container, view, emit } = createCard('tool:tu-1')
+      clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+      clickOn(view.querySelector('.ask-question-submit')!, emit)
+
+      expect(getAskState('tool:tu-1')?.viaRecommend).toBe(false)
+      container.remove()
+    })
+
     it('keeps separate state for separate cards', () => {
       const a = createCard('tool:tu-a')
       const b = createCard('tool:tu-b')
@@ -3544,6 +3574,40 @@ describe('AskUserQuestion answer state persistence', () => {
       expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).disabled).toBe(true)
       const submit = rebuilt.view.querySelector('.ask-question-submit') as HTMLButtonElement
       expect(submit.disabled).toBe(true)
+      rebuilt.container.remove()
+    })
+
+    it('restores a recommend answer by hiding Submit, not relabelling it', () => {
+      // The whole point of recording `viaRecommend`: a rebuilt card must come
+      // back in the recommend terminal look (Submit hidden), not Submit's.
+      const first = createCard('tool:tu-1')
+      clickOn(first.view.querySelector('.ask-question-recommend')!, first.emit)
+      first.container.remove()
+
+      const rebuilt = createCard('tool:tu-1')
+      restoreAskStateFromStore(rebuilt.view)
+
+      expect(rebuilt.view.classList.contains('ask-submitted')).toBe(true)
+      const submit = rebuilt.view.querySelector('.ask-question-submit') as HTMLButtonElement
+      expect(submit.style.display).toBe('none')
+      const recommend = rebuilt.view.querySelector('.ask-question-recommend') as HTMLElement
+      expect(recommend.textContent).toBe('Recommended')
+      expect(recommend.style.pointerEvents).toBe('none')
+      rebuilt.container.remove()
+    })
+
+    it('does not hide Submit when restoring a plain submit', () => {
+      const first = createCard('tool:tu-1')
+      clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
+      clickOn(first.view.querySelector('.ask-question-submit')!, first.emit)
+      first.container.remove()
+
+      const rebuilt = createCard('tool:tu-1')
+      restoreAskStateFromStore(rebuilt.view)
+
+      const submit = rebuilt.view.querySelector('.ask-question-submit') as HTMLButtonElement
+      expect(submit.style.display).not.toBe('none')
+      expect(submit.textContent).toBe('Submitted')
       rebuilt.container.remove()
     })
 
@@ -3645,6 +3709,26 @@ describe('AskUserQuestion answer state persistence', () => {
       expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).disabled).toBe(false)
       // The user's selection survived, so retrying is one tap away.
       expect(rebuilt.view.querySelectorAll('.ask-question-option.selected').length).toBe(1)
+      rebuilt.container.remove()
+    })
+
+    it('clears the recommend marker so a rebuilt card is not re-hidden', () => {
+      const first = createCard('tool:tu-1')
+      clickOn(first.view.querySelector('.ask-question-recommend')!, first.emit)
+      first.container.remove()
+
+      revertAskSubmission('tool:tu-1')
+
+      // The store drops viaRecommend whenever submitted goes false, so the
+      // rebuilt card must come back answerable (Submit visible).
+      expect(getAskState('tool:tu-1')?.viaRecommend ?? false).toBe(false)
+
+      const rebuilt = createCard('tool:tu-1')
+      restoreAskStateFromStore(rebuilt.view)
+
+      const submit = rebuilt.view.querySelector('.ask-question-submit') as HTMLButtonElement
+      expect(submit.style.display).not.toBe('none')
+      expect(rebuilt.view.classList.contains('ask-submitted')).toBe(false)
       rebuilt.container.remove()
     })
 
