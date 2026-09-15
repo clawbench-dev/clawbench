@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { TAG_PALETTE, hashTagName, tagAccent, tagAccentStyle, readableTextOn, contrastRatio } from '@/utils/tagColor'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 /**
  * Parse the tool-call accent palette out of ContentBlocks.vue.
@@ -12,10 +11,7 @@ import { TAG_PALETTE, hashTagName, tagAccent, tagAccentStyle, readableTextOn, co
  * nothing despite claiming to catch drift between the two color systems.
  */
 function toolCallPaletteFromComponent() {
-  // Vitest runs with the web/ package as cwd, so a path relative to it is
-  // stable (import.meta.url is not a file: URL under vitest's transform).
-  const path = resolve(process.cwd(), 'src/components/chat/ContentBlocks.vue')
-  const src = readFileSync(path, 'utf8')
+  const src = readWebFile('src/components/chat/ContentBlocks.vue')
   const light: Record<string, string> = {}
   const dark: Record<string, string> = {}
   const re = /\.chat-tool-call\[data-category="([a-z]+)"\]\s*\{\s*--tool-accent:\s*([^;]+);\s*\}/g
@@ -196,8 +192,7 @@ describe('tagColor', () => {
      * new theme must be covered without editing this test.
      */
     function surfaces(): { name: string; bg: [number, number, number]; dark: boolean }[] {
-      const path = resolve(process.cwd(), '../web/css/variables.css')
-      const src = readFileSync(path, 'utf8')
+      const src = readWebFile('css/variables.css')
       const root = /:root\s*\{([\s\S]*?)\n\}/.exec(src)
       const base: Record<string, string> = {}
       if (root) {
@@ -287,8 +282,7 @@ describe('tagColor', () => {
       // Regression: the checkbox tick was hardcoded white and sat on the theme
       // accent. Those accents are mid-to-light blues, so white scored as low as
       // 1.69:1 — below 4.5:1 on 28 of 36 themes.
-      const path = resolve(process.cwd(), '../web/css/variables.css')
-      const src = readFileSync(path, 'utf8')
+      const src = readWebFile('css/variables.css')
       const accents = [...src.matchAll(/--accent-color:\s*(#[0-9a-fA-F]{6})\s*;/g)].map(m => m[1])
       expect(accents.length).toBeGreaterThan(20)
       const worst: string[] = []
@@ -321,8 +315,7 @@ describe('tagColor', () => {
      * so the test asserts that pairing rather than the CSS text.
      */
     function surfacesByMode() {
-      const path = resolve(process.cwd(), '../web/css/variables.css')
-      const src = readFileSync(path, 'utf8')
+      const src = readWebFile('css/variables.css')
       const root = /:root\s*\{([\s\S]*?)\n\}/.exec(src)
       const base: Record<string, string> = {}
       if (root) {
@@ -361,10 +354,7 @@ describe('tagColor', () => {
       // Read the label colours out of the component rather than restating them
       // here: a test that asserts its own constants stays green when the CSS
       // drifts, which is the failure mode this is meant to prevent.
-      const css = readFileSync(
-        resolve(process.cwd(), 'src/components/session/SessionTagFilterBar.vue'),
-        'utf8',
-      )
+      const css = readWebFile('src/components/session/SessionTagFilterBar.vue')
       const base = /\.session-tag-filter-chip\.active\s*\{[^}]*color:\s*([^;]+);/.exec(css)
       const darkRule = /\[data-theme-base="dark"\]\s*\.session-tag-filter-chip\.active\s*\{[^}]*color:\s*([^;]+);/.exec(css)
       expect(base, '.active must declare a label colour').not.toBeNull()

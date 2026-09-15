@@ -120,9 +120,10 @@
     --font-size-2xl: 16px;   /* headings, and inputs kept at 16px so mobile
                                 Safari does not zoom when they gain focus */
 
-    /* ── Weights. Three steps cover the UI; `400` (regular) is the browser
-       default and is left unwritten rather than tokenized, and `800` exists
-       once for terminal keycaps. ── */
+    /* ── Weights. Three steps cover the UI, plus `normal` for the places that
+       must opt back OUT of an inherited weight (a muted badge nested inside a
+       semibold label); `800` exists once for terminal keycaps. ── */
+    --font-weight-normal: 400;    /* resets an inherited weight */
     --font-weight-medium: 500;    /* secondary emphasis, list emphasis */
     --font-weight-semibold: 600;  /* the workhorse: labels, headings, buttons */
     --font-weight-bold: 700;      /* strong emphasis, keycaps */

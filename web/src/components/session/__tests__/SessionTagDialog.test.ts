@@ -1,9 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 const { mockStore, mockDialogHolder, mockGet, mockDelete, mockPatch } = vi.hoisted(() => ({
   mockStore: { state: { sessionListVersion: 0 } },
@@ -414,7 +413,7 @@ describe('SessionTagDialog', () => {
   // a text link, while the chips above (which do declare a surface) looked
   // right. jsdom does not cascade CSS, so assert on the declared source rules.
   describe('form controls declare their own surface', () => {
-    const src = readFileSync(resolve(process.cwd(), 'src/components/session/SessionTagDialog.vue'), 'utf8')
+    const src = readWebFile('src/components/session/SessionTagDialog.vue')
     const ruleFor = (selector: string) => {
       // Match ".selector { ... }" and take the declaration block.
       const m = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(src)
@@ -464,7 +463,7 @@ describe('SessionTagDialog', () => {
   })
 
   describe('candidate grid', () => {
-    const src = readFileSync(resolve(process.cwd(), 'src/components/session/SessionTagDialog.vue'), 'utf8')
+    const src = readWebFile('src/components/session/SessionTagDialog.vue')
     const decls = src.replace(/\/\*[\s\S]*?\*\//g, '')
     const ruleFor = (selector: string) => {
       const m = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(decls)
@@ -572,7 +571,7 @@ describe('SessionTagDialog', () => {
   })
 
   describe('pending tag', () => {
-    const src = readFileSync(resolve(process.cwd(), 'src/components/session/SessionTagDialog.vue'), 'utf8')
+    const src = readWebFile('src/components/session/SessionTagDialog.vue')
     const decls = src.replace(/\/\*[\s\S]*?\*\//g, '')
 
     it('marks a not-yet-saved tag with a dashed border', () => {

@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 const i18n = createI18n({
   legacy: false,
@@ -27,10 +26,7 @@ function mountBar(props: Record<string, unknown> = {}) {
 }
 
 function source(): string {
-  return readFileSync(
-    resolve(process.cwd(), 'src/components/session/SessionTagFilterBar.vue'),
-    'utf8',
-  )
+  return readWebFile('src/components/session/SessionTagFilterBar.vue')
 }
 
 /**
