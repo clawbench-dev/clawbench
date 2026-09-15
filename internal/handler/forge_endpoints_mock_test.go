@@ -608,10 +608,15 @@ func TestServeForgeItems_TagsUnreadRows(t *testing.T) {
 	})
 	require.NoError(t, err)
 	// The mock host is dynamic, so fix the host on the stored row to match.
-	var host string
-	require.NoError(t, service.ReadDB().QueryRow(
-		`SELECT host FROM project_forges WHERE project_path = ?`, env.ProjectDir,
-	).Scan(&host))
+	//
+	// The lookup goes through GetProjectForge rather than raw SQL: bindProject
+	// stores NormalizeProjectPath(projectPath), and that normalization is not a
+	// no-op on macOS (/var → /private/var) or Windows (filepath.Abs adds a
+	// drive). Querying with the raw temp dir would find no row there.
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf, "the mock binding must be stored for this project")
+	host := pf.Host
 	_, err = service.WriteExec(`UPDATE forge_events SET host = ?`, host)
 	require.NoError(t, err)
 

@@ -3734,6 +3734,12 @@ func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
 	defer func() { db = origDB; dbRead = origDBRead }()
 
 	// A LEGACY project_forges table: no scheme column, one pre-existing row.
+	//
+	// The path is normalized before it is stored. GetProjectForge normalizes its
+	// argument, so a raw "/proj" here would never match on Windows — filepath.Abs
+	// turns it into a drive-qualified path — and the test would fail on a lookup
+	// miss rather than on the migration it is meant to check.
+	projPath := NormalizeProjectPath(t.TempDir())
 	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
 	legacy, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
 	require.NoError(t, err)
@@ -3751,7 +3757,7 @@ func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = legacy.Exec(
 		`INSERT INTO project_forges (project_path, platform, host, owner, repo)
-		 VALUES ('/proj', 'gitlab', 'gitlab.internal', 'group', 'widgets')`)
+		 VALUES (?, 'gitlab', 'gitlab.internal', 'group', 'widgets')`, projPath)
 	require.NoError(t, err)
 	require.NoError(t, legacy.Close())
 
@@ -3767,12 +3773,12 @@ func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
 	// would override the credential's hint on an http-only instance.
 	var scheme string
 	require.NoError(t, UnsafeDBForTest().QueryRow(
-		"SELECT scheme FROM project_forges WHERE project_path = '/proj'").Scan(&scheme))
+		"SELECT scheme FROM project_forges WHERE project_path = ?", projPath).Scan(&scheme))
 	assert.Empty(t, scheme, "existing rows must backfill to unknown, not https")
 
 	// And the migrated table must be usable through the real accessors, which is
 	// what an upgrade actually exercises.
-	pf, err := GetProjectForge("/proj")
+	pf, err := GetProjectForge(projPath)
 	require.NoError(t, err)
 	require.NotNil(t, pf)
 	assert.Equal(t, "gitlab.internal", pf.Host)

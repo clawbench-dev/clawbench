@@ -249,9 +249,13 @@ func TestStaticSource_EmptyCommandIsAlwaysAvailable(t *testing.T) {
 }
 
 func TestCLISource_ParsesCommandOutput(t *testing.T) {
+	// printf via sh, not `echo` with an embedded newline: Windows has no echo
+	// executable (it is a cmd builtin), so exec.Command("echo", …) fails there
+	// and the test would see an empty catalog. sh is available on every CI
+	// runner this repo uses (see exec_test.go, which relies on the same).
 	src := NewCLISource("cli-test", CLIOptions{
-		Command: "echo",
-		Args:    []string{"alpha/beta\ngamma/delta"},
+		Command: "sh",
+		Args:    []string{"-c", "printf 'alpha/beta\\ngamma/delta\\n'"},
 		Parse:   ParseProviderModel,
 	})
 
