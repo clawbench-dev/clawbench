@@ -110,6 +110,14 @@ func reportSlowWrite(s slowWrite) {
 
 // timedWrite runs one write statement under writeMu, reporting it when either
 // the lock wait or the execution exceeds slowWriteThreshold.
+//
+// The unlock is deferred rather than written inline: exec() reaches into
+// database/sql and can panic (a nil *sql.DB dereferences inside db.Exec, which
+// is exactly what the backfill path does when the DB is torn down between
+// tests). An inline Unlock after exec() would be skipped by the panic and leave
+// writeMu held forever, so every later writer blocks on Lock — the whole
+// process wedges with no CPU use and no error, and the run dies on the test
+// timeout instead of surfacing the original panic.
 func timedWrite(query string, exec func() (sql.Result, error)) (sql.Result, error) {
 	// Derived before locking so the label work is not inside the critical
 	// section either.
@@ -118,12 +126,13 @@ func timedWrite(query string, exec func() (sql.Result, error)) (sql.Result, erro
 	waitStart := time.Now()
 	writeMu.Lock()
 	lockedAt := time.Now()
-	result, err := exec()
-	wait, execDur := lockedAt.Sub(waitStart), time.Since(lockedAt)
-	writeMu.Unlock()
+	defer func() {
+		wait, execDur := lockedAt.Sub(waitStart), time.Since(lockedAt)
+		writeMu.Unlock()
+		reportSlowWrite(slowWrite{op: op, wait: wait, exec: execDur})
+	}()
 
-	reportSlowWrite(slowWrite{op: op, wait: wait, exec: execDur})
-	return result, err
+	return exec()
 }
 
 // WriteLock acquires the global write mutex.

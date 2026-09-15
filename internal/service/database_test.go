@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	_ "modernc.org/sqlite"
@@ -3813,4 +3814,32 @@ func TestSchema_ProjectForgesSchemeMigrationIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pf)
 	assert.Equal(t, "http", pf.Scheme, "a later migration pass must not disturb stored data")
+}
+
+// TestTimedWrite_ReleasesLockOnPanic is the regression test for a wedged
+// process: timedWrite used to call writeMu.Unlock() inline after exec(), so a
+// panic inside exec() (db.Exec on a nil *sql.DB, which the summary backfill
+// path hits when the DB is torn down) skipped the unlock and left the global
+// write mutex held forever. Every later writer then blocked in Lock with no CPU
+// use and no error — the run died on the test timeout instead of reporting the
+// original panic.
+func TestTimedWrite_ReleasesLockOnPanic(t *testing.T) {
+	assert.Panics(t, func() {
+		_, _ = timedWrite("SELECT 1", func() (sql.Result, error) {
+			panic("boom")
+		})
+	})
+
+	// The lock must be free again: acquiring it with a deadline is the assertion.
+	acquired := make(chan struct{})
+	go func() {
+		writeMu.Lock()
+		writeMu.Unlock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("writeMu is still held after exec panicked — later writers would block forever")
+	}
 }

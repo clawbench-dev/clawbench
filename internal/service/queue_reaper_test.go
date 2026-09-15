@@ -2,6 +2,7 @@ package service
 
 import (
 	"database/sql"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,8 +242,6 @@ func TestQueueReaper_StopIsIdempotent(t *testing.T) {
 	w := &QueueReaper{
 		grace:    time.Minute,
 		interval: time.Hour,
-		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}),
 		reapFn:   func(string) bool { return false },
 	}
 	w.Start()
@@ -251,6 +250,70 @@ func TestQueueReaper_StopIsIdempotent(t *testing.T) {
 		w.Stop()
 		w.Stop()
 	})
+}
+
+// TestQueueReaper_ConcurrentStopClosesOnce is the regression test for the
+// double-close panic: Stop used to clear `running` only after waiting, so two
+// concurrent callers both passed the guard and both reached close(stopCh) —
+// "panic: close of closed channel". Shutdown paths can race, so the guard has
+// to be part of the same critical section that decides who closes.
+func TestQueueReaper_ConcurrentStopClosesOnce(t *testing.T) {
+	w := &QueueReaper{
+		grace:    time.Minute,
+		interval: time.Hour,
+		reapFn:   func(string) bool { return false },
+	}
+	w.Start()
+
+	const callers = 8
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			defer wg.Done()
+			assert.NotPanics(t, func() { w.Stop() })
+		}()
+	}
+	wg.Wait()
+}
+
+// TestQueueReaper_RestartAfterStop is the regression test for the other
+// double-close: run() closes doneCh on exit, so a Stop→Start pair reused the
+// already-closed channels and panicked inside the new goroutine ("panic: close
+// of closed channel" at run's deferred close). Each start must own fresh
+// channels.
+func TestQueueReaper_RestartAfterStop(t *testing.T) {
+	w := &QueueReaper{
+		grace:    time.Minute,
+		interval: time.Hour,
+		reapFn:   func(string) bool { return false },
+	}
+	w.Start()
+	w.Stop()
+	w.Start()
+
+	// The restarted loop must still be responsive to Stop.
+	assert.NotPanics(t, func() { w.Stop() })
+}
+
+// TestQueueReaper_ConcurrentStartStop mixes both transitions, which is where the
+// two panics above interact: a Start racing a Stop must never leave the worker
+// running=true with closed channels, nor close a channel twice.
+func TestQueueReaper_ConcurrentStartStop(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		w := &QueueReaper{
+			grace:    time.Minute,
+			interval: time.Hour,
+			reapFn:   func(string) bool { return false },
+		}
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() { defer wg.Done(); assert.NotPanics(t, w.Start) }()
+		go func() { defer wg.Done(); assert.NotPanics(t, w.Start) }()
+		go func() { defer wg.Done(); assert.NotPanics(t, w.Stop) }()
+		wg.Wait()
+		assert.NotPanics(t, w.Stop)
+	}
 }
 
 // TestQueueReaper_ReapFnFailureIsNotFatal ensures one failing recovery does not

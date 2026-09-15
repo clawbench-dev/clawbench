@@ -40,6 +40,10 @@ type QueueReaper struct {
 	mu      sync.Mutex
 	running bool
 
+	// stopOnce guards close(stopCh): Stop is safe to call from more than one
+	// goroutine (shutdown paths can race), and an unguarded close would panic.
+	stopOnce sync.Once
+
 	// reapFn is the per-session recovery hook. Overridable in tests so the
 	// reaper can be verified without launching a real AI execution.
 	reapFn func(sessionID string) bool
@@ -61,43 +65,62 @@ var (
 )
 
 // NewQueueReaper creates a queue reaper with the default windows.
+//
+// The stop/done channels are created by Start (one generation per run), so a
+// stopped instance can be restarted without reusing closed channels.
 func NewQueueReaper() *QueueReaper {
 	return &QueueReaper{
 		grace:    defaultQueueReapGrace,
 		interval: defaultQueueReapInterval,
-		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}),
 		reapFn:   EnsureConsumer,
 	}
 }
 
 // Start begins the reap loop in a goroutine.
+//
+// Reusable after Stop: fresh channels are created per run, so a restart cannot
+// close an already-closed channel. That matters because the shutdown and
+// startup paths are independent — a Stop/Start pair on the same instance (e.g.
+// a reload or a test reusing the worker) previously panicked inside run's
+// deferred close(doneCh).
 func (w *QueueReaper) Start() {
 	w.mu.Lock()
 	if w.running {
 		w.mu.Unlock()
 		return
 	}
+	w.stopCh = make(chan struct{})
+	w.doneCh = make(chan struct{})
+	w.stopOnce = sync.Once{}
 	w.running = true
+	stopCh, doneCh := w.stopCh, w.doneCh
 	w.mu.Unlock()
 
-	go w.run()
+	go w.run(stopCh, doneCh)
 	slog.Info("queue reaper started",
 		slog.Duration("grace", w.grace),
 		slog.Duration("interval", w.interval))
 }
 
 // Stop signals the reaper to stop and waits for it to finish.
+//
+// Safe to call concurrently and repeatedly. Closing stopCh is guarded by
+// stopOnce so a second caller cannot close an already-closed channel and panic;
+// every caller that observes running still waits for the same doneCh, so the
+// "waits for it to finish" guarantee holds for all of them rather than only the
+// first.
 func (w *QueueReaper) Stop() {
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()
 		return
 	}
+	stopCh, doneCh := w.stopCh, w.doneCh
+	stopOnce := &w.stopOnce
 	w.mu.Unlock()
 
-	close(w.stopCh)
-	<-w.doneCh
+	stopOnce.Do(func() { close(stopCh) })
+	<-doneCh
 
 	w.mu.Lock()
 	w.running = false
@@ -110,15 +133,18 @@ func (w *QueueReaper) Stop() {
 // than immediately: at startup nothing can be stranded yet (a fresh process has
 // no stale running flags), and waiting avoids a burst of DB reads while the
 // server is still coming up.
-func (w *QueueReaper) run() {
-	defer close(w.doneCh)
+//
+// The channels are passed in rather than read from the receiver so a restart
+// cannot make a running loop observe the next generation's channels.
+func (w *QueueReaper) run(stopCh <-chan struct{}, doneCh chan<- struct{}) {
+	defer close(doneCh)
 
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-w.stopCh:
+		case <-stopCh:
 			return
 		case <-ticker.C:
 			w.reap()
