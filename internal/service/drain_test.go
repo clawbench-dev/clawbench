@@ -78,6 +78,12 @@ func setupDrainSession(t *testing.T, sessionID string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
+	// database/sql hands ":memory:" a fresh database per connection, so the
+	// schema below would be invisible to any second connection the pool opens
+	// under load (a local-only pass, CI-only flake). Pin the pool to one
+	// connection — the same guard every other in-memory helper in this package
+	// uses.
+	db.SetMaxOpenConns(1)
 	_, err = db.Exec(drainTestSchema)
 	assert.NoError(t, err)
 	cleanup := SetDBForTest(db, db)
