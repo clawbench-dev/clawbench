@@ -51,6 +51,14 @@ const SHARED_CHROME = [
   // List chrome shared by the issue/PR list, the pipeline list and the
   // overview list. All three render rows into the same panel shell.
   'forge-list',
+  // The row's BASE rule and its primary text. These were the third occurrence of
+  // this bug class: the modifier rules (.forge-row.unread, .forge-row-time, …)
+  // were already global, but the base geometry was left in ForgePanelContent's
+  // scoped block — so the activity tab's rows had no flex layout, padding,
+  // separator or ellipsis at all. A modifier rule does NOT satisfy the base
+  // class, which is why this list must name the base explicitly.
+  'forge-row',
+  'forge-row-text',
   'forge-row-main',
   'forge-row-title',
   'forge-row-meta',
@@ -105,6 +113,31 @@ function declaredSubjects(source: string): Set<string> {
   return out
 }
 
+/**
+ * Classes with a BASE rule — a selector that is exactly `.class`.
+ *
+ * Stricter than declaredSubjects, and the distinction matters. `declaredSubjects`
+ * accepts `.forge-row.unread { }` as "declaring" forge-row, because it is a
+ * single whitespace-free compound. But a compound rule only applies to elements
+ * that ALSO carry the modifier, so it can never stand in for the base rule: an
+ * element with just `class="forge-row"` gets nothing from it.
+ *
+ * That gap is exactly how the activity tab's rows ended up unstyled while
+ * `.forge-row.unread` was already global. A base-rule check catches it; the
+ * looser one cannot.
+ */
+function baseRuleClasses(source: string): Set<string> {
+  const out = new Set<string>()
+  const css = source.replace(/\/\*[\s\S]*?\*\//g, '')
+  for (const m of css.matchAll(/([^{}]+)\{/g)) {
+    for (const selector of m[1].split(',')) {
+      const trimmed = selector.trim()
+      if (/^\.[a-z][a-z0-9-]*$/.test(trimmed)) out.add(trimmed.slice(1))
+    }
+  }
+  return out
+}
+
 function read(rel: string): string {
   for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
     try {
@@ -147,6 +180,53 @@ describe('forge drill-down chrome is declared globally', () => {
   it('declares every shared chrome class in a global stylesheet', () => {
     const missing = SHARED_CHROME.filter(c => !globalSubjects.has(c))
     expect(missing, `these must be declared globally, not scoped: ${missing.join(', ')}`).toEqual([])
+  })
+
+  it('gives every shared chrome class a BASE rule, not just a modifier', () => {
+    // Regression: the activity tab's rows rendered with no flex layout, padding
+    // or ellipsis because `.forge-row` had no base rule anywhere global — only
+    // `.forge-row.unread` and friends were global, and `.forge-row` itself was
+    // left in ForgePanelContent's scoped block.
+    //
+    // The assertion above did not catch it: `declaredSubjects` accepts
+    // `.forge-row.unread` as declaring forge-row. A compound rule only matches
+    // elements that also carry the modifier, so it can never substitute for the
+    // base rule. This test pins the stricter property.
+    const baseClasses = (() => {
+      const out = new Set<string>()
+      for (const rel of GLOBAL_STYLESHEETS) {
+        try {
+          for (const c of baseRuleClasses(read(rel))) out.add(c)
+        } catch {
+          // optional stylesheet
+        }
+      }
+      return out
+    })()
+
+    const missing = SHARED_CHROME.filter(c => !baseClasses.has(c))
+    expect(
+      missing,
+      `these are only styled by a modifier/compound rule, so an element with just ` +
+        `this class gets no styling: ${missing.join(', ')}`,
+    ).toEqual([])
+  })
+
+  it('keeps the row base geometry in the global stylesheet', () => {
+    // Anchored to the properties that DEFINE a row, so this fails if the base
+    // rule is ever moved back into a scoped block or deleted.
+    const components = read('css/components.css')
+    const rule = components.match(/\.forge-row\s*\{([\s\S]*?)\}/)
+    expect(rule, '.forge-row base rule must exist in components.css').not.toBeNull()
+    for (const prop of [
+      'display: flex',
+      'align-items: flex-start',
+      'padding: 11px var(--space-6)',
+      'border-bottom: 1px solid var(--border-color)',
+      'cursor: pointer',
+    ]) {
+      expect(rule![1], `.forge-row must declare ${prop}`).toContain(prop)
+    }
   })
 
   it('declares every CI status modifier globally', () => {

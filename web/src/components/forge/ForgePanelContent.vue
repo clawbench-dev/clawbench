@@ -989,39 +989,17 @@ function formatTime(iso: string): string {
 }
 
 
-/* ── List ── */
-.forge-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-5);
-  padding:11px var(--space-6);
-  border-bottom: 1px solid var(--border-color);
-  cursor: pointer;
-  transition: background var(--duration-base) ease;
-}
-@media (hover: hover) {
-  .forge-row:hover {
-    background: var(--bg-secondary);
-  }
-}
-.forge-row:active {
-  background: var(--bg-tertiary);
-}
+/* ── List ──
+   .forge-row and .forge-row-text are declared GLOBALLY (web/css/components.css):
+   the activity tab renders its own rows from a child component, so a scoped rule
+   here would leave those rows with no flex layout, padding or ellipsis at all.
+   Only the classes exclusive to this panel's two lists stay scoped. */
 .forge-row-number {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
-}
-.forge-row-text {
-  color: var(--text-primary);
-  font-size: var(--font-size-lg);
-  line-height: var(--line-height-snug);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
 }
 .forge-row-comments {
   display: inline-flex;

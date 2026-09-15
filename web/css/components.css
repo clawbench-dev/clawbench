@@ -258,12 +258,45 @@
     border-top: 1px solid var(--border-color);
 }
 
+/* The row itself. This is the geometry every forge list shares — without it a
+   row is not a flex line at all (no padding, no separator, no hover), which is
+   exactly how the activity tab rendered before it was moved here. */
+.forge-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-5);
+    padding: 11px var(--space-6);
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: background var(--duration-base) ease;
+}
+@media (hover: hover) {
+    .forge-row:hover {
+        background: var(--bg-secondary);
+    }
+}
+.forge-row:active {
+    background: var(--bg-tertiary);
+}
+
 .forge-row-main { flex: 1; min-width: 0; }
 
 .forge-row-title {
     display: flex;
     align-items: baseline;
     gap: var(--space-3);
+    min-width: 0;
+}
+
+/* The primary text of a row. Shared for the same reason as .forge-row: it is
+   the row's typography, not one view's. */
+.forge-row-text {
+    color: var(--text-primary);
+    font-size: var(--font-size-lg);
+    line-height: var(--line-height-snug);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     min-width: 0;
 }
 
