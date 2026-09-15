@@ -75,7 +75,7 @@ export default {
     showChat: '显示聊天区域',
   },
   forge: {
-    type: { issues: '议题', prs: '合并请求', pipelines: '流水线' },
+    type: { issues: '议题', prs: '合并', pipelines: '流水线' },
     state: { open: '开启', closed: '已关闭', all: '全部', merged: '已合并' },
     mine: { all: '全部', assigned: '分配给我', created: '我提的', review: '待我 review' },
     searchPlaceholder: '搜索议题 / 合并请求…',
@@ -85,7 +85,7 @@ export default {
     unreadItem: '有新动态',
     retry: '重试',
     overview: {
-      title: '未读总览',
+      title: '未读',
       empty: '没有未读内容',
       emptyHint: '有新动态的议题、合并请求与流水线会出现在这里',
       pipelineRef: '流水线 run:{runId}',

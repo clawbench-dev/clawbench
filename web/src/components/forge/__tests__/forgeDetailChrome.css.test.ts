@@ -176,3 +176,51 @@ describe('forge drill-down chrome is declared globally', () => {
     }
   })
 })
+
+/**
+ * Regression guard: forge tab labels must ellipsise, not wrap.
+ *
+ * The tab bar is a fixed 34px strip (`.forge-tabs { height: 34px }`), so a label
+ * that does not fit has nowhere to wrap to: the second line is clipped mid-glyph
+ * (or the bar grows and breaks the panel's fixed header geometry). Truncating is
+ * what makes a too-narrow tab read as a tab.
+ *
+ * The label is a flex item, so `min-width: 0` is required too — without it a flex
+ * item refuses to shrink below its content width and the ellipsis never engages.
+ */
+describe('forge tab label truncation', () => {
+  const panel = readFileSync(
+    join(__dirname, '..', 'ForgePanelContent.vue'),
+    'utf8',
+  )
+
+  /** The declaration block for one selector, or '' when absent. */
+  function block(selector: string): string {
+    const i = panel.indexOf(`${selector} {`)
+    if (i === -1) return ''
+    return panel.slice(i, panel.indexOf('}', i))
+  }
+
+  it('gives the label a dedicated class in the template', () => {
+    expect(panel).toContain('class="forge-tab-label"')
+  })
+
+  it('ellipsises instead of wrapping', () => {
+    const b = block('.forge-tab-label')
+    expect(b, '.forge-tab-label rule must exist').not.toBe('')
+    expect(b).toContain('white-space: nowrap')
+    expect(b).toContain('text-overflow: ellipsis')
+    expect(b).toContain('overflow: hidden')
+  })
+
+  it('lets the label shrink below its content width', () => {
+    // Without min-width:0 the flex item keeps its intrinsic width and the
+    // ellipsis never triggers — the label would overflow the tab instead.
+    expect(block('.forge-tab-label')).toContain('min-width: 0')
+  })
+
+  it('keeps the icon from being squeezed', () => {
+    // The icon must hold its size; only the text shrinks.
+    expect(panel).toMatch(/\.forge-tab\s*>\s*:deep\(svg\)[^}]*flex-shrink:\s*0/)
+  })
+})

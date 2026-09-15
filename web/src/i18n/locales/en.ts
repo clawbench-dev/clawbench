@@ -75,7 +75,7 @@ export default {
     showChat: 'Show chat area',
   },
   forge: {
-    type: { issues: 'Issues', prs: 'Pull Requests', pipelines: 'Pipelines' },
+    type: { issues: 'Issues', prs: 'PRs', pipelines: 'Pipelines' },
     state: { open: 'Open', closed: 'Closed', all: 'All', merged: 'Merged' },
     mine: { all: 'All', assigned: 'Assigned to me', created: 'Created by me', review: 'Awaiting my review' },
     searchPlaceholder: 'Search issues / PRs…',
@@ -85,7 +85,7 @@ export default {
     unreadItem: 'New activity',
     retry: 'Retry',
     overview: {
-      title: 'Unread overview',
+      title: 'Unread',
       empty: 'Nothing unread',
       emptyHint: 'Issues, pull requests and pipelines with new activity show up here',
       pipelineRef: 'Pipeline run {runId}',

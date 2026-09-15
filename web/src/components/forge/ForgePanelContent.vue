@@ -123,7 +123,7 @@
             @click="setActiveTab(tab.key)"
           >
             <component :is="tab.icon" :size="13" />
-            <span>{{ t(tab.labelKey) }}</span>
+            <span class="forge-tab-label">{{ t(tab.labelKey) }}</span>
           </button>
         </div>
 
@@ -880,6 +880,18 @@ function formatTime(iso: string): string {
   user-select: none;
   -webkit-tap-highlight-color: transparent;
   position: relative;
+}
+/* The tab bar is a fixed-height strip, so a label that does not fit must be
+   ellipsised rather than wrapped — wrapping would clip it mid-line. The icon
+   keeps its size and only the text shrinks. */
+.forge-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.forge-tab > :deep(svg) {
+  flex-shrink: 0;
 }
 @media (hover: hover) {
   .forge-tab:hover {

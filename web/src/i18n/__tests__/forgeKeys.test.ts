@@ -23,9 +23,10 @@ describe('forge locale values', () => {
     // These are the visible tab labels; leaving them English was the bug.
     expect(zh.forge.type.issues).not.toBe('Issues')
     expect(zh.forge.type.prs).not.toBe('Pull Requests')
-    // The chosen Chinese terms. 合并请求 covers a GitHub PR and a GitLab MR.
+    // The chosen Chinese terms, kept SHORT because they are tab labels. 合并
+    // covers a GitHub PR and a GitLab MR.
     expect(zh.forge.type.issues).toBe('议题')
-    expect(zh.forge.type.prs).toBe('合并请求')
+    expect(zh.forge.type.prs).toBe('合并')
   })
 
   it('translates the state filter chips in zh', () => {
