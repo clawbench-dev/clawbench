@@ -39,7 +39,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onUpdated } from 'vue'
+import { computed, ref, onMounted, onUpdated, nextTick } from 'vue'
 import { CheckCircle2, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -134,12 +134,15 @@ function handleBodyInput(event) {
 
 // The ask-card body is rebuilt from an HTML string whenever toolInputHtml
 // changes, which discards the user's selection / note / submitted flag. Re-apply
-// the stored answer after every update; the helper returns immediately when the
-// body holds no keyed card.
+// the stored answer after every update — and on mount too, since the drawer is
+// mounted fresh each time it is opened (onUpdated does not fire on initial
+// mount). The helper returns immediately when the body holds no keyed card.
 const bodyRef = ref(null)
-onUpdated(() => {
+function restoreAskStates() {
   if (bodyRef.value) restoreAskStatesInContainer(bodyRef.value)
-})
+}
+onMounted(() => nextTick(restoreAskStates))
+onUpdated(restoreAskStates)
 
 </script>
 

@@ -2058,3 +2058,50 @@ describe('AskUserQuestion restore hook', () => {
     suppSpy.mockReturnValue(false)
   })
 })
+
+// ── Restore on MOUNT, not just on update ──
+//
+// ChatMessageList binds :key="listKey" (sessionId|msgs.length|first|last), so a
+// new message arriving — e.g. a reply that lands while the app is backgrounded —
+// remounts the entire list. Every ContentBlocks instance is then MOUNTED FRESH,
+// and onUpdated does NOT fire on initial mount. An AskUserQuestion card carries
+// its input inline (interactive tool), so nothing triggers a later update
+// either: relying on onUpdated alone left the restored answer unapplied.
+//
+// Found by end-to-end testing against a real browser — the update-only unit
+// tests below all passed while the user-visible bug remained.
+describe('AskUserQuestion restore on mount', () => {
+  it('applies stored answers to a freshly mounted card (list remount path)', async () => {
+    const restoreSpy = vi.mocked(restoreAskStatesInContainer)
+    restoreSpy.mockClear()
+
+    mountBlocks({
+      blocks: [{
+        type: 'tool_use',
+        name: 'AskUserQuestion',
+        id: 'ask-1',
+        input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] },
+        done: true,
+        status: 'success',
+      }],
+    })
+    await nextTick()
+
+    // A fresh mount must restore too — this is the path a list remount takes.
+    expect(restoreSpy).toHaveBeenCalled()
+  })
+
+  it('passes the component root on the mount path as well', async () => {
+    const restoreSpy = vi.mocked(restoreAskStatesInContainer)
+    restoreSpy.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', input: { questions: [{ header: 'H', options: [{ label: 'A' }] }] }, done: true, status: 'success' }],
+    })
+    await nextTick()
+
+    expect(restoreSpy).toHaveBeenCalled()
+    const arg = restoreSpy.mock.calls[restoreSpy.mock.calls.length - 1][0] as HTMLElement
+    expect(arg?.classList?.contains('content-blocks')).toBe(true)
+  })
+})

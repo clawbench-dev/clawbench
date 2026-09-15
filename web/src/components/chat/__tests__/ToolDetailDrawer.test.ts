@@ -127,3 +127,21 @@ describe('ToolDetailDrawer — ask-card answer state', () => {
     expect(handleAskSupplementaryInput).toHaveBeenCalled()
   })
 })
+
+// The drawer is mounted fresh each time it is opened, and onUpdated does not
+// fire on initial mount — so the restore must also run on mount, exactly as in
+// the chat list (see the list-remount note in ContentBlocks.test.ts).
+describe('ToolDetailDrawer — restore on mount', () => {
+  beforeEach(() => {
+    vi.mocked(restoreAskStatesInContainer).mockClear()
+  })
+
+  it('applies stored answers to a freshly mounted drawer', async () => {
+    const wrapper = mountDrawer()
+    await nextTick()
+
+    expect(restoreAskStatesInContainer).toHaveBeenCalled()
+    const arg = vi.mocked(restoreAskStatesInContainer).mock.calls[0][0] as HTMLElement
+    expect(arg?.classList?.contains('tool-detail-body')).toBe(true)
+  })
+})

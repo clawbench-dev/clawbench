@@ -1258,15 +1258,25 @@ function handleToolDetailInput(event: Event) {
 
 // The ask-card body is rebuilt from an HTML string whenever the rendered
 // content changes (a loadHistory reload after switching tabs or backgrounding,
-// a merged-card branch flip, a remount). Re-apply the user's stored answer to
-// the fresh DOM after every update. `restoreAskStatesInContainer` returns
-// immediately when the subtree holds no keyed card, so the streaming-frame
-// cost is a single querySelectorAll.
+// a merged-card branch flip) OR the component is remounted wholesale.
+//
+// Both paths must be covered. ChatMessageList binds :key="listKey"
+// (sessionId|msgs.length|first|last), so a message arriving — e.g. a reply that
+// landed while the app was backgrounded — remounts the entire list. onUpdated
+// does NOT fire on initial mount, and an AskUserQuestion card carries its input
+// inline (interactive tool) so nothing triggers a later update: an update-only
+// hook silently left the restored answer unapplied. Found via end-to-end
+// testing in a real browser after the update-only version passed every test.
+//
+// `restoreAskStatesInContainer` returns immediately when the subtree holds no
+// keyed card, so the streaming-frame cost is a single querySelectorAll.
 const contentRootRef = ref<HTMLElement | null>(null)
-onUpdated(() => {
+function restoreAskStates() {
   const root = contentRootRef.value
   if (root) restoreAskStatesInContainer(root)
-})
+}
+onMounted(() => nextTick(restoreAskStates))
+onUpdated(restoreAskStates)
 
 // ── Throttled streaming render ──
 const blockHtmlCache = ref<Record<string, any>>({})
