@@ -3,6 +3,7 @@ package service
 
 import (
 	"database/sql"
+	"time"
 )
 
 // InitInMemoryDB creates an in-memory SQLite database with the agents table.
@@ -22,4 +23,27 @@ func InitInMemoryDB() (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// writeMuAcquirable reports whether the global write lock can be taken within
+// timeout. It is the assertion used by the panic-safety tests: a leaked lock
+// exposes no return value, so the only way to observe the leak is to try to
+// acquire it from another goroutine.
+//
+// The probe goroutine takes the lock and releases it via defer; that take and
+// release IS the measurement, so the lock is deliberately not held across the
+// rest of the test.
+func writeMuAcquirable(timeout time.Duration) bool {
+	acquired := make(chan struct{})
+	go func() {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }

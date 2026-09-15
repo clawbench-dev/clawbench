@@ -86,8 +86,11 @@ func TestParseDeepSeekModels_ThirdPartyProviderFiltered(t *testing.T) {
 	assert.Equal(t, "deepseek/deepseek-v4-pro", models[0].ID)
 }
 
-func TestDiscoverDeepSeekModels_RegistersWithModel(t *testing.T) {
-	// Verify that init() registered the discovery function
+func TestDeepSeekSource_Registered(t *testing.T) {
 	spec := model.BackendSpec{ID: "deepseek", Backend: "deepseek", DefaultCmd: "codewhale"}
-	assert.True(t, model.CanDiscoverModels(spec), "deepseek should support model discovery via registry")
+	assert.True(t, model.CanDiscoverModels(spec), "deepseek should support model discovery")
+
+	src, ok := model.LookupModelSource("deepseek")
+	require.True(t, ok)
+	assert.Equal(t, model.SourceKindCLI, src.Kind())
 }

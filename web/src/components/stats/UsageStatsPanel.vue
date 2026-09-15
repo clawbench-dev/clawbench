@@ -141,7 +141,7 @@
             <div class="stats-card-title">
               <Table :size="13" class="stats-card-title-icon" />
               <span>{{ t('stats.detailTitle') }}</span>
-              <span class="stats-count-chip">{{ filteredRows.length }}</span>
+              <span class="stats-count-chip count-badge">{{ filteredRows.length }}</span>
             </div>
             <div class="stats-table-wrap">
               <table class="stats-table">
@@ -555,13 +555,9 @@ onMounted(() => {
 }
 .stats-count-chip {
   margin-left: auto;
-  font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
-  padding: 1px 7px;
-  line-height: 16px;
 }
 
 /* ── Chips / toggles ──

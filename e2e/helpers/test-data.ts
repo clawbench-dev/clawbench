@@ -1,4 +1,5 @@
 import { getServerURL } from './server'
+import { getSessionCookie } from './auth'
 
 /**
  * Test data constants and seeding helpers for E2E tests.
@@ -6,6 +7,20 @@ import { getServerURL } from './server'
  * The Go server auto-creates an empty database on startup.
  * Data is seeded via API calls in test fixtures or test bodies.
  */
+
+/**
+ * fetch() against the E2E server with the session cookie attached.
+ *
+ * Node-context calls carry no browser cookies, so they must authenticate
+ * explicitly. The old loopback auth bypass is gone, so an unauthenticated call
+ * here now returns 401.
+ */
+async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const cookie = await getSessionCookie()
+  const headers = new Headers(init.headers)
+  headers.set('Cookie', cookie)
+  return fetch(url, { ...init, headers })
+}
 
 /** Default quick-send items for tests */
 export const DEFAULT_QUICK_SEND_ITEMS = [
@@ -23,7 +38,7 @@ export async function seedQuickSendItems(
   items: { label: string; command: string }[] = DEFAULT_QUICK_SEND_ITEMS,
 ): Promise<void> {
   for (const item of items) {
-    const response = await fetch(`${baseURL}/api/chat/quick-send`, {
+    const response = await apiFetch(`${baseURL}/api/chat/quick-send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(item),
@@ -38,7 +53,7 @@ export async function seedQuickSendItems(
  * Get all quick-send items via API.
  */
 export async function getQuickSendItems(baseURL: string): Promise<{ id: number; label: string; command: string }[]> {
-  const response = await fetch(`${baseURL}/api/chat/quick-send`)
+  const response = await apiFetch(`${baseURL}/api/chat/quick-send`)
   if (!response.ok) {
     throw new Error(`Failed to get quick-send items: ${response.status}`)
   }
@@ -51,7 +66,7 @@ export async function getQuickSendItems(baseURL: string): Promise<{ id: number; 
 export async function clearQuickSendItems(baseURL: string): Promise<void> {
   const items = await getQuickSendItems(baseURL)
   for (const item of items) {
-    await fetch(`${baseURL}/api/chat/quick-send/${item.id}`, { method: 'DELETE' })
+    await apiFetch(`${baseURL}/api/chat/quick-send/${item.id}`, { method: 'DELETE' })
   }
 }
 
@@ -66,7 +81,7 @@ export async function createTask(
   baseURL: string,
   opts: { name: string; cron_expr: string; agent_id: string; prompt: string },
 ): Promise<{ id: number; name: string }> {
-  const resp = await fetch(`${baseURL}/api/tasks`, {
+  const resp = await apiFetch(`${baseURL}/api/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(opts),
@@ -80,7 +95,7 @@ export async function createTask(
  * Trigger a task immediately via API.
  */
 export async function triggerTask(baseURL: string, taskId: number): Promise<void> {
-  const resp = await fetch(`${baseURL}/api/tasks/${taskId}`, {
+  const resp = await apiFetch(`${baseURL}/api/tasks/${taskId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'trigger' }),
@@ -92,7 +107,7 @@ export async function triggerTask(baseURL: string, taskId: number): Promise<void
  * Delete a task via API.
  */
 export async function deleteTask(baseURL: string, taskId: number): Promise<void> {
-  const resp = await fetch(`${baseURL}/api/tasks/${taskId}`, { method: 'DELETE' })
+  const resp = await apiFetch(`${baseURL}/api/tasks/${taskId}`, { method: 'DELETE' })
   if (!resp.ok) throw new Error(`Failed to delete task ${taskId}: ${resp.status}`)
 }
 
@@ -103,7 +118,7 @@ export async function getTaskExecutions(
   baseURL: string,
   taskId: number,
 ): Promise<Array<{ id: number; status: string; sessionId: string }>> {
-  const resp = await fetch(`${baseURL}/api/tasks/${taskId}/executions`)
+  const resp = await apiFetch(`${baseURL}/api/tasks/${taskId}/executions`)
   if (!resp.ok) throw new Error(`Failed to get executions for task ${taskId}: ${resp.status}`)
   const data = await resp.json()
   return data.executions || []
@@ -138,7 +153,7 @@ export async function continueFromExecution(
   taskId: number,
   execId: number,
 ): Promise<{ ok: boolean; sessionId: string; alreadyExists: boolean }> {
-  const resp = await fetch(`${baseURL}/api/tasks/${taskId}/executions/${execId}/continue`, {
+  const resp = await apiFetch(`${baseURL}/api/tasks/${taskId}/executions/${execId}/continue`, {
     method: 'POST',
   })
   if (!resp.ok) throw new Error(`Failed to continue from execution ${execId}: ${resp.status}`)
@@ -156,7 +171,7 @@ export async function createSession(
   baseURL: string,
   opts: { agentId?: string; title?: string } = {},
 ): Promise<{ sessionId: string; backend: string }> {
-  const resp = await fetch(`${baseURL}/api/ai/sessions`, {
+  const resp = await apiFetch(`${baseURL}/api/ai/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(opts),
@@ -169,7 +184,7 @@ export async function createSession(
  * Archive a chat session via API.
  */
 export async function archiveSession(baseURL: string, sessionId: string, backend = 'acp-mock'): Promise<void> {
-  const resp = await fetch(`${baseURL}/api/ai/session/archive?session_id=${sessionId}&backend=${backend}`, {
+  const resp = await apiFetch(`${baseURL}/api/ai/session/archive?session_id=${sessionId}&backend=${backend}`, {
     method: 'DELETE',
   })
   if (!resp.ok) throw new Error(`Failed to archive session ${sessionId}: ${resp.status}`)
@@ -179,7 +194,7 @@ export async function archiveSession(baseURL: string, sessionId: string, backend
  * Resume an archived chat session via API.
  */
 export async function resumeSession(baseURL: string, sessionId: string): Promise<{ ok: boolean }> {
-  const resp = await fetch(`${baseURL}/api/ai/session/resume`, {
+  const resp = await apiFetch(`${baseURL}/api/ai/session/resume`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId }),
@@ -192,7 +207,7 @@ export async function resumeSession(baseURL: string, sessionId: string): Promise
  * Get session list via API.
  */
 export async function getSessions(baseURL: string): Promise<Array<{ id: string; title: string }>> {
-  const resp = await fetch(`${baseURL}/api/ai/sessions`)
+  const resp = await apiFetch(`${baseURL}/api/ai/sessions`)
   if (!resp.ok) throw new Error(`Failed to get sessions: ${resp.status}`)
   const data = await resp.json()
   return data.sessions || []

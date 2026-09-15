@@ -77,8 +77,8 @@ flowchart LR
 |------|------|------|
 | `/api/apk` | GET | APK 下载（恒定从 `go:embed` 读取，路径 `assets/clawbench-android.apk`；不读磁盘 `public/`；无需鉴权） |
 | `/api/health` | GET | 服务端健康检查，返回 `{app, version}`（无需鉴权）；原生层据此做 APK 版本不匹配检测 |
-| `/api/client-log` | POST | 客户端统一日志（200 条/请求上限；`js` 与 `android` 条目汇入同一 `client.log`，行内 `[js]`/`[android]` 标记区分） |
-| `/api/ssh/info` | GET | SSH 隧道状态轮询（无需鉴权） |
+| `/api/client-log` | POST | 客户端统一日志（**需鉴权**，`AppLog` 随请求带会话 Cookie；200 条/请求上限；`js` 与 `android` 条目汇入同一 `client.log`，行内 `[js]`/`[android]` 标记区分） |
+| `/api/ssh/info` | GET | SSH 端口发现（无需鉴权，仅返回 `{enabled, port}`）；完整隧道信息在需鉴权的 `/api/ssh/info/full` |
 | `/api/ai/events/pending` | GET | 离线期间漏发事件 |
 
 > Web 前端与 Android `AppLog` 均 POST 到 `/api/client-log`，服务端 `ServeClientLog` 统一写入 `{data-dir}/logs/client.log` 单文件，每条行内带 `[js]`/`[android]` 来源标记。

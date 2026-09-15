@@ -34,6 +34,14 @@ type UpgradeState struct {
 	// survive a retry and mislabel an unrelated failure.
 	ErrorCode string `json:"error_code"`
 	Error     string `json:"error,omitempty"`
+	// VerificationWarning is the human-readable text shown to the user when this
+	// release cannot be fully verified, listing every reason (an uncheckable
+	// signature, a missing integrity hash). Presentation only.
+	VerificationWarning string `json:"verification_warning"`
+	// VerificationIssues is the stable identity of the same problems, as sorted
+	// issue codes. This is what the client echoes back and the service compares,
+	// so it must not vary with wording, registry routing or failure mode.
+	VerificationIssues string `json:"verification_issues"`
 }
 
 var (
@@ -84,6 +92,14 @@ const (
 	// a restart happens. Reported instead of leaving the phase at "restarting"
 	// forever, which would show an endless spinner with no way forward.
 	UpgradeErrRestartFailed = "restart_failed"
+
+	// UpgradeErrUnverifiedNotConfirmed means the registry metadata says this
+	// release cannot be fully verified, but the request did not carry the
+	// acknowledgment the user would have given for exactly that warning. Either
+	// the caller skipped the confirmation step, or the metadata changed between
+	// the check and the start. The upgrade is refused so an unverified install
+	// cannot happen without a decision; the client should re-check and re-ask.
+	UpgradeErrUnverifiedNotConfirmed = "unverified_not_confirmed"
 )
 
 // SetUpgradeError sets phase to failed with an error message.
@@ -107,6 +123,16 @@ func SetUpgradeVersions(current, latest string) {
 	defer upgradeMu.Unlock()
 	upgradeState.CurrentVer = current
 	upgradeState.LatestVer = latest
+}
+
+// SetUpgradeVerificationWarning records that this release cannot be fully
+// verified, so the UI can tell the user before they commit. The message is for
+// display; the fingerprint is what an acknowledgment is later compared against.
+func SetUpgradeVerificationWarning(warning, issues string) {
+	upgradeMu.Lock()
+	defer upgradeMu.Unlock()
+	upgradeState.VerificationWarning = warning
+	upgradeState.VerificationIssues = issues
 }
 
 // SetUpgradeBackupPath records the backup file path.

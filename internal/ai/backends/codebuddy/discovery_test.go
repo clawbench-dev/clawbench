@@ -548,9 +548,9 @@ func TestModelsFromRuntimeCache_NoUsableEntry(t *testing.T) {
 	assert.Nil(t, modelsFromRuntimeCache(home))
 }
 
-// --- detail reporting via the registered seam ---
+// --- detail reporting through the ModelSource entry point ---
 
-func TestCodebuddyDiscoveryDetail_AfterFailure(t *testing.T) {
+func TestCodebuddySource_ReportsDetailOnFailure(t *testing.T) {
 	origResolve := codebuddyResolveCLIPath
 	origHome := codebuddyUserHomeDir
 	origGetenv := codebuddyGetenv
@@ -564,12 +564,12 @@ func TestCodebuddyDiscoveryDetail_AfterFailure(t *testing.T) {
 	codebuddyUserHomeDir = func() (string, error) { return t.TempDir(), nil }
 	codebuddyGetenv = func(string) string { return "" }
 
-	models := DiscoverCodebuddyModels()
+	models, detail := discoverCodebuddyModels()
 	assert.Empty(t, models)
-	assert.NotEmpty(t, CodebuddyDiscoveryDetail(), "failure detail must be recorded")
+	assert.NotEmpty(t, detail, "the failure reason must be returned to the caller")
 }
 
-func TestCodebuddyDiscoveryDetail_ClearedOnSuccess(t *testing.T) {
+func TestCodebuddySource_NoDetailOnSuccess(t *testing.T) {
 	origResolve := codebuddyResolveCLIPath
 	origHome := codebuddyUserHomeDir
 	origGetenv := codebuddyGetenv
@@ -588,9 +588,56 @@ func TestCodebuddyDiscoveryDetail_ClearedOnSuccess(t *testing.T) {
 	codebuddyUserHomeDir = func() (string, error) { return home, nil }
 	codebuddyGetenv = func(string) string { return "" }
 
-	models := DiscoverCodebuddyModels()
+	models, detail := discoverCodebuddyModels()
 	require.NotEmpty(t, models)
-	assert.Empty(t, CodebuddyDiscoveryDetail(), "detail must be cleared on success")
+	assert.Empty(t, detail, "a successful discovery has no failure to report")
+}
+
+func TestCodebuddySource_ConcurrentCallsDoNotShareDetail(t *testing.T) {
+	// The old design stored the last failure in package state, so a concurrent
+	// refresh could overwrite the detail a manual refresh was about to read.
+	// With the detail returned per call, a failure and a success interleaved
+	// must not contaminate each other.
+	origResolve := codebuddyResolveCLIPath
+	origHome := codebuddyUserHomeDir
+	origGetenv := codebuddyGetenv
+	t.Cleanup(func() {
+		codebuddyResolveCLIPath = origResolve
+		codebuddyUserHomeDir = origHome
+		codebuddyGetenv = origGetenv
+	})
+
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	writeProductFile(t, filepath.Join(root, "pkg"), "product.cloudhosted.json", productJSON(t, "ok-model"))
+	okBin := filepath.Join(root, "pkg", "bin", "codebuddy")
+
+	const rounds = 20
+	results := make(chan [2]string, rounds*2)
+	for range rounds {
+		go func() {
+			codebuddyResolveCLIPath = func(string) string { return okBin }
+			codebuddyUserHomeDir = func() (string, error) { return home, nil }
+			codebuddyGetenv = func(string) string { return "" }
+			models, detail := discoverCodebuddyModels()
+			results <- [2]string{fmt.Sprintf("%d", len(models)), detail}
+		}()
+		go func() {
+			codebuddyResolveCLIPath = func(string) string { return "" }
+			codebuddyUserHomeDir = func() (string, error) { return t.TempDir(), nil }
+			codebuddyGetenv = func(string) string { return "" }
+			models, detail := discoverCodebuddyModels()
+			results <- [2]string{fmt.Sprintf("%d", len(models)), detail}
+		}()
+	}
+	for range rounds * 2 {
+		r := <-results
+		if r[0] == "0" {
+			assert.NotEmpty(t, r[1], "an empty result must carry its own reason")
+		} else {
+			assert.Empty(t, r[1], "a successful result must not inherit another call's failure detail")
+		}
+	}
 }
 
 // writeCacheEntry writes a product JSON as a base64+gzip .info entry, matching

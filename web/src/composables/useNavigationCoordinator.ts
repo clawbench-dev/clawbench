@@ -55,7 +55,7 @@ export interface NavigationCoordinatorOptions {
     exitEdit: () => void
   }
   viewActions?: {
-    scrollToLine?: (start: number, end?: number, path?: string, anchorId?: unknown, lineRanges?: string) => void
+    scrollToLine?: (start: number, end?: number, path?: string, anchorId?: string, lineRanges?: string) => void
     closeOverlayAndSync?: () => void
     handleOpenFileManager?: () => void
     isFileManagerMultiSelectActive?: () => boolean

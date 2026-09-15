@@ -17,18 +17,24 @@ import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
 import { parseLineRanges } from '@/utils/lineRanges'
+import { joinPath } from '@/utils/path'
 import { getFileType } from '@/utils/fileType'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import type { DirPreviewEntry } from '@/composables/useDirPreview'
 import {
   sliceCodeForPreview,
+  computeRenderWindow,
+  computeFetchWindow,
+  windowCovers,
   buildPreviewUrl,
   placeNearAnchor,
   previewCache,
   LARGE_FILE_THRESHOLD_BYTES,
   type CodeSliceResult,
   type FileContentResponse,
+  type FetchWindow,
   type CardPlacementResult,
 } from '@/utils/codeLinkPreview'
 
@@ -44,6 +50,11 @@ export interface PreviewTarget {
   /** Full multi-range target (canonical "90-91,309,938-943"), when annotated. */
   lineRanges?: string
   anchorEl?: HTMLElement
+  /**
+   * The verified annotation is a directory, not a file. Directories have no
+   * content to fetch, so the card renders a listing instead of a code slice.
+   */
+  isDir?: boolean
 }
 
 /** Whether the preview target is a Markdown file (by extension). */
@@ -123,10 +134,94 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   // toggle (it renders the same line-slice window the code view shows).
   const renderMode = ref<PreviewRenderMode>('source')
 
+  // ── Directory targets ───────────────────────────────────────────────────
+  // A directory annotation has no file content, so the card lists the
+  // directory instead of slicing code. This mirrors the file manager's docked
+  // pane (useDirPreview + DirPreviewBody) so both surfaces show the same
+  // control; the listing is fetched from the same /api/dir endpoint.
+  //
+  // Declared BEFORE the file-type computeds below so they can defer to it.
+  const isDirTarget = computed(() => target.value?.isDir === true)
+
+  // `getFileType` is purely extension-based, so a DIRECTORY named `assets.png`
+  // or `docs.md` looks like a media/markdown file. The verified `isDir` flag is
+  // authoritative (it came from the server's stat), so every extension-based
+  // classification defers to it. Without this, such a directory would render a
+  // media body or a bogus markdown toggle instead of its listing.
   const isMarkdown = computed(() => {
+    if (isDirTarget.value) return false
     const filePath = target.value?.filePath || ''
     return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
   })
+
+  const dirEntries = ref<DirPreviewEntry[]>([])
+  const dirLoading = ref(false)
+  const dirError = ref(false)
+  /** Directory the current listing belongs to (guards out-of-order responses). */
+  const dirLoadedPath = ref('')
+  let dirSeq = 0
+
+  const loadDir = async (path: string) => {
+    const mySeq = ++dirSeq
+    dirLoading.value = true
+    dirError.value = false
+    try {
+      const url = `/api/dir?path=${encodeURIComponent(path)}`
+      const data = await apiGet<{ items: DirPreviewEntry[] }>(url, { timeoutMs: 10_000 })
+      if (mySeq !== dirSeq) return
+      dirEntries.value = data.items || []
+      dirLoadedPath.value = path
+    } catch (err) {
+      if (mySeq !== dirSeq) return
+      appLog.w('CodeLinkPreview', 'Failed to list directory for preview', { path, error: err })
+      dirEntries.value = []
+      dirError.value = true
+      dirLoadedPath.value = path
+    } finally {
+      if (mySeq === dirSeq) dirLoading.value = false
+    }
+  }
+
+  /** Hidden entries are filtered at render time so the toolbar toggle applies
+   *  without a refetch — same rule as useDirPreview. */
+  const dirEntryVisible = (entry: DirPreviewEntry): boolean =>
+    localConfig.showHidden === true || !entry.name.startsWith('.')
+
+  /** Fetch the target's directory listing. Called by showPreview and refresh. */
+  const fetchDirPreview = (dirPath: string) => {
+    dirEntries.value = []
+    dirLoadedPath.value = ''
+    void loadDir(dirPath)
+  }
+
+  /**
+   * The card listed a directory and the user picked a child directory: hand off
+   * to the file manager, exactly as the docked pane does (its listing becomes
+   * the main list, so keeping the card open would just duplicate it).
+   *
+   * With no `name` this opens the listed directory itself — what the card's
+   * "open directory" button does, as opposed to revealing its parent.
+   */
+  const openDirChild = (name?: string) => {
+    const parent = target.value?.filePath || ''
+    const full = name ? joinPath(parent, name) : parent
+    if (!full) return
+    close()
+    window.dispatchEvent(new CustomEvent('open-directory-from-context', {
+      detail: { path: full, source: options.source },
+    }))
+  }
+
+  /**
+   * The card listed a directory and the user picked a file: open it in the
+   * full-screen viewer, matching the docked pane and a double-click in the list.
+   */
+  const openDirFile = (name: string) => {
+    const parent = target.value?.filePath || ''
+    close()
+    options.onBeforeOpen?.()
+    void openFilePath(joinPath(parent, name), undefined, undefined, options.source)
+  }
 
   // ── Media targets (image / SVG / video / audio / PDF) ────────────────────
   // These are served as raw bytes by /api/local-file/ (correct MIME, no size
@@ -134,6 +229,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   // every raster image as binary. The preview short-circuits the fetch for
   // them and renders a media body straight from the URL.
   const fileType = computed(() => {
+    if (isDirTarget.value) return null
     const filePath = target.value?.filePath || ''
     return filePath ? getFileType(filePath) : null
   })
@@ -155,6 +251,8 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   })
 
   /** Whether the current target is a Markdown file (renderable in the doc view). */
+  // `isMarkdown` and `isMediaTarget` already return false for a directory target
+  // (see their definitions), so this stays a plain alias.
   const canRenderMarkdown = computed(() => isMarkdown.value)
 
   // A Markdown file default-renders unless the annotation pinned a line range
@@ -177,19 +275,94 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     return false
   }
 
+  // The line window the currently-held fileContent covers (null when it is the
+  // whole file). Expanding context past it triggers a wider re-fetch.
+  const fetchedWindow = ref<FetchWindow | null>(null)
+  /** Total lines in the file, known once a windowed response arrives. */
+  const fileTotalLines = ref<number | null>(null)
+  /**
+   * The server hit its own byte cap while collecting the window, so the returned
+   * content is short (or empty, when a single line exceeded the cap). Widening
+   * cannot help — the pane surfaces a notice instead.
+   */
+  const windowTruncated = ref(false)
+  /** Guards the "widen the window" re-fetch so it converges in one extra round. */
+  let pendingWiden = false
+
   const updateSlice = () => {
     if (!fileContent.value) return
-    slicedCode.value = sliceCodeForPreview(
-      fileContent.value.content,
-      target.value?.lineStart,
-      target.value?.lineEnd,
-      {
-        contextExpansion: contextExpansion.value,
-        expandAboveLines: extraAboveLines.value,
-        expandBelowLines: extraBelowLines.value,
-        lineRanges: target.value?.lineRanges ? parseLineRanges(target.value.lineRanges) : undefined,
+    const lineRanges = target.value?.lineRanges ? parseLineRanges(target.value.lineRanges) : undefined
+    const sliceOptions = {
+      contextExpansion: contextExpansion.value,
+      expandAboveLines: extraAboveLines.value,
+      expandBelowLines: extraBelowLines.value,
+      lineRanges,
+    }
+    const win = fetchedWindow.value
+    if (win && win.end < win.start) {
+      // The server captured no lines at all: either its byte cap tripped, or the
+      // requested range starts past EOF. `content` is empty, so slicing it would
+      // yield a bogus blank line — report the empty window and let the widen
+      // block below recover it.
+      //
+      // An out-of-range annotation is exactly the case that needs recovering:
+      // computeRenderWindow clamps `reqStart > totalLines` back to the last
+      // lines, so the widen re-fetches a window that really exists and the pane
+      // shows the tail of the file (matching the pre-window behavior). Returning
+      // here instead would leave the pane blank AND un-recoverable, since
+      // expandToTop/expandToBottom are no-ops from an empty slice.
+      slicedCode.value = {
+        code: '',
+        startLine: win.start,
+        endLine: win.start - 1,
+        totalLines: fileTotalLines.value ?? win.start,
+        lineOutOfRange: !windowTruncated.value,
+        renderTruncated: false,
       }
-    )
+    } else if (win) {
+      slicedCode.value = sliceCodeForPreview(
+        fileContent.value.content,
+        target.value?.lineStart,
+        target.value?.lineEnd,
+        {
+          ...sliceOptions,
+          baseLineOffset: win.start,
+          // A windowed response reports the true file length; prefer it over the
+          // locally-derived count, which only sees the window.
+          totalLines: fileTotalLines.value ?? undefined,
+        }
+      )
+    } else {
+      slicedCode.value = sliceCodeForPreview(
+        fileContent.value.content,
+        target.value?.lineStart,
+        target.value?.lineEnd,
+        sliceOptions
+      )
+    }
+
+    // The slice wanted lines outside the fetched window (it stops at the window
+    // edge). Widen once to cover them; pendingWiden makes this converge even if
+    // the server clamps the request. A server-truncated window is not widened —
+    // the cap would just trip again.
+    if (!pendingWiden && win && !windowTruncated.value && slicedCode.value) {
+      const wanted = computeRenderWindow(
+        target.value?.lineStart,
+        target.value?.lineEnd,
+        slicedCode.value.totalLines,
+        sliceOptions
+      )
+      if (!windowCovers(win, wanted.startLine, wanted.endLine)) {
+        pendingWiden = true
+        // Request exactly the wanted render window. It is bounded by
+        // MAX_RENDER_LINES (200), well under the server's window cap, so no
+        // further clamping is needed.
+        const wider: FetchWindow = { start: wanted.startLine, end: wanted.endLine }
+        fetchPreview(target.value as PreviewTarget, true, wider, { silent: true }).finally(() => {
+          pendingWiden = false
+        })
+      }
+    }
   }
 
   const updatePlacement = (anchorEl?: HTMLElement, customWidth?: number, customHeight?: number) => {
@@ -208,7 +381,12 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     placement.value = placeNearAnchor(rect, cardWidth, cardHeight)
   }
 
-  const fetchPreview = async (newTarget: PreviewTarget, forceRefresh = false) => {
+  const fetchPreview = async (
+    newTarget: PreviewTarget,
+    forceRefresh = false,
+    windowOverride: FetchWindow | null = null,
+    opts: { silent?: boolean } = {}
+  ) => {
     const reqId = ++currentRequestId
     if (currentAbortController) {
       currentAbortController.abort()
@@ -216,10 +394,34 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     currentAbortController = new AbortController()
     const signal = currentAbortController.signal
 
-    status.value = 'loading'
-    errorCode.value = null
-    errorMessage.value = null
-    isLargeFile.value = false
+    // A silent fetch (widening the window after an expand) keeps the current
+    // slice on screen instead of flipping back to the loading spinner — the
+    // expand handler is anchoring scroll around the existing content.
+    if (!opts.silent) {
+      status.value = 'loading'
+      errorCode.value = null
+      errorMessage.value = null
+      isLargeFile.value = false
+    }
+
+    // Directories have no file content: the card lists them instead. The listing
+    // lives in dirEntries, so there is nothing to slice.
+    //
+    // This MUST be checked before isMediaTarget: getFileType() is purely
+    // extension-based, so a DIRECTORY named `assets.png` or `docs.md` looks like
+    // a media/markdown file. The verified `isDir` flag is authoritative — it came
+    // from the server's stat — so it wins over the extension guess. Checking
+    // media first would swallow the directory and never fetch its listing.
+    if (isDirTarget.value) {
+      fileContent.value = null
+      slicedCode.value = null
+      fetchedWindow.value = null
+      fileTotalLines.value = null
+      windowTruncated.value = false
+      fetchDirPreview(newTarget.filePath)
+      status.value = 'ready'
+      return
+    }
 
     // Media files are served as raw bytes by /api/local-file/ and rendered
     // straight from that URL — there is no JSON content to fetch, and /api/file
@@ -228,12 +430,21 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     if (isMediaTarget.value) {
       fileContent.value = null
       slicedCode.value = null
+      fetchedWindow.value = null
+      fileTotalLines.value = null
+      windowTruncated.value = false
       status.value = 'ready'
       return
     }
 
+    // Ask for just the lines this preview can render (plus margin), so a large
+    // file is never transferred in full. A widen re-fetch passes the exact
+    // window it needs; otherwise the window is planned from the target.
+    const win: FetchWindow = windowOverride
+      ?? computeFetchWindow(newTarget, fileTotalLines.value)
+
     const projectRoot = store.state.projectRoot || ''
-    const cacheKey = previewCache.buildKey(projectRoot, newTarget.filePath)
+    const cacheKey = previewCache.buildKey(projectRoot, newTarget.filePath, win)
 
     if (forceRefresh) {
       previewCache.delete(cacheKey)
@@ -243,6 +454,9 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         if (reqId !== currentRequestId) return
         fileContent.value = cached
         isLargeFile.value = (cached.size ?? 0) > LARGE_FILE_THRESHOLD_BYTES
+        fetchedWindow.value = cached.windowStart ? { start: cached.windowStart, end: cached.windowEnd ?? cached.windowStart } : null
+        fileTotalLines.value = cached.totalLines ?? null
+        windowTruncated.value = cached.windowTruncated === true
         updateSlice()
         status.value = 'ready'
         return
@@ -250,7 +464,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     }
 
     try {
-      const url = buildPreviewUrl(newTarget.filePath)
+      const url = buildPreviewUrl(newTarget.filePath, win)
       const resp = await apiGet<FileContentResponse>(url, { signal, timeoutMs: 10_000 })
       if (reqId !== currentRequestId) return
 
@@ -262,9 +476,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
       fileContent.value = resp
       isLargeFile.value = (resp.size ?? 0) > LARGE_FILE_THRESHOLD_BYTES
-      if (!isLargeFile.value) {
-        previewCache.set(cacheKey, resp)
-      }
+      fetchedWindow.value = resp.windowStart ? { start: resp.windowStart, end: resp.windowEnd ?? resp.windowStart } : null
+      fileTotalLines.value = resp.totalLines ?? null
+      windowTruncated.value = resp.windowTruncated === true
+      // Large files ARE cached now: only the window is held, not the whole file,
+      // so the 2 MiB guard (which existed to keep whole-file content out of the
+      // LRU) no longer applies.
+      previewCache.set(cacheKey, resp)
 
       updateSlice()
       status.value = 'ready'
@@ -276,6 +494,10 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         return
       }
       appLog.w('CodeLinkPreview', 'Failed to fetch file content for preview', { path: newTarget.filePath, error: err })
+      // A silent widen must not destroy the slice the user is reading: keep the
+      // current content and status, and let pendingWiden reset so a later expand
+      // can retry.
+      if (opts.silent) return
       status.value = 'error'
       const msgKey = errObj?.msgKey || ''
       const msg = errObj?.message || ''
@@ -305,6 +527,18 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
     const wasPinned = mode.value === 'pinned'
     target.value = newTarget
+    // A new target is a different file: drop the previous window/length so the
+    // first request is planned from the annotation alone.
+    fetchedWindow.value = null
+    fileTotalLines.value = null
+    windowTruncated.value = false
+    // Retargeting away from a directory (or onto another one) must not leave the
+    // previous listing on screen while the new one loads.
+    dirSeq += 1
+    dirEntries.value = []
+    dirLoadedPath.value = ''
+    dirLoading.value = false
+    dirError.value = false
     mode.value = wasPinned && previewMode !== 'sheet' ? 'pinned' : previewMode
     contextExpansion.value = 0
     extraAboveLines.value = 0
@@ -342,6 +576,16 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     target.value = null
     fileContent.value = null
     slicedCode.value = null
+    fetchedWindow.value = null
+    fileTotalLines.value = null
+    windowTruncated.value = false
+    // Drop the listing and invalidate any in-flight fetch so a stale response
+    // can't repopulate the card after it was closed.
+    dirSeq += 1
+    dirEntries.value = []
+    dirLoadedPath.value = ''
+    dirLoading.value = false
+    dirError.value = false
     errorCode.value = null
     errorMessage.value = null
     isLargeFile.value = false
@@ -381,6 +625,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
   const refresh = () => {
     if (!target.value) return
+    // A directory listing is its own fetch; re-run it rather than re-slicing.
+    // Checked before media for the same reason as fetchPreview: a directory
+    // named `assets.png` must not bump the media nonce instead of re-listing.
+    if (isDirTarget.value) {
+      fetchDirPreview(target.value.filePath)
+      return
+    }
     // Media is not fetched through fetchPreview (no JSON body), so a refresh
     // must instead force the media element to re-request its URL. Bumping this
     // nonce feeds MediaPreviewBody's cache-busting param.
@@ -458,12 +709,19 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     const targetEl = el.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
     if (!targetEl) return null
 
-    // Check verification status: must be file, not dir or unverified
+    // Only verified paths qualify: "file" previews its content, "dir" previews
+    // its listing. Unverified paths (no data-path-type yet) return null and fall
+    // through to the container's original handler.
     const pathType = targetEl.getAttribute('data-path-type')
-    if (pathType !== 'file') return null
+    if (pathType !== 'file' && pathType !== 'dir') return null
 
     const filePath = targetEl.getAttribute('data-file-path')
     if (!filePath) return null
+
+    // Line annotations are meaningless for a directory; ignore any suffix.
+    if (pathType === 'dir') {
+      return { filePath, isDir: true, anchorEl: targetEl }
+    }
 
     const startAttr = targetEl.getAttribute('data-line-start')
     const endAttr = targetEl.getAttribute('data-line-end')
@@ -585,6 +843,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     errorCode,
     errorMessage,
     isLargeFile,
+    windowTruncated,
     contextExpansion,
     extraAboveLines,
     extraBelowLines,
@@ -599,6 +858,15 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     isAudioTarget,
     isPdfTarget,
     isMediaTarget,
+    // Directory targets (the card lists the directory instead of slicing code).
+    isDirTarget,
+    dirEntries,
+    dirLoading,
+    dirError,
+    dirLoadedPath,
+    dirEntryVisible,
+    openDirChild,
+    openDirFile,
     mediaRefreshNonce,
     showPreview,
     close,
@@ -639,16 +907,17 @@ export interface CodeLinkPreviewController {
 }
 
 /**
- * Shared interceptor for clicks on verified file-path annotations
- * (`.chat-file-path[data-file-path]` with `data-path-type="file"`).
+ * Shared interceptor for clicks on verified path annotations
+ * (`.chat-file-path[data-file-path]` with `data-path-type` of `file` or `dir`).
  *
  * The composable binds a capture-phase click listener once its container ref is
  * mounted; until that binding is in place this helper is the fallback used by
  * container-level click handlers (chat / markdown preview / task views), so
- * every surface shares one decision instead of four copies.
+ * every surface shares one decision instead of five copies.
  *
- * Only verified *file* paths are intercepted — directories and not-yet-verified
- * paths return false and fall through to the container's original handlers.
+ * Both verified types are intercepted: a file previews its content, a directory
+ * previews its listing. Only unverified paths (no `data-path-type` yet) return
+ * false and fall through to the container's original handlers.
  * Returns true when the event was handled by the preview (open it).
  */
 export function handleVerifiedFilePathClick(event: MouseEvent, preview: CodeLinkPreviewController): boolean {
@@ -658,15 +927,16 @@ export function handleVerifiedFilePathClick(event: MouseEvent, preview: CodeLink
   const target = event.target as HTMLElement | null
   const linkOrBtn = target?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]') ?? null
   const pathEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path]') ?? null
-  const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'
+  const pathType = linkOrBtn?.getAttribute('data-path-type')
+  const isVerifiedPath = pathType === 'file' || pathType === 'dir'
   // Desktop: modifier-click on either the path text or the open button pins the
   // preview; plain click on the path text opens a transient preview.
-  if (isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
+  if (isVerifiedPath && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
     preview.handleClick(event)
     return true
   }
   // Touch: tapping the path text opens the bottom-sheet preview.
-  if (isVerifiedFile && isTouch && pathEl) {
+  if (isVerifiedPath && isTouch && pathEl) {
     preview.handleClick(event)
     return true
   }

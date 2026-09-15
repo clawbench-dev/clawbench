@@ -1732,3 +1732,180 @@ func TestACPConn_ClaimSteerEchoIsSingleUse(t *testing.T) {
 	assert.False(t, conn.claimPendingSteerID("once-1"), "second claim must fail")
 	assert.False(t, conn.claimPendingSteerID(""), "empty id is never claimable")
 }
+
+// ---------------------------------------------------------------------------
+// EnrichModelList — the shared enrichment for every model-state channel
+// ---------------------------------------------------------------------------
+
+// The enrichment attaches the CLI list and the resolved list so clients render a
+// single list instead of merging two. ACP membership is authoritative for
+// concrete IDs; the CLI list supplies order and names.
+func TestEnrichModelList_AttachesCLIAndResolvedLists(t *testing.T) {
+	const agentID = "enrich-agent"
+	orig := model.Agents
+	model.Agents = map[string]*model.Agent{
+		agentID: {
+			ID: agentID,
+			Models: []model.AgentModel{
+				{ID: "cli-a", Name: "CLI A", Default: true},
+				{ID: "retired", Name: "Retired"},
+			},
+		},
+	}
+	t.Cleanup(func() { model.Agents = orig })
+
+	raw := &ModelListState{
+		CurrentModelID: "acp-a",
+		Models: []model.AgentModel{
+			{ID: "cli-a", Name: "CLI A (live)"},
+			{ID: "acp-a", Name: "ACP A"},
+		},
+	}
+
+	got := EnrichModelList(agentID, raw)
+
+	require.NotNil(t, got)
+	// The raw list is preserved.
+	assert.Equal(t, raw.Models, got.Models)
+	assert.Equal(t, "acp-a", got.CurrentModelID)
+	// The CLI list is shipped untouched.
+	require.Len(t, got.CLIModels, 2)
+	assert.Equal(t, "cli-a", got.CLIModels[0].ID)
+	assert.Equal(t, "retired", got.CLIModels[1].ID)
+	// The resolved list follows ACP membership: "retired" is dropped, "acp-a" added,
+	// and the ACP display name wins for the shared ID.
+	require.Len(t, got.ResolvedModels, 2)
+	assert.Equal(t, "cli-a", got.ResolvedModels[0].ID)
+	assert.Equal(t, "CLI A (live)", got.ResolvedModels[0].Name)
+	assert.Equal(t, "acp-a", got.ResolvedModels[1].ID)
+	assert.True(t, got.ResolvedModels[1].Default, "the session's current model is the default")
+}
+
+// The caller must not be able to mutate the shared agent's list through the
+// returned value.
+func TestEnrichModelList_DoesNotAliasAgentModels(t *testing.T) {
+	const agentID = "alias-agent"
+	orig := model.Agents
+	agent := &model.Agent{ID: agentID, Models: []model.AgentModel{{ID: "m", Name: "M"}}}
+	model.Agents = map[string]*model.Agent{agentID: agent}
+	t.Cleanup(func() { model.Agents = orig })
+
+	got := EnrichModelList(agentID, &ModelListState{Models: []model.AgentModel{{ID: "m", Name: "M"}}})
+	require.NotNil(t, got)
+
+	// Mutating the raw input's models must not reach the agent's stored list.
+	got.CLIModels = nil
+	assert.Len(t, agent.Models, 1, "the agent's own list must be unaffected")
+}
+
+func TestEnrichModelList_UnknownAgentOrEmptyCLIList(t *testing.T) {
+	orig := model.Agents
+	t.Cleanup(func() { model.Agents = orig })
+
+	raw := &ModelListState{Models: []model.AgentModel{{ID: "acp-a", Name: "ACP A"}}}
+
+	model.Agents = map[string]*model.Agent{}
+	assert.Nil(t, EnrichModelList("nobody", raw), "an unknown agent cannot be enriched")
+
+	model.Agents = map[string]*model.Agent{
+		"empty": {ID: "empty", Models: nil},
+	}
+	assert.Nil(t, EnrichModelList("empty", raw), "no CLI list means nothing to resolve against")
+
+	// A nil model list is not enrichable either.
+	assert.Nil(t, EnrichModelList("empty", nil))
+}
+
+func TestEnrichModelListWith_NilInputs(t *testing.T) {
+	assert.Nil(t, EnrichModelListWith(nil, &ModelListState{}))
+	assert.Nil(t, EnrichModelListWith(&model.Agent{ID: "a", Models: []model.AgentModel{{ID: "m"}}}, nil))
+	assert.Nil(t, EnrichModelListWith(&model.Agent{ID: "a"}, &ModelListState{}))
+}
+
+// The ACP connection path resolves the agent through the live registry, so a
+// refresh (which replaces the Agents map) is picked up rather than shipping a
+// stale CLI list.
+func TestEnrichModelList_ConnectionUsesLiveAgent(t *testing.T) {
+	const agentID = "conn-agent"
+	orig := model.Agents
+	t.Cleanup(func() { model.Agents = orig })
+
+	// The connection captured this pointer at creation time...
+	stale := &model.Agent{ID: agentID, Models: []model.AgentModel{{ID: "old", Name: "Old"}}}
+	// ...but a refresh has since swapped in a new one.
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Models: []model.AgentModel{{ID: "new", Name: "New"}}},
+	}
+
+	conn := NewACPConnForTest(stale, "sid-live")
+	t.Cleanup(func() { GetACPConnManager().CloseConn("sid-live") })
+
+	got := enrichModelList(conn, &ModelListState{Models: []model.AgentModel{{ID: "new", Name: "New"}}})
+
+	require.NotNil(t, got)
+	require.Len(t, got.CLIModels, 1)
+	assert.Equal(t, "new", got.CLIModels[0].ID, "the live agent's list must win over the captured pointer")
+}
+
+// A nil connection or list yields the input unchanged (the caller then ships the
+// raw ACP state rather than losing it).
+func TestEnrichModelList_NilConnOrList(t *testing.T) {
+	assert.Nil(t, enrichModelList(nil, nil))
+
+	raw := &ModelListState{Models: []model.AgentModel{{ID: "acp-a", Name: "ACP A"}}}
+	assert.Equal(t, raw, enrichModelList(nil, raw), "no connection means nothing to enrich with, so the raw state passes through")
+
+	conn := NewACPConnForTest(&model.Agent{ID: "c"}, "sid-nil-list")
+	t.Cleanup(func() { GetACPConnManager().CloseConn("sid-nil-list") })
+	assert.Nil(t, enrichModelList(conn, nil), "no list means nothing to enrich")
+}
+
+// An agent with no CLI list cannot be enriched; the raw state must come back
+// rather than being dropped, or the picker would go empty.
+func TestEnrichModelList_NoCLIListReturnsRawState(t *testing.T) {
+	const agentID = "no-cli-agent"
+	orig := model.Agents
+	model.Agents = map[string]*model.Agent{agentID: {ID: agentID, Models: nil}}
+	t.Cleanup(func() { model.Agents = orig })
+
+	conn := NewACPConnForTest(&model.Agent{ID: agentID}, "sid-no-cli")
+	t.Cleanup(func() { GetACPConnManager().CloseConn("sid-no-cli") })
+
+	raw := &ModelListState{Models: []model.AgentModel{{ID: "acp-a", Name: "ACP A"}}}
+	got := enrichModelList(conn, raw)
+
+	require.NotNil(t, got, "the raw state must survive an unenrichable agent")
+	assert.Equal(t, raw, got)
+}
+
+// When the agent is not in the live registry (e.g. a connection built in a test
+// or for an agent that was since removed), the connection's own pointer is the
+// fallback so the CLI list is still attached.
+func TestEnrichModelList_FallsBackToConnectionAgent(t *testing.T) {
+	orig := model.Agents
+	model.Agents = map[string]*model.Agent{} // registry does not know this agent
+	t.Cleanup(func() { model.Agents = orig })
+
+	conn := NewACPConnForTest(&model.Agent{
+		ID:     "unregistered-agent",
+		Models: []model.AgentModel{{ID: "cli-fallback", Name: "CLI Fallback"}},
+	}, "sid-fallback")
+	t.Cleanup(func() { GetACPConnManager().CloseConn("sid-fallback") })
+
+	got := enrichModelList(conn, &ModelListState{Models: []model.AgentModel{{ID: "cli-fallback", Name: "CLI Fallback"}}})
+
+	require.NotNil(t, got)
+	require.Len(t, got.CLIModels, 1)
+	assert.Equal(t, "cli-fallback", got.CLIModels[0].ID)
+	require.Len(t, got.ResolvedModels, 1)
+}
+
+// A connection with no agent bound at all cannot be enriched; the raw list is
+// returned so the caller still ships something.
+func TestEnrichModelList_ConnectionWithoutAgent(t *testing.T) {
+	conn := NewACPConnForTest(nil, "sid-no-agent")
+	t.Cleanup(func() { GetACPConnManager().CloseConn("sid-no-agent") })
+
+	raw := &ModelListState{Models: []model.AgentModel{{ID: "acp-a", Name: "ACP A"}}}
+	assert.Equal(t, raw, enrichModelList(conn, raw))
+}

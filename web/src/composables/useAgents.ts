@@ -37,6 +37,8 @@ interface AgentRecord {
   command?: string
   specialty?: string
   models?: Array<{ id: string; name: string; default: boolean }>
+  /** Pure CLI-discovered list, supplied by the backend for the CLI view. */
+  cliModels?: Array<{ id: string; name: string; default: boolean }>
   preferredModel?: string
   thinkingEffort?: string
   thinkingEffortLevels?: string[]
@@ -68,124 +70,26 @@ interface AcpState {
   modeState?: { availableModes?: Array<{ id: string; name: string }>; currentModeId?: string }
   thinkingEffortState?: { availableLevels?: Array<{ id: string; name: string }>; currentId?: string }
   commands?: Array<{ name: string; description: string; inputHint?: string }>
-  modelListState?: { models?: Array<{ id: string; name: string }>; currentModelId?: string }
+  modelListState?: {
+    models?: Array<{ id: string; name: string }>
+    resolvedModels?: Array<{ id: string; name: string; default: boolean }>
+    cliModels?: Array<{ id: string; name: string; default: boolean }>
+    currentModelId?: string
+  }
   planState?: { entries?: Array<Record<string, unknown>> }
   loadSession?: boolean
 }
-
-// originalModels stores the pure CLI-discovered model lists for each agent.
-// It is initialized from the /api/agents response (which always carries the
-// CLI list — the backend never overwrites it with ACP models). ACP models are
-// merged by ID on top of this baseline so display names/order stay stable
-// regardless of which source is freshest. Issue #404.
-const originalModels = new Map<string, Array<{ id: string; name: string; default: boolean }>>()
 
 /** Reset all module-level singleton refs — used by SPA hot project switch. */
 export function resetAgents(): void {
     agents.value = []
     defaultAgentId.value = ''
     acpStatesCache = {}
-    originalModels.clear()
     loadPromise = null
     _updateAvailableModes = null
     _updateAvailableThinkingEfforts = null
     _updateCommandState = null
     _currentAgentId = null
-}
-
-/**
- * Merge ACP-reported models on top of the CLI-discovered baseline by model ID.
- * The CLI list is the skeleton (preserves order and the default flag); ACP
- * display names win for matching IDs (fallback to the CLI name when empty);
- * ACP-only models are appended at the end. The default flag is recomputed with
- * a single priority: currentModelId match > CLI default > first in list.
- * Returns a fresh array — never mutates its inputs.
- */
-/**
- * Tier-alias alignment for ACP-reported models (revision 3).
- *
- * Some ACP agents (notably claude-agent-acp) report their model list using
- * **tier aliases** ("opus" / "sonnet" / "haiku" / "default") whose names carry
- * the *actual* model behind the user's env redirection (e.g. glm-5.3[1m]),
- * while the CLI-discovered skeleton uses full snapshot ids
- * (claude-sonnet-4-20250514). Matching by id alone therefore never aligns the
- * two lists and the merge degenerates into an append — producing a doubled
- * list where stale snapshot names sit next to the real runtime names.
- *
- * Fix: when an ACP-reported entry's id is a known tier alias, apply its name
- * to the skeleton entry whose id contains the same tier token, then drop the
- * alias entry. Backend-agnostic: consumes only the unified acpStates
- * channel; no env or per-backend config is read.
- *
- * 档位别名对齐（修订 3）：claude-agent-acp 以档位别名上报模型列表，其
- * name 携带 env 重定向后的真实模型名；按别名将真名写入骨架同档位条目，
- * 然后移除别名条目。仅消费统一的 acpStates 通道，不读取任何 env 或
- * 后端专属配置，对所有 ACP 后端一致生效。
- */
-const TIER_ALIASES = new Set(['default', 'opus', 'sonnet', 'haiku', 'fast', 'plan'])
-
-/** True when an ACP-reported model id is a tier alias (opus/sonnet/haiku/...). */
-export function isTierAliasId(id: string): boolean {
-    return TIER_ALIASES.has(id.replace(/[^a-z]/g, ''))
-}
-
-export function alignTierAliases(
-    cliModels: Array<{ id: string; name: string; default?: boolean }>,
-    acpModels: Array<{ id: string; name: string }>,
-): Array<{ id: string; name: string; default?: boolean }> {
-    const byAlias = new Map<string, string>()
-    for (const m of acpModels) {
-        const alias = m.id.replace(/[^a-z]/g, '')
-        if (TIER_ALIASES.has(alias) && m.name) byAlias.set(alias, m.name)
-    }
-    if (byAlias.size === 0) return cliModels
-    const out: Array<{ id: string; name: string; default?: boolean }> = []
-    for (const m of cliModels) {
-        const tokens = m.id.toLowerCase().replace(/[^a-z]/g, ' ').split(' ')
-        let hit = ''
-        for (const alias of byAlias.keys()) {
-            if (tokens.includes(alias)) { hit = alias; break }
-        }
-        out.push(hit ? { ...m, name: byAlias.get(hit)! } : m)
-    }
-    // Append any remaining alias-named entries the skeleton cannot represent
-    for (const m of acpModels) {
-        const alias = m.id.replace(/[^a-z]/g, '')
-        // Skip the meta "default" tier — it is a fallback marker, not a
-        // concrete model option. 跳过无具体模型名的元档位。
-        if (alias === 'default') continue
-        if (!TIER_ALIASES.has(alias)) continue
-        if (!out.some(x => x.name === m.name)) {
-            out.push({ id: m.id, name: m.name })
-        }
-    }
-    return out
-}
-
-export function mergeModelLists(
-    cliModels: Array<{ id: string; name: string; default?: boolean }>,
-    acpModels: Array<{ id: string; name: string }>,
-    currentModelId?: string,
-): Array<{ id: string; name: string; default: boolean }> {
-    const acpByName = new Map(acpModels.map(m => [m.id, m]))
-    const merged: Array<{ id: string; name: string; default: boolean }> = cliModels.map(m => ({
-        id: m.id,
-        name: acpByName.get(m.id)?.name || m.name,
-        default: false,
-    }))
-    const seen = new Set(merged.map(m => m.id))
-    for (const m of acpModels) {
-        if (!seen.has(m.id)) {
-            merged.push({ id: m.id, name: m.name, default: false })
-            seen.add(m.id)
-        }
-    }
-    const cliDefaultId = cliModels.find(m => m.default)?.id
-    const defaultId = currentModelId || cliDefaultId || merged[0]?.id
-    for (const m of merged) {
-        m.default = m.id === defaultId
-    }
-    return merged
 }
 
 async function loadAgents(force = false): Promise<void> {
@@ -195,14 +99,11 @@ async function loadAgents(force = false): Promise<void> {
     loadPromise = (async () => {
         try {
             const data = await apiGet<{ agents: AgentRecord[]; defaultAgent?: string; acpStates?: Record<string, Record<string, unknown>> }>('/api/agents')
+            // The backend resolves the model list (CLI order/names with ACP
+            // membership applied) and also reports the untouched CLI list as
+            // cliModels. The client renders what it is given; it keeps no
+            // baseline of its own.
             agents.value = data.agents || []
-            // Baseline for ACP model merging: the /api/agents response always
-            // carries the pure CLI-discovered list (the backend never overwrites
-            // it with ACP models), so this is the correct restore baseline.
-            originalModels.clear()
-            for (const a of agents.value) {
-                originalModels.set(a.id, (a.models || []).map(m => ({ ...m })))
-            }
             if (data.defaultAgent) {
                 defaultAgentId.value = data.defaultAgent
             }
@@ -242,8 +143,13 @@ async function loadAgents(force = false): Promise<void> {
                     }
                     // When ACP provides a model list, override agent.models
                     // so the frontend SessionDrawer shows ACP models.
-                    if (activeState.modelListState?.models && activeState.modelListState.models.length > 0) {
-                        updateACPModelList(activeAgentId, activeState.modelListState.models, activeState.modelListState.currentModelId)
+                    // The backend resolves the CLI and ACP lists before sending
+                    // them, so apply the resolved list when present.
+                    const ml = activeState.modelListState
+                    if (ml?.resolvedModels && ml.resolvedModels.length > 0) {
+                        applyResolvedModelList(activeAgentId, ml.resolvedModels, ml.cliModels)
+                    } else if (ml?.models && ml.models.length > 0) {
+                        updateACPModelList(activeAgentId, ml.models, ml.currentModelId)
                     }
                     if (activeState.planState?.entries && activeState.planState.entries.length > 0) {
                         updatePlanEntries(activeState.planState.entries as unknown as import('@/composables/usePlanProgress').PlanEntry[])
@@ -402,62 +308,75 @@ async function setDefaultAgent(agentId: string): Promise<void> {
 }
 
 /**
- * Merge ACP-reported models into an agent's model list, keyed by model ID.
- * The CLI-discovered baseline (originalModels) is kept untouched; ACP display
- * names win for matching IDs and ACP-only models are appended. Stable display
- * names/order regardless of which source is freshest. Issue #404.
+ * Apply an ACP model list update pushed over the WebSocket.
+ *
+ * The backend sends the already-resolved list (`resolvedModels`) plus the pure
+ * CLI list (`cliModels`), so this is a plain assignment. Previously the client
+ * held a CLI baseline and merged the two lists itself, which needed a tier-alias
+ * pass for claude-style agents and a manual save/restore around transport
+ * switches.
+ *
+ * Falls back to the raw ACP list when the backend could not resolve it (no CLI
+ * list available at emit time) — better to show the ACP list alone than nothing.
  */
 export function updateACPModelList(agentId: string, models: Array<{ id: string; name: string }>, currentModelId?: string): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
-    // Baseline: prefer the recorded pure CLI list. If it's missing (e.g. loadAgents
-    // failed but a WS model_list_update still arrived), treat the current
-    // agent.models as the baseline and record it — otherwise a second merge would
-    // use an already-merged list as its skeleton and cement ACP-only models into
-    // the restore baseline (Issue #404).
-    let cliModels = originalModels.get(agentId)
-    if (!cliModels) {
-        cliModels = (agent.models || []).map(m => ({ id: m.id, name: m.name, default: !!m.default }))
-        originalModels.set(agentId, cliModels)
+    if (models.length === 0) return
+
+    agent.models = models.map(m => ({ id: m.id, name: m.name, default: m.id === currentModelId }))
+    // An empty currentModelId means no session context; the backend's resolved
+    // list already carries the default flag, so only override when we know it.
+    if (currentModelId) {
+        for (const m of agent.models) m.default = m.id === currentModelId
+    } else if (!agent.models.some(m => m.default)) {
+        agent.models[0].default = true
     }
-    const aligned = alignTierAliases(cliModels, models)
-    // Tier aliases were consumed by alignTierAliases (their real names are now
-    // on the skeleton entries) — exclude them from the merge so mergeModelLists
-    // does not re-append the alias ids and double the list. Non-alias ACP-only
-    // models are still appended by the merge as before.
-    // 档位别名已被 alignTierAliases 消费（真名已写入骨架条目），需从合并
-    // 输入中剔除，避免 mergeModelLists 按 id 重新追加别名导致列表翻倍。
-    // 非别名的 ACP 独有模型仍按原有逻辑追加。
-    const nonAliasModels = models.filter(m => !isTierAliasId(m.id))
-    agent.models = mergeModelLists(aligned, nonAliasModels, currentModelId)
 }
 
 /**
- * Restore agent's model list to the pure CLI-discovered baseline.
- * The baseline is kept (not deleted) so later ACP merges can reuse it and the
- * agent can be overridden/restored repeatedly. Use setCLIModels to force a new
- * baseline after a manual model refresh.
+ * Apply a backend-resolved model list together with its CLI counterpart.
+ *
+ * This is the preferred path: the backend already applied ACP membership over the
+ * CLI skeleton, so the client only assigns. `cliModels` is stored alongside so a
+ * later transport switch to CLI is a plain field read.
+ */
+export function applyResolvedModelList(
+    agentId: string,
+    resolved: Array<{ id: string; name: string; default: boolean }>,
+    cliModels?: Array<{ id: string; name: string; default: boolean }>,
+): void {
+    const agent = agents.value.find(a => a.id === agentId)
+    if (!agent) return
+    agent.models = resolved.map(m => ({ ...m }))
+    if (cliModels && cliModels.length > 0) {
+        agent.cliModels = cliModels.map(m => ({ ...m }))
+    }
+}
+
+/**
+ * Switch the agent's displayed model list to the CLI view.
+ *
+ * `cliModels` is supplied by the backend on every /api/agents response, so no
+ * client-side baseline is needed.
  */
 export function restoreOriginalModels(agentId: string): void {
-    const saved = originalModels.get(agentId)
-    if (!saved) return
     const agent = agents.value.find(a => a.id === agentId)
-    if (agent) {
-        agent.models = saved.map(m => ({ ...m }))
-    }
+    if (!agent?.cliModels) return
+    agent.models = agent.cliModels.map(m => ({ ...m }))
 }
 
 /**
- * Replace the agent's model list with a freshly CLI-discovered list (e.g. after
- * a manual "refresh models"). Both agent.models and the merge baseline are
- * updated, so subsequent ACP model merges stay anchored to the new list.
+ * Replace the agent's model list with a freshly CLI-discovered list, e.g. after
+ * a manual "refresh models". The backend persists the new list, so this only
+ * updates the in-memory copy for immediate feedback.
  */
 export function setCLIModels(agentId: string, models: Array<{ id: string; name: string; default?: boolean }>): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
     const mapped = models.map(m => ({ id: m.id, name: m.name, default: !!m.default }))
     agent.models = mapped
-    originalModels.set(agentId, mapped.map(m => ({ ...m })))
+    agent.cliModels = mapped.map(m => ({ ...m }))
 }
 
 /** Check if an agent supports model refresh (has canRefreshModels from backend). */
@@ -557,8 +476,11 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
     if (Array.isArray(state.commands) && state.commands.length > 0) {
         _updateCommandState?.(state.commands as { name: string; description: string; inputHint?: string }[])
     }
-    if (state.modelListState?.models && state.modelListState.models.length > 0) {
-        updateACPModelList(agentId, state.modelListState.models, state.modelListState.currentModelId)
+    const ml = state.modelListState
+    if (ml?.resolvedModels && ml.resolvedModels.length > 0) {
+        applyResolvedModelList(agentId, ml.resolvedModels, ml.cliModels)
+    } else if (ml?.models && ml.models.length > 0) {
+        updateACPModelList(agentId, ml.models, ml.currentModelId)
     }
     if (state.planState?.entries && state.planState.entries.length > 0) {
         updatePlanEntries(state.planState.entries as unknown as import('@/composables/usePlanProgress').PlanEntry[])
@@ -625,7 +547,6 @@ export function useAgents() {
         updateACPModelList,
         restoreOriginalModels,
         setCLIModels,
-        mergeModelLists,
         populateACPStateFromCache,
         duplicateAgent,
         deleteAgent,

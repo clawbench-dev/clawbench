@@ -19,6 +19,7 @@ import {
   chatMessageReducer,
   trackInFlightSend,
   untrackInFlightSend,
+  isInFlightSend,
   resetInFlightSendsForTest,
 } from '@/utils/chatStreamUtils.ts'
 
@@ -1430,6 +1431,39 @@ describe('cancelPendingMessages', () => {
     const removed = cancelPendingMessages(messages, ['remote-q-999'])
     expect(removed).toBe(0)
     expect(messages).toHaveLength(1)
+  })
+
+  it('releases the in-flight guard for cancelled queueIds (backend DELETEs the row)', () => {
+    // A cancelled queued message is DELETEd from chat_history, so no future
+    // db_load snapshot will contain its queueId — the "row seen" cleanup in
+    // rebuildFromDb can never fire. The guard must be released here or the
+    // registry entry leaks for the process lifetime.
+    resetInFlightSendsForTest()
+    trackInFlightSend('pending-cancel')
+    trackInFlightSend('pending-keep')
+    const messages: any[] = [
+      { role: 'user', id: 'pending-cancel', content: 'A', pending: true },
+      { role: 'user', id: 'pending-keep', content: 'B', pending: true },
+    ]
+    cancelPendingMessages(messages, ['pending-cancel'])
+    expect(isInFlightSend('pending-cancel')).toBe(false)
+    expect(isInFlightSend('pending-keep')).toBe(true)
+    resetInFlightSendsForTest()
+  })
+})
+
+describe('remove_pending releases the in-flight guard', () => {
+  beforeEach(() => { resetInFlightSendsForTest() })
+  afterEach(() => { resetInFlightSendsForTest() })
+
+  it('releases the guard for the removed queueId', () => {
+    trackInFlightSend('pending-rm')
+    const state: any[] = [
+      { role: 'user', id: 'pending-rm', content: 'A', pending: true, queueId: 'pending-rm' },
+    ]
+    chatMessageReducer(state, { type: 'remove_pending', queueId: 'pending-rm' } as any)
+    expect(state).toHaveLength(0)
+    expect(isInFlightSend('pending-rm')).toBe(false)
   })
 })
 
@@ -2952,6 +2986,55 @@ describe('in-flight direct-send guard in rebuildFromDb', () => {
     const staleDb: any[] = [u(1, 'msg1')]
     const merged = rebuildFromDb(state, staleDb)
     expect(merged.filter((m: any) => m.role === 'user' && m.content === 'msg2')).toHaveLength(0)
+  })
+
+  it('keeps an ENQUEUED (pending) bubble when a stale db_load snapshot predates its row', () => {
+    // The enqueue path pushes a pending bubble while the AI is still
+    // generating, so a loadHistory GET in flight BEFORE the enqueue POST
+    // committed can return a snapshot without the row. The bubble must survive
+    // — its queued=1 DB row is absent from the snapshot, so rebuildFromDb's
+    // pending-row branch (case 2) cannot match it.
+    trackInFlightSend('pending-q2')
+    const state: any[] = [
+      u(1, 'msg1'),
+      a(2, 'reply1'),
+      u('pending-q2', 'queued msg', { seq: 99, queueId: 'pending-q2', pending: true }),
+    ]
+    const staleDb: any[] = [u(1, 'msg1'), a(2, 'reply1')]
+    const merged = rebuildFromDb(state, staleDb)
+    const queued = merged.filter((m: any) => m.role === 'user' && messageText(m) === 'queued msg')
+    expect(queued).toHaveLength(1)
+    expect(queued[0].id).toBe('pending-q2')
+    expect(queued[0].pending).toBe(true)
+  })
+
+  it('releases the guard once the ENQUEUED bubble appears in a snapshot (queued=1)', () => {
+    // Fresh snapshot now carries the queued=1 row: the pending branch matches it,
+    // the bubble is kept (still waiting for its drain, which adopts the DB id),
+    // and the guard is released so a later stale rebuild cannot resurrect it.
+    trackInFlightSend('pending-q2')
+    const state: any[] = [
+      u(1, 'msg1'),
+      a(2, 'reply1'),
+      u('pending-q2', 'queued msg', { seq: 99, queueId: 'pending-q2', pending: true }),
+    ]
+    const freshDb: any[] = [
+      u(1, 'msg1'),
+      a(2, 'reply1'),
+      u(3, 'queued msg', { queueId: 'pending-q2', queued: true }),
+    ]
+    const merged = rebuildFromDb(state, freshDb)
+    const queued = merged.filter((m: any) => m.role === 'user' && messageText(m) === 'queued msg')
+    expect(queued).toHaveLength(1)
+    // The pending bubble object is preserved (not replaced by the DB row) until
+    // queue_drain carries the authoritative id.
+    expect(queued[0].id).toBe('pending-q2')
+    expect(queued[0].pending).toBe(true)
+    expect(isInFlightSend('pending-q2')).toBe(false)
+
+    const staleDb: any[] = [u(1, 'msg1'), a(2, 'reply1')]
+    const merged2 = rebuildFromDb(merged, staleDb)
+    expect(merged2.filter((m: any) => m.role === 'user' && messageText(m) === 'queued msg')).toHaveLength(0)
   })
 })
 

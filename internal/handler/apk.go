@@ -24,6 +24,12 @@ const (
 // whenever the server's CWD contains one — shadowing the embedded copy and
 // making /api/apk 404 even though the APK is embedded.
 func ServeAPK(w http.ResponseWriter, r *http.Request) {
+	// Read-only resource: only GET/HEAD are meaningful, and http.ServeContent
+	// already handles range requests and HEAD. Rejecting other methods keeps
+	// the surface honest (this was previously reachable by any verb).
+	if !requireMethod(w, r, http.MethodGet, http.MethodHead) {
+		return
+	}
 	serveAPK(frontend.EmbeddedFS(), w, r)
 }
 

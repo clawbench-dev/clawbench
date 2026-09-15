@@ -133,7 +133,18 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 	}
 	states := make(map[string]*acpState, len(agents))
 	reg := ai.GetAgentCapabilityRegistry()
-	for _, a := range agents {
+	connManager := ai.GetACPConnManager()
+
+	// Resolve each agent's model list here, in the backend, so the frontend just
+	// renders what it is given. The CLI list supplies order and names; a concrete
+	// ACP list is authoritative for membership when present. ACP lists made of
+	// tier aliases (claude) are handled differently — see model.ResolveModels,
+	// which is the single place this rule lives.
+	//
+	// The resolved list goes on a COPY of the agent. Mutating the shared *Agent
+	// would overwrite the stored CLI-discovered list with a merged one, and the
+	// next refresh would treat ACP-only models as CLI-discovered.
+	for i, a := range agents {
 		if !a.SupportsACP() {
 			continue
 		}
@@ -145,22 +156,46 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 		s := &acpState{LoadSession: loadSession, ListSessions: reg.GetListSessions(a.ID)}
 
 		agentCap := reg.Get(a.ID)
-		if agentCap != nil && agentCap.HasData() {
-			s.Mode = reg.GetModeState(a.ID, "")
-			s.Effort = reg.GetThinkingEffortState(a.ID, "")
-			s.Commands = reg.GetCommands(a.ID)
-			// Include the agent's currently-selected model from any live ACP
-			// connection so the frontend can mark the correct default on the
-			// merged model list. Falls back to "" when no active connection.
-			s.ModelList = reg.GetModelListState(a.ID, ai.GetACPConnManager().GetCurrentModelIDByAgentID(a.ID))
-
-			// NOTE: Do NOT overwrite a.Models with s.ModelList.Models here.
-			// a.Models must always stay the pure CLI-discovered list so the
-			// frontend can merge ACP models by ID on top of it (stable display
-			// names/order). ACP models are delivered separately via
-			// acpStates[].modelListState.
+		if agentCap == nil || !agentCap.HasData() {
+			states[a.ID] = s
+			continue
 		}
+
+		s.Mode = reg.GetModeState(a.ID, "")
+		s.Effort = reg.GetThinkingEffortState(a.ID, "")
+		s.Commands = reg.GetCommands(a.ID)
+		s.ModelList = reg.GetModelListState(a.ID, connManager.GetCurrentModelIDByAgentID(a.ID))
 		states[a.ID] = s
+
+		var acpModels []model.AgentModel
+		currentModelID := ""
+		if s.ModelList != nil {
+			acpModels = s.ModelList.Models
+			currentModelID = s.ModelList.CurrentModelID
+		}
+		resolved := model.ResolveModels(a.Models, acpModels, currentModelID)
+		if len(resolved) == 0 {
+			continue
+		}
+
+		// Publish the resolved list as Models, and the untouched CLI list as
+		// CLIModels. The client needs the latter to render the CLI view when the
+		// user switches transport; without it the client would have to keep its
+		// own baseline and re-merge, which is what this refactor removed.
+		//
+		// The same two lists are attached to modelListState so the client can
+		// refresh its view from the ACP state cache alone (e.g. after creating a
+		// session) without re-fetching /api/agents. s.ModelList is nil when the
+		// agent has no ACP-reported models yet, in which case only Models matters.
+		if s.ModelList != nil {
+			s.ModelList.ResolvedModels = resolved
+			s.ModelList.CLIModels = a.Models
+		}
+
+		clone := *a
+		clone.CLIModels = a.Models
+		clone.Models = resolved
+		agents[i] = &clone
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -224,16 +259,21 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, clone)
 }
 
-// serveAgentsRescan handles POST /api/agents/rescan — re-runs the full agent
-// discovery pipeline (detect CLIs → discover models → merge → reload memory).
+// serveAgentsRescan handles POST /api/agents/rescan — re-runs the agent refresh
+// pipeline (detect CLIs → discover models → persist → reload memory).
 // This brings back any auto-detected agents that were accidentally deleted.
-func serveAgentsRescan(w http.ResponseWriter, _ *http.Request) {
+func serveAgentsRescan(w http.ResponseWriter, r *http.Request) {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
-	model.SyncDiscoverAgentsDB(service.WriteDB())
-	discoveredModels := model.SyncDiscoverModels()
-	model.MergeDiscoveredDataDB(service.WriteDB(), discoveredModels)
+	// A rescan is an explicit user action, so bypass the discovery cache and
+	// re-probe every backend.
+	model.InvalidateAllDiscoveredModels()
+	if _, err := model.RefreshAgents(service.WriteDB(), model.RefreshOptions{}); err != nil {
+		slog.Error("agent rescan failed", "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
 
 	// Return the current agent list (same shape as GET /api/agents)
 	agents := make([]*model.Agent, len(model.AgentList))
@@ -622,13 +662,13 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var models []model.AgentModel
-	canDiscover := false // whether any discovery method is available
+	canDiscover := model.HasModelSource(agent.Backend)
 
-	// CLI model discovery via BackendSpec
-	spec := model.FindSpecByBackend(agent.Backend)
-	if spec != nil && model.CanDiscoverModels(*spec) {
-		canDiscover = true
-		models = model.DiscoverModels(*spec)
+	if canDiscover {
+		// A manual refresh must reflect the CLI's current state, not a cached
+		// answer from startup, so drop the cached entry first.
+		model.InvalidateDiscoveredModels(agent.Backend)
+		models, _ = model.DiscoverWithDetail(agent.Backend)
 	}
 
 	if len(models) == 0 {
@@ -638,6 +678,7 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Discovery method available but returned nothing — check for specific errors
+		spec := model.FindSpecByBackend(agent.Backend)
 		if spec != nil {
 			if err := model.CheckCLIExistsErr(spec.DefaultCmd); err != nil {
 				slog.Warn("model refresh failed: CLI not available", "agent", agentID, "backend", agent.Backend, "cmd", spec.DefaultCmd, "error", err)
@@ -645,10 +686,7 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		reason := ""
-		if spec != nil {
-			reason = model.DiscoveryFailureDetail(*spec)
-		}
+		_, reason := model.DiscoverWithDetail(agent.Backend)
 		slog.Warn("model refresh returned no models", "agent", agentID, "backend", agent.Backend, "reason", reason)
 		var detail map[string]any
 		if reason != "" {

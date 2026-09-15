@@ -21,6 +21,10 @@ import {
   WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
+import { DOCK_TABS, DOCK_TAB_IDS, isDockTabId, secondaryDockTabs } from '@/composables/dockTabs'
+import enMessages from '@/i18n/locales/en'
+import zhMessages from '@/i18n/locales/zh'
+import { DOCK_TABS_WITH_ICONS } from '@/composables/dockTabMeta'
 
 beforeEach(() => {
   _resetForTest()
@@ -265,14 +269,17 @@ describe('activePane focus tracking', () => {
 })
 
 describe('wideDockTabOrder', () => {
+  // Secondary tabs = the registry minus the primary head, in registry order.
+  const SECONDARY_TABS = DOCK_TABS.filter((t) => !t.primary).map((t) => t.id)
+
   it('puts the fixed primary tabs first, then the secondary tabs in given order', () => {
-    const all = wideDockTabOrder(['tasks', 'terminal', 'proxy', 'stats', 'settings'])
-    expect(all).toEqual(['browse', 'view', 'history', 'tasks', 'terminal', 'proxy', 'stats', 'settings'])
+    const all = wideDockTabOrder(SECONDARY_TABS)
+    expect(all).toEqual([...WIDE_SCREEN_PRIMARY_TABS, ...SECONDARY_TABS])
     expect(all).toEqual(WIDE_SCREEN_DOCK_TABS)
   })
 
   it('preserves secondary-tab order after filtering (terminal/proxy disabled)', () => {
-    expect(wideDockTabOrder(['tasks', 'settings'])).toEqual(['browse', 'view', 'history', 'tasks', 'settings'])
+    expect(wideDockTabOrder(['forge', 'tasks', 'settings'])).toEqual(['browse', 'view', 'history', 'forge', 'tasks', 'settings'])
     expect(wideDockTabOrder([])).toEqual(['browse', 'view', 'history'])
   })
 
@@ -282,6 +289,142 @@ describe('wideDockTabOrder', () => {
     // The whole visible dock never depends on measured space — regression guard
     // for the old height-measured overflow that collapsed tabs into a popup.
     expect(order).toHaveLength(WIDE_SCREEN_PRIMARY_TABS.length + 2)
+  })
+})
+
+describe('dock tab registry (single source of truth)', () => {
+  it('derives the switch whitelist from the registry — no second hand-written list', () => {
+    // The whole point of the registry: the whitelist is the registry's ids, so
+    // the two cannot diverge. This is deliberately an identity check on the
+    // exported array: if someone reintroduces a separately maintained list, the
+    // reference stops matching DOCK_TAB_IDS and this fails.
+    expect(WIDE_SCREEN_DOCK_TABS).toBe(DOCK_TAB_IDS)
+    expect(WIDE_SCREEN_DOCK_TABS).toEqual(DOCK_TABS.map((t) => t.id))
+  })
+
+  it('has unique ids and every id is reachable by the type guard', () => {
+    const ids = DOCK_TABS.map((t) => t.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const id of ids) expect(isDockTabId(id)).toBe(true)
+  })
+
+  it('primary tabs are a prefix-ordered subset of the registry', () => {
+    const primary = DOCK_TABS.filter((t) => t.primary).map((t) => t.id)
+    expect(primary).toEqual([...WIDE_SCREEN_PRIMARY_TABS])
+    // Primary tabs must come first in registry order, because the dock renders
+    // WIDE_SCREEN_PRIMARY_TABS before the secondary list.
+    expect(DOCK_TABS.map((t) => t.id).slice(0, primary.length)).toEqual(primary)
+  })
+
+  it('every registry entry carries an i18n title key', () => {
+    for (const tab of DOCK_TABS) {
+      expect(tab.titleKey, `${tab.id} has no titleKey`).toMatch(/^[a-z]+\.[A-Za-z]/)
+    }
+  })
+
+  it('every title key actually RESOLVES in both locales', () => {
+    // The shape check above passes for a typo'd key like "nav.overveiw", which
+    // would render the raw key as the tab's tooltip with no error anywhere.
+    for (const [locale, messages] of Object.entries({ en: enMessages, zh: zhMessages })) {
+      for (const tab of DOCK_TABS) {
+        const value = tab.titleKey.split('.').reduce<unknown>(
+          (acc, part) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined),
+          messages,
+        )
+        expect(typeof value, `${tab.titleKey} missing in ${locale}`).toBe('string')
+        expect(value, `${tab.titleKey} is empty in ${locale}`).not.toBe('')
+      }
+    }
+  })
+
+  it('every registry entry has an icon attached in the icon module', () => {
+    // Icons live in dockTabMeta.ts (kept out of dockTabs.ts so that importing
+    // the ids does not pull lucide into composable module graphs). Both halves
+    // must cover exactly the same ids.
+    expect(DOCK_TABS_WITH_ICONS.map((t) => t.id)).toEqual(DOCK_TABS.map((t) => t.id))
+    for (const tab of DOCK_TABS_WITH_ICONS) {
+      expect(tab.icon, `${tab.id} has no icon`).toBeTruthy()
+    }
+  })
+
+  it('rejects unknown ids', () => {
+    expect(isDockTabId('not-a-tab')).toBe(false)
+    expect(isDockTabId('')).toBe(false)
+  })
+})
+
+describe('wide dock tab reachability (regression)', () => {
+  // A tab rendered in the wide dock but not switchable is a dead button:
+  // switchLeftTab() rejects it, so clicking does nothing visible. That was the
+  // forge tab bug — it was rendered by the wide dock (App.vue's overflowTabs,
+  // which starts with 'forge') but missing from the whitelist.
+  //
+  // The render list comes from secondaryDockTabs(), the same function App.vue's
+  // overflowTabs computed calls, so this asserts the real render list rather
+  // than the registry compared against itself.
+  const RENDERED_ALL = wideDockTabOrder(secondaryDockTabs())
+
+  it('every tab the wide dock renders can actually be switched to', () => {
+    // Direct whitelist coverage: the dock renders exactly these tabs, so the
+    // switch whitelist must contain every one of them.
+    expect(RENDERED_ALL.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab))).toEqual([])
+
+    for (const tab of RENDERED_ALL) {
+      resetWideScreenState()
+      // Start from a tab that is guaranteed different from the target, so the
+      // switch below is a real transition rather than the same-tab early return.
+      switchLeftTab(tab === 'browse' ? 'settings' : 'browse')
+      const setActiveTab = vi.fn()
+      registerWideScreenCallbacks({ setActiveTab })
+      switchLeftTab(tab)
+      const { leftTab } = useWideScreenLayout()
+      expect(leftTab.value, `dock tab "${tab}" is rendered but not switchable`).toBe(tab)
+      expect(setActiveTab, `dock tab "${tab}" did not sync activeTab`).toHaveBeenCalledWith(tab)
+    }
+  })
+
+  it('still holds for every runtime gate combination', () => {
+    // The gates change *which* tabs render; all four combinations must remain
+    // switchable. This is the case the old registry-vs-registry test could not
+    // see, because the gates live outside the registry.
+    for (const terminalDisabled of [false, true]) {
+      for (const sshDisabled of [false, true]) {
+        const rendered = wideDockTabOrder(secondaryDockTabs({ terminalDisabled, sshDisabled }))
+        expect(
+          rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
+          `gate combination terminalDisabled=${terminalDisabled} sshDisabled=${sshDisabled}`,
+        ).toEqual([])
+      }
+    }
+  })
+
+  it('gates hide exactly terminal and proxy, and nothing else', () => {
+    const all = secondaryDockTabs()
+    expect(all).toContain('terminal')
+    expect(all).toContain('proxy')
+    expect(secondaryDockTabs({ terminalDisabled: true })).not.toContain('terminal')
+    expect(secondaryDockTabs({ terminalDisabled: true })).toContain('proxy')
+    expect(secondaryDockTabs({ sshDisabled: true })).not.toContain('proxy')
+    expect(secondaryDockTabs({ sshDisabled: true })).toContain('terminal')
+    expect(secondaryDockTabs({ terminalDisabled: true, sshDisabled: true })).not.toContain('terminal')
+    expect(secondaryDockTabs({ terminalDisabled: true, sshDisabled: true })).not.toContain('proxy')
+    // Order is registry order with the gated ones removed, never reordered.
+    expect(secondaryDockTabs({ terminalDisabled: true, sshDisabled: true })).toEqual(
+      all.filter((t) => t !== 'terminal' && t !== 'proxy'),
+    )
+  })
+
+  it('forge is switchable and persists across a re-init', () => {
+    expect(WIDE_SCREEN_DOCK_TABS).toContain('forge')
+    switchLeftTab('forge')
+    expect(localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)).toBe('forge')
+    _resetForTest()
+    const { leftTab } = useWideScreenLayout()
+    expect(leftTab.value).toBe('forge')
+  })
+
+  it('resolveLeftTabOnEnter accepts forge as the current narrow-mode tab', () => {
+    expect(resolveLeftTabOnEnter('forge', 'browse')).toBe('forge')
   })
 })
 

@@ -44,8 +44,11 @@ npm test                                              # Vitest 前端测试
 
 - **开关**：设置 → 调试 →「调试日志捕获」（`logCapture`，默认关）。开启后 App 模式（Android）的 JS 日志仅 HTTP 上报一份（跳过 console 与 native 桥，避免 `WebView:LOG` 重复与 `[object Object]` 失真），网页模式则 console + HTTP 双份；关闭时日志只在本地（logcat / console）可见。
 - **JS（`web/src/utils/appLog.ts`）**：批量 POST `/api/client-log`（2s / 200 条缓冲 / 200 条每请求），`source="js"` → `[js]` 行。
-- **Android（`android/app/.../AppLog.java`）**：捕获开启时每 3s POST `/api/client-log`，`source="android"` → `[android]` 行。
-- **服务端（`internal/handler/android_log.go`）**：`ServeClientLog` 统一写 `{LogDir}/logs/client.log`，行格式 `2006-01-02T15:04:05.000 [js] I/ChatStream: msg`（换行转义为 `\n`），50MiB 轮转到 `client.log.1`。端点无鉴权（仅写日志、不入库）。
+- **Android（`android/app/.../AppLog.java`）**：捕获开启时每 3s POST `/api/client-log`，`source="android"` → `[android]` 行；请求带 WebView 会话 Cookie（同进程读取）。
+- **服务端（`internal/handler/android_log.go`）**：`ServeClientLog` 统一写 `{LogDir}/logs/client.log`，行格式 `2006-01-02T15:04:05.000 [js] I/ChatStream: msg`，50MiB 轮转到 `client.log.1`。
+  - **需鉴权**：这是向服务端文件追加写入的原语，匿名调用者可伪造日志行或反复触发轮转以销毁上一代日志。两个客户端上报时均已登录（JS 中继受 `logCapture` 门控且仅在已认证的应用内启用；Android `startCapture` 由登录后的 WebView 桥触发）。
+  - **字段清洗**：`Msg`/`Tag`/`Level`/`Source` 全部转义换行、CR 与 NUL 并截断——只转义 `Msg` 会让 `Tag` 可伪造整行。
+  - **上限**：单请求 200 条、总计 256 KiB。**不限流**——磁盘已由字节上限与 50 MiB 文件上限封死，限流不改变该边界；且 429 会被两端客户端静默丢弃（`appLog.ts` 不重试），徒增丢日志风险。
 - **查看**：`tail -f {data-dir}/logs/client.log`、`grep '\[js\]' {data-dir}/logs/client.log`。
 
 ## 架构
@@ -103,3 +106,10 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
   `internal/frontend/dist` 是 gitignore 的构建产物，不同步则运行中的服务看不到改动，不进提交。
 - **覆盖率门槛**：每 PR / 推送到 main 强制执行——包级覆盖率不低于基线、变更行覆盖率 ≥ 80%。
 - **推送前必须运行本地检查**：`./scripts/pre-push-checks.sh`
+- **跑全量测试前先评估成本，且不得与并发 agent 争抢**：主工作区可能同时有多个 agent 在改同一棵树，全量测试是**共享的稀缺资源**——实测全量 vitest 约 14 分钟、`go test ./internal/service` 约 128 秒、前端构建 1.5–4 分钟；并发时彼此争抢 CPU/内存，会把对方拖到超时（同一命令并发下撞 600s 超时，单独跑仅 128s）并产生假失败。
+  - **先评估要不要跑全量**：能用隔离测试回答的问题（`npx vitest run <file>`、`go test ./internal/<pkg>/ -run <TestName>`）就不要跑全量。判「是否我引入的回归」一律先隔离单跑。
+  - **跑之前先检查他人是否已在跑**：`ps -eo pid,ppid,etime,cmd | grep -E "vitest|go test|npm run build" | grep -v grep`。有则 `sleep` 等待其结束后再跑，不要并发起跑。
+  - **不重复跑同一个全量**：复用已有结果，例如 `./scripts/check-go-coverage.sh --skip-test` 复用已生成的 `coverage.out`。
+  - **绝不同时跑 `npm run build` 与全量 vitest**：会 OOM 被 Killed，并把结果污染成成片假失败。必须串行。
+  - **判据**：若一个验证动作**不改变结论**，就不该跑。跑之前问「这个结果会让我改代码吗」，不会就别跑。
+  - **baseline 陈旧导致的 Tier 1 失败不要靠补测试去「修」**：先确认归属（比对失败包是否被自己改过）；Tier 1-only 是 non-blocking（脚本以 `exit 2` 区分）。

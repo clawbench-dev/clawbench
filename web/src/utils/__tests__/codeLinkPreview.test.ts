@@ -2,6 +2,9 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import {
   normalizePreviewRange,
   sliceCodeForPreview,
+  computeRenderWindow,
+  computeFetchWindow,
+  windowCovers,
   buildPreviewUrl,
   getAppHeaderBottom,
   placeNearAnchor,
@@ -11,6 +14,8 @@ import {
   MAX_RENDER_LINES,
   MAX_RENDER_BYTES,
   MAX_LINE_BYTES,
+  FETCH_WINDOW_MARGIN,
+  MAX_FETCH_WINDOW_LINES,
   splitHighlightedHtml,
 } from '@/utils/codeLinkPreview'
 
@@ -212,6 +217,142 @@ describe('codeLinkPreview utils', () => {
     })
   })
 
+  describe('computeRenderWindow', () => {
+    it('shows the head of the file with no annotation', () => {
+      const win = computeRenderWindow(undefined, undefined, 1000)
+      expect(win.startLine).toBe(1)
+      expect(win.endLine).toBe(30)
+    })
+
+    it('centers context on the annotated line and clamps to the file', () => {
+      const win = computeRenderWindow(500, 500, 1000)
+      expect(win.startLine).toBe(470)
+      expect(win.endLine).toBe(530)
+      expect(win.highlightStart).toBe(500)
+      expect(win.highlightEnd).toBe(500)
+    })
+
+    it('flags an annotation past EOF and falls back to the tail', () => {
+      const win = computeRenderWindow(9999, 9999, 100)
+      expect(win.lineOutOfRange).toBe(true)
+      expect(win.startLine).toBe(71)
+      expect(win.endLine).toBe(100)
+      expect(win.highlightStart).toBeUndefined()
+    })
+
+    it('caps the window at MAX_RENDER_LINES', () => {
+      const win = computeRenderWindow(1, 400, 1000)
+      expect(win.endLine - win.startLine + 1).toBe(MAX_RENDER_LINES)
+      expect(win.renderTruncated).toBe(true)
+      expect(win.truncateReason).toBe('lines')
+    })
+  })
+
+  describe('sliceCodeForPreview with a line window', () => {
+    // Server returns only lines 101..160 of a 1000-line file.
+    const windowContent = Array.from({ length: 60 }, (_, i) => `line ${101 + i}`).join('\n')
+    const windowOpts = { baseLineOffset: 101, totalLines: 1000 }
+
+    it('reports absolute line numbers for the window', () => {
+      const res = sliceCodeForPreview(windowContent, 130, 130, windowOpts)
+      expect(res.totalLines).toBe(1000)
+      expect(res.startLine).toBe(101)
+      expect(res.endLine).toBe(160)
+      expect(res.code.split('\n')[0]).toBe('line 101')
+      expect(res.code.split('\n')[29]).toBe('line 130')
+    })
+
+    it('keeps "lines remaining" in file coordinates, not window coordinates', () => {
+      const res = sliceCodeForPreview(windowContent, 130, 130, windowOpts)
+      // 100 lines exist above the window, 840 below — derived from totalLines.
+      expect(res.startLine - 1).toBe(100)
+      expect(res.totalLines - res.endLine).toBe(840)
+    })
+
+    it('falls back to the nearest held edge when the window misses entirely', () => {
+      // Window holds 101..160; a render window of 170..230 has no overlap. Rather
+      // than blanking out mid-read, fall back to the nearest real line (160) and
+      // let the caller widen the fetch.
+      const res = sliceCodeForPreview(windowContent, 200, 200, windowOpts)
+      expect(res.startLine).toBe(160)
+      expect(res.code).toBe('line 160')
+    })
+
+    it('clamps an expansion past the fetched edge to what is held', () => {
+      // Expanding to the top of a 1000-line file while holding only 101..160:
+      // the slice keeps the window's top edge, all of which are real lines.
+      const res = sliceCodeForPreview(windowContent, 130, 130, {
+        ...windowOpts,
+        expandAboveLines: 500,
+      })
+      expect(res.startLine).toBe(101)
+      expect(res.endLine).toBe(160)
+      expect(res.code.split('\n')[0]).toBe('line 101')
+    })
+
+    it('still flags an annotation past the real EOF', () => {
+      const res = sliceCodeForPreview(windowContent, 5000, 5000, windowOpts)
+      expect(res.lineOutOfRange).toBe(true)
+    })
+
+    it('matches whole-file slicing when the window covers the whole file', () => {
+      const whole = Array.from({ length: 300 }, (_, i) => `line ${i + 1}`).join('\n')
+      const viaFile = sliceCodeForPreview(whole, 150, 150)
+      const viaWindow = sliceCodeForPreview(whole, 150, 150, { baseLineOffset: 1, totalLines: 300 })
+      expect(viaWindow).toEqual(viaFile)
+    })
+  })
+
+  describe('computeFetchWindow', () => {
+    it('opens on the file head when there is no annotation', () => {
+      const win = computeFetchWindow({ filePath: 'a.ts' }, null)
+      expect(win.start).toBe(1)
+      expect(win.end).toBe(30 + FETCH_WINDOW_MARGIN)
+    })
+
+    it('surrounds the annotated line with margin', () => {
+      const win = computeFetchWindow({ filePath: 'a.ts', lineStart: 500, lineEnd: 510 }, 1000)
+      // Render window is 470..540; margin extends both sides.
+      expect(win.start).toBe(470 - FETCH_WINDOW_MARGIN)
+      expect(win.end).toBe(540 + FETCH_WINDOW_MARGIN)
+    })
+
+    it('clamps to the file length once known', () => {
+      const win = computeFetchWindow({ filePath: 'a.ts', lineStart: 500, lineEnd: 510 }, 520)
+      expect(win.end).toBe(520)
+    })
+
+    it('spans a multi-range annotation without exceeding the render cap', () => {
+      const win = computeFetchWindow({ filePath: 'a.ts', lineRanges: '90-91,309,938-943' }, 2000)
+      expect(win.start).toBe(1)
+      // The render window is capped at 200 lines from the first range, so the
+      // request stays bounded rather than spanning to line 943.
+      expect(win.end - win.start + 1).toBeLessThanOrEqual(MAX_FETCH_WINDOW_LINES)
+      expect(win.end).toBeLessThan(943 + FETCH_WINDOW_MARGIN)
+    })
+
+    it('stays bounded for a huge annotation span', () => {
+      const win = computeFetchWindow({ filePath: 'a.ts', lineStart: 100, lineEnd: 5000 }, null)
+      // The render window is capped at 200 lines from the annotation start, plus
+      // margin — so a 4901-line span never becomes a 4901-line request.
+      expect(win.start).toBe(1)
+      expect(win.end).toBe(299 + FETCH_WINDOW_MARGIN)
+      expect(win.end - win.start + 1).toBeLessThanOrEqual(MAX_FETCH_WINDOW_LINES)
+    })
+  })
+
+  describe('windowCovers', () => {
+    it('is false without a fetched window', () => {
+      expect(windowCovers(null, 1, 10)).toBe(false)
+    })
+
+    it('requires full containment', () => {
+      expect(windowCovers({ start: 100, end: 200 }, 120, 180)).toBe(true)
+      expect(windowCovers({ start: 100, end: 200 }, 90, 180)).toBe(false)
+      expect(windowCovers({ start: 100, end: 200 }, 120, 210)).toBe(false)
+    })
+  })
+
   describe('splitHighlightedHtml', () => {
     it('returns empty array for empty input', () => {
       expect(splitHighlightedHtml('')).toEqual([])
@@ -260,6 +401,20 @@ describe('codeLinkPreview utils', () => {
     it('encodes Windows absolute paths with query param', () => {
       expect(buildPreviewUrl('C:\\repo\\file.ts')).toBe('/api/file?path=C%3A%2Frepo%2Ffile.ts')
       expect(buildPreviewUrl('D:/repo/file.ts')).toBe('/api/file?path=D%3A%2Frepo%2Ffile.ts')
+    })
+
+    it('appends the line window to a relative-path URL', () => {
+      expect(buildPreviewUrl('src/a.ts', { start: 101, end: 200 }))
+        .toBe('/api/file/src%2Fa.ts?lineStart=101&lineEnd=200')
+    })
+
+    it('appends the line window to an absolute-path URL with &', () => {
+      expect(buildPreviewUrl('/etc/hosts', { start: 5, end: 9 }))
+        .toBe('/api/file?path=%2Fetc%2Fhosts&lineStart=5&lineEnd=9')
+    })
+
+    it('omits the window when none is given', () => {
+      expect(buildPreviewUrl('src/a.ts', null)).toBe('/api/file/src%2Fa.ts')
     })
   })
 
@@ -387,12 +542,36 @@ describe('codeLinkPreview utils', () => {
       expect(cache.get(key, 2500)).toBeUndefined()
     })
 
-    it('does not cache files exceeding largeFileThreshold', () => {
+    it('does not cache content exceeding largeFileThreshold', () => {
       const key = 'test::large.ts'
-      const largeItem = { content: 'x', name: 'large.ts', path: 'large.ts', supported: true, size: 60000 }
+      const largeItem = {
+        content: 'x'.repeat(60000),
+        name: 'large.ts',
+        path: 'large.ts',
+        supported: true,
+        size: 60000,
+      }
       const success = cache.set(key, largeItem)
       expect(success).toBe(false)
       expect(cache.get(key)).toBeUndefined()
+    })
+
+    it('caches a small window of a large file (budget tracks held content)', () => {
+      // A windowed response for a 50 MB file holds only a few lines. The old
+      // whole-file size must not disqualify it, or large files would never cache.
+      const key = 'test::big.ts::1-200'
+      const windowed = {
+        content: 'line\n'.repeat(50),
+        name: 'big.ts',
+        path: 'big.ts',
+        supported: true,
+        size: 50 * 1024 * 1024,
+        totalLines: 1_000_000,
+        windowStart: 1,
+        windowEnd: 50,
+      }
+      expect(cache.set(key, windowed)).toBe(true)
+      expect(cache.get(key)?.windowStart).toBe(1)
     })
 
     it('evicts least recently used item when maxItems is reached', () => {

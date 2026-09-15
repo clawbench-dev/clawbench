@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -105,13 +106,25 @@ func TestServeSessionRewind_SuccessTruncatesAndResetsSession(t *testing.T) {
 	require.NoError(t, service.UpdateExternalSessionID(sessionID, "ext-stale-session"))
 	assert.Equal(t, "ext-stale-session", service.GetExternalSessionID(sessionID))
 
-	// Inject a fake ACP connection into the pool.
+	// Inject a fake ACP connection into the pool. NewACPConnForTest is used
+	// (rather than a bare &ai.ACPConn{}) because GetCachedStateByClawbenchSID
+	// reads conn.agent to resolve agent-level capability state and returns an
+	// empty state when the agent is nil.
 	mgr := ai.GetACPConnManager()
 	client := ai.NewClawBenchACPClient()
-	conn := &ai.ACPConn{}
+	conn := ai.NewACPConnForTest(&model.Agent{ID: "rewind-plan-agent", Backend: "claude"}, sessionID)
 	conn.SetClientForTest(client)
 	conn.SetSessionMappingForTest(sessionID, "ext-stale-session")
+	// Seed a plan so the post-rewind assertion is meaningful: without seeding,
+	// the connection is simply absent and the check would pass vacuously.
+	conn.SetCachedPlanState(&ai.PlanState{Entries: []ai.PlanEntry{
+		{Content: "Step 1", Priority: "high", Status: "completed"},
+	}})
 	mgr.SetConnForTest(sessionID, conn)
+
+	// Sanity: the seeded plan is visible before the rewind (proves the
+	// lookup path below actually reads connection state).
+	require.NotNil(t, mgr.GetCachedStateByClawbenchSID(sessionID).Plan)
 
 	body := map[string]any{"sessionId": sessionID, "beforeMessageId": asst1ID}
 	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
@@ -135,6 +148,16 @@ func TestServeSessionRewind_SuccessTruncatesAndResetsSession(t *testing.T) {
 
 	// External session mapping cleared.
 	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
+
+	// The rewind destroys the ACP connection, which is the ONLY place plan
+	// progress lives (it is never persisted to the DB — no plan table, and
+	// context_state carries only mode/thinkingEffort/usage). The frontend's
+	// GET /api/ai/chat therefore reports planState=null after a rewind, which
+	// it treats as "no plan". This is the contract that makes clearing the
+	// plan panel on rewind correct — see issue #457 and the frontend's
+	// rewindSession / onSessionEvent('rewound') handlers.
+	assert.Nil(t, mgr.GetCachedStateByClawbenchSID(sessionID).Plan,
+		"plan state must not survive a rewind: it is connection-scoped and the connection is gone")
 
 	// ACP connection closed (goroutine — wait briefly).
 	assert.Eventually(t, func() bool { return mgr.GetConn(sessionID) == nil },

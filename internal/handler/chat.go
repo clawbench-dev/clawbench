@@ -197,6 +197,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Ship the same shape as GET /api/agents: the raw ACP list plus the
+			// CLI list and the resolved list. Without this the client would have
+			// to merge the two itself, and a consumer that only has the ACP half
+			// (this endpoint's modelListState.models) would drop the CLI models.
+			if ml, ok := modelListState.(*ai.ModelListState); ok && ml != nil && sessionAgentID != "" {
+				if enriched := ai.EnrichModelList(sessionAgentID, ml); enriched != nil {
+					modelListState = enriched
+				}
+			}
+
 			// DB fallback: if any state is still nil after in-memory lookups,
 			// try to restore from persisted context_state (survives server restart).
 			if modeState == nil || thinkingEffortState == nil || usageState == nil {
@@ -361,30 +371,15 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Derive file/dir paths from validatedFileEntries for prompt prefixing,
-	// excluding entries already covered by filePaths (cross-deduplication).
+	// Derive file/dir/link buckets from validatedFileEntries for prompt
+	// prefixing, excluding entries already covered by filePaths
+	// (cross-deduplication).
 	filePathsSet := make(map[string]struct{}, len(validatedFilePaths)+len(validatedDirPaths))
 	for _, p := range append(validatedFilePaths, validatedDirPaths...) {
 		filePathsSet[p] = struct{}{}
 	}
 
-	fileEntryFileLabels := make([]string, 0) // "path" or "path:startLine-endLine"
-	fileEntryDirPaths := make([]string, 0)
-	for _, f := range validatedFileEntries {
-		// URL entries are not filesystem paths and must not be prefixed onto
-		// the prompt as if they were local files.
-		if f.IsURL() {
-			continue
-		}
-		if _, exists := filePathsSet[f.Path]; exists {
-			continue // already covered by filePaths
-		}
-		if f.IsDir {
-			fileEntryDirPaths = append(fileEntryDirPaths, f.Path)
-		} else {
-			fileEntryFileLabels = append(fileEntryFileLabels, fileEntryLabel(f))
-		}
-	}
+	attachmentParts := model.ClassifyAttachments(validatedFileEntries, filePathsSet)
 
 	prompt := req.Message
 	// Slash commands (e.g. /reload-plugins, /compact) must be sent as-is to ACP
@@ -394,18 +389,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// commands: they are injected locally below and must keep file prefixes.
 	isSlashCmd := ai.IsACPSlashCommand(req.Message) && !IsClawbenchCommand(req.Message)
 	if !isSlashCmd {
-		if len(validatedFilePaths) > 0 {
-			prompt = fmt.Sprintf("[Current file: %s]\n%s", strings.Join(validatedFilePaths, ", "), req.Message)
-		}
-		if len(validatedDirPaths) > 0 {
-			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(validatedDirPaths, ", "), prompt)
-		}
-		if len(fileEntryFileLabels) > 0 {
-			prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileEntryFileLabels), strings.Join(fileEntryFileLabels, ", "), prompt)
-		}
-		if len(fileEntryDirPaths) > 0 {
-			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(fileEntryDirPaths, ", "), prompt)
-		}
+		prompt = model.ApplyAttachmentPrefixes(prompt, validatedFilePaths, validatedDirPaths, attachmentParts)
 	}
 
 	// ClawBench built-in command injection: detect on raw req.Message, prepend
@@ -468,7 +452,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prevent concurrent sessions for the same session ID
-	if !service.TrySetSessionRunning(sessionID) {
+	runCtx, claimed := service.TryClaimSessionRun(sessionID)
+	if !claimed {
 		// Session already running — enqueue the message to DB (queued=1).
 		// The running drain loop picks it up via DequeueQueuedMessage.
 		//
@@ -478,12 +463,25 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// behavior is identical for every backend and the message is visible
 		// (and actionable) in the queue instead of silently disappearing into
 		// the reply being written.
+		//
+		// The row is inserted here, AFTER the claim above. That order matters:
+		// the claim marks the live runner as having pending work, and a runner
+		// about to exit consumes that mark on its next retire check. Inserting
+		// afterwards would leave the mark consumed with the row not yet visible,
+		// and the runner would exit before it could dequeue — stranding the
+		// message until the reaper's next pass. (The queue path inserts first
+		// for the same reason.) A row that is already visible when the runner
+		// re-checks cannot be missed.
 		msgID, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
 			return
 		}
-		service.SignalDrain(sessionID)
+		// Re-mark the runner as having pending work. The claim above already set
+		// this, but a retire pass may have consumed the mark between the claim
+		// and the insert above; re-marking now that the row exists makes the
+		// guarantee unconditional rather than depending on timing.
+		service.WakeSessionRunner(sessionID)
 
 		// Emit user_message to other session subscribers for cross-device sync.
 		// SenderClientID allows the sending device to skip its own echo. MessageID
@@ -531,12 +529,12 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{"started": true, "sessionId": sessionID, "msgId": msgID})
 
-	// Create context and cancel AFTER TrySetSessionRunning succeeded, but BEFORE
-	// starting the goroutine. Registering the cancel function here (not inside the
-	// goroutine) prevents a race where CancelSession finds no cancel func but
-	// activeSessions is true, which would leave the session permanently stuck.
-	ctx, cancel := context.WithCancel(context.Background())
-	service.RegisterSessionCancel(sessionID, cancel)
+	// The context came from the claim, so it is both the one the runner owns and
+	// the one CancelSession will cancel. It is captured at claim time on purpose:
+	// a lookup here could find nothing if a cancel landed in between, and by now
+	// the user message has already been persisted with queued=0 — the reaper only
+	// scans queued rows, so a message skipped here would be lost outright.
+	ctx := runCtx
 
 	slog.Info("about to start ai goroutine", slog.String("project", projectPath))
 
@@ -549,9 +547,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					slog.Any("panic", r),
 					slog.String("stack", string(debug.Stack())),
 				)
-				service.SetSessionRunning(sessionID, false, true) // skipEvent: error event already emitted below
-				service.UnregisterSessionCancel(sessionID)
-				cancel()
+				// Retire the runner and cancel its context in one step, so the
+				// session cannot be left running with nothing to cancel it.
+				service.FinishSessionRun(sessionID)
 				// Emit error event to WS clients
 				ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
 				// Push cancelled notification — panic is a terminal state
@@ -563,9 +561,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		slog.Info("ai goroutine started", slog.String("project", projectPath))
-		defer service.SetSessionRunning(sessionID, false, true) // skipEvent: markDoneAndSendFinal already emitted the terminal event
-		defer cancel()
-		defer service.UnregisterSessionCancel(sessionID)
+		// Single cleanup: removes the runner and cancels its context. Replaces the
+		// previous three separate defers (clear flag / cancel / unregister) whose
+		// execution order was load-bearing and left a window where the session was
+		// still "running" with no cancel func registered.
+		defer service.FinishSessionRun(sessionID)
 		// Mark session as not-running BEFORE sending terminal WS event.
 		// Without this, a race exists: the "done" event reaches the client,
 		// which calls loadHistory(), but the deferred SetSessionRunning(false)
@@ -676,404 +676,56 @@ func executeStreamRun(
 	fileDir string,
 	queueID string,
 ) streamRunResult {
-	runStart := time.Now()
-
-	// Per-turn context: lets "interrupt and send" stop just THIS turn while the
-	// drain loop's shared context stays alive for the next queued message. The
-	// outer ctx still governs everything (user cancel / shutdown cancel it, and
-	// that propagates here).
-	turnCtx, turnCancel := context.WithCancel(ctx)
-	service.RegisterSessionTurnCancel(sessionID, turnCancel)
-	// Unregister as soon as the turn's outcome has been read (RunWithChannel
-	// returns after buildResult consumed the cancel reason), NOT when this
-	// function exits. Finalize below can take a while (DB writes), and leaving
-	// the turn registered through it would let a late interrupt claim success
-	// and leave its reason behind for the NEXT turn to misread.
-	defer turnCancel()
-
-	sessionTransport := service.GetSessionTransport(sessionID)
-	slog.Info("acp perf: executeStreamRun.start", "session_id", sessionID, "backend", backendName, "agent_id", agentID, "transport", sessionTransport, "resume", chatReq.Resume)
-
-	backend, err := ai.NewBackendForAgentWithTransport(backendName, agentID, sessionTransport)
-	if err != nil {
-		slog.Error("failed to create backend", slog.String("backend", backendName), slog.String("err", err.Error()))
-		errMsg := T(r, "BackendCreateFailed", map[string]any{"Error": err.Error()})
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
-		_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", errMsg, nil, false, "")
-		return streamRunResult{err: errMsg}
-	}
-
-	// If session transport was acp-stdio but agent fell back to CLI, clear the
-	// stale transport override so subsequent messages don't keep warning.
-	if sessionTransport == "acp-stdio" {
-		if _, ok := backend.(*ai.ACPBackend); !ok {
-			_ = service.UpdateSessionTransport(sessionID, "")
-		}
-	}
-
-	slog.Info("acp perf: executeStreamRun.ExecuteStream_start", "session_id", sessionID, "transport", sessionTransport, "after_backend_create", time.Since(runStart))
-	eventCh, err := backend.ExecuteStream(turnCtx, chatReq)
-	if err != nil {
-		slog.Error("failed to start stream", slog.String("err", err.Error()))
-		errMsg := T(r, "StreamStartFailed", map[string]any{"Error": err.Error()})
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
-		_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", errMsg, nil, false, "")
-		return streamRunResult{err: errMsg}
-	}
-
-	// Create streaming placeholder message in DB. When this run answers a queued
-	// message, record its queue_id so the frontend can anchor the reply to its
-	// own question (anchorRepliesToQuestions) instead of falling back to raw DB
-	// id order (user2,user3,reply2,reply3).
-	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	streamingMsgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "", queueID)
-	if err != nil {
-		slog.Error("failed to create streaming assistant placeholder",
-			slog.String("session", sessionID),
-			slog.String("queueID", queueID),
-			slog.String("err", err.Error()))
-		errMsg := T(r, "StreamStartFailed", map[string]any{"Error": err.Error()})
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
-		return streamRunResult{err: errMsg}
-	}
-	slog.Info("chat: created streaming assistant placeholder",
-		slog.String("session", sessionID),
-		slog.Int64("streamingMsgID", streamingMsgID),
-		slog.String("queueID", queueID))
-
-	// Broadcast stream_start so subscribed clients (including ones that opened
-	// the session mid-stream) know the streaming message id and can create a
-	// placeholder if none exists yet. Mirrors executeStreamRunShared in the
-	// service layer — this is the web POST path's per-prompt insertion point.
-	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID, QueueID: queueID},
-	})
-
-	// Delegate event loop to SessionExecutor
-	cfg := service.RunConfig{
-		Mode:               service.ModeInteractive,
-		ProjectPath:        projectPath,
-		BackendName:        backendName,
-		SessionID:          sessionID,
-		AgentID:            agentID,
-		ChatRequest:        chatReq,
-		FileDir:            fileDir,
-		StreamingMessageID: streamingMsgID,
+	// Delegate the whole turn to the service layer's single implementation,
+	// shared with the queue/push path and the scheduler. runTurn owns the
+	// per-turn context, the turn-cancel registration, backend creation, the
+	// streaming placeholder, stream_start, the event loop and Finalize — so a
+	// fix can no longer land in only one of the copies.
+	res := service.RunTurn(service.TurnSpec{
+		Ctx:             ctx,
+		Mode:            service.ModeInteractive,
+		ProjectPath:     projectPath,
+		BackendName:     backendName,
+		SessionID:       sessionID,
+		AgentID:         agentID,
+		ChatReq:         chatReq,
+		FileDir:         fileDir,
+		QueueID:         queueID,
+		DrainOnFinalize: true,
 		LocalizeError: func(err error, key string, args map[string]any) string {
 			return T(r, key, args)
 		},
-	}
-	executor := service.NewSessionExecutor(turnCtx, cfg)
-	runResult := executor.RunWithChannel(eventCh)
-	// The turn is over: its cancel reason has been read, so stop advertising it
-	// as interruptible. Anything arriving now belongs to the next turn.
-	service.UnregisterSessionTurnCancel(sessionID)
+	})
 
-	// Finalize: persist to DB, drain channel, save metadata
-	runResult = executor.Finalize(runResult, eventCh)
-
-	// Send updated metadata (with wallMs) to WS clients before the terminal event
-	ws.EmitToSession(sessionID, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
-
-	// Convert RunResult to streamRunResult
-	result := streamRunResult{}
-	switch {
-	case runResult.CancelReason == "user":
-		result.cancelReason = runResult.CancelReason
-	case runResult.CancelReason == "interrupt":
-		// "interrupt and send": the drain loop must KEEP the queue and move on
-		// to the next message. Passing the reason through (instead of folding it
-		// into the generic "cancel" below) is what tells it to do that.
-		result.cancelReason = runResult.CancelReason
-	case turnCtx.Err() == context.Canceled:
-		result.cancelReason = "cancel"
-	case turnCtx.Err() == context.DeadlineExceeded:
-		result.err = "AI response timed out (30 min)"
-	case runResult.Empty:
-		result.empty = true
-	}
-
-	slog.Info(
-		"ai stream run done",
-		slog.String("session", sessionID),
-		slog.Int("blocks", len(runResult.Blocks)),
-		slog.String("cancel_reason", runResult.CancelReason),
-		slog.Int("wall_ms", runResult.WallMs),
-	)
-
-	return result
-}
-
-// buildChatRequest constructs an ai.ChatRequest from the given parameters.
-// modelOverride, if non-empty, takes precedence over the agent's default model.
-// thinkingEffortOverride, if non-empty, takes precedence over the agent's YAML default.
-// modeOverride, if non-empty, takes precedence over the current ACP session mode.
-func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
-	systemPrompt := ""
-	agentModel := ""
-	agentCommand := ""
-	effectiveThinkingEffort := thinkingEffortOverride // Frontend selection takes priority
-	effectiveMode := modeOverride                     // Frontend selection takes priority
-
-	if agentID == "" {
-		agentID = model.GetDefaultAgentID()
-	}
-	if agent, ok := model.Agents[agentID]; ok {
-		systemPrompt = agent.SystemPrompt
-		// Replace {{PROJECT_PATH}} per-request with the actual project path from cookie
-		if projectPath != "" {
-			systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)
-		}
-		if modelOverride != "" {
-			agentModel = modelOverride
-		} else if defaultID := agent.DefaultModelID(); defaultID != "" {
-			agentModel = defaultID
-		}
-		if agent.Command != "" {
-			agentCommand = agent.Command
-		}
-		// Fall back to agent's effective thinking effort when frontend didn't specify
-		if effectiveThinkingEffort == "" && agent.EffectiveThinkingEffort() != "" {
-			effectiveThinkingEffort = agent.EffectiveThinkingEffort()
-		}
-		// Fall back to agent's preferred mode when frontend didn't specify
-		if effectiveMode == "" && agent.EffectiveModeID() != "" {
-			effectiveMode = agent.EffectiveModeID()
-		}
-	}
-
-	// Resolve effective session ID for CLI.
-	// All backends now store their CLI-identifiable session ID in external_session_id:
-	//   - codebuddy/claude/qoder: ClawBench UUID (same as session id)
-	//   - opencode/codex/deepseek/pi: CLI-assigned ID (captured from stream events)
-	// When resuming, we always use external_session_id so the CLI can find its session context.
-	//
-	// EXCEPTION: ACP-backed agents manage their own session mapping internally
-	// via ACPConnectionPool (clawbench UUID → ACP session ID). For ACP agents,
-	// always use the ClawBench UUID as the session ID — the pool handles the rest.
-	effectiveSessionID := sessionID
-	resumeStart := time.Now()
-	resume := service.SessionHasAssistant(sessionID)
-	slog.Info("acp perf: buildChatRequest.SessionHasAssistant", "session_id", sessionID, "resume", resume, "elapsed", time.Since(resumeStart))
-	isACP := false
-	if transportOverride != "" {
-		isACP = transportOverride == "acp-stdio"
-	} else if agent, ok := model.Agents[agentID]; ok {
-		isACP = agent.Transport == "acp-stdio"
-	}
-	// Resolve external_session_id for fork detection (used by both CLI resume and fork context injection).
-	var resolvedExtID string
-	if resume {
-		extStart := time.Now()
-		resolvedExtID = service.GetExternalSessionID(sessionID)
-		slog.Info("acp perf: buildChatRequest.GetExternalSessionID", "session_id", sessionID, "ext_id", resolvedExtID, "elapsed", time.Since(extStart))
-	}
-
-	if resume && !isACP {
-		if resolvedExtID != "" {
-			effectiveSessionID = resolvedExtID
-			slog.Info("session resume: resolved external_session_id",
-				slog.String("session", sessionID),
-				slog.String("external_session_id", resolvedExtID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID),
-				slog.Bool("ext_id_is_clawbench_uuid", resolvedExtID == sessionID))
-		} else if !service.SessionHasRealAssistantContent(sessionID) {
-			// The first assistant message is an empty cancel/warning placeholder
-			// (no text/tool_use/thinking blocks). This means the AI never responded
-			// with real content — the stream was interrupted before the CLI
-			// established a session. Resume with any ID would fail because the AI
-			// never saw this session. Clear effectiveSessionID and set resume=false
-			// so the backend starts a completely fresh session (no --resume, proper
-			// system prompt injection).
-			effectiveSessionID = ""
-			resume = false
-			slog.Info("session resume: external_session_id is empty and no real AI content (first message interrupted), starting fresh",
-				slog.String("session", sessionID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID))
-		} else {
-			// No external session ID available — the CLI cannot resume a session
-			// it has never seen. Clear effectiveSessionID so the backend does not
-			// pass an invalid ID to --resume. This results in a fresh CLI session
-			// (context amnesia). Log a warning for diagnosis.
-			effectiveSessionID = ""
-			slog.Warn("session resume: external_session_id is empty, CLI will start a new session (context amnesia)",
-				slog.String("session", sessionID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID))
-		}
-	} else if !resume {
-		slog.Info("session: new conversation (no resume)",
-			slog.String("session", sessionID),
-			slog.String("backend", backendName),
-			slog.String("agent", agentID))
-	}
-
-	// Detect fork session first message: resume=true (has copied assistant messages)
-	// but no external_session_id (AI side has no context). This happens after
-	// ForkSession which copies messages in DB but doesn't inherit the AI-side session.
-	// Inject formatted history so the AI can continue with context.
-	//
-	// Note: This branch only fires when resume is still true after the above
-	// checks. If the first message was interrupted (resume set to false above),
-	// this fork detection is skipped — correct, because a phantom-cancel session
-	// is not a fork.
-	//
-	// Guard against re-injection on subsequent messages:
-	// After the first AI response, session_capture persists external_session_id,
-	// so resolvedExtID != "" and the above resume branch uses it directly,
-	// bypassing this fork detection.
-	var forkContext string
-	if resume && resolvedExtID == "" {
-		forkContext = buildForkContext(sessionID)
-		if forkContext != "" {
-			slog.Info("fork session: injecting context history",
-				slog.String("session", sessionID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID),
-				slog.Bool("is_acp", isACP))
-
-			// For ACP sessions: external_session_id is empty, so the ACP pool
-			// has no existing connection for this session. Setting Resume=false
-			// ensures the ACP backend calls NewSession (not ResumeSession with
-			// an invalid ID). The fork context in the prompt provides the
-			// necessary history, so a new session is the correct approach.
-			if isACP {
-				resume = false
-			}
-		}
-	}
-
-	// Inject media handling rules only when the user message carries attachments.
-	// These rules are omitted for text-only messages to save tokens.
-	if hasAttachments {
-		mediaPrompt := model.BuildMediaPrompt()
-		if mediaPrompt != "" {
-			if systemPrompt != "" {
-				systemPrompt += "\n\n" + mediaPrompt
-			} else {
-				systemPrompt = mediaPrompt
-			}
-		}
-	}
-
-	// HasConversationHistory: conservative on error (true = has history) so a
-	// DB hiccup can never silently reset the session via amnesia prevention.
-	hasConversationHistory := true
-	if count, err := service.GetChatMessageCount(sessionID); err == nil {
-		hasConversationHistory = count > 0
-	} else {
-		slog.Warn("buildChatRequest: GetChatMessageCount failed, assuming conversation history", "session_id", sessionID, "err", err)
-	}
-
-	return ai.ChatRequest{
-		Prompt:                 prompt,
-		SessionID:              effectiveSessionID,
-		WorkDir:                fileDir,
-		SystemPrompt:           systemPrompt,
-		Model:                  agentModel,
-		Command:                agentCommand,
-		AgentID:                agentID,
-		ThinkingEffort:         effectiveThinkingEffort,
-		Mode:                   effectiveMode,
-		Resume:                 resume,
-		HasAttachments:         hasAttachments,
-		AssistantMessageCount:  service.GetAssistantMessageCount(sessionID),
-		HasConversationHistory: hasConversationHistory,
-		ForkContext:            forkContext,
+	return streamRunResult{
+		cancelReason: res.CancelReason,
+		err:          res.Err,
+		empty:        res.Empty,
 	}
 }
 
-// buildForkContext reads the chat history from DB and formats it as a text block
-// that can be prepended to the user's prompt. This gives the AI context from the
-// parent session when the forked session sends its first message.
+// buildChatRequest delegates to the service layer's single implementation.
 //
-// Tool output fields are truncated to 500 runes (see
-// service.forkToolOutputMaxLen) to avoid token explosion.
-func buildForkContext(sessionID string) string {
-	// Use GetMessagesBySessionIDRaw: GetMessagesBySessionID strips the content
-	// blocks of assistant messages that have a reading summary (empty
-	// {"blocks":[]}), which would drop all AI replies from the fork context.
-	msgs, err := service.GetMessagesBySessionIDRaw(sessionID)
-	if err != nil || len(msgs) == 0 {
-		return ""
-	}
-
-	// Batch-fetch tool call details for the session
-	toolCalls, _ := service.GetToolCallsBySession(sessionID)
-	toolCallMap := make(map[string]*service.ToolCallRecord, len(toolCalls))
-	for i := range toolCalls {
-		toolCallMap[toolCalls[i].ToolID] = &toolCalls[i]
-	}
-
-	var sb strings.Builder
-	sb.WriteString("[Below is the conversation history from before this session. Continue based on this context.]\n\n")
-
-	for _, m := range msgs {
-		role := "User"
-		if m.Role == "assistant" {
-			role = "Assistant"
-		}
-
-		if m.Role != "user" && m.Role != "assistant" {
-			continue
-		}
-
-		var wrapper struct {
-			Blocks []model.ContentBlock `json:"blocks"`
-		}
-		if !strings.HasPrefix(m.Content, `{"blocks":`) || json.Unmarshal([]byte(m.Content), &wrapper) != nil {
-			// Non-block content: treat as plain text. Use the unified extractor
-			// so nested JSON serializations (bare content arrays, ACP notification
-			// wrappers from sync replay) never leak raw JSON into the model.
-			content := service.ExtractPlainText(m.Content)
-			if content == "" {
-				continue
-			}
-			fmt.Fprintf(&sb, "%s: %s\n\n", role, content)
-			continue
-		}
-
-		// Render blocks: text as-is, tool_use as structured JSON, thinking skipped
-		var msgParts []string
-		for _, b := range wrapper.Blocks {
-			switch b.Type {
-			case "text":
-				if b.Text != "" {
-					msgParts = append(msgParts, b.Text)
-				}
-			case strToolUse:
-				tcJSON := service.FormatToolUseBlock(b, toolCallMap)
-				if tcJSON != "" {
-					msgParts = append(msgParts, tcJSON)
-				}
-				// thinking, warning, error: skipped
-			}
-		}
-		if len(msgParts) == 0 {
-			continue
-		}
-
-		content := strings.Join(msgParts, "\n\n")
-		fmt.Fprintf(&sb, "%s: %s\n\n", role, content)
-	}
-
-	sb.WriteString("[End of conversation history. Now answer the user's new question.]\n\n")
-	return sb.String()
+// Kept as a thin wrapper (rather than updating the ~30 call sites and tests that
+// use it) so the unification lands as one behavioral change: the handler no
+// longer has its own copy to drift from the queue/push path.
+func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
+	return service.BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir, hasAttachments)
 }
 
-// fileEntryLabel returns a prompt label for a FileEntry, appending line info
-// when present: "path", "path:10", or "path:10-20".
-func fileEntryLabel(f model.FileEntry) string {
-	if f.StartLine > 0 && f.EndLine > 0 && f.StartLine != f.EndLine {
-		return fmt.Sprintf("%s:%d-%d", f.Path, f.StartLine, f.EndLine)
-	}
-	if f.StartLine > 0 {
-		return fmt.Sprintf("%s:%d", f.Path, f.StartLine)
-	}
-	return f.Path
+// buildForkContext delegates to the service layer's single implementation.
+//
+// The header/footer and capitalized roles are handler-specific presentation; the
+// rendering and budget enforcement live in service so both the web chat path and
+// the task engine path share one implementation.
+func buildForkContext(sessionID string) string {
+	return service.BuildForkContextWithOptions(sessionID, service.ForkContextOptions{
+		Header:            "[Below is the conversation history from before this session. Continue based on this context.]\n\n",
+		Footer:            "[End of conversation history. Now answer the user's new question.]\n\n",
+		CapitalizeRoles:   true,
+		PlainTextFallback: true,
+		BudgetChars:       model.ChatForkContextBudget,
+	})
 }
 
 // buildChatRequestFromQueue constructs an ai.ChatRequest from a queued message.
@@ -1081,9 +733,9 @@ func fileEntryLabel(f model.FileEntry) string {
 // reference cannot be rendered from the embedded spec.
 func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath, backendName, agentID, fileDir string) (ai.ChatRequest, error) {
 	prompt := qMsg.Text
+	var filePaths, dirPaths []string
 	if len(qMsg.FilePaths) > 0 {
 		basePath, _ := filepath.Abs(projectPath)
-		var filePaths, dirPaths []string
 		for _, fp := range qMsg.FilePaths {
 			absPath, ok := model.ValidatePath(basePath, fp)
 			if !ok {
@@ -1101,37 +753,18 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 				filePaths = append(filePaths, absPath)
 			}
 		}
-		if len(filePaths) > 0 {
-			prompt = fmt.Sprintf("[Current file: %s]\n%s", strings.Join(filePaths, ", "), qMsg.Text)
-		}
-		if len(dirPaths) > 0 {
-			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(dirPaths, ", "), prompt)
-		}
 	}
-	if len(qMsg.Files) > 0 {
-		// Build line-number-aware labels, excluding files already in filePaths
-		filePathsLookup := make(map[string]struct{}, len(qMsg.FilePaths))
-		for _, p := range qMsg.FilePaths {
-			filePathsLookup[p] = struct{}{}
-		}
-		var fileLabels, dirPaths []string
-		for _, f := range qMsg.Files {
-			if _, exists := filePathsLookup[f.Path]; exists {
-				continue
-			}
-			if f.IsDir {
-				dirPaths = append(dirPaths, f.Path)
-			} else {
-				fileLabels = append(fileLabels, fileEntryLabel(f))
-			}
-		}
-		if len(fileLabels) > 0 {
-			prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileLabels), strings.Join(fileLabels, ", "), prompt)
-		}
-		if len(dirPaths) > 0 {
-			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(dirPaths, ", "), prompt)
-		}
+	// Classify the structured entries through the same helper as the direct
+	// send path, so a URL attachment reaches the AI as a link here too. This
+	// path previously had no URL branch at all: the label was emitted as a
+	// [User uploaded ...] file path the AI could never read, while the real
+	// address was dropped.
+	lookup := make(map[string]struct{}, len(qMsg.FilePaths))
+	for _, p := range qMsg.FilePaths {
+		lookup[p] = struct{}{}
 	}
+	parts := model.ClassifyAttachments(qMsg.Files, lookup)
+	prompt = model.ApplyAttachmentPrefixes(prompt, filePaths, dirPaths, parts)
 
 	// ClawBench built-in command injection for queued messages (same logic as
 	// the primary message path). A render failure means the embedded spec is
@@ -1145,12 +778,12 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 		prompt = injected + "\n\n" + prompt
 	}
 
-	// Use session-persisted model (if user explicitly chose one) as modelOverride
-	// so queued messages respect the user's model choice, not just the agent default.
-	sessionModel := service.GetSessionModel(sessionID)
-	sessionTransport := service.GetSessionTransport(sessionID)
+	// No explicit model/transport overrides: the shared builder reads the
+	// session's persisted choices itself, so a queued message honors the same
+	// model and transport a direct send would. Passing them here as well would
+	// duplicate that lookup and invite the two paths to drift again.
 	hasAttachments := len(qMsg.FilePaths) > 0 || len(qMsg.Files) > 0
-	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, sessionModel, "", "", sessionTransport, fileDir, hasAttachments), nil
+	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", "", fileDir, hasAttachments), nil
 }
 
 // CancelChat handles POST to cancel an ongoing AI stream for a session.
@@ -1235,7 +868,31 @@ func MarkChatRead(w http.ResponseWriter, r *http.Request) {
 // executable link long after the request that created it. Rejecting it at the
 // boundary keeps every renderer safe without each one having to remember a
 // guard.
+// isSafeExternalURL reports whether an external URL attachment may be persisted
+// and later rendered as a clickable link, and injected into the AI's prompt.
+//
+// Two separate risks are covered here, both because the value is persisted once
+// and then reused long after the request that created it:
+//
+//  1. Scheme. Only http(s) is allowed. The value is re-rendered as an anchor
+//     href on every subsequent load, so a javascript:/data: entry would become
+//     an executable link forever. Rejecting it at the boundary keeps every
+//     renderer safe without each one having to remember a guard.
+//
+//  2. Tag forgery. The address is injected into the prompt inside a single-line
+//     machine header (`[Referenced external link: <url>]`), and other code
+//     scans the prompt for `[Current file` / `[User uploaded` ANYWHERE in the
+//     text (see internal/ai/acp_conn_state.go extractImagesFromPrompt). A URL
+//     containing whitespace or square brackets — `https://x/a] [Current file:
+//     /etc/passwd` parses fine and has a valid host — could therefore smuggle a
+//     fake attachment tag into the prompt. Rejecting whitespace and brackets
+//     removes the structural characters those tags are built from. No real
+//     http(s) URL contains them unencoded (RFC 3986 requires percent-encoding),
+//     and forge URLs come from the provider's own html_url/WebURL field.
 func isSafeExternalURL(raw string) bool {
+	if strings.ContainsAny(raw, " \t\r\n[]") {
+		return false
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return false

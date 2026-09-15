@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -191,26 +189,52 @@ type LaunchConfig struct {
 	BackendName string
 	AgentID     string
 	Message     string
+	// Files are the message's attachments. They MUST be carried here: this
+	// engine builds its own prompt (executeStreamRunShared) and does not go
+	// through the handler's prompt builder, so omitting them silently drops
+	// every attachment — the URL of a quoted issue/PR and ordinary files alike.
+	Files []model.FileEntry
 	// QueueID is the queue_id of the queued user message this execution answers
 	// (set when draining a queued message). It is recorded on the reply row so
 	// the frontend can anchor the reply to its own question when multiple
 	// queued messages interleave (DB id order ≠ conversational order).
 	QueueID string
+
+	// RunCtx is the execution context returned by TryClaimSessionRun. It must be
+	// passed through so the execution is both the one the claim created and the
+	// one a cancel reaches. Nil falls back to a registry lookup (see
+	// LaunchSessionExecution).
+	RunCtx context.Context
 }
 
 // LaunchSessionExecution starts the AI execution goroutine for a session.
 // The caller must have already persisted the user message and called TrySetSessionRunning.
 func LaunchSessionExecution(cfg LaunchConfig) {
 	sessionID := cfg.SessionID
-	ctx, cancel := context.WithCancel(context.Background())
-	RegisterSessionCancel(sessionID, cancel)
+	// The execution context is the one the claim returned (see
+	// TryClaimSessionRun). It is passed in rather than looked up here on purpose:
+	// a cancel landing between the claim and this call removes the registry
+	// entry, and a lookup would then find nothing — after the caller had already
+	// consumed the message row, which the reaper cannot recover (it only scans
+	// rows still queued).
+	ctx := cfg.RunCtx
+	if ctx == nil {
+		// Defensive: a caller that bypassed TryClaimSessionRun. Fall back to the
+		// registry so behavior is unchanged for such callers, and warn because
+		// it re-opens the window this field exists to close.
+		ctx = runnerContext(sessionID)
+	}
+	if ctx == nil {
+		slog.Warn("launch: no execution context for session, nothing to run",
+			slog.String("session", sessionID))
+		return
+	}
 
 	go func() {
-		defer handleSessionPanic(cfg, sessionID, cancel)
+		defer handleSessionPanic(cfg, sessionID)
 
-		defer SetSessionRunning(sessionID, false, true) // skipEvent: markDoneAndSendFinal already emitted the terminal event
-		defer cancel()
-		defer UnregisterSessionCancel(sessionID)
+		// Single cleanup: removes the runner and cancels its context.
+		defer FinishSessionRun(sessionID)
 		defer handleACPCleanup(sessionID, cfg.AgentID)
 
 		markDoneAndSendFinal := func(event ai.StreamEvent) {
@@ -243,6 +267,10 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
 				cfg.Message = msg.Content
 				cfg.QueueID = msg.QueueID
+				// Carry the drained row's own attachments, replacing whatever the
+				// previous turn carried — otherwise turn N's files would be
+				// re-prefixed onto turn N+1's prompt.
+				cfg.Files = msg.Files
 				nextResult := executeStreamRunShared(ctx, cfg)
 				return DrainResult{
 					CancelReason: nextResult.cancelReason,
@@ -277,20 +305,15 @@ type EnqueueStartConfig struct {
 
 // EnqueueAndMaybeStart is the unified enqueue entry point (POST /api/ai/queue).
 // It persists the message to chat_history (queued=1), then:
-//   - if the session is NOT running, starts an AI execution goroutine that
-//     drains the queue (returns started=true);
-//   - if the session IS running, signals the existing drain loop (returns
-//     started=false).
+//   - if the session is idle, claims it and starts an execution goroutine that
+//     runs the message and then drains the rest of the queue (started=true);
+//   - if the session is already running, marks its runner as having pending work
+//     and returns (started=false) — that runner's loop will dequeue it.
 //
-// B2 self-healing: a race exists where the drain loop has just decided to exit
-// (WaitForEnqueue timed out) while the session is still marked running. The
-// delayed recheck goroutine below watches this window: 100ms later, if the
-// session is no longer running, it takes over and starts the execution itself
-// so the queued message is never silently lost.
-// EnqueueAndMaybeStart persists the message and starts/notifies execution.
-//
-// If the session is already running and the backend can inject into the running
-// turn, the message is delivered there instead of being queued (injected=true).
+// A message can no longer be stranded between those two outcomes: a runner only
+// exits after re-checking for late work under the same lock this function uses
+// to submit (see retireRunner). That atomic check replaced the previous
+// "signal + 100ms delayed re-check" workaround.
 //
 // It returns started=true when a new execution goroutine was launched (the
 // session was idle), plus the persisted DB message id (msgID, >0) so callers
@@ -330,55 +353,39 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 		return false, false, 0, err
 	}
 
-	if TrySetSessionRunning(cfg.SessionID) {
+	// Claim the session. created=true means we must start the execution; false
+	// means a live runner exists and has been woken to pick this message up.
+	// Either way the message cannot be stranded: a runner that is about to exit
+	// re-checks for late work under the same lock (see retireRunner).
+	if runCtx, created := TryClaimSessionRun(cfg.SessionID); created {
 		// Session was idle — the message we just queued is the FIRST one and must
 		// NOT be consumed twice. executeStreamRunShared runs cfg.Message directly,
 		// so dequeue the row we just inserted (it would otherwise be picked up
 		// again by the drain loop's DequeueQueuedMessage, executing it twice).
 		//
 		// Consume BY ID: a concurrent enqueue may have slipped an earlier row
-		// into the queue between our insert and the TrySetSessionRunning claim,
-		// and that earlier row belongs to the drain loop, not to this execution.
+		// into the queue between our insert and the claim, and that earlier row
+		// belongs to the drain loop, not to this execution.
 		consumeQueuedMessageByID(cfg.SessionID, msgID)
-		// Start execution now; the drain loop inside will consume the REST of
-		// the queue (any messages beyond the first).
+		// Start execution now; the loop inside will consume the REST of the
+		// queue (any messages beyond the first).
 		LaunchSessionExecution(LaunchConfig{
 			SessionID:   cfg.SessionID,
 			ProjectPath: cfg.ProjectPath,
 			BackendName: cfg.BackendName,
 			AgentID:     cfg.AgentID,
 			Message:     cfg.Message,
+			Files:       cfg.Files,
 			QueueID:     cfg.QueueID,
+			RunCtx:      runCtx,
 		})
 		return true, false, msgID, nil
 	}
 
-	// Session is running — the drain loop will pick the message up. Signal it.
-	SignalDrain(cfg.SessionID)
-
-	// B2 self-heal: delayed recheck for the drain-loop exit race.
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		// Defensive: if the DB has been torn down (test cleanup), do nothing.
-		if !DBReady() {
-			return
-		}
-		// If the session is no longer running, the drain loop exited without
-		// consuming our message — take over and start execution ourselves.
-		if !IsSessionRunning(cfg.SessionID) {
-			if TrySetSessionRunning(cfg.SessionID) {
-				consumeQueuedMessageByID(cfg.SessionID, msgID)
-				LaunchSessionExecution(LaunchConfig{
-					SessionID:   cfg.SessionID,
-					ProjectPath: cfg.ProjectPath,
-					BackendName: cfg.BackendName,
-					AgentID:     cfg.AgentID,
-					Message:     cfg.Message,
-					QueueID:     cfg.QueueID,
-				})
-			}
-		}
-	}()
+	// A runner already exists and has been woken; its loop will dequeue this
+	// message. No signal or delayed re-check is needed — the wake flag set by
+	// TryClaimSessionRun is what the runner consults before exiting (retireRunner
+	// re-checks for late work under the same lock).
 	return false, false, msgID, nil
 }
 
@@ -409,7 +416,7 @@ func consumeQueuedMessageByID(sessionID string, msgID int64) {
 }
 
 // handleSessionPanic recovers from panics in the session goroutine.
-func handleSessionPanic(cfg LaunchConfig, sessionID string, cancel context.CancelFunc) {
+func handleSessionPanic(cfg LaunchConfig, sessionID string) {
 	if r := recover(); r != nil {
 		slog.Error(
 			"session goroutine panicked",
@@ -417,9 +424,9 @@ func handleSessionPanic(cfg LaunchConfig, sessionID string, cancel context.Cance
 			slog.Any("panic", r),
 			slog.String("stack", string(debug.Stack())),
 		)
-		SetSessionRunning(sessionID, false, true)
-		UnregisterSessionCancel(sessionID)
-		cancel()
+		// Retire the runner and cancel its context together, so the session is
+		// not left running with nothing to cancel it.
+		FinishSessionRun(sessionID)
 		emitDrainEvent(sessionID, ai.StreamEvent{Type: eventTypeError, Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
 		// Push cancelled notification — panic is a terminal state
 		EmitSessionPushNotification(sessionID, statusCancelled)
@@ -441,214 +448,6 @@ func handleACPCleanup(sessionID, agentID string) {
 		slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", agentID)
 		ai.GetACPConnManager().MarkIdle(sessionID)
 	}
-}
-
-// BuildChatRequest constructs an ai.ChatRequest from the given parameters.
-// This is the service-layer equivalent of handler.buildChatRequest, without HTTP-specific i18n.
-func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
-	if agentID == "" {
-		agentID = model.GetDefaultAgentID()
-	}
-
-	agentCfg := resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffortOverride, modeOverride)
-	isACP := resolveIsACP(transportOverride, agentID)
-	effectiveSessionID, resume, forkContext := resolveSessionState(sessionID, agentID, isACP)
-
-	systemPrompt := agentCfg.systemPrompt
-	if hasAttachments {
-		systemPrompt = appendMediaPrompt(systemPrompt)
-	}
-
-	// HasConversationHistory drives the amnesia-prevention fallback in
-	// acp_backend: true blocks silent fallback to NewSession when a session
-	// may hold history. On count failure, conservatively assume history exists
-	// rather than risk dropping the session context.
-	hasHistory := true
-	if count, err := GetChatMessageCount(sessionID); err == nil {
-		hasHistory = count > 0
-	} else {
-		slog.Warn("BuildChatRequest: GetChatMessageCount failed, assuming conversation history", "session_id", sessionID, "err", err)
-	}
-
-	return ai.ChatRequest{
-		Prompt:                 prompt,
-		SessionID:              effectiveSessionID,
-		WorkDir:                fileDir,
-		SystemPrompt:           systemPrompt,
-		Model:                  agentCfg.agentModel,
-		Command:                agentCfg.agentCommand,
-		AgentID:                agentID,
-		ThinkingEffort:         agentCfg.effectiveThinkingEffort,
-		Mode:                   agentCfg.effectiveMode,
-		Resume:                 resume,
-		HasAttachments:         hasAttachments,
-		AssistantMessageCount:  GetAssistantMessageCount(sessionID),
-		HasConversationHistory: hasHistory,
-		ForkContext:            forkContext,
-	}
-}
-
-// agentConfigResult holds the resolved agent configuration fields.
-type agentConfigResult struct {
-	systemPrompt            string
-	agentModel              string
-	agentCommand            string
-	effectiveThinkingEffort string
-	effectiveMode           string
-}
-
-// resolveAgentConfig resolves system prompt, model, command, thinking effort, and mode from agent config.
-func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffortOverride, modeOverride string) agentConfigResult {
-	result := agentConfigResult{
-		effectiveThinkingEffort: thinkingEffortOverride,
-		effectiveMode:           modeOverride,
-	}
-	agent, ok := model.Agents[agentID]
-	if !ok {
-		return result
-	}
-	result.systemPrompt = agent.SystemPrompt
-	if projectPath != "" {
-		result.systemPrompt = strings.ReplaceAll(result.systemPrompt, "{{PROJECT_PATH}}", projectPath)
-	}
-	if modelOverride != "" {
-		result.agentModel = modelOverride
-	} else if defaultID := agent.DefaultModelID(); defaultID != "" {
-		result.agentModel = defaultID
-	}
-	if agent.Command != "" {
-		result.agentCommand = agent.Command
-	}
-	if result.effectiveThinkingEffort == "" && agent.EffectiveThinkingEffort() != "" {
-		result.effectiveThinkingEffort = agent.EffectiveThinkingEffort()
-	}
-	if result.effectiveMode == "" && agent.EffectiveModeID() != "" {
-		result.effectiveMode = agent.EffectiveModeID()
-	}
-	return result
-}
-
-// resolveIsACP determines whether the transport is ACP stdio.
-func resolveIsACP(transportOverride, agentID string) bool {
-	if transportOverride != "" {
-		return transportOverride == transportACPStdio
-	}
-	if agent, ok := model.Agents[agentID]; ok {
-		return agent.Transport == transportACPStdio
-	}
-	return false
-}
-
-// resolveSessionState resolves the effective session ID, resume flag, and fork context.
-func resolveSessionState(sessionID string, _ string, isACP bool) (effectiveSessionID string, resume bool, forkContext string) {
-	effectiveSessionID = sessionID
-	resume = SessionHasAssistant(sessionID)
-
-	var resolvedExtID string
-	if resume {
-		resolvedExtID = GetExternalSessionID(sessionID)
-	}
-
-	if resume && !isACP {
-		if resolvedExtID != "" {
-			effectiveSessionID = resolvedExtID
-		} else {
-			effectiveSessionID = ""
-		}
-	}
-
-	if resume && resolvedExtID == "" {
-		forkContext = BuildForkContext(sessionID)
-		if forkContext != "" && isACP {
-			resume = false
-		}
-	}
-
-	return effectiveSessionID, resume, forkContext
-}
-
-// appendMediaPrompt appends the media prompt to the system prompt if non-empty.
-func appendMediaPrompt(systemPrompt string) string {
-	mediaPrompt := model.BuildMediaPrompt()
-	if mediaPrompt == "" {
-		return systemPrompt
-	}
-	if systemPrompt != "" {
-		return systemPrompt + "\n\n" + mediaPrompt
-	}
-	return mediaPrompt
-}
-
-// BuildForkContext reads the chat history from DB and formats it as a text block
-// that can be prepended to the user's prompt for fork sessions.
-// Includes text blocks as-is and tool_use blocks as structured JSON wrapped in
-// <tool_use> tags. Thinking blocks are excluded.
-func BuildForkContext(sessionID string) string {
-	messages, err := GetMessagesBySessionIDRaw(sessionID)
-	if err != nil || len(messages) == 0 {
-		return ""
-	}
-
-	// Batch-fetch tool call details for the session (input/output are stored
-	// separately in chat_tool_calls, not in content JSON).
-	toolCalls, err := GetToolCallsBySession(sessionID)
-	if err != nil {
-		toolCalls = nil // proceed without tool details; blocks get slim version
-	}
-	// Build lookup: toolID → ToolCallRecord for quick enrichment
-	toolCallMap := make(map[string]*ToolCallRecord, len(toolCalls))
-	for i := range toolCalls {
-		toolCallMap[toolCalls[i].ToolID] = &toolCalls[i]
-	}
-
-	var sb strings.Builder
-	for _, msg := range messages {
-		if msg.Role != roleUser && msg.Role != roleAssistant {
-			continue
-		}
-		var content struct {
-			Blocks []model.ContentBlock `json:"blocks"`
-		}
-		if err := json.Unmarshal([]byte(msg.Content), &content); err != nil {
-			continue
-		}
-
-		// Collect all non-skipped block outputs for this message
-		msgParts := extractMessageParts(content.Blocks, toolCallMap)
-		if len(msgParts) == 0 {
-			continue
-		}
-		sb.WriteString(msg.Role)
-		sb.WriteString(": ")
-		for i, part := range msgParts {
-			if i > 0 {
-				sb.WriteString("\n\n")
-			}
-			sb.WriteString(part)
-		}
-		sb.WriteString("\n\n")
-	}
-	return sb.String()
-}
-
-// extractMessageParts collects non-skipped block outputs from content blocks.
-func extractMessageParts(blocks []model.ContentBlock, toolCallMap map[string]*ToolCallRecord) []string {
-	var parts []string
-	for _, b := range blocks {
-		switch b.Type {
-		case contentKeyText:
-			if b.Text != "" {
-				parts = append(parts, b.Text)
-			}
-		case eventTypeToolUse:
-			tcJSON := FormatToolUseBlock(b, toolCallMap)
-			if tcJSON != "" {
-				parts = append(parts, tcJSON)
-			}
-			// thinking, warning, error: skipped
-		}
-	}
-	return parts
 }
 
 // forkToolOutputMaxLen is the maximum number of runes kept from a tool_use
@@ -723,108 +522,39 @@ type streamRunResultShared struct {
 // executeStreamRunShared runs one AI backend execution.
 // Uses the correct SessionExecutor API: NewSessionExecutor(ctx, RunConfig) -> RunWithChannel(eventCh) -> Finalize(result, eventCh)
 func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResultShared {
-	// Per-turn context: lets "interrupt and send" stop just THIS turn while the
-	// drain loop's shared context stays alive for the next queued message. The
-	// outer ctx still governs everything (user cancel / shutdown propagate here).
-	turnCtx, turnCancel := context.WithCancel(ctx)
-	RegisterSessionTurnCancel(cfg.SessionID, turnCancel)
-	// Unregister as soon as the turn's outcome has been read (RunWithChannel
-	// returns after buildResult consumed the cancel reason), NOT when this
-	// function exits. Finalize below can take a while (DB writes), and leaving
-	// the turn registered through it would let a late interrupt claim success
-	// and leave its reason behind for the NEXT turn to misread.
-	defer turnCancel()
+	fileDir := resolveFileDir(cfg.ProjectPath)
 
-	sessionTransport := GetSessionTransport(cfg.SessionID)
+	// Prefix the attachments onto the prompt. runTurn is the single turn
+	// implementation, but the prompt itself is built here, so the attachment
+	// classification must happen on this side too — otherwise every attachment
+	// is silently dropped (both an ordinary file's path and a quoted issue/PR's
+	// URL). Paths arrive already resolved/validated (the handler resolves them
+	// before persisting, and the drain loop reads them back from the DB), so
+	// there is no legacy filePaths channel to de-duplicate against.
+	prompt := cfg.Message
+	parts := model.ClassifyAttachments(cfg.Files, nil)
+	prompt = model.ApplyAttachmentPrefixes(prompt, nil, nil, parts)
 
-	backend, err := ai.NewBackendForAgentWithTransport(cfg.BackendName, cfg.AgentID, sessionTransport)
-	if err != nil {
-		slog.Error("failed to create backend", slog.String("backend", cfg.BackendName), slog.String("err", err.Error()))
-		errMsg := fmt.Sprintf("create backend: %v", err)
-		emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
-		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: blockTypeWarning, contentKeyText: errMsg, contentKeyReason: ai.ReasonBackendExit}}})
-		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(errContent), nil, false, ""); saveErr != nil {
-			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
-		}
-		return streamRunResultShared{err: errMsg}
-	}
+	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))
 
-	if sessionTransport == transportACPStdio {
-		if _, ok := backend.(*ai.ACPBackend); !ok {
-			_ = UpdateSessionTransport(cfg.SessionID, "")
-		}
-	}
-
-	// Resolve fileDir to absolute path, matching handler/chat.go logic.
-	// Without this, ACP ResumeSession/NewSession receives cwd="" and fails.
-	fileDir := cfg.ProjectPath
-	if absDir, absErr := filepath.Abs(cfg.ProjectPath); absErr == nil {
-		fileDir = absDir
-	}
-
-	chatReq := BuildChatRequest(cfg.Message, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, false)
-
-	eventCh, err := backend.ExecuteStream(turnCtx, chatReq)
-	if err != nil {
-		slog.Error("failed to start stream", slog.String("err", err.Error()))
-		errMsg := fmt.Sprintf("start stream: %v", err)
-		emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
-		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: blockTypeWarning, contentKeyText: errMsg, contentKeyReason: ai.ReasonBackendExit}}})
-		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(errContent), nil, false, ""); saveErr != nil {
-			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
-		}
-		return streamRunResultShared{err: errMsg}
-	}
-
-	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
-	streamingMsgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(emptyContent), nil, true, "", cfg.QueueID)
-	if err != nil {
-		slog.Error("failed to create streaming message", slog.String("session", cfg.SessionID), slog.String("err", err.Error()))
-	}
-	// Broadcast stream_start so subscribed clients (including ones that opened
-	// the session mid-stream) know the streaming message id and can create a
-	// placeholder if none exists yet. This makes the assistant bubble purely
-	// data-driven: any client, at any time, sees a placeholder whenever the DB
-	// has a streaming=1 row or a stream_start event arrives.
-	ws.EmitToSession(cfg.SessionID, ai.StreamEvent{
-		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID, QueueID: cfg.QueueID},
+	// The one AI-turn implementation — shared with the /api/ai/chat handler and
+	// the scheduler so a fix can no longer land in only one copy.
+	res := runTurn(TurnSpec{
+		Ctx:             ctx,
+		Mode:            ModeInteractive,
+		ProjectPath:     cfg.ProjectPath,
+		BackendName:     cfg.BackendName,
+		SessionID:       cfg.SessionID,
+		AgentID:         cfg.AgentID,
+		ChatReq:         chatReq,
+		FileDir:         fileDir,
+		QueueID:         cfg.QueueID,
+		DrainOnFinalize: true,
+		LocalizeError:   serviceLocalizeError,
 	})
-
-	execCfg := RunConfig{
-		Mode:               ModeInteractive,
-		ProjectPath:        cfg.ProjectPath,
-		BackendName:        cfg.BackendName,
-		SessionID:          cfg.SessionID,
-		AgentID:            cfg.AgentID,
-		ChatRequest:        chatReq,
-		StreamingMessageID: streamingMsgID,
-		LocalizeError:      nil,
+	return streamRunResultShared{
+		cancelReason: res.CancelReason,
+		err:          res.Err,
+		empty:        res.Empty,
 	}
-	executor := NewSessionExecutor(turnCtx, execCfg)
-	runResult := executor.RunWithChannel(eventCh)
-	// The turn is over: its cancel reason has been read, so stop advertising it
-	// as interruptible. Anything arriving now belongs to the next turn.
-	UnregisterSessionTurnCancel(cfg.SessionID)
-	runResult = executor.Finalize(runResult, eventCh)
-
-	emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: contentKeyMetadata, Meta: runResult.Metadata})
-
-	result := streamRunResultShared{}
-	switch {
-	case runResult.CancelReason == cancelReasonUser:
-		result.cancelReason = runResult.CancelReason
-	case runResult.CancelReason == cancelReasonInterrupt:
-		// "interrupt and send": the drain loop must KEEP the queue and move on
-		// to the next message (see drainHandleTerminal).
-		result.cancelReason = runResult.CancelReason
-	case turnCtx.Err() == context.Canceled:
-		result.cancelReason = "cancel"
-	case turnCtx.Err() == context.DeadlineExceeded:
-		result.err = "AI response timed out (30 min)"
-	case runResult.Empty:
-		result.empty = true
-	}
-
-	return result
 }

@@ -11,17 +11,18 @@ import (
 	"clawbench/internal/ssh"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestServeSSHInfo_Disabled(t *testing.T) {
+func TestServeSSHInfoFull_Disabled(t *testing.T) {
 	// No SSH server reference set
 	origSSH := sshServerRef
 	sshServerRef = nil
 	defer func() { sshServerRef = origSSH }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
 	w := httptest.NewRecorder()
-	ServeSSHInfo(w, req)
+	ServeSSHInfoFull(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
@@ -36,7 +37,7 @@ func TestServeSSHInfo_Disabled(t *testing.T) {
 	}
 }
 
-func TestServeSSHInfo_Enabled(t *testing.T) {
+func TestServeSSHInfoFull_Enabled(t *testing.T) {
 	// Set up a ProxyService with a registered port
 	origProxy := service.ProxyService
 	service.ProxyService = service.NewProxyRegistry(0)
@@ -56,10 +57,10 @@ func TestServeSSHInfo_Enabled(t *testing.T) {
 	sshServerRef = srv
 	defer func() { sshServerRef = origSSH }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
 	req.Host = "myserver.com:20000"
 	w := httptest.NewRecorder()
-	ServeSSHInfo(w, req)
+	ServeSSHInfoFull(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
@@ -116,7 +117,7 @@ func TestServeSSHInfo_Enabled(t *testing.T) {
 	}
 }
 
-func TestServeSSHInfo_NonLocalhostTarget_UsesReverseProxyRoute(t *testing.T) {
+func TestServeSSHInfoFull_NonLocalhostTarget_UsesReverseProxyRoute(t *testing.T) {
 	// When a non-localhost target has a reverse proxy, the SSH -L command should
 	// route through the reverse proxy (127.0.0.1:{localPort}) instead of directly
 	// to the remote host, so that the Host header is rewritten correctly.
@@ -146,10 +147,10 @@ func TestServeSSHInfo_NonLocalhostTarget_UsesReverseProxyRoute(t *testing.T) {
 	sshServerRef = srv
 	defer func() { sshServerRef = origSSH }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
 	req.Host = "myserver.com:20000"
 	w := httptest.NewRecorder()
-	ServeSSHInfo(w, req)
+	ServeSSHInfoFull(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
@@ -180,17 +181,17 @@ func TestServeSSHInfo_NonLocalhostTarget_UsesReverseProxyRoute(t *testing.T) {
 	}
 }
 
-func TestServeSSHInfo_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/ssh/info", http.NoBody)
+func TestServeSSHInfoFull_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/ssh/info/full", http.NoBody)
 	w := httptest.NewRecorder()
-	ServeSSHInfo(w, req)
+	ServeSSHInfoFull(w, req)
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", w.Code)
 	}
 }
 
-func TestServeSSHInfo_AutoPort(t *testing.T) {
+func TestServeSSHInfoFull_AutoPort(t *testing.T) {
 	// Test that port 0 auto-assigns to mainPort+1
 	origProxy := service.ProxyService
 	service.ProxyService = service.NewProxyRegistry(0)
@@ -207,10 +208,10 @@ func TestServeSSHInfo_AutoPort(t *testing.T) {
 	sshServerRef = srv
 	defer func() { sshServerRef = origSSH }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
 	req.Host = "server:30000"
 	w := httptest.NewRecorder()
-	ServeSSHInfo(w, req)
+	ServeSSHInfoFull(w, req)
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
@@ -221,7 +222,7 @@ func TestServeSSHInfo_AutoPort(t *testing.T) {
 	}
 }
 
-func TestServeSSHInfo_HostFromHeader(t *testing.T) {
+func TestServeSSHInfoFull_HostFromHeader(t *testing.T) {
 	// Test that host is correctly extracted from various Host header formats
 	origProxy := service.ProxyService
 	service.ProxyService = service.NewProxyRegistry(0)
@@ -247,10 +248,10 @@ func TestServeSSHInfo_HostFromHeader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+			req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
 			req.Host = tt.host
 			w := httptest.NewRecorder()
-			ServeSSHInfo(w, req)
+			ServeSSHInfoFull(w, req)
 
 			var result map[string]interface{}
 			if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
@@ -263,7 +264,7 @@ func TestServeSSHInfo_HostFromHeader(t *testing.T) {
 	}
 }
 
-func TestServeSSHInfo_EmptyPortList(t *testing.T) {
+func TestServeSSHInfoFull_EmptyPortList(t *testing.T) {
 	// When no ports are registered, command should be empty
 	origProxy := service.ProxyService
 	service.ProxyService = service.NewProxyRegistry(0)
@@ -277,10 +278,10 @@ func TestServeSSHInfo_EmptyPortList(t *testing.T) {
 	sshServerRef = srv
 	defer func() { sshServerRef = origSSH }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
 	req.Host = "server:20000"
 	w := httptest.NewRecorder()
-	ServeSSHInfo(w, req)
+	ServeSSHInfoFull(w, req)
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
@@ -291,15 +292,15 @@ func TestServeSSHInfo_EmptyPortList(t *testing.T) {
 	}
 }
 
-func TestServeSSHInfo_ConnectionStats_Disabled(t *testing.T) {
+func TestServeSSHInfoFull_ConnectionStats_Disabled(t *testing.T) {
 	// When SSH is disabled, connectionStats should be nil
 	origSSH := sshServerRef
 	sshServerRef = nil
 	defer func() { sshServerRef = origSSH }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
 	w := httptest.NewRecorder()
-	ServeSSHInfo(w, req)
+	ServeSSHInfoFull(w, req)
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
@@ -310,7 +311,7 @@ func TestServeSSHInfo_ConnectionStats_Disabled(t *testing.T) {
 	}
 }
 
-func TestServeSSHInfo_ConnectionStats_Enabled(t *testing.T) {
+func TestServeSSHInfoFull_ConnectionStats_Enabled(t *testing.T) {
 	// When SSH is enabled but no clients connected, connectionStats should reflect that
 	origProxy := service.ProxyService
 	service.ProxyService = service.NewProxyRegistry(0)
@@ -327,10 +328,10 @@ func TestServeSSHInfo_ConnectionStats_Enabled(t *testing.T) {
 	sshServerRef = srv
 	defer func() { sshServerRef = origSSH }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
 	req.Host = "server:20000"
 	w := httptest.NewRecorder()
-	ServeSSHInfo(w, req)
+	ServeSSHInfoFull(w, req)
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
@@ -393,7 +394,7 @@ func TestSetSSHServer_GetSSHServer(t *testing.T) {
 
 // --- ServeSSHInfo with nil ProxyService ---
 
-func TestServeSSHInfo_NilProxyService(t *testing.T) {
+func TestServeSSHInfoFull_NilProxyService(t *testing.T) {
 	origProxy := service.ProxyService
 	service.ProxyService = nil
 	defer func() { service.ProxyService = origProxy }()
@@ -406,10 +407,10 @@ func TestServeSSHInfo_NilProxyService(t *testing.T) {
 	sshServerRef = srv
 	defer func() { sshServerRef = origSSH }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
 	req.Host = "server:20000"
 	w := httptest.NewRecorder()
-	ServeSSHInfo(w, req)
+	ServeSSHInfoFull(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
@@ -424,4 +425,76 @@ func TestServeSSHInfo_NilProxyService(t *testing.T) {
 	if result["command"] != "" {
 		t.Errorf("expected empty command with nil ProxyService, got: %v", result["command"])
 	}
+}
+
+// --- ServeSSHInfo (public minimal) ---
+
+// The public endpoint exists so Android can discover the tunnel port without a
+// cookie. It must expose ONLY that, because anything else is reachable by
+// anonymous callers.
+func TestServeSSHInfo_MinimalPayloadOnly(t *testing.T) {
+	origProxy := service.ProxyService
+	service.ProxyService = service.NewProxyRegistry(0)
+	defer func() {
+		service.ProxyService.Stop()
+		service.ProxyService = origProxy
+	}()
+	_, _ = service.ProxyService.RegisterPort(5173, "internal-db", "DB", "http")
+
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "test-password", service.ProxyService)
+	if err := srv.InitHostKey(); err != nil {
+		t.Fatalf("failed to init host key: %v", err)
+	}
+	origSSH := sshServerRef
+	sshServerRef = srv
+	defer func() { sshServerRef = origSSH }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req.Host = "myserver.com:20000"
+	w := httptest.NewRecorder()
+	ServeSSHInfo(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+
+	// What Android needs.
+	assert.Equal(t, true, result["enabled"])
+	assert.Equal(t, float64(20001), result["port"])
+
+	// What must NOT leak: the tunnel command enumerates forwarded ports and
+	// their internal target hosts; the fingerprint enables MITM identification;
+	// the username and stats are unnecessary.
+	for _, leaked := range []string{"command", "fingerprint", "username", "host", "connectionStats"} {
+		_, present := result[leaked]
+		assert.Falsef(t, present, "public /api/ssh/info must not expose %q", leaked)
+	}
+
+	// The internal target host must not appear anywhere in the body.
+	assert.NotContains(t, w.Body.String(), "internal-db")
+	assert.NotContains(t, w.Body.String(), "ssh -N")
+}
+
+func TestServeSSHInfo_DisabledMinimal(t *testing.T) {
+	origSSH := sshServerRef
+	sshServerRef = nil
+	defer func() { sshServerRef = origSSH }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeSSHInfo(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, false, result["enabled"])
+	assert.Equal(t, float64(0), result["port"])
+}
+
+func TestServeSSHInfo_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/ssh/info", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeSSHInfo(w, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }

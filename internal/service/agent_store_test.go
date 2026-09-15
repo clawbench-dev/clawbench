@@ -43,6 +43,7 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 			acp_available_modes TEXT NOT NULL DEFAULT '[]',
 			acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
 			acp_available_commands TEXT NOT NULL DEFAULT '[]',
+			acp_available_models TEXT NOT NULL DEFAULT '[]',
 			acp_config_options TEXT NOT NULL DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -318,7 +319,8 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"models":               true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
-		"acp_config_options": true, "auto_approve": true,
+		"acp_available_models": true,
+		"acp_config_options":   true, "auto_approve": true,
 		"created_at": true, "updated_at": true,
 	}
 

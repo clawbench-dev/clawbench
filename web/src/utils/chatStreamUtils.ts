@@ -739,6 +739,9 @@ export function cancelPendingMessages(
       removed++
     }
   }
+  // Same as remove_pending: the backend DELETEs these rows, so the "row seen"
+  // cleanup in rebuildFromDb never fires — release the guards here.
+  for (const id of queueIds) untrackInFlightSend(id)
   return removed
 }
 
@@ -1287,6 +1290,11 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
           state.splice(i, 1)
         }
       }
+      // The backend DELETEs the cancelled row, so no future db_load snapshot will
+      // ever contain this queueId — the "row seen" cleanup in rebuildFromDb can
+      // never fire for it. Release the in-flight guard here or the registry entry
+      // would leak for the process lifetime.
+      untrackInFlightSend(action.queueId)
       return state
     }
     case 'clear_queued_pending': {

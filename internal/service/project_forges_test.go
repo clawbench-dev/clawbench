@@ -72,6 +72,101 @@ func TestProjectForge_GetMissingReturnsNil(t *testing.T) {
 	assert.Nil(t, got, "absent binding must return nil, not an error")
 }
 
+// TestProjectForge_SchemeRoundTrip pins that the scheme survives the write and
+// read path. It is what lets a self-hosted http instance be reached after a
+// restart rather than being silently probed over https.
+func TestProjectForge_SchemeRoundTrip(t *testing.T) {
+	setupTestDBForProjectForges(t)
+
+	dir := t.TempDir()
+	err := service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: dir,
+		Platform:    string(forge.PlatformGitLab),
+		Host:        "gitlab.internal:8080",
+		Scheme:      "http",
+		Owner:       "group",
+		Repo:        "widgets",
+	})
+	require.NoError(t, err)
+
+	got, err := service.GetProjectForge(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "http", got.Scheme)
+	assert.Equal(t, "gitlab.internal:8080", got.Host)
+
+	// And through the list path, which scans the same columns.
+	all, err := service.ListProjectForges()
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, "http", all[0].Scheme)
+}
+
+// TestProjectForge_EmptySchemeStaysEmpty pins that an unstated scheme is stored
+// as "", not defaulted to https: the resolver must be able to tell "the remote
+// did not say" from "the user chose https", or a later http hint could never
+// take effect.
+func TestProjectForge_EmptySchemeStaysEmpty(t *testing.T) {
+	setupTestDBForProjectForges(t)
+
+	dir := t.TempDir()
+	err := service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: dir,
+		Platform:    string(forge.PlatformGitLab),
+		Host:        "gitlab.internal",
+		Owner:       "group",
+		Repo:        "widgets",
+	})
+	require.NoError(t, err)
+
+	got, err := service.GetProjectForge(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Empty(t, got.Scheme, "an unstated scheme must stay empty rather than defaulting")
+}
+
+// TestProjectForge_SchemeDoesNotAffectIdentity is the invariant that keeps the
+// feature from fragmenting state: the same instance over http and https is ONE
+// repository. Host is the key for credentials, snapshots and read state, so the
+// scheme must never enter those comparisons.
+func TestProjectForge_SchemeDoesNotAffectIdentity(t *testing.T) {
+	setupTestDBForProjectForges(t)
+
+	dirHTTP := t.TempDir()
+	dirHTTPS := t.TempDir()
+	for _, tc := range []struct {
+		dir    string
+		scheme string
+	}{{dirHTTP, "http"}, {dirHTTPS, "https"}} {
+		require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+			ProjectPath: tc.dir,
+			Platform:    string(forge.PlatformGitLab),
+			Host:        "gitlab.internal",
+			Scheme:      tc.scheme,
+			Owner:       "group",
+			Repo:        "widgets",
+		}))
+	}
+
+	// Both projects must resolve to the same repository key, so polling and read
+	// state are shared rather than duplicated per scheme.
+	refs, err := service.UniqueForgeRepos()
+	require.NoError(t, err)
+	require.Len(t, refs, 1, "the same instance over http and https must be one repository")
+	assert.Equal(t, "gitlab.internal", refs[0].Host)
+}
+
+// TestProjectForge_FromRemoteCarriesScheme ensures the parsed remote's scheme
+// reaches the binding, which is how an http clone URL ends up configured http.
+func TestProjectForge_FromRemoteCarriesScheme(t *testing.T) {
+	remote, err := forge.ParseRemoteURL("http://gitlab.internal/group/widgets.git")
+	require.NoError(t, err)
+
+	pf := service.ProjectForgeFromRemote(t.TempDir(), remote, "auto")
+	assert.Equal(t, "http", pf.Scheme)
+	assert.Equal(t, "gitlab.internal", pf.Host)
+}
+
 func TestProjectForge_UpsertReplacesExisting(t *testing.T) {
 	setupTestDBForProjectForges(t)
 	dir := t.TempDir()

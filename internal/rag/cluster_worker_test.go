@@ -58,7 +58,8 @@ func setupTestDBForClusterWorker(t *testing.T) func() {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS message_clusters_cache (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

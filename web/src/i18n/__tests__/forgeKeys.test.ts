@@ -23,9 +23,10 @@ describe('forge locale values', () => {
     // These are the visible tab labels; leaving them English was the bug.
     expect(zh.forge.type.issues).not.toBe('Issues')
     expect(zh.forge.type.prs).not.toBe('Pull Requests')
-    // The chosen Chinese terms. 合并请求 covers a GitHub PR and a GitLab MR.
+    // The chosen Chinese terms, kept SHORT because they are tab labels. 合并
+    // covers a GitHub PR and a GitLab MR.
     expect(zh.forge.type.issues).toBe('议题')
-    expect(zh.forge.type.prs).toBe('合并请求')
+    expect(zh.forge.type.prs).toBe('合并')
   })
 
   it('translates the state filter chips in zh', () => {
@@ -35,6 +36,10 @@ describe('forge locale values', () => {
     expect(zh.forge.state.open).toBe('开启')
     expect(zh.forge.state.closed).toBe('已关闭')
     expect(zh.forge.state.all).toBe('全部')
+    // "merged" is a first-class filter for change requests, not just a display
+    // state: GitLab's state=closed excludes merged MRs, so the two must be
+    // separately selectable for the platforms to agree.
+    expect(zh.forge.state.merged).toBe('已合并')
   })
 
   it('translates the dock nav label in zh', () => {
@@ -64,6 +69,35 @@ describe('forge locale values', () => {
     for (const [name, loc] of [['en', en], ['zh', zh]] as const) {
       expect(loc.forge.bind.change, `${name} bind.change`).toBeTruthy()
       expect(loc.forge.bind.unbind, `${name} bind.unbind`).toBeTruthy()
+    }
+  })
+
+  it('has matching activity filter and per-view empty-state keys in both locales', () => {
+    // These are looked up DYNAMICALLY (`t('forge.overview.filter.' + f)`), so a
+    // missing key would not fail a type check — it would render the raw key path
+    // in the chip. The top-level key-parity check above cannot see this, because
+    // it only compares the first level of the namespace.
+    const filters = ['unread', 'read', 'all'] as const
+    const views = ['unread', 'read', 'all'] as const
+    for (const [name, loc] of [['en', en], ['zh', zh]] as const) {
+      for (const f of filters) {
+        expect(loc.forge.overview.filter[f], `${name} overview.filter.${f}`).toBeTruthy()
+      }
+      for (const v of views) {
+        expect(loc.forge.overview.empty[v], `${name} overview.empty.${v}`).toBeTruthy()
+        expect(loc.forge.overview.emptyHint[v], `${name} overview.emptyHint.${v}`).toBeTruthy()
+      }
+    }
+  })
+
+  it('distinguishes the unread empty state from the read one', () => {
+    // "Nothing unread" and "nothing read yet" are different facts. If they read
+    // the same, one of the two views is showing a lie.
+    for (const [name, loc] of [['en', en], ['zh', zh]] as const) {
+      expect(
+        loc.forge.overview.empty.unread,
+        `${name}: the unread and read empty states must differ`,
+      ).not.toBe(loc.forge.overview.empty.read)
     }
   })
 

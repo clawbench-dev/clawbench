@@ -5,12 +5,15 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha1"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +21,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -222,7 +227,7 @@ func TestFetchUpgradeInfo_FallsBackToUserMirror(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://mirror.example.com/pkg/-/pkg-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -282,13 +287,26 @@ func TestFetchUpgradeInfo_AllSourcesFail(t *testing.T) {
 // failoverTransport routes the default registry base to defaultBase and the
 // user mirror base to mirrorBase. This lets tests simulate the default registry
 // being unreachable while the user's mirror works.
+//
+// keysJSON, when set, is served for the npm signing-keys endpoint. The keys
+// endpoint is always fetched from npmjs, so it must be answerable even when the
+// test's package metadata comes from a mirror.
 type failoverTransport struct {
 	defaultBase string
 	mirrorBase  string
 	mirrorHit   *bool
+	keysJSON    []byte
+	// keysStatus overrides the keys-endpoint status when non-zero.
+	keysStatus int
 }
 
 func (t *failoverTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// The signing-keys endpoint is a trust anchor fetched from npmjs directly;
+	// serve it locally so tests never reach the network.
+	if req.URL.Path == npmKeysPath {
+		return t.keysResponse(req)
+	}
+
 	target := t.defaultBase
 	// Requests to a user mirror host route to mirrorBase; the default registry
 	// host (npmjs) routes to defaultBase.
@@ -301,6 +319,25 @@ func (t *failoverTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	clone := req.Clone(req.Context())
 	clone.URL, _ = url.Parse(target + req.URL.Path)
 	return http.DefaultTransport.RoundTrip(clone)
+}
+
+// keysResponse synthesizes a response for the npm signing-keys endpoint.
+func (t *failoverTransport) keysResponse(req *http.Request) (*http.Response, error) {
+	status := t.keysStatus
+	if status == 0 {
+		status = http.StatusOK
+	}
+	body := t.keysJSON
+	if status != http.StatusOK {
+		body = []byte(`{"error":"keys unavailable"}`)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    req,
+	}, nil
 }
 
 // withTempHome redirects the process HOME (and USERPROFILE on Windows) to a
@@ -350,49 +387,213 @@ func writeNpmRc(t *testing.T, content string) {
 	}
 }
 
-// --- verifyIntegrity ---
+// --- resolveExpectedDigest ---
 
-func TestVerifyIntegrity_ValidSHA512(t *testing.T) {
-	data := []byte("hello world")
-	hasher := sha512.New()
-	hasher.Write(data)
-	expectedHash := hasher.Sum(nil)
-	integrity := "sha512-" + base64.StdEncoding.EncodeToString(expectedHash)
+func TestResolveExpectedDigest_SHA512SRI(t *testing.T) {
+	sum := sha512.Sum512([]byte("hello world"))
+	integrity := "sha512-" + base64.StdEncoding.EncodeToString(sum[:])
 
-	err := verifyIntegrity(hasher, integrity)
-	assert.NoError(t, err)
+	digest, _, err := resolveExpectedDigest(integrity, "")
+	require.NoError(t, err)
+	assert.Equal(t, "sha512", digest.algorithm)
+	assert.Equal(t, sum[:], digest.hash)
 }
 
-func TestVerifyIntegrity_InvalidPrefix_SkipsVerification(t *testing.T) {
-	hasher := sha512.New()
-	hasher.Write([]byte("test"))
+func TestResolveExpectedDigest_SHA1SRI(t *testing.T) {
+	sum := sha1.Sum([]byte("hello world"))
+	integrity := "sha1-" + base64.StdEncoding.EncodeToString(sum[:])
 
-	err := verifyIntegrity(hasher, "sha256-abc123")
-	assert.NoError(t, err) // unsupported algorithm → skip, no error
+	digest, _, err := resolveExpectedDigest(integrity, "")
+	require.NoError(t, err)
+	assert.Equal(t, "sha1", digest.algorithm)
+	assert.Equal(t, sum[:], digest.hash)
 }
 
-func TestVerifyIntegrity_MalformedBase64(t *testing.T) {
-	hasher := sha512.New()
-	hasher.Write([]byte("test"))
+// npm's own client (pacote) falls back to the legacy hex shasum when
+// dist.integrity is absent, which is legal for older packages and for
+// registries that omit it. ClawBench must do the same rather than install an
+// unverified binary.
+func TestResolveExpectedDigest_FallsBackToShasum(t *testing.T) {
+	sum := sha1.Sum([]byte("legacy package"))
+	shasum := hex.EncodeToString(sum[:])
 
-	err := verifyIntegrity(hasher, "sha512-!!!not-base64!!!")
-	assert.Error(t, err)
+	digest, _, err := resolveExpectedDigest("", shasum)
+	require.NoError(t, err)
+	assert.Equal(t, "sha1", digest.algorithm)
+	assert.Equal(t, sum[:], digest.hash)
+}
+
+func TestResolveExpectedDigest_IntegrityWinsOverShasum(t *testing.T) {
+	sri := sha512.Sum512([]byte("real"))
+	legacy := sha1.Sum([]byte("real"))
+
+	digest, _, err := resolveExpectedDigest(
+		"sha512-"+base64.StdEncoding.EncodeToString(sri[:]),
+		hex.EncodeToString(legacy[:]),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "sha512", digest.algorithm)
+}
+
+// A response with no hash at all no longer aborts: it yields an unverified
+// digest plus a warning. The upgrade proceeds, but nothing is checked, so the
+// user must be told.
+func TestResolveExpectedDigest_NeitherField_WarnsAndProceeds(t *testing.T) {
+	digest, issues, err := resolveExpectedDigest("", "")
+	require.NoError(t, err, "a missing hash must not block the upgrade")
+	assert.True(t, digest.unverified, "the digest must be marked unverified")
+	assert.Nil(t, digest.hash)
+	assert.Contains(t, verificationMessages(issues), "no integrity hash")
+	assert.Equal(t, VerifyIssueNoIntegrityHash, verificationFingerprint(issues))
+}
+
+// The unverified digest must pass verification unconditionally — there is
+// nothing to compare against, and the warning already covered the gap.
+// An unverified digest passes any bytes, while a verified one rejects the same
+// bytes. Asserting only the first half would be tautological — the point is the
+// contrast, which is what makes the flag load-bearing.
+func TestExpectedDigest_UnverifiedPassesWhereVerifiedWouldFail(t *testing.T) {
+	unverified, _, err := resolveExpectedDigest("", "")
+	require.NoError(t, err)
+	require.True(t, unverified.unverified)
+
+	// A digest with a real hash, for the same content the hasher will see.
+	sum := sha512.Sum512([]byte("arbitrary bytes"))
+	verified, _, err := resolveExpectedDigest("sha512-"+base64.StdEncoding.EncodeToString(sum[:]), "")
+	require.NoError(t, err)
+	require.False(t, verified.unverified)
+
+	arbitrary := []byte("arbitrary bytes")
+
+	uh := unverified.newHasher()
+	_, _ = uh.Write(arbitrary)
+	assert.NoError(t, unverified.verify(uh), "an unverified digest has nothing to compare")
+
+	// The verified digest must disagree with a *different* payload, proving the
+	// two branches really do differ.
+	vh := verified.newHasher()
+	_, _ = vh.Write([]byte("different bytes"))
+	require.Error(t, verified.verify(vh), "a verified digest must reject the wrong content")
+}
+
+func TestResolveExpectedDigest_WhitespaceOnly_WarnsAndProceeds(t *testing.T) {
+	digest, issues, err := resolveExpectedDigest("   ", "\t")
+	require.NoError(t, err)
+	assert.True(t, digest.unverified)
+	assert.Contains(t, verificationMessages(issues), "no integrity hash")
+	assert.Equal(t, VerifyIssueNoIntegrityHash, verificationFingerprint(issues))
+}
+
+// An algorithm we cannot compute must fail closed instead of skipping.
+func TestResolveExpectedDigest_UnsupportedAlgorithm_Errors(t *testing.T) {
+	for _, integrity := range []string{
+		"sha256-abc123",
+		"md5-abc123",
+		"blake2b-abc123",
+	} {
+		t.Run(integrity, func(t *testing.T) {
+			_, _, err := resolveExpectedDigest(integrity, "")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unsupported integrity algorithm")
+		})
+	}
+}
+
+func TestResolveExpectedDigest_MissingPrefix_Errors(t *testing.T) {
+	_, _, err := resolveExpectedDigest("abcdef123456", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing algorithm prefix")
+}
+
+func TestResolveExpectedDigest_MalformedBase64_Errors(t *testing.T) {
+	_, _, err := resolveExpectedDigest("sha512-!!!not-base64!!!", "")
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode integrity hash")
 }
 
-func TestVerifyIntegrity_HashMismatch(t *testing.T) {
+func TestResolveExpectedDigest_WrongHashLength_Errors(t *testing.T) {
+	// Valid base64, but not the 64 bytes a sha512 digest must be.
+	short := base64.StdEncoding.EncodeToString([]byte("too short"))
+
+	_, _, err := resolveExpectedDigest("sha512-"+short, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "want 64")
+}
+
+func TestResolveExpectedDigest_MalformedShasum_Errors(t *testing.T) {
+	_, _, err := resolveExpectedDigest("", "not-hex-zzzz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to decode shasum")
+}
+
+func TestResolveExpectedDigest_ShortShasum_Errors(t *testing.T) {
+	_, _, err := resolveExpectedDigest("", "abcd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "want 20")
+}
+
+// --- expectedDigest.verify ---
+
+func TestExpectedDigest_VerifyMatch(t *testing.T) {
+	sum := sha512.Sum512([]byte("payload"))
+	digest := expectedDigest{algorithm: "sha512", hash: sum[:]}
+
 	hasher := sha512.New()
-	hasher.Write([]byte("actual data"))
+	_, _ = hasher.Write([]byte("payload"))
 
-	// Build integrity from different data
-	wrongHasher := sha512.New()
-	wrongHasher.Write([]byte("wrong data"))
-	wrongHash := wrongHasher.Sum(nil)
-	integrity := "sha512-" + base64.StdEncoding.EncodeToString(wrongHash)
+	assert.NoError(t, digest.verify(hasher))
+}
 
-	err := verifyIntegrity(hasher, integrity)
-	assert.Error(t, err)
+func TestExpectedDigest_VerifyMismatch(t *testing.T) {
+	sum := sha512.Sum512([]byte("expected"))
+	digest := expectedDigest{algorithm: "sha512", hash: sum[:]}
+
+	hasher := sha512.New()
+	_, _ = hasher.Write([]byte("actual"))
+
+	err := digest.verify(hasher)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hash mismatch")
+}
+
+func TestExpectedDigest_VerifySHA1Mismatch(t *testing.T) {
+	sum := sha1.Sum([]byte("expected"))
+	digest := expectedDigest{algorithm: "sha1", hash: sum[:]}
+
+	hasher := sha1.New()
+	_, _ = hasher.Write([]byte("actual"))
+
+	err := digest.verify(hasher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hash mismatch")
+}
+
+func TestExpectedDigest_NewHasherSelectsAlgorithm(t *testing.T) {
+	assert.Equal(t, sha512.Size, expectedDigest{algorithm: "sha512"}.newHasher().Size())
+	assert.Equal(t, sha1.Size, expectedDigest{algorithm: "sha1"}.newHasher().Size())
+}
+
+// --- shortHash / truncateForLog ---
+
+func TestShortHash_TruncatesLongHash(t *testing.T) {
+	long := bytes.Repeat([]byte{0xAB}, 32)
+	assert.Equal(t, long[:8], shortHash(long))
+}
+
+func TestShortHash_KeepsShortInput(t *testing.T) {
+	short := []byte{1, 2, 3}
+	assert.Equal(t, short, shortHash(short))
+}
+
+func TestTruncateForLog_TruncatesLongValue(t *testing.T) {
+	long := strings.Repeat("a", 50)
+	got := truncateForLog(long)
+	assert.Equal(t, long[:20]+"...", got)
+	assert.Len(t, got, 23)
+}
+
+func TestTruncateForLog_KeepsShortValue(t *testing.T) {
+	assert.Equal(t, "sha256", truncateForLog("sha256"))
 }
 
 // --- equalHashes ---
@@ -417,6 +618,56 @@ func TestEqualHashes_DifferentContent(t *testing.T) {
 
 func TestEqualHashes_Empty(t *testing.T) {
 	assert.True(t, equalHashes([]byte{}, []byte{}))
+}
+
+// --- verification issues ---
+
+// A release can be unauthenticated for more than one reason at once; the user
+// must see all of them, not just the last one computed.
+func TestVerificationMessages_CombinesDistinctReasons(t *testing.T) {
+	got := verificationMessages([]verificationIssue{
+		{Code: VerifyIssueSignatureMissing, Message: "signature could not be verified"},
+		{Code: VerifyIssueNoIntegrityHash, Message: "no integrity hash"},
+	})
+	assert.Equal(t, "signature could not be verified no integrity hash", got)
+}
+
+func TestVerificationMessages_SkipsEmptyMessages(t *testing.T) {
+	assert.Equal(t, "only this", verificationMessages([]verificationIssue{
+		{Code: "a", Message: ""}, {Code: "b", Message: "only this"},
+	}))
+	assert.Equal(t, "", verificationMessages(nil))
+}
+
+// The fingerprint is what the acknowledgment is compared against, so it must be
+// independent of the order issues happened to be discovered in — otherwise
+// reordering two checks would silently invalidate every outstanding consent.
+func TestVerificationFingerprint_IsOrderIndependent(t *testing.T) {
+	a := verificationFingerprint([]verificationIssue{{Code: "zz"}, {Code: "aa"}})
+	b := verificationFingerprint([]verificationIssue{{Code: "aa"}, {Code: "zz"}})
+	assert.Equal(t, "aa,zz", a)
+	assert.Equal(t, a, b)
+}
+
+func TestVerificationFingerprint_Deduplicates(t *testing.T) {
+	got := verificationFingerprint([]verificationIssue{{Code: "aa"}, {Code: "aa"}})
+	assert.Equal(t, "aa", got)
+}
+
+func TestVerificationFingerprint_EmptyWhenVerified(t *testing.T) {
+	assert.Equal(t, "", verificationFingerprint(nil))
+}
+
+// The fingerprint must not embed the message, which carries the registry base
+// and error detail and therefore varies between two fetches of the same state.
+func TestVerificationFingerprint_IgnoresMessageText(t *testing.T) {
+	a := verificationFingerprint([]verificationIssue{
+		{Code: VerifyIssueSignatureMissing, Message: "The registry https://a.example did not sign this release."},
+	})
+	b := verificationFingerprint([]verificationIssue{
+		{Code: VerifyIssueSignatureMissing, Message: "The official registry https://b.example returned no signature."},
+	})
+	assert.Equal(t, a, b, "the same problem must fingerprint identically regardless of wording")
 }
 
 // --- throttledProgress ---
@@ -659,7 +910,7 @@ func TestFetchUpgradeInfo_Success(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -740,7 +991,7 @@ func TestFetchUpgradeInfo_NPMMirrorTarballRewrite(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -759,56 +1010,18 @@ func TestFetchUpgradeInfo_NPMMirrorTarballRewrite(t *testing.T) {
 	assert.NotContains(t, info.TarballURL, "registry.npmjs.org")
 }
 
-// fetchUpgradeInfoWithBase is a test helper that calls fetchUpgradeInfo with a
-// custom registry base URL by temporarily replacing the HTTP client transport.
+// fetchUpgradeInfoWithBase calls the production registry query against baseURL.
+//
+// It deliberately delegates to fetchUpgradeInfoFromBase rather than
+// reimplementing it: an earlier copy of this logic drifted from production and
+// silently skipped the signature check, so tests passed while the real path
+// was unverified.
 func fetchUpgradeInfoWithBase(baseURL string) (*UpgradeInfo, error) {
 	pkg, err := getPlatformPkg()
 	if err != nil {
 		return nil, err
 	}
-
-	url := fmt.Sprintf("%s/%s/latest", baseURL, pkg)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := upgradeHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query registry: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry returned status %d", resp.StatusCode)
-	}
-
-	var npmResp npmRegistryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&npmResp); err != nil {
-		return nil, fmt.Errorf("failed to decode registry response: %w", err)
-	}
-
-	tarballURL := npmResp.Dist.Tarball
-	if tarballURL == "" {
-		return nil, fmt.Errorf("no tarball URL in registry response")
-	}
-
-	// Mirror the production pipeline in fetchUpgradeInfoFromBase: normalize the
-	// package-name segment first, then repoint the host at the query base.
-	tarballURL = normalizeTarballURL(tarballURL)
-	tarballURL = rewriteTarballURL(tarballURL, baseURL)
-
-	return &UpgradeInfo{
-		CurrentVersion: "0.0.1",
-		LatestVersion:  npmResp.Version,
-		TarballURL:     tarballURL,
-		Integrity:      npmResp.Dist.Integrity,
-		HasUpgrade:     true,
-	}, nil
+	return fetchUpgradeInfoFromBase(baseURL, pkg, version.Get())
 }
 
 // --- downloadAndExtract ---
@@ -832,12 +1045,70 @@ func TestDownloadAndExtract_Success(t *testing.T) {
 	destDir := t.TempDir()
 	destPath := filepath.Join(destDir, "clawbench-new")
 
-	err := downloadAndExtract(context.Background(), ts.URL, integrity, destPath)
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, integrity, ""), destPath)
 	require.NoError(t, err)
 
 	got, err := os.ReadFile(destPath)
 	require.NoError(t, err)
 	assert.Equal(t, binContent, got)
+}
+
+// A tarball delivered with a legacy hex sha1 shasum and no dist.integrity must
+// still be verified (npm's own fallback behavior).
+func TestDownloadAndExtract_SHA1ShasumFallback(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	binContent := []byte("#!/bin/sh\necho legacy")
+	tarball, integrity := buildTarball(t, binContent)
+	require.True(t, strings.HasPrefix(integrity, "sha512-"))
+
+	// The real sha1 of the tarball, hex-encoded as npm's dist.shasum is.
+	sum := sha1.Sum(tarball)
+	shasum := hex.EncodeToString(sum[:])
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, "", shasum), destPath)
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	assert.Equal(t, binContent, got)
+}
+
+// A shasum that does not match the served tarball must be rejected.
+func TestDownloadAndExtract_ShasumMismatch(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	tarball, _ := buildTarball(t, []byte("binary data"))
+
+	wrongSum := sha1.Sum([]byte("something else entirely"))
+	wrongShasum := hex.EncodeToString(wrongSum[:])
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, "", wrongShasum), destPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "integrity verification failed")
+
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "dest file should be removed on integrity failure")
 }
 
 func TestDownloadAndExtract_NonOKStatus(t *testing.T) {
@@ -852,7 +1123,7 @@ func TestDownloadAndExtract_NonOKStatus(t *testing.T) {
 	upgradeHTTPClient = ts.Client()
 
 	destDir := t.TempDir()
-	err := downloadAndExtract(context.Background(), ts.URL, "", filepath.Join(destDir, "out"))
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, "sha512-"+base64.StdEncoding.EncodeToString(make([]byte, sha512.Size)), ""), filepath.Join(destDir, "out"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "download returned status 403")
 }
@@ -880,7 +1151,7 @@ func TestDownloadAndExtract_IntegrityMismatch(t *testing.T) {
 	destDir := t.TempDir()
 	destPath := filepath.Join(destDir, "clawbench-new")
 
-	err := downloadAndExtract(context.Background(), ts.URL, wrongIntegrity, destPath)
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, wrongIntegrity, ""), destPath)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "integrity verification failed")
 
@@ -918,7 +1189,7 @@ func TestDownloadAndExtract_BinaryNotFoundInTarball(t *testing.T) {
 	upgradeHTTPClient = ts.Client()
 
 	destDir := t.TempDir()
-	err = downloadAndExtract(context.Background(), ts.URL, "", filepath.Join(destDir, "out"))
+	err = downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(destDir, "out"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in tarball")
 }
@@ -936,7 +1207,7 @@ func TestDownloadAndExtract_InvalidGzip(t *testing.T) {
 	upgradeHTTPClient = ts.Client()
 
 	destDir := t.TempDir()
-	err := downloadAndExtract(context.Background(), ts.URL, "", filepath.Join(destDir, "out"))
+	err := downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(destDir, "out"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "gzip decompress failed")
 }
@@ -958,7 +1229,7 @@ func TestDownloadAndExtract_CancelledContext(t *testing.T) {
 	cancel() // cancel immediately
 
 	destDir := t.TempDir()
-	err := downloadAndExtract(ctx, ts.URL, "", filepath.Join(destDir, "out"))
+	err := downloadAndExtract(ctx, ts.URL, dummyDigest(t), filepath.Join(destDir, "out"))
 	assert.Error(t, err)
 }
 
@@ -985,8 +1256,37 @@ func TestDownloadAndExtract_DestNotWritable(t *testing.T) {
 	require.NoError(t, os.Chmod(destDir, 0o444))
 	defer os.Chmod(destDir, 0o755)
 
-	err := downloadAndExtract(context.Background(), ts.URL, "", filepath.Join(destDir, "clawbench-new"))
+	err := downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(destDir, "clawbench-new"))
 	assert.Error(t, err)
+}
+
+// --- helper: mustDigest resolves registry fields into an expectedDigest,
+// failing the test if they are unusable.
+func mustDigest(t *testing.T, integrity, shasum string) expectedDigest {
+	t.Helper()
+	digest, _, err := resolveExpectedDigest(integrity, shasum)
+	require.NoError(t, err, "resolveExpectedDigest(%q, %q)", integrity, shasum)
+	return digest
+}
+
+// wellFormedIntegrity is a syntactically valid sha512 SRI string (64 zero
+// bytes). Tests whose subject is not verification need digest resolution to
+// succeed so they reach the code path under test; it deliberately does not
+// match any real tarball.
+var wellFormedIntegrity = "sha512-" + base64.StdEncoding.EncodeToString(make([]byte, sha512.Size))
+
+// --- helper: dummyDigest returns a well-formed digest for tests whose subject
+// is a failure that occurs before or independently of verification (bad HTTP
+// status, corrupt gzip, missing binary, unwritable dest).
+func dummyDigest(t *testing.T) expectedDigest {
+	t.Helper()
+	return mustDigest(t, "sha512-"+base64.StdEncoding.EncodeToString(make([]byte, sha512.Size)), "")
+}
+
+// --- helper: sha512SRI builds a "sha512-<base64>" SRI string for data.
+func sha512SRI(data []byte) string {
+	sum := sha512.Sum512(data)
+	return "sha512-" + base64.StdEncoding.EncodeToString(sum[:])
 }
 
 // --- helper: buildTarball creates a .tgz containing a single binary file
@@ -1021,17 +1321,6 @@ func buildTarball(t *testing.T, binContent []byte) ([]byte, string) {
 
 	integrity := "sha512-" + base64.StdEncoding.EncodeToString(hasher.Sum(nil))
 	return buf.Bytes(), integrity
-}
-
-// --- verifyIntegrity with hash.Hash interface ---
-
-func TestVerifyIntegrity_EmptyIntegrity(t *testing.T) {
-	// Empty integrity string → hasher is nil at call site, but verifyIntegrity
-	// may still be called if both hasher and integrity are non-nil.
-	// Test with non-empty integrity and non-sha512 prefix: should skip verification.
-	hasher := sha512.New()
-	err := verifyIntegrity(hasher, "")
-	assert.NoError(t, err) // empty string has no sha512- prefix → skip
 }
 
 // --- equalHashes edge cases ---
@@ -1146,50 +1435,374 @@ func TestCleanStaleUpgradeTempDirs_SkipsFiles(t *testing.T) {
 	assert.NoError(t, err, "regular file matching pattern should not be removed")
 }
 
-// --- verifyIntegrity: correct hash with real sha512 ---
+// --- expectedDigest.verify with a real sha512 digest ---
 
-func TestVerifyIntegrity_CorrectHash(t *testing.T) {
+func TestExpectedDigest_VerifyRealSHA512(t *testing.T) {
 	data := []byte("test content for integrity")
+	digest := mustDigest(t, sha512SRI(data), "")
+
 	hasher := sha512.New()
 	_, _ = hasher.Write(data)
-	actualHash := hasher.Sum(nil)
 
-	integrity := "sha512-" + base64.StdEncoding.EncodeToString(actualHash)
-
-	// Create a new hasher that has the same data fed to it
-	testHasher := sha512.New()
-	_, _ = testHasher.Write(data)
-
-	err := verifyIntegrity(testHasher, integrity)
-	assert.NoError(t, err)
+	assert.NoError(t, digest.verify(hasher))
 }
 
-// --- downloadAndExtract without integrity (empty string) ---
+// --- unverified installs require a matching acknowledgment ---
 
-func TestDownloadAndExtract_NoIntegrity(t *testing.T) {
+// unverifiedMirrorHarness stands up the "plain proxy" scenario: the default
+// registry is unreachable, and the user's mirror advertises an upgrade while
+// supplying no hash at all (so the release cannot be verified). It reports how
+// many times the tarball was fetched, which is the signal for whether the
+// upgrade proceeded past the acknowledgment gate.
+type unverifiedMirrorHarness struct {
+	tarballHits int32
+	warning     string
+	issues      string
+}
+
+func newUnverifiedMirrorHarness(t *testing.T) *unverifiedMirrorHarness {
+	t.Helper()
+	h := &unverifiedMirrorHarness{}
+
+	dir := withTempDataDir(t)
+	live := filepath.Join(dir, "bin", "clawbench")
+	require.NoError(t, os.MkdirAll(filepath.Dir(live), 0o755))
+	require.NoError(t, os.WriteFile(live, []byte("binary"), 0o755))
+	require.NoError(t, WriteSelfPath(live))
+
+	// A version behind the target defeats the short-circuit, so the download
+	// path is reached.
+	origVer := selfBinaryVersion
+	selfBinaryVersion = func(string) (string, error) { return "0.10.0", nil }
+	t.Cleanup(func() { selfBinaryVersion = origVer })
+
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(failServer.Close)
+
+	tarball, _ := buildTarball(t, []byte("#!/bin/sh\necho clawbench"))
+	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, ".tgz") {
+			atomic.AddInt32(&h.tarballHits, 1)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+			_, _ = w.Write(tarball)
+			return
+		}
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = "https://mirror.example.com/test/-/test-99.0.0.tgz"
+		// Both dist.integrity and dist.shasum deliberately left empty.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mirrorServer.Close)
+
+	origClient := upgradeHTTPClient
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: failServer.URL,
+		mirrorBase:  mirrorServer.URL,
+	}}
+	t.Cleanup(func() { upgradeHTTPClient = origClient })
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	platform.ChinaMirrorChecked.Store(2) // non-China -> default base first
+	t.Cleanup(func() { platform.ChinaMirrorChecked.Store(origChina) })
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	os.Setenv("NPM_CONFIG_REGISTRY", mirrorServer.URL)
+	t.Cleanup(func() { os.Setenv("NPM_CONFIG_REGISTRY", origEnv) })
+
+	// Stub the restart so the flow stops before exec'ing the fake binary.
+	origRestart := upgradeRestartFunc
+	upgradeRestartFunc = func() error { return nil }
+	t.Cleanup(func() { upgradeRestartFunc = origRestart })
+
+	ResetUpgradeState()
+	t.Cleanup(ResetUpgradeState)
+
+	// Discover the warning the registry produces, which is what a client that
+	// showed it to the user would echo back.
+	probe, err := fetchUpgradeInfo()
+	require.NoError(t, err)
+	require.NotEmpty(t, probe.VerificationWarning, "precondition: the mirror supplies no hash")
+	h.warning = probe.VerificationWarning
+	h.issues = probe.VerificationIssues
+	require.NotEmpty(t, h.issues, "precondition: the fingerprint must be present too")
+
+	return h
+}
+
+// With the user's acknowledgment, the unverified install proceeds and the
+// warning is surfaced.
+func TestPerformUpgrade_UnverifiedWithAcknowledgmentProceeds(t *testing.T) {
+	h := newUnverifiedMirrorHarness(t)
+
+	performUpgrade(context.Background(), h.issues)
+
+	s := GetUpgradeState()
+	assert.Contains(t, s.VerificationWarning, "no integrity hash",
+		"the unverified install must be reported to the user")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&h.tarballHits),
+		"the download must proceed when the warning was acknowledged")
+
+	// The upgrade may still fail later (the fake binary cannot be exec'd), but
+	// it must not fail for lack of verification.
+	assert.NotContains(t, s.Error, "unverified")
+}
+
+// Without an acknowledgment the upgrade must be refused before any download.
+// This is what makes the confirmation a control rather than a UI convention:
+// POST /api/upgrade/start cannot install an unverified release on its own.
+func TestPerformUpgrade_UnverifiedWithoutAcknowledgmentRefused(t *testing.T) {
+	h := newUnverifiedMirrorHarness(t)
+
+	performUpgrade(context.Background(), "")
+
+	s := GetUpgradeState()
+	assert.Equal(t, UpgradePhaseFailed, s.Phase)
+	assert.Equal(t, UpgradeErrUnverifiedNotConfirmed, s.ErrorCode)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&h.tarballHits),
+		"nothing may be downloaded without an acknowledgment")
+}
+
+// An acknowledgment that does not match the current metadata is refused: the
+// user consented to a different risk description than the one now on offer, so
+// the decision does not carry over.
+func TestPerformUpgrade_StaleAcknowledgmentRefused(t *testing.T) {
+	h := newUnverifiedMirrorHarness(t)
+
+	performUpgrade(context.Background(), "some_other_problem_code")
+
+	s := GetUpgradeState()
+	assert.Equal(t, UpgradePhaseFailed, s.Phase)
+	assert.Equal(t, UpgradeErrUnverifiedNotConfirmed, s.ErrorCode)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&h.tarballHits))
+}
+
+// A fully verified release needs no acknowledgment, so an empty one is correct
+// rather than suspicious. Guarding the inverse direction: the gate must not
+// demand a confirmation that the client could never have obtained.
+func TestPerformUpgrade_VerifiedReleaseNeedsNoAcknowledgment(t *testing.T) {
+	dir := withTempDataDir(t)
+	live := filepath.Join(dir, "bin", "clawbench")
+	require.NoError(t, os.MkdirAll(filepath.Dir(live), 0o755))
+	require.NoError(t, os.WriteFile(live, []byte("binary"), 0o755))
+	require.NoError(t, WriteSelfPath(live))
+
+	origVer := selfBinaryVersion
+	selfBinaryVersion = func(string) (string, error) { return "0.10.0", nil }
+	t.Cleanup(func() { selfBinaryVersion = origVer })
+
+	// A mirror that serves a hash AND a valid npm signature, so the release is
+	// fully verified and produces no warning at all. Both are required: a
+	// missing signature is itself a warning.
+	keys := newTestSigningKeys(t)
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+
+	var tarballHits int32
+	tarball, integrity := buildTarball(t, []byte("#!/bin/sh\necho clawbench"))
+	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, ".tgz") {
+			atomic.AddInt32(&tarballHits, 1)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+			_, _ = w.Write(tarball)
+			return
+		}
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = "https://mirror.example.com/test/-/test-99.0.0.tgz"
+		resp.Dist.Integrity = integrity
+		resp.Dist.Signatures = []npmSignature{keys.sign(t, pkg, "99.0.0", integrity)}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mirrorServer.Close)
+
+	origClient := upgradeHTTPClient
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		mirrorBase: mirrorServer.URL,
+		keysJSON:   keys.keysJSON(t),
+	}}
+	t.Cleanup(func() { upgradeHTTPClient = origClient })
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	platform.ChinaMirrorChecked.Store(2)
+	t.Cleanup(func() { platform.ChinaMirrorChecked.Store(origChina) })
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	os.Setenv("NPM_CONFIG_REGISTRY", mirrorServer.URL)
+	t.Cleanup(func() { os.Setenv("NPM_CONFIG_REGISTRY", origEnv) })
+
+	origRestart := upgradeRestartFunc
+	upgradeRestartFunc = func() error { return nil }
+	t.Cleanup(func() { upgradeRestartFunc = origRestart })
+
+	ResetUpgradeState()
+	t.Cleanup(ResetUpgradeState)
+
+	// Confirm the precondition: this release produces no warning at all.
+	probe, err := fetchUpgradeInfo()
+	require.NoError(t, err)
+	require.Empty(t, probe.VerificationWarning, "precondition: the release verifies")
+
+	performUpgrade(context.Background(), "")
+
+	s := GetUpgradeState()
+	// The download happening is the real signal that the gate let this through.
+	// Asserting only on the error code would pass for any later failure — the
+	// fake binary cannot be exec'd, so a downstream error is the likely outcome.
+	assert.Equal(t, int32(1), atomic.LoadInt32(&tarballHits),
+		"a verified release must reach the download without an acknowledgment")
+	assert.NotEqual(t, UpgradeErrUnverifiedNotConfirmed, s.ErrorCode,
+		"a verified release must not be refused for a missing acknowledgment")
+}
+
+// downloadAndExtract verifies whenever the digest carries a hash. An unverified
+// digest (no hash available) is the only case that skips the comparison.
+func TestDownloadAndExtract_AlwaysVerifies(t *testing.T) {
 	origClient := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = origClient }()
 
-	binContent := []byte("binary without integrity check")
-	tarball := buildTarballNoIntegrity(t, binContent)
+	binContent := []byte("binary")
+	tarball, _ := buildTarball(t, binContent)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
 		w.Write(tarball)
 	}))
 	defer ts.Close()
-
 	upgradeHTTPClient = ts.Client()
 
-	destDir := t.TempDir()
-	destPath := filepath.Join(destDir, "clawbench-new")
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
 
-	err := downloadAndExtract(context.Background(), ts.URL, "", destPath)
+	// A deliberately wrong sha1 digest must be rejected even though the tarball
+	// itself is perfectly well-formed.
+	wrong := sha1.Sum([]byte("not the tarball"))
+	err := downloadAndExtract(context.Background(), ts.URL,
+		mustDigest(t, "", hex.EncodeToString(wrong[:])), destPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "integrity verification failed")
+
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "binary must not remain on disk after failed verification")
+}
+
+// captureLogs redirects the default slog logger into a buffer for the duration
+// of the test and returns the accumulated text. Needed because the behavior
+// under test is which log line is emitted, which no return value exposes.
+func captureLogs(t *testing.T) func() string {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	return buf.String
+}
+
+// An unverified digest must not be reported as a successful verification. The
+// regression this guards: verify() returns nil for an unverified digest, so a
+// shared code path would log "integrity verified" alongside a hardcoded
+// algorithm that was never applied.
+//
+// This asserts on the log because that is the entire observable effect of the
+// fix — the return value and the extracted bytes are identical either way, so a
+// test that checked only those would pass with the fix reverted.
+func TestDownloadAndExtract_UnverifiedReportsNotVerified(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	binContent := []byte("#!/bin/sh\necho hi")
+	tarball, _ := buildTarball(t, binContent)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+	upgradeHTTPClient = ts.Client()
+
+	digest, _, err := resolveExpectedDigest("", "")
+	require.NoError(t, err)
+	require.True(t, digest.unverified, "precondition: no hash means unverified")
+
+	logs := captureLogs(t)
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	require.NoError(t, downloadAndExtract(context.Background(), ts.URL, digest, destPath),
+		"an unverified install must still complete")
+
+	got := logs()
+	assert.NotContains(t, got, "integrity verified",
+		"an unverified install must never be logged as verified")
+	assert.Contains(t, got, "without integrity verification",
+		"the install must be logged as unverified, not silently accepted")
+
+	// The bytes still land, since an unverified digest is not a failure.
+	installed, readErr := os.ReadFile(destPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, binContent, installed)
+}
+
+// A decompression bomb must not be able to fill the disk. The archive here is
+// tiny on the wire and enormous once expanded, which is exactly the shape a
+// hostile mirror would serve when no hash constrains it.
+func TestDownloadAndExtract_RejectsOversizedBinary(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	huge := bytes.Repeat([]byte("A"), maxBinarySize+1024)
+	tarball, _ := buildTarball(t, huge)
+	require.Less(t, len(tarball), 10<<20, "precondition: the archive itself is small")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+	upgradeHTTPClient = ts.Client()
+
+	digest, _, err := resolveExpectedDigest("", "")
 	require.NoError(t, err)
 
-	got, err := os.ReadFile(destPath)
-	require.NoError(t, err)
-	assert.Equal(t, binContent, got)
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	err = downloadAndExtract(context.Background(), ts.URL, digest, destPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "limit")
+
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "an oversized binary must be cleaned up")
+}
+
+// The digest is checked against the bytes actually served, so a tarball that is
+// swapped after the metadata was fetched is still caught.
+func TestDownloadAndExtract_DetectsSwappedTarball(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	// The registry's hash was computed for the honest tarball...
+	honest := buildTarballNoIntegrity(t, []byte("the real binary"))
+	digest := mustDigest(t, sha512SRI(honest), "")
+
+	// ...but the server is serving a different one.
+	swapped := buildTarballNoIntegrity(t, []byte("the tampered binary"))
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(swapped)))
+		w.Write(swapped)
+	}))
+	defer ts.Close()
+	upgradeHTTPClient = ts.Client()
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+
+	err := downloadAndExtract(context.Background(), ts.URL, digest, destPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "integrity verification failed")
+
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "tampered binary must be removed")
 }
 
 func buildTarballNoIntegrity(t *testing.T, binContent []byte) []byte {
@@ -1237,7 +1850,7 @@ func TestCheckForUpgrade_Success(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -1264,12 +1877,11 @@ func TestCheckForUpgrade_DirectCall(t *testing.T) {
 	pkg, err := getPlatformPkg()
 	require.NoError(t, err)
 
+	keys := newTestSigningKeys(t)
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, pkg)
-		resp := npmRegistryResponse{}
-		resp.Version = "2.0.0"
-		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-2.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp := signedRegistryResponse(t, keys, pkg, "2.0.0", wellFormedIntegrity)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -1283,7 +1895,11 @@ func TestCheckForUpgrade_DirectCall(t *testing.T) {
 
 	// Rewrite requests to test server
 	origTransport := upgradeHTTPClient.Transport
-	upgradeHTTPClient.Transport = &rewritingTransport{targetURL: ts.URL, orig: origTransport}
+	upgradeHTTPClient.Transport = &rewritingTransport{
+		targetURL: ts.URL,
+		orig:      origTransport,
+		keysJSON:  keys.keysJSON(t),
+	}
 	defer func() { upgradeHTTPClient.Transport = origTransport }()
 
 	currentVer, latestVer, err := CheckForUpgrade()
@@ -1316,13 +1932,19 @@ func TestCheckForUpgrade_DirectCallError(t *testing.T) {
 	assert.Empty(t, latestVer)
 }
 
-// rewritingTransport rewrites all requests to a target test server.
+// rewritingTransport rewrites all requests to a target test server, except the
+// npm signing-keys endpoint, which is answered from keysJSON so the signature
+// check can succeed without reaching the network.
 type rewritingTransport struct {
 	targetURL string
 	orig      http.RoundTripper
+	keysJSON  []byte
 }
 
 func (rt *rewritingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Path == npmKeysPath {
+		return syntheticJSONResponse(req, http.StatusOK, rt.keysJSON)
+	}
 	newURL, err := url.Parse(rt.targetURL + req.URL.Path)
 	if err != nil {
 		return nil, err
@@ -1332,6 +1954,17 @@ func (rt *rewritingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		return rt.orig.RoundTrip(req)
 	}
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+// syntheticJSONResponse builds an in-memory HTTP response.
+func syntheticJSONResponse(req *http.Request, status int, body []byte) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: status,
+		Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    req,
+	}, nil
 }
 
 func TestCheckForUpgrade_Error(t *testing.T) {
@@ -1387,6 +2020,30 @@ func TestSetUpgradeState_SetsAllFields(t *testing.T) {
 	assert.Equal(t, "Halfway there", s.Message)
 }
 
+// --- SetUpgradeVerificationWarning ---
+
+func TestSetUpgradeVerificationWarning_RecordsWarning(t *testing.T) {
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	const warning = "The release signature could not be verified."
+	SetUpgradeVerificationWarning(warning, "signature_missing")
+
+	st := GetUpgradeState()
+	assert.Equal(t, warning, st.VerificationWarning)
+	assert.Equal(t, "signature_missing", st.VerificationIssues)
+}
+
+// ResetUpgradeState must clear the warning, otherwise a retry would keep
+// showing a stale downgrade notice after a successful verified check.
+func TestSetUpgradeVerificationWarning_ClearedByReset(t *testing.T) {
+	SetUpgradeVerificationWarning("stale warning", "")
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	assert.Empty(t, GetUpgradeState().VerificationWarning)
+}
+
 // --- ResetUpgradeState clears everything ---
 
 func TestResetUpgradeState_ClearsAll(t *testing.T) {
@@ -1433,7 +2090,7 @@ func TestPerformUpgrade_UnreachableRegistry(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		performUpgrade(context.Background())
+		performUpgrade(context.Background(), "")
 	}()
 
 	select {
@@ -1581,17 +2238,21 @@ func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {
 	defer func() { upgradeExecutable = origExe }()
 
 	// Registry reports an upgrade is available.
+	keys := newTestSigningKeys(t)
+	pkg, pkgErr := getPlatformPkg()
+	require.NoError(t, pkgErr)
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		resp := npmRegistryResponse{}
-		resp.Version = "99.0.0"
-		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp := signedRegistryResponse(t, keys, pkg, "99.0.0", wellFormedIntegrity)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: ts.URL,
+		keysJSON:    keys.keysJSON(t),
+	}}
 
 	origChina := platform.ChinaMirrorChecked.Load()
 	defer platform.ChinaMirrorChecked.Store(origChina)
@@ -1615,7 +2276,7 @@ func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		performUpgrade(context.Background())
+		performUpgrade(context.Background(), "")
 	}()
 	select {
 	case <-done:
@@ -1718,7 +2379,7 @@ func TestFetchUpgradeInfo_NormalizesMalformedMirrorTarball(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "0.91.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/@scope/pkg@latest/-/pkg-0.91.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 
 	"clawbench/internal/service"
@@ -12,7 +14,7 @@ const upgradeStatusStarted = "started"
 
 // Package-level function variables for testability.
 var (
-	upgradeCheckForUpgrade     = service.CheckForUpgrade
+	upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 	upgradeIsInProgress        = service.IsUpgradeInProgress
 	upgradePerformUpgrade      = service.PerformUpgrade
 	upgradeGetUpgradeState     = service.GetUpgradeState
@@ -29,11 +31,12 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	currentVer, latestVer, err := upgradeCheckForUpgrade()
+	info, err := upgradeCheckForUpgradeInfo()
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
+	currentVer, latestVer := info.CurrentVersion, info.LatestVersion
 
 	hasUpgrade := upgradeCompareVersions(currentVer, latestVer) < 0 || upgradeIsDevBuild(currentVer)
 
@@ -58,6 +61,14 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		// recommending an image-based upgrade. Self-replace still works in a
 		// container, but a later rebuild from the unchanged image reverts it.
 		"is_docker": upgradeIsDocker(),
+		// verification_warning is the human-readable text shown to the user when
+		// this release cannot be fully verified. Display only.
+		"verification_warning": info.VerificationWarning,
+		// verification_issues is the stable identity of the same problems, as
+		// sorted issue codes. The client echoes this back on start; the service
+		// compares codes rather than the message, which varies with registry
+		// routing and error detail.
+		"verification_issues": info.VerificationIssues,
 	})
 }
 
@@ -65,6 +76,12 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 // Initiates the upgrade process. Returns error if already in progress.
 // Note: version verification is done inside PerformUpgrade(), so we don't
 // re-query the registry here (avoids TOCTOU race and redundant latency).
+//
+// The body carries verification_issues: the issue fingerprint the client
+// displayed and got consent for, or omitted/empty when the client saw none. The
+// service compares it against what the registry reports and refuses a mismatch,
+// so an unverified install cannot happen without a decision that matches the
+// metadata.
 func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -75,7 +92,19 @@ func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upgradePerformUpgrade()
+	// The body is optional: callers that saw no warning send none. An empty
+	// body is therefore valid, not a malformed request.
+	var req struct {
+		VerificationIssues string `json:"verification_issues"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+	}
+
+	upgradePerformUpgrade(req.VerificationIssues)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		jsonKeyStatus: upgradeStatusStarted,

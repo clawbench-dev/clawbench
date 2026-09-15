@@ -131,4 +131,48 @@ describe('PopupMenu', () => {
     expect(computeMenuStyle).not.toHaveBeenCalled()
     vi.useRealTimers()
   })
+
+  it('repositions when the anchor element is swapped while open', async () => {
+    // The Android input recovery rebuilds the chat textarea (:key), so the ref
+    // handed to targetElement is rebound to a fresh node. Position is otherwise
+    // only recomputed on `show`, scroll and resize, which would leave the menu
+    // anchored to the removed element's rect.
+    vi.useFakeTimers()
+    const first = { getBoundingClientRect: () => ({ top: 10, bottom: 30, left: 0, right: 100 }) }
+    const second = { getBoundingClientRect: () => ({ top: 500, bottom: 520, left: 0, right: 100 }) }
+    const wrapper = mount(PopupMenu, {
+      props: { show: true, targetElement: first },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await vi.advanceTimersByTimeAsync(16)
+    const callsAfterMount = computeMenuStyle.mock.calls.length
+
+    await wrapper.setProps({ targetElement: second })
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(computeMenuStyle.mock.calls.length).toBeGreaterThan(callsAfterMount)
+    // And it must read the NEW element's geometry, not the stale one.
+    expect(computeMenuStyle).toHaveBeenLastCalledWith(
+      second.getBoundingClientRect(),
+      expect.anything(),
+    )
+    vi.useRealTimers()
+    wrapper.unmount()
+  })
+
+  it('does not reposition on an anchor swap while closed', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(PopupMenu, {
+      props: { show: false, targetElement: { getBoundingClientRect: () => ({}) } },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await wrapper.setProps({ targetElement: { getBoundingClientRect: () => ({ top: 1 }) } })
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(computeMenuStyle).not.toHaveBeenCalled()
+    vi.useRealTimers()
+    wrapper.unmount()
+  })
 })

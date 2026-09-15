@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
@@ -25,8 +24,7 @@ import (
 const maxCacheEntryBytes = 4 << 20 // 4 MiB
 
 func init() {
-	model.RegisterDiscoverModelsFunc("codebuddy", DiscoverCodebuddyModels)
-	model.RegisterDiscoverModelsDetailFunc("codebuddy", CodebuddyDiscoveryDetail)
+	model.RegisterModelSource(model.PluginSource("codebuddy", discoverCodebuddyModels))
 }
 
 // codebuddyProductFiles are the product-config filenames CodeBuddy ships.
@@ -73,53 +71,25 @@ var (
 	codebuddyGetenv         = os.Getenv
 )
 
-// lastDiscoveryDetail records why the most recent discovery attempt failed
-// (empty string on success). Surfaced via CodebuddyDiscoveryDetail so the HTTP
-// handler can report an actionable message instead of a generic failure.
-//
-// Caveat: this is process-global, so it reflects the most recent discovery
-// across all callers. Discovery can also run from AsyncRefreshModelCache's
-// goroutine and from startup SyncDiscoverModels, so a manual refresh racing one
-// of those could read another call's detail. The detail is only used to enrich
-// an error message, so a misattribution degrades wording, not correctness.
-var (
-	lastDiscoveryDetailMu sync.Mutex
-	lastDiscoveryDetail   string
-)
-
-// CodebuddyDiscoveryDetail returns the reason the last DiscoverCodebuddyModels
-// call returned no models, or "" if it succeeded (or was never called).
-func CodebuddyDiscoveryDetail() string {
-	lastDiscoveryDetailMu.Lock()
-	defer lastDiscoveryDetailMu.Unlock()
-	return lastDiscoveryDetail
-}
-
-func setDiscoveryDetail(detail string) {
-	lastDiscoveryDetailMu.Lock()
-	lastDiscoveryDetail = detail
-	lastDiscoveryDetailMu.Unlock()
-}
-
 // DiscoverCodebuddyModels discovers CodeBuddy models from, in order:
 //  1. an explicit ACC_PRODUCT_CONFIG* override,
 //  2. a product.*.json file next to the resolved CLI (npm or native layout),
 //  3. CodeBuddy's runtime cache under ~/.codebuddy/local_storage/.
 //
-// Returns nil if none of the sources yields a model list; the failure reason is
-// recorded and available via CodebuddyDiscoveryDetail.
+// Returns nil if none of the sources yields a model list.
 func DiscoverCodebuddyModels() []model.AgentModel {
+	models, _ := discoverCodebuddyModels()
+	return models
+}
+
+// discoverCodebuddyModels is the ModelSource entry point. The failure detail is
+// returned to the caller rather than stashed in package state: discovery also
+// runs from the background refresher, so a process-global "last failure" string
+// could be overwritten by a concurrent refresh and misattribute the reason.
+func discoverCodebuddyModels() ([]model.AgentModel, string) {
 	realPath := codebuddyResolveCLIPath("codebuddy")
 	home, _ := codebuddyUserHomeDir()
-
-	models, detail := discoverCodebuddyModelsFrom(realPath, home, codebuddyGetenv)
-	setDiscoveryDetail(detail)
-	if len(models) == 0 {
-		slog.Debug("codebuddy model discovery: no models found", "cli_path", realPath, "detail", detail)
-		return nil
-	}
-	slog.Info("codebuddy model discovery succeeded", "models", len(models))
-	return models
+	return discoverCodebuddyModelsFrom(realPath, home, codebuddyGetenv)
 }
 
 // discoverCodebuddyModelsFrom is the testable core of DiscoverCodebuddyModels.

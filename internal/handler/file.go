@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -233,29 +235,30 @@ func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string)
 }
 
 // GetFile returns the content of a single file.
+//
+// Supports an optional line window (?lineStart=&lineEnd=, 1-based inclusive)
+// for the quick-preview pane: only those lines are returned, along with the
+// file's total line count. Without the params the whole file is returned, so
+// existing callers are unaffected.
 func GetFile(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := requireProject(w, r)
+	m, ok := resolveGetFileTarget(w, r)
 	if !ok {
 		return
 	}
 
-	absPath, isExternal, ok := resolveFilePath(w, r, projectPath)
-	if !ok {
-		return
-	}
-
-	info, err := os.Stat(absPath)
-	if err != nil {
-		handleStatError(w, r, absPath, err)
-		return
-	}
-	if info.IsDir() {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAFile")
-		return
-	}
-
-	if info.Size() > 10*1024*1024 {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLarge")
+	// Line-window requests (quick-preview pane) are only meaningful for real
+	// text files: forceText/binary sanitization rewrites the byte stream, so the
+	// window is ignored there and the full sanitized content is returned.
+	//
+	// Parsed (and rejected) BEFORE the binary early-return below so an invalid
+	// range is a 400 for every file, as the OpenAPI spec promises. Parsing it
+	// after meant a binary file answered 200 isBinary:true for `?lineStart=0`,
+	// which silently contradicts the documented contract.
+	isText := model.IsTextFile(m.info.Name())
+	forceText := r.URL.Query().Get("forceText") == "1"
+	winStart, winEnd, hasWindow, winErr := parseLineWindow(r)
+	if hasWindow && winErr != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidLineRange")
 		return
 	}
 
@@ -264,33 +267,69 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 	// frontend shows a placeholder with "Open as text" button.
 	// Use ?forceText=1 to override: returns sanitized content (truncated +
 	// non-printable chars replaced) safe for DOM rendering.
-	isText := model.IsTextFile(info.Name())
-	forceText := r.URL.Query().Get("forceText") == "1"
-
 	if !isText && !forceText {
-		isBinary, sniffErr := sniffBinaryContent(absPath)
+		isBinary, sniffErr := sniffBinaryContent(m.absPath)
 		if sniffErr != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("cannot open file")))
 			return
 		}
 		if isBinary {
-			respPath := responsePath(absPath, projectPath, isExternal)
-			linkTarget, isSymlink := resolveLinkTarget(absPath, projectPath, isExternal)
-			writeJSON(w, http.StatusOK, FileContent{
-				Content:    "",
-				Name:       info.Name(),
-				Path:       respPath,
-				Supported:  false,
-				IsBinary:   true,
-				Size:       info.Size(),
-				LinkTarget: linkTarget,
-				IsSymlink:  isSymlink,
-			})
+			writeBinaryFileResponse(w, m)
 			return
 		}
 	}
 
-	content, err := os.ReadFile(absPath)
+	// Subtype detection (OpenAPI → ReDoc) needs the whole document, and so does
+	// sanitization. Both are skipped on the window path, which only ever serves
+	// the plain-text preview pane.
+	if hasWindow && isText {
+		writeLineWindowResponse(w, m, winStart, winEnd)
+		return
+	}
+
+	writeWholeFileResponse(w, m, isText)
+}
+
+// resolveGetFileTarget resolves and validates the file a GetFile request refers
+// to. On failure it has already written the error response, so the caller only
+// checks ok.
+func resolveGetFileTarget(w http.ResponseWriter, r *http.Request) (fileResponseMeta, bool) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return fileResponseMeta{}, false
+	}
+
+	absPath, isExternal, ok := resolveFilePath(w, r, projectPath)
+	if !ok {
+		return fileResponseMeta{}, false
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		handleStatError(w, r, absPath, err)
+		return fileResponseMeta{}, false
+	}
+	if info.IsDir() {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAFile")
+		return fileResponseMeta{}, false
+	}
+	if info.Size() > maxGetFileBytes {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLarge")
+		return fileResponseMeta{}, false
+	}
+
+	return fileResponseMeta{absPath: absPath, projectPath: projectPath, isExternal: isExternal, info: info}, true
+}
+
+// maxGetFileBytes caps the whole-file response; the line-window path exists
+// precisely so a larger file can still be previewed.
+const maxGetFileBytes = 10 * 1024 * 1024
+
+// writeWholeFileResponse reads the file in full and answers with its content,
+// sanitizing non-text files (forceText, or a non-text extension that sniffed as
+// text) and converting an OpenAPI YAML spec to JSON for ReDoc.
+func writeWholeFileResponse(w http.ResponseWriter, m fileResponseMeta, isText bool) {
+	content, err := os.ReadFile(m.absPath)
 	if err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("cannot read file")))
 		return
@@ -303,31 +342,85 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		content, truncated = sanitizeTextContent(content)
 	}
 
-	respPath := responsePath(absPath, projectPath, isExternal)
-
-	// Detect file subtype (e.g., OpenAPI spec) and convert YAML→JSON for ReDoc.
-	subtype := model.DetectSubtype(info.Name(), string(content))
+	subtype := model.DetectSubtype(m.info.Name(), string(content))
 	var specJSON string
-	if subtype == model.SubtypeOpenAPI {
-		lower := strings.ToLower(info.Name())
-		if strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml") {
-			specJSON = model.ConvertSpecToJSON(string(content))
-		}
+	if subtype == model.SubtypeOpenAPI && isYAMLSpec(m.info.Name()) {
+		specJSON = model.ConvertSpecToJSON(string(content))
 	}
 
-	linkTarget, isSymlink := resolveLinkTarget(absPath, projectPath, isExternal)
+	respPath := responsePath(m.absPath, m.projectPath, m.isExternal)
+	linkTarget, isSymlink := resolveLinkTarget(m.absPath, m.projectPath, m.isExternal)
 
 	writeJSON(w, http.StatusOK, FileContent{
 		Content:    string(content),
-		Name:       info.Name(),
+		Name:       m.info.Name(),
 		Path:       respPath,
-		Supported:  model.IsSupportedFile(info.Name()),
-		Size:       info.Size(),
+		Supported:  model.IsSupportedFile(m.info.Name()),
+		Size:       m.info.Size(),
 		Truncated:  truncated,
 		Subtype:    subtype,
 		SpecJSON:   specJSON,
 		LinkTarget: linkTarget,
 		IsSymlink:  isSymlink,
+	})
+}
+
+// isYAMLSpec reports whether name is a YAML document, which is the only OpenAPI
+// flavor that needs converting to JSON for ReDoc.
+func isYAMLSpec(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml")
+}
+
+// fileResponseMeta carries the resolved path and stat info shared by GetFile's
+// response branches, so each branch does not re-derive the response path.
+type fileResponseMeta struct {
+	absPath     string
+	projectPath string
+	isExternal  bool
+	info        os.FileInfo
+}
+
+// writeBinaryFileResponse answers a binary file: metadata plus isBinary=true and
+// no content, which the frontend renders as an "Open as text" placeholder.
+func writeBinaryFileResponse(w http.ResponseWriter, m fileResponseMeta) {
+	respPath := responsePath(m.absPath, m.projectPath, m.isExternal)
+	linkTarget, isSymlink := resolveLinkTarget(m.absPath, m.projectPath, m.isExternal)
+	writeJSON(w, http.StatusOK, FileContent{
+		Content:    "",
+		Name:       m.info.Name(),
+		Path:       respPath,
+		Supported:  false,
+		IsBinary:   true,
+		Size:       m.info.Size(),
+		LinkTarget: linkTarget,
+		IsSymlink:  isSymlink,
+	})
+}
+
+// writeLineWindowResponse answers a line-window request for the quick-preview
+// pane, streaming only the requested lines instead of the whole file.
+func writeLineWindowResponse(w http.ResponseWriter, m fileResponseMeta, winStart, winEnd int) {
+	win, readErr := readFileLineWindow(m.absPath, winStart, winEnd)
+	if readErr != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("cannot read file")))
+		return
+	}
+	respPath := responsePath(m.absPath, m.projectPath, m.isExternal)
+	linkTarget, isSymlink := resolveLinkTarget(m.absPath, m.projectPath, m.isExternal)
+	writeJSON(w, http.StatusOK, FileContent{
+		Content:         win.Text,
+		Name:            m.info.Name(),
+		Path:            respPath,
+		Supported:       model.IsSupportedFile(m.info.Name()),
+		Size:            m.info.Size(),
+		Truncated:       win.Truncated,
+		LinkTarget:      linkTarget,
+		IsSymlink:       isSymlink,
+		TotalLines:      win.TotalLines,
+		WindowStart:     win.Start,
+		WindowEnd:       win.End,
+		WindowTruncated: win.Truncated,
 	})
 }
 
@@ -847,6 +940,20 @@ type FileContent struct {
 	SpecJSON   string `json:"specJson,omitempty"`
 	LinkTarget string `json:"linkTarget,omitempty"`
 	IsSymlink  bool   `json:"isSymlink,omitempty"`
+
+	// Line-window metadata, present only on ?lineStart/?lineEnd responses.
+	// TotalLines is the file's full line count (so the preview can compute how
+	// much context remains above/below), while WindowStart/WindowEnd bound the
+	// returned Content (1-based inclusive; WindowEnd < WindowStart means no lines
+	// were captured, e.g. the requested range starts past EOF).
+	TotalLines  int `json:"totalLines,omitempty"`
+	WindowStart int `json:"windowStart,omitempty"`
+	// WindowEnd is deliberately NOT omitempty: "no lines captured" is encoded as
+	// WindowEnd == WindowStart-1, which is 0 when the window starts at line 1.
+	// Omitting that 0 would make an empty window indistinguishable from a
+	// response that carried no window metadata at all.
+	WindowEnd       int  `json:"windowEnd"`
+	WindowTruncated bool `json:"windowTruncated,omitempty"`
 }
 
 // buildDirEntries builds a sorted list of directory entries
@@ -1126,4 +1233,182 @@ func truncateAtUTF8Boundary(data []byte) []byte {
 		cut--
 	}
 	return data[:cut]
+}
+
+const (
+	// maxWindowLines bounds a single ?lineStart/?lineEnd window. The preview
+	// pane renders at most 200 lines plus context, so this is generous
+	// headroom while still rejecting a pathological "give me everything".
+	maxWindowLines = 2000
+	// maxWindowBytes bounds the window's serialized size for the same reason.
+	maxWindowBytes = 2 * 1024 * 1024
+)
+
+// parseLineWindow extracts the optional ?lineStart/?lineEnd window from the
+// request. present is false when neither param is supplied (whole-file request);
+// when present is true the range is validated and start/end are usable, so a
+// malformed or inverted range is reported via err for the caller to answer 400
+// rather than silently returning the whole file.
+func parseLineWindow(r *http.Request) (start, end int, present bool, err error) {
+	rawStart := r.URL.Query().Get("lineStart")
+	rawEnd := r.URL.Query().Get("lineEnd")
+	if rawStart == "" && rawEnd == "" {
+		return 0, 0, false, nil
+	}
+	if rawStart == "" {
+		return 0, 0, true, errors.New("lineStart is required when lineEnd is set")
+	}
+
+	start, err = strconv.Atoi(rawStart)
+	if err != nil || start < 1 {
+		return 0, 0, true, errors.New("lineStart must be a positive integer")
+	}
+
+	// A lone lineStart means "just that line".
+	end = start
+	if rawEnd != "" {
+		end, err = strconv.Atoi(rawEnd)
+		if err != nil || end < start {
+			return 0, 0, true, errors.New("lineEnd must be an integer >= lineStart")
+		}
+	}
+	if end-start+1 > maxWindowLines {
+		end = start + maxWindowLines - 1
+	}
+	return start, end, true, nil
+}
+
+// lineWindow is the result of reading a line window out of a file.
+type lineWindow struct {
+	// Text is the requested lines joined by "\n".
+	Text string
+	// TotalLines is the file's line count.
+	TotalLines int
+	// Start and End delimit the lines actually returned. End < Start signals
+	// "no lines captured" (the range starts past EOF, or the byte cap tripped on
+	// the very first line); the caller renders that as the out-of-range notice
+	// rather than an empty body.
+	Start, End int
+	// Truncated reports that the byte cap cut the window short.
+	Truncated bool
+}
+
+// readFileLineWindow streams absPath and returns the lines [startLine, endLine]
+// (1-based, inclusive) joined by "\n", plus the file's total line count and the
+// last line actually included. Only the requested window is materialized, so a
+// large file costs a sequential scan but no large allocation — the whole point
+// of the line-window path for the quick-preview pane.
+//
+// Line splitting mirrors the frontend's /\r\n|\r|\n/: "\r\n" counts as a single
+// separator, a bare "\r" or "\n" each count as one, and a file ending in a
+// separator has a trailing empty line (so "a\n" is 2 lines). An empty file has 0
+// lines, matching sliceCodeForPreview's empty-content special case.
+func readFileLineWindow(absPath string, startLine, endLine int) (lineWindow, error) {
+	f, err := os.Open(absPath)
+	if err != nil {
+		return lineWindow{}, err
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return lineWindow{}, err
+	}
+	if info.Size() == 0 {
+		return lineWindow{}, nil
+	}
+
+	w := &lineWindowCollector{startLine: startLine, endLine: endLine}
+	if err := w.scan(f); err != nil {
+		return lineWindow{}, err
+	}
+
+	// Finalize the last line. When the file ended on a separator this is the
+	// trailing empty line JS split() also yields; lineNo already counts it, and
+	// starts at 1, so lineNo is exactly the file's line count either way.
+	w.appendLine()
+
+	win := lineWindow{
+		Text:       strings.Join(w.lines, "\n"),
+		TotalLines: w.lineNo,
+		Start:      startLine,
+		End:        startLine - 1,
+		Truncated:  w.truncated,
+	}
+	if len(w.lines) > 0 {
+		win.End = startLine + len(w.lines) - 1
+	}
+	return win, nil
+}
+
+// lineWindowCollector accumulates the lines of [startLine, endLine] while the
+// caller streams the file, so a huge file never has to be held in memory.
+type lineWindowCollector struct {
+	startLine, endLine int
+	lines              []string
+	cur                []byte
+	lineNo             int
+	bytesUsed          int
+	truncated          bool
+	crPending          bool
+}
+
+// scan consumes r in fixed-size chunks, splitting on /\r\n|\r|\n/ exactly like
+// the frontend's split() (see readFileLineWindow's doc comment for the rules).
+func (w *lineWindowCollector) scan(r io.Reader) error {
+	w.lineNo = 1
+	buf := make([]byte, 64*1024)
+	for {
+		n, readErr := r.Read(buf)
+		for _, b := range buf[:n] {
+			w.consumeByte(b)
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				return readErr
+			}
+			return nil
+		}
+	}
+}
+
+// consumeByte feeds one byte to the splitter, emitting a line at each boundary.
+func (w *lineWindowCollector) consumeByte(b byte) {
+	if w.crPending {
+		w.crPending = false
+		if b == '\n' {
+			return // the LF half of a CRLF: same single separator
+		}
+	}
+	switch b {
+	case '\n':
+		w.appendLine()
+		w.lineNo++
+	case '\r':
+		w.appendLine()
+		w.lineNo++
+		w.crPending = true
+	default:
+		w.cur = append(w.cur, b)
+	}
+}
+
+// appendLine captures the current line when it falls inside the window. It is
+// called for every line boundary, including empty ones.
+func (w *lineWindowCollector) appendLine() {
+	if w.truncated || w.lineNo < w.startLine || w.lineNo > w.endLine {
+		w.cur = w.cur[:0]
+		return
+	}
+	if w.bytesUsed+len(w.cur) > maxWindowBytes {
+		w.truncated = true
+		w.cur = w.cur[:0]
+		return
+	}
+	w.lines = append(w.lines, string(w.cur))
+	w.bytesUsed += len(w.cur)
+	if len(w.lines) > 1 {
+		w.bytesUsed++ // the joining "\n"
+	}
+	w.cur = w.cur[:0]
 }

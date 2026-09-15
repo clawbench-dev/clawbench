@@ -770,6 +770,13 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 	if string(cmdsJSON) == "null" {
 		cmdsJSON = []byte("[]")
 	}
+	// The ACP-reported model list is persisted so it survives a restart. Without
+	// it the list lives only in memory and an agent's selectable models change
+	// across a restart until a new ACP session repopulates the registry.
+	modelsJSON, _ := json.Marshal(agentCap.AvailableModels)
+	if string(modelsJSON) == "null" {
+		modelsJSON = []byte("[]")
+	}
 	var configJSON string
 	if agentCap.ConfigOptionState != nil {
 		b, _ := json.Marshal(agentCap.ConfigOptionState)
@@ -789,23 +796,22 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 			acp_available_modes = ?,
 			acp_available_thinking_efforts = ?,
 			acp_available_commands = ?,
+			acp_available_models = ?,
 			acp_config_options = ?,
 			acp_load_session = ?,
 			acp_list_sessions = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		string(modesJSON), string(effortsJSON), string(cmdsJSON), configJSON,
+		string(modesJSON), string(effortsJSON), string(cmdsJSON), string(modelsJSON), configJSON,
 		loadSessionVal, listSessionsVal, agentID)
 	return err
 }
 
 // LoadFromDB loads persisted capabilities from the agents table on startup.
-//
-//nolint:gocyclo // LoadFromDB branches on each capability field; a switch adds boilerplate without clarity
 func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
 		SELECT id, acp_available_modes, acp_available_thinking_efforts,
-		       acp_available_commands, acp_config_options,
+		       acp_available_commands, acp_available_models, acp_config_options,
 		       acp_load_session, acp_list_sessions
 		FROM agents
 		WHERE transport = 'acp-stdio'
@@ -815,59 +821,76 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 		return
 	}
 	defer func() { _ = rows.Close() }()
-	if rowsErr := rows.Err(); rowsErr != nil {
-		slog.Warn("agent capability rows error", "error", rowsErr)
-	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for rows.Next() {
-		var agentID, modesJSON, effortsJSON, cmdsJSON, configJSON string
-		var loadSession, listSessions bool
-		if err := rows.Scan(&agentID, &modesJSON, &effortsJSON, &cmdsJSON, &configJSON, &loadSession, &listSessions); err != nil {
+		var row capabilityRow
+		if err := rows.Scan(&row.agentID, &row.modes, &row.efforts, &row.commands,
+			&row.models, &row.config, &row.loadSession, &row.listSessions); err != nil {
 			slog.Warn("failed to scan agent capability row", "error", err)
 			continue
 		}
-
-		agentCap := &AgentCapability{}
-
-		if modesJSON != "" && modesJSON != "[]" {
-			var modes []ModeDef
-			if err := json.Unmarshal([]byte(modesJSON), &modes); err == nil {
-				agentCap.AvailableModes = modes
-			}
+		capability := row.toCapability()
+		if !capability.HasData() {
+			continue
 		}
-		if effortsJSON != "" && effortsJSON != "[]" {
-			var efforts []ThinkingEffortDef
-			if err := json.Unmarshal([]byte(effortsJSON), &efforts); err == nil {
-				agentCap.AvailableThinkingEfforts = efforts
-			}
-		}
-		if cmdsJSON != "" && cmdsJSON != "[]" {
-			var cmds []AvailableCommandInfo
-			if err := json.Unmarshal([]byte(cmdsJSON), &cmds); err == nil {
-				agentCap.AvailableCommands = cmds
-			}
-		}
-		if configJSON != "" {
-			var config ConfigOptionState
-			if err := json.Unmarshal([]byte(configJSON), &config); err == nil {
-				agentCap.ConfigOptionState = &config
-			}
-		}
+		r.caps[row.agentID] = capability
+		slog.Info("loaded agent capability from DB",
+			"agent", row.agentID,
+			"modes", len(capability.AvailableModes),
+			"efforts", len(capability.AvailableThinkingEfforts),
+			"models", len(capability.AvailableModels),
+			"commands", len(capability.AvailableCommands))
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		slog.Warn("agent capability rows error", "error", rowsErr)
+	}
+}
 
-		agentCap.LoadSession = &loadSession
-		agentCap.ListSessions = &listSessions
+// capabilityRow is one raw agents row, with the JSON columns still as strings.
+type capabilityRow struct {
+	agentID      string
+	modes        string
+	efforts      string
+	commands     string
+	models       string
+	config       string
+	loadSession  bool
+	listSessions bool
+}
 
-		if agentCap.HasData() {
-			agentCap.UpdatedAt = time.Now()
-			r.caps[agentID] = agentCap
-			slog.Info("loaded agent capability from DB",
-				"agent", agentID,
-				"modes", len(agentCap.AvailableModes),
-				"efforts", len(agentCap.AvailableThinkingEfforts),
-				"commands", len(agentCap.AvailableCommands))
+// toCapability decodes the JSON columns. An unparseable column is skipped rather
+// than failing the row: the other capability fields are still worth loading.
+func (row *capabilityRow) toCapability() *AgentCapability {
+	capability := &AgentCapability{
+		AvailableModes:           decodeJSONSlice[ModeDef](row.modes),
+		AvailableThinkingEfforts: decodeJSONSlice[ThinkingEffortDef](row.efforts),
+		AvailableCommands:        decodeJSONSlice[AvailableCommandInfo](row.commands),
+		AvailableModels:          decodeJSONSlice[model.AgentModel](row.models),
+		LoadSession:              &row.loadSession,
+		ListSessions:             &row.listSessions,
+	}
+	if row.config != "" {
+		var config ConfigOptionState
+		if err := json.Unmarshal([]byte(row.config), &config); err == nil {
+			capability.ConfigOptionState = &config
 		}
 	}
+	capability.UpdatedAt = time.Now()
+	return capability
+}
+
+// decodeJSONSlice unmarshals a JSON array column, returning nil for an empty or
+// unparseable value.
+func decodeJSONSlice[T any](raw string) []T {
+	if raw == "" || raw == "[]" {
+		return nil
+	}
+	var out []T
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
 }

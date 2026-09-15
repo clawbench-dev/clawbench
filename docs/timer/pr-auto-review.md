@@ -54,7 +54,8 @@ gh issue view "$NUMBER" -R "$REPO" --json number,title,body,author,labels,state,
 
 ```bash
 curl -sk "https://localhost:20000/api/forge/item?type=$KIND&number=$NUMBER" \
-  -H "Cookie: clawbench_project=$(git rev-parse --show-toplevel)"
+  -H "Cookie: clawbench_project=$(git rev-parse --show-toplevel)" \
+  -H "X-ClawBench-AI-Token: $AI_TOKEN"   # 由内置斜杠命令注入；人工调用请改用登录后的会话 Cookie
 ```
 
 两者不一致时以 `gh` 为准，并在报告中说明差异。

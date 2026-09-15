@@ -209,6 +209,16 @@ describe('ChatMessageItem', () => {
     expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
   })
 
+  it('renders the assistant meta bar outside the bubble card', () => {
+    // The meta row must not be clipped by the bubble (background, radius,
+    // overflow: hidden) — it is a sibling of .msg-card, not a child.
+    const wrapper = createWrapper({
+      msg: { id: '5b', role: 'assistant', content: 'response', blocks: [{ type: 'text', text: 'Hello world' }] },
+    })
+    expect(wrapper.find('.msg-card .chat-meta-bar').exists()).toBe(false)
+    expect(wrapper.find('.chat-message > .chat-meta-bar').exists()).toBe(true)
+  })
+
   it('does not render meta bar for streaming assistant message', () => {
     const wrapper = createWrapper({
       msg: { id: '6', role: 'assistant', content: '...', blocks: [{ type: 'text', text: '...' }], streaming: true },
@@ -952,9 +962,96 @@ describe('ChatMessageItem', () => {
       expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(true)
     })
 
-    it('does not render meta bar for user messages', () => {
+    it('renders a meta bar for user messages too (time + copy + details)', () => {
       const wrapper = createWrapper({ msg: { id: 'um1', role: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }] } })
+      const bar = wrapper.find('.chat-meta-bar')
+      expect(bar.exists()).toBe(true)
+      expect(bar.classes()).toContain('chat-meta-bar-user')
+      expect(wrapper.find('button[title="复制"]').exists()).toBe(true)
+      expect(wrapper.find('button[title="详情"]').exists()).toBe(true)
+      // Assistant-only actions must not leak into the user bar.
+      expect(wrapper.find('.summary-toggle-stub').exists()).toBe(false)
+      expect(wrapper.find('button[title="chat.actions.forkSession"]').exists()).toBe(false)
+      expect(wrapper.find('button[title="chat.actions.rewindSession"]').exists()).toBe(false)
+    })
+
+    it('omits the user meta bar while the message is still queued', () => {
+      const wrapper = createWrapper({
+        msg: { id: 'um2', role: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }], pending: true },
+      })
       expect(wrapper.find('.chat-meta-bar').exists()).toBe(false)
+    })
+
+    it('renders the user meta bar outside the bubble card', () => {
+      // The requirement is that the meta row sits on the panel background, not
+      // inside the coloured bubble — assert the DOM containment, not just class names.
+      const wrapper = createWrapper({ msg: { id: 'um3', role: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }] } })
+      const card = wrapper.find('.msg-card')
+      expect(card.exists()).toBe(true)
+      expect(card.find('.chat-meta-bar').exists()).toBe(false)
+      expect(wrapper.find('.chat-message > .chat-meta-bar').exists()).toBe(true)
+    })
+
+    it('copies the user message content, not the meta-bar timestamp', async () => {
+      // Regression: the copy handler read msgText, which is assistant-only
+      // (returns '' for user rows) — so the user bar's copy button copied
+      // nothing. The timestamp sits in the same row, so a "copies the date"
+      // mix-up is the visible failure mode this pins down.
+      const { copyText } = await import('@/utils/clipboard')
+      copyText.mockClear()
+      const wrapper = createWrapper({
+        msg: {
+          id: 'uc1', role: 'user',
+          content: 'the actual message body',
+          blocks: [{ type: 'text', text: 'the actual message body' }],
+          createdAt: '2026-01-01T00:00:00Z',
+        },
+      })
+      await wrapper.find('button[aria-label="复制"]').trigger('click')
+      expect(copyText).toHaveBeenCalledWith('the actual message body', expect.any(Function))
+      // The friendly time is rendered right next to the button — it must never
+      // be the copied payload.
+      expect(wrapper.find('.chat-meta-time').text()).toBe('3 min ago')
+    })
+
+    it('falls back to content when a user message has no text blocks', async () => {
+      // Summary-stripped / ACP-synced rows can arrive with empty blocks but a
+      // populated content string; copy must still work.
+      const { copyText } = await import('@/utils/clipboard')
+      copyText.mockClear()
+      const wrapper = createWrapper({
+        msg: { id: 'uc2', role: 'user', content: 'plain content', blocks: [] },
+      })
+      await wrapper.find('button[aria-label="复制"]').trigger('click')
+      expect(copyText).toHaveBeenCalledWith('plain content', expect.any(Function))
+    })
+  })
+
+  // Read-only hosts (task execution detail) hide only the fork/rewind pair:
+  // branching or truncating a finished execution record has no session to act
+  // on. The rest of the bar (summary, speak, copy, details) stays.
+  describe('hideSessionActions', () => {
+    const assistantMsg = { id: 'hm1', role: 'assistant', content: 'response', blocks: [{ type: 'text', text: 'Hello world' }] }
+
+    it('hides the fork and rewind buttons when hideSessionActions is set', () => {
+      const wrapper = createWrapper({ msg: assistantMsg, hideSessionActions: true })
+      expect(wrapper.find('button[title="chat.actions.forkSession"]').exists()).toBe(false)
+      expect(wrapper.find('button[title="chat.actions.rewindSession"]').exists()).toBe(false)
+    })
+
+    it('keeps the meta bar and its remaining actions when hideSessionActions is set', () => {
+      const wrapper = createWrapper({ msg: assistantMsg, hideSessionActions: true })
+      expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
+      // Summary toggle, copy and details survive; only the two session actions go.
+      expect(wrapper.find('.summary-toggle-stub').exists()).toBe(true)
+      expect(wrapper.find('button[title="复制"]').exists()).toBe(true)
+      expect(wrapper.find('button[title="详情"]').exists()).toBe(true)
+    })
+
+    it('still renders both session actions by default (chat host unaffected)', () => {
+      const wrapper = createWrapper({ msg: assistantMsg })
+      expect(wrapper.find('button[title="chat.actions.forkSession"]').exists()).toBe(true)
+      expect(wrapper.find('button[title="chat.actions.rewindSession"]').exists()).toBe(true)
     })
   })
 

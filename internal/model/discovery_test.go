@@ -2,7 +2,6 @@ package model_test
 
 import (
 	"testing"
-	"time"
 
 	_ "clawbench/internal/ai/backends/antigravity"
 	_ "clawbench/internal/ai/backends/claude"
@@ -133,70 +132,56 @@ func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 	assert.False(t, model.CanDiscoverModels(model.BackendSpec{Backend: "nonexistent_xyz"}), "nonexistent backend should not support model discovery")
 }
 
-// --- Test 4b: Discovery function registry ---
+// --- Test 4b: Model source registry ---
 
-func TestRegisterDiscoverModelsFunc(t *testing.T) {
-	// Register a test function and verify it can be looked up
-	model.RegisterDiscoverModelsFunc("test-backend", func() []model.AgentModel {
-		return []model.AgentModel{{ID: "test-model", Name: "Test Model", Default: true}}
-	})
+func TestRegisterModelSource(t *testing.T) {
+	model.RegisterModelSource(model.StaticSource("test-backend", "", []model.AgentModel{
+		{ID: "test-model", Name: "Test Model", Default: true},
+	}))
 
-	// Verify it works through DiscoverModels
 	spec := model.BackendSpec{ID: "test-backend", Backend: "test-backend", DefaultCmd: "nonexistent"}
-	models := model.DiscoverModels(spec)
+	models := model.DiscoverModels("test-backend")
 	require.Len(t, models, 1)
 	assert.Equal(t, "test-model", models[0].ID)
 	assert.True(t, models[0].Default)
 
-	// Verify CanDiscoverModels returns true
 	assert.True(t, model.CanDiscoverModels(spec))
 }
 
-func TestRegisterDiscoverModelsDetailFunc(t *testing.T) {
-	model.RegisterDiscoverModelsDetailFunc("test-detail-backend", func() string {
-		return "no model list found; tried: /a, /b"
-	})
-	t.Cleanup(func() {
-		model.RegisterDiscoverModelsDetailFunc("test-detail-backend", func() string { return "" })
-	})
+func TestDiscoverWithDetail_ReportsProbeReason(t *testing.T) {
+	model.RegisterModelSource(model.PluginSource("test-detail-backend", func() ([]model.AgentModel, string) {
+		return nil, "no model list found; tried: /a, /b"
+	}))
 
-	spec := model.BackendSpec{ID: "test-detail-backend", Backend: "test-detail-backend"}
-	assert.Equal(t, "no model list found; tried: /a, /b", model.DiscoveryFailureDetail(spec))
+	models, detail := model.DiscoverWithDetail("test-detail-backend")
+	assert.Empty(t, models)
+	assert.Equal(t, "no model list found; tried: /a, /b", detail)
 }
 
-func TestDiscoveryFailureDetail_Unregistered(t *testing.T) {
-	spec := model.BackendSpec{ID: "no-detail", Backend: "no-detail"}
-	assert.Empty(t, model.DiscoveryFailureDetail(spec),
-		"backends without a detail function must report an empty detail")
+func TestDiscoverWithDetail_Unregistered(t *testing.T) {
+	models, detail := model.DiscoverWithDetail("no-detail")
+	assert.Nil(t, models)
+	assert.Empty(t, detail, "a backend with no source has no failure story to tell")
 }
 
 // --- Test 5: DiscoverModels ---
 
 func TestDiscoverModels_NoSupport(t *testing.T) {
-	spec := model.BackendSpec{
-		ID:         "claude",
-		DefaultCmd: "claude",
-	}
-	models := model.DiscoverModels(spec)
-	assert.Nil(t, models, "should return nil when no model discovery support")
+	models := model.DiscoverModels("no-source-registered-xyz")
+	assert.Nil(t, models, "should return nil when no model source is registered")
 }
 
 func TestDiscoverModels_NonexistentCLI(t *testing.T) {
-	spec := model.BackendSpec{
-		ID:         "test",
-		DefaultCmd: "definitely_not_a_real_command_xyz_12345",
-	}
-	models := model.DiscoverModels(spec)
-	assert.Nil(t, models, "should return nil when no discovery function registered")
+	models := model.DiscoverModels("test-nonexistent-cli-xyz")
+	assert.Nil(t, models, "should return nil when no model source is registered")
 }
 
 func TestDiscoverModels_WithRealCLI(t *testing.T) {
-	spec := model.FindSpecByBackend("opencode")
-	if spec == nil || !model.CanDiscoverModels(*spec) {
-		t.Skip("opencode not installed or no discovery function, skipping integration test")
+	if !model.HasModelSource("opencode") {
+		t.Skip("opencode has no model source registered, skipping integration test")
 	}
 
-	models := model.DiscoverModels(*spec)
+	models := model.DiscoverModels("opencode")
 	if len(models) == 0 {
 		t.Skip("opencode discovery returned no models (CLI may not be properly configured)")
 	}
@@ -207,24 +192,13 @@ func TestDiscoverModels_WithRealCLI(t *testing.T) {
 	}
 }
 
-func TestDiscoverModels_WithEchoCLI(t *testing.T) {
-	// Register a discovery function for a mock backend
-	model.RegisterDiscoverModelsFunc("mock-echo-cli", func() []model.AgentModel {
-		return []model.AgentModel{
-			{ID: "mock-a", Name: "Mock A", Default: true},
-			{ID: "mock-b", Name: "Mock B", Default: false},
-		}
-	})
+func TestDiscoverModels_StaticSource(t *testing.T) {
+	model.RegisterModelSource(model.StaticSource("mock-static-source", "", []model.AgentModel{
+		{ID: "mock-a", Name: "Mock A", Default: true},
+		{ID: "mock-b", Name: "Mock B"},
+	}))
 
-	spec := model.BackendSpec{
-		ID:         "mock-echo-cli",
-		Backend:    "mock-echo-cli",
-		DefaultCmd: "echo",
-		Name:       "Mock",
-		Specialty:  "Testing",
-	}
-
-	models := model.DiscoverModels(spec)
+	models := model.DiscoverModels("mock-static-source")
 	require.Len(t, models, 2)
 	assert.Equal(t, "mock-a", models[0].ID)
 	assert.True(t, models[0].Default)
@@ -254,50 +228,30 @@ func TestFindSpecByBackend_AllBackends(t *testing.T) {
 	}
 }
 
-// --- Test 7: SyncDiscoverModels ---
+// --- Test 7: Registered model sources ---
 
-func TestSyncDiscoverModels_ReturnsMap(t *testing.T) {
-	result := model.SyncDiscoverModels()
-
-	// Result should be a valid map (may be empty if no CLIs installed)
-	assert.NotNil(t, result)
-
-	// If any models were discovered, verify structure
-	for backend, models := range result {
-		assert.NotEmpty(t, backend)
-		assert.NotEmpty(t, models)
-		for _, m := range models {
-			assert.NotEmpty(t, m.ID)
-		}
+func TestBackendsWithModelDiscovery_NonEmpty(t *testing.T) {
+	backends := model.BackendsWithModelDiscovery()
+	assert.NotEmpty(t, backends, "the linked backend packages register model sources at init")
+	for _, b := range backends {
+		assert.NotEmpty(t, b)
+		assert.True(t, model.HasModelSource(b))
 	}
 }
 
-func TestSyncDiscoverModels_NilWhenNoCLIs(t *testing.T) {
-	result := model.SyncDiscoverModels()
-	// The result may be empty if no CLIs are installed, but should never be nil
-	// (it's an empty map, not nil)
-	if result == nil {
-		result = make(map[string][]model.AgentModel)
-	}
-	assert.NotNil(t, result)
-}
-
-// --- Test 8: Discovery function registry integration ---
+// --- Test 8: Model source registry integration ---
 
 func TestDiscoverModels_RegistryPath(t *testing.T) {
-	// Test that the registry path works: when a function is registered for
-	// a backend, DiscoverModels should use it.
 	called := false
-	model.RegisterDiscoverModelsFunc("test-registry-path", func() []model.AgentModel {
+	model.RegisterModelSource(model.PluginSource("test-registry-path", func() ([]model.AgentModel, string) {
 		called = true
-		return []model.AgentModel{{ID: "registry-model", Name: "Registry Model", Default: true}}
-	})
+		return []model.AgentModel{{ID: "registry-model", Name: "Registry Model", Default: true}}, ""
+	}))
 
-	spec := model.BackendSpec{ID: "test-registry-path", Backend: "test-registry-path", DefaultCmd: "nonexistent"}
-	models := model.DiscoverModels(spec)
+	models := model.DiscoverModels("test-registry-path")
 	require.Len(t, models, 1)
 	assert.Equal(t, "registry-model", models[0].ID)
-	assert.True(t, called, "registry function should have been called")
+	assert.True(t, called, "registered source should have been called")
 }
 
 // --- Test 9: FindBackendSpecByDefaultCmd ---
@@ -319,17 +273,26 @@ func TestFindBackendSpecByDefaultCmd_Empty(t *testing.T) {
 	assert.Nil(t, spec)
 }
 
-// --- Test 10: AsyncRefreshModelCache ---
+// --- Test 10: discovery cache invalidation ---
 
-func TestAsyncRefreshModelCache_DoesNotPanic(t *testing.T) {
-	assert.NotPanics(t, func() {
-		model.AsyncRefreshModelCache(nil)
-	})
-}
+func TestInvalidateAllDiscoveredModels_ForcesReprobe(t *testing.T) {
+	restore := model.SnapshotModelSourcesForTest()
+	defer restore()
+	model.ResetModelSourcesForTest()
 
-func TestAsyncRefreshModelCache_DoesNotBlock(t *testing.T) {
-	model.AsyncRefreshModelCache(nil)
-	time.Sleep(100 * time.Millisecond)
+	calls := 0
+	model.RegisterModelSource(model.PluginSource("inv-test", func() ([]model.AgentModel, string) {
+		calls++
+		return []model.AgentModel{{ID: "m"}}, ""
+	}))
+
+	model.DiscoverModels("inv-test")
+	model.DiscoverModels("inv-test")
+	assert.Equal(t, 1, calls, "the second lookup should be served from cache")
+
+	model.InvalidateAllDiscoveredModels()
+	model.DiscoverModels("inv-test")
+	assert.Equal(t, 2, calls, "an explicit rescan must re-probe")
 }
 
 // --- Test 11: CheckCLIExistsErr ---
@@ -351,16 +314,15 @@ func TestCheckCLIExistsErr_EmptyCommand(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty command")
 }
 
-// --- Test 13: DiscoverModels for backends with registry ---
+// --- Test 13: DiscoverModels for backends with a registered source ---
 
 func TestDiscoverModels_DeepSeekWithRealCLI(t *testing.T) {
 	if !model.CheckCLIExists("deepseek") {
 		t.Skip("deepseek not installed, skipping integration test")
 	}
 
-	spec := model.FindSpecByBackend("deepseek")
-	require.NotNil(t, spec)
-	models := model.DiscoverModels(*spec)
+	require.True(t, model.HasModelSource("deepseek"))
+	models := model.DiscoverModels("deepseek")
 	if len(models) == 0 {
 		t.Skip("deepseek model discovery returned no models")
 	}

@@ -565,6 +565,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatPageSize = cfg.Chat.PageSize
 	model.ChatSessionPageSize = cfg.Chat.SessionPageSize
 	model.ChatSystemPromptInterval = cfg.Chat.SystemPromptInterval
+	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
@@ -832,6 +833,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer rag.Shutdown()
 	defer service.StopSessionCleanupWorker()
+	defer service.StopQueueReaper()
 	defer service.StopForgePoller()
 	defer service.StopBingWallpaperWorker()
 
@@ -858,27 +860,22 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Set global port for cookie name scoping (multi-instance on same hostname)
 	model.ServerPort = port
 
-	// 1. Detect installed CLIs and write new agents to DB
-	model.SyncDiscoverAgentsDB(service.WriteDB())
-
-	// 1a. Load manually-defined agents from config/agents/*.yaml (e.g., acp-mock for E2E)
-	model.LoadYamlAgents(service.WriteDB(), filepath.Dir(configPath))
-
-	// 2. Synchronous model discovery (run when agents may have empty model lists)
-	discoveredModels := model.SyncDiscoverModels()
-
-	// 2a. Migrate custom_system_prompt BEFORE LoadAgentsIntoMemory so the
-	// composition logic (commonPrompt + customSystemPrompt) works correctly
-	// on first startup with legacy system_prompt data.
+	// 1. Bring agents and model lists in line with what is installed.
+	// This is a single pass: detect CLIs, load YAML agents, discover models,
+	// persist, and reload memory. It replaces five separate steps that each
+	// re-queried the database and re-ran the same discovery probes.
+	//
+	// 1a. Migrate custom_system_prompt first so the prompt composition in the
+	// reload works correctly on a first startup with legacy system_prompt data.
 	service.MigrateCustomSystemPrompt()
 
-	// 3. Merge runtime data: fill models/levels from discovery results/registry, reload memory
-	model.MergeDiscoveredDataDB(service.WriteDB(), discoveredModels)
+	if _, err := model.RefreshAgents(service.WriteDB(), model.RefreshOptions{
+		ConfigDir: filepath.Dir(configPath),
+	}); err != nil {
+		slog.Error("failed to refresh agents", "error", err)
+	}
 
 	slog.Info("agents loaded", slog.Int("count", len(model.AgentList)))
-
-	// 4. Async: refresh model cache in background (non-blocking)
-	model.AsyncRefreshModelCache(service.WriteDB())
 
 	// Set default agent ID from config, or fall back to first agent
 	if cfg.DefaultAgent != "" {
@@ -972,6 +969,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Start session archive cleanup worker
 	service.StartSessionCleanupWorker(cfg)
+
+	// Start the queue reaper: a safety net that recovers user messages left
+	// stranded at queued=1 by a lost consumer handoff (stale running flag,
+	// consumer exit race). Without it such a message gets no AI response until
+	// the user cancels and re-sends.
+	service.StartQueueReaper()
 
 	// Start the GitHub/GitLab change poller. It is read-only and only runs when
 	// at least one project is bound to a repository; the provider factory is

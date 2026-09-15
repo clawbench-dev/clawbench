@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TaskOverviewTab from '../TaskOverviewTab.vue'
+import { resetForgeBindingState } from '@/composables/useForgeBinding'
 
 // ── Mocks ──
 vi.mock('vue-i18n', () => ({
@@ -138,6 +139,9 @@ const eventTask = {
 describe('TaskOverviewTab trigger card branching', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // The binding singleton (and its TTL cache) survives between tests; reset it
+    // so each case performs its own lookup, as a real project switch would.
+    resetForgeBindingState()
     mockFetchBinding.mockResolvedValue({ binding: null })
   })
 

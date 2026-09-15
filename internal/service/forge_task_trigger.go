@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -64,11 +65,18 @@ type ForgeQueuedEvent struct {
 // forgeEventKindForItem maps a forge item type to its subscription kind. It
 // lives here rather than in scheduler.go so the scheduler does not need to
 // import the forge package.
+//
+// A pipeline run has no item kind: it belongs to the repository, so it maps to
+// the empty kind and is matched by its bare subscription key.
 func forgeEventKindForItem(t forge.ItemType) string {
-	if t == forge.ItemTypeChangeRequest {
+	switch t {
+	case forge.ItemTypeChangeRequest:
 		return forgeEventKindPR
+	case forge.ItemTypePipeline:
+		return ""
+	default:
+		return forgeEventKindIssue
 	}
-	return forgeEventKindIssue
 }
 
 // identityEntry is a cached credential login with its expiry.
@@ -100,7 +108,11 @@ func NewForgeTaskTrigger(scheduler *Scheduler, cfgFn func() model.Config, identi
 	}
 	if scheduler != nil {
 		t.fire = func(taskID int64, ev ForgeQueuedEvent) bool {
-			return scheduler.triggerTaskWithContext(taskID, "event", EventContextFromChange(ev.repo, ev.item, ev.change))
+			ec := EventContextFromChange(ev.repo, ev.item, ev.change)
+			// The trigger is the only place that can resolve the credential's
+			// login, so it fills in the self-authorship flag the prompt reads.
+			ec.ActorIsSelf = t.actorIsSelf(ev.repo, ev.item, ev.change)
+			return scheduler.triggerTaskWithContext(taskID, "event", ec)
 		}
 	}
 	return t
@@ -124,6 +136,9 @@ func (t *ForgeTaskTrigger) SetRetryBackoffForTest(d time.Duration) { t.retryBack
 
 // EventTypeForTest exposes the queued event's type to tests.
 func (e ForgeQueuedEvent) EventTypeForTest() string { return string(e.change.Type) }
+
+// PipelineRunIDForTest exposes the queued event's CI run id to tests.
+func (e ForgeQueuedEvent) PipelineRunIDForTest() int64 { return e.change.PipelineRunID }
 
 // HandleChange matches an event against the event-triggered tasks and fires the
 // matching ones. It implements ForgeChangeSink alongside the notifier, so both
@@ -158,7 +173,15 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 	// in a row) fires the task once, not five times. The event type is part of
 	// the key so a comment arriving right after a close is not swallowed, and
 	// the item kind is too so a new issue right after a new PR is not either.
+	//
+	// Pipeline events are keyed by RUN ID instead. A repository can legitimately
+	// finish several runs within the debounce window (a matrix, a re-run, two
+	// branches), and those are separate events the user asked to hear about —
+	// collapsing them into one would silently drop every run but the first.
 	debounceKey := repo.Key() + "\x00" + forgeEventKindForItem(item.Type) + "\x00" + string(change.Type)
+	if change.Type == forge.EventPipeline {
+		debounceKey = repo.Key() + "\x00pipeline\x00" + strconv.FormatInt(change.PipelineRunID, 10)
+	}
 	t.mu.Lock()
 	if last, ok := t.lastFire[debounceKey]; ok && t.now().Sub(last) < t.debounceWindow {
 		t.mu.Unlock()
@@ -184,7 +207,26 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 // comment the author is the commenter, and for close/merge it is whoever
 // performed the transition. Comparing the item creator would miss exactly the
 // case this guard exists for — the AI commenting on someone else's issue.
+//
+// Pipeline events are deliberately EXEMPT. A pipeline finishing is not an
+// action the user performed: it is the outcome of a run that may have been
+// started minutes earlier, possibly by someone else, possibly by a schedule or
+// a push to main. Suppressing "our own" pipelines would break the most valuable
+// case there is — the AI pushes a fix, CI fails, and the task that repairs it
+// never runs. The actor is still carried on the event so a task's prompt can
+// decide for itself; see the ACTOR_IS_SELF context variable.
 func (t *ForgeTaskTrigger) isSelfAuthored(repo ForgeRepoRef, item forge.Item, change forge.Change) bool {
+	if change.Type == forge.EventPipeline {
+		return false
+	}
+	return t.actorIsSelf(repo, item, change)
+}
+
+// actorIsSelf reports whether the acting user is the credential's own account,
+// WITHOUT applying the pipeline exemption. It is what isSelfAuthored delegates
+// to, and what feeds the ACTOR_IS_SELF prompt variable so a task can make the
+// same judgement for itself.
+func (t *ForgeTaskTrigger) actorIsSelf(repo ForgeRepoRef, item forge.Item, change forge.Change) bool {
 	if t.identityFn == nil {
 		return false
 	}
@@ -267,8 +309,22 @@ func (t *ForgeTaskTrigger) projectBindsRepo(projectPath string, repo ForgeRepoRe
 //   - the bare legacy key, e.g. "opened", which matches either kind. Tasks
 //     stored before the split used bare keys, so this keeps them working
 //     without a migration.
+//
+// A repository-targeted event (a pipeline run) has no kind, so only the bare
+// key matches it. The kind-scoped spelling is deliberately NOT accepted: a
+// pipeline does not belong to a PR, and accepting "pr.pipeline_done" here would
+// fire a "pull request" task for a push to main.
 func eventTypeSubscribed(task *model.ScheduledTask, itemType forge.ItemType, typ forge.EventType) bool {
 	kind := forgeEventKindForItem(itemType)
+	if kind == "" {
+		for _, t := range task.EventTypeList() {
+			if t == string(typ) {
+				return true
+			}
+		}
+		return false
+	}
+
 	scoped := forgeEventKey(kind, string(typ))
 	for _, t := range task.EventTypeList() {
 		if t == scoped || t == string(typ) {

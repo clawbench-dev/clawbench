@@ -256,6 +256,77 @@ describe('useTaskTab', () => {
       expect(store.state.tasks).toBe(originalTasksRef)
     })
 
+    it('skips store update when a structurally equal but distinct payload arrives', async () => {
+      // The API deserializes fresh objects on every poll, so "identical" must
+      // mean value-equal, not reference-equal. Otherwise every poll would
+      // replace the array and re-render every consumer.
+      const { loadTasks } = useTaskTab()
+      const task = makeTask({ id: 1, name: 'A', cronExpr: '0 9 * * *' })
+
+      mockTasksResponse([task])
+      await loadTasks()
+
+      const originalTasksRef = store.state.tasks
+
+      mockTasksResponse([{ ...task }])
+      await loadTasks()
+
+      expect(store.state.tasks).toBe(originalTasksRef)
+    })
+
+    // Editing a task in the form changes fields that the old subset guard
+    // (id/status/runCount/unreadCount/runningCount) never looked at, so the
+    // store kept the pre-edit objects and the detail view — which reads the
+    // task out of the store — showed stale values until a page reload.
+    it.each([
+      ['name', 'Renamed Task'],
+      ['cronExpr', '0 3 * * *'],
+      ['prompt', 'a brand new prompt'],
+      ['agentId', 'agent-2'],
+      ['repeatMode', 'limited'],
+      ['maxRuns', 7],
+      ['triggerMode', 'event'],
+      ['eventTypes', 'pr.opened'],
+      ['nextRunAt', '2026-01-01T00:00:00Z'],
+    ] as const)('updates store when the edited field %s changes', async (key, value) => {
+      const { loadTasks } = useTaskTab()
+
+      mockTasksResponse([makeTask({ id: 1, [key]: key === 'maxRuns' ? 0 : 'before' })])
+      await loadTasks()
+
+      mockTasksResponse([makeTask({ id: 1, [key]: value })])
+      await loadTasks()
+
+      expect((store.state.tasks[0] as any)[key]).toBe(value)
+    })
+
+    it('updates store when a nested field changes', async () => {
+      // Nested values must compare by value too — a reference compare on an
+      // object field would silently report "unchanged".
+      const { loadTasks } = useTaskTab()
+
+      mockTasksResponse([makeTask({ id: 1, runningExecutions: [{ id: 'e1' }] })])
+      await loadTasks()
+
+      mockTasksResponse([makeTask({ id: 1, runningExecutions: [{ id: 'e1' }, { id: 'e2' }] })])
+      await loadTasks()
+
+      expect((store.state.tasks[0] as any).runningExecutions).toHaveLength(2)
+    })
+
+    it('updates store when a field is removed from the payload', async () => {
+      const { loadTasks } = useTaskTab()
+
+      mockTasksResponse([makeTask({ id: 1, sessionId: 's-1' })])
+      await loadTasks()
+
+      const withoutField = makeTask({ id: 1 })
+      mockTasksResponse([withoutField])
+      await loadTasks()
+
+      expect((store.state.tasks[0] as any).sessionId).toBeUndefined()
+    })
+
     it('updates store when task status changes', async () => {
       const { loadTasks } = useTaskTab()
 
@@ -923,19 +994,22 @@ describe('useTaskTab', () => {
       expect(formViewOpen.value).toBe(false)
     })
 
-    it('navigateToTaskSettings calls markTaskRead (history is merged into settings)', async () => {
+    it('navigateToTaskSettings does NOT clear the task unread history', async () => {
+      // Unread is per execution: opening a task must not wipe its history, or
+      // the badge number would vanish before the user could find which run it
+      // referred to. Opening one run is what marks that run read.
       const { navigateToTaskSettings, currentView, selectedTaskId } = useTaskTab()
       store.state.tasks = [{ id: 1, unreadCount: 2, name: 'Task 1' }]
+      mockFetch.mockClear()
       mockFetch.mockResolvedValue({ ok: true })
 
       navigateToTaskSettings(1)
       expect(currentView.value).toBe('settings')
       expect(selectedTaskId.value).toBe(1)
 
-      // markTaskRead should be called (unread badge cleared when viewing task details)
-      await vi.waitFor(() => {
-        expect(mockFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PUT' }))
-      })
+      // Give any fire-and-forget call a chance to land before asserting absence.
+      await new Promise(r => setTimeout(r, 0))
+      expect(mockFetch).not.toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PUT' }))
     })
 
     it('goBack navigates from settings to list', () => {
@@ -1168,58 +1242,4 @@ describe('useTaskTab', () => {
 
   // ── markTaskRead ──
 
-  describe('markTaskRead', () => {
-    it('marks a single task as read', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [
-        { id: 1, unreadCount: 2 },
-        { id: 2, unreadCount: 3 },
-      ]
-      mockFetch.mockResolvedValue({ ok: true })
-
-      await markTaskRead(1)
-
-      expect(mockFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PUT' }))
-      expect(store.state.tasks[0].unreadCount).toBe(0)
-      expect(store.state.taskUnreadCount).toBe(3)
-    })
-
-    it('skips when task has no unreadCount', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [{ id: 1, unreadCount: 0 }]
-      mockFetch.mockResolvedValue({ ok: true })
-
-      await markTaskRead(1)
-      expect(mockFetch).not.toHaveBeenCalled()
-    })
-
-    it('skips when task is not found', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [{ id: 1, unreadCount: 2 }]
-      mockFetch.mockResolvedValue({ ok: true })
-
-      await markTaskRead(999)
-      expect(mockFetch).not.toHaveBeenCalled()
-    })
-
-    it('does not update local state when API returns not ok', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [{ id: 1, unreadCount: 2 }]
-      mockFetch.mockResolvedValue({ ok: false, status: 500 })
-
-      await markTaskRead(1)
-
-      expect(store.state.tasks[0].unreadCount).toBe(2)
-    })
-
-    it('silently ignores fetch error', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [{ id: 1, unreadCount: 2 }]
-      mockFetch.mockRejectedValue(new Error('Network error'))
-
-      await markTaskRead(1)
-      // Should not throw, unreadCount stays unchanged
-      expect(store.state.tasks[0].unreadCount).toBe(2)
-    })
-  })
 })

@@ -6,13 +6,18 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"time"
 
 	"clawbench/internal/model"
 )
 
 // IsLocalhost returns true if the request originates from the local machine.
 // The AI subprocesses that serve built-in slash commands always connect from
-// localhost, as does any locally-run tool.
+// localhost.
+//
+// This is an address check only and is not sufficient on its own to establish
+// trust: the FRP tunnel's frpc process also dials in from 127.0.0.1. Callers
+// must pair it with a credential (see IsAITokenRequest).
 func IsLocalhost(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -21,18 +26,27 @@ func IsLocalhost(r *http.Request) bool {
 	return host == "127.0.0.1" || host == "::1" || host == "localhost"
 }
 
-// ShouldBypassAuth returns true if the request should skip authentication.
-// Localhost requests are always trusted. This bypass is unconditional: the
-// former localhost_auth_exempt config switch was removed because the local CLI
-// and AI agents rely on it, and a locally-reachable process already has
-// equivalent access to the database and the cookie-token file.
-func ShouldBypassAuth(r *http.Request) bool {
-	return IsLocalhost(r)
+// IsAITokenRequest returns true if the request should skip authentication
+// because it carries a valid AI token.
+//
+// Two conditions must hold, and the address check is the weaker of the two:
+//   - IsLocalhost(r) rejects a token replayed from off-machine. It cannot
+//     distinguish the FRP tunnel's frpc process, which dials in from
+//     127.0.0.1 (internal/frp), so the signature is what actually gates FRP.
+//   - A valid, unexpired signature over the header value. The token is signed
+//     with model.CookieToken, so rotating it (as a password change does)
+//     invalidates every in-flight token.
+//
+// The AI subprocess is the only intended caller: the built-in slash commands
+// inject a freshly signed token into their prompt (internal/handler). Local
+// browsers hold no token and must log in.
+func IsAITokenRequest(r *http.Request) bool {
+	return IsLocalhost(r) && model.VerifyAIToken(r.Header.Get(model.AITokenHeader), time.Now())
 }
 
 // Auth wraps a handler with password auth if configured.
-// Localhost requests bypass auth; remote requests require a valid
-// "clawbench_session" cookie.
+// Requests carrying a valid AI token from localhost bypass auth; every other
+// request requires a valid "clawbench_session" cookie.
 func Auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// No password configured — open access
@@ -40,8 +54,8 @@ func Auth(next http.HandlerFunc) http.HandlerFunc {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Localhost bypass
-		if ShouldBypassAuth(r) {
+		// Local AI subprocess holding a short-lived signed token
+		if IsAITokenRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}

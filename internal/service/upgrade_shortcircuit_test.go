@@ -73,6 +73,12 @@ func (h *shortCircuitHarness) setup(t *testing.T, diskVersion string) {
 	selfBinaryVersion = func(string) (string, error) { return diskVersion, nil }
 	t.Cleanup(func() { selfBinaryVersion = origVer })
 
+	// Registry metadata carries a real signature: the production path verifies
+	// it for official registries and would otherwise refuse the response.
+	keys := newTestSigningKeys(t)
+	pkg, pkgErr := getPlatformPkg()
+	require.NoError(t, pkgErr)
+
 	// Registry: metadata always served; a tarball request is a failure signal.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, ".tgz") {
@@ -80,17 +86,17 @@ func (h *shortCircuitHarness) setup(t *testing.T, diskVersion string) {
 			http.Error(w, "tarball must not be requested", http.StatusInternalServerError)
 			return
 		}
-		resp := npmRegistryResponse{}
-		resp.Version = h.targetVersion
-		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-" + h.targetVersion + ".tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp := signedRegistryResponse(t, keys, pkg, h.targetVersion, wellFormedIntegrity)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(ts.Close)
 
 	origClient := upgradeHTTPClient
-	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: ts.URL,
+		keysJSON:    keys.keysJSON(t),
+	}}
 	t.Cleanup(func() { upgradeHTTPClient = origClient })
 
 	origChina := platform.ChinaMirrorChecked.Load()
@@ -114,7 +120,7 @@ func TestPerformUpgrade_ShortCircuitsWhenDiskAtTarget(t *testing.T) {
 	h := &shortCircuitHarness{targetVersion: "0.99.0"}
 	h.setup(t, "0.99.0")
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	s := GetUpgradeState()
 	assert.Equal(t, 0, h.tarballHits, "tarball must not be downloaded when disk is already at target")
@@ -128,7 +134,7 @@ func TestPerformUpgrade_DownloadsWhenDiskBehind(t *testing.T) {
 	h := &shortCircuitHarness{targetVersion: "0.99.0"}
 	h.setup(t, "0.10.0")
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	assert.Equal(t, 1, h.tarballHits, "an older disk binary must be downloaded")
 	assert.Equal(t, 0, h.restartCalls, "no restart before the download completes")
@@ -144,7 +150,7 @@ func TestPerformUpgrade_ShortCircuitSkipsWhenVersionProbeFails(t *testing.T) {
 	// Override the probe installed by setup to fail.
 	selfBinaryVersion = func(string) (string, error) { return "", fmt.Errorf("probe failed") }
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	assert.Equal(t, 1, h.tarballHits, "a failed probe must fall back to downloading")
 }
@@ -160,7 +166,7 @@ func TestPerformUpgrade_ShortCircuitSkippedWithoutRestartFunc(t *testing.T) {
 
 	upgradeRestartFunc = nil // not wired
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	assert.Equal(t, 0, h.restartCalls, "no restart func → no restart call")
 	assert.Equal(t, 1, h.tarballHits, "must fall through to the normal download path")
@@ -176,7 +182,7 @@ func TestPerformUpgrade_ShortCircuitRestartFailureReportsError(t *testing.T) {
 	h.setup(t, "0.99.0")
 	h.restartErr = fmt.Errorf("sentinel launch failed")
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	s := GetUpgradeState()
 	require.Equal(t, UpgradePhaseFailed, s.Phase, "a failed restart must not leave the phase at restarting")
@@ -193,18 +199,22 @@ func TestPerformUpgrade_ShortCircuitRestartFailureReportsError(t *testing.T) {
 func TestPerformUpgrade_SelfPathUnresolved(t *testing.T) {
 	dir := withTempDataDir(t) // empty data dir → no self-path record
 
+	keys := newTestSigningKeys(t)
+	pkg, pkgErr := getPlatformPkg()
+	require.NoError(t, pkgErr)
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		resp := npmRegistryResponse{}
-		resp.Version = "99.0.0"
-		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp := signedRegistryResponse(t, keys, pkg, "99.0.0", wellFormedIntegrity)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(ts.Close)
 
 	origClient := upgradeHTTPClient
-	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: ts.URL,
+		keysJSON:    keys.keysJSON(t),
+	}}
 	t.Cleanup(func() { upgradeHTTPClient = origClient })
 
 	origChina := platform.ChinaMirrorChecked.Load()
@@ -222,7 +232,7 @@ func TestPerformUpgrade_SelfPathUnresolved(t *testing.T) {
 	ResetUpgradeState()
 	t.Cleanup(ResetUpgradeState)
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	s := GetUpgradeState()
 	require.Equal(t, UpgradePhaseFailed, s.Phase)

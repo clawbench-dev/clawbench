@@ -1639,6 +1639,104 @@ describe('verifyFilePaths', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not clobber an already-verified chunk when a later chunk fails', async () => {
+    // Chunking means a failure can happen after earlier chunks succeeded. The
+    // network-error fallback must not then mark the WHOLE list as missing —
+    // that would strip annotations from files the first chunk already resolved
+    // (and, because 'none' is cached, never recover them).
+    let call = 0
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      call += 1
+      if (call === 1) {
+        const body = JSON.parse(String(init.body)) as { paths: string[] }
+        const results: Record<string, string> = {}
+        for (const p of body.paths) results[p] = 'file'
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ results }) })
+      }
+      return Promise.reject(new Error('offline'))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const paths = Array.from({ length: 250 }, (_, i) => `src/f${i}.go`)
+    const container = document.createElement('div')
+    container.innerHTML = paths
+      .map(p => `<span class="chat-file-path" data-file-path="${p}">${p}</span>`)
+      .join('')
+
+    await verifyFilePaths(paths, container)
+
+    // Chunk 1 (first 100) resolved as real files; its annotations must survive.
+    expect(mockFetch.mock.calls.length).toBeGreaterThan(1)
+    for (const p of paths.slice(0, 100)) {
+      const el = container.querySelector(`[data-file-path="${p}"]`)
+      expect(el, `${p} from the verified chunk must keep its annotation`).not.toBeNull()
+      expect(el!.getAttribute('data-path-type')).toBe('file')
+    }
+
+    vi.unstubAllGlobals()
+  })
+
+  it('batches >100 paths into separate requests', async () => {
+    // The endpoint rejects >100 paths with 400 TooManyPaths, and the error body
+    // has no `results` field. Sending them all at once therefore made
+    // Object.entries(undefined) throw, which the catch block treated as a
+    // network failure and cached every path as 'none' — permanently stripping
+    // annotations from real files. Chunk the request instead.
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { paths: string[] }
+      const results: Record<string, string> = {}
+      for (const p of body.paths) results[p] = 'file'
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ results }) })
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const paths = Array.from({ length: 250 }, (_, i) => `src/f${i}.go`)
+    const container = document.createElement('div')
+    container.innerHTML = paths
+      .map(p => `<span class="chat-file-path" data-file-path="${p}">${p}</span>`)
+      .join('')
+
+    await verifyFilePaths(paths, container)
+
+    // Three requests of at most 100, and every path verified as a real file.
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+    for (const call of mockFetch.mock.calls) {
+      const body = JSON.parse(String((call[1] as RequestInit).body)) as { paths: string[] }
+      expect(body.paths.length).toBeLessThanOrEqual(100)
+    }
+    for (const p of paths) {
+      const el = container.querySelector(`[data-file-path="${p}"]`)
+      expect(el, `${p} must keep its annotation`).not.toBeNull()
+      expect(el!.getAttribute('data-path-type')).toBe('file')
+    }
+
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps annotations when the batch request fails with a non-OK status', async () => {
+    // A 4xx/5xx body carries no `results`. Treating that as "path does not
+    // exist" would strip annotations from files that are perfectly real, so an
+    // unusable response must leave the annotation alone (still clickable is
+    // better than silently destroyed).
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ error: 'TooManyPaths', code: 400 }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="src/real.go">src/real.go</span>'
+
+    await verifyFilePaths(['src/real.go'], container)
+
+    const el = container.querySelector('.chat-file-path')
+    expect(el).not.toBeNull()
+    expect(el!.getAttribute('data-file-path')).toBe('src/real.go')
+
+    vi.unstubAllGlobals()
+  })
+
   it('removes annotation for project-external directory', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -1693,6 +1791,67 @@ describe('verifyFilePaths', () => {
     // Internal directory annotation should be kept (valid navigation target)
     expect(container.querySelector('.chat-file-open-btn')).not.toBeNull()
     expect(container.querySelector('.chat-file-path')).not.toBeNull()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('swaps to an internal directory fallback when the primary does not exist', async () => {
+    // The common shape for a directory written in a doc: the primary candidate is
+    // resolved relative to the FILE's own directory (which usually does not hold
+    // such a directory), and the real target is the project-root fallback.
+    // e.g. in test/path-annotation/README.md, `web/src/composables` → primary
+    // `test/path-annotation/web/src/composables` (none) + fallback
+    // `web/src/composables` (dir). Directory fallbacks used to be skipped, so the
+    // annotation was stripped even though the directory exists.
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        results: { 'test/path-annotation/web/src/composables': 'none', 'web/src/composables': 'dir' },
+      }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="test/path-annotation/web/src/composables" data-fallback-path="web/src/composables">web/src/composables</span><button class="chat-file-open-btn" data-file-path="test/path-annotation/web/src/composables" data-fallback-path="web/src/composables">open</button>'
+
+    await verifyFilePaths(
+      ['test/path-annotation/web/src/composables', 'web/src/composables'],
+      container,
+    )
+
+    // Swapped to the real directory and marked as a directory.
+    const span = container.querySelector('.chat-file-path[data-file-path="web/src/composables"]')
+    const btn = container.querySelector('.chat-file-open-btn[data-file-path="web/src/composables"]')
+    expect(span).not.toBeNull()
+    expect(btn).not.toBeNull()
+    expect(span!.getAttribute('data-path-type')).toBe('dir')
+    expect(btn!.getAttribute('data-path-type')).toBe('dir')
+    expect(span!.hasAttribute('data-fallback-path')).toBe(false)
+    // The dead primary must be gone.
+    expect(container.querySelector('[data-file-path="test/path-annotation/web/src/composables"]')).toBeNull()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not swap to a project-EXTERNAL directory fallback (still stripped)', async () => {
+    // The original intent of skipping directory fallbacks: an external directory
+    // must not become a navigation target. Only the *internal* case is reopened.
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        results: { 'missing-dir': 'none', '/home/user/other-project': 'dir' },
+      }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="missing-dir" data-fallback-path="/home/user/other-project">other</span><button class="chat-file-open-btn" data-file-path="missing-dir" data-fallback-path="/home/user/other-project">open</button>'
+
+    await verifyFilePaths(['missing-dir', '/home/user/other-project'], container)
+
+    // No annotation survives — the external directory is not a valid target.
+    expect(container.querySelector('.chat-file-open-btn')).toBeNull()
+    expect(container.querySelector('.chat-file-path')).toBeNull()
 
     vi.unstubAllGlobals()
   })

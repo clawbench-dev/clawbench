@@ -104,9 +104,12 @@ func TestParseGrokModels_SkipsEmptyStars(t *testing.T) {
 	assert.Equal(t, "grok-build", models[0].ID)
 }
 
-func TestGrokDefaults_FirstIsDefault(t *testing.T) {
-	models := grokDefaults()
-	require.Len(t, models, len(grokDefaultModels))
+func TestGrokCatalog_FirstIsDefault(t *testing.T) {
+	src, ok := model.LookupModelSource("grok")
+	require.True(t, ok)
+
+	models, _ := src.Discover()
+	require.NotEmpty(t, models)
 	assert.True(t, models[0].Default)
 	assert.Equal(t, "grok-4.5", models[0].ID)
 }
@@ -169,15 +172,47 @@ Available models:
 	assert.False(t, models[2].Default)
 }
 
-func TestDiscoverGrokModels_Registered(t *testing.T) {
-	// model discovery function should be registered via init()
-	registry := model.GetBackendRegistry()
-	found := false
-	for _, spec := range registry {
-		if spec.Backend == "grok" {
-			found = true
-			assert.True(t, model.CanDiscoverModels(spec), "grok should support model discovery")
-		}
-	}
-	assert.True(t, found, "grok should be in the backend registry")
+func TestGrokSource_Registered(t *testing.T) {
+	spec := model.BackendSpec{ID: "grok", Backend: "grok", DefaultCmd: "grok"}
+	assert.True(t, model.CanDiscoverModels(spec), "grok should support model discovery")
+
+	src, ok := model.LookupModelSource("grok")
+	require.True(t, ok)
+	assert.Equal(t, model.SourceKindCLI, src.Kind())
+}
+
+// An end-to-end transcript: the parser is only useful if a real `grok models`
+// output yields exactly the models, names and default the CLI reports. Section
+// headers and prose must not leak in.
+func TestParseGrokModels_RealTranscript(t *testing.T) {
+	output := `Model 'grok' is using its own API key.
+
+Default model: grok-4.5
+
+Available models:
+  * grok-4.5 (default)
+  - grok-build
+  - grok-code
+`
+	models := parseGrokModels(output)
+
+	require.Len(t, models, 3, "only the three real entries; no headers or prose")
+	assert.Equal(t, "grok-4.5", models[0].ID)
+	assert.Equal(t, "Grok 4.5", models[0].Name)
+	assert.True(t, models[0].Default)
+	assert.Equal(t, "grok-build", models[1].ID)
+	assert.Equal(t, "Grok Build", models[1].Name)
+	assert.False(t, models[1].Default)
+	assert.Equal(t, "grok-code", models[2].ID)
+	assert.Equal(t, "Grok Code", models[2].Name)
+}
+
+// A transcript whose only prose line is a single word must not yield a phantom
+// model (this is the shape that exposed the unbulleted-line regression).
+func TestParseGrokModels_SingleWordHeaderIsNotAModel(t *testing.T) {
+	output := "authenticated\n  * grok-4.5\n"
+	models := parseGrokModels(output)
+
+	require.Len(t, models, 1)
+	assert.Equal(t, "grok-4.5", models[0].ID)
 }

@@ -50,14 +50,14 @@
               <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
-              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(tab) }" @animationend="wideDockBadgeAnimEnd(tab)">{{ formatBadgeCount(wideDockBadgeCount(tab)) }}</span>
+              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
             <!-- Secondary tabs (always shown inline; the dock scrolls if too short) -->
             <div v-for="tab in overflowTabs" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
-              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(tab) }" @animationend="wideDockBadgeAnimEnd(tab)">{{ formatBadgeCount(wideDockBadgeCount(tab)) }}</span>
+              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
           </div>
           <!-- Chat visibility toggle pinned to the bottom of the vertical dock -->
@@ -133,7 +133,7 @@
                       @search-change="viewSearchActive = !!$event"
                       @toggle-view="markdownViewMode = markdownViewMode === 'rendered' ? 'raw' : 'rendered'"
                       @refresh="handleRefresh"
-                      @jump="(line, anchorId) => scrollToLine(line, undefined, store.state.currentFile?.path, anchorId)"
+                      @jump="(line: number, anchorId?: string) => scrollToLine(line, undefined, store.state.currentFile?.path, anchorId)"
                       @jump-page="handleJumpPdfPage"
                       @close-git-history="fileHistoryDrawer.close()"
                       @open-file="handleOverlayOpenFile"
@@ -367,7 +367,7 @@
               <button class="dock-btn" :class="{ active: activeTab === 'chat', 'has-unread': store.state.chatUnreadCount > 0 && activeTab !== 'chat', 'has-running': sessionIdentity.runningSessions.value.size > 0 && activeTab !== 'chat' }" @click.stop="switchTab('chat')" :title="t('nav.chat')">
                 <MessageSquare />
               </button>
-              <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': chatBadgeAnim }" @animationend="chatBadgeAnim = false">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
+              <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': chatBadgeAnim }" @animationend="chatBadgeAnim = false">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
             </div>
             <button class="dock-btn" :class="{ active: activeTab === 'browse' }" @click.stop="switchTab('browse')" :title="t('nav.fileManager')">
               <FolderOpen />
@@ -379,27 +379,27 @@
               <button class="dock-btn" :class="{ active: activeTab === 'history' }" @click.stop="switchTab('history')" :title="t('git.history.projectHistory')">
                 <GitBranch />
               </button>
-              <span v-if="store.state.gitWorkingTreeChangeCount > 0 && activeTab !== 'history'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': historyBadgeAnim }" @animationend="historyBadgeAnim = false">{{ formatBadgeCount(store.state.gitWorkingTreeChangeCount) }}</span>
+              <span v-if="store.state.gitWorkingTreeChangeCount > 0 && activeTab !== 'history'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': historyBadgeAnim }" @animationend="historyBadgeAnim = false">{{ formatBadgeCount(store.state.gitWorkingTreeChangeCount) }}</span>
             </div>
             <!-- Inline overflow tabs (rendered in overflowTabs order — settings always last) -->
             <div v-for="tab in inlineOverflowTabs" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="dockTabIcon(tab)" />
               </button>
-              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
-              <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
-              <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
-              <span v-if="tab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
+              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
+              <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
+              <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
+              <span v-if="tab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
             </div>
             <!-- Single remaining popup item shown directly (no overflow menu) -->
             <div v-if="singleDirectTab" :key="'single-' + singleDirectTab" class="dock-btn-wrap">
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(singleDirectTab)" @click.stop="handleInlineOverflowClick(singleDirectTab)" :title="dockTabTitle(singleDirectTab)">
                 <component :is="dockTabIcon(singleDirectTab)" />
               </button>
-              <span v-if="singleDirectTab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
-              <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
-              <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
-              <span v-if="singleDirectTab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
+              <span v-if="singleDirectTab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
+              <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
+              <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
+              <span v-if="singleDirectTab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
             </div>
             <!-- Overflow button (popup has >1 items) -->
             <div v-if="showOverflowButton" class="dock-overflow-wrapper">
@@ -414,7 +414,7 @@
               >
                 <component :is="overflowButtonIcon" />
               </button>
-              <span v-if="overflowBadgeCount > 0 && !isOverflowTabActive" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': overflowBadgeAnim }" @animationend="overflowBadgeAnim = false">{{ formatBadgeCount(overflowBadgeCount) }}</span>
+              <span v-if="overflowBadgeCount > 0 && !isOverflowTabActive" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': overflowBadgeAnim }" @animationend="overflowBadgeAnim = false">{{ formatBadgeCount(overflowBadgeCount) }}</span>
             </div>
           </div>
         </div>
@@ -425,33 +425,21 @@
     <Teleport to="body">
       <Transition name="dock-popup">
         <div v-if="overflowMenuOpen" class="dock-overflow-popup" :style="overflowPopupStyle" @keydown.escape="overflowMenuOpen = false">
-          <button v-if="popupOverflowTabs.includes('forge')" class="dock-overflow-item" :class="{ active: activeTab === 'forge' }" @click.stop="handleOverflowSelect('forge')">
-            <component :is="dockTabIcon('forge')" :size="16" />
-            <span>{{ t('nav.forge') }}</span>
-            <span v-if="forgeUnreadCount > 0" class="dock-overflow-count">{{ formatBadgeCount(forgeUnreadCount) }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('tasks')" class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
-            <Clock :size="16" />
-            <span>{{ t('nav.tasks') }}</span>
-            <span v-if="store.state.taskUnreadCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('terminal')" class="dock-overflow-item" :class="{ active: activeTab === 'terminal' }" @click.stop="handleOverflowSelect('terminal')">
-            <TerminalIcon :size="16" />
-            <span>{{ t('terminal.title') }}</span>
-            <span v-if="store.state.terminalSessionCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('proxy')" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
-            <Network :size="16" />
-            <span>{{ t('nav.portForward') }}</span>
-            <span v-if="store.state.portForwardEnabledCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('stats')" class="dock-overflow-item" :class="{ active: activeTab === 'stats' }" @click.stop="handleOverflowSelect('stats')">
-            <BarChart3 :size="16" />
-            <span>{{ t('nav.stats') }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('settings')" class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
-            <Settings :size="16" />
-            <span>{{ t('nav.settings') }}</span>
+          <button
+            v-for="tab in popupOverflowTabs"
+            :key="tab"
+            class="dock-overflow-item"
+            :class="{ active: activeTab === tab }"
+            @click.stop="handleOverflowSelect(tab)"
+          >
+            <component :is="dockTabIcon(tab)" :size="16" />
+            <span>{{ dockTabTitle(tab) }}</span>
+            <span
+              v-if="dockTabBadgeCount(tab) > 0"
+              class="dock-overflow-count count-badge count-badge--md"
+              :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }"
+              @animationend="dockTabBadgeAnimEnd(tab)"
+            >{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
           </button>
         </div>
       </Transition>
@@ -463,8 +451,8 @@
   </div>
 </template>
 
-<script setup>
-import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent } from 'vue'
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent, type CSSProperties } from 'vue'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
@@ -473,9 +461,9 @@ import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePane
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
-import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3, Github, Gitlab } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -520,6 +508,7 @@ import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
+import type { SessionSearchResult } from './composables/useSessionSearch'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
 import { resetAllCrudLists } from '@/composables/useCrudList'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
@@ -543,7 +532,10 @@ import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { flashElement } from './utils/domFlash'
-import { useGlobalEvents } from './composables/useGlobalEvents'
+import { useGlobalEvents, type ServerEvent } from './composables/useGlobalEvents'
+
+/** Payload carried by a server event (see useGlobalEvents). */
+type ServerEventData = ServerEvent['data']
 import { useCompletionPopover } from './composables/useCompletionPopover'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
 import { useUpgrade } from './composables/useUpgrade'
@@ -555,6 +547,8 @@ import { useAndroidBackPress } from './composables/useAndroidBackPress'
 import { useDirectoryReturn } from './composables/useDirectoryReturn'
 import { store } from './stores/app.ts'
 import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
+import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
+import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
 import { fileSupportsToc } from './utils/tocSupport.ts'
@@ -580,6 +574,10 @@ import {
   PANE_LEFT,
   PANE_RIGHT,
 } from './composables/useWideScreenLayout'
+// Single source of truth for dock tabs (render list, switch whitelist, icons,
+// titles). See the module doc for why this exists.
+import { secondaryDockTabs } from './composables/dockTabs'
+import { dockTabWithIcon } from './composables/dockTabMeta'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
@@ -589,7 +587,7 @@ import './assets/mono-icon-colors.css'
 import './assets/refresh-spin.css'
 import './assets/chat-actions.css'
 
-const isAuthenticated = ref(null)
+const isAuthenticated = ref<boolean | null>(null)
 const { t } = useI18n()
 const TAG = 'ClawBench'
 
@@ -603,7 +601,7 @@ const projectKey = ref('initial')
 const switchingProject = ref(false)
 const navigationByProject = new Map()
 
-async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav) {
+async function hotSwitchProject(newProjectPath: string, pendingSessionId?: string | null, pendingTaskNav?: { taskId: string; executionId?: string } | null) {
   const previousProjectPath = store.state.projectRoot
   if (previousProjectPath) {
     navigationByProject.set(previousProjectPath, navigation.snapshot())
@@ -623,7 +621,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
   } catch (err) {
     // Project doesn't exist — revert fade-out and show error
     switchingProject.value = false
-    const msgKey = err?.msgKey
+    const msgKey = (err as Error & { msgKey?: string })?.msgKey
     if (msgKey === 'NotADirectory') {
       toast.show(t('appHeader.projectPathNotFound'), { icon: '⚠️', type: 'error', duration: 3000 })
       fetch('/api/recent-projects', {
@@ -637,7 +635,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
       // project the admin has since removed from the roots.
       toast.show(t('appHeader.projectPathNotAllowed'), { icon: '⚠️', type: 'error', duration: 3000 })
     } else {
-      toast.show(t('appHeader.switchProjectFailed', { error: err.message }), { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(t('appHeader.switchProjectFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error', duration: 3000 })
     }
     return
   }
@@ -657,7 +655,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
   // keyed project subtree replacement. Never carry a return target from the
   // previous project into the newly selected project.
   navigation.restore(navigationByProject.get(resolvedProjectPath) ?? navigationByProject.get(newProjectPath))
-  navCoordinator.invalidateDirectoryRequests()
+  navCoordinator!.invalidateDirectoryRequests()
   directoryReturn.clear()
   fileNav.closeOverlay()
   // A browse preview session belongs to the previous project's file manager.
@@ -720,22 +718,23 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
       openExecDetail(pendingTaskNav.executionId)
     }
   } else if (pendingSessionId) {
-    // Watch for session identity to be ready instead of polling
-    const stopWatch = watch(
-      () => sessionIdentity.currentSessionId.value,
-      (id) => {
-        if (id) {
-          stopWatch()
-          switchTab('chat')
-          // Pass the (now-current) project path so the mark-as-read call can
-          // prove ownership. Without it the backend falls back to the cookie
-          // project and 403s, leaving the cross-project session's unread badge
-          // stuck — the whole point of opening it from the cross-project tab.
-          sessionIdentity.switchSession(pendingSessionId, resolvedProjectPath)
-        }
-      },
-      { immediate: true }
-    )
+    // Open the session the cross-project tab targeted. Pass the (now-current)
+    // project path so the mark-as-read call can prove ownership — without it
+    // the backend falls back to the cookie project and 403s, leaving the
+    // cross-project session's unread badge stuck, which is the whole point of
+    // opening it from that tab.
+    openPendingSessionWhenReady({
+      currentSessionId: sessionIdentity.currentSessionId,
+      sessionId: pendingSessionId,
+      projectPath: resolvedProjectPath,
+      switchTab,
+      switchSession: sessionIdentity.switchSession,
+      // Only open while the user is still on the project this session belongs
+      // to. Without this, a fallback watcher (armed when identity was not yet
+      // resolved) would survive an unrelated later project switch and open this
+      // stale session there.
+      isStillRelevant: () => store.state.projectRoot === resolvedProjectPath,
+    })
   }
 }
 
@@ -746,7 +745,7 @@ const { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed, chatCollap
 
 const chatActive = computed(() => (isWideScreen.value ? 'chat' : activeTab.value))
 const leftPanelActive = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
-const panelIsActive = (tabId) =>
+const panelIsActive = (tabId: string) =>
   isWideScreen.value ? leftTab.value === tabId : activeTab.value === tabId
 
 // Focus-aware keyboard gating: a panel's global shortcuts only fire when the
@@ -754,7 +753,7 @@ const panelIsActive = (tabId) =>
 const chatShortcutActive = computed(() => (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat'))
 const fileManagerShortcutActive = computed(() => (isWideScreen.value ? activePane.value === PANE_LEFT : activeTab.value === 'browse'))
 
-function onSplitRatioChange(ratio) {
+function onSplitRatioChange(ratio: number) {
   setSplitRatio(ratio)
 }
 
@@ -776,7 +775,7 @@ function handleWideDockChatToggle() {
 // soft keyboard to dismiss then re-appear when CM re-focuses on mousedown.
 function onLeftPanePointerDown() {
   setActivePane(PANE_LEFT)
-  const el = document.activeElement
+  const el = document.activeElement as HTMLElement | null
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el.isContentEditable && !el.classList.contains('cm-content')))) {
     el.blur()
   }
@@ -808,7 +807,7 @@ const dockIndicatorStyle = computed(() => ({
 // Assigned later in setup (it needs handlers defined further below); every
 // consumer runs at event time, long after setup finished. All navigation
 // logic lives in useNavigationCoordinator.
-let navCoordinator = null
+let navCoordinator: ReturnType<typeof useNavigationCoordinator> | null = null
 
 const navigation = useNavigationContext()
 // A browse click starts an isolated preview session.  The file navigation
@@ -817,15 +816,15 @@ const navigation = useNavigationContext()
 const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
 
-function switchTab(tab, force = false) {
-  // Opening the Issues & PRs tab clears its unread badge.
-  if (tab === 'forge') {
-    void markForgeRead()
-  }
+function switchTab(tab: string, force = false) {
+  // Opening the Issues & PRs tab does NOT clear its unread badge. Read state is
+  // per item now: opening a row clears that row, and the "mark all read" button
+  // clears the rest. Clearing on tab open is what made the badge number
+  // meaningless — it vanished before the user could find what it referred to.
   // The user reached the surface a jump started from without using Back, so
   // the return target is spent — settle it (skip when returnToOrigin() is
   // driving the switch). Single implementation: useNavigationCoordinator.
-  if (!navCoordinator.isApplyingOriginReturn()) navCoordinator.settleOriginForTab(tab)
+  if (!navCoordinator!.isApplyingOriginReturn()) navCoordinator!.settleOriginForTab(tab)
   if (isWideScreen.value) {
     // Wide-screen: chat is always visible; non-chat tabs route to the left column
     if (tab === 'chat') return
@@ -850,18 +849,32 @@ function switchTab(tab, force = false) {
     loadSessionsOnce()
   }
   if (tab === 'tasks') {
-    // Only stop dock button flash — don't clear per-task unread badges.
-    // Per-task badges are cleared when the user enters that task's execution history.
-    store.state.taskUnreadCount = 0
+    // Opening the tab deliberately does NOT zero the badge. Read state is per
+    // execution now: opening a run clears that run, and "mark all read" clears
+    // the rest. Zeroing here also stuck permanently whenever loadTasks() failed
+    // (it returns early on a non-OK response), leaving a badge that said "all
+    // read" while unread runs were still there.
     loadTasks()
   }
   // Close overflow menu on any tab switch
   overflowMenuOpen.value = false
 }
 
+/**
+ * Payload of the `clawbench-open-session` / `clawbench-open-task` window events.
+ *
+ * Two dispatchers emit these: the Android native shell (MainActivity, from a
+ * notification tap — see its handleNotificationIntent / pendingNavigation
+ * re-dispatch) and CompletionPopover.vue. Both send `sessionId`/`taskId` as
+ * strings (Android reads them via getStringExtra; the popover's
+ * CompletionItem types taskId as string).
+ */
+interface OpenSessionDetail { sessionId?: string; projectPath?: string }
+interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string }
+
 /** Handle clawbench-open-session event from Android push notification tap */
-function handleOpenSession(e) {
-  const detail = e?.detail
+function handleOpenSession(e: Event) {
+  const detail = (e as CustomEvent<OpenSessionDetail>).detail
   if (!detail?.sessionId) {
     appLog.w(TAG, 'clawbench-open-session: no sessionId in detail, ignoring')
     return
@@ -883,8 +896,8 @@ function handleOpenSession(e) {
 }
 
 /** Handle clawbench-open-task event from Android push notification tap (task execution) */
-function handleOpenTask(e) {
-  const detail = e?.detail
+function handleOpenTask(e: Event) {
+  const detail = (e as CustomEvent<OpenTaskDetail>).detail
   if (!detail?.taskId) {
     appLog.w(TAG, 'clawbench-open-task: no taskId in detail, ignoring')
     return
@@ -1002,11 +1015,11 @@ const wallpaperImageStyle = computed(() =>
 
 /** Apply the wallpaper effect from the latest server config + theme state. */
 function refreshWallpaper() {
-  const appearance = serverConfig.value?.appearance ?? {}
-  const state = resolveWallpaperState(serverConfig.value?.appearance)
+  const appearance = (serverConfig.value?.appearance ?? {}) as Record<string, unknown>
+  const state = resolveWallpaperState(appearance)
   // The server resolves which image is active (mode + enabled + selection);
   // an empty value means no wallpaper, including the globally-disabled case.
-  const file = resolveActiveFile(serverConfig.value?.appearance)
+  const file = resolveActiveFile(appearance)
   const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
 
   wallpaperActive.value = state === 'set'
@@ -1015,7 +1028,7 @@ function refreshWallpaper() {
   // URL first (keeps resolveWallpaperUrl's cache in sync), then the scrim /
   // panel-alpha CSS variables + wallpaper-active class.
   wallpaperUrl.value = resolveWallpaperUrl(file, false)
-  applyWallpaper(file, resolvePanelOpacity(appearance), dark, false)
+  applyWallpaper(file ?? '', resolvePanelOpacity(appearance), dark, false)
 
   scheduleBingFirstImagePoll()
 }
@@ -1023,14 +1036,14 @@ function refreshWallpaper() {
 // On a fresh install the Bing wallpaper is enabled but its first fetch runs in
 // the background, so the initial config has no image yet. Poll briefly so the
 // factory wallpaper appears on its own instead of requiring a manual refresh.
-let bingPollTimer = null
+let bingPollTimer: ReturnType<typeof setTimeout> | null = null
 let bingPollAttempts = 0
 const BING_POLL_MAX_ATTEMPTS = 20
 const BING_POLL_INTERVAL_MS = 5000
 
 function scheduleBingFirstImagePoll() {
   if (bingPollTimer) return
-  if (!isBingFirstImagePending(serverConfig.value?.appearance)) return
+  if (!isBingFirstImagePending((serverConfig.value?.appearance ?? {}) as Record<string, unknown>)) return
   if (bingPollAttempts >= BING_POLL_MAX_ATTEMPTS) return
 
   bingPollAttempts += 1
@@ -1081,7 +1094,7 @@ function closeOverlayAndSync() {
  * If the saved file can no longer be opened (deleted/moved), its stale record
  * is cleared so it isn't retried and re-reported on every launch/switch.
  */
-async function restoreProjectWorkspace(opts) {
+async function restoreProjectWorkspace(opts: { activateView?: boolean } = {}) {
   // activateView: on cold start (initializeApp) AND project switch
   // (hotSwitchProject) the app must land on the chat tab — restoring the last
   // opened file loads it into state but does NOT switch the user away from
@@ -1127,7 +1140,7 @@ const removeTaskHandler = onEvent((event, data) => {
 })
 
 // 取路径 basename 作为项目显示名（跨项目弹窗用）
-function projectBaseName(path) {
+function projectBaseName(path: string) {
     const trimmed = (path || '').replace(/[\\/]+$/, '')
     const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
     return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
@@ -1142,7 +1155,7 @@ function projectBaseName(path) {
 // 但服务端 replay buffer 里的旧 completed 事件仍会通过 WS 重放送达——
 // 那些是补发的历史通知，不是用户正在观看的实时完成，绝不能再弹窗。
 const completionPopover = useCompletionPopover()
-function handleCompletionEvent(event, data, skipReplay = false) {
+function handleCompletionEvent(event: string, data: ServerEventData, skipReplay = false) {
     if (!data || data.status !== 'completed') return
     if (event !== 'session_update' && event !== 'task_update') return
     // 重放阶段（页面刷新/断线重连补发的历史完成）不弹窗：
@@ -1225,7 +1238,7 @@ const disposeAndroidBackPress = useAndroidBackPress({
     showExitHint: () => toast.show(t('toast.swipeAgainToExit'), { icon: '👋', type: 'info', duration: 2000 }),
 })
 window.addEventListener('clawbench-reconnect', handleReconnect)
-const terminalRequestedCwd = ref(null)
+const terminalRequestedCwd = ref<string | null>(null)
 
 // Terminal keyboard height for detecting when soft keyboard is open in terminal tab.
 // Dock is hidden only when keyboard is open. Detection is driven by
@@ -1253,8 +1266,8 @@ const { chatKeyboardHeight } = useChatKeyboard()
 const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKeyboardHeight.value > 0)
 
 const quoteQuestion = useQuoteQuestion()
-const sessionDrawerRef = ref(null)
-const sessionSidebarRef = ref(null)
+const sessionDrawerRef = ref<InstanceType<typeof SessionDrawer> | null>(null)
+const sessionSidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
 
 // Register SessionDrawer ref so identity.openAgentSelector() works
 watch(sessionDrawerRef, (ref) => {
@@ -1273,7 +1286,7 @@ watch(sessionSidebarRef, (ref) => {
 // openAgentSelector is NOT registered here — it's handled via
 // registerSessionDrawerRef above, which is independent.
 
-function handleSessionSelect(sessionId, _backend, projectPath) {
+function handleSessionSelect(sessionId: string, _backend?: string, projectPath?: string) {
   // Cross-project selection: the session belongs to another project, so switch
   // projects first (hotSwitchProject's Phase 7 opens the session once the new
   // project's identity is ready). Must run BEFORE the already-active guard —
@@ -1299,7 +1312,7 @@ function handleSessionSelect(sessionId, _backend, projectPath) {
   sessionIdentity.sessionDrawer.close()
 }
 
-async function handleSessionCreate(agentId) {
+async function handleSessionCreate(agentId: string) {
   await sessionIdentity.createSession(agentId)
   const id = sessionIdentity.currentSessionId.value
   if (!id) return
@@ -1329,11 +1342,11 @@ function handleDrawerPin() {
   sessionSidebar.pinToSidebar()
 }
 
-function handleSessionArchive(sessionId, backend) {
+function handleSessionArchive(sessionId: string, backend?: string) {
   sessionIdentity.archiveSession(sessionId, backend)
 }
 
-function handleSessionDestroy(sessionId) {
+function handleSessionDestroy(sessionId: string) {
   sessionIdentity.destroySession(sessionId)
 }
 
@@ -1344,7 +1357,7 @@ const acpSessionDrawer = useTabDrawer('chat')
 const sessionSearchDrawer = useTabDrawer('chat', { autoRestore: false })
 const searchConfirmDialog = useDialog()
 
-function handleOpenFromSearch(session) {
+function handleOpenFromSearch(session: SessionSearchResult) {
   if (!session?.session_id) return
   sessionSearchDrawer.close()
   handleSessionSelect(session.session_id, session.backend)
@@ -1373,7 +1386,7 @@ async function handleRenameSession() {
   }
 }
 
-async function handleResumeFromSearch(session) {
+async function handleResumeFromSearch(session: SessionSearchResult) {
   if (!session?.session_id) return
   const title = session.session_title || gt('sessionSearch.untitledSession')
   const confirmed = await searchConfirmDialog.confirm(
@@ -1403,7 +1416,7 @@ async function handleResumeFromSearch(session) {
   }
 }
 
-async function handleDestroyFromSearch(session) {
+async function handleDestroyFromSearch(session: SessionSearchResult) {
   if (!session?.session_id) return
   const title = session.session_title || gt('sessionSearch.untitledSession')
   const confirmed = await searchConfirmDialog.confirm(
@@ -1418,7 +1431,7 @@ async function handleDestroyFromSearch(session) {
   sessionIdentity.destroySession(session.session_id)
 }
 
-async function handleAcpSessionSelect(sessionId) {
+async function handleAcpSessionSelect(sessionId: string) {
   await sessionIdentity.switchSession(sessionId)
   acpSessionDrawer.close()
 }
@@ -1443,8 +1456,8 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   document.addEventListener('click', handleOverflowOutsideClick)
-  window.addEventListener('clawbench-theme-change', async (e) => {
-      const resolved = e.detail
+  window.addEventListener('clawbench-theme-change', async (e: Event) => {
+      const resolved = (e as CustomEvent<string>).detail
       applyThemeAttributes(resolved)
       theme.value = resolved
       // Recompute the wallpaper scrim strength for the new light/dark base.
@@ -1466,13 +1479,18 @@ function registerAppEventListeners() {
       await initMermaid()
       await reRenderMermaid()
   })
-  window.addEventListener('clawbench-showhidden-change', (e) => {
-      showHidden.value = e.detail
+  window.addEventListener('clawbench-showhidden-change', (e: Event) => {
+      showHidden.value = (e as CustomEvent<boolean>).detail
   })
-  window.addEventListener('clawbench-sort-change', (e) => {
-      if (e.detail.field !== undefined) sortField.value = e.detail.field
-      if (e.detail.dir !== undefined) sortDir.value = e.detail.dir
+  window.addEventListener('clawbench-sort-change', (e: Event) => {
+      const detail = (e as CustomEvent<{ field?: string; dir?: string }>).detail
+      if (detail.field !== undefined) sortField.value = detail.field
+      if (detail.dir !== undefined) sortDir.value = detail.dir
   })
+  // Follow the system light/dark preference while the theme is 'auto'.
+  // Registered here (not in onMounted) because it is part of the global
+  // listener set that both cold start and post-login initialization install.
+  startSystemThemeWatcher()
 }
 
 /**
@@ -1481,6 +1499,10 @@ function registerAppEventListeners() {
  * Must complete BEFORE isAuthenticated is set to true (which triggers
  * ChatPanelContent mount and loadHistory).
  * Returns false if a fatal error occurred (callers should not set isAuthenticated).
+ *
+ * Callers must route this through guardStartupWithSplash(): an exception thrown
+ * here would otherwise reject the caller's async onMounted handler before it
+ * reaches dismissSplash(), leaving the native splash overlay up forever.
  */
 async function initializeApp() {
   // 1. Prerequisite data — must complete before UI renders
@@ -1524,21 +1546,35 @@ async function initializeApp() {
   return true
 }
 
+/** Report a fatal startup error to the user and to the client log relay. */
+function reportStartupFailure(context: string, err: unknown) {
+  appLog.e(TAG, `[${context}] app initialization failed:`, err)
+  toast.show(t('toast.initFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+}
+
 async function handleLoginSuccess() {
     // Full initialization BEFORE setting isAuthenticated — ensures
     // clawbench_project cookie, session identity, and all infrastructure
     // are ready before ChatPanelContent mounts and calls loadHistory().
-    if (!(await initializeApp())) return
+    // The guard dismisses the native splash on every exit path, so a failure
+    // can't strand the user on the splash overlay.
+    const ok = await guardStartupWithSplash({
+      initialize: initializeApp,
+      dismissSplash,
+      onError: (err) => reportStartupFailure('handleLoginSuccess', err),
+      // Flip auth before the splash fades so the app UI is already mounted
+      // behind it (the original ordering).
+      onReady: () => { isAuthenticated.value = true },
+    })
+    if (!ok) return
     // Clean up legacy localStorage keys (no longer used)
     Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
-    isAuthenticated.value = true
-    dismissSplash()
     await nextTick()
-    applyUIScale(localConfig.uiScale ?? 1)
+    applyUIScale(Number(localConfig.uiScale ?? 1))
     applyFontConfig()
     startDockResize()
     // Measure dock height and set --dock-height CSS variable for fixed-position elements
-    const dockWrapper = document.querySelector('.bottom-dock-wrapper')
+    const dockWrapper = document.querySelector<HTMLElement>('.bottom-dock-wrapper')
     if (dockWrapper) {
       const updateDockHeight = () => {
         const h = dockWrapper.offsetHeight
@@ -1557,9 +1593,9 @@ async function handleLoginSuccess() {
 
 const projectDialogOpen = ref(false)
 const shareLinkOpen = ref(false)
-const welcomeOverlay = ref(null)
-const upgradePromptOverlay = ref(null)
-const upgradeDialogRef = ref(null)
+const welcomeOverlay = ref<InstanceType<typeof WelcomeOverlay> | null>(null)
+const upgradePromptOverlay = ref<InstanceType<typeof UpgradePromptOverlay> | null>(null)
+const upgradeDialogRef = ref<InstanceType<typeof UpgradeDialog> | null>(null)
 
 async function checkForUpgrade() {
   const { checkForUpgradePrompt, state } = useUpgrade()
@@ -1636,11 +1672,11 @@ const tocFile = computed(() => {
 })
 
 // PDF TOC integration
-const fileOverlayRef = ref(null)
-const fileManagerRef = ref(null)
-const sessionSearchDrawerRef = ref(null)
+const fileOverlayRef = ref<InstanceType<typeof FileOverlay> | null>(null)
+const fileManagerRef = ref<InstanceType<typeof FileManagerContent> | null>(null)
+const sessionSearchDrawerRef = ref<InstanceType<typeof SessionSearchDrawer> | null>(null)
 const pdfOutline = computed(() => fileOverlayRef.value?.pdfOutline || [])
-function handleJumpPdfPage(pageNum) {
+function handleJumpPdfPage(pageNum: number) {
     fileOverlayRef.value?.pdfScrollToPage(pageNum)
 }
 
@@ -1681,7 +1717,7 @@ function toggleHidden() {
     store.loadFiles(store.state.currentDir, false, 0, true)
 }
 
-function handleToggleSort(field) {
+function handleToggleSort(field: string) {
     if (sortField.value === field) {
         if (sortDir.value === 'asc') {
             sortDir.value = 'desc'
@@ -1697,7 +1733,7 @@ function handleToggleSort(field) {
     setSetting('sortDir', sortDir.value)
 }
 
-async function handleNavigateDir(path) {
+async function handleNavigateDir(path: string) {
     await store.navigateToDir(path)
 }
 
@@ -1799,7 +1835,7 @@ const {
 } = navCoordinator
 
 /** FileHeader「设置为主题背景」：把当前图片拷贝为服务器全局背景。 */
-async function handleSetAsBackground(path) {
+async function handleSetAsBackground(path: string) {
     try {
         await setWallpaperFromPath(path)
         await loadConfig()
@@ -1824,7 +1860,10 @@ async function handleFileHistoryForward() {
 
 
 
-function onTaskCardClick(taskId) {
+// Task cards carry a numeric task id: ContentBlocks emits summaryTaskIDs
+// (taskIDs?: number[]) and blockTasks[].taskId, both numbers end-to-end from
+// the backend's TaskIDs []int64. No coercion needed.
+function onTaskCardClick(taskId: number) {
     // Task cards appear inside chat messages (scheduled-task-card), so this is
     // a chat→tasks jump. Record the chat origin so Back returns the user
     // straight to the conversation.
@@ -1833,7 +1872,7 @@ function onTaskCardClick(taskId) {
     switchTab('tasks')
 }
 
-async function handleRename({ path, name }) {
+async function handleRename({ path, name }: { path: string; name: string }) {
     try {
         await store.renameFile(path, name)
     } catch (err) {
@@ -1841,7 +1880,7 @@ async function handleRename({ path, name }) {
     }
 }
 
-async function handleDelete(path) {
+async function handleDelete(path: string) {
     const wasOverlay = fileNav.overlayOpen.value
     try {
         await store.deleteFile(path)
@@ -1861,7 +1900,7 @@ async function handleDelete(path) {
     }
 }
 
-async function handleBatchDelete(paths) {
+async function handleBatchDelete(paths: string[]) {
     try {
         await store.deleteFiles(paths)
         for (const p of paths) removeRecentFile(p)
@@ -1881,26 +1920,21 @@ function handleDockTerminal() {
 
 // Overflow menu state
 const overflowMenuOpen = ref(false)
-const overflowBtnRef = ref(null)
-const overflowTabs = computed(() => {
-  const tabs = ['forge', 'tasks']
-  if (!isTerminalDisabled.value) tabs.push('terminal')
-  if (!isSSHDisabled.value) tabs.push('proxy')
-  tabs.push('stats')
-  tabs.push('settings')
-  return tabs
-})
-const overflowTabMeta = {
-  forge:   { icon: Github, titleKey: 'nav.forge' },
-  tasks:   { icon: Clock, titleKey: 'nav.tasks' },
-  proxy:   { icon: Network, titleKey: 'nav.portForward' },
-  terminal:{ icon: TerminalIcon, titleKey: 'terminal.title' },
-  stats:   { icon: BarChart3, titleKey: 'nav.stats' },
-  settings:{ icon: Settings, titleKey: 'nav.settings' },
-}
+const overflowBtnRef = ref<HTMLElement | null>(null)
+// Secondary (non-primary) dock tabs, in registry order, minus the ones the
+// current runtime has disabled. The render list, the switch whitelist and the
+// icon/title lookups all derive from DOCK_TABS — see composables/dockTabs.ts.
+// The filtering itself lives in secondaryDockTabs() so a test can assert the
+// render list stays a subset of the switch whitelist.
+const overflowTabs = computed(() =>
+  secondaryDockTabs({
+    terminalDisabled: isTerminalDisabled.value,
+    sshDisabled: isSSHDisabled.value,
+  }),
+)
 
 // Responsive dock overflow — ResizeObserver drives inline promotion
-const dockRef = ref(null)
+const dockRef = ref<HTMLElement | null>(null)
 const {
   inlineOverflowTabs,
   popupOverflowTabs,
@@ -1933,7 +1967,7 @@ watch(() => localConfig.uiScale, () => {
   requestAnimationFrame(() => {
     startDockResize()
     // Also update --dock-height CSS variable for fixed-position elements
-    const dw = document.querySelector('.bottom-dock-wrapper')
+    const dw = document.querySelector<HTMLElement>('.bottom-dock-wrapper')
     if (dw) {
       const h = dw.offsetHeight
       document.documentElement.style.setProperty('--dock-height', h ? `${h}px` : '0px')
@@ -1942,19 +1976,20 @@ watch(() => localConfig.uiScale, () => {
 })
 
 // Helpers for dynamic inline overflow buttons
-function dockTabIcon(tab) {
+function dockTabIcon(tab: string) {
   // The forge tab serves both GitHub and GitLab. GitHub is the default brand
   // (including before a repository is bound); the icon only switches to GitLab
   // once a GitLab repository is actually bound.
   if (tab === 'forge') {
     return forgeDockIconKind(forgePlatform.value) === 'gitlab' ? Gitlab : Github
   }
-  return overflowTabMeta[tab]?.icon ?? Clock
+  return dockTabMeta(tab)?.icon ?? Clock
 }
-function dockTabTitle(tab) {
-  return overflowTabMeta[tab] ? t(overflowTabMeta[tab].titleKey) : ''
+function dockTabTitle(tab: string) {
+  const meta = dockTabMeta(tab)
+  return meta ? t(meta.titleKey) : ''
 }
-function dockInlineOverflowBtnClass(tab) {
+function dockInlineOverflowBtnClass(tab: string) {
   return {
     active: activeTab.value === tab,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab.value !== 'tasks',
@@ -1962,7 +1997,7 @@ function dockInlineOverflowBtnClass(tab) {
     'has-running': tab === 'tasks' && store.state.taskRunning && activeTab.value !== 'tasks',
   }
 }
-function handleInlineOverflowClick(tab) {
+function handleInlineOverflowClick(tab: string) {
   if (tab === 'terminal') {
     handleDockTerminal()
   } else {
@@ -2001,7 +2036,7 @@ watch(isWideScreen, (val) => {
     // display:none → visible transition, see the keyboard safety-net comment).
     nextTick(() => {
       startDockResize()
-      const dw = document.querySelector('.bottom-dock-wrapper')
+      const dw = document.querySelector<HTMLElement>('.bottom-dock-wrapper')
       if (dw) {
         const h = dw.offsetHeight
         document.documentElement.style.setProperty('--dock-height', h ? `${h}px` : '0px')
@@ -2015,12 +2050,14 @@ registerWideScreenCallbacks({
   setActiveTab: (tab) => { activeTab.value = tab },
   sideEffects: (tab) => {
     if (tab === 'browse') store.loadFiles(store.state.currentDir, false, 0, true)
-    if (tab === 'tasks') { store.state.taskUnreadCount = 0; loadTasks() }
+    // No zeroing here: see the narrow-mode switchTab note. The badge is
+    // re-derived from the server by loadTasks().
+    if (tab === 'tasks') loadTasks()
   },
 })
 
 // ── Wide-screen vertical dock helpers ──
-function handleWideDockTabClick(tab) {
+function handleWideDockTabClick(tab: string) {
   // Clicking the already-active tab toggles the left pane collapsed (VS Code-style).
   // Clicking a different tab expands (if needed) and switches to it.
   if (tab === leftTab.value) {
@@ -2039,7 +2076,7 @@ function handleWideDockTabClick(tab) {
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
 const { addAttachedFile } = useChatContext()
-const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead } = useForgeUnread()
+const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
@@ -2048,12 +2085,14 @@ const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBindi
 // default — the user selects the part they care about, then types their message.
 // The bar is global (position: fixed), so no tab switch is needed on open; the
 // add path switches to chat via onAdd.
-function handleForgeQuote(payload) {
+function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
   const it = payload?.item
   if (!it) return
   quoteQuestion.openComposer({
     url: it.url,
-    label: `${it.slug}#${it.number}`,
+    // A pipeline run has no issue/PR number, so its caller supplies a label
+    // that names the run; otherwise `slug#number` would read like a PR number.
+    label: it.label ?? `${it.slug}#${it.number}`,
     onAdd: () => switchTab('chat'),
   })
 }
@@ -2061,7 +2100,7 @@ function handleForgeQuote(payload) {
 // "Quote in chat" from the file browser header. Same composer as the forge
 // header, but the attachment is the local file instead of an external URL, and
 // no quote text is pre-filled — the user types the instruction themselves.
-function handleFileQuoteInChat(path) {
+function handleFileQuoteInChat(path: string) {
   if (!path) return
   quoteQuestion.openComposer({
     filePath: path,
@@ -2074,12 +2113,12 @@ const chatDropActive = ref(false)
 let chatDropCounter = 0
 
 /** Whether a drag event carries OS files (dragged from the file manager / desktop). */
-function isOSFileDrop(e) {
+function isOSFileDrop(e: DragEvent) {
   const types = e.dataTransfer?.types
   return !!types && Array.from(types).includes('Files')
 }
 
-function onChatColDragEnter(e) {
+function onChatColDragEnter(e: DragEvent) {
   const internal = hasAttachDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
@@ -2088,7 +2127,7 @@ function onChatColDragEnter(e) {
   chatDropActive.value = true
 }
 
-function onChatColDragOver(e) {
+function onChatColDragOver(e: DragEvent) {
   // Allow the drop for internal attach drags (wide-screen) and OS file drops.
   const internal = hasAttachDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
@@ -2104,7 +2143,7 @@ function onChatColDragLeave() {
   }
 }
 
-function onChatColDrop(e) {
+function onChatColDrop(e: DragEvent) {
   chatDropCounter = 0
   chatDropActive.value = false
   // Internal attach drag (from the file manager) → attach the referenced path.
@@ -2128,30 +2167,25 @@ function onChatColDrop(e) {
   }
 }
 
-const wideScreenTabMeta = {
-  browse: { icon: FolderOpen, titleKey: 'nav.fileManager' },
-  view: { icon: FileText, titleKey: 'nav.fileView' },
-  history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
-  forge: overflowTabMeta.forge,
-  tasks: overflowTabMeta.tasks,
-  proxy: overflowTabMeta.proxy,
-  terminal: overflowTabMeta.terminal,
-  stats: overflowTabMeta.stats,
-  settings: overflowTabMeta.settings,
+// Registry lookup shared by both docks (narrow + wide). Returns undefined for
+// unknown ids so callers can apply their own fallback icon.
+function dockTabMeta(tab: string) {
+  return dockTabWithIcon(tab)
 }
 
-function wideDockTabIcon(tab) {
+function wideDockTabIcon(tab: string) {
   // Route forge through the same platform-aware logic as the compact dock, so
   // the wide-screen dock shows the GitHub/GitLab brand too.
   if (tab === 'forge') return dockTabIcon('forge')
-  return wideScreenTabMeta[tab]?.icon ?? FolderOpen
+  return dockTabMeta(tab)?.icon ?? FolderOpen
 }
-function wideDockTabTitle(tab) {
-  return wideScreenTabMeta[tab] ? t(wideScreenTabMeta[tab].titleKey) : ''
+function wideDockTabTitle(tab: string) {
+  const meta = dockTabMeta(tab)
+  return meta ? t(meta.titleKey) : ''
 }
 /** Chat toggle button tooltip: points at the action that will happen on click. */
 const chatToggleTitle = computed(() => (chatCollapsed.value ? t('nav.showChat') : t('nav.hideChat')))
-function wideDockBtnClass(tab) {
+function wideDockBtnClass(tab: string) {
   return {
     // When the left pane is collapsed no dock tab is active (VS Code-style).
     active: leftTab.value === tab && !leftCollapsed.value,
@@ -2160,7 +2194,9 @@ function wideDockBtnClass(tab) {
     'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
   }
 }
-function wideDockBadgeCount(tab) {
+// Badge lookups shared by the narrow popup, the inline overflow buttons and the
+// wide-screen dock. One switch per concern instead of one per dock.
+function dockTabBadgeCount(tab: string) {
   switch (tab) {
     case 'history': return store.state.gitWorkingTreeChangeCount
     case 'forge': return forgeUnreadCount.value
@@ -2170,10 +2206,7 @@ function wideDockBadgeCount(tab) {
     default: return 0
   }
 }
-function wideDockBadgeVisible(tab) {
-  return wideDockBadgeCount(tab) > 0 && leftTab.value !== tab
-}
-function wideDockBadgeAnim(tab) {
+function dockTabBadgeAnim(tab: string) {
   switch (tab) {
     case 'history': return historyBadgeAnim.value
     case 'forge': return forgeBadgeAnim.value
@@ -2183,7 +2216,7 @@ function wideDockBadgeAnim(tab) {
     default: return false
   }
 }
-function wideDockBadgeAnimEnd(tab) {
+function dockTabBadgeAnimEnd(tab: string) {
   switch (tab) {
     case 'history': historyBadgeAnim.value = false; break
     case 'forge': forgeBadgeAnim.value = false; break
@@ -2191,6 +2224,9 @@ function wideDockBadgeAnimEnd(tab) {
     case 'terminal': terminalBadgeAnim.value = false; break
     case 'proxy': proxyBadgeAnim.value = false; break
   }
+}
+function wideDockBadgeVisible(tab: string) {
+  return dockTabBadgeCount(tab) > 0 && leftTab.value !== tab
 }
 const wideDockActiveIndex = computed(() => {
   // Visible order mirrors the rendered dock: fixed primary tabs + all secondary tabs.
@@ -2206,7 +2242,7 @@ const wideDockIndicatorStyle = computed(() => ({
 
 const isOverflowTabActive = computed(() => popupOverflowTabs.value.includes(activeTab.value))
 
-const overflowPopupStyle = computed(() => {
+const overflowPopupStyle = computed<CSSProperties>(() => {
   const btn = overflowBtnRef.value
   if (!btn) return {}
   const rect = btn.getBoundingClientRect()
@@ -2221,7 +2257,7 @@ const overflowPopupStyle = computed(() => {
 const overflowButtonIcon = computed(() => {
   // If active tab is in the popup, show its icon on the overflow button
   if (popupOverflowTabs.value.includes(activeTab.value)) {
-    return overflowTabMeta[activeTab.value]?.icon ?? MoreHorizontal
+    return dockTabMeta(activeTab.value)?.icon ?? MoreHorizontal
   }
   return MoreHorizontal
 })
@@ -2235,7 +2271,7 @@ const terminalBadgeAnim = ref(false)
 const proxyBadgeAnim = ref(false)
 const overflowBadgeAnim = ref(false)
 
-function triggerBadgeAnim(animRef) {
+function triggerBadgeAnim(animRef: { value: boolean }) {
   animRef.value = false
   nextTick(() => { animRef.value = true })
 }
@@ -2278,7 +2314,8 @@ const overflowBadgeCount = computed(() => {
 
 const overflowButtonTitle = computed(() => {
   if (popupOverflowTabs.value.includes(activeTab.value)) {
-    return overflowTabMeta[activeTab.value] ? t(overflowTabMeta[activeTab.value].titleKey) : t('nav.more')
+    const meta = dockTabMeta(activeTab.value)
+    return meta ? t(meta.titleKey) : t('nav.more')
   }
   return t('nav.more')
 })
@@ -2294,7 +2331,7 @@ function toggleOverflowMenu() {
   }
 }
 
-function handleOverflowSelect(tab) {
+function handleOverflowSelect(tab: string) {
   if (activeTab.value === tab) {
     // Already on this tab, just close the menu
     overflowMenuOpen.value = false
@@ -2309,12 +2346,13 @@ function handleOverflowSelect(tab) {
 }
 
 // Close overflow menu on outside click
-function handleOverflowOutsideClick(e) {
-  if (overflowMenuOpen.value && !e.target.closest('.dock-overflow-popup') && !e.target.closest('.dock-overflow-btn')) {
+function handleOverflowOutsideClick(e: MouseEvent) {
+  const target = e.target as Element | null
+  if (overflowMenuOpen.value && !target?.closest('.dock-overflow-popup') && !target?.closest('.dock-overflow-btn')) {
     overflowMenuOpen.value = false
   }
   // Close any open table block copy menus (dropdowns injected into markdown)
-  if (!e.target.closest('.table-block-copy-menu') && !e.target.closest('.table-block-copy-btn')) {
+  if (!target?.closest('.table-block-copy-menu') && !target?.closest('.table-block-copy-btn')) {
     closeAllTableBlockMenus()
   }
 }
@@ -2322,15 +2360,15 @@ function handleOverflowOutsideClick(e) {
 // ── Wide-screen dock overflow state ──
 // (None — the wide vertical dock always renders every tab inline.)
 
-function handleOpenTerminal(cwd) {
+function handleOpenTerminal(cwd?: string | null) {
     terminalRequestedCwd.value = cwd || null
     switchTab('terminal')
 }
 
-let activeLineScrollCancel = null
+let activeLineScrollCancel: (() => void) | null = null
 let lineScrollRequestId = 0
 
-function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, anchorId, lineRanges) {
+function scrollToLine(line: number, lineEnd?: number, path: string | undefined = store.state.currentFile?.path, anchorId?: string, lineRanges?: string) {
     const startLine = Math.max(1, line)
     const endLine = Math.min(lineEnd && lineEnd > startLine ? lineEnd : startLine, startLine + 200)
     // Multi-range annotations flash every listed line (clamped to a sane cap);
@@ -2352,8 +2390,8 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
         if (activeLineScrollCancel === cleanup) activeLineScrollCancel = null
     }
 
-    function onHandled(e) {
-        if (e.detail?.requestId !== requestId) return
+    function onHandled(e: Event) {
+        if ((e as CustomEvent<{ requestId?: number }>).detail?.requestId !== requestId) return
         handled = true
         cleanup()
     }
@@ -2410,7 +2448,7 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
 }
 
 /** Find a heading anchor inside the content container for `path` (if any). */
-function findVisibleAnchorEl(id, path) {
+function findVisibleAnchorEl(id: string, path?: string) {
     if (!id) return null
     if (path) {
         const containers = document.querySelectorAll(`[data-file-path="${escAttr(path)}"]`)
@@ -2423,21 +2461,30 @@ function findVisibleAnchorEl(id, path) {
 }
 
 /** Minimal CSS-identifier escaping without relying on global `CSS` (absent in jsdom). */
-function escId(id) {
+function escId(id: string) {
     if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(id)
     return String(id).replace(/["'\\]/g, '')
 }
 // For attribute selectors the value is literal — only quotes/backslashes matter.
-function escAttr(value) {
+function escAttr(value: string) {
     return String(value).replace(/["\\]/g, '')
 }
 
 
 
-async function applyTheme(t) {
-    const resolved = resolveThemeId(t)
-    applyThemeAttributes(resolved)
-    setSetting('theme', t)
+/**
+ * Mount-time theme application.
+ *
+ * Applies the *stored* value (which may be 'auto') and syncs the native shell
+ * and mermaid to the resolved ID. Deliberately does not persist — the stored
+ * value is owned by useSettingsConfig (`setLocalConfig('theme', …)` → side
+ * effect → the `clawbench-theme-change` listener below). Persisting the
+ * resolved ID here would overwrite a stored 'auto' with 'github-light' /
+ * 'github-dark' and permanently pin the theme, so the app would never follow
+ * the system again (issue #458).
+ */
+async function applyStoredThemeOnMount() {
+    const resolved = applyStoredTheme()
     const palette = buildThemePalette(resolved)
     getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
     const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
@@ -2451,24 +2498,23 @@ function dismissSplash() {
 }
 
 provide('theme', theme)
-provide('applyTheme', applyTheme)
 provide('activeTab', activeTab)
 provide('switchTab', switchTab)
 provide('hotSwitchProject', hotSwitchProject)
 
 // Lightbox — expose open/openMdImages/openSvg via ref and provide at App level
 // so TableRowModal (in <main> subtree, not Lightbox's subtree) can inject them
-const lightboxRef = ref(null)
-provide('openLightbox', (url, svg) => lightboxRef.value?.open(url, svg))
-provide('openSvgLightbox', (svg) => lightboxRef.value?.openSvg(svg))
-provide('openMdImages', (imgs, idx) => lightboxRef.value?.openMdImages(imgs, idx))
+const lightboxRef = ref<InstanceType<typeof Lightbox> | null>(null)
+provide('openLightbox', (url: string, svg?: string) => lightboxRef.value?.open(url, svg))
+provide('openSvgLightbox', (svg: string) => lightboxRef.value?.openSvg(svg))
+provide('openMdImages', (imgs: string[], idx: number) => lightboxRef.value?.openMdImages(imgs, idx))
 
 function handleOpenFileManager() {
     switchTab('browse')
 }
 
-function handleNavigateToCommit(e) {
-    const sha = e?.detail?.sha
+function handleNavigateToCommit(e: Event) {
+    const sha = (e as CustomEvent<{ sha?: string }>)?.detail?.sha
     if (!sha) return
     // Record the surface this commit jump came from so Back (header / edge
     // swipe / Android) returns the user straight there. Chat/task/history jumps
@@ -2493,8 +2539,8 @@ function handleNavigateToCommit(e) {
     switchTab('history')
 }
 
-function playQuoteEmitAnimation(e) {
-  const { from, to } = e?.detail ?? {}
+function playQuoteEmitAnimation(e?: Event) {
+  const { from, to } = (e as CustomEvent<{ from?: { x: number; y: number }; to?: { x: number; y: number } }>)?.detail ?? {}
   if (!from || !to) return
   const x0 = from.x, y0 = from.y, x1 = to.x, y1 = to.y
   const mx = (x0 + x1) / 2
@@ -2509,7 +2555,7 @@ function playQuoteEmitAnimation(e) {
   `
   document.body.appendChild(dot)
   const duration = 420, start = performance.now()
-  function animate(now) {
+  function animate(now: number) {
     const t = Math.min((now - start) / duration, 1)
     const ease = 1 - Math.pow(1 - t, 3)
     const x = (1 - ease) ** 2 * x0 + 2 * (1 - ease) * ease * mx + ease ** 2 * x1
@@ -2517,7 +2563,7 @@ function playQuoteEmitAnimation(e) {
     const scale = t < 0.1 ? t / 0.1 : t > 0.85 ? 1 - (t - 0.85) / 0.15 : 1
     const opacity = t < 0.08 ? t / 0.08 : t > 0.7 ? 1 - (t - 0.7) / 0.3 : 1
     dot.style.transform = `translate(${x - 4}px, ${y - 4}px) scale(${scale})`
-    dot.style.opacity = opacity
+    dot.style.opacity = String(opacity)
     if (t < 1) requestAnimationFrame(animate)
     else {
       dot.remove()
@@ -2531,8 +2577,16 @@ function playQuoteEmitAnimation(e) {
   requestAnimationFrame(animate)
 }
 
+// The forge badge is scoped to the project's bound repository, so it must be
+// re-derived when the project changes — otherwise the previous project's count
+// would linger over a panel showing a different repository.
+watch(() => store.state.projectRoot, () => {
+    void refreshForgeUnread()
+    void refreshForgePlatform()
+})
+
 onMounted(async () => {
-    applyTheme(theme.value)
+    applyStoredThemeOnMount()
     // Prime the forge unread badge (server-authoritative; independent of the
     // notification toggles) and the bound platform (drives the dock icon).
     void refreshForgeUnread()
@@ -2547,6 +2601,8 @@ onMounted(async () => {
         } else {
             toast.show(t('toast.serverUnreachableWeb'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
         }
+        // Login view stays mounted — drop the native splash so it can't cover it.
+        dismissSplash()
         return
     }
     if (!resp.ok) {
@@ -2558,10 +2614,10 @@ onMounted(async () => {
                         const loginRes = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: savedPwd }) })
                         if (loginRes.ok) {
                             await getNative()?.setSSHPassword?.(savedPwd)
-                        } else { isAuthenticated.value = false; return }
-                    } catch { isAuthenticated.value = false; return }
-                } else { isAuthenticated.value = false; return }
-            } else { isAuthenticated.value = false; return }
+                        } else { isAuthenticated.value = false; dismissSplash(); return }
+                    } catch { isAuthenticated.value = false; dismissSplash(); return }
+                } else { isAuthenticated.value = false; dismissSplash(); return }
+            } else { isAuthenticated.value = false; dismissSplash(); return }
         } else {
             isAuthenticated.value = false
             if (isAppMode.value) {
@@ -2569,6 +2625,7 @@ onMounted(async () => {
             } else {
                 toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
             }
+            dismissSplash()
             return
         }
     }
@@ -2578,11 +2635,19 @@ onMounted(async () => {
     // so that ChatPanelContent mounts only when the clawbench_project cookie
     // and session identity are already available. This prevents loadHistory()
     // from firing with missing cookies (Android first-login bug).
-    if (!(await initializeApp())) return
-    isAuthenticated.value = true
-    dismissSplash()
+    // The guard dismisses the native splash on every exit path, so a failure
+    // can't strand the user on the splash overlay.
+    const initOk = await guardStartupWithSplash({
+        initialize: initializeApp,
+        dismissSplash,
+        onError: (err) => reportStartupFailure('onMounted', err),
+        // Flip auth before the splash fades so the app UI is already mounted
+        // behind it (the original ordering).
+        onReady: () => { isAuthenticated.value = true },
+    })
+    if (!initOk) return
     await nextTick()
-    applyUIScale(localConfig.uiScale ?? 1)
+    applyUIScale(Number(localConfig.uiScale ?? 1))
     applyFontConfig()
     startDockResize()
     welcomeOverlay.value?.show()
@@ -2590,7 +2655,7 @@ onMounted(async () => {
 
     // Handle pending navigation from push notification deep link
     // (cross-project reload or cold start via native bridge)
-    const processPendingSessionNav = (navSessionId) => {
+    const processPendingSessionNav = (navSessionId: string) => {
       // Wait for sessions to load before switching (max 3 seconds)
       let attempts = 0
       const checkReady = () => {
@@ -2605,7 +2670,7 @@ onMounted(async () => {
       checkReady()
     }
 
-    const processPendingTaskNav = async (navTaskId, navExecutionId) => {
+    const processPendingTaskNav = async (navTaskId?: string, navExecutionId?: string) => {
       // Ensure tasks are loaded before navigating
       try {
         await loadTasks()
@@ -2736,13 +2801,18 @@ function toggleViewSearch() {
     openFileSearch()
   }
 }
-function handleCtrlF(e) {
+function handleCtrlF(e: KeyboardEvent) {
     if (!(e.ctrlKey || e.metaKey) || e.key !== 'f') return
     // Skip when focus is in input/textarea/contenteditable/terminal
-    const tag = e.target?.tagName
+    const target = e.target as HTMLElement | null
+    const tag = target?.tagName
     if (tag === 'INPUT' || tag === 'TEXTAREA') return
-    if (e.target?.isContentEditable) return
-    if (e.target?.closest?.('.terminal-panel')) return
+    if (target?.isContentEditable) return
+    // Optional call, not just optional chain: a keydown dispatched on
+    // `document` has an EventTarget (not an Element) as its target, and
+    // EventTarget has no `closest`. Same guard as the sibling copies in
+    // ChatMessageList/ChatPanelContent.
+    if (target?.closest?.('.terminal-panel')) return
     // Skip when modal dialog or project dialog is open
     if (_dlg.state.value.visible || projectDialogOpen.value) return
 
@@ -2787,7 +2857,7 @@ function handleCtrlF(e) {
      if (window.innerHeight > 0) seedFullHeight(window.innerHeight)
  })
 
-let stopLocalLinkGuard = null
+let stopLocalLinkGuard: (() => void) | null = null
 
 onUnmounted(() => {
     stopLocalLinkGuard?.()
@@ -3303,16 +3373,16 @@ onUnmounted(() => {
     pointer-events: none;
 }
 
+/* Shape/geometry comes from the shared .count-badge; this rule keeps only the
+   dot-reset (the base .dock-badge is an 8px circle) and the corner offset.
+   The pill radius is re-declared on purpose: the scoped `.dock-badge` rule above
+   sets `border-radius: 50%`, and a scoped selector outranks the global
+   `.count-badge`, so without this the badge would render as an ellipse. */
 .dock-badge-count {
     width: auto;
     height: auto;
-    min-width: 16px;
-    padding:0 var(--space-2);
-    border-radius: var(--radius-sm);
-    font-size: var(--font-size-2xs);
+    border-radius: var(--radius-full);
     font-weight: var(--font-weight-bold);
-    line-height: 16px;
-    text-align: center;
     color: #fff;
     top: -4px;
     right: -6px;
@@ -3462,16 +3532,9 @@ onUnmounted(() => {
 
 .dock-overflow-count {
     margin-left: auto;
-    min-width: 18px;
-    padding: 0 5px;
-    border-radius: var(--radius-md);
     background: var(--accent-color);
     color: #fff;
-    font-size: var(--font-size-xs);
     font-weight: var(--font-weight-bold);
-    line-height: 18px;
-    text-align: center;
-    flex-shrink: 0;
 }
 
 

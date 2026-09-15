@@ -72,11 +72,11 @@ describe('useForgeUnread', () => {
     // it back. A live event must re-derive the server count.
     mockFetchUnread.mockResolvedValue({ count: 2 })
     mockMarkRead.mockResolvedValue({ count: 0 })
-    const { forgeUnreadCount, refresh, markRead, onForgeEvent } = useForgeUnread()
+    const { forgeUnreadCount, refresh, markAllRead, onForgeEvent } = useForgeUnread()
     await refresh()
     expect(forgeUnreadCount.value).toBe(2)
 
-    await markRead()
+    await markAllRead()
     expect(forgeUnreadCount.value).toBe(0)
 
     // A new event arrives while the user is on another tab.
@@ -91,32 +91,121 @@ describe('useForgeUnread', () => {
     expect(forgeUnreadCount.value).toBe(1)
   })
 
-  it('markRead clears optimistically and persists', async () => {
+  it('markAllRead clears optimistically and persists', async () => {
     mockFetchUnread.mockResolvedValue({ count: 4 })
     mockMarkRead.mockResolvedValue({ count: 0 })
-    const { forgeUnreadCount, refresh, markRead } = useForgeUnread()
+    const { forgeUnreadCount, refresh, markAllRead } = useForgeUnread()
     await refresh()
     expect(forgeUnreadCount.value).toBe(4)
 
-    await markRead()
+    await markAllRead()
     expect(forgeUnreadCount.value).toBe(0)
     expect(mockMarkRead).toHaveBeenCalledTimes(1)
   })
 
-  it('markRead is a no-op when already zero', async () => {
-    const { markRead } = useForgeUnread()
-    await markRead()
-    expect(mockMarkRead).not.toHaveBeenCalled()
+  it('a failed markAllRead restores the previous count', async () => {
+    // The badge must not claim everything was seen when the write failed.
+    mockFetchUnread.mockResolvedValue({ count: 2 })
+    const { forgeUnreadCount, refresh, markAllRead } = useForgeUnread()
+    await refresh()
+    expect(forgeUnreadCount.value).toBe(2)
+
+    mockMarkRead.mockRejectedValue(new Error('offline'))
+    await expect(markAllRead()).rejects.toThrow()
+
+    expect(forgeUnreadCount.value).toBe(2, 'a failed clear must roll back')
   })
 
-  it('a failed markRead re-syncs from the server', async () => {
-    mockFetchUnread.mockResolvedValue({ count: 2 })
-    mockMarkRead.mockRejectedValue(new Error('fail'))
-    const { forgeUnreadCount, refresh, markRead } = useForgeUnread()
+  it('a mark-all already in flight is reused, not re-issued', async () => {
+    // The items list and the pipeline list clear the same repo-level state.
+    // Normally the second call short-circuits on the "already zero" guard, but
+    // if a refresh repopulates the count in between, the in-flight guard is what
+    // still prevents a second write.
+    mockFetchUnread.mockResolvedValue({ count: 3 })
+    const { forgeUnreadCount, refresh, markAllRead } = useForgeUnread()
     await refresh()
-    mockFetchUnread.mockResolvedValue({ count: 2 })
-    await markRead()
-    // After the failed clear, the refresh restores the authoritative count.
+    expect(forgeUnreadCount.value).toBe(3)
+
+    let resolveWrite: (v: { count: number }) => void = () => {}
+    mockMarkRead.mockReturnValue(new Promise(res => { resolveWrite = res }))
+
+    const first = markAllRead()
+    expect(forgeUnreadCount.value).toBe(0, 'the clear is optimistic')
+
+    // Simulate a refresh landing between the two calls and repopulating the
+    // count — without the in-flight guard this would fire a second write.
+    forgeUnreadCount.value = 7
+    const second = markAllRead()
+
+    resolveWrite({ count: 0 })
+    await Promise.all([first, second])
+
+    expect(mockMarkRead).toHaveBeenCalledTimes(1,
+      'a second caller must reuse the in-flight write')
+    expect(forgeUnreadCount.value).toBe(0)
+  })
+
+  it('a refresh issued before the clear cannot restore the old count', async () => {
+    // The race: a debounced WS refetch is in flight when the user clicks
+    // "mark all read". Its response predates the write, so it must not win.
+    mockFetchUnread.mockResolvedValue({ count: 5 })
+    const { forgeUnreadCount, refresh, markAllRead } = useForgeUnread()
+    await refresh()
+    expect(forgeUnreadCount.value).toBe(5)
+
+    let resolveStale: (v: { count: number }) => void = () => {}
+    mockFetchUnread.mockReturnValue(new Promise(res => { resolveStale = res }))
+    const staleRefresh = refresh()          // in flight, still 5 on the server
+
+    mockMarkRead.mockResolvedValue({ count: 0 })
+    await markAllRead()
+    expect(forgeUnreadCount.value).toBe(0)
+
+    // The stale GET lands after the clear.
+    resolveStale({ count: 5 })
+    await staleRefresh
+
+    expect(forgeUnreadCount.value).toBe(0,
+      'a response that predates the clear must not restore the old count')
+  })
+})
+
+describe('useForgeUnread markAllRead (mark all in the bound repository)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useForgeUnread().forgeUnreadCount.value = 0
+  })
+
+  it('marks read with no itemKey, which the server treats as "all"', async () => {
+    mockMarkRead.mockResolvedValue({ count: 0 })
+    const { forgeUnreadCount, markAllRead } = useForgeUnread()
+    forgeUnreadCount.value = 4
+
+    await markAllRead()
+
+    // No argument: the whole repository, not one item.
+    expect(mockMarkRead).toHaveBeenCalledWith()
+    expect(forgeUnreadCount.value).toBe(0)
+  })
+
+  it('settles on the server-reported remainder rather than assuming zero', async () => {
+    // Activity can arrive while the request is in flight; the response is the
+    // authoritative remainder, so the badge must use it.
+    mockMarkRead.mockResolvedValue({ count: 2 })
+    const { forgeUnreadCount, markAllRead } = useForgeUnread()
+    forgeUnreadCount.value = 4
+
+    await markAllRead()
+
     expect(forgeUnreadCount.value).toBe(2)
+  })
+
+  it('is a no-op when there is nothing unread', async () => {
+    // Clearing an already-zero repo is a wasted write.
+    mockMarkRead.mockResolvedValue({ count: 0 })
+    const { forgeUnreadCount, markAllRead } = useForgeUnread()
+    forgeUnreadCount.value = 0
+    await markAllRead()
+    expect(mockMarkRead).not.toHaveBeenCalled()
   })
 })

@@ -35,7 +35,7 @@ func codebuddyACPAgent() *model.Agent {
 		Backend:              "codebuddy",
 		Transport:            "acp-stdio",
 		AcpCommand:           "codebuddy --acp",
-		Models:                []model.AgentModel{{ID: "glm-4-plus", Name: "glm-4-plus", Default: true}},
+		Models:               []model.AgentModel{{ID: "glm-4-plus", Name: "glm-4-plus", Default: true}},
 		ThinkingEffortLevels: []string{"low", "medium", "high"},
 	}
 }

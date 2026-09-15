@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -18,7 +20,7 @@ import (
 
 func TestServeUpgradeCheck_Success(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
@@ -28,8 +30,8 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 	upgradeCheckInstallDirWrit = func() (string, error) { return "/usr/local/bin", nil }
 	upgradeIsDocker = func() bool { return false }
 
-	upgradeCheckForUpgrade = func() (string, string, error) {
-		return "1.0.0", "1.1.0", nil
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.0.0", LatestVersion: "1.1.0"}, nil
 	}
 	upgradeCompareVersions = func(a, b string) int {
 		if a < b {
@@ -53,6 +55,51 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 	assert.Equal(t, true, resp["install_writable"])
 	assert.Equal(t, "/usr/local/bin", resp["install_dir"])
 	assert.Equal(t, false, resp["is_docker"])
+	assert.Equal(t, "", resp["verification_warning"], "a verified release must carry no warning")
+	assert.Equal(t, "", resp["verification_issues"], "a verified release must carry no fingerprint")
+}
+
+// TestServeUpgradeCheck_VerificationWarning guards that a downgraded signature
+// check is reported to the UI. The user must learn before starting that the
+// download will only be integrity-checked.
+func TestServeUpgradeCheck_VerificationWarning(t *testing.T) {
+	defer func() {
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
+		upgradeCompareVersions = version.CompareVersions
+		upgradeIsDevBuild = version.IsDevBuild
+		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
+		upgradeIsDocker = service.IsDocker
+	}()
+
+	upgradeCheckInstallDirWrit = func() (string, error) { return "/usr/local/bin", nil }
+	upgradeIsDocker = func() bool { return false }
+	upgradeCompareVersions = func(a, b string) int { return -1 }
+	upgradeIsDevBuild = func(v string) bool { return false }
+
+	const warning = "The release signature could not be verified because npm's signing keys were unreachable."
+	const issues = "signature_keys_unreachable"
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{
+			CurrentVersion:      "1.0.0",
+			LatestVersion:       "1.1.0",
+			VerificationWarning: warning,
+			VerificationIssues:  issues,
+		}, nil
+	}
+
+	req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeCheck, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, warning, resp["verification_warning"])
+	// The fingerprint is the value the client echoes back, so it must be exposed
+	// alongside the message the user reads.
+	assert.Equal(t, issues, resp["verification_issues"])
+	assert.Equal(t, true, resp["has_upgrade"], "a signature warning must not block the upgrade")
 }
 
 // TestServeUpgradeCheck_DockerAdvisory guards that a container deployment is
@@ -60,14 +107,16 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 // without affecting has_upgrade — the upgrade must remain available.
 func TestServeUpgradeCheck_DockerAdvisory(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
 		upgradeIsDocker = service.IsDocker
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) { return "1.0.0", "1.1.0", nil }
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.0.0", LatestVersion: "1.1.0"}, nil
+	}
 	upgradeCompareVersions = func(a, b string) int { return -1 }
 	upgradeIsDevBuild = func(v string) bool { return false }
 	upgradeCheckInstallDirWrit = func() (string, error) { return "/app", nil }
@@ -87,13 +136,15 @@ func TestServeUpgradeCheck_DockerAdvisory(t *testing.T) {
 
 func TestServeUpgradeCheck_InstallDirNotWritable(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) { return "1.0.0", "1.1.0", nil }
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.0.0", LatestVersion: "1.1.0"}, nil
+	}
 	upgradeCompareVersions = func(a, b string) int { return -1 }
 	upgradeIsDevBuild = func(v string) bool { return false }
 	upgradeCheckInstallDirWrit = func() (string, error) {
@@ -117,13 +168,15 @@ func TestServeUpgradeCheck_InstallDirNotWritable(t *testing.T) {
 // would show a misleading warning with an empty dir).
 func TestServeUpgradeCheck_ProbeInconclusive(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) { return "1.0.0", "1.1.0", nil }
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.0.0", LatestVersion: "1.1.0"}, nil
+	}
 	upgradeCompareVersions = func(a, b string) int { return -1 }
 	upgradeIsDevBuild = func(v string) bool { return false }
 	upgradeCheckInstallDirWrit = func() (string, error) {
@@ -144,13 +197,13 @@ func TestServeUpgradeCheck_ProbeInconclusive(t *testing.T) {
 
 func TestServeUpgradeCheck_NoUpgrade(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) {
-		return "1.1.0", "1.1.0", nil
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.1.0", LatestVersion: "1.1.0"}, nil
 	}
 	upgradeCompareVersions = func(a, b string) int { return 0 }
 	upgradeIsDevBuild = func(v string) bool { return false }
@@ -168,13 +221,13 @@ func TestServeUpgradeCheck_NoUpgrade(t *testing.T) {
 
 func TestServeUpgradeCheck_DevBuild(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) {
-		return "dev", "1.0.0", nil
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "dev", LatestVersion: "1.0.0"}, nil
 	}
 	upgradeCompareVersions = func(a, b string) int { return 1 } // dev > 1.0.0 lexicographically
 	upgradeIsDevBuild = func(v string) bool { return v == "dev" }
@@ -191,10 +244,10 @@ func TestServeUpgradeCheck_DevBuild(t *testing.T) {
 }
 
 func TestServeUpgradeCheck_Error(t *testing.T) {
-	defer func() { upgradeCheckForUpgrade = service.CheckForUpgrade }()
+	defer func() { upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo }()
 
-	upgradeCheckForUpgrade = func() (string, string, error) {
-		return "", "", errors.New("registry unreachable")
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return nil, errors.New("registry unreachable")
 	}
 
 	req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
@@ -222,7 +275,7 @@ func TestServeUpgradeStart_Success(t *testing.T) {
 
 	upgradeIsInProgress = func() bool { return false }
 	upgradeCalled := false
-	upgradePerformUpgrade = func() { upgradeCalled = true }
+	upgradePerformUpgrade = func(string) { upgradeCalled = true }
 
 	req := newRequest(t, http.MethodPost, "/api/upgrade/start", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -246,6 +299,60 @@ func TestServeUpgradeStart_AlreadyInProgress(t *testing.T) {
 	w := callHandler(ServeUpgradeStart, req)
 
 	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// The client's acknowledgment must reach the service, since that is what the
+// service compares against the registry to decide whether the install may
+// proceed unverified.
+func TestServeUpgradeStart_PassesAcknowledgmentThrough(t *testing.T) {
+	defer func() { upgradePerformUpgrade = service.PerformUpgrade }()
+
+	const issues = "signature_missing,no_integrity_hash"
+	var got string
+	upgradePerformUpgrade = func(ack string) { got = ack }
+
+	req := newRequest(t, http.MethodPost, "/api/upgrade/start",
+		map[string]string{"verification_issues": issues})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeStart, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, issues, got)
+}
+
+// An absent body is the normal case for a fully verified release, not a
+// malformed request.
+func TestServeUpgradeStart_EmptyBodyIsAccepted(t *testing.T) {
+	defer func() { upgradePerformUpgrade = service.PerformUpgrade }()
+
+	called := false
+	var got string
+	upgradePerformUpgrade = func(ack string) { called = true; got = ack }
+
+	req := newRequest(t, http.MethodPost, "/api/upgrade/start", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeStart, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, called)
+	assert.Equal(t, "", got)
+}
+
+func TestServeUpgradeStart_MalformedBodyRejected(t *testing.T) {
+	defer func() { upgradePerformUpgrade = service.PerformUpgrade }()
+
+	called := false
+	upgradePerformUpgrade = func(string) { called = true }
+
+	// Built by hand: newRequest marshals its argument, so it cannot produce
+	// malformed JSON.
+	req := httptest.NewRequest(http.MethodPost, "/api/upgrade/start", strings.NewReader(`{not json`))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeStart, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.False(t, called, "a malformed body must not start an upgrade")
 }
 
 func TestServeUpgradeStart_MethodNotAllowed(t *testing.T) {

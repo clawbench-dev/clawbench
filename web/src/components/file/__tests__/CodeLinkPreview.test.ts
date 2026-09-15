@@ -7,6 +7,8 @@ import { store } from '@/stores/app'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
 import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 // Mock highlightCode
 vi.mock('@/utils/globals', () => ({
@@ -96,6 +98,7 @@ const i18n = createI18n({
           retry: 'Retry',
           largeFileNotice: 'Large file: preview shows partial content and may load slower',
           truncatedNotice: 'Preview truncated (up to {n} lines / {size})',
+          windowTruncatedNotice: 'File has an oversized line; only part of it can be shown',
           lineOutOfRange: 'Requested line is out of file range',
           binaryNotSupported: 'Binary file cannot be previewed',
           mediaLoadError: 'Failed to load media file',
@@ -124,6 +127,13 @@ const i18n = createI18n({
           linesCount: '{n} lines',
           renderedView: 'Rendered preview',
           sourceView: 'Source code',
+        },
+        dirPreview: {
+          loading: 'Loading…',
+          empty: 'This directory is empty',
+          loadFailed: 'Failed to load directory',
+          close: 'Close preview',
+          count: '{n} items',
         },
         header: {
           lineNumbers: 'Line Numbers',
@@ -164,6 +174,16 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   const errorCode = ref<any>(null)
   const errorMessage = ref<string | null>(null)
   const isLargeFile = ref(false)
+  const windowTruncated = ref(false)
+  // Directory targets: the card lists the directory instead of slicing code.
+  const isDirTarget = ref(false)
+  const dirEntries = ref<any[]>([])
+  const dirLoading = ref(false)
+  const dirError = ref(false)
+  const dirLoadedPath = ref('')
+  const dirEntryVisible = (entry: { name: string }) => !entry.name.startsWith('.')
+  const openDirChild = vi.fn()
+  const openDirFile = vi.fn()
   const contextExpansion = ref(0)
   const placement = ref<any>({
     viewportX: 100,
@@ -215,6 +235,15 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     errorCode,
     errorMessage,
     isLargeFile,
+    windowTruncated,
+    isDirTarget,
+    dirEntries,
+    dirLoading,
+    dirError,
+    dirLoadedPath,
+    dirEntryVisible,
+    openDirChild,
+    openDirFile,
     contextExpansion,
     placement,
     renderMode,
@@ -382,6 +411,135 @@ describe('CodeLinkPreview.vue', () => {
     expect(notice?.textContent).toContain('Large file')
   })
 
+  it('renders the window-truncated notice when the server capped the window', () => {
+    const preview = createMockPreviewController({
+      windowTruncated: ref(true),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    expect(document.body.textContent).toContain('oversized line')
+  })
+
+  it('lists a directory target instead of slicing code', () => {
+    const openDirChild = vi.fn()
+    const openDirFile = vi.fn()
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([
+        { name: 'a.ts', type: 'file' },
+        { name: 'nested', type: 'dir' },
+      ]),
+      openDirChild,
+      openDirFile,
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    // The directory listing replaces the code slice.
+    const items = document.querySelectorAll('.dir-preview-item')
+    expect(items.length).toBe(2)
+    // No code-slice body, and no text-viewer tools for a directory.
+    expect(document.querySelector('.code-preview-lines')).toBeNull()
+    // The card supplies its own title + meta rows, so the embedded body must
+    // drop its own toolbar — otherwise three bars stack up.
+    expect(document.querySelector('.dir-preview-body .dir-preview-meta')).toBeNull()
+
+    // Clicking a child directory hands off to the file manager.
+    ;(items[1] as HTMLElement).click()
+    expect(openDirChild).toHaveBeenCalledWith('nested')
+
+    // Clicking a child file opens it in the full-screen viewer.
+    ;(items[0] as HTMLElement).click()
+    expect(openDirFile).toHaveBeenCalledWith('a.ts')
+  })
+
+  it('hides the "open file" action for a directory target', () => {
+    // A directory has no file to open in the viewer, and the reveal button
+    // already opens the directory itself — the two would be redundant, and
+    // "Full file" would be mislabeled.
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([{ name: 'a.ts', type: 'file' }]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    expect(document.querySelector('button[title="Open file"]')).toBeNull()
+    // "Open Directory" (reveal) stays available.
+    expect(document.querySelector('button[title="Open Directory"]')).not.toBeNull()
+  })
+
+  it('shows the entry count in the meta row for a directory target', () => {
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([
+        { name: 'a.ts', type: 'file' },
+        { name: 'nested', type: 'dir' },
+        { name: 'deep', type: 'dir' },
+      ]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    // Line count / size would be meaningless here.
+    expect(document.body.textContent).toContain('3 items')
+  })
+
+  it('counts only visible entries so the number matches the rendered grid', () => {
+    // The mock's dirEntryVisible hides dotfiles. The count must apply the same
+    // filter the grid does, or the meta row reports entries the user cannot see
+    // (and disagrees with the docked pane, which counts the filtered list).
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([
+        { name: 'a.ts', type: 'file' },
+        { name: '.hidden', type: 'file' },
+        { name: '.env', type: 'file' },
+      ]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    expect(document.body.textContent).toContain('1 items')
+    expect(document.body.textContent).not.toContain('3 items')
+    // And the grid really does render just the one.
+    expect(document.querySelectorAll('.dir-preview-item').length).toBe(1)
+  })
+
+  it('does not open a dead search bar over a directory listing (Ctrl+F)', async () => {
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([{ name: 'a.ts', type: 'file' }]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    // The search button is hidden for a directory; the window-level Ctrl+F
+    // shortcut must not bypass that and open an unsearchable bar.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }))
+    await nextTick()
+
+    expect(document.querySelector('.code-preview-search-input')).toBeNull()
+  })
+
   it('renders binary file error with open full file button', () => {
     const preview = createMockPreviewController({
       status: ref('error'),
@@ -399,7 +557,11 @@ describe('CodeLinkPreview.vue', () => {
     expect(openBtn).not.toBeNull()
   })
 
-  it('renders too-large error with view details button instead of openFull', () => {
+  it('keeps the icon open-button for a too-large file (no wide text button)', () => {
+    // An oversize file used to render a wide "View details / Download" text
+    // button — 4x the width of every other tool and the only one without an
+    // icon, so it broke the icon strip. It now renders the same icon button,
+    // with the tooltip carrying the download hint.
     const preview = createMockPreviewController({
       status: ref('error'),
       errorCode: ref('too-large'),
@@ -411,10 +573,28 @@ describe('CodeLinkPreview.vue', () => {
 
     const floating = document.querySelector('.code-link-preview-floating')
     expect(floating?.textContent).toContain('File exceeds 10MiB limit')
+
     const detailsBtn = floating?.querySelector('button[title="View details / Download"]')
     expect(detailsBtn).not.toBeNull()
-    const openFullBtn = floating?.querySelector('button[title="Open file"]')
-    expect(openFullBtn).toBeNull()
+    // It is an icon button, and it does not dump its label into the tool row.
+    expect(detailsBtn?.querySelector('svg')).not.toBeNull()
+    expect(detailsBtn?.textContent?.trim()).toBe('')
+    // No second, plain "Open file" button appears alongside it.
+    expect(floating?.querySelector('button[title="Open file"]')).toBeNull()
+  })
+
+  it('labels the open button normally when the file is not oversize', () => {
+    const preview = createMockPreviewController({ status: ref('ready') })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const floating = document.querySelector('.code-link-preview-floating')
+    const btn = floating?.querySelector('button[title="Open file"]')
+    expect(btn).not.toBeNull()
+    expect(btn?.querySelector('svg')).not.toBeNull()
+    expect(floating?.querySelector('button[title="View details / Download"]')).toBeNull()
   })
 
   it('toggles pin and updates aria-pressed', async () => {
@@ -2368,37 +2548,80 @@ describe('CodeLinkPreview.vue — docked outside-click behaviour', () => {
   })
 })
 
-describe('CodeLinkPreview.vue — compact layout (docked on touch)', () => {
-  it('collapses to a single row: no title row, name+meta and Close in the toolbar row', async () => {
-    _setIsPCForTest(false)
+describe('CodeLinkPreview.vue — docked pane reuses the two-row layout', () => {
+  // The docked pane used to collapse to a special ONE-row layout (header hidden,
+  // file name + tools crammed into the meta row, tool strip scrolling sideways).
+  // It now reuses the floating card's chrome so the tool row gets the full pane
+  // width. These tests pin the reuse AND the platform-independence: the shape
+  // must be identical on a PC and a touch device, because the previous design
+  // was keyed off isPC and that divergence is exactly what we do not want back.
+  const FILE = 'android/build.gradle'
+
+  function mountDocked() {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: FILE, anchorEl: document.createElement('span') }),
+    })
+    return mount(CodeLinkPreview, {
+      props: { preview, docked: true },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    })
+  }
+
+  it('renders the shared header row and meta row (desktop)', async () => {
+    _setIsPCForTest(true)
     try {
-      const preview = createMockPreviewController({
-        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
-      })
-      const wrapper = mount(CodeLinkPreview, {
-        props: { preview, docked: true },
-        global: { plugins: [i18n] },
-        attachTo: document.body,
-      })
+      const wrapper = mountDocked()
       await flushPromises()
 
-      const card = wrapper.find('.code-link-preview-floating')
-      expect(card.classes()).toContain('is-compact')
+      // The header row (directory path + Close) is now rendered when docked —
+      // that row is what frees the tool row below to use the full width.
+      expect(wrapper.find('.code-preview-header').exists()).toBe(true)
+      expect(wrapper.find('.code-preview-title-dir').text()).toBe('android/')
+      expect(wrapper.find('.code-preview-header-actions .close').exists()).toBe(true)
 
-      // The desktop title row (with the file path) is not rendered at all, so
-      // the pane has exactly one row of chrome.
-      expect(wrapper.find('.code-preview-header').exists()).toBe(false)
-      expect(wrapper.find('.code-preview-title-dir').exists()).toBe(false)
+      // The one-row design's file-name-in-meta is gone; the meta row carries the
+      // usual line/size summary again.
+      expect(wrapper.find('.code-preview-compact-name').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-meta-info').text()).toBe('50 lines · 20 B')
+      // Close lives in the header, not in the meta row.
+      expect(wrapper.find('.code-preview-meta > .code-preview-btn.close').exists()).toBe(false)
 
-      // The file name is the only thing on the left — the line/size summary
-      // is deliberately omitted in this mode.
-      expect(wrapper.find('.code-preview-meta .code-preview-compact-name').text()).toBe('build.gradle')
-      expect(wrapper.find('.code-preview-compact-meta').exists()).toBe(false)
-      expect(wrapper.find('.code-preview-meta-info').text()).toBe('build.gradle')
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
+  })
 
-      // Close lives in that same row, but OUTSIDE the scrollable tool strip —
-      // as a child it would scroll out of reach for a code file (10 tools).
-      const close = wrapper.find('.code-preview-meta > .code-preview-btn.close')
+  it('renders the identical two-row layout on touch (no is-compact variant)', async () => {
+    _setIsPCForTest(false)
+    try {
+      const wrapper = mountDocked()
+      await flushPromises()
+
+      // `is-compact` is gone entirely: the docked shape must not depend on the
+      // platform, so there is no second class to diverge.
+      expect(wrapper.find('.code-link-preview-floating.is-compact').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-header').exists()).toBe(true)
+      expect(wrapper.find('.code-preview-title-dir').text()).toBe('android/')
+      expect(wrapper.find('.code-preview-compact-name').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-meta-info').text()).toBe('50 lines · 20 B')
+
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
+  })
+
+  it('puts Close in the header, not in the tool strip', async () => {
+    _setIsPCForTest(true)
+    try {
+      const wrapper = mountDocked()
+      await flushPromises()
+
+      // Close is a header control now. It must not sit inside the tool strip,
+      // where a long tool set could crowd it.
+      const close = wrapper.find('.code-preview-header-actions .close')
       expect(close.exists()).toBe(true)
       expect(wrapper.find('.code-preview-actions').element.contains(close.element)).toBe(false)
 
@@ -2408,48 +2631,160 @@ describe('CodeLinkPreview.vue — compact layout (docked on touch)', () => {
     }
   })
 
-  it('keeps the two-row desktop layout when not compact', async () => {
+  it('keeps the two-row layout for a FLOATING card (desktop only)', async () => {
+    // The floating card is a draggable window with no breadcrumb above it, so it
+    // keeps its title row. The floating card is teleported to <body>, so it is
+    // queried off the document.
     _setIsPCForTest(true)
     try {
       const preview = createMockPreviewController({
-        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
+        target: ref({ filePath: FILE, anchorEl: document.createElement('span') }),
       })
       const wrapper = mount(CodeLinkPreview, {
-        props: { preview, docked: true },
+        props: { preview, docked: false },
         global: { plugins: [i18n] },
+        attachTo: document.body,
       })
       await flushPromises()
 
-      const card = wrapper.find('.code-link-preview-floating')
-      expect(card.classes()).not.toContain('is-compact')
-      // Title row present with the directory path; Close in the header.
-      expect(wrapper.find('.code-preview-header').exists()).toBe(true)
-      expect(wrapper.find('.code-preview-title-dir').exists()).toBe(true)
-      expect(wrapper.find('.code-preview-header-actions .close').exists()).toBe(true)
-      // No compact name, and no second close in the meta row.
-      expect(wrapper.find('.code-preview-compact-name').exists()).toBe(false)
-      expect(wrapper.find('.code-preview-meta > .code-preview-btn.close').exists()).toBe(false)
+      expect(document.querySelector('.code-link-preview-floating .code-preview-header')).not.toBeNull()
+      expect(document.querySelector('.code-preview-title-dir')).not.toBeNull()
+      expect(document.querySelector('.code-preview-header-actions .close')).not.toBeNull()
+      // The meta row shows the line/size summary, not the file name.
+      expect(document.querySelector('.code-preview-compact-name')).toBeNull()
+      expect(document.querySelector('.code-preview-meta > .code-preview-btn.close')).toBeNull()
       wrapper.unmount()
     } finally {
       _resetPlatformForTest()
     }
   })
+})
 
-  it('does not use the compact layout for a floating card on touch', async () => {
-    _setIsPCForTest(false)
-    try {
-      const preview = createMockPreviewController({
-        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
-      })
-      const wrapper = mount(CodeLinkPreview, {
-        props: { preview, docked: false },
-        global: { plugins: [i18n] },
-      })
-      await flushPromises()
-      expect(wrapper.find('.code-link-preview-floating.is-compact').exists()).toBe(false)
-      wrapper.unmount()
-    } finally {
-      _resetPlatformForTest()
+describe('code-link-preview.css — docked pane adds no divergent rules', () => {
+  // The docked pane reuses the floating card's rows, so it must not carry its
+  // own shape. jsdom does not evaluate the stylesheet, hence a source contract
+  // (same pattern as dockedPaneStacking.css.test.ts).
+  const css = readFileSync(
+    resolve(__dirname, '../../../assets/code-link-preview.css'),
+    'utf8',
+  )
+
+  it('adds no shape-specific overrides for the docked pane', () => {
+    // The docked pane reuses the floating card's header + meta rows verbatim, so
+    // the ONLY `.is-docked` rules allowed are the container/layout ones (position,
+    // size, border, shadow, z-index) and the cursor reset. Anything else would be
+    // a divergence — the tool strip in particular must NOT be given its own
+    // scroll/height rules again.
+    const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const dockedBlocks = code.match(/\.code-link-preview-floating\.is-docked[^{]*\{[^}]*\}/g) || []
+    expect(dockedBlocks.length).toBeGreaterThan(0)
+    for (const block of dockedBlocks) {
+      expect(block).not.toMatch(/overflow-x/)
+      expect(block).not.toMatch(/min-height/)
+      expect(block).not.toMatch(/height:\s*28px/)
     }
+  })
+
+  it('has no platform-conditional docked rules left', () => {
+    // A `(pointer: coarse)` or `.is-compact` docked rule is exactly the split
+    // this change removed; reintroducing one would silently desync the two
+    // platforms again. Prose in comments may mention them, so compare against
+    // the comment-free source.
+    const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const dockedBlocks = code.match(/\.code-link-preview-floating\.is-docked[^{]*\{[^}]*\}/g) || []
+    for (const block of dockedBlocks) {
+      expect(block).not.toContain('is-compact')
+    }
+    // And the compact class itself must be gone from the stylesheet entirely.
+    expect(code).not.toContain('.is-compact')
+    // The one-row design's file-name class is gone with it.
+    expect(code).not.toContain('.code-preview-compact-name')
+  })
+})
+
+describe('code-link-preview.css — compact floating header', () => {
+  // The floating card's title row was 37px because of 24px buttons plus 6px
+  // paddings (the text is only ~16px). These assertions pin the three
+  // declarations that hold it at 27px; measured in headless Chrome against the
+  // real stylesheet, all of short / long / very-long paths render 27px.
+  const css = readFileSync(
+    resolve(__dirname, '../../../assets/code-link-preview.css'),
+    'utf8',
+  )
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const decls = (selector: string): string => {
+    const re = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}')
+    const m = code.match(re)
+    expect(m, `${selector} rule must exist`).not.toBeNull()
+    return m![1]
+  }
+
+  it('slims the header paddings and its own buttons', () => {
+    expect(decls('.code-preview-header')).toMatch(/padding:\s*var\(--space-1\)/)
+    // Scoped to the header — the meta row keeps its 24px controls.
+    const btn = decls('.code-preview-header .code-preview-btn')
+    expect(btn).toMatch(/height:\s*22px/)
+    expect(btn).toMatch(/min-width:\s*22px/)
+  })
+
+  it('keeps the path on one line so a long path cannot re-inflate the row', () => {
+    const path = decls('.code-preview-title-path')
+    expect(path).toMatch(/flex-wrap:\s*nowrap/)
+    // A max-height would be redundant and would hide the wrap regression.
+    expect(path).not.toMatch(/max-height/)
+  })
+
+  it('clamps the file name to one line', () => {
+    // A 2-line clamp measured 34.7px for a very long name, undoing the
+    // compaction. Ellipsis + nowrap keeps the row at 27px.
+    const name = decls('.code-preview-filename')
+    expect(name).toMatch(/white-space:\s*nowrap/)
+    expect(name).toMatch(/text-overflow:\s*ellipsis/)
+    expect(name).not.toMatch(/-webkit-line-clamp/)
+  })
+})
+
+describe('code-link-preview.css — the touch sheet is content-sized', () => {
+  // The sheet is the quick preview opened by tapping a path link in chat on a
+  // touch device (preview.mode === 'sheet'). BottomSheet is given `auto`, so the
+  // height should come from the content. A `height: min(84vh, 720px) !important`
+  // override used to beat that and pin the drawer to ~709px on an 844px phone
+  // even for a directory with a couple of entries. jsdom does not evaluate the
+  // stylesheet, so this is a source contract.
+  const css = readFileSync(
+    resolve(__dirname, '../../../assets/code-link-preview.css'),
+    'utf8',
+  )
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  const panelDecls = (): string => {
+    const m = code.match(/\.code-preview-sheet-panel\s*\{([^}]*)\}/)
+    expect(m, '.code-preview-sheet-panel rule must exist').not.toBeNull()
+    return m![1]
+  }
+
+  it('does not pin the sheet to a fixed height', () => {
+    const body = panelDecls()
+    // A fixed height (with or without !important) is the regression.
+    expect(body).not.toMatch(/(?<!max-)height\s*:/)
+    expect(body).not.toMatch(/84vh/)
+    expect(body).not.toMatch(/720px/)
+  })
+
+  it('keeps a max-height cap so a long file cannot cover the page', () => {
+    // The cap must stay (and stay !important, to win over the base .bs-panel),
+    // otherwise a huge directory would expand past the overlay.
+    expect(panelDecls()).toMatch(/max-height:\s*100%\s*!important/)
+  })
+
+  it('passes `auto` to BottomSheet so the height follows the content', () => {
+    const src = readFileSync(
+      resolve(__dirname, '../../file/CodeLinkPreview.vue'),
+      'utf8',
+    )
+    const m = src.match(/<BottomSheet\b[\s\S]*?>/)
+    expect(m, 'the sheet BottomSheet element must exist').not.toBeNull()
+    expect(m![0]).toMatch(/\sauto\b/)
+    expect(m![0]).toContain('code-preview-sheet-panel')
   })
 })

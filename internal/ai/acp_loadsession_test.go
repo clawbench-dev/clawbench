@@ -695,10 +695,10 @@ func measureLoadSessionLatency(t *testing.T, agent *model.Agent, acpSSID string)
 // Measures the full LoadSession pipeline for Claude ACP, breaking down where
 // time is spent. This test documents the "resume button hangs" bug:
 //
-//   spawnLocked (npx + Initialize):  5-30s
-//   LoadSession RPC (replay):        10-60s (proportional to conversation length)
-//   time.Sleep for late notifs:     500ms (fixed)
-//   Total:                          15-90s
+//	spawnLocked (npx + Initialize):  5-30s
+//	LoadSession RPC (replay):        10-60s (proportional to conversation length)
+//	time.Sleep for late notifs:     500ms (fixed)
+//	Total:                          15-90s
 //
 // Run with verbose output:
 //
@@ -1178,4 +1178,3 @@ func contextWithTimeout(t *testing.T, timeout time.Duration) (context.Context, c
 	t.Helper()
 	return context.WithTimeout(context.Background(), timeout)
 }
-

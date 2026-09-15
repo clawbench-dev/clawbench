@@ -40,6 +40,13 @@ type Provider struct {
 	baseURL string
 	token   string
 	project string // URL-encoded namespace/project path
+	// projectPath is the RAW namespace/project path, used to build web URLs.
+	// Kept beside the encoded form because url.PathEscape is not reversible by
+	// inspection: a web link needs "ns/repo", not "ns%2Frepo".
+	projectPath string
+	// webBase is the instance's web origin ("https://gitlab.com"), i.e. baseURL
+	// without the "/api/v4" suffix. Web links cannot be built from baseURL.
+	webBase string
 	client  *http.Client
 }
 
@@ -60,11 +67,14 @@ func New(cfg Config, namespace, repo string) (*Provider, error) {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	fullPath := namespace + "/" + repo
+	origin := fmt.Sprintf("%s://%s", scheme, cfg.Host)
 	return &Provider{
-		baseURL: fmt.Sprintf("%s://%s/api/v4", scheme, cfg.Host),
-		token:   cfg.Token,
-		project: url.PathEscape(fullPath),
-		client:  client,
+		baseURL:     origin + "/api/v4",
+		token:       cfg.Token,
+		project:     url.PathEscape(fullPath),
+		projectPath: fullPath,
+		webBase:     origin,
+		client:      client,
 	}, nil
 }
 
@@ -129,6 +139,14 @@ func verifyUser(ctx context.Context, baseURL, token string, client *http.Client)
 
 // ListItems returns a page of issues or merge requests.
 func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
+	// GitLab issues have no merged lifecycle, and the API rejects
+	// state=merged on the issues endpoint with 400. Answer the impossible
+	// query locally instead of forwarding it and surfacing a platform error
+	// for what is really an empty result.
+	if opts.Type != forge.ItemTypeChangeRequest && opts.State == string(forge.StateMerged) {
+		return forge.ListResult{Items: []forge.Item{}}, nil
+	}
+
 	path := "/projects/" + p.project + "/issues"
 	if opts.Type == forge.ItemTypeChangeRequest {
 		path = "/projects/" + p.project + "/merge_requests"
@@ -321,6 +339,8 @@ type gitlabItem struct {
 	MergedAt       string       `json:"merged_at"`
 	// MR-only fields.
 	Draft bool `json:"draft"`
+	// SourceBranch is the MR's head branch. Issues omit it.
+	SourceBranch string `json:"source_branch"`
 }
 
 type gitlabUser struct {
@@ -355,6 +375,8 @@ func (g gitlabItem) toItem(typ forge.ItemType) forge.Item {
 		URL:          g.WebURL,
 		CreatedAt:    parseTime(g.CreatedAt),
 		UpdatedAt:    parseTime(g.UpdatedAt),
+		// MR-only; an issue payload leaves it empty.
+		SourceBranch: g.SourceBranch,
 	}
 	if state == forge.StateMerged && g.MergedAt != "" {
 		t := parseTime(g.MergedAt)
@@ -409,23 +431,37 @@ func parseTime(s string) time.Time {
 	return t
 }
 
+// stateParam maps the generic state vocabulary onto GitLab's.
+//
+// GitLab spells "open" as "opened" and, for merge requests, reports merged as
+// its own state rather than folding it into closed. The generic vocabulary
+// keeps them distinct too (see forge.State), so "closed" means closed and NOT
+// merged — a plain pass-through would return merged MRs under the closed
+// filter, which is the opposite of what the filter promises.
 func stateParam(state string) string {
 	switch state {
 	case "open":
 		return "opened"
-	case "closed", "all":
+	case "closed", "all", "merged":
 		return state
 	default:
 		return "opened"
 	}
 }
 
+// orderByParam maps the generic sort field onto GitLab's, which requires an
+// `_at` suffix: the API rejects "updated"/"created" with
+// `{"error":"order_by does not have a valid value"}`. GitLab's issues and
+// merge_requests endpoints accept only updated_at, created_at (and priority for
+// issues) — there is no bare "updated".
 func orderByParam(sort string) string {
 	switch sort {
-	case "updated", "created":
-		return sort
+	case "updated":
+		return "updated_at"
+	case "created":
+		return "created_at"
 	default:
-		return "updated"
+		return "updated_at"
 	}
 }
 
@@ -456,14 +492,6 @@ func perPageOrDefault(n int) int {
 // listResult derives pagination state from GitLab's X-Next-Page header.
 func listResult(items []forge.Item, hdr http.Header) forge.ListResult {
 	res := forge.ListResult{Items: items}
-	if hdr == nil {
-		return res
-	}
-	if next := hdr.Get("X-Next-Page"); next != "" {
-		if n, err := strconv.Atoi(next); err == nil && n > 0 {
-			res.HasMore = true
-			res.NextPage = n
-		}
-	}
+	res.HasMore, res.NextPage = paginationFromHeader(hdr)
 	return res
 }

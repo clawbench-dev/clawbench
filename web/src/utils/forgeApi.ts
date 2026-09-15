@@ -13,6 +13,8 @@ export const FORGE_TIMEOUT_MS = 20_000
 export interface ForgeBinding {
     platform: string
     host: string
+    /** Resolved API scheme ("http" or "https") requests to this host use. */
+    scheme?: string
     owner: string
     repo: string
     slug: string
@@ -38,6 +40,14 @@ export interface ForgeItem {
     createdAt: string
     updatedAt: string
     slug: string
+    /** True when this item has activity the user has not seen. */
+    unread?: boolean
+    /**
+     * The branch a change request merges FROM (its head branch). Empty for
+     * issues. Present so the detail view can look up the item's CI runs, which
+     * are addressed by branch on GitHub.
+     */
+    sourceBranch?: string
 }
 
 export interface ForgeComment {
@@ -46,6 +56,84 @@ export interface ForgeComment {
     body: string
     createdAt: string
     updatedAt: string
+}
+
+/** Normalized CI run status, shared by both platforms. */
+export type ForgePipelineStatus = 'success' | 'failure' | 'running' | 'cancelled' | 'skipped' | 'unknown'
+
+/** A change request a CI run is attached to. */
+export interface ForgePipelinePullRequest {
+    /** PR/MR number — what the client passes to open the item in-panel. */
+    number: number
+    /** Best-effort: GitHub reports it, GitLab's pipeline payload does not. */
+    title?: string
+    /** Web link, when the platform could provide one. */
+    url?: string
+}
+
+export interface ForgePipelineRun {
+    platform: string
+    host: string
+    owner: string
+    repo: string
+    /** Platform run id (GitHub run id / GitLab pipeline id). */
+    id: number
+    /** Workflow name; falls back to the ref on older GitLab instances. */
+    name: string
+    /** Human-facing run counter (GitHub run_number / GitLab iid). */
+    number: number
+    status: ForgePipelineStatus
+    ref: string
+    sha: string
+    /** What triggered the run, in the platform's own vocabulary. */
+    event: string
+    actor: string
+    url: string
+    createdAt: string
+    updatedAt: string
+    /** Absent when the platform does not report it (GitHub's list endpoint). */
+    durationSeconds?: number
+    slug: string
+    /** True when this run has activity the user has not seen. */
+    unread?: boolean
+    /**
+     * Change requests this run is attached to. ABSENT (not an empty array) when
+     * there are none — which is the normal case for a push-to-branch run, so a
+     * consumer must render "no link" rather than an empty section.
+     *
+     * Platform coverage differs: GitHub reports these inline on every run;
+     * GitLab only exposes them for merge-request pipelines (derived from the
+     * ref), so a branch push with an open MR stays unlinked.
+     */
+    pullRequests?: ForgePipelinePullRequest[]
+}
+
+export interface ForgePipelineJob {
+    id: number
+    name: string
+    /** GitLab only; GitHub has no stage concept. */
+    stage?: string
+    status: ForgePipelineStatus
+    /** GitLab only. */
+    failureReason?: string
+    runner?: string
+    url: string
+    durationSeconds?: number
+    startedAt?: string
+    completedAt?: string
+}
+
+export interface ForgePipelineListResult {
+    pipelines: ForgePipelineRun[]
+    hasMore: boolean
+    nextPage: number
+    binding: ForgeBinding
+}
+
+export interface ForgePipelineDetailResult {
+    pipeline: ForgePipelineRun
+    jobs: ForgePipelineJob[]
+    binding: ForgeBinding
 }
 
 export interface ForgeItemListResult {
@@ -60,6 +148,12 @@ export interface ForgeRemote {
     url: string
     platform?: string
     host?: string
+    /**
+     * The remote's own API scheme, absent when it could not state one (an ssh or
+     * scp remote). Distinct from an explicit "https": the UI resolves it for
+     * display instead of treating an absent value as https.
+     */
+    scheme?: string
     owner?: string
     repo?: string
     slug?: string
@@ -179,7 +273,63 @@ export function fetchForgeBinding(signal?: AbortSignal): Promise<{ binding: Forg
     return forgeFetch('/api/forge/binding', { signal })
 }
 
-export function setForgeBinding(input: { url?: string; platform?: string; host?: string; owner?: string; repo?: string }): Promise<{ binding: ForgeBinding }> {
+/**
+ * List CI runs for the bound repository.
+ *
+ * `status` filters server-side; omit it for every status. The forge API is
+ * read-only, so there is no corresponding write call (no re-run, no cancel).
+ */
+export function fetchForgePipelines(params: {
+    status?: ForgePipelineStatus
+    page?: number
+    perPage?: number
+    signal?: AbortSignal
+} = {}): Promise<ForgePipelineListResult> {
+    const q = new URLSearchParams()
+    if (params.status) q.set('status', params.status)
+    q.set('page', String(params.page ?? 1))
+    q.set('perPage', String(params.perPage ?? 30))
+    return forgeFetch<ForgePipelineListResult>(`/api/forge/pipelines?${q.toString()}`, { signal: params.signal })
+}
+
+/** Fetch one run and its jobs. Jobs are best-effort and may come back empty. */
+export function fetchForgePipeline(id: number, signal?: AbortSignal): Promise<ForgePipelineDetailResult> {
+    return forgeFetch(`/api/forge/pipeline?id=${id}`, { signal })
+}
+
+/**
+ * List the CI runs attached to a change request, for the PR detail's CI section.
+ *
+ * Separate from the item payload on purpose: it costs an upstream request, so it
+ * is only fetched when the user expands the section.
+ */
+export function fetchForgeItemPipelines(
+    type: 'issue' | 'pr',
+    number: number,
+    signal?: AbortSignal,
+): Promise<{ pipelines: ForgePipelineRun[]; binding: ForgeBinding }> {
+    const q = new URLSearchParams()
+    q.set('type', type)
+    q.set('number', String(number))
+    return forgeFetch(`/api/forge/item-pipelines?${q.toString()}`, { signal })
+}
+
+/**
+ * Bind the project to a repository.
+ *
+ * Either pass `url` (a remote URL parsed server-side, which carries its own
+ * scheme) or the explicit fields. `scheme` is optional: omit it when the source
+ * did not state one, so the server keeps any scheme already recorded for the
+ * host rather than overwriting it with a guess.
+ */
+export function setForgeBinding(input: {
+    url?: string
+    platform?: string
+    host?: string
+    scheme?: string
+    owner?: string
+    repo?: string
+}): Promise<{ binding: ForgeBinding }> {
     return forgeFetch('/api/forge/binding', { method: 'POST', body: input })
 }
 
@@ -195,7 +345,14 @@ export function testForgeConnection(): Promise<{ ok: boolean; identity?: string;
     return forgeFetch('/api/forge/test', { method: 'POST' })
 }
 
-export function setForgeToken(host: string, token: string): Promise<{ host: string; has_token: boolean }> {
+/**
+ * Save a token for a forge host.
+ *
+ * `host` accepts what the user typed — a bare host or a full URL — and the
+ * server normalizes it. A URL also records the API scheme for that host, which
+ * is how an http-only instance is reached when the git remote cannot say.
+ */
+export function setForgeToken(host: string, token: string): Promise<{ host: string; scheme: string; has_token: boolean }> {
     return forgeFetch('/api/forge/credentials', { method: 'POST', body: { host, token } })
 }
 
@@ -218,6 +375,7 @@ export function verifyForgeToken(input: { host: string; token?: string }): Promi
     ok: boolean
     identity?: string
     name?: string
+    scheme?: string
     code?: string
     error?: string
 }> {
@@ -228,6 +386,77 @@ export function fetchForgeUnread(signal?: AbortSignal): Promise<{ count: number 
     return forgeFetch('/api/forge/unread', { signal })
 }
 
-export function markForgeRead(): Promise<{ count: number }> {
-    return forgeFetch('/api/forge/read', { method: 'POST' })
+/**
+ * One activity row in the overview panel.
+ *
+ * `itemKey` is opaque and must be passed back verbatim to markForgeRead: a
+ * pipeline's `number` is always 0, so rebuilding the key from type+number would
+ * produce "pipeline/0" and silently match nothing.
+ */
+export interface ForgeUnreadItem {
+    itemKey: string
+    type: 'issue' | 'pr' | 'pipeline'
+    /** Issue/PR number. Always 0 for a pipeline. */
+    number: number
+    /** CI run id; 0 for anything that is not a pipeline. */
+    runId: number
+    /** Newest event type: opened / closed / merged / reopened / commented / pipeline_done. */
+    eventType: string
+    /** Total events for this item, not just the unread ones. */
+    eventCount: number
+    url: string
+    /** owner/repo */
+    slug: string
+    updatedAt: string
+    /**
+     * Server-reported read state: true when EVERY event of this item has been
+     * read. It comes from the same query that selected the row, so the styling
+     * cannot disagree with the filter.
+     *
+     * Distinct from `locallyRead` below: this is what the server said, that is
+     * what this client did a moment ago. Keeping them separate is what lets a
+     * row be greyed out instantly without the optimistic flag ever being mistaken
+     * for persisted state (or vice versa).
+     */
+    read?: boolean
+    /**
+     * Set locally after the user opens the row, so it can be greyed out without
+     * being removed (removing it would shift the rows below mid-click).
+     */
+    locallyRead?: boolean
+}
+
+/** The read-state filter offered by the activity view. */
+export type ForgeActivityFilter = 'unread' | 'read' | 'all'
+
+/**
+ * List the bound repository's activity items.
+ *
+ * `filter` selects by ITEM read state: an item counts as read only when all of
+ * its events have been read.
+ */
+export function fetchForgeUnreadItems(
+    filter: ForgeActivityFilter = 'unread',
+    signal?: AbortSignal,
+): Promise<{
+    count: number
+    items: ForgeUnreadItem[]
+}> {
+    const q = new URLSearchParams()
+    q.set('filter', filter)
+    return forgeFetch(`/api/forge/unread-items?${q.toString()}`, { signal })
+}
+
+/**
+ * Mark forge activity read.
+ *
+ * With no itemKey the whole bound repository is marked read (the "mark all
+ * read" action). With an itemKey only that item is marked, which is what
+ * opening a row does.
+ */
+export function markForgeRead(itemKey?: string): Promise<{ count: number }> {
+    return forgeFetch('/api/forge/read', {
+        method: 'POST',
+        body: itemKey ? { itemKey } : {},
+    })
 }

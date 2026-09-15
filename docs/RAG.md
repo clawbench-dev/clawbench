@@ -72,17 +72,18 @@ Indexer 每轮读取未索引消息，提取用户文本和助手的 `text` 内�
 # 语义 / 全文混合检索（POST，query 字段名为 q）
 curl -X POST http://localhost:20000/api/rag/search \
   -H 'Content-Type: application/json' \
+  -H 'X-ClawBench-AI-Token: <token>' \
   -b 'clawbench_project=/path/to/project' \
   -d '{"q":"SSH 隧道保活","limit":20,"exclude_session_id":"abc-123"}'
 
 # 按 ID 取完整消息（含 thinking / tool_use 块）
-curl 'http://localhost:20000/api/rag/message?id=42'
+curl -H 'X-ClawBench-AI-Token: <token>' 'http://localhost:20000/api/rag/message?id=42'
 
 # 取会话全部消息
-curl 'http://localhost:20000/api/rag/session?id=abc-123'
+curl -H 'X-ClawBench-AI-Token: <token>' 'http://localhost:20000/api/rag/session?id=abc-123'
 ```
 
-`POST /api/rag/search` 支持 `q`、`limit`、`backend`、`role`、`session_id`、`exclude_session_id`、`from` 和 `to` 过滤参数。项目范围通过 `clawbench_project` Cookie 传递；localhost 请求按认证中间件规则免密。
+`POST /api/rag/search` 支持 `q`、`limit`、`backend`、`role`、`session_id`、`exclude_session_id`、`from` 和 `to` 过滤参数。项目范围通过 `clawbench_project` Cookie 传递。认证走会话 Cookie 或本机 AI 的短时 `X-ClawBench-AI-Token`；回环地址本身不再免密，因此上述示例需带令牌（令牌由内置斜杠命令注入 AI，人工调用请先登录并用会话 Cookie）。
 
 ## 删除与维护
 

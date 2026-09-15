@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { useSettingsConfig, applyUIScale, getUIScale, toFixedCSS, getZoomedViewport, applyFirstRunThemeDefaults, localConfig } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getUIScale, toFixedCSS, getZoomedViewport, applyFirstRunThemeDefaults, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher } from '@/composables/useSettingsConfig'
 
 // Mock api.ts
 vi.mock('@/utils/api', () => ({
@@ -22,6 +22,7 @@ vi.mock('@/composables/useAgents', () => ({
 
 import { apiGet, apiPatch, apiPost } from '@/utils/api'
 import { store } from '@/stores/app.ts'
+import { applyThemeAttributes } from '@/utils/themeMeta'
 
 const mockedApiGet = vi.mocked(apiGet)
 const mockedApiPatch = vi.mocked(apiPatch)
@@ -963,6 +964,186 @@ describe('useSettingsConfig', () => {
 
       localStorage.removeItem('clawbench-settings-theme')
       localConfig.theme = 'auto'
+    })
+  })
+
+  // ── system color-scheme following (issue #458) ──
+
+  describe('applyStoredTheme', () => {
+    it("applies the resolved auto theme but leaves the stored value as 'auto'", () => {
+      vi.stubGlobal('matchMedia', vi.fn(() => ({
+        matches: false,
+        media: '(prefers-color-scheme: dark)',
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })))
+      try {
+        localConfig.theme = 'auto'
+        localStorage.setItem('clawbench-settings-theme', JSON.stringify('auto'))
+
+        const resolved = applyStoredTheme()
+
+        // Resolved to a concrete theme for the DOM …
+        expect(resolved).toBe('github-light')
+        expect(document.documentElement.getAttribute('data-theme')).toBe('github-light')
+        // … but the *stored* setting must survive, or the settings page shows
+        // a concrete theme and the app stops following the system forever.
+        expect(localStorage.getItem('clawbench-settings-theme')).toBe(JSON.stringify('auto'))
+        expect(localConfig.theme).toBe('auto')
+      } finally {
+        vi.unstubAllGlobals()
+        document.documentElement.removeAttribute('data-theme')
+        document.documentElement.removeAttribute('data-theme-base')
+        localStorage.removeItem('clawbench-settings-theme')
+        localConfig.theme = 'auto'
+      }
+    })
+
+    it('applies a concrete stored theme as-is', () => {
+      try {
+        localConfig.theme = 'dracula'
+        expect(applyStoredTheme()).toBe('dracula')
+        expect(document.documentElement.getAttribute('data-theme')).toBe('dracula')
+      } finally {
+        document.documentElement.removeAttribute('data-theme')
+        document.documentElement.removeAttribute('data-theme-base')
+        localConfig.theme = 'auto'
+      }
+    })
+  })
+
+  describe('syncThemeFromSystem', () => {
+    /**
+     * Stub matchMedia with a fixed scheme and reset the document/localConfig
+     * afterwards. The callback is driven by calling syncThemeFromSystem
+     * directly — the listener wiring is covered by onSystemColorSchemeChange
+     * and startSystemThemeWatcher specs.
+     */
+    function withScheme(dark: boolean, fn: () => void) {
+      vi.stubGlobal('matchMedia', vi.fn(() => ({
+        matches: dark,
+        media: '(prefers-color-scheme: dark)',
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })))
+      try {
+        fn()
+      } finally {
+        vi.unstubAllGlobals()
+        document.documentElement.removeAttribute('data-theme')
+        document.documentElement.removeAttribute('data-theme-base')
+        localStorage.removeItem('clawbench-settings-theme')
+        localConfig.theme = 'auto'
+      }
+    }
+
+    it('re-resolves and applies when the stored value is auto', () => {
+      withScheme(true, () => {
+        localConfig.theme = 'auto'
+        applyThemeAttributes('github-light')
+
+        syncThemeFromSystem()
+
+        expect(document.documentElement.getAttribute('data-theme')).toBe('github-dark')
+        expect(document.documentElement.getAttribute('data-theme-base')).toBe('dark')
+      })
+    })
+
+    it('notifies listeners via clawbench-theme-change', () => {
+      withScheme(true, () => {
+        localConfig.theme = 'auto'
+        applyThemeAttributes('github-light')
+        const listener = vi.fn()
+        window.addEventListener('clawbench-theme-change', listener)
+
+        try {
+          syncThemeFromSystem()
+          expect(listener).toHaveBeenCalledTimes(1)
+          expect(listener.mock.calls[0][0].detail).toBe('github-dark')
+        } finally {
+          window.removeEventListener('clawbench-theme-change', listener)
+        }
+      })
+    })
+
+    it('does not touch the DOM when the resolved theme is already applied', () => {
+      withScheme(true, () => {
+        localConfig.theme = 'auto'
+        applyThemeAttributes('github-dark')
+        const listener = vi.fn()
+        window.addEventListener('clawbench-theme-change', listener)
+
+        try {
+          // Resume events (visibilitychange/pageshow) fire even when nothing
+          // changed — they must not re-render mermaid or ping native.
+          syncThemeFromSystem()
+          expect(listener).not.toHaveBeenCalled()
+          expect(document.documentElement.getAttribute('data-theme')).toBe('github-dark')
+        } finally {
+          window.removeEventListener('clawbench-theme-change', listener)
+        }
+      })
+    })
+
+    it('ignores the system when the user picked a concrete theme', () => {
+      withScheme(true, () => {
+        localConfig.theme = 'dracula'
+        applyThemeAttributes('dracula')
+        const listener = vi.fn()
+        window.addEventListener('clawbench-theme-change', listener)
+
+        try {
+          syncThemeFromSystem()
+          expect(listener).not.toHaveBeenCalled()
+          expect(document.documentElement.getAttribute('data-theme')).toBe('dracula')
+        } finally {
+          window.removeEventListener('clawbench-theme-change', listener)
+        }
+      })
+    })
+  })
+
+  describe('startSystemThemeWatcher', () => {
+    it('subscribes to the scheme change once and re-applies through syncThemeFromSystem', () => {
+      const listeners = new Set<() => void>()
+      vi.stubGlobal('matchMedia', vi.fn(() => ({
+        matches: true,
+        media: '(prefers-color-scheme: dark)',
+        onchange: null,
+        addEventListener: (_: string, cb: () => void) => { listeners.add(cb) },
+        removeEventListener: (_: string, cb: () => void) => { listeners.delete(cb) },
+        dispatchEvent: vi.fn(),
+      })))
+      const listener = vi.fn()
+      try {
+        localConfig.theme = 'auto'
+        applyThemeAttributes('github-light')
+        window.addEventListener('clawbench-theme-change', listener)
+
+        // App.vue's registration runs on both cold start and post-login; a
+        // second subscription would apply every scheme change twice.
+        startSystemThemeWatcher()
+        startSystemThemeWatcher()
+        expect(listeners.size).toBe(1)
+
+        for (const cb of [...listeners]) cb()
+        expect(document.documentElement.getAttribute('data-theme')).toBe('github-dark')
+        expect(listener).toHaveBeenCalledTimes(1)
+      } finally {
+        window.removeEventListener('clawbench-theme-change', listener)
+        vi.unstubAllGlobals()
+        document.documentElement.removeAttribute('data-theme')
+        document.documentElement.removeAttribute('data-theme-base')
+        localConfig.theme = 'auto'
+      }
     })
   })
 })

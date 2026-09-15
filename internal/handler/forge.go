@@ -19,13 +19,15 @@ import (
 // scoped to that host and applying the configured TLS policy.
 //
 // This is the single place where a provider is constructed, so the credential
-// scope (per host) and the TLS policy (optional insecure mode) are applied
-// consistently for every endpoint.
+// scope (per host), the API scheme and the TLS policy are applied consistently
+// for every endpoint — the panel, the poller and the pipeline views all reach
+// the platform through here.
 func newForgeProvider(pf *service.ProjectForge) (forge.Provider, error) {
 	if pf == nil {
 		return nil, fmt.Errorf("no repository binding")
 	}
 	token := model.ConfigInstance.ForgeToken(pf.Host)
+	scheme := forge.ResolveScheme(pf.Scheme, model.ConfigInstance.ForgeScheme(pf.Host))
 
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
@@ -41,8 +43,11 @@ func newForgeProvider(pf *service.ProjectForge) (forge.Provider, error) {
 	switch forge.Platform(pf.Platform) {
 	case forge.PlatformGitHub:
 		baseURL := ""
+		// The official host keeps the go-github default (api.github.com, always
+		// https). A self-hosted GitHub Enterprise instance is reached over the
+		// resolved scheme so an internal http deployment works.
 		if pf.Host != forge.GitHubHost {
-			baseURL = fmt.Sprintf("https://%s/api/v3", pf.Host)
+			baseURL = fmt.Sprintf("%s://%s/api/v3", scheme, pf.Host)
 		}
 		return github.New(github.Config{
 			Token:      token,
@@ -53,6 +58,7 @@ func newForgeProvider(pf *service.ProjectForge) (forge.Provider, error) {
 		return gitlab.New(gitlab.Config{
 			Token:      token,
 			Host:       pf.Host,
+			Scheme:     scheme,
 			HTTPClient: httpClient,
 		}, pf.Owner, pf.Repo)
 	default:
@@ -63,7 +69,15 @@ func newForgeProvider(pf *service.ProjectForge) (forge.Provider, error) {
 // writeForgeError maps a classified forge error to an HTTP response, preserving
 // the error kind so the frontend can react (auth → settings, rate limit → retry
 // later, network → check connectivity).
-func writeForgeError(w http.ResponseWriter, err error) {
+//
+// `pf` is the binding the request was served for, when known. It exists for one
+// case: a 404 on a host with no stored credential. GitLab (and GitHub) report an
+// inaccessible private repository as 404 rather than 403, precisely so an
+// unauthenticated caller cannot tell "private" from "nonexistent" — which means
+// the bare platform message sends the user hunting for a typo in the repository
+// path when the real fix is to add a token. When no credential is configured for
+// that host, the response says so and names the host.
+func writeForgeError(w http.ResponseWriter, err error, pf *service.ProjectForge) {
 	var fe *forge.Error
 	status := http.StatusBadGateway
 	code := "ForgeError"
@@ -90,6 +104,17 @@ func writeForgeError(w http.ResponseWriter, err error) {
 			code = "ForgeServerError"
 		default:
 			status = http.StatusBadGateway
+		}
+		if fe.Kind == forge.ErrKindNotFound && pf != nil && !model.ConfigInstance.ForgeHasToken(pf.Host) {
+			// Not necessarily a missing token — the repository may genuinely not
+			// exist. The wording therefore states both possibilities instead of
+			// asserting the token is the cause.
+			code = codeForgeNeedsAuth
+			message = fmt.Sprintf(
+				"%s has no access token configured for %s, so it was queried anonymously. "+
+					"The repository may not exist, or it may be private and require a token for this host.",
+				pf.Platform, pf.Host,
+			)
 		}
 	}
 	body := map[string]any{strReqError: message, jsonCode: code}

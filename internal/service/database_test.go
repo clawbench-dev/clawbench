@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	_ "modernc.org/sqlite"
@@ -56,7 +57,8 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
@@ -299,6 +301,88 @@ func TestSchema_TitleSourceMigration_Idempotent(t *testing.T) {
 
 	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
 	assert.Contains(t, columns, "title_source")
+}
+
+// TestSchema_CompletedAtMigration verifies chat_history.completed_at is added
+// to a database created before the column existed, that the migration is
+// idempotent, and that legacy rows (completed_at NULL) keep the old created_at
+// unread semantics.
+func TestSchema_CompletedAtMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Phase 1: build the current schema, then drop completed_at to simulate a
+	// database created before the column existed. Building via InitDB guarantees
+	// every other table/index is present, so the second InitDB below exercises
+	// ONLY the completed_at migration.
+	require.NoError(t, InitDB())
+	CloseDB()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_history DROP COLUMN completed_at")
+	require.NoError(t, err)
+	// A finalized legacy reply plus a session that has never been read.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('legacy-at', '/p', 'claude', 'Legacy')")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_history (project_path, role, content, session_id, streaming, created_at) VALUES ('/p', 'assistant', 'old reply', 'legacy-at', 0, '2025-01-01 10:00:00')")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds the column.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	assert.Contains(t, getTableColumns(t, UnsafeDBForTest(), "chat_history"), "completed_at")
+
+	// The legacy row must keep the old semantics: completed_at is NULL, so the
+	// unread query falls back to created_at and the reply reads as unread.
+	var completed sql.NullTime
+	require.NoError(t, db.QueryRow(
+		"SELECT completed_at FROM chat_history WHERE session_id = 'legacy-at'").Scan(&completed))
+	assert.False(t, completed.Valid, "a legacy row must have completed_at NULL")
+
+	sessions, err := GetSessions("/p", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 1, sessions[0].UnreadCount,
+		"a legacy finalized reply must fall back to created_at and count as unread")
+
+	// Reading it must clear the badge via the COALESCE anchor.
+	UpdateLastRead("legacy-at")
+	sessions, err = GetSessions("/p", "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, sessions[0].UnreadCount, "reading a legacy row must clear it")
+}
+
+// TestSchema_CompletedAtMigration_Idempotent verifies running InitDB twice does
+// not fail on the already-present completed_at column.
+func TestSchema_CompletedAtMigration_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, InitDB())
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_history")
+	assert.True(t, columns["completed_at"], "completed_at must survive repeated migrations")
 }
 
 func TestSchema_TaskExecutionsColumns(t *testing.T) {
@@ -737,6 +821,59 @@ func TestInitDB_CreatesTables(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 1, count, "table %s should exist", table)
 	}
+}
+
+// TestInitDB_CreatesSessionTagTables guards the session-tag migration: an
+// existing database (created before tags existed) must gain both tables on the
+// next startup, otherwise every tag read/write fails with "no such table".
+//
+// Uses initTestDB (real InitDB against a temp dir) rather than the hand-rolled
+// test schema, because the point is to exercise the migration itself.
+func TestInitDB_CreatesSessionTagTables(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	// Restore the previous handles on exit (mirrors TestInitDB_ReadWriteSeparation):
+	// InitDB reassigns the package-level db/dbRead, so without restoring them the
+	// pools this test closes would stay installed and the next test to run a
+	// query would hit a closed database.
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	for _, table := range []string{"session_tags", "session_tag_links"} {
+		var count int
+		err := db.QueryRow(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+			table,
+		).Scan(&count)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, count, "table %s should exist", table)
+	}
+
+	// The composite key is what keeps two projects' same-named labels apart.
+	var colCount int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('session_tags')
+		WHERE name IN ('name', 'project_path')`).Scan(&colCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, colCount)
+
+	// A global tag (project_path='') and a project tag may share a name.
+	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES ('bug', 'global', '')`)
+	assert.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES ('bug', 'project', '/proj/a')`)
+	assert.NoError(t, err)
+	// ...but the same (name, project_path) twice must be rejected.
+	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES ('bug', 'project', '/proj/a')`)
+	assert.Error(t, err, "duplicate (name, project_path) must violate the unique constraint")
 }
 
 // ---------- Orphaned streaming message cleanup ----------
@@ -1475,7 +1612,8 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1864,7 +2002,8 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			deleted INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, deleted, created_at);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -2028,7 +2167,8 @@ func TestSchema_DropsLegacyRawResponsesTable(t *testing.T) {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS ai_raw_responses (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2707,7 +2847,8 @@ func setupTestDBForToolCallMigration(t *testing.T) func() {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_tool_calls (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3063,7 +3204,8 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_quick_send (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3568,4 +3710,134 @@ func TestSchema_ForgeItemsCommentsBaselinedMigration(t *testing.T) {
 		`SELECT comments_baselined FROM forge_items WHERE number = 2`).Scan(&baselined2))
 	assert.Equal(t, 1, baselined1, "a row with a known comment id must be backfilled as baselined")
 	assert.Equal(t, 0, baselined2, "a row with no comment id must stay unbaselined")
+}
+
+// TestSchema_ProjectForgesSchemeMigration covers the upgrade path: a database
+// created before the scheme column existed must gain it, with existing rows
+// backfilled to ” (unknown) rather than 'https'.
+//
+// It drives the REAL migration (InitDB) against a legacy on-disk database. A
+// test that executes the ALTER itself proves only that SQLite backfills an empty
+// default — it would still pass with the migration deleted, an inverted pragma
+// guard, or a missing DDL column, which is precisely the class of failure this
+// is meant to catch.
+func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// A LEGACY project_forges table: no scheme column, one pre-existing row.
+	//
+	// The path is normalized before it is stored. GetProjectForge normalizes its
+	// argument, so a raw "/proj" here would never match on Windows — filepath.Abs
+	// turns it into a drive-qualified path — and the test would fail on a lookup
+	// miss rather than on the migration it is meant to check.
+	projPath := NormalizeProjectPath(t.TempDir())
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	legacy, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = legacy.Exec(`CREATE TABLE project_forges (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		project_path TEXT NOT NULL,
+		platform     TEXT NOT NULL,
+		host         TEXT NOT NULL,
+		owner        TEXT NOT NULL,
+		repo         TEXT NOT NULL,
+		source       TEXT NOT NULL DEFAULT 'auto',
+		created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+	_, err = legacy.Exec(
+		`INSERT INTO project_forges (project_path, platform, host, owner, repo)
+		 VALUES (?, 'gitlab', 'gitlab.internal', 'group', 'widgets')`, projPath)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	// Run the real migration.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "project_forges")
+	assert.Contains(t, columns, "scheme",
+		"the migration must add scheme to an existing database")
+
+	// The existing row must read back as "" — not "https". A guess frozen here
+	// would override the credential's hint on an http-only instance.
+	var scheme string
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		"SELECT scheme FROM project_forges WHERE project_path = ?", projPath).Scan(&scheme))
+	assert.Empty(t, scheme, "existing rows must backfill to unknown, not https")
+
+	// And the migrated table must be usable through the real accessors, which is
+	// what an upgrade actually exercises.
+	pf, err := GetProjectForge(projPath)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "gitlab.internal", pf.Host)
+	assert.Empty(t, pf.Scheme)
+}
+
+// TestSchema_ProjectForgesSchemeMigrationIsIdempotent runs the real migration repeatedly:
+// a restart must not fail or duplicate work, since InitDB runs on every boot.
+func TestSchema_ProjectForgesSchemeMigrationIsIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	for i := range 3 {
+		require.NoError(t, InitDB(), "InitDB must succeed on run %d", i+1)
+		columns := getTableColumns(t, UnsafeDBForTest(), "project_forges")
+		assert.Contains(t, columns, "scheme")
+		CloseDB()
+	}
+
+	// A binding written after migration must survive another pass unchanged.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+	require.NoError(t, UpsertProjectForge(ProjectForge{
+		ProjectPath: "/proj2", Platform: "gitlab", Host: "gitlab.internal",
+		Scheme: "http", Owner: "g", Repo: "w",
+	}))
+	CloseDB()
+	require.NoError(t, InitDB())
+	pf, err := GetProjectForge("/proj2")
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "http", pf.Scheme, "a later migration pass must not disturb stored data")
+}
+
+// TestTimedWrite_ReleasesLockOnPanic is the regression test for a wedged
+// process: timedWrite used to call writeMu.Unlock() inline after exec(), so a
+// panic inside exec() (db.Exec on a nil *sql.DB, which the summary backfill
+// path hits when the DB is torn down) skipped the unlock and left the global
+// write mutex held forever. Every later writer then blocked in Lock with no CPU
+// use and no error — the run died on the test timeout instead of reporting the
+// original panic.
+func TestTimedWrite_ReleasesLockOnPanic(t *testing.T) {
+	assert.Panics(t, func() {
+		_, _ = timedWrite("SELECT 1", func() (sql.Result, error) {
+			panic("boom")
+		})
+	})
+
+	// The lock must be free again: acquiring it with a deadline is the assertion.
+	if !writeMuAcquirable(2 * time.Second) {
+		t.Fatal("writeMu is still held after exec panicked — later writers would block forever")
+	}
 }

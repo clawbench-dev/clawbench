@@ -67,6 +67,44 @@ func TestListItems_IssuesExcludesPullRequests(t *testing.T) {
 	assert.Equal(t, "alice", res.Items[0].Author.Login)
 }
 
+// TestListItems_PullsCarryHeadBranch: the head branch is the key the CI lookup
+// uses, so a PR that arrives without it would silently show no pipelines.
+func TestListItems_PullsCarryHeadBranch(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"number":5,"title":"pr","state":"open","user":{"login":"carol"},
+			 "head":{"ref":"feat/login-fix"},
+			 "html_url":"https://github.com/acme/widgets/pull/5",
+			 "updated_at":"2026-09-09T12:00:00Z"}
+		]`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{Type: forge.ItemTypeChangeRequest})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, "feat/login-fix", res.Items[0].SourceBranch)
+}
+
+// TestListItems_IssuesHaveNoHeadBranch: an issue has no branch, and inventing one
+// would make the CI lookup query a branch that does not exist.
+func TestListItems_IssuesHaveNoHeadBranch(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"number":5,"title":"issue","state":"open","user":{"login":"carol"},
+			 "html_url":"https://github.com/acme/widgets/issues/5",
+			 "updated_at":"2026-09-09T12:00:00Z"}
+		]`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{Type: forge.ItemTypeIssue})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Empty(t, res.Items[0].SourceBranch)
+}
+
+// TestListItems_PullsMergedState covers the merged normalization.
 func TestListItems_PullsMergedState(t *testing.T) {
 	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "/repos/acme/widgets/pulls")
@@ -87,6 +125,107 @@ func TestListItems_PullsMergedState(t *testing.T) {
 	require.NotNil(t, res.Items[0].MergedAt)
 	assert.Equal(t, forge.StateOpen, res.Items[1].State)
 	assert.True(t, res.Items[1].Draft)
+}
+
+// TestListItems_PullsClosedExcludesMerged pins the cross-platform agreement:
+// GitLab's state=closed never includes merged MRs, so GitHub's closed filter
+// must drop merged PRs too.
+//
+// It must be served by the search API rather than filtered locally, because a
+// page whose PRs are ALL merged would come back empty while hasMore stayed true
+// — an empty list has no scrollable area, so the caller's infinite scroll never
+// fires and the remaining pages are unreachable.
+func TestListItems_PullsClosedExcludesMerged(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "/search/issues",
+			"closed must be served by search, so an all-merged page cannot stall the scroll")
+		q := r.URL.Query().Get("q")
+		assert.Contains(t, q, "state:closed")
+		assert.Contains(t, q, "is:unmerged", "merged PRs must be excluded by the query, not dropped locally")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":1,"items":[
+			{"number":6,"title":"closed unmerged","state":"closed",
+			 "pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/6"},
+			 "user":{"login":"dave"},
+			 "html_url":"https://github.com/acme/widgets/pull/6","updated_at":"2026-09-10T09:00:00Z"}
+		]}`))
+	}))
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, State: string(forge.StateClosed),
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, 6, res.Items[0].Number)
+	assert.Equal(t, forge.StateClosed, res.Items[0].State)
+}
+
+// TestListItems_PullsMergedUsesSearchApi covers the merged filter, which the
+// list endpoint cannot express: GitHub accepts state=merged but silently
+// returns OPEN pull requests, so the request must go to the search API instead.
+func TestListItems_PullsMergedUsesSearchApi(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "/search/issues", "merged must be served by search, not the list endpoint")
+		assert.Contains(t, r.URL.Query().Get("q"), "is:merged")
+		assert.Contains(t, r.URL.Query().Get("q"), "is:pr")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"total_count":1,
+			"items":[
+				{"number":5,"title":"merged pr","state":"closed",
+				 "pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/5",
+				                 "merged_at":"2026-09-09T12:00:00Z"},
+				 "user":{"login":"carol"},
+				 "html_url":"https://github.com/acme/widgets/pull/5","updated_at":"2026-09-09T12:00:00Z"}
+			]}`))
+	}))
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, State: string(forge.StateMerged),
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	// The search payload carries the merge time in the nested pull_request
+	// object; without reading it this would normalize to "closed".
+	assert.Equal(t, forge.StateMerged, res.Items[0].State)
+	require.NotNil(t, res.Items[0].MergedAt)
+	assert.Equal(t, forge.ItemTypeChangeRequest, res.Items[0].Type)
+}
+
+// TestListItems_PullsSearchClosedExcludesMerged covers the search path's state
+// handling: state:closed there also matches merged PRs, so is:unmerged is
+// required to keep the two filters disjoint.
+func TestListItems_PullsSearchClosedExcludesMerged(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "/search/issues")
+		q := r.URL.Query().Get("q")
+		assert.Contains(t, q, "state:closed")
+		assert.Contains(t, q, "is:unmerged")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":0,"items":[]}`))
+	}))
+	_, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, State: string(forge.StateClosed), Query: "fix",
+	})
+	require.NoError(t, err)
+}
+
+// TestListItems_IssuesMergedFilterIsEmptyNotOpen pins the same class of bug the
+// GitLab adapter has: GitHub does not reject state=merged on the issues
+// endpoint, it silently falls back to "open". Forwarding it would show open
+// issues under a "merged" filter, which is worse than an error because nothing
+// signals the filter was ignored.
+func TestListItems_IssuesMergedFilterIsEmptyNotOpen(t *testing.T) {
+	called := false
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"number":1,"title":"open issue","state":"open","user":{"login":"a"},"updated_at":"2026-09-10T10:00:00Z"}]`))
+	}))
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, State: string(forge.StateMerged),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.Items, "issues have no merged state, so the result must be empty")
+	assert.False(t, called, "an impossible filter must not reach the API and be silently downgraded to open")
 }
 
 func TestListItems_Pagination(t *testing.T) {

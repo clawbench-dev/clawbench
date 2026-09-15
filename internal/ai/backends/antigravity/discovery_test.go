@@ -73,54 +73,54 @@ func TestParseAgyModels_CRLF(t *testing.T) {
 	assert.Equal(t, "gemini-3-flash", models[1].ID)
 }
 
-func TestAntigravityDefaults_FirstIsDefault(t *testing.T) {
-	models := antigravityDefaults()
-	require.Len(t, models, len(antigravityDefaultModels))
+func TestAntigravityCatalog_FirstIsDefault(t *testing.T) {
+	src := model.NewCLISource("antigravity-test", model.CLIOptions{
+		Command:  "definitely-not-a-real-cli-xyz",
+		Parse:    parseAgyModels,
+		Fallback: model.AntigravityCatalog,
+	})
+
+	models, _ := src.Discover()
+	require.Len(t, models, len(model.AntigravityCatalog))
 	assert.True(t, models[0].Default)
 	assert.Equal(t, "gemini-3-pro", models[0].ID)
 	assert.False(t, models[1].Default)
 }
 
-func TestDiscoverAntigravityModels_Registered(t *testing.T) {
-	registry := model.GetBackendRegistry()
-	found := false
-	for _, spec := range registry {
-		if spec.Backend == "antigravity" {
-			found = true
-			assert.True(t, model.CanDiscoverModels(spec), "antigravity should support model discovery")
-		}
-	}
-	assert.True(t, found, "antigravity should be in the backend registry")
+func TestAntigravitySource_Registered(t *testing.T) {
+	spec := model.BackendSpec{ID: "antigravity", Backend: "antigravity", DefaultCmd: "agy"}
+	assert.True(t, model.CanDiscoverModels(spec), "antigravity should support model discovery")
+
+	src, ok := model.LookupModelSource("antigravity")
+	require.True(t, ok)
+	assert.Equal(t, model.SourceKindCLI, src.Kind())
 }
 
-func TestDiscoverAntigravityModels_FallsBackOnMissingBinary(t *testing.T) {
-	// In CI/test environments the `agy` binary is not installed, so the
-	// command fails and discovery must fall back to known defaults without
-	// returning an empty list. When agy is present, discovered models are
-	// returned — either way the result is non-empty and first is default.
-	models := DiscoverAntigravityModels()
+func TestAntigravitySource_FallsBackOnMissingBinary(t *testing.T) {
+	// The real source falls back to the catalog when `agy` is absent or
+	// unauthenticated, so the result must never be empty.
+	models := model.DiscoverModels("antigravity")
 	require.NotEmpty(t, models)
 	assert.True(t, models[0].Default)
 }
 
-func TestDiscoverAntigravityModels_SucceedsWithMockBinary(t *testing.T) {
+func TestAntigravitySource_SucceedsWithMockBinary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("mock script relies on sh, not available on Windows")
 	}
-	// Create a mock `agy` script that returns model output, so the success
-	// path (parseAgyModels on stdout) is exercised in CI.
 	tmpDir := t.TempDir()
-	agyPath := filepath.Join(tmpDir, "agy")
-	script := `#!/bin/sh
-echo "gemini-3-pro"
-echo "gemini-3-flash"
-`
-	require.NoError(t, os.WriteFile(agyPath, []byte(script), 0o755))
+	script := "#!/bin/sh\necho gemini-3-pro\necho gemini-3-flash\n"
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "agy"), []byte(script), 0o755))
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", tmpDir+":"+origPath)
+	src := model.NewCLISource("antigravity-mock", model.CLIOptions{
+		Command:  "agy",
+		Args:     []string{"models"},
+		Parse:    parseAgyModels,
+		Fallback: model.AntigravityCatalog,
+	})
 
-	models := DiscoverAntigravityModels()
+	models, _ := src.Discover()
 	require.Len(t, models, 2)
 	assert.Equal(t, "gemini-3-pro", models[0].ID)
 	assert.Equal(t, "Gemini 3 Pro", models[0].Name)

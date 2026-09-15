@@ -1,6 +1,9 @@
 <template>
   <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata, pending: msg.pending }]" :data-msg-key="msg.id ? 'db-' + msg.id : null">
 
+    <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
+         element so it sits on the panel background for both roles. -->
+    <div class="msg-card">
     <!-- Collapsible content wrapper -->
     <div ref="wrapperRef" class="msg-content-wrapper">
       <FileAttachmentList v-if="msg.role === 'user' && msg.files && msg.files.length > 0 && !hasImagesInContent(msg.content)" :files="msg.files" @file-tag-click="$emit('file-tag-click', $event)" />
@@ -72,58 +75,66 @@
     <button v-if="msg.role === 'assistant' && !msg.streaming && hasFileChanges" class="chat-file-changes-banner" @click="fileChangesDrawer.open()">
       <FileDiff :size="14" />
       <span>{{ t('chat.fileChanges.title') }}</span>
-      <span class="chat-file-changes-count">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
+      <span class="chat-file-changes-count count-badge count-badge--md">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
     </button>
 
     <!-- Cancelled marker: shown after file changes banner, hidden when last block is thinking (shown inline in thinking-header instead) -->
     <div v-if="msg.cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
+    </div><!-- /.msg-card -->
 
-    <!-- Bottom bar for assistant messages -->
-    <div v-if="msg.role === 'assistant' && !msg.streaming && (msgText || msg.blocks?.length || msg.summary)" class="chat-meta-bar">
+    <!-- ── Meta bar (OUTSIDE the bubble, both roles) ──
+         Assistant: duration + friendly time on the left, actions on the right.
+         User: friendly time + copy + details. Same row layout, same styles —
+         only which actions are meaningful differs. -->
+    <div v-if="showMetaBar" class="chat-meta-bar" :class="msg.role === 'user' ? 'chat-meta-bar-user' : 'chat-meta-bar-assistant'">
       <span class="chat-meta-info">
-        <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
-        <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': msg.metadata?.wallMs }">{{ relativeTime }}</span>
+        <span v-if="msg.role === 'assistant' && msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
+        <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': msg.role === 'assistant' && msg.metadata?.wallMs }">{{ relativeTime }}</span>
       </span>
       <div class="chat-meta-actions">
-        <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
-          <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
-          <LoadingIndicator v-else size="sm" inline />
-        </span>
-        <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
-          <LoadingIndicator size="sm" inline />
-        </span>
-        <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
-          <!-- Generating states: summarizing / synthesizing -->
-          <template v-if="autoSpeech.isGeneratingText(msg.id)">
-            <Clock :size="14" class="speak-spinner" />
-            <span>{{ autoSpeech.getPhaseLabel(msg.id) ? t('chat.speech.' + autoSpeech.getPhaseLabel(msg.id)) : '' }}</span>
-          </template>
-          <!-- Playing state -->
-          <template v-else-if="autoSpeech.isPlayingAudio(msg.id)">
-            <Pause :size="14" />
-            <span>{{ t('chat.message.speaking') }}</span>
-          </template>
-          <!-- Default idle state -->
-          <template v-else>
-            <Volume2 :size="14" />
-          </template>
-        </button>
-        <button v-if="!msg.streaming" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
+        <template v-if="msg.role === 'assistant'">
+          <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
+            <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
+            <LoadingIndicator v-else size="sm" inline />
+          </span>
+          <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
+            <LoadingIndicator size="sm" inline />
+          </span>
+          <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
+            <!-- Generating states: summarizing / synthesizing -->
+            <template v-if="autoSpeech.isGeneratingText(msg.id)">
+              <Clock :size="14" class="speak-spinner" />
+              <span>{{ autoSpeech.getPhaseLabel(msg.id) ? t('chat.speech.' + autoSpeech.getPhaseLabel(msg.id)) : '' }}</span>
+            </template>
+            <!-- Playing state -->
+            <template v-else-if="autoSpeech.isPlayingAudio(msg.id)">
+              <Pause :size="14" />
+              <span>{{ t('chat.message.speaking') }}</span>
+            </template>
+            <!-- Default idle state -->
+            <template v-else>
+              <Volume2 :size="14" />
+            </template>
+          </button>
+        </template>
+        <button v-if="!msg.streaming && (msg.role === 'assistant' || copyableUserText)" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
           <span v-if="copied" class="chat-copy-copied-text">{{ t('common.copied') }}</span>
           <Copy v-else :size="14" />
         </button>
-        <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
-          <Split :size="14" />
-        </button>
-        <button
-          v-if="!msg.streaming"
-          class="chat-action-btn"
-          :disabled="isLastMessage"
-          :title="isLastMessage ? t('chat.session.nothingToRewind') : t('chat.actions.rewindSession')"
-          @click="$emit('rewind-from-message', msg)"
-        >
-          <Rewind :size="14" />
-        </button>
+        <template v-if="msg.role === 'assistant'">
+          <button v-if="!msg.streaming && !hideSessionActions" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
+            <Split :size="14" />
+          </button>
+          <button
+            v-if="!msg.streaming && !hideSessionActions"
+            class="chat-action-btn"
+            :disabled="isLastMessage"
+            :title="isLastMessage ? t('chat.session.nothingToRewind') : t('chat.actions.rewindSession')"
+            @click="$emit('rewind-from-message', msg)"
+          >
+            <Rewind :size="14" />
+          </button>
+        </template>
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
@@ -198,6 +209,11 @@ const props = defineProps({
   midTurnSupported: { type: Boolean, default: false },
   /** True while this bubble's action request is in flight (disables the button). */
   pendingActionBusy: { type: Boolean, default: false },
+  /** Read-only hosts (task execution detail) hide the fork/rewind pair: those
+   *  two actions need a live session to branch or truncate, which a finished
+   *  execution record does not have. The rest of the bar (summary toggle,
+   *  speak, copy, details) stays useful there. */
+  hideSessionActions: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'pending-action', 'fork-from-message', 'rewind-from-message', 'reset-session'])
@@ -263,10 +279,28 @@ const msgText = computed(() => {
   return ''
 })
 
-// Friendly relative timestamp shown next to the elapsed duration in the meta bar.
+// Friendly relative timestamp shown in the meta bar for BOTH roles.
 // formatRelativeTime returns '' for missing/invalid dates (including Go zero-value
 // times), so the label and its separator stay hidden when there is nothing to show.
 const relativeTime = computed(() => (props.msg?.createdAt ? formatRelativeTime(props.msg.createdAt) : ''))
+
+// Copyable text for a user message — the raw content (blocks are the same text
+// for user rows; `content` survives summary-stripped payloads).
+const copyableUserText = computed(() => {
+  if (props.msg?.role !== 'user') return ''
+  return extractSpeakableText(props.msg?.blocks || []) || (props.msg?.content || '')
+})
+
+// Meta bar visibility. Assistant keeps its old gate (it owns the action bar);
+// user messages show it as soon as there is a timestamp or copyable text, and
+// never while the bubble is still queued (pending hint already occupies that row).
+const showMetaBar = computed(() => {
+  if (props.msg?.role === 'assistant') {
+    return !props.msg.streaming && !!(msgText.value || props.msg.blocks?.length || props.msg.summary)
+  }
+  if (props.msg?.role !== 'user' || props.msg.pending || props.msg.streaming) return false
+  return !!(relativeTime.value || copyableUserText.value)
+})
 
 // Accessible name/tooltip for the read-aloud button. While audio is playing the
 // button acts as a stop control, so it must not advertise "read aloud".
@@ -376,9 +410,12 @@ function handleOpenFilePayload(payload) {
 const copied = ref(false)
 function handleCopyMessage() {
   if (copied.value) return
-  // Reuse the same text extraction as read-aloud: all text + AskUserQuestion
-  // blocks, falling back to the summary for summary-only (empty-blocks) view.
-  const text = msgText.value
+  // Role-appropriate payload: assistant reuses the read-aloud extraction (all
+  // text + AskUserQuestion blocks, falling back to the summary for the
+  // summary-only view); a user message copies its own content. `msgText` is
+  // assistant-only (it returns '' for user rows), so using it here would make
+  // the user bar's copy button a silent no-op.
+  const text = props.msg?.role === 'user' ? copyableUserText.value : msgText.value
   if (!text) return
   copyText(text, () => {
     copied.value = true
@@ -414,6 +451,16 @@ function handleCopyMessage() {
 /* Image thumbnail style */
 .chat-message .chat-img {
   vertical-align: middle;
+}
+
+/* ── Message card (the bubble itself) ──
+   The meta bar is a SIBLING of this element, so the card owns every bubble
+   visual (background, radius, padding, clipping). */
+.msg-card {
+    padding: var(--space-4) var(--space-6);
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 /* ── Message content wrapper ── */
@@ -464,24 +511,26 @@ function handleCopyMessage() {
 
 .chat-file-changes-count {
     margin-left: auto;
-    font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
     background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
-    border-radius: var(--radius-xs);
-    padding:0 var(--space-3);
-    min-width: 18px;
-    text-align: center;
-    line-height: 18px;
 }
 
-/* Chat Meta Bar — contains model/duration info + detail button */
+/* Chat Meta Bar — duration/time info + message actions.
+   Sits OUTSIDE the bubble (sibling of .msg-card), so it always renders on the
+   panel background and never inherits the user bubble's white-on-accent text. */
 .chat-meta-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-top: var(--space-2);
     gap: var(--space-3);
+    padding: 0 var(--space-6);
+    min-width: 0;
 }
+
+/* Both roles share the row. The user row is already right-aligned and
+   shrink-to-fit (align-items: flex-end on .chat-message.user), so the bar needs
+   no alignment of its own — only the shared row layout above. */
 
 .chat-meta-info {
     display: flex;
@@ -551,14 +600,8 @@ function handleCopyMessage() {
     to { transform: rotate(360deg); }
 }
 
-/* User message meta bar */
-.chat-meta-bar-user {
-    color: color-mix(in srgb, var(--text-secondary) 60%, transparent);
-    transition: color var(--duration-slow);
-}
-
 /* ── Pending (queued) user message styles ── */
-.chat-message.user.pending {
+.chat-message.user.pending .msg-card {
     color: rgba(255, 255, 255, 0.55);
     background: color-mix(in srgb, var(--user-msg-color) 55%, transparent);
     border: 1px dashed rgba(255, 255, 255, 0.5);
@@ -647,27 +690,15 @@ function handleCopyMessage() {
     color: var(--text-secondary);
   }
 }
-
-.chat-info-btn-user {
-    color: rgba(255, 255, 255, 0.7);
-}
-
-@media (hover: hover) {
-  .chat-info-btn-user:hover {
-    color: rgba(255, 255, 255, 0.9);
-    background: rgba(255, 255, 255, 0.1);
-  }
-}
-
-.chat-meta-bar-user .chat-meta-info {
-    color: rgba(255, 255, 255, 0.7);
-}
 </style>
 
 <style>
-/* Chat message - non-scoped for v-html penetration */
+/* Chat message - non-scoped for v-html penetration.
+   .chat-message is now the row container (bubble + meta bar); the bubble
+   visuals live on .msg-card so the meta bar can sit outside them. */
 .chat-message {
-    padding: var(--space-4) var(--space-6);
+    display: flex;
+    flex-direction: column;
     font-size: var(--font-size-md);
     line-height: var(--line-height-snug);
     min-width: 0;
@@ -676,6 +707,28 @@ function handleCopyMessage() {
     max-width: 100%;
     box-sizing: border-box;
     contain: style;
+}
+
+/* ── Leaked form/XML control wrapping guard ──
+   A malformed <ask-question> payload (e.g. an <option> without a <question>)
+   fails isValidAskContent, so detectAskQuestion() reports not-found and the raw
+   XML is NOT stripped — it falls through to markdown, where marked passes the
+   tags through and DOMPurify keeps them. Those become REAL form elements in the
+   bubble.
+
+   The problem: the UA stylesheet gives <option> `white-space: nowrap` (and
+   <select> `pre`). With no way to wrap, one long option label lays out as a
+   single line — measured 485px past the bubble for a prose label and 5394px for
+   a 600-char URL — and .chat-message.assistant's `overflow: hidden` then clips
+   it silently with no way to scroll. Resetting white-space restores normal
+   wrapping; overflow-wrap guarantees even an unbreakable token breaks.
+
+   Scoped to .chat-message (both roles) and to exactly the tags DOMPurify
+   preserves from a leaked payload. None of them is legitimately rendered as
+   content in a chat bubble, so this cannot affect real markdown output. */
+.chat-message :is(option, optgroup, select, textarea, label, fieldset, legend, header) {
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -842,25 +895,44 @@ function handleCopyMessage() {
   }
 }
 
+/* ── Row layout (bubble + meta bar) ──
+   .chat-message no longer paints a background: it is the flex row that holds
+   .msg-card (the bubble) and .chat-meta-bar (outside it). Kept in the global
+   block so the role colours and alignment still reach v-html descendants.
+
+   The user row spans the full column (no margin-right) so its meta bar lines up
+   with the assistant one. The 10px right inset belongs to the BUBBLE, not the
+   row — keeping it on the row would shift the meta bar inward and misalign the
+   two rows' right edges. */
 .chat-message.user {
-    background: var(--user-msg-color);
     color: white;
-    align-self: flex-end;
+    align-self: stretch;
+    align-items: flex-end;
+    max-width: 100%;
+}
+
+.chat-message.assistant {
+    color: var(--text-primary);
+    align-self: stretch;
+    align-items: stretch;
+    position: relative;
+    min-width: 0;
+    overflow-wrap: break-word;
+}
+
+/* ── The bubble itself ── */
+.chat-message.assistant .msg-card {
+    background: var(--bg-tertiary);
+    border-radius: 0;
+    overflow: hidden;
+}
+
+.chat-message.user .msg-card {
+    background: var(--user-msg-color);
     border-radius: 20px 20px 0 20px;
     margin-right: var(--space-5);
     max-width: calc(100% - 20px);
     overflow: hidden;
-}
-
-.chat-message.assistant {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    align-self: stretch;
-    border-radius: 0;
-    position: relative;
-    min-width: 0;
-    overflow: hidden;
-    overflow-wrap: break-word;
 }
 
 .chat-message.user pre {

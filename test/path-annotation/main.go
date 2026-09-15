@@ -40,6 +40,56 @@ var (
 
 var externalRef = "../../other-project/main.go"
 
+// ─── 文件夹路径（无扩展名）───
+// 注意：文件夹必须写成行内代码才进入标注（文本分支要求扩展名）。
+// 以下为「行内代码形式」样例。
+
+// 项目内文件夹（应标注，可导航进入）
+var (
+	dirComposables = "web/src/composables"
+	dirChat        = "web/src/components/chat"
+	dirStores      = "web/src/stores"
+	dirRag         = "internal/rag"
+	dirSpec        = "docs/spec"
+	dirFixture     = "test/path-annotation"
+	dirTwoSeg      = "web/src"
+	dirTrailing    = "web/src/composables/"
+)
+
+// 项目内绝对文件夹路径（应归一化为项目相对路径）
+var (
+	absDirComposables = "/home/xulongzhe/projects/clawbench/web/src/composables"
+	absDirRag         = "/home/xulongzhe/projects/clawbench/internal/rag"
+)
+
+// 以本文件所在目录为基准的相对文件夹
+var (
+	relDirSibling = "../path-annotation"
+	relDirParent  = "./.."
+	relDirEscape  = "../.."
+)
+
+// 项目外文件夹（校验后标注会被撤销，橙色不保留）
+var (
+	extDirCodebuddy = "/home/xulongzhe/.codebuddy"
+	extDirPlugins   = "/home/xulongzhe/.codebuddy/plugins"
+	extDirLog       = "/var/log"
+	extDirTilde     = "~/.codebuddy"
+)
+
+// 末尾含点号、易被误判为文件的文件夹
+var (
+	dotDirWorktree   = "/home/user/project/.worktrees"
+	dotDirSuppressed = "/home/user/project/.worktrees/gitgraph-fix"
+)
+
+// ─── 文件夹 + 行号（无意义，不应这么写）───
+
+var (
+	dirWithLine  = "web/src/composables:10"
+	dirWithRange = "internal/rag:1-5"
+)
+
 // ─── 不应标注 ───
 
 var (

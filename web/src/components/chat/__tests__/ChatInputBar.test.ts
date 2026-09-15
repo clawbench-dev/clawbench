@@ -17,6 +17,16 @@ import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
 import { _resetChatDraftsForTesting } from '@/utils/chatDraftStore.ts'
 
+// `isAndroidUA` is a module-level constant read from navigator.userAgent, so
+// the real `_setIsPCForTest` hook cannot drive it. Override only that export
+// (via a getter) and keep the rest of the module real, so the existing
+// _setIsPCForTest-based cases keep working.
+const platform = vi.hoisted(() => ({ isAndroid: false }))
+vi.mock('@/composables/usePlatformDetect', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/usePlatformDetect')>()),
+  get isAndroidUA() { return platform.isAndroid },
+}))
+
 vi.mock('@/utils/api', () => ({
   apiGet: vi.fn().mockResolvedValue(undefined),
 }))
@@ -490,6 +500,79 @@ describe('ChatInputBar', () => {
   it('renders the attach button', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
+  })
+
+  describe('Android select-all delete recovery', () => {
+    afterEach(() => { platform.isAndroid = false })
+
+    /** Dispatch the signature: empty insert over a live selection. */
+    function fireSignature(ta: HTMLTextAreaElement) {
+      const ev = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: '' })
+      ta.dispatchEvent(ev)
+    }
+
+    function applyEdit(ta: HTMLTextAreaElement, value: string) {
+      ta.value = value
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+
+    it('rebuilds the textarea so the field keeps accepting input', async () => {
+      // The chat input hits the same WebView bug as the rename dialog: the IME
+      // dies after an empty insert replaces a selection, so without a rebuild
+      // the input is bricked until the app restarts.
+      platform.isAndroid = true
+      const wrapper = mountBar()
+      await flushPromises()
+      const before = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+      // The signature needs a non-collapsed selection, so give the field text.
+      before.value = 'OLDNAME'
+      before.focus()
+      before.setSelectionRange(0, 7)
+
+      fireSignature(before)
+      applyEdit(before, '')
+      await flushPromises()
+
+      // A new element means a new InputConnection — the whole point, since the
+      // old one is dead and cannot be revived in place.
+      const after = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+      expect(after).not.toBe(before)
+      // The caret is restored to where the replaced selection began.
+      expect(after.selectionStart).toBe(0)
+      expect(after.selectionStart).toBe(after.selectionEnd)
+      wrapper.unmount()
+    })
+
+    it('does not rebuild on desktop', async () => {
+      platform.isAndroid = false
+      const wrapper = mountBar()
+      await flushPromises()
+      const before = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+      before.focus()
+
+      fireSignature(before)
+      applyEdit(before, '')
+      await flushPromises()
+
+      expect(wrapper.find('.chat-textarea').element).toBe(before)
+      wrapper.unmount()
+    })
+
+    it('does not rebuild on a normal keystroke', async () => {
+      platform.isAndroid = true
+      const wrapper = mountBar()
+      await flushPromises()
+      const before = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+      before.focus()
+
+      const ev = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'h' })
+      before.dispatchEvent(ev)
+      applyEdit(before, 'h')
+      await flushPromises()
+
+      expect(wrapper.find('.chat-textarea').element).toBe(before)
+      wrapper.unmount()
+    })
   })
 
   it('renders the send button', () => {

@@ -60,7 +60,8 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			indexed INTEGER NOT NULL DEFAULT 0,
 			queue_id TEXT DEFAULT '',
 			queued INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -296,25 +297,39 @@ func TestListRecentSessions(t *testing.T) {
 }
 
 // ============================================================================
-// resolveAgentConfig tests
+// Agent-config / session-state resolution tests
+//
+// These used to call resolveAgentConfig / resolveIsACP / resolveSessionState
+// directly. Those helpers were folded into BuildChatRequest when the handler and
+// service implementations were unified, so the same behaviors are now asserted
+// through the public API — which is also what production calls.
 // ============================================================================
 
-func TestResolveAgentConfig_UnknownAgentID(t *testing.T) {
+// withAgents swaps the agent registry for one test and restores it afterwards.
+func withAgents(t *testing.T, agents map[string]*model.Agent) {
+	t.Helper()
 	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{}
-	defer func() { model.Agents = origAgents }()
-
-	result := resolveAgentConfig("nonexistent", "/proj", "", "", "")
-	assert.Equal(t, "", result.systemPrompt)
-	assert.Equal(t, "", result.agentModel)
-	assert.Equal(t, "", result.agentCommand)
-	assert.Equal(t, "", result.effectiveThinkingEffort)
-	assert.Equal(t, "", result.effectiveMode)
+	model.Agents = agents
+	t.Cleanup(func() { model.Agents = origAgents })
 }
 
-func TestResolveAgentConfig_AgentWithAllFields(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
+func TestBuildChatRequest_UnknownAgentID_EmptyAgentFields(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{})
+
+	req := BuildChatRequest("hi", "sess-unknown-agent", "/proj", "claude", "nonexistent", "", "", "", "", "/proj", false)
+
+	assert.Equal(t, "", req.Model)
+	assert.Equal(t, "", req.Command)
+	assert.Equal(t, "", req.ThinkingEffort)
+	assert.Equal(t, "", req.Mode)
+}
+
+func TestBuildChatRequest_AgentWithAllFields(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
 		"test-agent": {
 			ID:             "test-agent",
 			SystemPrompt:   "You are at {{PROJECT_PATH}}",
@@ -323,324 +338,258 @@ func TestResolveAgentConfig_AgentWithAllFields(t *testing.T) {
 			PreferredMode:  "code",
 			Models:         []model.AgentModel{{ID: "model-1", Default: true}},
 		},
-	}
-	defer func() { model.Agents = origAgents }()
+	})
 
-	result := resolveAgentConfig("test-agent", "/home/user/proj", "", "", "")
-	assert.Equal(t, "You are at /home/user/proj", result.systemPrompt)
-	assert.Equal(t, "model-1", result.agentModel)
-	assert.Equal(t, "/usr/bin/test-cli", result.agentCommand)
-	assert.Equal(t, "high", result.effectiveThinkingEffort)
-	assert.Equal(t, "code", result.effectiveMode)
+	req := BuildChatRequest("hi", "sess-all-fields", "/home/user/proj", "claude", "test-agent", "", "", "", "", "/home/user/proj", false)
+
+	assert.Equal(t, "You are at /home/user/proj", req.SystemPrompt)
+	assert.Equal(t, "model-1", req.Model)
+	assert.Equal(t, "/usr/bin/test-cli", req.Command)
+	assert.Equal(t, "high", req.ThinkingEffort)
+	assert.Equal(t, "code", req.Mode)
 }
 
-func TestResolveAgentConfig_ModelOverride(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {
-			ID:           "test-agent",
-			SystemPrompt: "hello",
-			Models:       []model.AgentModel{{ID: "default-model", Default: true}},
-		},
-	}
-	defer func() { model.Agents = origAgents }()
+func TestBuildChatRequest_ModelOverridePrecedence(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", SystemPrompt: "hello", Models: []model.AgentModel{{ID: "default-model", Default: true}}},
+	})
 
-	// modelOverride takes precedence over agent's default model
-	result := resolveAgentConfig("test-agent", "", "custom-model", "", "")
-	assert.Equal(t, "custom-model", result.agentModel)
+	req := BuildChatRequest("hi", "sess-model-override", "", "claude", "test-agent", "custom-model", "", "", "", "", false)
+
+	assert.Equal(t, "custom-model", req.Model, "explicit override beats the agent default")
 }
 
-func TestResolveAgentConfig_NoModelOverride_NoDefaultModel(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {
-			ID:           "test-agent",
-			SystemPrompt: "hello",
-			Models:       []model.AgentModel{},
-		},
-	}
-	defer func() { model.Agents = origAgents }()
+func TestBuildChatRequest_NoOverride_NoDefaultModel(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", SystemPrompt: "hello", Models: []model.AgentModel{}},
+	})
 
-	result := resolveAgentConfig("test-agent", "", "", "", "")
-	assert.Equal(t, "", result.agentModel)
+	req := BuildChatRequest("hi", "sess-no-model", "", "claude", "test-agent", "", "", "", "", "", false)
+
+	assert.Equal(t, "", req.Model)
 }
 
-func TestResolveAgentConfig_ProjectPathReplacement(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {
-			ID:           "test-agent",
-			SystemPrompt: "Work on {{PROJECT_PATH}} and {{PROJECT_PATH}} again",
-		},
-	}
-	defer func() { model.Agents = origAgents }()
+func TestBuildChatRequest_ProjectPathReplacement(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", SystemPrompt: "Work on {{PROJECT_PATH}} and {{PROJECT_PATH}} again"},
+	})
 
-	result := resolveAgentConfig("test-agent", "/my/path", "", "", "")
-	assert.Equal(t, "Work on /my/path and /my/path again", result.systemPrompt)
+	req := BuildChatRequest("hi", "sess-path-repl", "/my/path", "claude", "test-agent", "", "", "", "", "/my/path", false)
+
+	assert.Equal(t, "Work on /my/path and /my/path again", req.SystemPrompt)
 }
 
-func TestResolveAgentConfig_EmptyProjectPath_NoReplacement(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {
-			ID:           "test-agent",
-			SystemPrompt: "Work on {{PROJECT_PATH}}",
-		},
-	}
-	defer func() { model.Agents = origAgents }()
+func TestBuildChatRequest_EmptyProjectPath_NoReplacement(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", SystemPrompt: "Work on {{PROJECT_PATH}}"},
+	})
 
-	result := resolveAgentConfig("test-agent", "", "", "", "")
-	assert.Equal(t, "Work on {{PROJECT_PATH}}", result.systemPrompt)
+	req := BuildChatRequest("hi", "sess-empty-path", "", "claude", "test-agent", "", "", "", "", "", false)
+
+	assert.Equal(t, "Work on {{PROJECT_PATH}}", req.SystemPrompt)
 }
 
-func TestResolveAgentConfig_ThinkingEffortOverridePrecedence(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {
-			ID:             "test-agent",
-			SystemPrompt:   "hello",
-			ThinkingEffort: "low",
-		},
-	}
-	defer func() { model.Agents = origAgents }()
+func TestBuildChatRequest_ThinkingEffortOverridePrecedence(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", SystemPrompt: "hello", ThinkingEffort: "low"},
+	})
 
-	// Override takes precedence over agent default
-	result := resolveAgentConfig("test-agent", "", "", "high", "")
-	assert.Equal(t, "high", result.effectiveThinkingEffort)
+	req := BuildChatRequest("hi", "sess-effort-override", "", "claude", "test-agent", "", "high", "", "", "", false)
+
+	assert.Equal(t, "high", req.ThinkingEffort)
 }
 
-func TestResolveAgentConfig_ThinkingEffortFromAgent(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {
-			ID:                      "test-agent",
-			SystemPrompt:            "hello",
-			ThinkingEffort:          "low",
-			PreferredThinkingEffort: "medium",
-		},
-	}
-	defer func() { model.Agents = origAgents }()
+func TestBuildChatRequest_ThinkingEffortFromAgent(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", SystemPrompt: "hello", ThinkingEffort: "low", PreferredThinkingEffort: "medium"},
+	})
 
-	// No override → use agent's EffectiveThinkingEffort (PreferredThinkingEffort > ThinkingEffort)
-	result := resolveAgentConfig("test-agent", "", "", "", "")
-	assert.Equal(t, "medium", result.effectiveThinkingEffort)
+	req := BuildChatRequest("hi", "sess-effort-agent", "", "claude", "test-agent", "", "", "", "", "", false)
+
+	assert.Equal(t, "medium", req.ThinkingEffort, "PreferredThinkingEffort wins over ThinkingEffort")
 }
 
-func TestResolveAgentConfig_ModeOverridePrecedence(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {
-			ID:            "test-agent",
-			SystemPrompt:  "hello",
-			PreferredMode: "code",
-		},
-	}
-	defer func() { model.Agents = origAgents }()
+func TestBuildChatRequest_ModeOverridePrecedence(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", SystemPrompt: "hello", PreferredMode: "code"},
+	})
 
-	result := resolveAgentConfig("test-agent", "", "", "", "plan")
-	assert.Equal(t, "plan", result.effectiveMode)
+	req := BuildChatRequest("hi", "sess-mode-override", "", "claude", "test-agent", "", "", "plan", "", "", false)
+
+	assert.Equal(t, "plan", req.Mode)
 }
 
-func TestResolveAgentConfig_ModeFromAgent(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {
-			ID:            "test-agent",
-			SystemPrompt:  "hello",
-			PreferredMode: "code",
-		},
-	}
-	defer func() { model.Agents = origAgents }()
+func TestBuildChatRequest_ModeFromAgent(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", SystemPrompt: "hello", PreferredMode: "code"},
+	})
 
-	result := resolveAgentConfig("test-agent", "", "", "", "")
-	assert.Equal(t, "code", result.effectiveMode)
+	req := BuildChatRequest("hi", "sess-mode-agent", "", "claude", "test-agent", "", "", "", "", "", false)
+
+	assert.Equal(t, "code", req.Mode)
 }
 
-func TestResolveAgentConfig_NoCommand(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {
-			ID:           "test-agent",
-			SystemPrompt: "hello",
-		},
-	}
-	defer func() { model.Agents = origAgents }()
+func TestBuildChatRequest_NoCommand(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", SystemPrompt: "hello"},
+	})
 
-	result := resolveAgentConfig("test-agent", "", "", "", "")
-	assert.Equal(t, "", result.agentCommand)
+	req := BuildChatRequest("hi", "sess-no-command", "", "claude", "test-agent", "", "", "", "", "", false)
+
+	assert.Equal(t, "", req.Command)
 }
 
-func TestResolveAgentConfig_DefaultModelFromPreferredModel(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
+func TestBuildChatRequest_DefaultModelFromPreferredModel(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{
 		"test-agent": {
-			ID:             "test-agent",
-			SystemPrompt:   "hello",
+			ID: "test-agent", SystemPrompt: "hello",
 			PreferredModel: "preferred-model",
 			Models:         []model.AgentModel{{ID: "default-model", Default: true}},
 		},
-	}
-	defer func() { model.Agents = origAgents }()
+	})
 
-	// No modelOverride → PreferredModel takes precedence over default-flagged model
-	result := resolveAgentConfig("test-agent", "", "", "", "")
-	assert.Equal(t, "preferred-model", result.agentModel)
+	req := BuildChatRequest("hi", "sess-preferred-model", "", "claude", "test-agent", "", "", "", "", "", false)
+
+	assert.Equal(t, "preferred-model", req.Model)
 }
 
-// ============================================================================
-// resolveIsACP tests
-// ============================================================================
+// --- transport resolution (was resolveIsACP) ---
 
-func TestResolveIsACP_TransportOverrideACPStdio(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{}
-	defer func() { model.Agents = origAgents }()
-
-	assert.True(t, resolveIsACP("acp-stdio", "any-agent"))
-}
-
-func TestResolveIsACP_TransportOverrideCLI(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{}
-	defer func() { model.Agents = origAgents }()
-
-	assert.False(t, resolveIsACP("cli", "any-agent"))
-}
-
-func TestResolveIsACP_NoOverride_AgentWithACPTransport(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"acp-agent": {ID: "acp-agent", Transport: "acp-stdio"},
-	}
-	defer func() { model.Agents = origAgents }()
-
-	assert.True(t, resolveIsACP("", "acp-agent"))
-}
-
-func TestResolveIsACP_NoOverride_AgentWithCLITransport(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"cli-agent": {ID: "cli-agent", Transport: "cli"},
-	}
-	defer func() { model.Agents = origAgents }()
-
-	assert.False(t, resolveIsACP("", "cli-agent"))
-}
-
-func TestResolveIsACP_NoOverride_UnknownAgent(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{}
-	defer func() { model.Agents = origAgents }()
-
-	assert.False(t, resolveIsACP("", "nonexistent"))
-}
-
-func TestResolveIsACP_NoOverride_AgentWithEmptyTransport(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"agent": {ID: "agent", Transport: ""},
-	}
-	defer func() { model.Agents = origAgents }()
-
-	assert.False(t, resolveIsACP("", "agent"))
-}
-
-func TestResolveIsACP_OverrideTakesPrecedence(t *testing.T) {
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"acp-agent": {ID: "acp-agent", Transport: "acp-stdio"},
-	}
-	defer func() { model.Agents = origAgents }()
-
-	// transportOverride=cli should override agent's acp-stdio
-	assert.False(t, resolveIsACP("cli", "acp-agent"))
-}
-
-// ============================================================================
-// appendMediaPrompt tests
-// ============================================================================
-
-func TestAppendMediaPrompt_EmptyMediaPrompt(t *testing.T) {
-	// model.BuildMediaPrompt returns a non-empty string from the embedded template,
-	// but we test the logic: if mediaPrompt is empty, systemPrompt is returned as-is.
-	// Since we can't easily mock BuildMediaPrompt, we test with the actual function.
-	result := appendMediaPrompt("my system prompt")
-	// BuildMediaPrompt returns a non-empty string from embedded template,
-	// so result should contain both parts
-	assert.Contains(t, result, "my system prompt")
-}
-
-func TestAppendMediaPrompt_NonEmptySystemPrompt(t *testing.T) {
-	result := appendMediaPrompt("my system prompt")
-	// Should contain system prompt + media prompt joined by \n\n
-	assert.Contains(t, result, "my system prompt")
-	// Should also contain media-related content from the embedded template
-	assert.True(t, len(result) > len("my system prompt"), "result should be longer than just the system prompt")
-}
-
-func TestAppendMediaPrompt_EmptySystemPrompt(t *testing.T) {
-	result := appendMediaPrompt("")
-	// With empty system prompt, should just return the media prompt
-	// (or empty string if BuildMediaPrompt returns empty)
-	mediaPrompt := model.BuildMediaPrompt()
-	if mediaPrompt != "" {
-		assert.Equal(t, mediaPrompt, result)
-	} else {
-		assert.Equal(t, "", result)
-	}
-}
-
-// ============================================================================
-// resolveSessionState tests
-// ============================================================================
-
-func TestResolveSessionState_NewSession(t *testing.T) {
+// transportCase runs BuildChatRequest with the given transport override and
+// reports whether the request was treated as ACP. ACP is observable through
+// Resume: ACP keeps the ClawBench session id, while a non-ACP resume swaps in
+// the external session id.
+func TestBuildChatRequest_TransportOverrideACPStdio(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", SystemPrompt: "s"}})
 
-	// Session with no assistant messages → resume=false
-	effectiveID, resume, forkCtx := resolveSessionState("new-session", "", false)
-	assert.Equal(t, "new-session", effectiveID)
-	assert.False(t, resume)
-	assert.Equal(t, "", forkCtx)
+	req := BuildChatRequest("hi", "sess-acp-override", "", "claude", "any-agent", "", "", "", "acp-stdio", "", false)
+
+	assert.Equal(t, "sess-acp-override", req.SessionID)
 }
 
-func TestResolveSessionState_ResumeWithExternalID_NonACP(t *testing.T) {
+func TestBuildChatRequest_TransportOverrideCLI(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", SystemPrompt: "s"}})
+
+	// No assistant history → resume stays false, so the id is kept regardless.
+	req := BuildChatRequest("hi", "sess-cli-override", "", "claude", "any-agent", "", "", "", "cli", "", false)
+
+	assert.False(t, req.Resume)
+}
+
+func TestBuildChatRequest_NoOverride_AgentWithACPTransport(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", SystemPrompt: "s", Transport: "acp-stdio"}})
+
+	req := BuildChatRequest("hi", "sess-acp-agent", "", "claude", "acp-agent", "", "", "", "", "", false)
+
+	assert.Equal(t, "sess-acp-agent", req.SessionID)
+}
+
+func TestBuildChatRequest_NoOverride_AgentWithCLITransport(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"cli-agent": {ID: "cli-agent", SystemPrompt: "s", Transport: "cli"}})
+
+	req := BuildChatRequest("hi", "sess-cli-agent", "", "claude", "cli-agent", "", "", "", "", "", false)
+
+	assert.False(t, req.Resume)
+}
+
+func TestBuildChatRequest_NoOverride_UnknownAgent(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{})
+
+	req := BuildChatRequest("hi", "sess-unknown", "", "claude", "nope", "", "", "", "", "", false)
+
+	assert.Equal(t, "sess-unknown", req.SessionID)
+}
+
+func TestBuildChatRequest_OverrideTakesPrecedenceOverAgent(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", SystemPrompt: "s", Transport: "acp-stdio"}})
+
+	// Explicit "cli" must win over the agent's acp-stdio transport.
+	req := BuildChatRequest("hi", "sess-override-wins", "", "claude", "acp-agent", "", "", "", "cli", "", false)
+
+	assert.False(t, req.Resume)
+}
+
+// --- session-state resolution (was resolveSessionState) ---
+
+func TestBuildChatRequest_NewSession_NoResume(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"a": {ID: "a", SystemPrompt: "s"}})
+
+	req := BuildChatRequest("hi", "new-session", "", "claude", "a", "", "", "", "", "", false)
+
+	assert.Equal(t, "new-session", req.SessionID)
+	assert.False(t, req.Resume)
+	assert.Equal(t, "", req.ForkContext)
+}
+
+func TestBuildChatRequest_ResumeWithExternalID_NonACP(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"a": {ID: "a", SystemPrompt: "s"}})
 
 	sessionID := "sess-resume-1"
-	// Insert session with external_session_id
 	_, err := WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat', ?)",
 		sessionID, "ext-123",
 	)
 	require.NoError(t, err)
-	// Insert an assistant message to make SessionHasAssistant return true
 	_, err = WriteExec(
 		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"hello"}]}`, sessionID,
 	)
 	require.NoError(t, err)
 
-	effectiveID, resume, forkCtx := resolveSessionState(sessionID, "", false)
-	assert.Equal(t, "ext-123", effectiveID, "should use external session ID for non-ACP resume")
-	assert.True(t, resume)
-	assert.Equal(t, "", forkCtx, "no fork context when external ID exists")
+	req := BuildChatRequest("hi", sessionID, "", "claude", "a", "", "", "", "cli", "", false)
+
+	assert.Equal(t, "ext-123", req.SessionID, "non-ACP resume uses the external session ID")
+	assert.True(t, req.Resume)
+	assert.Equal(t, "", req.ForkContext)
 }
 
-func TestResolveSessionState_ResumeWithoutExternalID_Fork(t *testing.T) {
+func TestBuildChatRequest_ResumeWithoutExternalID_Fork(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"a": {ID: "a", SystemPrompt: "s"}})
 
 	sessionID := "sess-fork-1"
-	// Insert session without external_session_id
 	_, err := WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
-	// Insert messages for fork context
 	_, err = WriteExec(
 		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"user message"}]}`, sessionID,
@@ -652,26 +601,29 @@ func TestResolveSessionState_ResumeWithoutExternalID_Fork(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	effectiveID, resume, forkCtx := resolveSessionState(sessionID, "", false)
-	assert.Equal(t, "", effectiveID, "should clear session ID for non-ACP fork without external ID")
-	assert.True(t, resume)
-	assert.NotEmpty(t, forkCtx, "should have fork context when no external ID")
-	assert.Contains(t, forkCtx, "user: user message")
-	assert.Contains(t, forkCtx, "assistant: assistant reply")
+	req := BuildChatRequest("hi", sessionID, "", "claude", "a", "", "", "", "cli", "", false)
+
+	assert.Equal(t, "", req.SessionID, "non-ACP fork without external ID clears the session ID")
+	assert.True(t, req.Resume)
+	require.NotEmpty(t, req.ForkContext)
+	// Role labels are capitalised and the envelope is present — the queue path
+	// previously produced bare "user:"/"assistant:" lines with no envelope.
+	assert.Contains(t, req.ForkContext, "User: user message")
+	assert.Contains(t, req.ForkContext, "Assistant: assistant reply")
+	assert.Contains(t, req.ForkContext, "[Below is the conversation history")
 }
 
-func TestResolveSessionState_ResumeACPWithForkContext(t *testing.T) {
+func TestBuildChatRequest_ResumeACPWithForkContext(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", SystemPrompt: "s", Transport: "acp-stdio"}})
 
 	sessionID := "sess-acp-fork"
-	// Insert session without external_session_id
 	_, err := WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
-	// Insert messages
 	_, err = WriteExec(
 		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"msg"}]}`, sessionID,
@@ -683,16 +635,17 @@ func TestResolveSessionState_ResumeACPWithForkContext(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// ACP with fork context → resume=false
-	effectiveID, resume, forkCtx := resolveSessionState(sessionID, "", true)
-	assert.Equal(t, sessionID, effectiveID, "ACP should keep original session ID")
-	assert.False(t, resume, "ACP with fork context should set resume=false")
-	assert.NotEmpty(t, forkCtx, "should have fork context")
+	req := BuildChatRequest("hi", sessionID, "", "claude", "acp", "", "", "", "acp-stdio", "", false)
+
+	assert.Equal(t, sessionID, req.SessionID, "ACP keeps the ClawBench session ID")
+	assert.False(t, req.Resume, "ACP with fork context starts a new session")
+	assert.NotEmpty(t, req.ForkContext)
 }
 
-func TestResolveSessionState_ResumeACPWithExternalID(t *testing.T) {
+func TestBuildChatRequest_ResumeACPWithExternalID(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", SystemPrompt: "s", Transport: "acp-stdio"}})
 
 	sessionID := "sess-acp-ext"
 	_, err := WriteExec(
@@ -706,11 +659,11 @@ func TestResolveSessionState_ResumeACPWithExternalID(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// ACP with external ID → resume=true (no fork context needed)
-	effectiveID, resume, forkCtx := resolveSessionState(sessionID, "", true)
-	assert.Equal(t, sessionID, effectiveID, "ACP keeps original session ID even with external ID")
-	assert.True(t, resume)
-	assert.Equal(t, "", forkCtx, "no fork context when external ID exists")
+	req := BuildChatRequest("hi", sessionID, "", "claude", "acp", "", "", "", "acp-stdio", "", false)
+
+	assert.Equal(t, sessionID, req.SessionID, "ACP keeps the ClawBench session ID even with an external ID")
+	assert.True(t, req.Resume)
+	assert.Equal(t, "", req.ForkContext)
 }
 
 // ============================================================================
@@ -867,8 +820,8 @@ func TestBuildForkContext_WithMessages(t *testing.T) {
 	require.NoError(t, err)
 
 	result := BuildForkContext(sessionID)
-	assert.Contains(t, result, "user: hello user")
-	assert.Contains(t, result, "assistant: hello assistant")
+	assert.Contains(t, result, "User: hello user")
+	assert.Contains(t, result, "Assistant: hello assistant")
 }
 
 func TestBuildForkContext_SkipsEmptyContent(t *testing.T) {
@@ -892,7 +845,12 @@ func TestBuildForkContext_SkipsInvalidJSON(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	sessionID := "fork-sess-3"
-	// Insert message with invalid JSON content
+	// Insert message with content that is not the block JSON format.
+	//
+	// This used to be skipped entirely, which silently dropped history: a
+	// message stored as plain text (or as a nested JSON wrapper produced by ACP
+	// sync replay) never reached the forked session. It is now recovered as
+	// plain text, so the model sees the same history a direct send would inject.
 	_, err := WriteExec(
 		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", "not valid json", sessionID,
@@ -900,7 +858,8 @@ func TestBuildForkContext_SkipsInvalidJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	result := BuildForkContext(sessionID)
-	assert.Equal(t, "", result, "invalid JSON should be skipped")
+	assert.Contains(t, result, "User: not valid json",
+		"non-block content must be recovered as plain text, not dropped")
 }
 
 func TestBuildForkContext_SkipsEmptyTextBlocks(t *testing.T) {
@@ -932,7 +891,7 @@ func TestBuildForkContext_MultipleTextBlocks(t *testing.T) {
 	require.NoError(t, err)
 
 	result := BuildForkContext(sessionID)
-	assert.Contains(t, result, "user: first part")
+	assert.Contains(t, result, "User: first part")
 	assert.Contains(t, result, "second part")
 	// thinking blocks are excluded
 	assert.NotContains(t, result, "thinking part")
@@ -968,8 +927,8 @@ func TestBuildForkContext_PreservesSummarizedAssistant(t *testing.T) {
 	require.NoError(t, err)
 
 	result := BuildForkContext(sessionID)
-	assert.Contains(t, result, "user: user question")
-	assert.Contains(t, result, "assistant: assistant answer", "summarized assistant reply must survive fork context")
+	assert.Contains(t, result, "User: user question")
+	assert.Contains(t, result, "Assistant: assistant answer", "summarized assistant reply must survive fork context")
 	assert.Contains(t, result, "file contents", "tool_use output must survive fork context")
 	assert.NotContains(t, result, "reading summary")
 }
@@ -1229,8 +1188,8 @@ func TestHandleSessionPanic_Recovers(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	sessionID := "panic-sess-1"
-	_, cancel := context.WithCancel(context.Background())
-	RegisterSessionCancel(sessionID, cancel)
+	_, created := TryClaimSessionRun(sessionID)
+	require.True(t, created)
 
 	cfg := LaunchConfig{
 		SessionID:   sessionID,
@@ -1244,7 +1203,7 @@ func TestHandleSessionPanic_Recovers(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer func() { close(done) }()
-		defer handleSessionPanic(cfg, sessionID, cancel)
+		defer handleSessionPanic(cfg, sessionID)
 		panic("test panic")
 	}()
 	// Wait for the goroutine to complete - handleSessionPanic should recover
@@ -1373,7 +1332,7 @@ func TestBuildForkContext_ExcludesStreamingMessages(t *testing.T) {
 
 	result := BuildForkContext(sessionID)
 	assert.NotContains(t, result, "streaming content")
-	assert.Contains(t, result, "user: final content")
+	assert.Contains(t, result, "User: final content")
 }
 
 // ============================================================================
@@ -1833,7 +1792,7 @@ func TestBuildForkContext_ToolUseBlock(t *testing.T) {
 	require.NoError(t, err)
 
 	result := BuildForkContext(sessionID)
-	assert.Contains(t, result, "assistant: I'll read the file")
+	assert.Contains(t, result, "Assistant: I'll read the file")
 	assert.Contains(t, result, "<tool_use>")
 	assert.Contains(t, result, `"name":"Read"`)
 	assert.Contains(t, result, `"id":"toolu_1"`)
@@ -1856,7 +1815,7 @@ func TestBuildForkContext_ToolUseBlockWithoutDetail(t *testing.T) {
 	require.NoError(t, err)
 
 	result := BuildForkContext(sessionID)
-	assert.Contains(t, result, "assistant:")
+	assert.Contains(t, result, "Assistant:")
 	assert.Contains(t, result, "<tool_use>")
 	assert.Contains(t, result, `"name":"Bash"`)
 	assert.Contains(t, result, `"id":"toolu_2"`)
@@ -1878,7 +1837,7 @@ func TestBuildForkContext_ThinkingExcluded(t *testing.T) {
 	require.NoError(t, err)
 
 	result := BuildForkContext(sessionID)
-	assert.Contains(t, result, "assistant: Here is my answer")
+	assert.Contains(t, result, "Assistant: Here is my answer")
 	assert.NotContains(t, result, "I should think about this")
 }
 

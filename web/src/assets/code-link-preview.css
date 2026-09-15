@@ -34,18 +34,35 @@ body.code-preview-dragging * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-5);
+  /* Compact title row. Measured against the real stylesheet, this row used to be
+     37px and the height came from the 24px buttons plus 6px paddings — the text
+     is only ~16px. So the buttons and paddings are the lever, not the font.
+     With 22px buttons and 2px paddings the row is a deterministic 27px: the
+     floating card's chrome drops from 68px (37 + 31) to 58px, which is what
+     "the header is too thick" was about. The meta row below is deliberately
+     untouched. Keep the path on ONE line (see .code-preview-title-path) or a
+     long path wraps to two lines and the row grows back past 27px. */
+  padding: var(--space-1) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-bottom: 1px solid var(--border-color, #ebebeb);
   cursor: grab;
   user-select: none;
   touch-action: none;
   flex-shrink: 0;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
 .code-preview-header:active {
   cursor: grabbing;
+}
+
+/* Header controls (pin / close) are 22px rather than the shared 24px so they fit
+   the compact row. Scoped to the header: the meta row's tool strip keeps 24px,
+   and the docked pane keeps its own 28px touch target. */
+.code-preview-header .code-preview-btn {
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
 }
 
 .code-preview-header-actions {
@@ -70,13 +87,15 @@ body.code-preview-dragging * {
 
 .code-preview-title-path {
   display: flex;
-  flex-wrap: wrap;
+  /* One line only. A wrapping path would push the compact header back to two
+     lines (~38px), so the dir ellipsises and the file name is kept whole by
+     .code-preview-title-file's flex-shrink: 0. */
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-1) var(--space-2);
   font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   line-height: 1.35;
-  max-height: 38px;
   overflow: hidden;
   flex: 1;
   min-width: 0;
@@ -479,11 +498,14 @@ body.code-preview-dragging * {
 .code-preview-filename {
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #202124);
-  word-break: break-all;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  /* Single line with an ellipsis, so the compact header row stays 27px even for
+     a very long file name. It used to wrap to 2 lines, which measured 34.7px and
+     undid the compaction. The full path is still reachable via the title's
+     tooltip, so nothing is lost. The floating header and the docked pane both
+     render this class (the sheet uses .code-preview-sheet-title). */
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   line-height: 1.35;
   min-width: 0;
 }
@@ -511,9 +533,18 @@ body.code-preview-dragging * {
 /* Mobile BottomSheet Header & Footer styles */
 .code-preview-sheet-panel {
   top: auto !important;
-  /* Keep the sheet compact enough to leave a visible strip of the page on
-     phones, while retaining enough room for the code slice. */
-  height: min(84vh, 720px) !important;
+  /* Content-sized, NOT a fixed slab.
+
+     The sheet is opened with BottomSheet's `auto` prop (height: auto, capped at
+     the full overlay), which is exactly what a preview wants. This rule used to
+     force `height: min(84vh, 720px) !important`, which beat `auto` and pinned
+     the drawer to ~709px on an 844px phone no matter how little it had to show
+     — a directory with three entries still opened a near-fullscreen slab.
+
+     The !important is still needed on `max-height` (it must win over the base
+     `.bs-panel` rules), but the height now comes from the content. `max-height`
+     keeps a long file or a big directory from covering the whole page, and the
+     body scrolls past that point. */
   max-height: 100% !important;
 }
 
@@ -853,88 +884,32 @@ body.code-preview-dragging * {
   border-radius: 0;
   box-shadow: none;
   background: var(--bg-primary, #ffffff);
+  /* MUST be reset. The floating rule sets `z-index: var(--z-sheet)` (1200) to
+     sit above the app; docked, the pane is an ordinary layout pane and must
+     lose that stacking order. The split divider is `z-index: 2` and, when
+     hovered/dragged, expands from 1px to 12px — growing ~5.5px past its own box
+     on each side. The lower half lands inside this pane's box, so at 1200 the
+     opaque pane painted over it and only the upper half of the highlight band
+     was visible (the "half glow"). Every other divider has nothing stacked
+     above it at a higher z, which is why only the docked-pane divider looked
+     broken. `auto` (not a low number) keeps the pane out of the stacking game
+     entirely, matching its `position: relative` layout role. */
+  z-index: auto;
 }
-/* The docked pane sits under the file list, so the top edge needs no divider —
-   the SplitDivider already draws it. */
-.code-link-preview-floating.is-docked .code-preview-header {
-  cursor: default;
-}
+/* Docked, the pane is laid out by the caller's split — nothing to drag, so the
+   grab cursors the floating card uses are dropped. This matters for the header
+   too now that the docked pane renders it (it is the drag handle when floating,
+   but a plain title row here). */
+.code-link-preview-floating.is-docked .code-preview-header,
 .code-link-preview-floating.is-docked .code-preview-meta {
   cursor: default;
 }
 
-/* ── Compact layout: docked pane on a touch / narrow device ─────────────────
-   Mirrors the mobile (BottomSheet) mode's toolbar rather than restyling the
-   desktop card: ONE row, matching `.code-preview-sheet-row2` — the file name on
-   the left, icon tools plus Close on the right. The desktop title row (file
-   path) is not rendered at all in this mode, and neither is the line/size
-   summary: the name is what identifies the pane. */
-.code-link-preview-floating.is-compact .code-preview-meta {
-  /* Exactly the mobile sheet row's metrics (.code-preview-sheet-row2): a 32px
-     row with 28px buttons — the same weight as the 31px desktop meta row, not
-     a thicker bar. The tight paddings/gaps are what let a 10-tool code file
-     fit beside the file name on a 390px screen without the name collapsing. */
-  gap: var(--space-3);
-  min-height: 32px;
-  padding: var(--space-1) var(--space-4);
-}
-.code-link-preview-floating.is-compact .code-preview-meta-info {
-  /* The file name is the only thing on the left. A code file shows up to 10
-     tools, which would otherwise crush the name to zero width — so the name
-     keeps a floor and the tool row scrolls instead. */
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex: 1 1 auto;
-  min-width: 84px;
-  font-size: var(--font-size-xs);
-  overflow: hidden;
-}
-.code-link-preview-floating.is-compact .code-preview-compact-name {
-  font-family: var(--font-ui);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary, #202124);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.code-link-preview-floating.is-compact .code-preview-actions {
-  /* Scrolls rather than shrinking the name away. */
-  flex: 0 1 auto;
-  min-width: 0;
-  gap: var(--space-2);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  -webkit-overflow-scrolling: touch;
-}
-/* Close ends the row but lives OUTSIDE the scrollable strip, so a long tool set
-   cannot scroll it out of reach. */
-.code-link-preview-floating.is-compact .code-preview-meta > .code-preview-btn.close {
-  flex: 0 0 auto;
-  min-width: 28px;
-  height: 28px;
-  padding: 0;
-  margin-left: var(--space-1);
-  color: var(--text-secondary, #5f6368);
-}
-.code-link-preview-floating.is-compact .code-preview-actions::-webkit-scrollbar {
-  display: none;
-}
-.code-link-preview-floating.is-compact .code-preview-btn {
-  /* Same 28px target as the mobile sheet's `.icon-only` buttons — the desktop
-     24px control is too small to tap, but a bigger row is what made this feel
-     heavy, so match the mobile mode instead of inventing a new size. */
-  min-width: 28px;
-  height: 28px;
-  padding: 0;
-  flex-shrink: 0;
-}
-.code-link-preview-floating.is-compact .code-preview-btn svg {
-  width: 14px;
-  height: 14px;
-}
-.code-link-preview-floating.is-compact .code-preview-actions-divider {
-  height: 14px;
-  margin: 0 1px;
-}
+/* The docked pane deliberately has NO shape-specific rules of its own: it
+   reuses the floating card's header + meta rows as-is, so the tool row gets the
+   full pane width instead of competing with the file name. Anything added here
+   would be a divergence between the two, and a `(pointer: coarse)` / platform
+   split is explicitly unwanted — the docked shape must not depend on the
+   device. Only the container rules above (layout role, cursor, z-index) belong
+   to the docked variant. */
+

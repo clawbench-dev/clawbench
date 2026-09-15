@@ -3,7 +3,8 @@ info:
   title: ClawBench API
   description: |
     ClawBench 的完整 HTTP API。所有 `/api/` 路由默认经 `middleware.Auth`
-    鉴权（会话 Cookie），少数端点刻意免鉴权（见各 operation 的 `security: []`）。
+    鉴权（会话 Cookie，或本机 AI 子进程的短时 `aiToken`），少数端点刻意免鉴权
+    （见各 operation 的 `security: []`）。
     聊天流式内容通过 WebSocket 推送（见 `/api/ai/events/ws`），不在本文件建模。
 
     约定：
@@ -72,6 +73,7 @@ tags:
 
 security:
   - cookieAuth: []
+  - aiToken: []
 
 paths:
   # ── Auth ──────────────────────────────────────────────────────────────────
@@ -177,6 +179,38 @@ paths:
       responses:
         "200":
           description: 指标快照
+
+  /api/ws/delivery-stats:
+    get:
+      tags: [System]
+      summary: WebSocket 事件投递丢弃计数
+      description: |
+        统计「已产生但未投递」的流式事件，按原因分组。
+
+        事件投递此前是静默失败的：会话没有活跃订阅者时事件被直接丢弃，
+        既无日志也无计数，导致「UI 卡在缺少终态事件」与「后端根本没发」
+        在日志上完全无法区分。此端点让这类丢失可观测。
+
+        **响应字段**：
+        - `no_subscribers`：为无活跃订阅者的会话发出的事件数。非 0 即值得
+          排查——通常意味着客户端订阅已丢失（WS 重连）而其 UI 仍认为在订阅中。
+        - `no_manager`：WS manager 不可用时丢弃的事件数（启动/关闭窗口内正常）。
+        - `total`：两者之和。
+      operationId: wsDeliveryStats
+      responses:
+        "200":
+          description: 丢弃计数快照
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  no_subscribers:
+                    type: integer
+                  no_manager:
+                    type: integer
+                  total:
+                    type: integer
 
   /api/roots:
     get:
@@ -641,7 +675,17 @@ paths:
     get:
       tags: [Chat]
       summary: 聊天历史与运行状态
-      description: 分页返回会话消息，并附带运行状态与 ACP 状态。`session_id` 缺省时回退到会话 Cookie。
+      description: |
+        分页返回会话消息，并附带运行状态与 ACP 状态。`session_id` 缺省时回退到会话 Cookie。
+
+        **`modelListState` 与 `/api/agents` 同构**：返回原始 ACP 列表 `models`、
+        未经合并的纯 CLI 列表 `cliModels`，以及已解析的最终列表 `resolvedModels`
+        （CLI 提供顺序与名称，具体 ACP 列表对成员资格有权威性；档位别名只取其
+        显示名）。客户端直接渲染 `resolvedModels`，无需自行合并。
+
+        新建会话从不与 ACP 通信，其模型列表只能来自这里（后端从 agent 级能力
+        注册表解析）。CLI 会话不返回该字段。当 agent 没有 CLI 列表可合并时，
+        `resolvedModels` 为空但 `models` 仍会返回，避免整个列表丢失。
       operationId: chatGet
       parameters:
         - name: session_id
@@ -996,6 +1040,14 @@ paths:
           in: query
           schema:
             type: integer
+        - name: tag
+          in: query
+          description: |
+            仅返回带有该标签的会话（标签需在本项目可见：全局标签或本项目标签）。
+            在服务端过滤，因此 `hasMore` 反映的是过滤后的集合。
+            大小写不敏感；省略或空值表示不按标签过滤。
+          schema:
+            type: string
       responses:
         "200":
           description: 会话列表
@@ -1059,9 +1111,74 @@ paths:
                   type: boolean
                 title:
                   type: string
+                pinned:
+                  type: boolean
+                tags:
+                  type: array
+                  description: |
+                    替换该会话的完整标签集合（整表覆盖，不是增量）。字段省略 = 不改动标签；
+                    传 `[]` = 清空该会话的全部标签。不存在的标签会按 `scope` 新建，
+                    已存在的标签保留其原有 scope（重新打标签不会把项目标签变成全局标签）。
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                      scope:
+                        type: string
+                        enum: [project, global]
+                        description: 仅对新建标签生效；缺省为 `project`
       responses:
         "200":
           description: 已更新
+
+  /api/ai/session/tags:
+    get:
+      tags: [Sessions]
+      summary: 会话标签候选列表
+      description: 返回当前项目可选的标签：全部全局标签 + 当前项目自己的标签。同名时全局定义优先。
+      operationId: sessionTagsList
+      parameters:
+        - name: inUse
+          in: query
+          description: |
+            传 `1` 时只返回「本项目已有会话在使用」的标签（带使用计数），
+            供会话列表的标签过滤栏使用；省略时返回全部可选候选（含未被使用的
+            全局标签），供标签设置弹窗使用。
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: 标签候选列表
+    delete:
+      tags: [Sessions]
+      summary: 删除标签本身
+      description: |
+        删除标签定义及其在所有会话上的关联，即该标签从所有会话消失。
+        全局标签任意项目可删；项目标签只能由所属项目删除（其他项目看不到它）。
+      operationId: sessionTagsDelete
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: scope
+          in: query
+          description: |
+            要删除的定义的作用范围（`project`/`global`），即客户端在候选列表中看到的那一条。
+            同名标签同时存在全局与项目内两条时，必须传 scope 才能精确删除；
+            省略则退回旧的「全局优先，其次本项目」查找，可能删掉其他项目共享的全局标签。
+          schema:
+            type: string
+            enum: [project, global]
+      responses:
+        "200":
+          description: 已删除
+        "400":
+          description: 缺少 name，或标签不存在 / 属于其他项目
 
   /api/ai/session/archive:
     delete:
@@ -1716,7 +1833,16 @@ paths:
     get:
       tags: [Files]
       summary: 读取文件内容
-      description: 返回文本/结构化内容；二进制与不支持类型有专门处理。`{path}` 为项目相对路径。
+      description: |
+        返回文本/结构化内容；二进制与不支持类型有专门处理。`{path}` 为项目相对路径。
+
+        可选行窗口（快速预览窗格使用）：传 `lineStart`/`lineEnd` 时只返回该区间
+        （1-based，闭区间）的行，并附带文件总行数 `totalLines`，避免大文件整体传输。
+        行窗口只对文本文件生效；`forceText` / 二进制嗅探路径会忽略窗口并返回完整
+        净化内容。窗口最多 `maxWindowLines` 行。
+
+        非法区间（0 / 负数 / 非整数 / `lineEnd < lineStart` / 只传 `lineEnd`）一律返回
+        400 `InvalidLineRange`，**与文件类型无关**——二进制文件同样先校验区间。
       operationId: fileGet
       parameters:
         - $ref: "#/components/parameters/FilePath"
@@ -1730,9 +1856,67 @@ paths:
           description: 置 1 时强制按文本返回。
           schema:
             type: string
+        - name: lineStart
+          in: query
+          description: 行窗口起始行（1-based，含）。设置后仅返回该区间内容；单独使用时窗口即为该行。
+          schema:
+            type: integer
+            minimum: 1
+        - name: lineEnd
+          in: query
+          description: 行窗口结束行（1-based，含），须 >= lineStart。必须与 lineStart 同时提供，省略时窗口为单行 lineStart。
+          schema:
+            type: integer
+            minimum: 1
       responses:
         "200":
-          description: 文件内容
+          description: |
+            文件内容。带行窗口时额外返回 `totalLines`（文件总行数）、
+            `windowStart`/`windowEnd`（本次返回内容覆盖的行区间，`windowEnd < windowStart`
+            表示未取到任何行，如起始行超出文件末尾）、`windowTruncated`（是否因窗口上限被截断）。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+                  name:
+                    type: string
+                  path:
+                    type: string
+                  supported:
+                    type: boolean
+                  isBinary:
+                    type: boolean
+                  truncated:
+                    type: boolean
+                  size:
+                    type: integer
+                  subtype:
+                    type: string
+                  specJson:
+                    type: string
+                  linkTarget:
+                    type: string
+                  isSymlink:
+                    type: boolean
+                  totalLines:
+                    type: integer
+                    description: 文件总行数（仅行窗口响应）。
+                  windowStart:
+                    type: integer
+                    description: 返回内容起始行（1-based，含）。
+                  windowEnd:
+                    type: integer
+                    description: |
+                      返回内容结束行（1-based，含）。小于 windowStart 表示未取到任何行
+                      （如起始行超出文件末尾）。该字段始终返回，便于区分「空窗口」与「无窗口元数据」。
+                  windowTruncated:
+                    type: boolean
+                    description: 是否因窗口字节上限被截断（如存在超长行）。
+        "400":
+          $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
         "404":
@@ -2107,6 +2291,17 @@ paths:
       tags: [Forge]
       summary: 保存凭据
       operationId: forgeCredentialsSave
+      description: |
+        为某个主机保存访问令牌。令牌只写不读，`GET /api/config` 只回报哪些主机已配置。
+
+        `host` 可写完整地址（`http://gitlab.internal`、`https://gitlab.internal/group/repo`）
+        或只写主机名（`gitlab.internal:8080`）。服务端归一化为「主机名 + 可选端口」作为
+        凭据键——**协议不进入键**，否则 `https://h` 存下的令牌永远匹配不上绑定记录的
+        `h`。
+
+        地址中写明的协议会作为该实例的协议提示记录下来（响应 `scheme`），供远程为 ssh
+        形式、无法推断协议的绑定使用。只写主机名表示「未说明协议」，此时**保留**已记录
+        的提示，不会重置为 https。清除令牌（`token` 为空）会连同协议提示一起清除。
       requestBody:
         required: true
         content:
@@ -2116,15 +2311,19 @@ paths:
               properties:
                 host:
                   type: string
+                  description: 主机名（可含端口）或完整地址；服务端归一化
                 token:
                   type: string
+                  description: 访问令牌；为空表示清除该主机的凭据
       responses:
         "200":
-          description: 结果
+          description: 结果（`host`、`scheme`、`has_token`）
     delete:
       tags: [Forge]
       summary: 删除凭据
       operationId: forgeCredentialsDelete
+      description: |
+        等价于 POST 空 `token`：同时清除令牌与该主机的协议提示。
       parameters:
         - name: host
           in: query
@@ -2140,6 +2339,15 @@ paths:
       tags: [Forge]
       summary: 校验令牌
       operationId: forgeVerifyToken
+      description: |
+        校验令牌能否在该主机上通过认证。与保存解耦：可校验即将保存的令牌，也可复验已
+        保存的令牌（`token` 省略时用已保存的）。
+
+        失败仍返回 200，用 `ok:false` 与 `code` 区分「令牌被拒」（`auth`）与「主机不可
+        达」（`network`）——后者不能说明令牌无效。
+
+        `host` 中写明的协议（或该主机已记录的协议提示）决定探测使用的协议；成功时响应
+        的 `scheme` 是实际使用的协议。
       requestBody:
         required: true
         content:
@@ -2149,17 +2357,24 @@ paths:
               properties:
                 host:
                   type: string
+                  description: 主机名（可含端口）或完整地址；服务端归一化
                 token:
                   type: string
+                  description: 省略时校验该主机已保存的令牌
       responses:
         "200":
-          description: 校验结果
+          description: 校验结果（`ok`、`identity`、`scheme`，失败时 `code` / `error`）
 
   /api/forge/items:
     get:
       tags: [Forge]
       summary: 议题 / 合并请求列表
       operationId: forgeItems
+      description: |
+        返回项目所绑定仓库的议题 / 合并请求。
+
+        每项的 `unread` 为 true 表示该条目有用户尚未查看的活动。它与 dock 角标
+        计数的是同一批数据，因此角标数字与列表中的未读标记始终一致。
       parameters:
         - name: type
           in: query
@@ -2198,6 +2413,13 @@ paths:
       tags: [Forge]
       summary: 议题 / 合并请求详情
       operationId: forgeItem
+      description: |
+        返回单个条目（议题或合并请求）的详情。
+
+        响应中的 `sourceBranch` 是合并请求的**源分支**（head branch），议题为空。
+        它存在的原因是 CI 运行在 GitHub 侧按分支检索：没有它就无法定位该变更的
+        流水线。但**流水线列表本身不在这里返回**——见 `/api/forge/item-pipelines`，
+        那是一次单独的、按需的请求。
       parameters:
         - name: type
           in: query
@@ -2211,7 +2433,7 @@ paths:
             type: integer
       responses:
         "200":
-          description: 条目详情
+          description: 条目详情（`item` 含 `sourceBranch`，合并请求才有）
 
   /api/forge/comments:
     get:
@@ -2241,17 +2463,158 @@ paths:
         "200":
           description: 评论列表
 
+  /api/forge/pipelines:
+    get:
+      tags: [Forge]
+      summary: 流水线运行列表
+      operationId: forgePipelines
+      description: |
+        返回项目所绑定仓库的 CI 运行列表（GitHub Actions / GitLab Pipelines），
+        按时间倒序。**只读**：本端点只发 GET，不提供重跑或取消。
+
+        查询参数 `status` 过滤归一化后的状态：`success`、`failure`、`running`、
+        `cancelled`、`skipped`。无法识别的值等同于不过滤（与 `state` 的处理一致）。
+
+        平台不支持 CI 时返回 400 + `code=ForgeNoPipelines`；项目未绑定仓库时返回
+        404 + `code=NoForgeBinding`。
+
+        `durationSeconds` 可能缺失：GitHub 的运行列表不返回耗时，只有详情端点
+        能给出推算值。
+
+        每项的 `unread` 为 true 表示该次运行有用户尚未查看的活动，与 dock 角标
+        计数的是同一批数据。
+
+        每项的 `pullRequests` 列出该次运行关联的变更请求，供详情页跳转；**没有关联
+        时该字段整个缺失**（不是空数组）。平台差异：GitHub 在运行列表里内联返回
+        PR，因此总能给出编号、标题与链接；GitLab 的流水线载荷不含 MR 信息，仅当该
+        运行是合并请求流水线（ref 为 `refs/merge-requests/<iid>/head`）时才能从 ref
+        推出编号（无标题）。
+
+        **本列表端点的 `pullRequests` 只反映载荷里已有的信息**：GitLab 由分支推送
+        触发的运行在此处不会给出关联。这类关联需要按运行逐条查询，代价过高，故不在
+        列表（会被轮询与翻页）中执行——改由 `/api/forge/pipeline` 在打开详情时按需
+        补齐，见该端点的说明。
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [success, failure, running, cancelled, skipped]
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: perPage
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 运行列表（`pipelines`、`hasMore`、`nextPage`、`binding`）
+        "400":
+          description: 该平台不提供 CI 能力
+        "404":
+          description: 项目未绑定仓库
+
+  /api/forge/pipeline:
+    get:
+      tags: [Forge]
+      summary: 流水线运行详情（含作业）
+      operationId: forgePipeline
+      description: |
+        返回单次运行的元信息与它的作业列表。`jobs` 是**尽力而为**的：作业列表拉取
+        失败时仍返回 200，此时 `jobs` 为空数组——运行自身的元信息才是主载荷。
+
+        `id` 非法或缺失返回 400 + `code=ForgeInvalidPipelineID`；运行不在可见窗口内
+        返回 404。平台不支持 CI 时返回 400 + `code=ForgeNoPipelines`。
+
+        作业字段的平台差异：`stage` 与 `failureReason` 仅 GitLab 提供（GitHub 无
+        stage 概念），缺失时省略。
+
+        `pipeline.pullRequests` 列出该次运行关联的变更请求（`number` / `title` /
+        `url`），供详情页跳转；没有关联时整个字段缺失。
+
+        **与列表端点的差异（重要）**：本端点会为无法内联给出关联的平台（GitLab）
+        按需查询一次——对由分支推送触发的运行，用 `source_branch` 匹配该分支上处于
+        opened 的合并请求。因此这里比 `/api/forge/pipelines` 多一次请求，覆盖也更全
+        （能给出标题）。该查询是**尽力而为**的：失败时照常返回 200，只是没有关联，
+        运行自身的元信息不受影响。
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: 平台侧的运行 ID（GitHub run id / GitLab pipeline id）
+      responses:
+        "200":
+          description: 运行详情（`pipeline`、`jobs`、`binding`）
+        "400":
+          description: id 非法，或该平台不提供 CI 能力
+        "404":
+          description: 项目未绑定仓库，或运行不存在
+
+  /api/forge/item-pipelines:
+    get:
+      tags: [Forge]
+      summary: 某个变更请求的流水线列表
+      operationId: forgeItemPipelines
+      description: |
+        返回某个变更请求（PR / MR）关联的 CI 运行，供 PR 详情页的 CI 区块使用。
+        这是 `/api/forge/pipeline` 上「运行 → 关联 PR」的反方向：回答「这个变更
+        通过 CI 了吗」，即阅读 PR 时最关心的问题。
+
+        **为什么是独立端点而不是 `/api/forge/item` 的一个字段**：它每次调用都会
+        产生一次上游请求，因此只在用户真正展开 CI 区块时才应获取；并入条目载荷
+        会让每次打开 PR 都为一个多数人不会展开的列表付费。
+
+        平台差异：GitHub 用条目的源分支过滤运行列表（拿到完整字段）；GitLab 用
+        `/merge_requests/:iid/pipelines`（覆盖 fork 源分支的情形，但该端点返回
+        精简结构，**没有耗时、没有触发者**）。客户端应把缺失的耗时按「未提供」
+        处理，而不是当作 0。
+
+        平台不支持 CI、或该变更没有运行，均返回 200 且 `pipelines` 为空数组——
+        两者都不是错误。
+
+        `number` 非法或缺失返回 400；项目未绑定仓库返回 404 + `code=NoForgeBinding`。
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [issue, pr]
+          description: 只有 `pr` 会有流水线；`issue` 返回空列表
+        - name: number
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: 变更请求编号（GitHub PR number / GitLab merge-request iid）
+      responses:
+        "200":
+          description: 流水线列表（`pipelines`、`binding`）
+        "400":
+          description: number 非法或缺失
+        "404":
+          description: 项目未绑定仓库
+
   /api/forge/binding:
     get:
       tags: [Forge]
       summary: 读取项目绑定
       operationId: forgeBindingGet
       description: |
-        返回当前项目的仓库绑定（`binding` 含 `platform`、`host`、`owner`、`repo`、`slug`）。
+        返回当前项目的仓库绑定（`binding` 含 `platform`、`host`、`scheme`、`owner`、
+        `repo`、`slug`）。
         **未绑定时仍是 200**，此时 `binding` 为 `null`，可能附带 `suggested`（候选仓库）。
         注意：GET 有副作用——若项目存在指向官方平台的 git remote，本端点会自动完成绑定。
         事件触发的任务只在项目已绑定仓库时才会被触发，创建这类任务前应先用本端点确认
         `binding` 非空。
+
+        `scheme` 是请求该主机实际使用的协议（`http` / `https`），已解析而非原始值：
+        远程为 ssh 形式时无法推断协议，此时由凭据记录的协议提示决定，最终仍会落到
+        `http` 或 `https`。
       responses:
         "200":
           description: 绑定信息
@@ -2259,6 +2622,18 @@ paths:
       tags: [Forge]
       summary: 保存项目绑定
       operationId: forgeBindingSave
+      description: |
+        绑定项目到仓库。两种方式二选一：
+
+        - `url`：远程地址，服务端解析。`http://` / `https://` 会带上协议；`ssh://`
+          与 scp 形式（`git@host:path`）不表示协议，绑定记录的 `scheme` 为空，由凭据
+          的协议提示决定。
+        - 显式字段（`platform` / `host` / `owner` / `repo`）：`host` 可写完整地址
+          （`http://gitlab.internal`）也可只写主机名，服务端会归一化。`scheme` 可单独
+          传；两者都传时以 `host` 内的为准。
+
+        `host` 是绑定与凭据的关联键，**不含协议**——同一实例的 http 与 https 视为同一
+        个仓库，因此不会因协议不同而产生两份轮询/未读状态。
       requestBody:
         required: false
         content:
@@ -2270,12 +2645,18 @@ paths:
                   type: string
                 host:
                   type: string
+                  description: 主机名（可含端口）或完整地址；服务端归一化
+                scheme:
+                  type: string
+                  enum: [http, https]
+                  description: API 协议；省略时由 host 内协议或凭据提示决定
                 owner:
                   type: string
                 repo:
                   type: string
                 url:
                   type: string
+                  description: 远程地址，支持 http / https / ssh / scp 形式
                 source:
                   type: string
       responses:
@@ -2310,20 +2691,118 @@ paths:
   /api/forge/unread:
     get:
       tags: [Forge]
-      summary: 未读条目
+      summary: 未读条目数（按项目绑定的仓库）
+      description: |
+        返回该项目的仓库中「有新活动的条目」数量（按条目去重，不是事件数）。
+        未绑定仓库时返回 count 为 0（正常状态，非错误）。
       operationId: forgeUnread
       responses:
         "200":
-          description: 未读列表
+          description: 未读条目数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+
+  /api/forge/unread-items:
+    get:
+      tags: [Forge]
+      summary: 动态条目列表（按项目绑定的仓库）
+      description: |
+        返回该项目的仓库中有活动的条目，最近活动在前，供 forge 面板的「动态」页签使用。
+        每个条目给出最新的 eventType（用于生成「有新评论」这类说明）与事件总数。
+        流水线的 number 恒为 0，其运行 id 在 runId 字段；客户端应原样回传 itemKey
+        给 /api/forge/read，不要用 type/number 重新拼装。
+        `filter` 按条目的已读状态筛选：unread（默认）/ read / all。已读状态是**条目级**
+        的——只有该条目的全部事件都已读，read 才为 true。非法或缺省的 filter 一律回落
+        unread（它是视图选择器，写错最多回到默认视图，不应报错）。
+        未绑定仓库时返回 count 为 0、items 为空（正常状态，非错误）。
+      operationId: forgeUnreadItems
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [unread, read, all]
+            default: unread
+          description: 按条目已读状态筛选；非法值回落 unread
+      responses:
+        "200":
+          description: 动态条目列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        itemKey:
+                          type: string
+                          description: '条目键，如 issue/42、pr/7、pipeline/run:555'
+                        type:
+                          type: string
+                          description: issue / pr / pipeline
+                        number:
+                          type: integer
+                          description: 议题或合并请求编号；流水线恒为 0
+                        runId:
+                          type: integer
+                          description: 流水线运行 id；非流水线为 0
+                        eventType:
+                          type: string
+                          description: 最新事件类型，如 opened/closed/merged/reopened/commented/pipeline_done
+                        eventCount:
+                          type: integer
+                          description: 该条目的事件总数
+                        url:
+                          type: string
+                        slug:
+                          type: string
+                          description: owner/repo
+                        updatedAt:
+                          type: string
+                        read:
+                          type: boolean
+                          description: 该条目是否已全部读完（条目级，非事件级）
 
   /api/forge/read:
     post:
       tags: [Forge]
       summary: 标记已读
+      description: |
+        省略 body 或 itemKey 为空表示标记该仓库全部条目已读（「全部已读」）；
+        传 itemKey 则只标记该条目（打开某一行时使用）。
+        响应返回标记后剩余的未读条目数。
       operationId: forgeMarkRead
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                itemKey:
+                  type: string
+                  description: '条目键，如 issue/42、pr/7、pipeline/run:555'
       responses:
         "200":
-          description: 结果
+          description: 剩余未读条目数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
 
   # ── Agents ────────────────────────────────────────────────────────────────
   /api/agents:
@@ -2334,6 +2813,16 @@ paths:
         返回所有 agent，并附带 `acpStates`（模式、思考深度、斜杠命令 `commands`、
         模型列表、计划状态）。斜杠命令由 `acpStates[].commands` 提供，取代已移除的
         `/api/ai/commands`。
+
+        **模型列表由服务端合并**：`agents[].models` 是已解析的最终列表——CLI 发现的
+        列表提供顺序与名称，ACP 上报的**具体**模型列表在存在时对成员资格有权威性
+        （ACP 未上报的 CLI 模型会被剔除）。ACP 若上报的是 `opus`/`sonnet`/`haiku`
+        这类**档位别名**，则不参与成员资格判定，而是对齐到对应的 CLI 条目并只取其
+        显示名（保留具体 ID，CLI 仍能识别）。`agents[].cliModels` 是未经合并的纯 CLI
+        列表，供客户端在切换到 CLI 传输时直接渲染，无需自行保留基线并重新合并。
+
+        同一对列表也挂在 `acpStates[].modelListState` 的 `resolvedModels` /
+        `cliModels` 字段上，便于客户端仅凭 ACP 状态缓存刷新视图。
       operationId: agentsList
       responses:
         "200":
@@ -2624,7 +3113,12 @@ paths:
 
         `event_types` 合法取值：`issue.opened`、`issue.closed`、`issue.reopened`、
         `issue.commented`、`pr.opened`、`pr.closed`、`pr.merged`、`pr.reopened`、
-        `pr.commented`。历史拼写（不带 `issue.`/`pr.` 前缀）仍被接受。
+        `pr.commented`、`pipeline_done`。历史拼写（不带 `issue.`/`pr.` 前缀）仍被接受。
+
+        `pipeline_done` 是**仓库级**事件（CI 运行完成），不属于议题或合并请求，
+        因此用**裸键**订阅；`pr.pipeline_done` 仍被接受（历史拼写，避免既有任务
+        编辑时被拒）但不再作为可选项展示。`issue.pipeline_done` 始终非法。
+        成功与失败都会触发；`cancelled`/`skipped` 不会。
 
         **cron 表达式**按服务器本地时区解释（5 字段，支持 `@daily` 等描述符）。
         没有单独的 cron 校验端点：非法表达式在创建时返回 400，这是唯一的验证方式。
@@ -2638,8 +3132,12 @@ paths:
           （创建时前端会给出警告，但仍允许保存）。
         - 由**凭据账号自身**产生的动作（例如 AI 用该账号创建 PR）不触发事件，
           以防 AI 的写入自我触发形成循环。因此按事件触发时不会被自己创建的内容触发。
+          **`pipeline_done` 是例外**：流水线成败不是用户主动发起的动作，所以即使是
+          自己触发的运行也会触发任务。事件上下文会注入 `是否自身触发`（`是`/`否`），
+          由 prompt 自行决定是否行动。
         - 触发时事件上下文（事件类型、仓库、编号、标题、链接、作者、状态、
-          评论内容等）会**自动前置**到 `prompt` 之前，无需在 prompt 里写占位符。
+          评论内容、流水线状态/链接等）会**自动前置**到 `prompt` 之前，无需在
+          prompt 里写占位符。流水线事件没有编号，因此不注入「条目」一行。
       requestBody:
         required: true
         content:
@@ -2996,7 +3494,17 @@ paths:
     get:
       tags: [Upgrade]
       summary: 检查新版本
-      description: 返回是否有可用升级；`is_docker` 指示容器部署（容器内自升级改为提示）。
+      description: |
+        返回是否有可用升级；`is_docker` 指示容器部署（容器内自升级改为提示）。
+        响应字段：`current_version`、`latest_version`、`has_upgrade`、
+        `install_writable`、`install_dir`、`is_docker`、`verification_warning`。
+        `verification_warning` 是给人看的展示文本，非空表示本次升级有校验无法
+        完成，可能同时包含多个原因（发布签名未验证、registry 未提供完整性哈希）。
+        `verification_issues` 是同一批问题的稳定标识（排序后的原因码），用于回传
+        比对——文本内嵌 registry 地址与错误细节，两次请求可能不同，故不可用于
+        比对。前端须在**开始升级前**据此向用户展示并取得确认。
+        唯一会中止升级的校验是「下载内容与已知哈希不符」——那是文件损坏或
+        下载错误，而非仅仅无法校验。
       operationId: upgradeCheck
       responses:
         "200":
@@ -3006,10 +3514,22 @@ paths:
     post:
       tags: [Upgrade]
       summary: 开始升级
+      description: |
+        请求体可选，字段 `verification_issues`：客户端展示并取得确认的原因码
+        指纹（无问题时省略或留空），取自 `/api/upgrade/check` 的同名字段。服务端
+        与本次 registry 查询算出的指纹比对，不一致则以 `unverified_not_confirmed`
+        拒绝，避免未经确认就安装未校验的版本。
+        比对的是原因码而非展示文本：文本内嵌 registry 地址与错误细节，同一情形
+        在两次请求间可能渲染不同。
+        请求体为空是合法的（表示本次升级无需确认）；请求体非法则返回 400。
       operationId: upgradeStart
       responses:
         "200":
           description: 已开始
+        "400":
+          description: 请求体非法
+        "409":
+          description: 已有升级在进行中
 
   /api/upgrade/status:
     get:
@@ -3086,15 +3606,30 @@ paths:
   /api/ssh/info:
     get:
       tags: [SSH/FRP]
-      summary: SSH 隧道信息
+      summary: SSH 隧道最小信息（端口发现）
       description: |
         免鉴权：Android 原生在无 WebView Cookie 时需先发现 SSH 端口，否则回退到
-        错误端口导致隧道静默失败。仅暴露端口、用户名与指纹。
+        错误端口导致隧道静默失败。
+        仅返回 `enabled` 与 `port`。指纹、用户名、`ssh -L` 命令与连接统计
+        已移至需鉴权的 `/api/ssh/info/full`——其中命令会枚举全部转发端口及其
+        内网目标主机，等同于内网拓扑，不应提供给匿名调用方。
       operationId: sshInfo
       security: []
       responses:
         "200":
-          description: SSH 信息
+          description: 最小 SSH 信息（enabled、port）
+
+  /api/ssh/info/full:
+    get:
+      tags: [SSH/FRP]
+      summary: SSH 隧道完整信息
+      description: |
+        需鉴权。供 Web UI 展示隧道命令、指纹与连接统计。
+        返回 host、port、username、fingerprint、command、connectionStats。
+      operationId: sshInfoFull
+      responses:
+        "200":
+          description: 完整 SSH 信息
 
   /api/frp/info:
     get:
@@ -3226,11 +3761,14 @@ paths:
       tags: [ClientLogs]
       summary: 回传客户端日志
       description: |
-        免鉴权：Android 原生用 HttpURLConnection（无 WebView Cookie），JS 用 fetch。
+        需鉴权：这是向服务端文件追加写入的原语，匿名调用者可伪造日志行或反复触发轮转
+        以销毁上一代日志。两个客户端上报时均已登录——JS 中继受「调试日志捕获」开关门控
+        且仅在已认证的应用内启用，Android 的 `AppLog.startCapture` 由登录后的 WebView
+        桥触发，且 WebView Cookie 与它同进程。
         仅写日志（不可读），汇入 `{LogDir}/logs/client.log`，行内带 `[js]`/`[android]`
-        来源标记；50MiB 轮转到 `.1`。单请求上限 200 条。
+        来源标记；50MiB 轮转到 `.1`。单请求上限 200 条，且所有字段均被清洗
+        （转义换行/CR/NUL 并截断）。磁盘由字节上限与文件上限封死，故不限流。
       operationId: clientLog
-      security: []
       requestBody:
         required: true
         content:
@@ -3271,6 +3809,14 @@ components:
       in: cookie
       name: clawbench_session
       description: 登录后下发的会话 Cookie；CLI 使用 `<DataDir>/cookie-token`。
+    aiToken:
+      type: apiKey
+      in: header
+      name: X-ClawBench-AI-Token
+      description: |
+        本机 AI 子进程使用的短时令牌，由内置斜杠命令（`/cb-task` 等）在注入提示词时签发，
+        有效期 30 分钟，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
+        地址与签名须同时成立。地址单独不再放行——FRP 隧道的 frpc 亦从 `127.0.0.1` 回拨。
 
   parameters:
     Id:
@@ -3313,16 +3859,27 @@ components:
 
     FileEntry:
       type: object
-      description: 附件条目。
+      description: |
+        附件条目，可为本地文件/目录，也可为**外部链接**（`kind=url`）。
+        链接条目不参与文件系统校验，且其地址会以
+        `[Referenced external link: <url>]` 前缀注入 AI 的 prompt。
       properties:
         path:
           type: string
-        name:
-          type: string
-        size:
+          description: 本地路径；`kind=url` 时为人类可读标签（如 `owner/repo#123`）。
+        isDir:
+          type: boolean
+        startLine:
           type: integer
-        mime:
+        endLine:
+          type: integer
+        kind:
           type: string
+          enum: [file, url]
+          description: 缺省为本地文件；`url` 表示外部地址。
+        url:
+          type: string
+          description: 外部地址，仅当 `kind=url` 时使用；只接受 http(s)。
 
     GalleryItem:
       type: object

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS project_forges (
 	project_path TEXT NOT NULL,
 	platform     TEXT NOT NULL,
 	host         TEXT NOT NULL,
+	scheme       TEXT NOT NULL DEFAULT '',
 	owner        TEXT NOT NULL,
 	repo         TEXT NOT NULL,
 	source       TEXT NOT NULL DEFAULT 'auto',
@@ -38,8 +39,15 @@ type ProjectForge struct {
 	ProjectPath string `json:"projectPath"`
 	Platform    string `json:"platform"`
 	Host        string `json:"host"`
-	Owner       string `json:"owner"`
-	Repo        string `json:"repo"`
+	// Scheme is the API scheme ("http" or "https") this binding's host is
+	// reached with, or "" when the remote did not say (an ssh or scp remote).
+	// It is NOT part of the binding's identity: Host remains the key for
+	// credentials, snapshots, rate limits and read state, so the same instance
+	// over http and https stays one repository. See forge.ResolveScheme for how
+	// "" is resolved at request time.
+	Scheme string `json:"scheme,omitempty"`
+	Owner  string `json:"owner"`
+	Repo   string `json:"repo"`
 	// Source is "auto" (derived from the git remote) or "manual" (set by the
 	// user to override the remote).
 	Source    string `json:"source"`
@@ -49,6 +57,15 @@ type ProjectForge struct {
 
 // Slug returns the canonical owner/repo identifier.
 func (p ProjectForge) Slug() string { return p.Owner + "/" + p.Repo }
+
+// RepoKey returns the binding's repository identity.
+//
+// Read state is stored per REPOSITORY, not per project: one upstream item is one
+// item, even when two projects happen to be bound to the same repo. Keeping the
+// conversion here means every caller derives the key the same way.
+func (p ProjectForge) RepoKey() ForgeRepoKey {
+	return ForgeRepoKey{Platform: p.Platform, Host: p.Host, Owner: p.Owner, Repo: p.Repo}
+}
 
 // NormalizeProjectPath canonicalizes a project path so the same project always
 // maps to one binding row. It resolves symlinks when possible, cleans the path,
@@ -81,7 +98,7 @@ func GetProjectForge(projectPath string) (*ProjectForge, error) {
 		return nil, nil
 	}
 	row := dbRead.QueryRow(
-		`SELECT id, project_path, platform, host, owner, repo, source, created_at, updated_at
+		`SELECT id, project_path, platform, host, scheme, owner, repo, source, created_at, updated_at
 		 FROM project_forges WHERE project_path = ?`,
 		projectPath,
 	)
@@ -94,7 +111,7 @@ func scanProjectForge(row interface {
 },
 ) (*ProjectForge, error) {
 	var pf ProjectForge
-	err := row.Scan(&pf.ID, &pf.ProjectPath, &pf.Platform, &pf.Host, &pf.Owner, &pf.Repo, &pf.Source, &pf.CreatedAt, &pf.UpdatedAt)
+	err := row.Scan(&pf.ID, &pf.ProjectPath, &pf.Platform, &pf.Host, &pf.Scheme, &pf.Owner, &pf.Repo, &pf.Source, &pf.CreatedAt, &pf.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -122,16 +139,17 @@ func UpsertProjectForge(pf ProjectForge) error {
 		source = "manual"
 	}
 	_, err := WriteExec(
-		`INSERT INTO project_forges (project_path, platform, host, owner, repo, source)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO project_forges (project_path, platform, host, scheme, owner, repo, source)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(project_path) DO UPDATE SET
 			platform = excluded.platform,
 			host = excluded.host,
+			scheme = excluded.scheme,
 			owner = excluded.owner,
 			repo = excluded.repo,
 			source = excluded.source,
 			updated_at = CURRENT_TIMESTAMP`,
-		projectPath, pf.Platform, pf.Host, pf.Owner, pf.Repo, source,
+		projectPath, pf.Platform, pf.Host, pf.Scheme, pf.Owner, pf.Repo, source,
 	)
 	if err != nil {
 		slog.Warn("project_forges: upsert failed", "error", err, "project_path", projectPath)
@@ -177,14 +195,14 @@ func AutoBindProjectForge(projectPath string, remote forge.Remote) (bool, error)
 		return false, fmt.Errorf("project_forges: platform, host, owner and repo are required")
 	}
 	res, err := WriteExec(
-		`INSERT INTO project_forges (project_path, platform, host, owner, repo, source)
-		 SELECT ?, ?, ?, ?, ?, 'auto'
+		`INSERT INTO project_forges (project_path, platform, host, scheme, owner, repo, source)
+		 SELECT ?, ?, ?, ?, ?, ?, 'auto'
 		 WHERE NOT EXISTS (
 			SELECT 1 FROM project_meta
 			WHERE project_path = ? AND forge_bind_opt_out = 1
 		 )
 		 ON CONFLICT(project_path) DO NOTHING`,
-		projectPath, string(remote.Platform), remote.Host, remote.Owner, remote.Repo, projectPath,
+		projectPath, string(remote.Platform), remote.Host, remote.Scheme, remote.Owner, remote.Repo, projectPath,
 	)
 	if err != nil {
 		slog.Warn("project_forges: auto-bind failed", "error", err, "project_path", projectPath)
@@ -256,7 +274,7 @@ func ListProjectForges() ([]ProjectForge, error) {
 		return nil, nil
 	}
 	rows, err := dbRead.Query(
-		`SELECT id, project_path, platform, host, owner, repo, source, created_at, updated_at
+		`SELECT id, project_path, platform, host, scheme, owner, repo, source, created_at, updated_at
 		 FROM project_forges ORDER BY updated_at DESC`,
 	)
 	if err != nil {
@@ -267,7 +285,7 @@ func ListProjectForges() ([]ProjectForge, error) {
 	var out []ProjectForge
 	for rows.Next() {
 		var pf ProjectForge
-		if err := rows.Scan(&pf.ID, &pf.ProjectPath, &pf.Platform, &pf.Host, &pf.Owner, &pf.Repo, &pf.Source, &pf.CreatedAt, &pf.UpdatedAt); err != nil {
+		if err := rows.Scan(&pf.ID, &pf.ProjectPath, &pf.Platform, &pf.Host, &pf.Scheme, &pf.Owner, &pf.Repo, &pf.Source, &pf.CreatedAt, &pf.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, pf)
@@ -320,6 +338,7 @@ func ProjectForgeFromRemote(projectPath string, remote forge.Remote, source stri
 		ProjectPath: NormalizeProjectPath(projectPath),
 		Platform:    string(remote.Platform),
 		Host:        remote.Host,
+		Scheme:      remote.Scheme,
 		Owner:       remote.Owner,
 		Repo:        remote.Repo,
 		Source:      source,

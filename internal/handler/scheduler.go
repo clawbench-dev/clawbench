@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -272,8 +271,10 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 					return
 				}
 			} else {
-				// Task-level read: mark all executions as read
-				if err := service.UpdateTaskLastRead(taskID); err != nil {
+				// Mark all read: every finished execution of this task. Writes
+				// per-execution read state, so an execution that finishes later
+				// is still reported as unread.
+				if err := service.MarkTaskExecutionsRead(taskID); err != nil {
 					model.WriteError(w, model.Internal(err))
 					return
 				}
@@ -440,7 +441,7 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 // It joins task_executions with chat_history to fetch the assistant content.
 // Supports cursor-based pagination: ?limit=N&cursor=timestamp&cursor_id=id
 // When limit > 0, returns { executions, hasMore }. Otherwise returns all (no hasMore).
-func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, projectPath string) { //nolint:gocognit,gocyclo // execution list with pagination
+func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, projectPath string) { //nolint:gocyclo // execution list with pagination
 	task, err := service.GetTaskByID(taskID)
 	if err != nil {
 		writeLocalizedError(w, r, model.NotFound(nil, "TaskNotFound"))
@@ -541,18 +542,14 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		if summary.Valid {
 			exec.Summary = &summary.String
 		}
-		// An execution is unread if it has no read_at AND is not running AND
-		// (task has never been read OR execution is newer than last_read_at)
-		if readAt.Valid || exec.Status == "running" {
-			exec.IsUnread = false
-		} else if task.LastReadAt == nil {
-			exec.IsUnread = true
-		} else {
-			createdAt, parseErr := time.Parse(time.RFC3339, exec.CreatedAt)
-			if parseErr == nil {
-				exec.IsUnread = createdAt.After(*task.LastReadAt)
-			}
-		}
+		// An execution is unread if it has no read_at and is not running.
+		//
+		// The task-level last_read_at is deliberately NOT consulted: unread is
+		// tracked per execution, so "mark all read" writes read_at on each row
+		// instead of moving a watermark. A watermark could not express "this one
+		// read, that one not", and it would silently absorb a run that finished
+		// after the watermark was written.
+		exec.IsUnread = !readAt.Valid && exec.Status != "running"
 		executions = append(executions, exec)
 	}
 	if err := rows.Err(); err != nil {

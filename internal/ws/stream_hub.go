@@ -164,10 +164,19 @@ func (h *StreamHub) Emit(sessionID string, event ai.StreamEvent) {
 func EmitToSession(sessionID string, event ai.StreamEvent) {
 	mgr := GetManager()
 	if mgr == nil {
+		recordDeliveryDrop(DropReasonNoManager, sessionID, event.Type)
 		return
 	}
 	hub := mgr.StreamHub()
-	if hub == nil || !hub.HasSubscribers(sessionID) {
+	if hub == nil {
+		recordDeliveryDrop(DropReasonNoManager, sessionID, event.Type)
+		return
+	}
+	if !hub.HasSubscribers(sessionID) {
+		// No live subscriber: the event goes nowhere. Record it — silently
+		// returning here is what previously made a lost subscription
+		// indistinguishable from a backend that never sent anything.
+		recordDeliveryDrop(DropReasonNoSubscribers, sessionID, event.Type)
 		return
 	}
 	hub.Emit(sessionID, event)

@@ -3,7 +3,7 @@
     <div v-if="!hideHeader" class="section-header" @click="toggleCollapse">
       <div class="section-left">
         <span class="section-title">{{ t('git.manage.worktrees') }}</span>
-        <span v-if="worktrees.length > 0" class="section-count">{{ worktrees.length }}</span>
+        <span v-if="worktrees.length > 0" class="section-count count-badge">{{ worktrees.length }}</span>
       </div>
       <ChevronDown v-if="!collapsed" :size="16" class="section-chevron" />
       <ChevronRight v-else :size="16" class="section-chevron" />
@@ -114,12 +114,9 @@ function toggleCollapse() {
 }
 
 .section-count {
-  font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
-  padding:1px var(--space-3);
-  border-radius: var(--radius-md);
 }
 
 .section-chevron {

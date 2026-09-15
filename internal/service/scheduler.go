@@ -561,20 +561,29 @@ var forgeEventTransitions = map[string][]string{
 	forgeEventKindPR:    {"opened", "closed", "merged", "reopened", "commented"},
 }
 
+// forgeRepoTargetedTransitions are events that belong to the REPOSITORY rather
+// than to an issue or PR.
+//
+// A pipeline run is not attached to any item: it is triggered by a push to a
+// branch, a tag, or a schedule, none of which is an issue or a PR. Scoping it
+// under a kind would be a lie — it would render as "PR #0" and imply the run
+// belongs to a change request. These are therefore subscribed with the BARE
+// key (e.g. "pipeline_done") and matched only against the bare key.
+var forgeRepoTargetedTransitions = []string{"pipeline_done"}
+
 // forgeRetiredEventTypes are accepted but no longer offered.
 //
-// Nothing derives these events yet (no code path emits a pipeline change), so
-// subscribing would create a trigger that can never fire. They stay VALID so a
-// task that already stores one is not rejected on its next edit — the editor
-// cannot render a checkbox for them, and rejecting on save would strand the
-// user with a task they cannot fix from the UI.
-var forgeRetiredEventTypes = []string{"pipeline_done"}
+// Empty today: pipeline_done was the last retired type and is now a real,
+// derivable event. The mechanism is kept because a future event type may need
+// to be withdrawn without invalidating tasks that already store it.
+var forgeRetiredEventTypes = []string{}
 
 // forgeEventKey builds the canonical kind-scoped subscription key.
 func forgeEventKey(kind, transition string) string { return kind + "." + transition }
 
 // validForgeEventTypes is the set of event types an event task may subscribe to:
-// every kind-scoped key, plus the bare legacy keys for backward compatibility.
+// every kind-scoped key, the bare legacy keys, and the repository-targeted
+// events.
 var validForgeEventTypes = func() map[string]bool {
 	out := make(map[string]bool)
 	for kind, transitions := range forgeEventTransitions {
@@ -585,6 +594,14 @@ var validForgeEventTypes = func() map[string]bool {
 			out[tr] = true
 		}
 	}
+	for _, tr := range forgeRepoTargetedTransitions {
+		out[tr] = true
+		// "pr.pipeline_done" was accepted while the event was retired, so a task
+		// that stored that spelling must keep validating — the editor offers no
+		// checkbox for it, and rejecting on save would strand the user with a
+		// task they cannot fix from the UI. It is NOT offered.
+		out[forgeEventKey(forgeEventKindPR, tr)] = true
+	}
 	for _, tr := range forgeRetiredEventTypes {
 		out[tr] = true
 		out[forgeEventKey(forgeEventKindPR, tr)] = true
@@ -593,7 +610,7 @@ var validForgeEventTypes = func() map[string]bool {
 }()
 
 // OfferedForgeEventTypesForTest exposes the offered vocabulary so a test can
-// assert that a retired type is no longer presented to users.
+// assert exactly which keys the UI presents.
 func OfferedForgeEventTypesForTest() []string {
 	out := make([]string, 0)
 	for kind, transitions := range forgeEventTransitions {
@@ -601,6 +618,8 @@ func OfferedForgeEventTypesForTest() []string {
 			out = append(out, forgeEventKey(kind, tr))
 		}
 	}
+	// Repository-targeted events are offered in their bare form.
+	out = append(out, forgeRepoTargetedTransitions...)
 	return out
 }
 
@@ -816,18 +835,12 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		}
 	}()
 
-	// Mark session as running so ACP idle sweep does not close the connection
-	// while the task is still executing. Without this, the 5-minute
-	// idle timeout kills the ACP agent process mid-task (see log: "acp: idle
-	// sweep closing connection" after ~5m, causing "peer disconnected").
-	// skipEvent=true because the scheduler emits its own task events.
-	SetSessionRunning(sessionID, true, true)
-
-	// Register session stream for WS event delivery
-	defer func() {
-		SetSessionRunning(sessionID, false, true)
-	}()
-
+	// The session is marked running further down, when its real execution
+	// context is adopted (see RegisterExternalExecution). Marking it here first
+	// would register a placeholder whose cancel func nothing watches: a user
+	// cancel landing in that window would cancel the placeholder, broadcast
+	// "cancelled", and then the adoption below would re-register the session and
+	// the task would run to completion anyway.
 	slog.Info(
 		"executing task",
 		slog.Int64("task_id", task.ID),
@@ -911,21 +924,26 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Execute AI backend (no timeout - let AI run indefinitely)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	backend, err := ai.NewBackendForAgent(backendName, task.AgentID)
-	if err != nil {
-		slog.Error("failed to create backend for task", slog.String("err", err.Error()))
-		cancel() // Release context resources
-		_ = UpdateExecutionStatus(sessionID, "failed")
-		// No runningExecutions.Delete needed here — the entry hasn't been
-		// stored yet (Store happens after this check, at line ~728).
-		SetSessionRunning(sessionID, false, true)
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
-		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-		return
-	}
+	// Adopt this execution into the session registry so a user cancel actually
+	// reaches it, and mark the session running in the same step.
+	//
+	// This is the ONLY place a scheduled run becomes "running": the context
+	// registered here is the one the run actually uses, so "running" and
+	// "cancellable" refer to the same execution. It is also what makes scheduled
+	// sessions cancellable at all — previously their cancel func lived only in
+	// the scheduler's own map, so a user cancel could not reach it. Skipping the
+	// earlier placeholder registration is what keeps the ACP idle sweep away
+	// while still leaving no window where a cancel lands on the wrong context.
+	// skipEvent semantics: the scheduler emits its own task events, so no
+	// session_update is broadcast here (ISS-128 also requires no "running" event
+	// for a task that fails before it starts).
+	RegisterExternalExecution(ctx, cancel, sessionID)
 
-	// Register running execution only after backend creation succeeds (ISS-128).
-	// This prevents the frontend from seeing a "running" state that immediately fails.
+	// Clear the running state when this execution ends.
+	defer func() {
+		SetSessionRunning(sessionID, false, true)
+	}()
+
 	running := &RunningExecution{
 		ID:          sessionID,
 		TaskID:      task.ID,
@@ -939,48 +957,60 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		cancel()
 	}()
 
-	// Emit "running" event after backend creation succeeds (ISS-128).
-	emitTaskEvent(fmt.Sprintf("%d", task.ID), "running", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+	// Run the turn through the shared implementation. The scheduler emits its
+	// own stream_start (its subscribers assert on the exact id), and it handles
+	// the abort/terminal branches below itself because a task failure must also
+	// update the execution row and emit task events — behavior the interactive
+	// paths do not have.
+	//
+	// The "running" event rides OnStarted rather than being emitted after this
+	// call: runTurnStart's last step is the blocking event loop, so emitting it
+	// afterwards sent "running" once the task had already finished (subscribers
+	// saw started → completed with nothing in between). OnStarted fires after
+	// the backend and placeholder exist but before the loop, so the event is
+	// both truthful and correctly ordered. It also preserves ISS-128: a turn
+	// that fails before starting never reaches the hook, so no "running" event
+	// is emitted for it — only "failed".
+	at := runTurnStart(TurnSpec{
+		Ctx:         ctx,
+		Mode:        ModeScheduled,
+		ProjectPath: projectPath,
+		BackendName: backendName,
+		SessionID:   sessionID,
+		AgentID:     task.AgentID,
+		ChatReq:     chatReq,
+		FileDir:     projectPath,
+		TaskID:      task.ID,
+		ExecutionID: executionID,
+		TriggerType: triggerType,
+		OnStarted: func() {
+			emitTaskEvent(fmt.Sprintf("%d", task.ID), "running", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+		},
+	})
+	defer at.release()
 
-	eventCh, err := backend.ExecuteStream(ctx, chatReq)
-	if err != nil {
-		slog.Error("failed to execute stream for task", slog.String("err", err.Error()))
+	// Backend creation / stream start failed. ISS-128: no "running" event may be
+	// emitted for a task that fails before it starts, or the frontend shows a
+	// running state that immediately fails. So the failure branch comes first
+	// and emits only "failed". (OnStarted never ran in this case.)
+	if !at.started() {
+		slog.Error("failed to start task execution", slog.String("err", at.earlyFails.Err))
 		_ = UpdateExecutionStatus(sessionID, "failed")
-		s.runningExecutions.Delete(sessionID)
 		SetSessionRunning(sessionID, false, true)
 		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		return
 	}
 
-	// Create streaming placeholder message in DB (so SessionExecutor.Finalize
-	// can update it via FinalizeStreamingMessage, just like interactive sessions).
-	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	streamingMsgID, _ := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
+	executor := at.executor
+	eventCh := at.eventCh
+	runResult := at.runResult
 
-	// Broadcast stream_start (same as interactive paths) so clients that open the
-	// task's session mid-stream can create the streaming placeholder from the
-	// event, not just from the DB streaming row.
-	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
-	})
-
-	// Delegate event loop to SessionExecutor (scheduled mode — no ask-question
-	// conversion, no cancel-reason tracking)
-	executor := NewSessionExecutor(ctx, RunConfig{
-		Mode:               ModeScheduled,
-		ProjectPath:        projectPath,
-		BackendName:        backendName,
-		SessionID:          sessionID,
-		AgentID:            task.AgentID,
-		ChatRequest:        chatReq,
-		TaskID:             task.ID,
-		ExecutionID:        executionID,
-		TriggerType:        triggerType,
-		StreamingMessageID: streamingMsgID,
-	})
-	runResult := executor.RunWithChannel(eventCh)
+	// stream_start is emitted by runTurnStart, BEFORE the turn's event loop, so
+	// subscribers get the placeholder id before any content arrives. It used to
+	// be emitted here (with SkipStreamStart set) — which put it after the whole
+	// turn had already run, so a client could create a placeholder for an
+	// already-finished row.
 
 	// If context was cancelled, mark execution as cancelled and update stats
 	if ctx.Err() == context.Canceled {
@@ -1051,8 +1081,9 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
-	// Finalize: persist blocks to DB, save metadata, drain remaining events
-	runResult = executor.Finalize(runResult, nil)
+	// Finalize: persist blocks to DB, save metadata, drain remaining events.
+	// Shared with the interactive paths so the persisted shape cannot drift.
+	at.runTurnFinalize()
 
 	// Mark execution as completed
 	_ = UpdateExecutionStatus(sessionID, "completed")
@@ -1174,8 +1205,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
-			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-			 AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) AS unread_count
+			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') AS unread_count
 			FROM scheduled_tasks s ORDER BY s.created_at DESC`
 	} else {
 		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
@@ -1183,8 +1213,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
-			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-			 AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) AS unread_count
+			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') AS unread_count
 			FROM scheduled_tasks s WHERE s.project_path = ? ORDER BY s.created_at DESC`
 		args = []interface{}{projectPath}
 	}
@@ -1225,8 +1254,7 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 		s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 		s.last_read_at, s.created_at, s.updated_at,
 		(SELECT COUNT(*) FROM task_executions e
-		 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-		 AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) AS unread_count
+		 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') AS unread_count
 		FROM scheduled_tasks s WHERE s.id = ?`,
 		id,
 	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
@@ -1305,10 +1333,19 @@ func SetTaskExecutionEventPayload(executionID int64, eventURL, eventSummary stri
 	return err
 }
 
-// UpdateTaskLastRead updates the last_read_at timestamp for a task, clearing unread status.
-func UpdateTaskLastRead(taskID int64) error {
+// MarkTaskExecutionsRead marks every finished execution of a task as read.
+//
+// This is the "mark all read" action. It writes per-execution read_at rather
+// than bumping a task-level watermark, because the unread model is per item: a
+// watermark cannot express "this one read, that one not", and it would silently
+// absorb a run that finished after it was written.
+//
+// Running executions are skipped: their outcome is not known yet, and marking
+// them read would hide the completion the user is waiting for.
+func MarkTaskExecutionsRead(taskID int64) error {
 	_, err := WriteExec(
-		"UPDATE scheduled_tasks SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?",
+		`UPDATE task_executions SET read_at = CURRENT_TIMESTAMP
+		 WHERE task_id = ? AND read_at IS NULL AND status != 'running'`,
 		taskID,
 	)
 	return err
@@ -1434,16 +1471,14 @@ func HasUnreadTasks(projectPath string) (bool, error) {
 		err = dbRead.QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
 			 WHERE (SELECT COUNT(*) FROM task_executions e
-			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-			      AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) > 0`,
+			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') > 0`,
 		).Scan(&count)
 	} else {
 		err = dbRead.QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
 			 WHERE s.project_path = ?
 			 AND (SELECT COUNT(*) FROM task_executions e
-			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-			      AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) > 0`,
+			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') > 0`,
 			projectPath,
 		).Scan(&count)
 	}

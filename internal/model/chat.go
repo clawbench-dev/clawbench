@@ -49,7 +49,7 @@ func FileEntriesFromPaths(paths []string) []FileEntry {
 
 // PathsFromFileEntries extracts plain paths from []FileEntry.
 //
-// Deprecated: Use fileEntryLabel (in handler) instead to preserve line info.
+// Deprecated: Use FileEntryLabel instead to preserve line info.
 // This function strips StartLine/EndLine, which causes prompt prefix regression.
 func PathsFromFileEntries(entries []FileEntry) []string {
 	if len(entries) == 0 {
@@ -231,6 +231,17 @@ type ChatSession struct {
 	PendingApproval bool       `json:"pendingApproval,omitempty"` // ACP permission request awaiting user response
 	LastReadAt      *time.Time `json:"-"`
 	ProjectPath     string     `json:"projectPath,omitempty"` // project this session belongs to (overview grouping)
+	// Tags is populated by the session list / overview endpoints (batch-loaded,
+	// not stored on the session row itself). Always omitted when empty so the
+	// payload for untagged sessions is unchanged.
+	Tags []SessionTag `json:"tags,omitempty"`
+}
+
+// SessionTag is a user-defined label attached to a session. Scope is "project"
+// (visible only inside the owning project) or "global" (visible everywhere).
+type SessionTag struct {
+	Name  string `json:"name"`
+	Scope string `json:"scope,omitempty"`
 }
 
 // QueuedMessage represents a message waiting in the pending queue for a session.

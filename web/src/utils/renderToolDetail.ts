@@ -1853,11 +1853,26 @@ export function restoreAskStateFromStore(view: Element): void {
       input.style.opacity = 'var(--opacity-muted)'
     }
     const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
+    const recommendBtn = view.querySelector('.ask-question-recommend') as HTMLElement | null
+
+    if (state.viaRecommend) {
+      // The Recommend path never picks an option, so there is nothing to dim
+      // and the Submit button is hidden rather than relabelled.
+      if (submitBtn) {
+        submitBtn.disabled = true
+        submitBtn.style.display = 'none'
+      }
+      if (recommendBtn) {
+        recommendBtn.textContent = gt('tool.askUser.recommended')
+        recommendBtn.style.pointerEvents = 'none'
+      }
+      return
+    }
+
     if (submitBtn) {
       submitBtn.disabled = true
       submitBtn.textContent = gt('tool.askUser.submitted')
     }
-    const recommendBtn = view.querySelector('.ask-question-recommend') as HTMLElement | null
     if (recommendBtn) {
       recommendBtn.textContent = gt('tool.askUser.recommended')
       recommendBtn.style.pointerEvents = 'none'
@@ -1916,6 +1931,9 @@ function makeAskViewAnswerable(view: Element): void {
   const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
   if (submitBtn) {
     submitBtn.textContent = gt('tool.askUser.submit')
+    // The Recommend path hides the Submit button instead of relabelling it —
+    // restore visibility, or a reverted recommend card stays unanswerable.
+    submitBtn.style.display = ''
   }
 
   const recommendBtn = view.querySelector('.ask-question-recommend') as HTMLElement | null
@@ -1951,6 +1969,8 @@ export function revertAskSubmission(key: string): void {
   if (!key) return
   const state = getAskState(key)
   if (!state?.submitted) return
+  // `viaRecommend` is cleared for us — the store only keeps it while submitted
+  // (see patchAskState), so no rebuild can re-apply the recommend styling.
   patchAskState(key, { submitted: false })
 
   // Match by dataset rather than a selector: the key contains '|' and ':', and
@@ -2044,6 +2064,16 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
       }
       recommendBtn.textContent = gt('tool.askUser.recommended')
       recommendBtn.style.pointerEvents = 'none'
+
+      // Record the terminal state before emitting, exactly as the Submit branch
+      // does — otherwise a re-render silently resurrects the card as answerable
+      // and the button label reverts to "Recommend". `viaRecommend` is what
+      // lets a rebuild reproduce THIS terminal look rather than Submit's.
+      //
+      // No card key is sent with the emit: the prompt text ("Which one do you
+      // recommend?") is not an answer to the card, so there is nothing to revert
+      // if the send fails — the user can simply ask again.
+      patchAskState(askKeyOf(view), { selected: readSelectedFromDom(view), submitted: true, viaRecommend: true })
 
       emit('send-message', gt('tool.askUser.recommendAsk'))
     }

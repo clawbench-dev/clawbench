@@ -634,6 +634,23 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
   })
 })
 
+describe('ChatMessageList — scroll FAB is fully opaque', () => {
+  it('does not dim the floating scroll buttons with --opacity-muted', async () => {
+    // Regression: the FAB used `opacity: var(--opacity-muted)` (0.5), which made
+    // the icons hard to read against busy chat content. The buttons must render
+    // fully opaque at rest; only the enter/leave transitions animate opacity.
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const block = source.slice(
+      source.indexOf('.scroll-fab-round {'),
+      source.indexOf('.scroll-fab-enter-active'),
+    )
+    expect(block).toContain('opacity: 1')
+    expect(block).not.toContain('--opacity-muted')
+    // The opacity transition was only there for the muted resting state.
+    expect(block).not.toContain('opacity var(--duration-base)')
+  })
+})
 
 // ── send-message forwards the ask-card key ──
 //

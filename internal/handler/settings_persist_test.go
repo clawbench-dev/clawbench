@@ -128,6 +128,55 @@ func TestPersist_ChatSystemPromptInterval(t *testing.T) {
 	assert.Equal(t, 5, getNestedValue(cfg, "chat.system_prompt_interval"))
 }
 
+func TestPersist_ChatForkContextBudget(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+
+	cfg := patchAndReadConfig(t, `{"chat":{"fork_context_budget":50000}}`)
+	assert.Equal(t, 50000, getNestedValue(cfg, "chat.fork_context_budget"))
+	// The hot-reload global is what service.BuildForkContext actually reads.
+	assert.Equal(t, 50000, model.ChatForkContextBudget)
+}
+
+// TestPersist_ChatForkContextBudgetRejectsNegative guards the patch validator:
+// a negative budget would make every fork context fall back to the default
+// silently, so the write is refused up front.
+func TestPersist_ChatForkContextBudgetRejectsNegative(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"chat":{"fork_context_budget":-1}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestPersist_ChatForkContextBudgetRejectsZero guards against a UI/server
+// disagreement: the PATCH path does not re-run ApplyDefaults, so a stored 0
+// would be echoed by GET /api/config while BoundForkContext substitutes the
+// default. The UI would show 0 while the server used 100000.
+func TestPersist_ChatForkContextBudgetRejectsZero(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"chat":{"fork_context_budget":0}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 // ─── Session section ──────────────────────────────────────
 
 func TestPersist_SessionMaxCount(t *testing.T) {
