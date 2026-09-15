@@ -461,7 +461,7 @@ import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePane
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
-import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
 import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
@@ -1487,6 +1487,10 @@ function registerAppEventListeners() {
       if (detail.field !== undefined) sortField.value = detail.field
       if (detail.dir !== undefined) sortDir.value = detail.dir
   })
+  // Follow the system light/dark preference while the theme is 'auto'.
+  // Registered here (not in onMounted) because it is part of the global
+  // listener set that both cold start and post-login initialization install.
+  startSystemThemeWatcher()
 }
 
 /**
@@ -2468,10 +2472,19 @@ function escAttr(value: string) {
 
 
 
-async function applyTheme(t: string) {
-    const resolved = resolveThemeId(t)
-    applyThemeAttributes(resolved)
-    setSetting('theme', t)
+/**
+ * Mount-time theme application.
+ *
+ * Applies the *stored* value (which may be 'auto') and syncs the native shell
+ * and mermaid to the resolved ID. Deliberately does not persist — the stored
+ * value is owned by useSettingsConfig (`setLocalConfig('theme', …)` → side
+ * effect → the `clawbench-theme-change` listener below). Persisting the
+ * resolved ID here would overwrite a stored 'auto' with 'github-light' /
+ * 'github-dark' and permanently pin the theme, so the app would never follow
+ * the system again (issue #458).
+ */
+async function applyStoredThemeOnMount() {
+    const resolved = applyStoredTheme()
     const palette = buildThemePalette(resolved)
     getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
     const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
@@ -2485,7 +2498,6 @@ function dismissSplash() {
 }
 
 provide('theme', theme)
-provide('applyTheme', applyTheme)
 provide('activeTab', activeTab)
 provide('switchTab', switchTab)
 provide('hotSwitchProject', hotSwitchProject)
@@ -2574,7 +2586,7 @@ watch(() => store.state.projectRoot, () => {
 })
 
 onMounted(async () => {
-    applyTheme(theme.value)
+    applyStoredThemeOnMount()
     // Prime the forge unread badge (server-authoritative; independent of the
     // notification toggles) and the bound platform (drives the dock icon).
     void refreshForgeUnread()
