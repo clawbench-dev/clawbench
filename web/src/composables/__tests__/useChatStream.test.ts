@@ -2962,20 +2962,21 @@ describe('useChatStream', () => {
       expect(mockAppLogW).not.toHaveBeenCalled()
     })
 
-    it('logs a cancelled event that arrives with no streaming message', () => {
+    it('clears loading when cancelled arrives with no streaming message', () => {
+      // The terminal event's job is to end the turn; the placeholder is only an
+      // optional artifact. This path must not bail out early — doing so left
+      // loading.value = true forever, so the stop button stayed armed until the
+      // user switched sessions.
       const options = createOptions()
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
-      // Known symptom: the stop button keeps spinning because the cancelled
-      // event had no message to attach to. Log it so the case is identifiable.
       options.messages.value = []
       options.loading.value = true
       simulateWsEvent('cancelled', {})
 
-      const logged = mockAppLogW.mock.calls.map(c => String(c[1])).join('\n')
-      expect(logged).toContain('cancelled')
-      expect(logged).toContain('no streaming message')
+      expect(options.loading.value).toBe(false)
+      expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled')
     })
 
     it('logs events for another session while the current one is loading', () => {

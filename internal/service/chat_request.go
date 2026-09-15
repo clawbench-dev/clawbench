@@ -1,8 +1,6 @@
 package service
 
 import (
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -232,77 +230,19 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 // can be prepended to the user's prompt, giving the AI context from the parent
 // session when a forked session sends its first message.
 //
-// The output is wrapped in an explicit envelope with "User:"/"Assistant:" role
-// labels. Both matter: the envelope tells the model what it is looking at, and
-// the capitalised role names are what the model expects, so history injected
-// through a queued message reads the same as through a direct send.
-//
-// Tool output fields are truncated to forkToolOutputMaxLen to avoid token
-// explosion.
+// This is the queued-message / task-engine path, so it must render history the
+// same way a direct send does: the explicit envelope tells the model what it is
+// looking at, and the capitalised role names are what the model expects. The
+// rendering, priority selection and budget enforcement live in fork_context.go
+// so this path cannot drift from the handler path again.
 func BuildForkContext(sessionID string) string {
-	// Use GetMessagesBySessionIDRaw: GetMessagesBySessionID strips the content
-	// blocks of assistant messages that have a reading summary (empty
-	// {"blocks":[]}), which would drop all AI replies from the fork context.
-	msgs, err := GetMessagesBySessionIDRaw(sessionID)
-	if err != nil || len(msgs) == 0 {
-		return ""
-	}
-
-	// Batch-fetch tool call details for the session
-	toolCalls, _ := GetToolCallsBySession(sessionID)
-	toolCallMap := make(map[string]*ToolCallRecord, len(toolCalls))
-	for i := range toolCalls {
-		toolCallMap[toolCalls[i].ToolID] = &toolCalls[i]
-	}
-
-	var sb strings.Builder
-
-	for _, m := range msgs {
-		if m.Role != roleUser && m.Role != roleAssistant {
-			continue
-		}
-		role := "User"
-		if m.Role == roleAssistant {
-			role = "Assistant"
-		}
-
-		var wrapper struct {
-			Blocks []model.ContentBlock `json:"blocks"`
-		}
-		if !strings.HasPrefix(m.Content, `{"blocks":`) || json.Unmarshal([]byte(m.Content), &wrapper) != nil {
-			// Non-block content: treat as plain text. Use the unified extractor
-			// so nested JSON serializations (bare content arrays, ACP notification
-			// wrappers from sync replay) never leak raw JSON into the model.
-			content := ExtractPlainText(m.Content)
-			if content == "" {
-				continue
-			}
-			fmt.Fprintf(&sb, "%s: %s\n\n", role, content)
-			continue
-		}
-
-		// Render blocks: text as-is, tool_use as structured JSON, thinking skipped
-		msgParts := extractMessageParts(wrapper.Blocks, toolCallMap)
-		if len(msgParts) == 0 {
-			continue
-		}
-
-		content := strings.Join(msgParts, "\n\n")
-		fmt.Fprintf(&sb, "%s: %s\n\n", role, content)
-	}
-
-	// Return "" when nothing rendered. The caller treats a non-empty result as
-	// "this session has fork history worth injecting" and changes resume
-	// behaviour accordingly, so an envelope wrapping zero messages would claim a
-	// fork that does not exist.
-	body := sb.String()
-	if body == "" {
-		return ""
-	}
-
-	return "[Below is the conversation history from before this session. Continue based on this context.]\n\n" +
-		body +
-		"[End of conversation history. Now answer the user's new question.]\n\n"
+	return BuildForkContextWithOptions(sessionID, ForkContextOptions{
+		Header:            "[Below is the conversation history from before this session. Continue based on this context.]\n\n",
+		Footer:            "[End of conversation history. Now answer the user's new question.]\n\n",
+		CapitalizeRoles:   true,
+		PlainTextFallback: true,
+		BudgetChars:       model.ChatForkContextBudget,
+	})
 }
 
 // extractMessageParts renders a message's blocks for fork-context injection:
