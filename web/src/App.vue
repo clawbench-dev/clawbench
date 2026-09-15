@@ -3366,7 +3366,7 @@ onUnmounted(() => {
     height: auto;
     min-width: 16px;
     padding:0 var(--space-2);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-full);
     font-size: var(--font-size-2xs);
     font-weight: var(--font-weight-bold);
     line-height: 16px;
