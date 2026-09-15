@@ -1865,9 +1865,12 @@ export function restoreAskStateFromStore(view: Element): void {
     return
   }
 
-  // Not submitted — recompute whether the card is answerable with what we
-  // restored (e.g. a note alone enables Submit even with no option picked).
-  updateAskSubmitState(view)
+  // Not submitted — the store is the authority. A freshly rebuilt card is
+  // already answerable, but a card that was submitted and then reverted (a
+  // failed send) still carries the terminal DOM; makeAskViewAnswerable resets
+  // it and recomputes whether the restored answer re-enables Submit (a note
+  // alone is a valid answer).
+  makeAskViewAnswerable(view)
 }
 
 /**
@@ -1886,6 +1889,46 @@ export function restoreAskStatesInContainer(container: Element): void {
 }
 
 /**
+ * Reset a card's DOM back to the answerable state, undoing a submission.
+ *
+ * Submitting writes terminal state directly into the DOM (.ask-submitted, dead
+ * pointer events, dimmed options, a disabled input, a "Submitted" label). When
+ * that submission has to be undone — a failed send, or a rebuild against a
+ * store that no longer says submitted — every one of those must be reversed,
+ * otherwise the card looks and behaves answered even though it is not, and the
+ * user has no way to retry.
+ */
+function makeAskViewAnswerable(view: Element): void {
+  view.classList.remove('ask-submitted')
+
+  for (const opt of view.querySelectorAll('.ask-question-option')) {
+    const el = opt as HTMLElement
+    el.style.pointerEvents = ''
+    el.style.opacity = ''
+  }
+
+  const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+  if (input) {
+    input.disabled = false
+    input.style.opacity = ''
+  }
+
+  const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
+  if (submitBtn) {
+    submitBtn.textContent = gt('tool.askUser.submit')
+  }
+
+  const recommendBtn = view.querySelector('.ask-question-recommend') as HTMLElement | null
+  if (recommendBtn) {
+    recommendBtn.textContent = gt('tool.askUser.recommend')
+    recommendBtn.style.pointerEvents = ''
+  }
+
+  // The user's answer is still in the DOM, so Submit is usually re-enabled.
+  updateAskSubmitState(view)
+}
+
+/**
  * Undo the submitted flag after a FAILED send, keeping the user's work.
  *
  * The submitted flag is persisted (see the submit branch) so an answered card
@@ -1895,6 +1938,13 @@ export function restoreAskStatesInContainer(container: Element): void {
  * it to answerable while preserving the selection and the note, so retrying is
  * a single tap.
  *
+ * Clears BOTH the store and the live DOM. Clearing only the store left the
+ * rendered card stuck in its submitted look with dead controls — the retry the
+ * revert exists to enable was still impossible. Found by end-to-end testing.
+ *
+ * Every rendered instance of the card is released, because the chat list and
+ * the tool-detail drawer can show the same card at the same time.
+ *
  * A no-op for a card the user never touched.
  */
 export function revertAskSubmission(key: string): void {
@@ -1902,6 +1952,12 @@ export function revertAskSubmission(key: string): void {
   const state = getAskState(key)
   if (!state?.submitted) return
   patchAskState(key, { submitted: false })
+
+  // Match by dataset rather than a selector: the key contains '|' and ':', and
+  // comparing values avoids any selector-escaping pitfalls.
+  for (const view of document.querySelectorAll('.ask-question-view[data-ask-key]')) {
+    if ((view as HTMLElement).dataset?.askKey === key) makeAskViewAnswerable(view)
+  }
 }
 
 export function updateAskSubmitState(view: Element) {

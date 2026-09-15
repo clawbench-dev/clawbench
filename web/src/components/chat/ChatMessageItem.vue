@@ -11,6 +11,7 @@
         :blocks="msg.blocks"
         :msgId="msg.id"
         :msgIndex="index"
+        :sessionId="sessionId"
         :expandedTools="expandedTools"
         :blockTasks="blockTasks"
         :blockAskQuestions="blockAskQuestions"

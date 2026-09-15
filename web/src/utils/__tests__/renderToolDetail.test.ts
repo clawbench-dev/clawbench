@@ -3825,3 +3825,124 @@ describe('AskUserQuestion submit carries the card key', () => {
     container.remove()
   })
 })
+
+// ── Reverting must also clear the DOM, not just the store ──
+//
+// revertAskSubmission clears the stored submitted flag, but the live DOM still
+// carries .ask-submitted (and disabled controls) from the click that submitted
+// it. Without undoing that too, the card stays visually and behaviourally
+// answered even though the send failed — the user is stranded with no way to
+// retry. Found by end-to-end testing in a real browser.
+describe('AskUserQuestion revert clears the DOM as well as the store', () => {
+  function createKeyedCard(key: string): { container: HTMLDivElement; view: HTMLElement; emit: any } {
+    const emit = vi.fn() as any
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="ask-question-view" data-ask-key="${key}">
+        <div class="ask-question-item" data-multi="false">
+          <div class="ask-question-options">
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
+              <span class="ask-option-indicator">◯</span>
+            </div>
+          </div>
+        </div>
+        <div class="ask-question-supplementary"><input class="ask-supplementary-input" type="text" /></div>
+        <button class="ask-question-recommend">Recommend</button>
+        <button class="ask-question-submit" disabled>Submit</button>
+      </div>
+    `
+    document.body.appendChild(container)
+    return { container, view: container.querySelector('.ask-question-view') as HTMLElement, emit }
+  }
+
+  function clickOn(el: Element, emit: any) {
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'target', { value: el, writable: false })
+    handleToolAction('AskUserQuestion', ev, emit)
+  }
+
+  beforeEach(() => {
+    _resetAskStatesForTesting()
+  })
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('removes the submitted class from the live DOM', () => {
+    const { container, view, emit } = createKeyedCard('tool:tu-1')
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+    expect(view.classList.contains('ask-submitted')).toBe(true)
+
+    revertAskSubmission('tool:tu-1')
+
+    expect(view.classList.contains('ask-submitted')).toBe(false)
+    container.remove()
+  })
+
+  it('re-enables the supplementary input and the submit button', () => {
+    const { container, view, emit } = createKeyedCard('tool:tu-1')
+    const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement
+    input.value = 'retry me'
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+    expect(input.disabled).toBe(true)
+
+    revertAskSubmission('tool:tu-1')
+
+    expect(input.disabled).toBe(false)
+    const submit = view.querySelector('.ask-question-submit') as HTMLButtonElement
+    // The answer is still there, so Submit must be clickable for a retry.
+    expect(submit.disabled).toBe(false)
+    container.remove()
+  })
+
+  it('restores option interactivity so a different choice can be made', () => {
+    const { container, view, emit } = createKeyedCard('tool:tu-1')
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+
+    revertAskSubmission('tool:tu-1')
+
+    const opt = view.querySelectorAll('.ask-question-option')[0] as HTMLElement
+    expect(opt.style.pointerEvents).not.toBe('none')
+    // Clicking again must work (the handler guards on .ask-submitted).
+    clickOn(opt, emit)
+    expect(opt.classList.contains('selected')).toBe(false) // toggled off
+    container.remove()
+  })
+
+  it('clears the dimming applied to unselected options', () => {
+    const { container, view, emit } = createKeyedCard('tool:tu-1')
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+    const unselected = view.querySelectorAll('.ask-question-option')[0] as HTMLElement
+    // The selected one keeps full opacity; the class list is the durable part.
+
+    revertAskSubmission('tool:tu-1')
+
+    expect(view.classList.contains('ask-submitted')).toBe(false)
+    container.remove()
+  })
+
+  it('reverts every card sharing the key when a view is supplied', () => {
+    // The list and the drawer can render the same card; both must be released.
+    const a = createKeyedCard('tool:tu-1')
+    const b = createKeyedCard('tool:tu-1')
+    for (const c of [a, b]) {
+      clickOn(c.view.querySelectorAll('.ask-question-option')[0], c.emit)
+      clickOn(c.view.querySelector('.ask-question-submit')!, c.emit)
+    }
+
+    revertAskSubmission('tool:tu-1')
+
+    expect(a.view.classList.contains('ask-submitted')).toBe(false)
+    expect(b.view.classList.contains('ask-submitted')).toBe(false)
+    a.container.remove(); b.container.remove()
+  })
+
+  it('is still a no-op for an unknown key', () => {
+    expect(() => revertAskSubmission('tool:never-seen')).not.toThrow()
+    expect(() => revertAskSubmission('')).not.toThrow()
+  })
+})

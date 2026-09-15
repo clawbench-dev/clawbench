@@ -229,4 +229,37 @@ hasAskStatesForPrefix(prefix) / _resetAskStatesForTesting()
 
 验证后已停用并清理隔离实例，线上 20000 实例全程未受影响。
 
+### 6.2 E2E 又发现两个真实缺陷
+
+补充「已提交状态 + 失败回滚」的 E2E 时，又暴露两个单元测试完全没覆盖的问题：
+
+**缺陷 1：失败回滚只清了 store，没清 DOM。**
+`revertAskSubmission` 清了持久化标志，但 DOM 上 `.ask-submitted`、失效的
+`pointer-events`、被禁用的输入框与「已提交」文案全都还在 —— 卡片看起来、行为上都
+仍是已答，用户依然无法重试。回滚的意义被完全抵消。
+修复：新增 `makeAskViewAnswerable(view)` 统一重置 DOM（类名、交互、文案、禁用态），
+`revertAskSubmission` 与 restore 的「未提交」分支都走它；并按 `data-ask-key` 释放**所有**
+同 key 实例（列表与抽屉可能同时渲染同一张卡）。
+
+**缺陷 2：`sessionId` 没传到 ContentBlocks，按会话清理是死代码。**
+`ChatMessageItem` 渲染 `ContentBlocks` 时漏传 `:sessionId`，该 prop 一直取默认值 `''`，
+于是每张卡的 key 都是 `no-session|tool:<id>`。后果：`clearAskStatesByPrefix(askSessionPrefix(sid))`
+永远匹配不到任何条目 —— 归档/销毁会话时**清理完全失效**，答案状态跨会话泄漏到页面关闭。
+E2E 里表现为：应用明明用真实 session id 拉取历史（`session_id=e2e-second-session-0001`），
+渲染出的卡片 `data-ask-key` 却是 `no-session|...`。
+修复：补上 `:sessionId="sessionId"`。修后同一场景 key 变为
+`e2e-second-session-0001|tool:ask-probe2`。
+
+### 6.3 E2E 自身踩到的两个坑（记录以免重犯）
+
+1. **Playwright 的 glob 匹配包含 query string 的完整 URL。**
+   `page.route('**/api/ai/chat', ...)` **匹配不到** `/api/ai/chat?session_id=...`，
+   于是「让发送失败」实际从未生效，该断言变成「发送成功后卡片仍是已提交」——
+   一个必然通过的空转断言。改用正则，并加一条 `blockedHits > 0` 的守卫，
+   确保「发送确实被拦下」被显式验证。
+2. **必须针对应用真正打开的那个会话。**
+   `loadHistory` 在无存储 id 时回退到 `updated_at` 最新的会话。诊断脚本曾创建第二个
+   更新的会话，导致断言追加到一个 UI 并未显示的会话上，重建检查长期为假且不自知。
+   改为从 DB 解析「最新会话」而非硬编码 id，并输出 DB 条数与 UI 消息数以便对账。
+
 全量受影响套件：`EXIT=0` / 1516 suites / 6966 tests / 0 failed。
