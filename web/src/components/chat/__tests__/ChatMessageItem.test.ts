@@ -986,3 +986,31 @@ describe('ChatMessageItem', () => {
     })
   })
 })
+
+// ── Ask-card keys must be session-scoped ──
+//
+// ContentBlocks derives the ask-card key from its sessionId prop, and that key
+// scopes the answer-state store so a session's cards can be swept when it is
+// archived/destroyed. ChatMessageItem renders ContentBlocks WITHOUT passing
+// sessionId, so every card in every session keyed under the 'no-session'
+// fallback: the per-session sweep matched nothing, and answers leaked across
+// sessions for the lifetime of the page.
+//
+// Found by end-to-end testing: the app fetched history with a real session id
+// while the rendered card's data-ask-key said 'no-session|...'.
+describe('ChatMessageItem — sessionId reaches ContentBlocks', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatMessageItem.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('passes sessionId down to ContentBlocks', async () => {
+    const src = await source()
+    const start = src.indexOf('<ContentBlocks')
+    expect(start).toBeGreaterThan(-1)
+    // Slice to the end of that element's attribute list.
+    const region = src.slice(start, src.indexOf('>', src.indexOf(':staticBlockCache', start)))
+    // camelCase, matching the neighbouring props in this file.
+    expect(region).toMatch(/:sessionId="sessionId"/)
+  })
+})

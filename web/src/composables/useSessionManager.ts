@@ -5,6 +5,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { buildSendChannels, type FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
+import { clearAskStatesByPrefix, askSessionPrefix } from '@/utils/askQuestionState.ts'
 
 /**
  * Unified session manager — ensures consistent cleanup around session operations.
@@ -306,6 +307,9 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     // The session no longer exists — drop its attachment snapshot too so it
     // can't be resurrected by a future switch back to the same id.
     _restoreInputState.cleanupDraft?.(archivedId)
+    // Same for the per-card ask answers: keyed per card, they would otherwise
+    // accumulate for every archived session.
+    clearAskStatesByPrefix(askSessionPrefix(archivedId))
   }
 
   /** Hard-delete (physically destroy) a specific session — irreversible. */
@@ -337,6 +341,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     deleteDraft(destroyedId)
     // Drop the attachment snapshot for the destroyed session.
     _restoreInputState.cleanupDraft?.(destroyedId)
+    // ...and its per-card ask answers (see archiveCurrentSession).
+    clearAskStatesByPrefix(askSessionPrefix(destroyedId))
   }
 
   /** Continue a task execution as a new chat session. */
