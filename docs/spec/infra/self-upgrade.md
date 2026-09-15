@@ -78,6 +78,9 @@ sequenceDiagram
 - **失败必须可操作，不留无反馈的中间态**：升级失败以稳定的 `error_code` 结束，前端映射为本地化、可操作的文案，而非裸 ENOENT。已知码：`install_dir_not_writable`（安装目录不可写）、`self_path_unresolved`（找不到运行中的二进制，重启后自愈）、`restart_failed`（新版本已落盘但重启未能触发，需手动重启）。`restart_failed` 专门覆盖版本短路：该分支没有下载兜底，静默失败会让界面永远停在 "restarting" 转圈
 - **镜像 tarball URL 需归一化**：Nexus 等 npm 镜像在 `dist.tarball` 的包名段里保留 dist-tag（`.../@scope/pkg@latest/-/pkg-0.91.0.tgz`），而标准 npm 格式省略该 tag（`.../@scope/pkg/-/pkg-0.91.0.tgz`）。直接用镜像返回的 URL 会 404、下载步骤失败，因此下载前先归一化路径
 - **备份优先于替换**：升级状态暴露备份路径，使失败恢复和人工排障有明确落点
+- **替换前不销毁旧二进制（跨盘升级的硬约束）**：替换统一走 `platform.ReplaceBinary`——先 `rename(src, dst)`，失败则把 `src` 复制到 **dst 同目录**的临时文件再 rename 覆盖。两条路径都不先把 `dst` 改名或删除，因此 `dst` 在替换成功前始终是一个可运行的二进制。这条不变量是升级助手唯一能依赖的兜底：助手本身是被替换的目标进程的子进程，一旦安装目录里没有二进制，就再没有任何进程能把它拉起来，用户也无法从界面重试（前端连不上服务）。约束来自 Windows：`os.Rename` 映射到 `MoveFileEx` 带 `MOVEFILE_REPLACE_EXISTING` 但不带 `MOVEFILE_COPY_ALLOWED`，因此跨卷（`%TEMP%` 在 C:，安装目录在 D:/E:/F:）必然失败。历史上 Windows 分支采用「先把旧 exe 改名成 `.old`，再 rename 新 exe」的顺序，跨盘时前一步成功、后一步失败，安装目录只剩 `.old`/`.bak`——服务永久下线，只能手工把备份复制回去
+- **替换失败仍要拉起服务**：`upgrade-replace` 的替换失败路径不停在"报错退出"，而是照常启动 `target`（此时仍是旧版本）并以非零码退出。这样一次失败的升级表现为"服务还在跑旧版本、升级未完成"，而不是"服务消失"。旧实现失败时直接 `return 1`，跳过了清理与启动两步，同时泄漏下载目录（约 90MB）
+- **替换原语只有一份**：升级助手（`internal/cli`）与受托管就地替换（`internal/service`）共用 `platform.ReplaceBinary`。此前两处各有一份实现，受托管那份有跨盘回退、助手那份没有，于是同一个跨盘场景在 systemd 下成功、在非托管 Windows 下丢文件——重复实现是这条 bug 能长期存在的直接原因
 - **WS 优先、轮询兜底**：正常阶段使用低延迟事件，进程重启阶段使用无状态 HTTP 查询，两种通道覆盖升级的完整生命周期
 - **容器内强制走就地替换路径**：容器（Docker / Podman / Kubernetes，经 `platform.IsContainer` 判定）一律视为"受托管"，走就地替换 + 退出，由容器重启策略拉起新版本。该判定优先于 supervisor 探测——k8s / runit / supervisord 探测不到时会错误地指向自重启子进程路径，而该路径在容器中必然失败：PID 1 退出时运行时会拆除命名空间并杀掉 `upgrade-replace` 子进程，替换永远执行不到，服务静默回到旧二进制。同样的强制也适用于 `IsRunningUnderSupervisor()`，从而覆盖配置面板重启（哨兵进程同样会被容器拆除杀掉）
 - **容器类型区分提示与决策**：`platform.IsDockerLike`（Docker/Podman）用于 UI 提示，`platform.IsContainer`（含 k8s）用于路径决策。k8s Pod 是容器（自重启不可行）但 Docker CLI 建议不适用，故 `/api/upgrade/check` 的 `is_docker` 只对 Docker/Podman 为真
