@@ -14,7 +14,7 @@
 
   <div v-else-if="unread.items.value.length === 0" class="forge-state">
     <div class="forge-empty-card">
-      <Inbox :size="34" :stroke-width="1.5" class="forge-empty-icon" />
+      <Rss :size="34" :stroke-width="1.5" class="forge-empty-icon" />
       <div class="forge-empty-title">{{ t('forge.overview.empty') }}</div>
       <div class="forge-empty-hint">{{ t('forge.overview.emptyHint') }}</div>
     </div>
@@ -54,7 +54,7 @@
 <script setup lang="ts">
 import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, ChevronRight, Inbox } from 'lucide-vue-next'
+import { AlertCircle, ChevronRight, Rss } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useForgeUnreadItems } from '@/composables/useForge'
 import { forgeOverviewLabel } from '@/utils/forgeEventLabels'

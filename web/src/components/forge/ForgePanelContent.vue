@@ -169,7 +169,12 @@
 
           <div v-else-if="pipelines.pipelines.value.length === 0" class="forge-state">
             <div class="forge-empty-card">
-              <Inbox :size="34" :stroke-width="1.5" class="forge-empty-icon" />
+              <component
+                :is="tabIcon('pipeline')"
+                :size="34"
+                :stroke-width="1.5"
+                class="forge-empty-icon"
+              />
               <div class="forge-empty-title">{{ t('forge.pipeline.emptyList') }}</div>
             </div>
           </div>
@@ -257,7 +262,12 @@
 
         <div v-else-if="items.items.value.length === 0" class="forge-state">
           <div class="forge-empty-card">
-            <Inbox :size="34" :stroke-width="1.5" class="forge-empty-icon" />
+            <component
+              :is="tabIcon(items.type.value)"
+              :size="34"
+              :stroke-width="1.5"
+              class="forge-empty-icon"
+            />
             <div class="forge-empty-title">{{ t('forge.emptyList') }}</div>
           </div>
         </div>
@@ -419,6 +429,18 @@ const forgeTabs = [
   { key: 'pipeline' as const, labelKey: 'forge.type.pipelines', icon: Activity },
 ]
 type ForgeTabKey = typeof forgeTabs[number]['key']
+
+/**
+ * The tab's own glyph, for reuse in that tab's empty state.
+ *
+ * Derived from the registry rather than repeated, so an empty state cannot drift
+ * from the tab it belongs to. `pipeline` is keyed explicitly because the issue
+ * and PR lists share one empty state and it must not inherit the PR glyph for
+ * issues.
+ */
+function tabIcon(key: ForgeTabKey) {
+  return forgeTabs.find(t => t.key === key)?.icon
+}
 
 const activeTab = ref<ForgeTabKey>('overview')
 

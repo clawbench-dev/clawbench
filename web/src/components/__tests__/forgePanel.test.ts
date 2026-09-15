@@ -908,6 +908,54 @@ describe('ForgePanelContent unread tab', () => {
     expect(cleared).toEqual(['cleared'], 'the unread rows must be cleared too')
   })
 
+  it('shows each tab its OWN glyph in the empty state', async () => {
+    // A tab with nothing in it should still look like itself. The glyph comes
+    // from the tab registry, so this also guards the class of bug where an icon
+    // is referenced in the template but missing from the import list — vue-tsc
+    // does not check that (strictTemplates is off), so the element silently
+    // renders nothing.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    /** The empty state's glyph class, or '' when no icon rendered. */
+    const emptyGlyph = () =>
+      wrapper.find('.forge-empty-icon').attributes('class') ?? ''
+
+    // 动态 tab is the default; its list is stubbed, so drive the real list's
+    // empty branch through the panel's own issue/pipeline tabs instead.
+    // Issues (index 1) with an empty list.
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
+    await flushPromises()
+    expect(emptyGlyph(), 'issues empty state').toContain('circle-question-mark')
+
+    // Pipelines (index 3).
+    await wrapper.findAll('.forge-tab')[3].trigger('click')
+    await flushPromises()
+    expect(emptyGlyph(), 'pipeline empty state').toContain('activity')
+  })
+
+  it('gives the PR empty state the PR glyph, not the issue one', async () => {
+    // The issue and PR lists share ONE empty state, so its glyph is derived from
+    // items.type. That must be read at render time — hardcoding either glyph
+    // would make one of the two tabs lie about which list is empty.
+    //
+    // items.type is a plain object in this harness (not a ref), so it cannot be
+    // mutated after mount to force a re-render; preset it and then mount.
+    state.type.value = 'pr'
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.forge-empty-icon').attributes('class')).toContain('git-pull-request')
+  })
+
   it('passes active=false through the composite when the dock tab is inactive', async () => {
     // The composite is `props.active && activeTab === 'overview'`. The tab half is
     // covered above; without this the `active &&` half could be dropped silently

@@ -55,6 +55,7 @@ vi.mock('lucide-vue-next', () => {
     CheckCheck: stub('CheckCheck'),
     ChevronRight: stub('ChevronRight'),
     Inbox: stub('Inbox'),
+    Rss: stub('Rss'),
     RefreshCw: stub('RefreshCw'),
     RotateCw: stub('RotateCw'),
     RotateCcw: stub('RotateCcw'),
@@ -118,6 +119,21 @@ describe('ForgeOverviewList', () => {
 
     expect(w.text()).toContain('forge.overview.empty')
     expect(w.findAll('.forge-overview-row')).toHaveLength(0)
+  })
+
+  it('uses the SAME glyph in its empty state as the tab shows', async () => {
+    // The empty state must look like the tab it belongs to. The tab uses Rss
+    // (see the forgeTabs registry); this asserts the list agrees, so the two
+    // cannot drift apart.
+    //
+    // Asserted via the component name rather than a lucide CSS class: this file
+    // stubs lucide, so the stub renders a bare <svg> with no class of its own.
+    const w = mountPanel()
+    await nextTick()
+    await nextTick()
+
+    const icon = w.findComponent({ name: 'Rss' })
+    expect(icon.exists(), 'empty state must render the Rss glyph').toBe(true)
   })
 
   it('labels a pipeline row by run id, never #0', async () => {
