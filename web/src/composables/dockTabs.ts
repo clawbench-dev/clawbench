@@ -24,7 +24,6 @@ export type TabId =
   | 'browse'
   | 'view'
   | 'history'
-  | 'overview'
   | 'forge'
   | 'tasks'
   | 'terminal'
@@ -70,7 +69,6 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'browse', titleKey: 'nav.fileManager', primary: true },
   { id: 'view', titleKey: 'nav.fileView', primary: true },
   { id: 'history', titleKey: 'git.history.projectHistory', primary: true },
-  { id: 'overview', titleKey: 'nav.overview' },
   { id: 'forge', titleKey: 'nav.forge' },
   { id: 'tasks', titleKey: 'nav.tasks' },
   { id: 'terminal', titleKey: 'terminal.title' },

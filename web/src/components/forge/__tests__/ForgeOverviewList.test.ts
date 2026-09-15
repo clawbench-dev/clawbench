@@ -62,7 +62,7 @@ vi.mock('lucide-vue-next', () => {
   }
 })
 
-import ForgeOverviewPanel from '@/components/forge/ForgeOverviewPanel.vue'
+import ForgeOverviewList from '@/components/forge/ForgeOverviewList.vue'
 
 function row(itemKey: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -80,12 +80,12 @@ function row(itemKey: string, overrides: Record<string, unknown> = {}) {
 }
 
 function mountPanel(projectPath = '/proj') {
-  return mount(ForgeOverviewPanel, {
+  return mount(ForgeOverviewList, {
     props: { active: true, projectPath },
   })
 }
 
-describe('ForgeOverviewPanel', () => {
+describe('ForgeOverviewList', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockFetchForgeUnreadItems.mockResolvedValue({ count: 0, items: [] })
@@ -105,7 +105,7 @@ describe('ForgeOverviewPanel', () => {
   })
 
   it('does not load while inactive', async () => {
-    mount(ForgeOverviewPanel, { props: { active: false, projectPath: '/proj' } })
+    mount(ForgeOverviewList, { props: { active: false, projectPath: '/proj' } })
     await nextTick()
 
     expect(mockFetchForgeUnreadItems).not.toHaveBeenCalled()
@@ -118,14 +118,6 @@ describe('ForgeOverviewPanel', () => {
 
     expect(w.text()).toContain('forge.overview.empty')
     expect(w.findAll('.forge-overview-row')).toHaveLength(0)
-  })
-
-  it('shows the no-project card when no project is selected', async () => {
-    const w = mount(ForgeOverviewPanel, { props: { active: true, projectPath: '' } })
-    await nextTick()
-
-    expect(w.text()).toContain('forge.empty.noProjectHeader')
-    expect(mockFetchForgeUnreadItems).not.toHaveBeenCalled()
   })
 
   it('labels a pipeline row by run id, never #0', async () => {
@@ -185,19 +177,20 @@ describe('ForgeOverviewPanel', () => {
     expect(rows[1].classes()).toContain('unread')
   })
 
-  it('marks all read and empties the list', async () => {
+  it('clearLocal empties the rows without a request', async () => {
+    // The host's "mark all read" already performed the repo-wide write through
+    // the shared badge composable; this must not issue a second POST.
     mockFetchForgeUnreadItems.mockResolvedValue({ count: 1, items: [row('pr/1')] })
-    mockMarkForgeRead.mockResolvedValue({ count: 0 })
     const w = mountPanel()
     await nextTick()
     await nextTick()
     expect(w.findAll('.forge-overview-row')).toHaveLength(1)
 
-    await w.find('.clear-unread-btn').trigger('click')
+    w.vm.clearLocal()
     await nextTick()
 
-    expect(mockMarkForgeRead).toHaveBeenCalledTimes(1)
     expect(w.findAll('.forge-overview-row')).toHaveLength(0)
+    expect(mockMarkForgeRead).not.toHaveBeenCalled()
   })
 
   it('shows the error card on a failed load rather than the empty state', async () => {

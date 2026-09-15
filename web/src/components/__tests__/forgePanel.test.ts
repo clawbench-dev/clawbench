@@ -4,15 +4,9 @@ import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ForgePanelContent from '@/components/forge/ForgePanelContent.vue'
 import { canNavigateBack, handleBackNavigation, _resetHandlers } from '@/composables/useBackHandler'
-import {
-  pendingForgeNavigation,
-  setPendingForgeNavigation,
-  _resetPendingForgeNavigationForTesting,
-} from '@/composables/useForgeNavigation'
 
-// Panels stay alive after a test and keep watching the module-level pending
-// deep-link ref, so a leftover panel would consume a request before the panel
-// under test ever sees it. Auto-unmount every wrapper after each test.
+// Panels keep timers/watchers alive after a test; auto-unmount every wrapper so
+// one test's panel cannot affect the next.
 enableAutoUnmount(afterEach)
 
 // ── Mocks ────────────────────────────────────────────────────
@@ -71,9 +65,23 @@ const pipelineState = {
   markAllRead: vi.fn(),
 }
 
+// The unread list is stubbed in the tab-wiring tests, but the earlier describes
+// mount the REAL panel, which renders it — so the mock must cover the composable
+// it calls or module resolution throws.
+const unreadListState = {
+  items: { value: [] as unknown[] },
+  loading: { value: false },
+  loaded: { value: false },
+  error: { value: null as unknown },
+  load: vi.fn(),
+  markAllRead: vi.fn(),
+  markRowRead: vi.fn(),
+}
+
 vi.mock('@/composables/useForge', () => ({
   useForgeItems: () => state,
   useForgePipelines: () => pipelineState,
+  useForgeUnreadItems: () => unreadListState,
   FORGE_PIPELINE_FILTERS: ['failure', 'running', 'all'],
   useForgeDetail: () => ({
     item: { value: null },
@@ -142,6 +150,18 @@ function makeI18n() {
           emptyList: 'No matching issues or PRs',
           markAllRead: 'Mark all read',
           unreadItem: 'New activity',
+          overview: {
+            title: 'Unread',
+            empty: 'Nothing unread',
+            emptyHint: 'New activity shows up here',
+            markAllRead: 'Mark all read',
+            pipelineRef: 'Pipeline run {runId}',
+            eventCount: '{count} events',
+            reason: {
+              opened: 'Opened', closed: 'Closed', merged: 'Merged',
+              reopened: 'Reopened', commented: 'New comment', pipeline_done: 'Pipeline finished',
+            },
+          },
           retry: 'Retry',
           pipeline: {
             status: { success: 'Success', failure: 'Failed', running: 'Running', cancelled: 'Cancelled', skipped: 'Skipped', unknown: 'Unknown' },
@@ -202,6 +222,23 @@ const globalOpts = {
   },
 }
 
+/**
+ * Mount the panel and select the Issues tab.
+ *
+ * The panel now opens on the "unread" tab, so tests about the issue/PR list must
+ * switch first. Issues is index 1 (unread is 0).
+ */
+async function mountOnIssues() {
+  const wrapper = mount(ForgePanelContent, {
+    props: { active: true, projectPath: '/proj' },
+    global: globalOpts,
+  })
+  await new Promise(r => setTimeout(r, 0))
+  await wrapper.findAll('.forge-tab')[1].trigger('click')
+  await new Promise(r => setTimeout(r, 0))
+  return wrapper
+}
+
 describe('ForgePanelContent', () => {
   beforeEach(() => {
     _resetHandlers()
@@ -251,10 +288,7 @@ describe('ForgePanelContent', () => {
     state.items.value = [
       { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 2, url: 'u', createdAt: '', updatedAt: '2026-09-10T00:00:00Z', slug: 'a/b' },
     ]
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
     expect(wrapper.text()).toContain('A bug')
     expect(wrapper.text()).toContain('#7')
@@ -272,10 +306,7 @@ describe('ForgePanelContent', () => {
       { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 2, url: 'u', createdAt: '', updatedAt: '2026-09-10T00:00:00Z', slug: 'a/b' },
       { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 8, title: 'Another bug', state: 'open', author: 'bob', commentCount: 0, url: 'u', createdAt: '', updatedAt: '2026-09-10T00:00:00Z', slug: 'a/b' },
     ]
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
     // Both rows render, yet nothing in the header counts them.
     expect(wrapper.findAll('.forge-row')).toHaveLength(2)
@@ -286,17 +317,14 @@ describe('ForgePanelContent', () => {
     state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
     state.isBound.value = true
     state.items.value = []
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
     // Three connected page tabs, matching the stats panel tab bar. Pipelines is
     // a peer of Issues and PRs: a CI run is neither, and it needs its own
     // filters, so it cannot be a chip or a filter inside another tab.
     expect(wrapper.find('.forge-tabs').exists()).toBe(true)
     const tabs = wrapper.findAll('.forge-tab')
-    expect(tabs).toHaveLength(3)
+    expect(tabs).toHaveLength(4)
     // The retired segmented-control markup must be gone.
     expect(wrapper.find('.forge-segment').exists()).toBe(false)
     expect(wrapper.find('.forge-segment-btn').exists()).toBe(false)
@@ -313,10 +341,10 @@ describe('ForgePanelContent', () => {
     await new Promise(r => setTimeout(r, 0))
 
     const tabs = wrapper.findAll('.forge-tab')
-    await tabs[2].trigger('click')
+    await tabs[3].trigger('click')
     await new Promise(r => setTimeout(r, 0))
 
-    expect(tabs[2].classes()).toContain('active')
+    expect(tabs[3].classes()).toContain('active')
     // The pipeline list has its own loader; the issue/PR list must not be
     // reloaded as a side effect of switching.
     expect(mockPipelinesLoad).toHaveBeenCalled()
@@ -332,7 +360,7 @@ describe('ForgePanelContent', () => {
       global: globalOpts,
     })
     await new Promise(r => setTimeout(r, 0))
-    await wrapper.findAll('.forge-tab')[2].trigger('click')
+    await wrapper.findAll('.forge-tab')[3].trigger('click')
     await new Promise(r => setTimeout(r, 0))
 
     // A run has no open/closed state and no assignee, so those chips must be
@@ -353,7 +381,7 @@ describe('ForgePanelContent', () => {
       global: globalOpts,
     })
     await new Promise(r => setTimeout(r, 0))
-    await wrapper.findAll('.forge-tab')[2].trigger('click')
+    await wrapper.findAll('.forge-tab')[3].trigger('click')
     await new Promise(r => setTimeout(r, 0))
 
     // A busy repository produces far more green runs than anyone wants to
@@ -368,19 +396,19 @@ describe('ForgePanelContent', () => {
     state.isBound.value = true
     state.items.value = []
     state.type.value = 'issue'
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
     let tabs = wrapper.findAll('.forge-tab')
-    expect(tabs[0].classes()).toContain('active')
-    expect(tabs[1].classes()).not.toContain('active')
+    // Index 0 is the unread tab; this test is on Issues (index 1).
+    expect(tabs[0].classes()).not.toContain('active')
+    expect(tabs[1].classes()).toContain('active')
     expect(tabs[2].classes()).not.toContain('active')
+    expect(tabs[3].classes()).not.toContain('active')
 
     // setType is a spy in this harness (it does not mutate state), so assert
     // the click is routed to the right setter rather than the resulting state.
-    await tabs[1].trigger('click')
+    // Index 2 is the PR tab (0 unread, 1 issues, 2 pr, 3 pipelines).
+    await tabs[2].trigger('click')
     expect(mockSetType).toHaveBeenCalledWith('pr')
   })
 
@@ -392,10 +420,7 @@ describe('ForgePanelContent', () => {
     state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
     state.isBound.value = true
     state.items.value = []
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
     const html = wrapper.html()
     // Header brand mark is still present.
@@ -405,9 +430,10 @@ describe('ForgePanelContent', () => {
     expect(html).toContain('lucide-git-pull-request')
     expect(html).toContain('lucide-activity')
     const tabs = wrapper.findAll('.forge-tab')
-    expect(tabs[0].find('.lucide-circle-question-mark').exists(), 'issues tab uses the question-mark glyph').toBe(true)
-    expect(tabs[1].find('.lucide-git-pull-request').exists(), 'PR tab uses the pull-request glyph').toBe(true)
-    expect(tabs[2].find('.lucide-activity').exists(), 'pipelines tab uses the activity glyph').toBe(true)
+    expect(tabs[0].find('.lucide-inbox').exists(), 'unread tab uses the inbox glyph').toBe(true)
+    expect(tabs[1].find('.lucide-circle-question-mark').exists(), 'issues tab uses the question-mark glyph').toBe(true)
+    expect(tabs[2].find('.lucide-git-pull-request').exists(), 'PR tab uses the pull-request glyph').toBe(true)
+    expect(tabs[3].find('.lucide-activity').exists(), 'pipelines tab uses the activity glyph').toBe(true)
   })
 
   it('shows the GitHub icon in the unbound fallback card too', async () => {
@@ -535,10 +561,7 @@ describe('ForgePanelContent', () => {
     state.items.value = [
       { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'acme/widgets' },
     ]
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
 
     // On the list view there is nothing to go back to.
@@ -560,10 +583,14 @@ describe('ForgePanelContent', () => {
     state.items.value = [
       { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'acme/widgets' },
     ]
+    // This test is specifically about an INACTIVE panel, so it must not use the
+    // active-by-default helper.
     const wrapper = mount(ForgePanelContent, {
       props: { active: false, projectPath: '/proj' },
       global: globalOpts,
     })
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
     await new Promise(r => setTimeout(r, 0))
     await wrapper.find('.forge-row').trigger('click')
     // Even with a detail open, an inactive tab must not swallow the back press.
@@ -624,10 +651,7 @@ describe('ForgePanelContent', () => {
     state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
     state.isBound.value = true
     state.error.value = { message: 'bad credentials', code: 'ForgeAuthFailed' }
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
     expect(wrapper.text()).toContain('Auth failed')
     expect(wrapper.text()).toContain('bad credentials')
@@ -640,16 +664,7 @@ describe('ForgePanelContent', () => {
     state.items.value = [
       { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'acme/widgets' },
     ]
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: {
-        ...globalOpts,
-        // A named stub, so findComponent can locate it. The previous
-        // `ForgeDetail: true` produced an anonymous stub that findComponent
-        // never matched, which silently made this test a no-op.
-        stubs: { ...globalOpts.stubs, ForgeDetail: { name: 'ForgeDetail', template: '<div />' } },
-      },
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
 
     // The detail only mounts once a row is opened.
@@ -681,10 +696,7 @@ describe('ForgePanelContent unread rows', () => {
       { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 7, title: 'Seen', state: 'open', author: 'alice', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'a/b', unread: false },
       { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 8, title: 'New', state: 'open', author: 'bob', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'a/b', unread: true },
     ]
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
 
     const rows = wrapper.findAll('.forge-row')
@@ -701,10 +713,7 @@ describe('ForgePanelContent unread rows', () => {
     state.items.value = [
       { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 8, title: 'New', state: 'open', author: 'bob', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'a/b', unread: true },
     ]
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
-    })
+    const wrapper = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
 
     await wrapper.find('.forge-row').trigger('click')
@@ -744,162 +753,159 @@ describe('ForgePanelContent unread rows', () => {
   })
 })
 
-describe('ForgePanelContent deep-link (unread overview → item)', () => {
-  // `ForgeDetail: true` in globalOpts produces an ANONYMOUS stub, which
+describe('ForgePanelContent unread tab', () => {
+  // `ForgeDetail: true` in globalOpts is an ANONYMOUS stub, which
   // findComponent({name}) cannot match — name them so the detail view is
   // observable.
-  const deepLinkOpts = {
+  // A FRESH i18n per describe: reusing the module-level `globalOpts` instance
+  // across many mounts trips vue-i18n's devtools setup ("Need to install with
+  // app.use function"). The other describes call makeI18n() the same way.
+  const opts = {
     ...globalOpts,
+    plugins: [makeI18n()],
     stubs: {
       ...globalOpts.stubs,
       ForgeDetail: { name: 'ForgeDetail', props: ['type', 'number'], template: '<div />' },
       ForgePipelineDetail: { name: 'ForgePipelineDetail', props: ['runId'], template: '<div />' },
+      // The unread list is exercised in its own test file; here it is a stub so
+      // the assertions stay about the host's tab and detail wiring.
+      ForgeOverviewList: {
+        name: 'ForgeOverviewList',
+        props: ['active', 'projectPath'],
+        emits: ['open-item'],
+        template: '<div class="overview-stub" />',
+      },
     },
   }
 
   beforeEach(() => {
     _resetHandlers()
     vi.clearAllMocks()
-    _resetPendingForgeNavigationForTesting()
     state.items.value = []
-    state.binding.value = null
+    state.binding.value = { slug: 'acme/widgets' }
     state.suggested.value = null
     state.loading.value = false
     state.error.value = null
-    state.isBound.value = false
+    state.isBound.value = true
     state.type.value = 'issue'
     state.state.value = 'open'
     state.mineFilter.value = 'all'
-    // Default: the binding resolves on demand, as it does for a real project.
-    mockLoadBinding.mockImplementation(async () => {
-      state.binding.value = { slug: 'acme/widgets' }
-      state.isBound.value = true
-    })
   })
 
-  it('opens the requested item once the panel becomes active', async () => {
-    // The request is made while the tab is inactive (the panel may not even be
-    // mounted yet), then the tab activates.
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: false, projectPath: '/proj' },
-      global: deepLinkOpts,
-    })
-    await flushPromises()
-    setPendingForgeNavigation({ type: 'pr', number: 455, runId: 0 })
-    // Flush BEFORE activating: watchers run asynchronously, so without this the
-    // activation would land first and the watcher would read `active: true`
-    // immediately — which would hide a watcher that only observes the request.
-    await flushPromises()
-
-    await wrapper.setProps({ active: true })
-    await flushPromises()
-
-    expect(state.type.value).toBe('pr')
-    // The request is one-shot: consuming it is what stops the same item from
-    // re-opening on every later activation.
-    expect(pendingForgeNavigation.value).toBeNull()
-  })
-
-  it('resolves the binding when it is not yet known, then opens the item', async () => {
-    // The template renders the bind card whenever the panel is unbound, which
-    // REPLACES the detail view. A deep-link that arrives before the binding is
-    // known must therefore resolve it first — otherwise the item is never shown.
-    let loadBindingCalls = 0
-    mockLoadBinding.mockImplementation(async () => {
-      loadBindingCalls++
-      state.binding.value = { slug: 'acme/widgets' }
-      state.isBound.value = true
-    })
-
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: false, projectPath: '/proj' },
-      global: deepLinkOpts,
-    })
-    await flushPromises()
-
-    // Pretend the panel has never resolved the binding (the real one resolves on
-    // mount, so this isolates the deep-link's own resolution path).
-    state.binding.value = null
-    state.isBound.value = false
-    loadBindingCalls = 0
-
-    setPendingForgeNavigation({ type: 'issue', number: 7, runId: 0 })
-    await wrapper.setProps({ active: true })
-    await flushPromises()
-
-    expect(loadBindingCalls).toBeGreaterThan(0, 'the deep-link must resolve the binding')
-    expect(state.isBound.value).toBe(true)
-    expect(state.type.value).toBe('issue')
-  })
-
-  it('opens the item when the panel is ALREADY active', async () => {
-    // switchTab() no-ops when the target tab is already showing, so the request
-    // arrives with `active` unchanged. Watching only the pending ref would miss
-    // this entirely and the click would appear to do nothing.
+  it('lands on the unread tab by default', async () => {
+    // The panel opens on "what changed?", not on a category.
     const wrapper = mount(ForgePanelContent, {
       props: { active: true, projectPath: '/proj' },
-      global: deepLinkOpts,
+      global: opts,
     })
     await flushPromises()
-    expect(state.type.value).toBe('issue')
 
-    setPendingForgeNavigation({ type: 'pr', number: 455, runId: 0 })
-    await flushPromises()
-
-    expect(state.type.value).toBe('pr')
-    expect(pendingForgeNavigation.value).toBeNull()
+    expect(wrapper.find('.overview-stub').exists()).toBe(true)
+    // The unread tab is first, so it is the one marked active.
+    expect(wrapper.findAll('.forge-tab')[0].classes()).toContain('active')
   })
 
-  it('skips the binding round trip when it is already known', async () => {
-    // The common case: the panel is already bound, so opening an item must not
-    // re-fetch the binding.
-    const wrapper = mount(ForgePanelContent, {
-      props: { active: false, projectPath: '/proj' },
-      global: deepLinkOpts,
-    })
-    await flushPromises()
-    mockLoadBinding.mockClear()
-
-    setPendingForgeNavigation({ type: 'issue', number: 7, runId: 0 })
-    await wrapper.setProps({ active: true })
-    await flushPromises()
-
-    expect(mockLoadBinding).not.toHaveBeenCalled()
-    expect(state.type.value).toBe('issue')
-  })
-
-  it('does nothing when the repository is not bound', async () => {
-    // An unbound project has nothing to open; the panel shows its bind prompt.
-    mockLoadBinding.mockImplementation(async () => {
-      state.binding.value = null
-      state.isBound.value = false
-    })
+  it('switching to the unread tab does NOT pass it to items.setType', async () => {
+    // 'unread' is not an item type; feeding it to setType would corrupt the
+    // issue/PR list's own state.
     const wrapper = mount(ForgePanelContent, {
       props: { active: true, projectPath: '/proj' },
-      global: deepLinkOpts,
+      global: opts,
     })
-    await new Promise(r => setTimeout(r, 0))
-
-    setPendingForgeNavigation({ type: 'pr', number: 455, runId: 0 })
     await flushPromises()
 
-    // Nothing opened: the panel keeps showing its bind prompt.
-    expect(state.type.value).toBe('issue')
+    // Go to Issues, then back to unread.
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
+    await flushPromises()
+    mockSetType.mockClear()
+
+    await wrapper.findAll('.forge-tab')[0].trigger('click')
+    await flushPromises()
+
+    expect(mockSetType).not.toHaveBeenCalled()
+    expect(wrapper.find('.overview-stub').exists()).toBe(true)
   })
 
-  it('routes a pipeline request to the pipeline detail', async () => {
+  it('is only active when the panel is active AND the tab is selected', async () => {
+    // The list must not keep fetching while the user is on the Issues tab.
     const wrapper = mount(ForgePanelContent, {
       props: { active: true, projectPath: '/proj' },
-      global: deepLinkOpts,
+      global: opts,
     })
-    await new Promise(r => setTimeout(r, 0))
-
-    setPendingForgeNavigation({ type: 'pipeline', number: 0, runId: 555 })
     await flushPromises()
-    await nextTick()
+    expect(wrapper.findComponent({ name: 'ForgeOverviewList' }).props('active')).toBe(true)
 
-    // The pipeline branch switches the internal tab and targets the run id; the
-    // detail component self-loads from that prop (see ForgePipelineDetail).
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ForgeOverviewList' }).exists()).toBe(false)
+  })
+
+  it('opens the item an unread row points at', async () => {
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'ForgeOverviewList' }).vm.$emit('open-item', {
+      type: 'pr', number: 455, runId: 0, itemKey: 'pr/455',
+    })
+    await flushPromises()
+
+    const detail = wrapper.findComponent({ name: 'ForgeDetail' })
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('number')).toBe(455)
+    expect(detail.props('type')).toBe('pr')
+  })
+
+  it('routes a pipeline row to the pipeline detail by run id', async () => {
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'ForgeOverviewList' }).vm.$emit('open-item', {
+      type: 'pipeline', number: 0, runId: 555, itemKey: 'pipeline/run:555',
+    })
+    await flushPromises()
+
+    const detail = wrapper.findComponent({ name: 'ForgePipelineDetail' })
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('runId')).toBe(555)
+  })
+
+  it('header "mark all read" also clears the unread rows', async () => {
+    // Without this the badge would hit zero while the unread rows kept their
+    // dots — the list and the badge disagreeing, which is the bug this feature
+    // exists to fix. The stub records clearLocal so the call is observable.
+    unreadCount.current!.value = 3
+    const cleared: string[] = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: {
+        ...opts,
+        stubs: {
+          ...opts.stubs,
+          ForgeOverviewList: {
+            name: 'ForgeOverviewList',
+            props: ['active', 'projectPath'],
+            emits: ['open-item'],
+            template: '<div class="overview-stub" />',
+            methods: { clearLocal() { cleared.push('cleared') }, reload() {} },
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    const btn = wrapper.find('.clear-unread-btn')
+    expect(btn.attributes('disabled')).toBeUndefined()
+    await btn.trigger('click')
+    await flushPromises()
+
+    expect(state.markAllRead).toHaveBeenCalled()
+    expect(cleared).toEqual(['cleared'], 'the unread rows must be cleared too')
   })
 })
 
@@ -935,6 +941,11 @@ describe('ForgePanelContent non-official host warning', () => {
     mockFetchRemotes.mockResolvedValue({ remotes: [] })
   })
 
+  afterEach(() => {
+    document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
+    document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
+  })
+
   /** Mount the unbound panel and open the bind dialog. */
   async function openDialog() {
     const wrapper = mount(ForgePanelContent, {
@@ -948,11 +959,6 @@ describe('ForgePanelContent non-official host warning', () => {
     await flushPromises()
     return wrapper
   }
-
-  afterEach(() => {
-    document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
-    document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
-  })
 
   it('warns while typing an internal GitLab URL, before submit', async () => {
     const wrapper = await openDialog()
@@ -986,7 +992,7 @@ describe('ForgePanelContent non-official host warning', () => {
     wrapper.unmount()
   })
 
-  it('warns for an unparseable-to-official scp remote too', async () => {
+  it('warns for the scp remote form too', async () => {
     // `git remote -v` shows this form for most SSH clones; missing it would
     // silently skip the warning on a very common path.
     const wrapper = await openDialog()

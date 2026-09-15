@@ -127,8 +127,21 @@
           </button>
         </div>
 
+        <!-- Unread: every item with new activity, across all three categories.
+             `active` is a composite: the dock tab must be showing AND this
+             internal tab selected, or switching to Issues would leave it
+             fetching in the background. -->
+        <template v-if="activeTab === 'unread'">
+          <ForgeOverviewList
+            ref="overviewListRef"
+            :active="active && activeTab === 'unread'"
+            :project-path="projectPath"
+            @open-item="onOverviewOpenItem"
+          />
+        </template>
+
         <!-- Pipelines: a repository-level view with its own filters and list. -->
-        <template v-if="activeTab === 'pipeline'">
+        <template v-else-if="activeTab === 'pipeline'">
           <div class="forge-toolbar">
             <div class="forge-chips forge-chips-scroll">
               <button
@@ -367,12 +380,12 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import ForgeDetail from '@/components/forge/ForgeDetail.vue'
 import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
+import ForgeOverviewList from '@/components/forge/ForgeOverviewList.vue'
 import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
 import { isOfficialForgeHost, isNonOfficialRemote } from '@/utils/forgeHost'
 import { useForgeUnread } from '@/composables/useForgeUnread'
-import { pendingForgeNavigation, consumePendingForgeNavigation } from '@/composables/useForgeNavigation'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ForgePanel'
@@ -398,13 +411,16 @@ const { forgeUnreadCount } = useForgeUnread()
  * rendered branch out of step.
  */
 const forgeTabs = [
+  // First because it answers "what changed?" — the reason to open the panel —
+  // and because it spans all three of the category tabs that follow.
+  { key: 'unread' as const, labelKey: 'forge.overview.title', icon: Inbox },
   { key: 'issue' as const, labelKey: 'forge.type.issues', icon: CircleQuestionMark },
   { key: 'pr' as const, labelKey: 'forge.type.prs', icon: GitPullRequest },
   { key: 'pipeline' as const, labelKey: 'forge.type.pipelines', icon: Activity },
 ]
 type ForgeTabKey = typeof forgeTabs[number]['key']
 
-const activeTab = ref<ForgeTabKey>('issue')
+const activeTab = ref<ForgeTabKey>('unread')
 
 const stateOptions: Array<'open' | 'closed' | 'all'> = ['open', 'closed', 'all']
 const mineOptions: Array<'all' | 'assigned' | 'created' | 'review'> = ['all', 'assigned', 'created', 'review']
@@ -436,6 +452,10 @@ function setActiveTab(key: ForgeTabKey) {
   activeTab.value = key
   if (key === 'pipeline') {
     void pipelines.load()
+  } else if (key === 'unread') {
+    // The unread list owns its own composable and loads on activation; it must
+    // NOT be passed to items.setType, which only accepts an item type.
+    overviewListRef.value?.reload()
   } else {
     // The issue/PR list shares one composable; changing the type reloads it.
     items.setType(key)
@@ -500,10 +520,14 @@ function openPipelineDetail(run: ForgePipelineRun) {
 
 /** Mark every unread item in this repository read. */
 function markAllRead() {
-  // Both lists share one repo-level read state, so clear whichever is loaded.
-  // The other list re-reads on its next load and will come back already read.
+  // All three lists share one repo-level read state, so clear whichever is
+  // loaded. The others re-read on their next load and come back already read.
   void items.markAllRead()
   void pipelines.markAllRead()
+  // Without this the badge would drop to zero while the unread rows still showed
+  // their dots — the list and the badge disagreeing, which is the bug this
+  // feature exists to fix. No request: the writes above already covered it.
+  overviewListRef.value?.clearLocal()
 }
 function closeDetail() {
   detailOpen.value = false
@@ -511,44 +535,38 @@ function closeDetail() {
   pipelineDetailId.value = 0
 }
 
-/**
- * Open the item a deep-link asked for.
- *
- * The binding MUST be resolved first: the template's unbound branch
- * (`!items.isBound.value && !items.loading.value`) renders the bind card and
- * would swallow the detail view entirely.
- */
-async function applyForgeDeepLink(req: { type: string; number: number; runId: number }) {
-  if (!items.binding.value) await items.loadBinding()
-  if (!items.isBound.value) return
+/** The unread list, so the header's "mark all read" can clear its rows too. */
+const overviewListRef = ref<{ reload: () => void; clearLocal: () => void } | null>(null)
 
-  if (req.type === 'pipeline') {
+/**
+ * Open the item an unread row points at.
+ *
+ * In-component, so no cross-component seam is needed: the detail refs are right
+ * here. The row's own mark-read already happened in the list (it passes the
+ * opaque itemKey straight to the read endpoint), so nothing is lost by not
+ * routing through items.markItemRead / pipelines.markItemRead here.
+ */
+function onOverviewOpenItem(payload: {
+  type: 'issue' | 'pr' | 'pipeline'
+  number: number
+  runId: number
+}) {
+  if (payload.type === 'pipeline') {
     activeTab.value = 'pipeline'
     detailNumber.value = 0
-    pipelineDetailId.value = req.runId
+    pipelineDetailId.value = payload.runId
   } else {
-    // Assign directly rather than via setActiveTab, which early-returns on an
-    // unchanged tab and calls closeDetail().
-    items.type.value = req.type as 'issue' | 'pr'
+    activeTab.value = payload.type
+    // Keep the item list's own type in sync so closing the detail shows the
+    // matching list rather than the previously-viewed category.
+    items.type.value = payload.type
     pipelineDetailId.value = 0
-    detailNumber.value = req.number
+    detailNumber.value = payload.number
     void items.load()
   }
   detailOpen.value = true
 }
 
-// Watch the pending request AND `active`: switchTab() no-ops when the forge tab
-// is already showing, so a request made while active would otherwise never be
-// consumed. The panel is also lazily mounted, hence `immediate`.
-watch(
-  [pendingForgeNavigation, () => props.active],
-  ([req, active]) => {
-    if (!req || !active) return
-    const consumed = consumePendingForgeNavigation()
-    if (consumed) void applyForgeDeepLink(consumed)
-  },
-  { immediate: true },
-)
 
 // Register the drill-down back handler so the edge-swipe gesture and the Android
 // hardware back button close the detail view (same contract as tasks/git).
