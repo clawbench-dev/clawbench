@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import DirPreviewBody from '@/components/file/DirPreviewBody.vue'
 
 vi.mock('vue-i18n', () => ({
@@ -10,6 +12,17 @@ vi.mock('vue-i18n', () => ({
       params ? `${k} ${Object.values(params).join(' ')}` : k,
   }),
 }))
+
+// Keep the real isThumbable contract (it decides which entries get a thumbnail)
+// but pin the URL shape so assertions do not depend on joinPath internals.
+vi.mock('@/utils/fileManager', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/fileManager')>()
+  return {
+    ...actual,
+    buildThumbUrl: (dir: string, name: string, w = 200) =>
+      `/api/file/thumb?path=${dir}/${name}&w=${w}`,
+  }
+})
 
 const FileIconStub = { name: 'FileIcon', props: ['path', 'isDir', 'size'], template: '<i class="file-icon" />' }
 const LoadingStub = { name: 'LoadingIndicator', template: '<i class="loading" />' }
@@ -107,8 +120,38 @@ describe('DirPreviewBody', () => {
 
   it('emits closed from the toolbar close button', async () => {
     const wrapper = mountBody({ entries: [{ name: 'a.ts', type: 'file' }] })
-    await wrapper.find('.dir-preview-btn').trigger('click')
+    // Target Close explicitly — it is no longer the only toolbar button.
+    const closeBtn = wrapper.findAll('.dir-preview-actions .dir-preview-btn')[1]
+    await closeBtn.trigger('click')
     expect(wrapper.emitted('closed')).toBeTruthy()
+  })
+
+  it('renders an open-directory button using the same icon as open-file', () => {
+    // "Open directory" lives in the toolbar next to Close and uses ExternalLink,
+    // the same icon the file card's "open file" control uses.
+    const wrapper = mountBody({ entries: [{ name: 'a.ts', type: 'file' }] })
+    const btns = wrapper.findAll('.dir-preview-actions .dir-preview-btn')
+    expect(btns).toHaveLength(2)
+    expect(btns[0].attributes('title')).toBe('file.codePreview.revealInTree')
+    // Both controls share the same icon component (stubbed here as svg-less, so
+    // assert on the icon element the component renders).
+    expect(btns[0].find('svg').exists()).toBe(true)
+    expect(btns[1].attributes('title')).toBe('file.dirPreview.close')
+  })
+
+  it('emits open-self from the open-directory button, not closed', async () => {
+    const wrapper = mountBody({ entries: [{ name: 'a.ts', type: 'file' }] })
+    const openBtn = wrapper.findAll('.dir-preview-actions .dir-preview-btn')[0]
+    await openBtn.trigger('click')
+    expect(wrapper.emitted('open-self')).toHaveLength(1)
+    expect(wrapper.emitted('closed')).toBeFalsy()
+  })
+
+  it('omits the open-directory button in chromeless mode with the toolbar', () => {
+    // chromeless suppresses the whole toolbar, so both controls go with it.
+    const wrapper = mountBody({ entries: [{ name: 'a.ts', type: 'file' }], chromeless: true })
+    expect(wrapper.find('.dir-preview-actions').exists()).toBe(false)
+    expect(wrapper.emitted('open-self')).toBeFalsy()
   })
 
   it('renders a toolbar with the directory name and visible entry count', () => {
@@ -169,5 +212,94 @@ describe('DirPreviewBody', () => {
   it('keeps its toolbar by default (the docked pane relies on it)', () => {
     const wrapper = mountBody({ entries: [{ name: 'a.ts', type: 'file' }] })
     expect(wrapper.find('.dir-preview-meta').exists()).toBe(true)
+  })
+
+  it('renders a thumbnail for a thumbable image when the directory path is known', () => {
+    const wrapper = mountBody({
+      dirPath: 'assets',
+      entries: [
+        { name: 'logo.png', type: 'image' },
+        { name: 'main.ts', type: 'file' },
+      ],
+    })
+    const thumb = wrapper.find('.dir-preview-thumb')
+    expect(thumb.exists()).toBe(true)
+    // Same endpoint the file manager list uses, built from the directory path.
+    expect(thumb.attributes('src')).toContain('/api/file/thumb?path=assets/logo.png')
+    expect(thumb.attributes('loading')).toBe('lazy')
+    // Non-image entries keep their type icon.
+    expect(wrapper.findAll('.dir-preview-icon')).toHaveLength(1)
+  })
+
+  it('falls back to the type icon when the directory path is unknown', () => {
+    // Without dirPath a thumbnail URL cannot be built, so no <img> is rendered.
+    const wrapper = mountBody({ entries: [{ name: 'logo.png', type: 'image' }] })
+    expect(wrapper.find('.dir-preview-thumb').exists()).toBe(false)
+    expect(wrapper.find('.dir-preview-icon').exists()).toBe(true)
+  })
+
+  it('falls back to the type icon after a thumbnail fails to load', async () => {
+    const wrapper = mountBody({
+      dirPath: 'assets',
+      entries: [{ name: 'broken.png', type: 'image' }],
+    })
+    expect(wrapper.find('.dir-preview-thumb').exists()).toBe(true)
+    await wrapper.find('.dir-preview-thumb').trigger('error')
+    // The failed entry swaps to its icon instead of retrying the request.
+    expect(wrapper.find('.dir-preview-thumb').exists()).toBe(false)
+    expect(wrapper.find('.dir-preview-icon').exists()).toBe(true)
+  })
+
+  it('does not request thumbnails for directories', () => {
+    const wrapper = mountBody({
+      dirPath: 'assets',
+      entries: [{ name: 'sub', type: 'dir' }],
+    })
+    expect(wrapper.find('.dir-preview-thumb').exists()).toBe(false)
+    expect(wrapper.find('.dir-preview-icon').exists()).toBe(true)
+  })
+
+  it('scopes thumbnail failures to the full path, not the bare name', async () => {
+    // The pane reuses ONE instance as the user navigates between directories,
+    // and two directories can each hold `logo.png`. A failure recorded under the
+    // bare name would wrongly suppress the valid thumbnail after moving to a
+    // sibling directory, so the error key must include the directory.
+    const wrapper = mountBody({
+      dirPath: 'assets',
+      entries: [{ name: 'logo.png', type: 'image' }],
+    })
+    await wrapper.find('.dir-preview-thumb').trigger('error')
+    expect(wrapper.find('.dir-preview-thumb').exists()).toBe(false)
+
+    // Same instance, different directory, same file name → thumbnail returns.
+    await wrapper.setProps({ dirPath: 'public' })
+    expect(wrapper.find('.dir-preview-thumb').exists()).toBe(true)
+    expect(wrapper.find('.dir-preview-thumb').attributes('src')).toContain('public/logo.png')
+  })
+
+  it('sizes the listing for comfortable reading (enlarged entries)', () => {
+    // Enlarged at the user's request: 16px icon / 12px text / 4x6px padding /
+    // 150px tracks were too small. jsdom does not load SFC <style>, so assert
+    // against the source.
+    const src = readFileSync(
+      resolve(__dirname, '../../../components/file/DirPreviewBody.vue'),
+      'utf8',
+    )
+    const grid = src.match(/\.dir-preview-grid\s*\{([^}]*)\}/)
+    expect(grid, '.dir-preview-grid rule must exist').not.toBeNull()
+    expect(grid![1]).toMatch(/minmax\(180px/)
+
+    const item = src.match(/\.dir-preview-item\s*\{([^}]*)\}/)
+    expect(item, '.dir-preview-item rule must exist').not.toBeNull()
+    expect(item![1]).toMatch(/font-size:\s*var\(--font-size-md\)/)
+    expect(item![1]).toMatch(/padding:\s*var\(--space-3\)\s*var\(--space-4\)/)
+
+    // Icon size is a prop on FileIcon, so assert the markup.
+    expect(src).toMatch(/:size="20"/)
+
+    const thumb = src.match(/\.dir-preview-thumb\s*\{([^}]*)\}/)
+    expect(thumb, '.dir-preview-thumb rule must exist').not.toBeNull()
+    expect(thumb![1]).toMatch(/width:\s*20px/)
+    expect(thumb![1]).toMatch(/height:\s*20px/)
   })
 })

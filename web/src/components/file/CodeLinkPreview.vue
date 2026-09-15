@@ -147,8 +147,10 @@
         :error="preview.dirError.value"
         :visible="preview.dirEntryVisible"
         :dir-name="dirViewName"
+        :dir-path="dirViewPath"
         @open-file="preview.openDirFile"
         @open-dir="preview.openDirChild"
+        @open-self="preview.openDirChild('')"
         @closed="preview.close()"
       />
       <MediaPreviewBody
@@ -583,8 +585,10 @@
         :error="preview.dirError.value"
         :visible="preview.dirEntryVisible"
         :dir-name="dirViewName"
+        :dir-path="dirViewPath"
         @open-file="preview.openDirFile"
         @open-dir="preview.openDirChild"
+        @open-self="preview.openDirChild('')"
         @closed="preview.close()"
       />
       <MediaPreviewBody
@@ -759,6 +763,9 @@ const dirViewName = computed(() => {
   const base = p.replace(/\/+$/, '').split('/').pop()
   return base || p
 })
+
+/** Project-relative path of the listed directory, for thumbnail URLs. */
+const dirViewPath = computed(() => props.preview.target.value?.filePath || '')
 
 function toggleRenderView() {
   props.preview.toggleRenderMode?.()

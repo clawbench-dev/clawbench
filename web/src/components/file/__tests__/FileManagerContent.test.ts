@@ -390,9 +390,9 @@ const CodeLinkPreviewStub = defineComponent({
 // and how its events are handled, not the listing's own rendering.
 const DirPreviewBodyStub = defineComponent({
   name: 'DirPreviewBody',
-  props: ['entries', 'loading', 'error', 'visible'],
-  emits: ['open-file', 'open-dir', 'closed'],
-  template: '<div class="dir-preview-stub" :data-count="entries.length" />',
+  props: ['entries', 'loading', 'error', 'visible', 'dirName', 'dirPath'],
+  emits: ['open-file', 'open-dir', 'open-self', 'closed'],
+  template: '<div class="dir-preview-stub" :data-count="entries.length" :data-dir-path="dirPath" />',
 })
 
 const sampleEntries = [
@@ -4437,6 +4437,34 @@ describe('FileManagerContent — directory quick preview', () => {
     await nextTick()
 
     expect(wrapper.emitted('selectFile')![0]).toEqual(['src/inner.ts'])
+  })
+
+  it('passes the listed directory path down for thumbnails', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    // The body needs the directory to build /api/file/thumb URLs.
+    expect(wrapper.findComponent(DirPreviewBodyStub).props('dirPath')).toBe('src')
+  })
+
+  it('pane open-self opens the LISTED directory itself and collapses the pane', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    await wrapper.findComponent(DirPreviewBodyStub).vm.$emit('open-self')
+    await nextTick()
+
+    // The directory itself, NOT a child: `src`, not `src/<something>`.
+    expect(wrapper.emitted('navigateDir')![0]).toEqual(['src'])
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
   })
 
   it('pane close collapses the pane', async () => {

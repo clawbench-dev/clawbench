@@ -387,8 +387,10 @@
             :error="dirPreview.error.value"
             :visible="dirPreview.visible"
             :dir-name="dirPreviewName"
+            :dir-path="dirPreviewPath"
             @open-file="onDirPreviewOpenFile"
             @open-dir="onDirPreviewOpenDir"
+            @open-self="onDirPreviewOpenSelf"
             @closed="collapsePreviewPane"
           />
           <CodeLinkPreview
@@ -988,6 +990,17 @@ function onDirPreviewOpenDir(name) {
  *  double-click in the main list. */
 function onDirPreviewOpenFile(name) {
     emit('selectFile', joinPath(dirPreviewPath.value || props.currentDir, name))
+}
+
+/** Pane's "open directory" button: open the LISTED directory itself in the
+ *  main list (not a child). Same destination as clicking a child would reach,
+ *  just one level up — the listing becomes the main list, so the pane collapses
+ *  to avoid showing it twice. */
+function onDirPreviewOpenSelf() {
+    const target = dirPreviewPath.value
+    if (!target) return
+    dirPreviewPath.value = ''
+    emit('navigateDir', target)
 }
 
 /** Close the preview when the directory it was anchored in changes. Turning
