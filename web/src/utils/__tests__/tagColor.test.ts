@@ -38,20 +38,63 @@ function toolCallPaletteFromComponent() {
 }
 
 describe('tagColor', () => {
-  describe('palette consistency with ContentBlocks.vue', () => {
-    it('every tag palette color exists in the tool-call palette', () => {
-      // Guards requirement "different tags get different colors, following the
-      // tool-call color logic": the values must come FROM that palette, so a
-      // change on either side is caught here rather than by eye.
+  describe('palette relationship to the tool-call palette', () => {
+    /**
+     * Hue in degrees (0-360), or null for a fully desaturated colour.
+     * Tags deliberately keep the tool palette's HUES while using different
+     * lightness values (see TAG_PALETTE's doc comment), so hue is the property
+     * that must still line up.
+     */
+    function hue(hex: string): number | null {
+      const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+      if (!m) return null
+      const [r, g, b] = m.slice(1).map(v => parseInt(v, 16) / 255)
+      const max = Math.max(r, g, b)
+      const min = Math.min(r, g, b)
+      const d = max - min
+      if (d === 0) return null
+      let h: number
+      if (max === r) h = ((g - b) / d) % 6
+      else if (max === g) h = (b - r) / d + 2
+      else h = (r - g) / d + 4
+      return (h * 60 + 360) % 360
+    }
+
+    function hueDistance(a: number, b: number) {
+      const d = Math.abs(a - b) % 360
+      return Math.min(d, 360 - d)
+    }
+
+    it('every tag colour shares a hue with a tool-call accent', () => {
+      // The tags must stay recognisably in the same colour family as the tool
+      // cards, but are NOT the same values: the tool accents are tuned for an
+      // icon + 6% tint, and using them verbatim as 11px text left 128 of 252
+      // theme×colour combinations below 4.5:1. Asserting hue (not equality)
+      // still catches a genuinely new colour being introduced on either side.
       const { light, dark } = toolCallPaletteFromComponent()
-      const toolLight = new Set(Object.values(light))
-      const toolDark = new Set(Object.values(dark))
-      expect(toolLight.size).toBeGreaterThan(0)
-      expect(toolDark.size).toBeGreaterThan(0)
+      const huePool = (values: string[]) =>
+        values.map(hue).filter((h): h is number => h !== null)
+
+      const lightHues = huePool(Object.values(light))
+      const darkHues = huePool(Object.values(dark))
+      expect(lightHues.length).toBeGreaterThan(0)
+      expect(darkHues.length).toBeGreaterThan(0)
 
       for (const entry of TAG_PALETTE) {
-        expect(toolLight).toContain(entry.light.toLowerCase())
-        expect(toolDark).toContain(entry.dark.toLowerCase())
+        const lh = hue(entry.light)
+        const dh = hue(entry.dark)
+        expect(lh, `${entry.light} must be a hex colour`).not.toBeNull()
+        expect(dh, `${entry.dark} must be a hex colour`).not.toBeNull()
+        // 25° tolerance: enough to allow the re-lighting, tight enough that a
+        // blue swapped for a green is still caught.
+        expect(
+          Math.min(...lightHues.map(h => hueDistance(lh!, h))),
+          `${entry.light} should match a light tool-call hue`,
+        ).toBeLessThanOrEqual(25)
+        expect(
+          Math.min(...darkHues.map(h => hueDistance(dh!, h))),
+          `${entry.dark} should match a dark tool-call hue`,
+        ).toBeLessThanOrEqual(25)
       }
     })
 
@@ -141,6 +184,96 @@ describe('tagColor', () => {
         '--tag-accent-light': accent.light,
         '--tag-accent-dark': accent.dark,
       })
+    })
+  })
+
+  describe('legibility across every theme', () => {
+    /**
+     * Every theme's real surface colour, parsed out of variables.css.
+     *
+     * Reading the stylesheet (rather than a hardcoded list) is the point: the
+     * palette has to work on whatever surfaces the app actually ships, and a
+     * new theme must be covered without editing this test.
+     */
+    function surfaces(): { name: string; bg: [number, number, number]; dark: boolean }[] {
+      const path = resolve(process.cwd(), '../web/css/variables.css')
+      const src = readFileSync(path, 'utf8')
+      const root = /:root\s*\{([\s\S]*?)\n\}/.exec(src)
+      const base: Record<string, string> = {}
+      if (root) {
+        for (const [, k, v] of root[1].matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)) base[k] = v.trim()
+      }
+      const out: { name: string; bg: [number, number, number]; dark: boolean }[] = []
+      for (const m of src.matchAll(/\[data-theme="([a-z0-9-]+)"\]\s*\{([\s\S]*?)\n\}/g)) {
+        const vars = { ...base }
+        for (const [, k, v] of m[2].matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)) vars[k] = v.trim()
+        const hex = vars['bg-secondary'] || vars['bg-primary']
+        const rgb = hexToRgb(hex)
+        if (rgb) out.push({ name: m[1], bg: rgb, dark: luminance(rgb) < 0.35 })
+      }
+      return out
+    }
+
+    function hexToRgb(hex: string): [number, number, number] | null {
+      const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec((hex || '').trim())
+      return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null
+    }
+
+    function luminance([r, g, b]: [number, number, number]) {
+      const f = (c: number) => {
+        const s = c / 255
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+      }
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+    }
+
+    function contrast(a: [number, number, number], b: [number, number, number]) {
+      const la = luminance(a)
+      const lb = luminance(b)
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+    }
+
+    /** color-mix(in srgb, fg a%, transparent) painted over bg. */
+    function over(fg: [number, number, number], bg: [number, number, number], a: number): [number, number, number] {
+      return [0, 1, 2].map(i => Math.round(fg[i] * a + bg[i] * (1 - a))) as [number, number, number]
+    }
+
+    it('has themes to check', () => {
+      expect(surfaces().length).toBeGreaterThan(20)
+    })
+
+    it('keeps every tag readable as text on every theme surface', () => {
+      // Regression: the palette used to be the tool-call accents verbatim.
+      // Those are tuned for an icon plus a 6% tint, so as 11px chip text they
+      // left 128 of 252 theme×colour combinations under WCAG AA 4.5:1 — amber
+      // and yellow bottomed out at 1.45:1 on light themes, i.e. invisible.
+      const worst: string[] = []
+      for (const { name, bg, dark } of surfaces()) {
+        for (const entry of TAG_PALETTE) {
+          const accent = hexToRgb(dark ? entry.dark : entry.light)
+          if (!accent) continue
+          // The chip paints its own accent at 12% behind the text.
+          const chipBg = over(accent, bg, 0.12)
+          const cr = contrast(accent, chipBg)
+          if (cr < 4.5) worst.push(`${name}/${dark ? 'dark' : 'light'} ${dark ? entry.dark : entry.light} = ${cr.toFixed(2)}`)
+        }
+      }
+      expect(worst, `below 4.5:1:\n${worst.join('\n')}`).toEqual([])
+    })
+
+    it('keeps the accent visible as a border against every theme surface', () => {
+      // The chip's 1px border is the bare accent on the surface; WCAG asks 3:1
+      // for non-text UI.
+      const worst: string[] = []
+      for (const { name, bg, dark } of surfaces()) {
+        for (const entry of TAG_PALETTE) {
+          const accent = hexToRgb(dark ? entry.dark : entry.light)
+          if (!accent) continue
+          const cr = contrast(accent, bg)
+          if (cr < 3) worst.push(`${name}/${dark ? 'dark' : 'light'} ${dark ? entry.dark : entry.light} = ${cr.toFixed(2)}`)
+        }
+      }
+      expect(worst, `below 3:1:\n${worst.join('\n')}`).toEqual([])
     })
   })
 })

@@ -1,42 +1,44 @@
-/**
- * Session tag colors.
- *
- * Mirrors the tool-call color logic in `components/chat/ContentBlocks.vue`:
- * there, a tool name maps to a fixed `category`, and each category has a fixed
- * accent (`[data-category] { --tool-accent: ... }`). User tags have no natural
- * category, so we hash the tag name onto the SAME palette — which keeps the two
- * color systems visually consistent and guarantees a given tag always renders
- * in the same color.
- *
- * The light/dark pair is returned as an inline CSS custom property pair
- * (`--tag-accent-light` / `--tag-accent-dark`) plus a `--tag-accent` that
- * follows the active theme, because the palette values are raw hex (not
- * theme tokens) and the tag row lives outside `.content-blocks`, so it cannot
- * inherit the `[data-theme-base="dark"]` overrides there.
- */
-
 export interface TagAccent {
   light: string
   dark: string
 }
 
 /**
- * The tool-call palette, copied from ContentBlocks.vue. Keep these in sync with
- * the `[data-category]` rules there — `tagColor.test.ts` asserts the values so
- * a drift is caught by the test suite rather than by eye.
+ * Session tag colors.
+ *
+ * Derived from the tool-call palette in `components/chat/ContentBlocks.vue`:
+ * the tool palette maps a tool name to a `category`, and each category has a
+ * fixed accent. Tags have no natural category, so we hash the tag name onto the
+ * SAME set of hues — which keeps the two color systems recognisably related and
+ * guarantees a given tag always renders in the same color.
+ *
+ * The values are NOT the raw tool accents, though. The tool palette is built
+ * for an icon plus a 6%-tinted background; a tag chip uses its accent as the
+ * text colour at 11px, which needs far more contrast. Measured over all 36
+ * themes, the raw tool accents put 128 of 252 (theme × colour) combinations
+ * below WCAG AA 4.5:1 — the amber and yellow entries bottom out at 1.45:1 on
+ * light themes, i.e. effectively invisible.
+ *
+ * So each entry keeps its hue but is re-lit for text use: light themes darken
+ * the accent, dark themes lighten it, and saturation is floored at 0.45 so the
+ * hue stays identifiable (a straight darkening toward black would collapse
+ * every colour into near-grey). Verified: 252/252 combinations clear 4.5:1 for
+ * the chip text and 5.3:1 for the bare accent used as a border. The
+ * `tagColor.test.ts` consistency check asserts hue-family membership rather
+ * than exact equality for this reason.
  *
  * `file`/`plan` are deliberately excluded: they resolve to `var(--accent-color)`,
  * which is theme-dependent and would collapse to a single hue for every tag
  * landing on those buckets.
  */
 export const TAG_PALETTE: TagAccent[] = [
-  { light: '#10b981', dark: '#34d399' }, // bash  — emerald
-  { light: '#8b5cf6', dark: '#a78bfa' }, // search — violet
-  { light: '#f59e0b', dark: '#fbbf24' }, // task  — amber
-  { light: '#ec4899', dark: '#f472b6' }, // agent — pink
-  { light: '#06b6d4', dark: '#22d3ee' }, // skill — cyan
-  { light: '#f97316', dark: '#fb923c' }, // ask   — orange
-  { light: '#eab308', dark: '#fbbf24' }, // permission — yellow
+  { light: '#096848', dark: '#34d399' }, // bash  — emerald
+  { light: '#6222f3', dark: '#b299fb' }, // search — violet
+  { light: '#805205', dark: '#fbbf24' }, // task  — amber
+  { light: '#ad125f', dark: '#f57dbc' }, // agent — pink
+  { light: '#036475', dark: '#22d3ee' }, // skill — cyan
+  { light: '#994104', dark: '#fb923c' }, // ask   — orange
+  { light: '#735804', dark: '#fbbf24' }, // permission — yellow
 ]
 
 /**
