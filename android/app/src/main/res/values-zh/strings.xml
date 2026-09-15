@@ -83,9 +83,12 @@
     <string name="conn_render_crash">页面渲染异常，请重新连接。</string>
     <!-- Native pre-WebView version mismatch gate (APK older than server) -->
     <string name="version_mismatch_title">版本不一致</string>
-    <string name="version_mismatch_message">APK 版本: %1$s\n服务器版本: %2$s\n\n应用版本低于服务器，建议更新 APK 以获得最佳体验。</string>
+    <string name="version_mismatch_message">APK 版本: %1$s\n服务器版本: %2$s\n\n应用版本低于服务器，两者可能不兼容：旧版 APK 的部分功能可能异常或无法使用。建议更新 APK。</string>
     <string name="version_mismatch_download">下载 APK</string>
     <string name="version_mismatch_skip">强制跳过</string>
+    <!-- APK download / install failures surfaced to the user -->
+    <string name="apk_download_failed">APK 下载失败，请检查网络后重试。</string>
+    <string name="apk_install_failed">已下载的 APK 无法打开安装器。</string>
     <!-- Background service notifications -->
     <string name="ssh_notification_reconnecting">SSH 隧道断开，正在重连…</string>
     <string name="ssh_notification_recovering">SSH 隧道已恢复</string>

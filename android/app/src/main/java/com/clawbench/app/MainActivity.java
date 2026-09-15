@@ -1064,105 +1064,189 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
+    /** How long an APK download may take before we give up waiting. */
+    private static final long APK_POLL_MAX_MS = 10 * 60 * 1000;
+    /** How often the APK download is polled. */
+    private static final long APK_POLL_INTERVAL_MS = 500;
+
+    /** Outcome of waiting for a DownloadManager APK download to finish. */
+    enum ApkDownloadStatus {
+        /** Finished successfully — the APK is ready to install. */
+        SUCCESS,
+        /** DownloadManager reported a failure. */
+        FAILED,
+        /** The download did not finish within the deadline. */
+        TIMEOUT,
+        /** DownloadManager has no record of the id (e.g. the download was removed). */
+        NO_RESULT,
+    }
+
+    /** Result of {@link #awaitApkDownload}: a status plus the failure reason, if any. */
+    static final class ApkDownloadOutcome {
+        final ApkDownloadStatus status;
+        /** DownloadManager COLUMN_REASON, or -1 when not applicable. */
+        final int reason;
+
+        ApkDownloadOutcome(ApkDownloadStatus status, int reason) {
+            this.status = status;
+            this.reason = reason;
+        }
+    }
+
+    /**
+     * Poll DownloadManager until the APK download reaches a terminal state.
+     *
+     * <p>Extracted from {@link #waitForApkInstall} so the terminal-state handling
+     * (success / failure / timeout / vanished) is unit-testable without a device.
+     * Blocking: callers run it on a worker thread.
+     *
+     * @param dm             DownloadManager to query
+     * @param downloadId     id returned by {@code enqueue}
+     * @param maxPollMs      give up after this long
+     * @param pollIntervalMs sleep between polls while still in progress
+     */
+    static ApkDownloadOutcome awaitApkDownload(DownloadManager dm, long downloadId,
+                                               long maxPollMs, long pollIntervalMs) {
+        long startTime = System.currentTimeMillis();
+        while (true) {
+            if (System.currentTimeMillis() - startTime > maxPollMs) {
+                return new ApkDownloadOutcome(ApkDownloadStatus.TIMEOUT, -1);
+            }
+            DownloadManager.Query query = new DownloadManager.Query().setFilterById(downloadId);
+            try (android.database.Cursor cursor = dm.query(query)) {
+                if (cursor == null || !cursor.moveToFirst()) {
+                    return new ApkDownloadOutcome(ApkDownloadStatus.NO_RESULT, -1);
+                }
+                int status = cursor.getInt(
+                        cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                    return new ApkDownloadOutcome(ApkDownloadStatus.SUCCESS, -1);
+                }
+                if (status == DownloadManager.STATUS_FAILED) {
+                    int reasonIdx = cursor.getColumnIndex(DownloadManager.COLUMN_REASON);
+                    int reason = reasonIdx >= 0 ? cursor.getInt(reasonIdx) : -1;
+                    return new ApkDownloadOutcome(ApkDownloadStatus.FAILED, reason);
+                }
+            }
+            try {
+                Thread.sleep(pollIntervalMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return new ApkDownloadOutcome(ApkDownloadStatus.NO_RESULT, -1);
+            }
+        }
+    }
+
+    /**
+     * Resolve the downloaded APK as a URI the system installer can read, or null.
+     *
+     * <p>Uses {@link DownloadManager#getUriForDownloadedFile}, which is the only
+     * reliable way to reach the file under scoped storage: since Android 10 the
+     * app has no filesystem access to the public Downloads directory, so both
+     * {@code COLUMN_LOCAL_URI} (a synthetic {@code content://downloads/...} path)
+     * and a direct {@code File} lookup on the Downloads dir fail. The returned URI
+     * is readable by the installer once the intent carries
+     * {@code FLAG_GRANT_READ_URI_PERMISSION}.
+     */
+    static Uri resolveApkInstallUri(DownloadManager dm, long downloadId) {
+        try {
+            return dm.getUriForDownloadedFile(downloadId);
+        } catch (Exception e) {
+            AppLog.w(TAG, "getUriForDownloadedFile failed", e);
+            return null;
+        }
+    }
+
     /**
      * Poll DownloadManager until the APK download completes, then launch the system installer.
      * Called from both DownloadListener (file manager downloads) and WebAppInterface.downloadUrl().
+     *
+     * <p>Every failure path surfaces a toast — previously they were silent, so a
+     * failed download (e.g. {@code /api/apk} returning 404) left the user with no
+     * feedback at all.
      */
     private void waitForApkInstall(DownloadManager dm, long downloadId, String fileName) {
         new Thread("APK-Install-Wait") {
             @Override
             public void run() {
                 try {
-                    long startTime = System.currentTimeMillis();
-                    long MAX_POLL_MS = 10 * 60 * 1000; // 10 minutes
-                    boolean downloading = true;
-                    String localUri = null;
-                    while (downloading) {
-                        if (System.currentTimeMillis() - startTime > MAX_POLL_MS) {
+                    ApkDownloadOutcome outcome =
+                            awaitApkDownload(dm, downloadId, APK_POLL_MAX_MS, APK_POLL_INTERVAL_MS);
+                    switch (outcome.status) {
+                        case TIMEOUT:
                             AppLog.w(TAG, "APK download polling timed out");
+                            toastOnUiThread(R.string.apk_download_failed);
                             return;
-                        }
-                        DownloadManager.Query query = new DownloadManager.Query().setFilterById(downloadId);
-                        try (android.database.Cursor cursor = dm.query(query)) {
-                            if (cursor == null || !cursor.moveToFirst()) {
-                                AppLog.w(TAG, "Download query returned no results for APK");
-                                return;
-                            }
-                            int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-                            if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                                downloading = false;
-                                int uriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI);
-                                if (uriIdx >= 0) {
-                                    localUri = cursor.getString(uriIdx);
-                                }
-                            } else if (status == DownloadManager.STATUS_FAILED) {
-                                int reasonIdx = cursor.getColumnIndex(DownloadManager.COLUMN_REASON);
-                                int reason = reasonIdx >= 0 ? cursor.getInt(reasonIdx) : -1;
-                                AppLog.w(TAG, "APK download failed, reason=" + reason);
-                                return;
-                            } else {
-                                Thread.sleep(500);
-                            }
-                        }
+                        case NO_RESULT:
+                            AppLog.w(TAG, "Download query returned no results for APK");
+                            toastOnUiThread(R.string.apk_download_failed);
+                            return;
+                        case FAILED:
+                            AppLog.w(TAG, "APK download failed, reason=" + outcome.reason);
+                            toastOnUiThread(R.string.apk_download_failed);
+                            return;
+                        default:
+                            break;
                     }
 
                     AppLog.i(TAG, "APK download complete");
 
-                    // Resolve the APK file — prefer localUri from DownloadManager
-                    java.io.File apkFile = null;
-                    if (localUri != null) {
-                        apkFile = new java.io.File(Uri.parse(localUri).getPath());
-                    }
-                    if (apkFile == null || !apkFile.exists()) {
-                        apkFile = new java.io.File(
-                                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                                "ClawBench/" + fileName);
-                    }
-                    if (!apkFile.exists()) {
-                        AppLog.w(TAG, "APK file not found after download: " + apkFile.getAbsolutePath());
+                    Uri apkUri = resolveApkInstallUri(dm, downloadId);
+                    if (apkUri == null) {
+                        AppLog.w(TAG, "No installable URI for downloaded APK (id=" + downloadId + ")");
+                        toastOnUiThread(R.string.apk_install_failed);
                         return;
                     }
-
-                    // On Android 8+, check install permission before attempting
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        if (!getPackageManager().canRequestPackageInstalls()) {
-                            runOnUiThread(() -> {
-                                try {
-                                    Intent settingsIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
-                                    settingsIntent.setData(Uri.parse("package:" + getPackageName()));
-                                    settingsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                                    startActivity(settingsIntent);
-                                } catch (Exception e) {
-                                    AppLog.e(TAG, "Failed to open install permission settings", e);
-                                }
-                            });
-                            return;
-                        }
-                    }
-
-                    Intent installIntent = new Intent(Intent.ACTION_VIEW);
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-                        Uri apkUri = androidx.core.content.FileProvider.getUriForFile(
-                                MainActivity.this, getPackageName() + ".fileprovider", apkFile);
-                        installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-                        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    } else {
-                        installIntent.setDataAndType(Uri.fromFile(apkFile),
-                                "application/vnd.android.package-archive");
-                    }
-                    installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    runOnUiThread(() -> {
-                        try {
-                            startActivity(installIntent);
-                        } catch (Exception e) {
-                            AppLog.e(TAG, "Failed to launch APK installer", e);
-                        }
-                    });
+                    launchApkInstaller(apkUri);
                 } catch (Exception e) {
                     AppLog.e(TAG, "waitForApkInstall failed", e);
+                    toastOnUiThread(R.string.apk_install_failed);
                 }
             }
         }.start();
+    }
+
+    /**
+     * Launch the system package installer for {@code apkUri}, asking for the
+     * "install unknown apps" permission first on Android 8+ when it is missing.
+     */
+    void launchApkInstaller(Uri apkUri) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                && !getPackageManager().canRequestPackageInstalls()) {
+            runOnUiThread(() -> {
+                try {
+                    Intent settingsIntent =
+                            new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                    settingsIntent.setData(Uri.parse("package:" + getPackageName()));
+                    settingsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(settingsIntent);
+                } catch (Exception e) {
+                    AppLog.e(TAG, "Failed to open install permission settings", e);
+                }
+            });
+            return;
+        }
+
+        Intent installIntent = new Intent(Intent.ACTION_VIEW);
+        installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+        // The installer runs in another process: without the grant flag it cannot
+        // read the content:// URI handed to it by DownloadManager.
+        installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        runOnUiThread(() -> {
+            try {
+                startActivity(installIntent);
+            } catch (Exception e) {
+                AppLog.e(TAG, "Failed to launch APK installer", e);
+                Toast.makeText(this, R.string.apk_install_failed, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /** Show a toast on the UI thread; safe to call from any thread. */
+    void toastOnUiThread(int resId) {
+        runOnUiThread(() ->
+                Toast.makeText(this, resId, Toast.LENGTH_LONG).show());
     }
 
     /**
@@ -1446,22 +1530,21 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * Blocking dialog shown before the WebView loads when the APK is older than the
-     * server. Mirrors {@link #showSslConfirmationDialog}: framework AlertDialog,
-     * locale-aware strings, not cancelable so BACK/tap-outside cannot bypass it.
+     * server. Uses the web-style card ({@link WebStyleDialog}) so the prompt reads as
+     * the same UI as the in-app dialogs, with locale-aware strings; not cancelable so
+     * BACK/tap-outside cannot bypass it.
      *
      * @param onSkip navigation to run when the user chooses to continue on the old APK
      */
     void showVersionMismatchDialog(String url, String appVersion, String serverVersion, Runnable onSkip) {
         if (isFinishing() || isDestroyed()) return;
-        new AlertDialog.Builder(this)
-                .setTitle(userLangString(R.string.version_mismatch_title))
-                .setMessage(userLangString(R.string.version_mismatch_message, appVersion, serverVersion))
-                .setPositiveButton(userLangString(R.string.version_mismatch_download), (dialog, which) ->
-                        onVersionMismatchDownload(url))
-                .setNegativeButton(userLangString(R.string.version_mismatch_skip), (dialog, which) ->
-                        onSkip.run())
-                .setCancelable(false)
-                .show();
+        WebStyleDialog.show(this,
+                userLangString(R.string.version_mismatch_title),
+                userLangString(R.string.version_mismatch_message, appVersion, serverVersion),
+                userLangString(R.string.version_mismatch_download),
+                userLangString(R.string.version_mismatch_skip),
+                () -> onVersionMismatchDownload(url),
+                onSkip);
     }
 
     /**
