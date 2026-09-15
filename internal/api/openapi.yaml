@@ -2259,6 +2259,17 @@ paths:
       tags: [Forge]
       summary: 保存凭据
       operationId: forgeCredentialsSave
+      description: |
+        为某个主机保存访问令牌。令牌只写不读，`GET /api/config` 只回报哪些主机已配置。
+
+        `host` 可写完整地址（`http://gitlab.internal`、`https://gitlab.internal/group/repo`）
+        或只写主机名（`gitlab.internal:8080`）。服务端归一化为「主机名 + 可选端口」作为
+        凭据键——**协议不进入键**，否则 `https://h` 存下的令牌永远匹配不上绑定记录的
+        `h`。
+
+        地址中写明的协议会作为该实例的协议提示记录下来（响应 `scheme`），供远程为 ssh
+        形式、无法推断协议的绑定使用。只写主机名表示「未说明协议」，此时**保留**已记录
+        的提示，不会重置为 https。清除令牌（`token` 为空）会连同协议提示一起清除。
       requestBody:
         required: true
         content:
@@ -2268,15 +2279,19 @@ paths:
               properties:
                 host:
                   type: string
+                  description: 主机名（可含端口）或完整地址；服务端归一化
                 token:
                   type: string
+                  description: 访问令牌；为空表示清除该主机的凭据
       responses:
         "200":
-          description: 结果
+          description: 结果（`host`、`scheme`、`has_token`）
     delete:
       tags: [Forge]
       summary: 删除凭据
       operationId: forgeCredentialsDelete
+      description: |
+        等价于 POST 空 `token`：同时清除令牌与该主机的协议提示。
       parameters:
         - name: host
           in: query
@@ -2292,6 +2307,15 @@ paths:
       tags: [Forge]
       summary: 校验令牌
       operationId: forgeVerifyToken
+      description: |
+        校验令牌能否在该主机上通过认证。与保存解耦：可校验即将保存的令牌，也可复验已
+        保存的令牌（`token` 省略时用已保存的）。
+
+        失败仍返回 200，用 `ok:false` 与 `code` 区分「令牌被拒」（`auth`）与「主机不可
+        达」（`network`）——后者不能说明令牌无效。
+
+        `host` 中写明的协议（或该主机已记录的协议提示）决定探测使用的协议；成功时响应
+        的 `scheme` 是实际使用的协议。
       requestBody:
         required: true
         content:
@@ -2301,11 +2325,13 @@ paths:
               properties:
                 host:
                   type: string
+                  description: 主机名（可含端口）或完整地址；服务端归一化
                 token:
                   type: string
+                  description: 省略时校验该主机已保存的令牌
       responses:
         "200":
-          description: 校验结果
+          description: 校验结果（`ok`、`identity`、`scheme`，失败时 `code` / `error`）
 
   /api/forge/items:
     get:
@@ -2475,11 +2501,16 @@ paths:
       summary: 读取项目绑定
       operationId: forgeBindingGet
       description: |
-        返回当前项目的仓库绑定（`binding` 含 `platform`、`host`、`owner`、`repo`、`slug`）。
+        返回当前项目的仓库绑定（`binding` 含 `platform`、`host`、`scheme`、`owner`、
+        `repo`、`slug`）。
         **未绑定时仍是 200**，此时 `binding` 为 `null`，可能附带 `suggested`（候选仓库）。
         注意：GET 有副作用——若项目存在指向官方平台的 git remote，本端点会自动完成绑定。
         事件触发的任务只在项目已绑定仓库时才会被触发，创建这类任务前应先用本端点确认
         `binding` 非空。
+
+        `scheme` 是请求该主机实际使用的协议（`http` / `https`），已解析而非原始值：
+        远程为 ssh 形式时无法推断协议，此时由凭据记录的协议提示决定，最终仍会落到
+        `http` 或 `https`。
       responses:
         "200":
           description: 绑定信息
@@ -2487,6 +2518,18 @@ paths:
       tags: [Forge]
       summary: 保存项目绑定
       operationId: forgeBindingSave
+      description: |
+        绑定项目到仓库。两种方式二选一：
+
+        - `url`：远程地址，服务端解析。`http://` / `https://` 会带上协议；`ssh://`
+          与 scp 形式（`git@host:path`）不表示协议，绑定记录的 `scheme` 为空，由凭据
+          的协议提示决定。
+        - 显式字段（`platform` / `host` / `owner` / `repo`）：`host` 可写完整地址
+          （`http://gitlab.internal`）也可只写主机名，服务端会归一化。`scheme` 可单独
+          传；两者都传时以 `host` 内的为准。
+
+        `host` 是绑定与凭据的关联键，**不含协议**——同一实例的 http 与 https 视为同一
+        个仓库，因此不会因协议不同而产生两份轮询/未读状态。
       requestBody:
         required: false
         content:
@@ -2498,12 +2541,18 @@ paths:
                   type: string
                 host:
                   type: string
+                  description: 主机名（可含端口）或完整地址；服务端归一化
+                scheme:
+                  type: string
+                  enum: [http, https]
+                  description: API 协议；省略时由 host 内协议或凭据提示决定
                 owner:
                   type: string
                 repo:
                   type: string
                 url:
                   type: string
+                  description: 远程地址，支持 http / https / ssh / scp 形式
                 source:
                   type: string
       responses:

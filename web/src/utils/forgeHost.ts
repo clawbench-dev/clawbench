@@ -15,9 +15,9 @@
  * extractRemoteHost returns the host of a git remote URL, or '' when the input
  * is not a form the backend accepts.
  *
- * Mirrors splitRemote in internal/forge/remote.go: `https://` and `ssh://`
- * URLs, plus the scp-like `git@host:path`. Anything else (a local path, a bare
- * host, a `file://` URL) yields ''.
+ * Mirrors splitRemote in internal/forge/remote.go: `http://`, `https://` and
+ * `ssh://` URLs, plus the scp-like `git@host:path`. Anything else (a local path,
+ * a bare host, a `file://` URL) yields ''.
  *
  * '' does NOT mean "safe to bind silently" — it means the backend will reject
  * the URL outright with its own error, so no host warning is owed on top.
@@ -26,7 +26,7 @@ export function extractRemoteHost(raw: string): string {
     const trimmed = raw.trim()
     if (!trimmed) return ''
 
-    // https:// or ssh:// form.
+    // http://, https:// or ssh:// form.
     if (trimmed.includes('://')) {
         let parsed: URL
         try {
@@ -35,7 +35,10 @@ export function extractRemoteHost(raw: string): string {
             return ''
         }
         const scheme = parsed.protocol.replace(/:$/, '').toLowerCase()
-        if (scheme !== 'https' && scheme !== 'ssh') return ''
+        // http is accepted alongside https: a self-hosted instance on an
+        // internal network is a supported target, so its remote must be
+        // classifiable rather than silently treated as unparseable.
+        if (scheme !== 'https' && scheme !== 'http' && scheme !== 'ssh') return ''
         // host (not hostname) keeps a non-default port, which matters below.
         return parsed.host
     }

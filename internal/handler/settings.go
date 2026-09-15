@@ -370,6 +370,11 @@ type configFeishu struct {
 type configForge struct {
 	// CredentialHosts lists hosts with a configured token, sorted.
 	CredentialHosts []string `json:"credential_hosts"`
+	// CredentialSchemes maps each host with a token to the API scheme it is
+	// reached with. Not secret — it is how the host is reached, not how it is
+	// authenticated — and the settings UI displays it so an http-only instance
+	// is distinguishable from an https one.
+	CredentialSchemes map[string]string `json:"credential_schemes"`
 	// InsecureTLS allows skipping TLS verification for self-hosted instances.
 	InsecureTLS bool `json:"insecure_tls"`
 	// PauseEventTasks is the global kill-switch for event-triggered AI tasks.
@@ -493,6 +498,11 @@ func buildConfigAppearance(cfg model.Config) configAppearance {
 
 // buildConfigForge builds the forge section of the config response. It exposes
 // only which hosts have a token — never the token value.
+//
+// The schemes map is exposed alongside the hosts because it is not secret (it is
+// just how a host is reached) and the settings UI shows it: an http-only
+// internal instance looks identical to an https one otherwise, and a wrong
+// scheme surfaces as an opaque connection error.
 func buildConfigForge(cfg model.Config) configForge {
 	hosts := make([]string, 0, len(cfg.Forge.Credentials))
 	for host, token := range cfg.Forge.Credentials {
@@ -501,10 +511,22 @@ func buildConfigForge(cfg model.Config) configForge {
 		}
 	}
 	sort.Strings(hosts)
+
+	// Only report schemes for hosts that actually have a token: a stale hint for
+	// a host with no credential is not something the UI can act on, and hiding
+	// it keeps the response honest about what is configured.
+	schemes := make(map[string]string, len(hosts))
+	for _, host := range hosts {
+		if s := cfg.Forge.Schemes[host]; s != "" {
+			schemes[host] = s
+		}
+	}
+
 	return configForge{
-		CredentialHosts: hosts,
-		InsecureTLS:     cfg.Forge.InsecureTLS,
-		PauseEventTasks: cfg.Forge.PauseEventTasks,
+		CredentialHosts:   hosts,
+		CredentialSchemes: schemes,
+		InsecureTLS:       cfg.Forge.InsecureTLS,
+		PauseEventTasks:   cfg.Forge.PauseEventTasks,
 		Notify: configForgeNotify{
 			Opened:    cfg.Forge.Notify.Opened,
 			Closed:    cfg.Forge.Notify.Closed,

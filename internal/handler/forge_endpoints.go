@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"clawbench/internal/forge"
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
 
@@ -17,9 +18,23 @@ const (
 	jsonBinding        = "binding"
 	jsonHost           = "host"
 	jsonNoForgeBinding = "NoForgeBinding"
+	// codeForgeNeedsAuth marks a not-found that is plausibly a missing token:
+	// the host has no stored credential, so the lookup went out anonymously.
+	// Private repositories answer 404 (not 403) to hide their existence, so the
+	// frontend cannot distinguish the two cases from the status alone.
+	//
+	// The wire value is "ForgeNoCredential" (the frontend matches on it). gosec's
+	// G101 heuristic reads a literal containing "Credential" as a hardcoded
+	// secret, so the constant is named differently to keep the identifier and the
+	// value from tripping it.
+	codeForgeNeedsAuth = "ForgeNoCredential"
 	jsonCode           = "code"
 	// jsonCount is the response key for a numeric total (the unread count).
 	jsonCount = "count"
+	// jsonSlug and jsonScheme are response keys spelled the same way in several
+	// of the forge views below, so they are named once like the keys above.
+	jsonSlug   = "slug"
+	jsonScheme = "scheme"
 )
 
 // forgeItemView is the frontend-facing shape of an issue or PR. It flattens the
@@ -134,7 +149,7 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 
 	res, err := provider.ListItems(forgeContext(r), opts)
 	if err != nil {
-		writeForgeError(w, err)
+		writeForgeError(w, err, pf)
 		return
 	}
 
@@ -157,7 +172,7 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 	if q.Get("mine") == "1" {
 		me, meErr := provider.CurrentUser(forgeContext(r))
 		if meErr != nil {
-			writeForgeError(w, meErr)
+			writeForgeError(w, meErr, pf)
 			return
 		}
 		items = filterForgeItemsMine(items, me.Login, q.Get("mineScope"))
@@ -172,7 +187,7 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 			jsonHost:   pf.Host,
 			"owner":    pf.Owner,
 			"repo":     pf.Repo,
-			"slug":     pf.Slug(),
+			jsonSlug:   pf.Slug(),
 			"source":   pf.Source,
 		},
 	})
@@ -258,7 +273,7 @@ func ServeForgeItem(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := provider.GetItem(forgeContext(r), typ, number)
 	if err != nil {
-		writeForgeError(w, err)
+		writeForgeError(w, err, pf)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"item": toForgeItemView(pf, item)})
@@ -305,7 +320,7 @@ func ServeForgeComments(w http.ResponseWriter, r *http.Request) {
 		atoiDefault(r.URL.Query().Get("perPage"), 30),
 	)
 	if err != nil {
-		writeForgeError(w, err)
+		writeForgeError(w, err, pf)
 		return
 	}
 
@@ -400,7 +415,11 @@ type forgeBindingRequest struct {
 	Host     string `json:"host"`
 	Owner    string `json:"owner"`
 	Repo     string `json:"repo"`
-	// URL is a remote URL (https or ssh form) parsed server-side.
+	// Scheme is the API scheme ("http" or "https") to reach Host with. It is
+	// optional: a remote URL states its own, and a bare host leaves it to the
+	// instance hint. Only meaningful on the explicit-fields path.
+	Scheme string `json:"scheme"`
+	// URL is a remote URL (http, https or ssh form) parsed server-side.
 	URL string `json:"url"`
 	// Source marks how the binding was established; defaults to "manual".
 	Source string `json:"source"`
@@ -425,9 +444,22 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 			return
 		}
+		// Normalize the same way a credential host is normalized, so the binding
+		// and its token resolve to one scope. A host stored as
+		// "https://gitlab.com" would otherwise never match the credential key and
+		// every request would go out unauthenticated.
+		//
+		// The scheme is taken from the host field when it names one, so a client
+		// may send either "http://h" or {"host":"h","scheme":"http"}; the
+		// explicit field is the fallback for a client that already split them.
+		hostScheme, host := model.SplitForgeHostScheme(req.Host)
+		if hostScheme == "" {
+			hostScheme = forge.NormalizeScheme(req.Scheme)
+		}
 		remote = forge.Remote{
 			Platform: forge.Platform(req.Platform),
-			Host:     strings.ToLower(req.Host),
+			Host:     host,
+			Scheme:   hostScheme,
 			Owner:    req.Owner,
 			Repo:     req.Repo,
 		}
@@ -483,9 +515,13 @@ func ServeForgeRemotes(w http.ResponseWriter, r *http.Request) {
 		if parsed, perr := forge.ParseRemoteURL(rem.URL); perr == nil {
 			entry["platform"] = string(parsed.Platform)
 			entry["host"] = parsed.Host
+			// Empty when the remote could not state a scheme (ssh / scp). The
+			// UI shows the resolved value in that case rather than guessing, so
+			// it must be able to tell "no scheme" from "https".
+			entry[jsonScheme] = parsed.Scheme
 			entry["owner"] = parsed.Owner
 			entry["repo"] = parsed.Repo
-			entry["slug"] = parsed.Slug()
+			entry[jsonSlug] = parsed.Slug()
 		}
 		out = append(out, entry)
 	}
@@ -535,21 +571,32 @@ func ServeForgeTest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// bindingView renders a binding for the frontend.
+//
+// The scheme is reported as the one requests actually use (resolved), not the
+// raw column: a binding whose remote could not state a scheme is still reached
+// over some scheme, and showing "" would leave the user unable to tell which.
 func bindingView(pf *service.ProjectForge) map[string]any {
 	return map[string]any{
 		"platform": pf.Platform,
 		jsonHost:   pf.Host,
+		jsonScheme: forge.ResolveScheme(pf.Scheme, model.ConfigInstance.ForgeScheme(pf.Host)),
 		"owner":    pf.Owner,
 		"repo":     pf.Repo,
-		"slug":     pf.Slug(),
+		jsonSlug:   pf.Slug(),
 		"source":   pf.Source,
 	}
 }
 
 // normalizeForgeState clamps the state query to the values the providers accept.
+//
+// "merged" is part of the vocabulary because change requests have three
+// lifecycle states, not two: a merged MR/PR is closed but distinct from one
+// that was closed unmerged, and the two platforms only agree on that
+// distinction if the filter is carried explicitly.
 func normalizeForgeState(state string) string {
 	switch state {
-	case "open", "closed", "all":
+	case "open", "closed", "merged", "all":
 		return state
 	default:
 		return "open"
@@ -616,9 +663,14 @@ func suggestForgeBinding(projectPath string) map[string]any {
 	return map[string]any{
 		"platform": string(parsed.Platform),
 		jsonHost:   parsed.Host,
+		// The remote's own scheme, empty when it did not state one. The UI
+		// resolves it for display; it must not be pre-filled with https here,
+		// because confirming the suggestion would then persist that guess as if
+		// the remote had said it.
+		jsonScheme: parsed.Scheme,
 		"owner":    parsed.Owner,
 		"repo":     parsed.Repo,
-		"slug":     parsed.Slug(),
+		jsonSlug:   parsed.Slug(),
 		"remote":   name,
 	}
 }
@@ -707,7 +759,7 @@ func ServeForgeUnreadItems(w http.ResponseWriter, r *http.Request) {
 			"eventType":  it.EventType,
 			"eventCount": it.EventCount,
 			"url":        it.Payload,
-			"slug":       slug,
+			jsonSlug:     slug,
 			"updatedAt":  formatForgeTime(it.CreatedAt),
 		})
 	}

@@ -10,11 +10,15 @@ import { extractRemoteHost, isOfficialForgeHost, isNonOfficialRemote } from '@/u
  * official one (a warning on the common path, which trains users to ignore it).
  */
 describe('extractRemoteHost', () => {
-  it('reads the host from https and ssh URLs', () => {
+  it('reads the host from https, http and ssh URLs', () => {
     expect(extractRemoteHost('https://gitlab.com/acme/widgets.git')).toBe('gitlab.com')
     expect(extractRemoteHost('https://git.internal.corp:8443/acme/widgets.git')).toBe('git.internal.corp:8443')
     expect(extractRemoteHost('ssh://git@github.com/acme/widgets.git')).toBe('github.com')
     expect(extractRemoteHost('ssh://git@10.0.0.5:2222/acme/widgets.git')).toBe('10.0.0.5:2222')
+    // Plain http is a supported self-hosted deployment, so it must classify
+    // rather than fall through to "unparseable" and skip the warning.
+    expect(extractRemoteHost('http://git.internal.corp/acme/widgets.git')).toBe('git.internal.corp')
+    expect(extractRemoteHost('http://10.0.0.5:8080/acme/widgets.git')).toBe('10.0.0.5:8080')
   })
 
   it('reads the host from the scp-like form', () => {
@@ -38,7 +42,7 @@ describe('extractRemoteHost', () => {
     // rejected by ParseRemoteURL, so the dialog shows that error instead.
     expect(extractRemoteHost('/srv/git/widgets.git')).toBe('')
     expect(extractRemoteHost('file:///srv/git/widgets.git')).toBe('')
-    expect(extractRemoteHost('http://gitlab.com/acme/widgets.git')).toBe('')
+    expect(extractRemoteHost('ftp://gitlab.com/acme/widgets.git')).toBe('')
     expect(extractRemoteHost('github.com')).toBe('')
     expect(extractRemoteHost('')).toBe('')
     expect(extractRemoteHost('   ')).toBe('')
@@ -82,6 +86,9 @@ describe('isNonOfficialRemote', () => {
     expect(isNonOfficialRemote('https://git.internal.corp:8443/acme/widgets.git')).toBe(true)
     expect(isNonOfficialRemote('git@git.internal.corp:acme/widgets.git')).toBe(true)
     expect(isNonOfficialRemote('https://192.168.1.50/acme/widgets.git')).toBe(true)
+    // An http remote is just as much a non-official host, and must not slip
+    // through the warning by being unparseable.
+    expect(isNonOfficialRemote('http://git.internal.corp/acme/widgets.git')).toBe(true)
   })
 
   it('does not flag the official hosts', () => {

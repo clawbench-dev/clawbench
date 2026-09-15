@@ -129,6 +129,14 @@ func verifyUser(ctx context.Context, baseURL, token string, client *http.Client)
 
 // ListItems returns a page of issues or merge requests.
 func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
+	// GitLab issues have no merged lifecycle, and the API rejects
+	// state=merged on the issues endpoint with 400. Answer the impossible
+	// query locally instead of forwarding it and surfacing a platform error
+	// for what is really an empty result.
+	if opts.Type != forge.ItemTypeChangeRequest && opts.State == string(forge.StateMerged) {
+		return forge.ListResult{Items: []forge.Item{}}, nil
+	}
+
 	path := "/projects/" + p.project + "/issues"
 	if opts.Type == forge.ItemTypeChangeRequest {
 		path = "/projects/" + p.project + "/merge_requests"
@@ -409,23 +417,37 @@ func parseTime(s string) time.Time {
 	return t
 }
 
+// stateParam maps the generic state vocabulary onto GitLab's.
+//
+// GitLab spells "open" as "opened" and, for merge requests, reports merged as
+// its own state rather than folding it into closed. The generic vocabulary
+// keeps them distinct too (see forge.State), so "closed" means closed and NOT
+// merged — a plain pass-through would return merged MRs under the closed
+// filter, which is the opposite of what the filter promises.
 func stateParam(state string) string {
 	switch state {
 	case "open":
 		return "opened"
-	case "closed", "all":
+	case "closed", "all", "merged":
 		return state
 	default:
 		return "opened"
 	}
 }
 
+// orderByParam maps the generic sort field onto GitLab's, which requires an
+// `_at` suffix: the API rejects "updated"/"created" with
+// `{"error":"order_by does not have a valid value"}`. GitLab's issues and
+// merge_requests endpoints accept only updated_at, created_at (and priority for
+// issues) — there is no bare "updated".
 func orderByParam(sort string) string {
 	switch sort {
-	case "updated", "created":
-		return sort
+	case "updated":
+		return "updated_at"
+	case "created":
+		return "created_at"
 	default:
-		return "updated"
+		return "updated_at"
 	}
 }
 

@@ -3710,3 +3710,107 @@ func TestSchema_ForgeItemsCommentsBaselinedMigration(t *testing.T) {
 	assert.Equal(t, 1, baselined1, "a row with a known comment id must be backfilled as baselined")
 	assert.Equal(t, 0, baselined2, "a row with no comment id must stay unbaselined")
 }
+
+// TestSchema_ProjectForgesSchemeMigration covers the upgrade path: a database
+// created before the scheme column existed must gain it, with existing rows
+// backfilled to ” (unknown) rather than 'https'.
+//
+// It drives the REAL migration (InitDB) against a legacy on-disk database. A
+// test that executes the ALTER itself proves only that SQLite backfills an empty
+// default — it would still pass with the migration deleted, an inverted pragma
+// guard, or a missing DDL column, which is precisely the class of failure this
+// is meant to catch.
+func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// A LEGACY project_forges table: no scheme column, one pre-existing row.
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	legacy, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = legacy.Exec(`CREATE TABLE project_forges (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		project_path TEXT NOT NULL,
+		platform     TEXT NOT NULL,
+		host         TEXT NOT NULL,
+		owner        TEXT NOT NULL,
+		repo         TEXT NOT NULL,
+		source       TEXT NOT NULL DEFAULT 'auto',
+		created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+	_, err = legacy.Exec(
+		`INSERT INTO project_forges (project_path, platform, host, owner, repo)
+		 VALUES ('/proj', 'gitlab', 'gitlab.internal', 'group', 'widgets')`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	// Run the real migration.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "project_forges")
+	assert.Contains(t, columns, "scheme",
+		"the migration must add scheme to an existing database")
+
+	// The existing row must read back as "" — not "https". A guess frozen here
+	// would override the credential's hint on an http-only instance.
+	var scheme string
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		"SELECT scheme FROM project_forges WHERE project_path = '/proj'").Scan(&scheme))
+	assert.Empty(t, scheme, "existing rows must backfill to unknown, not https")
+
+	// And the migrated table must be usable through the real accessors, which is
+	// what an upgrade actually exercises.
+	pf, err := GetProjectForge("/proj")
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "gitlab.internal", pf.Host)
+	assert.Empty(t, pf.Scheme)
+}
+
+// TestSchema_ProjectForgesSchemeMigrationIsIdempotent runs the real migration repeatedly:
+// a restart must not fail or duplicate work, since InitDB runs on every boot.
+func TestSchema_ProjectForgesSchemeMigrationIsIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	for i := range 3 {
+		require.NoError(t, InitDB(), "InitDB must succeed on run %d", i+1)
+		columns := getTableColumns(t, UnsafeDBForTest(), "project_forges")
+		assert.Contains(t, columns, "scheme")
+		CloseDB()
+	}
+
+	// A binding written after migration must survive another pass unchanged.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+	require.NoError(t, UpsertProjectForge(ProjectForge{
+		ProjectPath: "/proj2", Platform: "gitlab", Host: "gitlab.internal",
+		Scheme: "http", Owner: "g", Repo: "w",
+	}))
+	CloseDB()
+	require.NoError(t, InitDB())
+	pf, err := GetProjectForge("/proj2")
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "http", pf.Scheme, "a later migration pass must not disturb stored data")
+}

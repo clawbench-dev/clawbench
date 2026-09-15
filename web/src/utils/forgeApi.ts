@@ -13,6 +13,8 @@ export const FORGE_TIMEOUT_MS = 20_000
 export interface ForgeBinding {
     platform: string
     host: string
+    /** Resolved API scheme ("http" or "https") requests to this host use. */
+    scheme?: string
     owner: string
     repo: string
     slug: string
@@ -120,6 +122,12 @@ export interface ForgeRemote {
     url: string
     platform?: string
     host?: string
+    /**
+     * The remote's own API scheme, absent when it could not state one (an ssh or
+     * scp remote). Distinct from an explicit "https": the UI resolves it for
+     * display instead of treating an absent value as https.
+     */
+    scheme?: string
     owner?: string
     repo?: string
     slug?: string
@@ -263,7 +271,22 @@ export function fetchForgePipeline(id: number, signal?: AbortSignal): Promise<Fo
     return forgeFetch(`/api/forge/pipeline?id=${id}`, { signal })
 }
 
-export function setForgeBinding(input: { url?: string; platform?: string; host?: string; owner?: string; repo?: string }): Promise<{ binding: ForgeBinding }> {
+/**
+ * Bind the project to a repository.
+ *
+ * Either pass `url` (a remote URL parsed server-side, which carries its own
+ * scheme) or the explicit fields. `scheme` is optional: omit it when the source
+ * did not state one, so the server keeps any scheme already recorded for the
+ * host rather than overwriting it with a guess.
+ */
+export function setForgeBinding(input: {
+    url?: string
+    platform?: string
+    host?: string
+    scheme?: string
+    owner?: string
+    repo?: string
+}): Promise<{ binding: ForgeBinding }> {
     return forgeFetch('/api/forge/binding', { method: 'POST', body: input })
 }
 
@@ -279,7 +302,14 @@ export function testForgeConnection(): Promise<{ ok: boolean; identity?: string;
     return forgeFetch('/api/forge/test', { method: 'POST' })
 }
 
-export function setForgeToken(host: string, token: string): Promise<{ host: string; has_token: boolean }> {
+/**
+ * Save a token for a forge host.
+ *
+ * `host` accepts what the user typed — a bare host or a full URL — and the
+ * server normalizes it. A URL also records the API scheme for that host, which
+ * is how an http-only instance is reached when the git remote cannot say.
+ */
+export function setForgeToken(host: string, token: string): Promise<{ host: string; scheme: string; has_token: boolean }> {
     return forgeFetch('/api/forge/credentials', { method: 'POST', body: { host, token } })
 }
 
@@ -302,6 +332,7 @@ export function verifyForgeToken(input: { host: string; token?: string }): Promi
     ok: boolean
     identity?: string
     name?: string
+    scheme?: string
     code?: string
     error?: string
 }> {

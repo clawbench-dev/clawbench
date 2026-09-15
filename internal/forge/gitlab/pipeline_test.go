@@ -98,6 +98,51 @@ func TestListPipelineRuns_AppliesSinceServerSide(t *testing.T) {
 	assert.Equal(t, "2026-09-14T12:00:00Z", gotUpdatedAfter)
 }
 
+// TestListPipelineRuns_OrderByPairsWithUpdatedAfter pins the pairing that
+// GitLab requires, and that the docs do not mention. Every other combination
+// returns 500:
+//
+//	order_by=id         + updated_after
+//	order_by=updated_at without it (on large projects)
+//
+// so the two parameters must move together.
+func TestListPipelineRuns_OrderByPairsWithUpdatedAfter(t *testing.T) {
+	t.Run("no lower bound uses id and omits updated_after", func(t *testing.T) {
+		var gotOrderBy, gotUpdatedAfter string
+		var hadUpdatedAfter bool
+		p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotOrderBy = r.URL.Query().Get("order_by")
+			gotUpdatedAfter = r.URL.Query().Get("updated_after")
+			_, hadUpdatedAfter = r.URL.Query()["updated_after"]
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		}))
+
+		_, err := p.ListPipelineRuns(context.Background(), time.Time{}, 1, 30)
+		require.NoError(t, err)
+		assert.Equal(t, "id", gotOrderBy)
+		assert.False(t, hadUpdatedAfter, "updated_after must be absent, not empty")
+		assert.Empty(t, gotUpdatedAfter)
+	})
+
+	t.Run("a lower bound switches to updated_at", func(t *testing.T) {
+		var gotOrderBy, gotUpdatedAfter string
+		p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotOrderBy = r.URL.Query().Get("order_by")
+			gotUpdatedAfter = r.URL.Query().Get("updated_after")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		}))
+
+		since := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+		_, err := p.ListPipelineRuns(context.Background(), since, 1, 30)
+		require.NoError(t, err)
+		// order_by=id here would make GitLab answer 500.
+		assert.Equal(t, "updated_at", gotOrderBy)
+		assert.Equal(t, "2026-09-14T12:00:00Z", gotUpdatedAfter)
+	})
+}
+
 // TestListPipelineRuns_PaginationFromNextPageHeader covers the paging contract.
 func TestListPipelineRuns_PaginationFromNextPageHeader(t *testing.T) {
 	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

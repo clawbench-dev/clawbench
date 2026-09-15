@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -185,7 +186,7 @@ func TestWriteForgeError_MapsKinds(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(string(tc.kind), func(t *testing.T) {
 			w := newRecorder()
-			writeForgeError(w, &forge.Error{Kind: tc.kind, Message: "boom"})
+			writeForgeError(w, &forge.Error{Kind: tc.kind, Message: "boom"}, nil)
 			assert.Equal(t, tc.status, w.Code)
 			resp := mustJSON(t, w.Body.Bytes())
 			assert.Equal(t, tc.code, resp["code"])
@@ -202,14 +203,14 @@ func TestWriteForgeError_RateLimitCarriesRetryAfter(t *testing.T) {
 		Kind:              forge.ErrKindRateLimit,
 		Message:           "slow down",
 		RetryAfterSeconds: 42,
-	})
+	}, nil)
 	assert.Equal(t, "42", w.Header().Get("Retry-After"))
 	resp := mustJSON(t, w.Body.Bytes())
 	assert.Equal(t, float64(42), resp["retryAfterSeconds"])
 
 	// A non-forge error keeps the generic shape.
 	w2 := newRecorder()
-	writeForgeError(w2, assert.AnError)
+	writeForgeError(w2, assert.AnError, nil)
 	assert.Equal(t, http.StatusBadGateway, w2.Code)
 	assert.Equal(t, "ForgeError", mustJSON(t, w2.Body.Bytes())["code"])
 	assert.Empty(t, w2.Header().Get("Retry-After"))
@@ -263,6 +264,129 @@ func TestNewForgeProvider_BuildsPerPlatform(t *testing.T) {
 func TestForgeContext_NilContextFallsBack(t *testing.T) {
 	req := &http.Request{}
 	assert.NotNil(t, forgeContext(req), "a missing context must fall back to Background")
+}
+
+// TestNewForgeProvider_SchemeReachesRequestURL is the end-to-end proof that the
+// scheme actually changes where requests go.
+//
+// A binding whose host is served over http must produce an http request. Before
+// this, the scheme was hardcoded to https, so an internal http instance failed
+// with a TLS error that named nothing useful.
+func TestNewForgeProvider_SchemeReachesRequestURL(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	var gotScheme string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotScheme = "http"
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"octocat","name":"Mona"}`))
+	}))
+	defer srv.Close()
+	// The server's URL is "http://127.0.0.1:PORT"; the provider takes host:port
+	// and the scheme separately, which is exactly the split under test.
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	model.ConfigInstance = model.Config{}
+	p, err := newForgeProvider(&service.ProjectForge{
+		Platform: "gitlab", Host: host, Scheme: "http", Owner: "group", Repo: "widgets",
+	})
+	require.NoError(t, err)
+
+	author, err := p.CurrentUser(context.Background())
+	require.NoError(t, err, "an http instance must be reachable when the binding says http")
+	assert.Equal(t, "octocat", author.Login)
+	assert.Equal(t, "http", gotScheme, "the request must go out over the binding's scheme")
+}
+
+// TestNewForgeProvider_SchemeHintFromCredential covers the case the binding
+// cannot answer: an ssh remote records no scheme, so the hint the user set when
+// configuring the credential is what makes an http-only instance reachable.
+func TestNewForgeProvider_SchemeHintFromCredential(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"octocat","name":"Mona"}`))
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	// The credential was configured with a URL, which is what recorded the hint.
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.SetForgeToken(host, "glpat-x")
+	model.ConfigInstance.SetForgeScheme(host, "http")
+
+	p, err := newForgeProvider(&service.ProjectForge{
+		// No Scheme on the binding — this is the ssh-remote case.
+		Platform: "gitlab", Host: host, Owner: "group", Repo: "widgets",
+	})
+	require.NoError(t, err)
+
+	author, err := p.CurrentUser(context.Background())
+	require.NoError(t, err, "the credential's scheme hint must make the instance reachable")
+	assert.Equal(t, "octocat", author.Login)
+	assert.True(t, hit, "the request must have reached the http server")
+}
+
+// TestNewForgeProvider_BindingSchemeBeatsHint pins the precedence: a binding that
+// states its own scheme is the more specific fact about that repository.
+func TestNewForgeProvider_BindingSchemeBeatsHint(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"octocat","name":"Mona"}`))
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	model.ConfigInstance = model.Config{}
+	// A conflicting hint: https would fail against this plain-http server.
+	model.ConfigInstance.SetForgeScheme(host, "https")
+
+	p, err := newForgeProvider(&service.ProjectForge{
+		Platform: "gitlab", Host: host, Scheme: "http", Owner: "group", Repo: "widgets",
+	})
+	require.NoError(t, err)
+
+	_, err = p.CurrentUser(context.Background())
+	require.NoError(t, err, "the binding's own scheme must win over the instance hint")
+	assert.True(t, hit)
+}
+
+// TestNewForgeProvider_UnknownSchemeDefaultsHTTPS guards the fallback: with no
+// scheme anywhere, behavior must be exactly what it was before schemes existed.
+func TestNewForgeProvider_UnknownSchemeDefaultsHTTPS(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	srv := httptestTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"octocat","name":"Mona"}`))
+	}))
+	host := strings.TrimPrefix(srv.URL, "https://")
+
+	model.ConfigInstance = model.Config{}
+	// The test server uses a self-signed certificate, so TLS verification must
+	// be relaxed for the probe to succeed — this is the same opt-in the real
+	// setting provides.
+	model.ConfigInstance.Forge.InsecureTLS = true
+
+	p, err := newForgeProvider(&service.ProjectForge{
+		Platform: "gitlab", Host: host, Owner: "group", Repo: "widgets",
+	})
+	require.NoError(t, err)
+
+	author, err := p.CurrentUser(context.Background())
+	require.NoError(t, err, "an unstated scheme must still resolve to https")
+	assert.Equal(t, "octocat", author.Login)
 }
 
 // TestNewForgeProvider_ExportedWrapper covers the exported bridge used by the

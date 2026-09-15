@@ -177,7 +177,7 @@ func ServeForgePipelines(w http.ResponseWriter, r *http.Request) {
 
 	runs, hasMore, err := collectPipelineRuns(forgeContext(r), lister, page, perPage, statusFilter)
 	if err != nil {
-		writeForgeError(w, err)
+		writeForgeError(w, err, pf)
 		return
 	}
 
@@ -320,7 +320,7 @@ func ServeForgePipeline(w http.ResponseWriter, r *http.Request) {
 	// this normally terminates on the first page.
 	run, found, err := findPipelineRun(forgeContext(r), lister, runID)
 	if err != nil {
-		writeForgeError(w, err)
+		writeForgeError(w, err, pf)
 		return
 	}
 	if !found {

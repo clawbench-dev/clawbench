@@ -201,7 +201,13 @@ function makeI18n() {
             unbind: 'Unbind',
           },
           detail: { back: 'Back', openBrowser: 'Open', analyze: 'Analyze', loadOlder: 'Load older' },
-          error: { auth: 'Auth failed', rateLimit: 'Rate limited', network: 'Network', generic: 'Failed' },
+          error: {
+            auth: 'Auth failed',
+            rateLimit: 'Rate limited',
+            network: 'Network',
+            noCredential: 'Repository not accessible or no access token configured',
+            generic: 'Failed',
+          },
         },
       },
     },
@@ -328,6 +334,30 @@ describe('ForgePanelContent', () => {
     // The retired segmented-control markup must be gone.
     expect(wrapper.find('.forge-segment').exists()).toBe(false)
     expect(wrapper.find('.forge-segment-btn').exists()).toBe(false)
+  })
+
+  it('offers the merged chip on the change-request tab only', async () => {
+    // GitLab reports merged as its own MR state and its API rejects
+    // state=merged on the issues endpoint; GitHub issues have no merge concept.
+    // Offering the chip on the issues tab would present a filter that is
+    // always empty.
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = []
+
+    // Issues tab: no merged chip.
+    state.type.value = 'issue'
+    const issues = await mountOnIssues()
+    await new Promise(r => setTimeout(r, 0))
+    const issueChips = issues.findAll('.forge-chip').map(c => c.text())
+    expect(issueChips).not.toContain('Merged')
+
+    // Change-request tab: merged is offered.
+    state.type.value = 'pr'
+    const prs = await mountOnIssues()
+    await new Promise(r => setTimeout(r, 0))
+    const prChips = prs.findAll('.forge-chip').map(c => c.text())
+    expect(prChips).toContain('Merged')
   })
 
   it('switches to the pipelines tab and loads its data', async () => {
@@ -656,6 +686,32 @@ describe('ForgePanelContent', () => {
     expect(wrapper.text()).toContain('Auth failed')
     expect(wrapper.text()).toContain('bad credentials')
     expect(wrapper.text()).toContain('Retry')
+  })
+
+  it('gives a not-found on an uncredentialed host its own error title', async () => {
+    // Private repositories answer 404 rather than 403, so the platform's own
+    // "Project Not Found" sends the user hunting for a typo in the repository
+    // path when the real fix is to add a token. The server classifies that case
+    // as ForgeNoCredential and the panel must surface a matching title.
+    //
+    // The assertion targets .forge-error-title specifically: the server's own
+    // message (rendered below it) also mentions the token, so a text-contains
+    // check on the whole card would pass even with the title mapping removed.
+    state.binding.value = { platform: 'gitlab', host: 'gitlab.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.error.value = {
+      message: 'gitlab has no access token configured for gitlab.com',
+      code: 'ForgeNoCredential',
+    }
+    const wrapper = await mountOnIssues()
+    await new Promise(r => setTimeout(r, 0))
+
+    const title = wrapper.find('.forge-error-title')
+    expect(title.exists()).toBe(true)
+    expect(title.text()).toBe('Repository not accessible or no access token configured')
+    expect(title.text()).not.toBe('Failed to load')
+    // The server's message is still shown verbatim underneath the title.
+    expect(wrapper.find('.forge-error-body').text()).toContain('gitlab.com')
   })
 
   it('re-emits the detail view\'s quote request', async () => {
@@ -1135,6 +1191,48 @@ describe('ForgePanelContent non-official host warning', () => {
     // signal available on this path.
     expect(rows[0].querySelector('.forge-remote-warning'), 'self-hosted row must hint').not.toBeNull()
     expect(rows[1].querySelector('.forge-remote-warning'), 'github.com row must not hint').toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('shows the scheme badge only for remotes that state one', async () => {
+    // An http-only internal instance looks identical to an https one otherwise,
+    // so the row shows the scheme it actually resolved. An ssh remote states
+    // none — that is not the same as https, and guessing it here would
+    // contradict the server, which resolves the scheme from the credential hint.
+    mockFetchRemotes.mockResolvedValue({
+      remotes: [
+        { name: 'origin', url: 'http://git.internal.corp/acme/widgets.git', platform: 'gitlab', host: 'git.internal.corp', scheme: 'http', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' },
+        { name: 'upstream', url: 'git@git.internal.corp:acme/other.git', platform: 'gitlab', host: 'git.internal.corp', owner: 'acme', repo: 'other', slug: 'acme/other' },
+      ],
+    })
+    const wrapper = await openDialog()
+
+    const rows = document.body.querySelectorAll('.forge-remote-row')
+    expect(rows.length).toBe(2)
+    expect(rows[0].querySelector('.forge-remote-scheme')?.textContent).toBe('http')
+    expect(rows[1].querySelector('.forge-remote-scheme'), 'an ssh remote states no scheme').toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('forwards the remote scheme when binding from a row', async () => {
+    // The scheme must reach the server, or an http-only instance would be
+    // probed over https and fail with an opaque TLS error.
+    mockFetchRemotes.mockResolvedValue({
+      remotes: [
+        { name: 'origin', url: 'http://git.internal.corp/acme/widgets.git', platform: 'gitlab', host: 'git.internal.corp', scheme: 'http', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' },
+      ],
+    })
+    const wrapper = await openDialog()
+
+    const row = document.body.querySelector('.forge-remote-row') as HTMLElement
+    row.click()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(mockSetBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ host: 'git.internal.corp', scheme: 'http' }),
+    )
 
     wrapper.unmount()
   })

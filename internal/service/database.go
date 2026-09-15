@@ -649,6 +649,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := WriteExec(ProjectForgesDDL); err != nil {
 		return fmt.Errorf("failed to create project_forges table: %w", err)
 	}
+	// project_forges.scheme: the API scheme the binding's host is reached with.
+	//
+	// Existing rows backfill to '' (unknown) rather than 'https'.
+	{
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('project_forges') WHERE name='scheme'").Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec("ALTER TABLE project_forges ADD COLUMN scheme TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add project_forges.scheme column: %w", err)
+			}
+		}
+	}
 	// Forge sync state: snapshot rows, watermark, derived events, and the CI
 	// run ledger.
 	for _, ddl := range []string{ForgeItemsDDL, ForgeSyncStateDDL, ForgeEventDDL, ForgePipelineRunsDDL} {

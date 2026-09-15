@@ -284,6 +284,124 @@ func TestServeForgeBinding_AcceptsExplicitFields(t *testing.T) {
 	assert.Equal(t, "group/sub", pf.Owner)
 }
 
+// TestServeForgeBinding_PersistsSchemeFromHostField covers the explicit-fields
+// path: a client may send the scheme either inside the host field or as its own
+// field, and a self-hosted http instance must survive as http — not be silently
+// upgraded to https, which is what made an internal instance unreachable.
+func TestServeForgeBinding_PersistsSchemeFromHostField(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"platform": "gitlab", "host": "http://gitlab.internal:8080",
+		"owner": "group", "repo": "widgets",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "gitlab.internal:8080", pf.Host,
+		"the scheme must not leak into the host key")
+	assert.Equal(t, "http", pf.Scheme)
+
+	// The response reports the resolved scheme so the UI can display it.
+	assert.Contains(t, w.Body.String(), `"scheme":"http"`)
+}
+
+// TestServeForgeBinding_SchemeFieldHonored covers the split form, where the
+// client sends the scheme separately rather than inside the host.
+func TestServeForgeBinding_SchemeFieldHonored(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"platform": "gitlab", "host": "gitlab.internal:8080", "scheme": "http",
+		"owner": "group", "repo": "widgets",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "http", pf.Scheme)
+}
+
+// TestServeForgeBinding_SchemeInHostWinsOverField pins the precedence when a
+// client sends both: the host field is what the user actually typed, so it is
+// the more specific statement.
+func TestServeForgeBinding_SchemeInHostWinsOverField(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"platform": "gitlab", "host": "http://gitlab.internal", "scheme": "https",
+		"owner": "group", "repo": "widgets",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "http", pf.Scheme, "the scheme in the host field is the more specific statement")
+}
+
+// TestServeForgeBinding_URLSchemePersists covers the URL path: an http clone URL
+// must bind over http rather than defaulting to https.
+func TestServeForgeBinding_URLSchemePersists(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"url": "http://gitlab.internal/group/widgets.git",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "gitlab.internal", pf.Host)
+	assert.Equal(t, "http", pf.Scheme)
+}
+
+// TestServeForgeBinding_SSHRemoteLeavesSchemeEmpty pins the distinction between
+// "no scheme stated" and "https". An ssh remote says nothing about the API
+// scheme, so the binding must record nothing and let the credential's hint
+// decide — writing https here would override an http-only instance.
+func TestServeForgeBinding_SSHRemoteLeavesSchemeEmpty(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"url": "git@gitlab.internal:group/widgets.git",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Empty(t, pf.Scheme, "ssh does not imply an API scheme")
+
+	// The response still reports the resolved scheme, so the UI can show which
+	// one requests will actually use.
+	assert.Contains(t, w.Body.String(), `"scheme":"https"`)
+}
+
 func TestServeForgeItems_NoBindingReturns404(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()

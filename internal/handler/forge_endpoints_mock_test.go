@@ -377,6 +377,107 @@ func TestServeForgeRemotes_ListsParsedRemotes(t *testing.T) {
 	assert.False(t, parsed, "a non-forge remote must not be parsed")
 }
 
+// TestServeForgeRemotes_ReportsEachRemotesOwnScheme pins the raw-vs-resolved
+// distinction the UI depends on: a remote that names http must say http, and one
+// that cannot state a scheme (ssh) must say nothing rather than being pre-filled
+// with https.
+//
+// The UI uses this to decide whether to show a scheme chip, and confirming a
+// suggestion writes the value into the binding — so a wrong value here becomes
+// persisted configuration, not just a label.
+func TestServeForgeRemotes_ReportsEachRemotesOwnScheme(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	runGitInDir(t, env.ProjectDir, "init")
+	runGitInDir(t, env.ProjectDir, "remote", "add", "http", "http://gitlab.internal/group/widgets.git")
+	runGitInDir(t, env.ProjectDir, "remote", "add", "https", "https://gitlab.internal/group/widgets.git")
+	runGitInDir(t, env.ProjectDir, "remote", "add", "ssh", "git@gitlab.internal:group/widgets.git")
+
+	req := newRequest(t, http.MethodGet, "/api/forge/remotes", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeRemotes, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	byName := map[string]map[string]any{}
+	for _, raw := range resp["remotes"].([]any) {
+		m := raw.(map[string]any)
+		byName[m["name"].(string)] = m
+	}
+
+	assert.Equal(t, "http", byName["http"]["scheme"],
+		"a remote that names http must report http, or an internal instance is unreachable")
+	assert.Equal(t, "https", byName["https"]["scheme"])
+	// The scp form says nothing about the API scheme. Reporting "" (absent) is
+	// the point: the server resolves it from the credential's hint, and a
+	// pre-filled https would be persisted as if the remote had said it.
+	assert.Empty(t, byName["ssh"]["scheme"], "an ssh remote must not claim a scheme")
+	assert.Equal(t, "gitlab.internal", byName["ssh"]["host"],
+		"the ssh and http remotes must share one host key")
+}
+
+// TestServeForgeBinding_SuggestionCarriesRawScheme covers the suggested-binding
+// payload: the scheme must be the remote's own (possibly empty), not a resolved
+// default, because confirming the suggestion persists it.
+func TestServeForgeBinding_SuggestionCarriesRawScheme(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	runGitInDir(t, env.ProjectDir, "init")
+	// A non-official host is never auto-bound, so it comes back as a suggestion.
+	runGitInDir(t, env.ProjectDir, "remote", "add", "origin", "http://gitlab.internal/group/widgets.git")
+
+	req := newRequest(t, http.MethodGet, "/api/forge/binding", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	assert.Nil(t, resp["binding"], "a non-official host must not be auto-bound")
+	suggested, ok := resp["suggested"].(map[string]any)
+	require.True(t, ok, "an http remote must produce a suggestion")
+	assert.Equal(t, "http", suggested["scheme"],
+		"the suggestion must carry the remote's own scheme, or confirming it would bind https")
+	assert.Equal(t, "gitlab.internal", suggested["host"])
+}
+
+// TestServeForgeBinding_SuggestionSSHSchemeStaysAbsent pins the other half: an
+// ssh remote must suggest an ABSENT scheme, not a resolved https, so confirming
+// it does not freeze a guess into the binding.
+func TestServeForgeBinding_SuggestionSSHSchemeStaysAbsent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	runGitInDir(t, env.ProjectDir, "init")
+	runGitInDir(t, env.ProjectDir, "remote", "add", "origin", "git@gitlab.internal:group/widgets.git")
+
+	req := newRequest(t, http.MethodGet, "/api/forge/binding", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	suggested, ok := resp["suggested"].(map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, suggested["scheme"],
+		"an ssh remote must not suggest a scheme it cannot know")
+}
+
 // TestServeForgeRemotes_NotARepoReturnsEmpty covers the error branch: git fails,
 // so the endpoint returns an empty list rather than a 500.
 func TestServeForgeRemotes_NotARepoReturnsEmpty(t *testing.T) {
@@ -543,4 +644,67 @@ func TestServeForgeItems_TagsUnreadRows(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "badge count must match the number of tagged rows")
+}
+
+// TestServeForgeItems_NotFoundWithoutTokenNamesTheHost covers the hint that
+// turns an opaque 404 into an actionable one.
+//
+// GitLab (and GitHub) answer 404 — not 403 — for a private repository the
+// caller cannot see, so the platform's own "404 Project Not Found" tells the
+// user nothing about which of the two causes applies. When the bound host has
+// no credential at all, the request went out anonymously, and saying so is the
+// difference between "check your repository path" and "add a token".
+func TestServeForgeItems_NotFoundWithoutTokenNamesTheHost(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	host := mockGitLab(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Project Not Found"}`))
+	}))
+	bindProject(t, env.ProjectDir, "gitlab", host)
+
+	// Ensure the host has no stored credential, which is the whole point.
+	model.ConfigInstance.SetForgeToken(host, "")
+
+	req := newRequest(t, http.MethodGet, "/api/forge/items?type=issue&state=open", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeItems, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "ForgeNoCredential", resp["code"])
+	msg, _ := resp["error"].(string)
+	assert.Contains(t, msg, host, "the message must name the host so the user knows where to add a token")
+}
+
+// TestServeForgeItems_NotFoundWithTokenStaysGeneric is the control: when a
+// credential IS configured, the same 404 means the repository genuinely is not
+// visible to that token, and the hint must not claim a token is missing.
+func TestServeForgeItems_NotFoundWithTokenStaysGeneric(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	host := mockGitLab(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Project Not Found"}`))
+	}))
+	bindProject(t, env.ProjectDir, "gitlab", host)
+	model.ConfigInstance.SetForgeToken(host, "glpat-present")
+	t.Cleanup(func() { model.ConfigInstance.SetForgeToken(host, "") })
+
+	req := newRequest(t, http.MethodGet, "/api/forge/items?type=issue&state=open", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeItems, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "ForgeNotFound", resp["code"],
+		"a configured token means the 404 is a real not-found, not a credential hint")
 }

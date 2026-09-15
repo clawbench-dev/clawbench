@@ -36,6 +36,10 @@ describe('forge locale values', () => {
     expect(zh.forge.state.open).toBe('开启')
     expect(zh.forge.state.closed).toBe('已关闭')
     expect(zh.forge.state.all).toBe('全部')
+    // "merged" is a first-class filter for change requests, not just a display
+    // state: GitLab's state=closed excludes merged MRs, so the two must be
+    // separately selectable for the platforms to agree.
+    expect(zh.forge.state.merged).toBe('已合并')
   })
 
   it('translates the dock nav label in zh', () => {

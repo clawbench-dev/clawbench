@@ -19,9 +19,26 @@ import (
 //
 // GitLab supports a real server-side `updated_after`, so the lower bound is
 // applied by the API rather than locally.
+//
+// order_by and updated_after must be chosen TOGETHER, because GitLab errors on
+// every other pairing:
+//
+//	order_by=id          + updated_after  → 500 Internal Server Error
+//	order_by=updated_at  without it       → 500 on large projects
+//	order_by=id          without it       → 200
+//	order_by=updated_at  + updated_after  → 200
+//
+// The underlying cause is that updated_after filters on a column the query can
+// only scan when the results are ordered by it; ordering by id instead leaves
+// the planner without a usable index and the request times out as a 500. The
+// two branches below are therefore a pair, not two independent choices.
 func (p *Provider) ListPipelineRuns(ctx context.Context, since time.Time, page, perPage int) (forge.PipelineRunPage, error) {
 	q := url.Values{}
-	q.Set("order_by", "id")
+	if since.IsZero() {
+		q.Set("order_by", "id")
+	} else {
+		q.Set("order_by", "updated_at")
+	}
 	q.Set("sort", "desc")
 	q.Set("page", strconv.Itoa(pageOrDefault(page)))
 	q.Set("per_page", strconv.Itoa(perPageOrDefault(perPage)))

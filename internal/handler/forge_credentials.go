@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"clawbench/internal/forge"
@@ -40,7 +39,7 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 			return
 		}
-		host := strings.ToLower(strings.TrimSpace(req.Host))
+		scheme, host := model.SplitForgeHostScheme(req.Host)
 		if host == "" {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 			return
@@ -48,21 +47,26 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 		// Any host is accepted, including self-hosted instances on private
 		// networks and unresolvable internal names. The UI warns before binding
 		// a non-official host; the server does not gate it.
-		if err := setForgeToken(host, req.Token); err != nil {
+		if err := setForgeToken(host, req.Token, scheme); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError", nil)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			jsonHost:    host,
+			jsonHost: host,
+			// The RESOLVED scheme, not the raw hint: this is what requests to
+			// that host will actually use, which is what the caller needs to
+			// display. Reporting the raw hint would show "" for a bare host even
+			// though requests go out over https.
+			jsonScheme:  forge.ResolveScheme("", model.ConfigInstance.ForgeScheme(host)),
 			"has_token": req.Token != "",
 		})
 	case http.MethodDelete:
-		host := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("host")))
+		host := model.NormalizeForgeHost(r.URL.Query().Get("host"))
 		if host == "" {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 			return
 		}
-		if err := setForgeToken(host, ""); err != nil {
+		if err := setForgeToken(host, "", ""); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError", nil)
 			return
 		}
@@ -75,12 +79,22 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 
 // setForgeToken persists a forge credential, restoring the in-memory snapshot on
 // disk-write failure so config never diverges from what is stored.
-func setForgeToken(host, token string) error {
+//
+// `scheme` is the API scheme the user named in the host field ("http://h"), or
+// "" when they typed a bare host. The two cases are NOT the same, and an empty
+// token disambiguates them:
+//
+//   - token != "" and scheme == "": the user replaced the token by typing a bare
+//     host. That says nothing about the scheme, so any recorded hint is kept —
+//     overwriting it would silently switch an http-only instance to https.
+//   - token == "": the credential is being cleared, so its hint goes with it.
+//     A scheme for a host with no credential is state the UI cannot act on.
+func setForgeToken(host, token, scheme string) error {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
 	snapshot := model.ConfigInstance
-	// Copy the credentials map so a failed write can be rolled back cleanly.
+	// Copy the maps so a failed write can be rolled back cleanly.
 	prev := model.ConfigInstance.Forge.Credentials
 	next := make(map[string]string, len(prev)+1)
 	for k, v := range prev {
@@ -91,13 +105,40 @@ func setForgeToken(host, token string) error {
 	} else {
 		next[host] = token
 	}
-	model.ConfigInstance.Forge.Credentials = next
 
-	// Persist the whole credentials map: writeConfigYAML patches the YAML map
-	// generically, and a per-host delete must be reflected on disk too.
+	// The hint is copied rather than mutated in place, so the rollback above
+	// covers both maps.
+	prevSchemes := model.ConfigInstance.Forge.Schemes
+	nextSchemes := make(map[string]string, len(prevSchemes)+1)
+	for k, v := range prevSchemes {
+		nextSchemes[k] = v
+	}
+	// Clamp before storing: the splitter returns whatever preceded "://", so a
+	// typo like "ftp://host" would otherwise be persisted and echoed back to the
+	// settings UI as a real scheme. Requests would still work (the resolver
+	// falls back to https for anything unrecognized), but the UI would advertise
+	// a scheme that is not in use — the opposite of what the hint is for.
+	validScheme := forge.NormalizeScheme(scheme)
+	switch {
+	case token == "":
+		// Clearing the credential clears its hint too.
+		delete(nextSchemes, host)
+	case validScheme != "":
+		nextSchemes[host] = validScheme
+		// Nothing usable was named with a token present: leave any existing
+		// hint untouched, since a bare host says nothing about the scheme.
+	}
+
+	model.ConfigInstance.Forge.Credentials = next
+	model.ConfigInstance.Forge.Schemes = nextSchemes
+
+	// Persist both maps: writeConfigYAML patches the YAML map generically, and a
+	// per-host delete must be reflected on disk too. Writing them together keeps
+	// a token and its scheme hint from diverging on disk.
 	patch := map[string]any{
 		"forge": map[string]any{
 			"credentials": next,
+			"schemes":     nextSchemes,
 		},
 	}
 	if err := writeConfigYAML(patch); err != nil {
@@ -138,7 +179,10 @@ func ServeForgeVerifyToken(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 		return
 	}
-	host := strings.ToLower(strings.TrimSpace(req.Host))
+	// A scheme in the host field applies to this check. When the user typed a
+	// bare host, fall back to the stored hint so re-verifying a saved credential
+	// reaches an http-only instance the same way a request would.
+	scheme, host := model.SplitForgeHostScheme(req.Host)
 	if host == "" {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 		return
@@ -158,7 +202,7 @@ func ServeForgeVerifyToken(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	author, err := verifyForgeToken(r, host, token)
+	author, err := verifyForgeToken(r, host, token, scheme)
 	if err != nil {
 		code := "ForgeError"
 		var fe *forge.Error
@@ -177,25 +221,30 @@ func ServeForgeVerifyToken(w http.ResponseWriter, r *http.Request) {
 		"identity": author.Login,
 		"name":     author.Name,
 		jsonHost:   host,
+		jsonScheme: forge.ResolveScheme(scheme, model.ConfigInstance.ForgeScheme(host)),
 	})
 }
 
 // verifyForgeToken builds a host-scoped client and probes the platform's user
 // endpoint. The platform is derived from the host the same way bindings are.
-func verifyForgeToken(r *http.Request, host, token string) (forge.Author, error) {
-	return verifyForgeTokenContext(forgeContext(r), host, token)
+//
+// `scheme` is the scheme the caller named in the host field, or "" when it named
+// none; the instance hint fills the gap.
+func verifyForgeToken(r *http.Request, host, token, scheme string) (forge.Author, error) {
+	return verifyForgeTokenContext(forgeContext(r), host, token, scheme)
 }
 
 // verifyForgeTokenContext is the context-explicit form of verifyForgeToken, so
 // callers without an *http.Request (the identity cache) share one implementation
-// and therefore one credential/TLS policy.
-func verifyForgeTokenContext(ctx context.Context, host, token string) (forge.Author, error) {
+// and therefore one credential/TLS/scheme policy.
+func verifyForgeTokenContext(ctx context.Context, host, token, scheme string) (forge.Author, error) {
 	httpClient := forgeHTTPClient()
+	resolved := forge.ResolveScheme(scheme, model.ConfigInstance.ForgeScheme(host))
 
 	if forge.PlatformForHost(host) == forge.PlatformGitHub {
 		baseURL := ""
 		if host != forge.GitHubHost {
-			baseURL = fmt.Sprintf("https://%s/api/v3", host)
+			baseURL = fmt.Sprintf("%s://%s/api/v3", resolved, host)
 		}
 		return github.VerifyToken(ctx, github.Config{
 			Token:      token,
@@ -206,6 +255,7 @@ func verifyForgeTokenContext(ctx context.Context, host, token string) (forge.Aut
 	return gitlab.VerifyToken(ctx, gitlab.Config{
 		Token:      token,
 		Host:       host,
+		Scheme:     resolved,
 		HTTPClient: httpClient,
 	})
 }

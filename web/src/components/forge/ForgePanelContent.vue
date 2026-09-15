@@ -329,7 +329,14 @@
             >
               <Github :size="15" class="forge-remote-icon" />
               <span class="forge-remote-text">
-                <span class="forge-remote-name">{{ r.name }}</span>
+                <span class="forge-remote-name">
+                  {{ r.name }}
+                  <!-- The remote's own scheme, when it states one. An ssh remote
+                       states none, so nothing is shown rather than guessing
+                       https: the server resolves that case from the credential's
+                       recorded hint. -->
+                  <span v-if="r.scheme" class="forge-remote-scheme">{{ r.scheme }}</span>
+                </span>
                 <span class="forge-remote-url">{{ r.slug || r.url }}</span>
                 <!-- Rows bind on click, so this hint is the only pre-submit
                      signal on this path. -->
@@ -444,7 +451,19 @@ function tabIcon(key: ForgeTabKey) {
 
 const activeTab = ref<ForgeTabKey>('overview')
 
-const stateOptions: Array<'open' | 'closed' | 'all'> = ['open', 'closed', 'all']
+/**
+ * State chips for the current item type.
+ *
+ * "merged" is offered only for change requests: GitLab issues have no merged
+ * lifecycle and its API rejects state=merged on the issues endpoint, and GitHub
+ * issues have no merge concept at all. Showing the chip on the issues tab would
+ * present a filter that is always empty.
+ */
+const stateOptions = computed<Array<'open' | 'closed' | 'merged' | 'all'>>(() =>
+  items.type.value === 'pr'
+    ? ['open', 'closed', 'merged', 'all']
+    : ['open', 'closed', 'all'],
+)
 const mineOptions: Array<'all' | 'assigned' | 'created' | 'review'> = ['all', 'assigned', 'created', 'review']
 
 const searchInput = ref('')
@@ -671,14 +690,30 @@ async function unbindRepo() {
 
 async function bindFromRemote(r: ForgeRemote) {
   if (!r.slug) return
-  await submitBinding({ platform: r.platform, host: r.host, owner: r.owner, repo: r.repo })
+  // The remote's own scheme is forwarded so the binding persists how the
+  // instance is actually reached. It is absent for an ssh remote, which is not
+  // the same as https — the server resolves that from the credential hint.
+  await submitBinding({
+    platform: r.platform,
+    host: r.host,
+    scheme: r.scheme,
+    owner: r.owner,
+    repo: r.repo,
+  })
 }
 
 async function bindFromUrl() {
   await submitBinding({ url: manualUrl.value })
 }
 
-async function submitBinding(input: { url?: string; platform?: string; host?: string; owner?: string; repo?: string }) {
+async function submitBinding(input: {
+  url?: string
+  platform?: string
+  host?: string
+  scheme?: string
+  owner?: string
+  repo?: string
+}) {
   bindError.value = ''
   try {
     await setForgeBinding(input)
@@ -720,6 +755,10 @@ function errorTitle(code: string): string {
     case 'ForgeAuthFailed': return t('forge.error.auth')
     case 'ForgeRateLimited': return t('forge.error.rateLimit')
     case 'ForgeNetworkError': return t('forge.error.network')
+    // A not-found on a host with no token: the server cannot tell "private" from
+    // "nonexistent" (private repos answer 404), so the title names the likelier
+    // fix instead of letting the user hunt for a typo in the repository path.
+    case 'ForgeNoCredential': return t('forge.error.noCredential')
     case 'NoForgeBinding': return t('forge.empty.noBindingHeader')
     default: return t('forge.error.generic')
   }
@@ -1113,6 +1152,19 @@ function formatTime(iso: string): string {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
+}
+/* The remote's own API scheme, shown only when it states one. Muted and
+   monospace: it is reference information about how the instance is reached, not
+   a status or a warning. */
+.forge-remote-scheme {
+  margin-left: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--text-muted);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
 }
 .forge-remote-url {
   font-size: 11.5px;

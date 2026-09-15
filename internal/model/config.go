@@ -115,6 +115,19 @@ type ForgeConfig struct {
 	// Credentials maps a host (e.g. "github.com", "git.acme.internal:8443") to
 	// its token. Hosts are stored lowercased.
 	Credentials map[string]string `yaml:"credentials"`
+	// Schemes maps a host to the API scheme ("http" or "https") it is served
+	// over, as observed when the user configured that host's credential.
+	//
+	// It exists because a host alone cannot answer the question for a self-hosted
+	// instance: a git remote of "git@gitlab.internal:team/repo.git" carries no
+	// scheme, so an http-only instance would otherwise be probed over https and
+	// fail with an opaque TLS error. The credential form is where the user names
+	// the instance explicitly, so it is where the scheme is learned.
+	//
+	// A host with no entry is unknown, not https — the resolver decides the
+	// fallback, so that a later https hint is not silently masked by a default
+	// written here.
+	Schemes map[string]string `yaml:"schemes"`
 	// InsecureTLS allows skipping TLS verification for self-hosted instances
 	// with self-signed certificates. Off by default; enabling it logs a warning.
 	InsecureTLS bool `yaml:"insecure_tls"`
@@ -383,19 +396,109 @@ func LoadCookieToken() string {
 	return strings.TrimSpace(string(data))
 }
 
+// SplitForgeHostScheme parses a user-supplied forge host into the scheme it
+// named and the normalized host key.
+//
+// The returned scheme is "" when the input did not name one, which callers must
+// distinguish from an explicit "https": a bare host must not overwrite a scheme
+// the user set earlier by typing a URL. The scheme is returned as written
+// (lowercased) rather than validated here, because the resolver is the place
+// that knows which schemes are usable and what to do with an unknown one.
+//
+// The host half is the same key NormalizeForgeHost produces, since both go
+// through this function — a scheme and its host can therefore never be read from
+// two different spellings of the same input.
+func SplitForgeHostScheme(raw string) (scheme, host string) {
+	h := strings.ToLower(strings.TrimSpace(raw))
+	if h == "" {
+		return "", ""
+	}
+	// The scheme is whatever precedes "://". Split rather than TrimPrefix so an
+	// unknown scheme ("ftp://") is surfaced to the resolver instead of being
+	// silently treated as absent.
+	if i := strings.Index(h, "://"); i >= 0 {
+		scheme = h[:i]
+		h = h[i+len("://"):]
+	}
+	// A userinfo prefix ("git@gitlab.com") carries no scope information.
+	if i := strings.LastIndex(h, "@"); i >= 0 {
+		h = h[i+1:]
+	}
+	// Anything from the first "/" on is a path, not the host. This also drops a
+	// trailing slash ("gitlab.com/" -> "gitlab.com").
+	if i := strings.Index(h, "/"); i >= 0 {
+		h = h[:i]
+	}
+	// A bracketed IPv6 literal must be handled before the port split: its own
+	// colons are not a port separator, and treating them as one would truncate
+	// "[::1]:8080" to "[". Everything up to "]" is the address; a numeric
+	// ":port" after it is kept, anything else is a path tail and is dropped.
+	if strings.HasPrefix(h, "[") {
+		end := strings.Index(h, "]")
+		if end < 0 {
+			// Unterminated bracket: not a usable host, so fall through to the
+			// generic handling rather than inventing one.
+			return scheme, ""
+		}
+		rest := h[end+1:]
+		if strings.HasPrefix(rest, ":") && isAllDigits(rest[1:]) {
+			return scheme, h[:end+1] + rest
+		}
+		return scheme, h[:end+1]
+	}
+	// Keep "host:port" but drop "host:path" (an scp-like remote's tail).
+	if i := strings.Index(h, ":"); i >= 0 && !isAllDigits(h[i+1:]) {
+		h = h[:i]
+	}
+	return scheme, strings.TrimSpace(h)
+}
+
+// NormalizeForgeHost canonicalizes a forge host into the credential scope key.
+//
+// The key must be derived from the HOST alone, because that is what the
+// binding stores and what ForgeToken looks up. A user typing "https://gitlab.com"
+// or "gitlab.com/" means the same instance as "gitlab.com"; storing those as
+// distinct keys would leave the real lookup empty, and an unauthenticated
+// request to a private repository comes back as 404 Project Not Found — an
+// error that names the wrong problem. So the scheme, credentials, any path and
+// a trailing slash are all stripped here, and the result is lowercased.
+//
+// A port is preserved ("git.acme.internal:8443"): it is part of the instance
+// identity, not decoration. The scheme is dropped rather than folded in for the
+// same reason it is tracked separately: "http://h" and "https://h" are one
+// repository reached two ways, not two repositories.
+func NormalizeForgeHost(host string) string {
+	_, h := SplitForgeHostScheme(host)
+	return h
+}
+
+// isAllDigits reports whether s is a non-empty run of ASCII digits (a port).
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // ForgeToken returns the token configured for a host, or "" when none is set.
-// The host is matched case-insensitively.
+// The host is normalized so any spelling of the same instance resolves.
 func (c *Config) ForgeToken(host string) string {
 	if c.Forge.Credentials == nil {
 		return ""
 	}
-	return c.Forge.Credentials[strings.ToLower(strings.TrimSpace(host))]
+	return c.Forge.Credentials[NormalizeForgeHost(host)]
 }
 
 // SetForgeToken stores (or clears, when token is empty) the token for a host.
-// The host is normalized to lowercase; an empty host is rejected as a no-op.
+// The host is normalized to the credential scope key; an empty host is rejected
+// as a no-op.
 func (c *Config) SetForgeToken(host, token string) {
-	host = strings.ToLower(strings.TrimSpace(host))
+	host = NormalizeForgeHost(host)
 	if host == "" {
 		return
 	}
@@ -413,4 +516,39 @@ func (c *Config) SetForgeToken(host, token string) {
 // revealing the token itself. This is what GET /api/config exposes.
 func (c *Config) ForgeHasToken(host string) bool {
 	return c.ForgeToken(host) != ""
+}
+
+// ForgeScheme returns the recorded API scheme for a host, or "" when the host
+// has no hint. The empty result means "unknown", not https — the resolver owns
+// the fallback, so a default written here could never be distinguished from a
+// user's explicit choice.
+func (c *Config) ForgeScheme(host string) string {
+	if c.Forge.Schemes == nil {
+		return ""
+	}
+	return c.Forge.Schemes[NormalizeForgeHost(host)]
+}
+
+// SetForgeScheme records (or clears, when scheme is empty) the API scheme a host
+// is served over.
+//
+// Clearing is the default outcome for an empty scheme rather than storing "": a
+// bare host must not overwrite a hint the user set earlier by typing a URL. The
+// value is stored as given — validation belongs to the resolver, which is the
+// only place that knows which schemes are usable.
+func (c *Config) SetForgeScheme(host, scheme string) {
+	host = NormalizeForgeHost(host)
+	if host == "" {
+		return
+	}
+	if scheme == "" {
+		// Nothing to record, and possibly something to forget: a delete here is
+		// what makes "clear the token" able to drop the hint with it.
+		delete(c.Forge.Schemes, host)
+		return
+	}
+	if c.Forge.Schemes == nil {
+		c.Forge.Schemes = make(map[string]string)
+	}
+	c.Forge.Schemes[host] = scheme
 }

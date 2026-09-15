@@ -54,7 +54,10 @@ export function useForgeItems(getProjectPath: () => string) {
     const error = ref<{ message: string; code: string } | null>(null)
 
     const type = ref<'issue' | 'pr'>('issue')
-    const state = ref<'open' | 'closed' | 'all'>('open')
+    // "merged" is only meaningful for change requests; issues have no merged
+    // lifecycle, so the chip is hidden on the issues tab (see stateOptions in
+    // ForgePanelContent) rather than shown and always empty.
+    const state = ref<'open' | 'closed' | 'merged' | 'all'>('open')
     const mineFilter = ref<ForgeFilter>('all')
     const query = ref('')
 
@@ -161,9 +164,13 @@ export function useForgeItems(getProjectPath: () => string) {
     function setType(t: 'issue' | 'pr') {
         if (type.value === t) return
         type.value = t
+        // Switching away from change requests must not leave a filter the new
+        // tab cannot express selected (issues have no merged state), or the
+        // list would come back permanently empty with no visible cause.
+        if (t === 'issue' && state.value === 'merged') state.value = 'open'
         void load()
     }
-    function setState(s: 'open' | 'closed' | 'all') {
+    function setState(s: 'open' | 'closed' | 'merged' | 'all') {
         if (state.value === s) return
         state.value = s
         void load()

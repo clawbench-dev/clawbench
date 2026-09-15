@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // FirstRun records whether this process started against a brand-new install.
@@ -440,8 +441,81 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// false" from "user omitted the field": an absent key means default (true),
 	// a present key means respect the parsed value.
 	applyForgeNotifyDefaults(cfg, presence)
+	normalizeForgeCredentialKeys(cfg)
 
 	return autoPassword
+}
+
+// normalizeForgeCredentialKeys rewrites credential and scheme keys into the
+// canonical host form.
+//
+// Older builds stored whatever the user typed after only lowercasing and
+// trimming, so entering a URL — the very input this feature exists to support —
+// persisted a row keyed "https://gitlab.internal". Lookups normalize their
+// argument (ForgeToken calls NormalizeForgeHost), so such a row can never be
+// found, and DELETE normalizes too, so it can never be removed either. The
+// result is a credential the settings page reports as "Set" that no request can
+// use and no click can clear.
+//
+// Normalizing here fixes every existing install in one place, on load, rather
+// than leaving a permanent class of unreachable rows behind.
+func normalizeForgeCredentialKeys(cfg *Config) {
+	cfg.Forge.Credentials = normalizeForgeHostKeys(cfg.Forge.Credentials, "credential")
+	cfg.Forge.Schemes = normalizeForgeHostKeys(cfg.Forge.Schemes, "scheme")
+}
+
+// normalizeForgeHostKeys rebuilds a host-keyed map with canonical keys,
+// returning nil when there is nothing to do.
+//
+// On a collision the non-empty value wins: two spellings of one host must
+// collapse to a single entry, and an empty value is the absence of information
+// (an unset scheme), so it must not overwrite a real one. A collision between
+// two *different* non-empty values keeps the first in sorted order, which makes
+// the outcome deterministic rather than dependent on map iteration.
+func normalizeForgeHostKeys(in map[string]string, label string) map[string]string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make(map[string]string, len(in))
+	changed := false
+
+	// Sort the source keys so a collision resolves the same way on every load.
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := in[k]
+		canonical := NormalizeForgeHost(k)
+		if canonical == "" {
+			// Nothing usable to key on; dropping it is the only option that
+			// does not leave an unreachable row behind.
+			slog.Warn("dropping forge entry with unusable host", slog.String("kind", label), slog.String("host", k))
+			changed = true
+			continue
+		}
+		if canonical != k {
+			changed = true
+		}
+		if existing, ok := out[canonical]; ok {
+			changed = true
+			if existing != "" {
+				// Keep the existing value; the loser is recorded so a genuine
+				// data conflict is visible rather than silently swallowed.
+				slog.Warn("forge host collision, keeping first value",
+					slog.String("kind", label), slog.String("host", canonical))
+				continue
+			}
+		}
+		out[canonical] = v
+	}
+
+	if !changed {
+		return in
+	}
+	return out
 }
 
 // applyForgeNotifyDefaults fills the forge notification toggles, defaulting each
