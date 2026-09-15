@@ -85,7 +85,7 @@ const acpNotificationSource = "acp"
 //
 // Critical events (see criticalStreamEvents) wait for room when the channel is
 // full, up to criticalSendTimeout. Everything else keeps the original
-// non-blocking behaviour and is dropped on a full channel.
+// non-blocking behavior and is dropped on a full channel.
 //
 // The split matters because the two losses are not equivalent. Before it, a
 // burst of thinking deltas could fill the 512-slot channel and cause the

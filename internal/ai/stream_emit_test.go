@@ -12,7 +12,7 @@ import (
 
 // emitStreamEvent splits event delivery by importance: critical events wait for
 // room in a full channel, high-frequency deltas are dropped. These tests pin
-// both halves of that split, and the guard that keeps the blocking behaviour off
+// both halves of that split, and the guard that keeps the blocking behavior off
 // the shared ACP notification goroutine.
 
 // TestEmitStreamEvent_SendsWhenBufferAvailable verifies a normal (non-full)
@@ -34,7 +34,7 @@ func TestEmitStreamEvent_SendsWhenBufferAvailable(t *testing.T) {
 // does NOT block the caller for a high-frequency delta, and logs a WARN naming
 // the event type + source.
 //
-// Deltas keep the original non-blocking behaviour on purpose: dropping one is
+// Deltas keep the original non-blocking behavior on purpose: dropping one is
 // imperceptible, and blocking on them would let a slow consumer stall the
 // agent's output entirely.
 func TestEmitStreamEvent_DropsAndWarnsOnFullChannel(t *testing.T) {
@@ -90,7 +90,7 @@ func TestEmitStreamEvent_NoPanicOnClosedChannel(t *testing.T) {
 }
 
 // TestForwardACPEvent_ReusesEmitStreamEvent verifies forwardACPEvent keeps its
-// non-blocking, no-panic behaviour. It runs on the SDK's shared notification
+// non-blocking, no-panic behavior. It runs on the SDK's shared notification
 // goroutine, whose bounded queue kills the connection on overflow — so it must
 // never block, not even for a critical event type.
 func TestForwardACPEvent_ReusesEmitStreamEvent(t *testing.T) {
@@ -130,7 +130,7 @@ func TestIsCriticalStreamEvent(t *testing.T) {
 }
 
 // TestEmitStreamEvent_DropsDeltaOnFullChannel verifies the high-frequency path
-// keeps its original non-blocking behaviour: a full channel must not stall the
+// keeps its original non-blocking behavior: a full channel must not stall the
 // producer for a delta the user cannot perceive.
 func TestEmitStreamEvent_DropsDeltaOnFullChannel(t *testing.T) {
 	ch := make(chan StreamEvent, 1)
@@ -150,7 +150,7 @@ func TestEmitStreamEvent_DropsDeltaOnFullChannel(t *testing.T) {
 	}
 }
 
-// TestEmitStreamEvent_CriticalWaitsForRoom is the core Stage B behaviour: a
+// TestEmitStreamEvent_CriticalWaitsForRoom is the core Stage B behavior: a
 // terminal event must not be lost just because the consumer is momentarily
 // behind. Before this, a burst of deltas could fill the channel and the `done`
 // event — the one the UI needs to stop loading — was dropped with them.

@@ -87,7 +87,7 @@ func TestDeliveryStats_AccumulateAndTotal(t *testing.T) {
 	SetManagerForTest(mgr)
 	t.Cleanup(func() { SetManagerForTest(nil) })
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		EmitToSession("session-a", ai.StreamEvent{Type: "thinking"})
 	}
 	SetManagerForTest(nil)
@@ -107,7 +107,7 @@ func TestRecordDeliveryDrop_LogsOncePerType(t *testing.T) {
 	ResetDeliveryStatsForTest()
 	t.Cleanup(ResetDeliveryStatsForTest)
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		recordDeliveryDrop(DropReasonNoSubscribers, "session-burst", "thinking")
 	}
 

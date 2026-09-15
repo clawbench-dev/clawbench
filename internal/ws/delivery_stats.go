@@ -25,7 +25,7 @@ const (
 	// the client's subscription was lost (WS reconnect) while the UI still
 	// believes it is subscribed.
 	DropReasonNoSubscribers = "no_subscribers"
-	// DropReasonNoManager — the WS manager is not initialised (early startup or
+	// DropReasonNoManager — the WS manager is not initialized (early startup or
 	// shutdown). Rare and expected in those windows.
 	DropReasonNoManager = "no_manager"
 )
