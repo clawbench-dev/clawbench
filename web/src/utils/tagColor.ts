@@ -87,3 +87,42 @@ export function tagAccentStyle(name: string): Record<string, string> {
     '--tag-accent-dark': dark,
   }
 }
+
+/** Relative luminance per WCAG 2.1, from a #rrggbb string. */
+function relativeLuminance(hex: string): number {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim())
+  if (!m) return 0
+  const [r, g, b] = m.slice(1).map(v => {
+    const c = parseInt(v, 16) / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/** WCAG contrast ratio between two #rrggbb colours. */
+export function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(a)
+  const lb = relativeLuminance(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+/**
+ * Pick a foreground that stays readable on `background`.
+ *
+ * Used where an accent fills a shape and something has to sit on top of it —
+ * the checkbox tick. A fixed white fails on most themes: the accents are mid
+ * to light blues, so white scored as low as 1.69:1 (28 of 36 themes below
+ * 4.5:1). Choosing per colour puts every theme at or above 4.5:1, which a CSS
+ * rule cannot do because it has no way to evaluate the accent's luminance.
+ *
+ * Returns the higher-contrast of near-black and white rather than a luminance
+ * threshold: four themes have accents dark enough to look like they want white
+ * (L≈0.38-0.50) where black is in fact clearly better.
+ */
+export function readableTextOn(background: string): string {
+  // Pure black, not near-black: bluloco-light's accent (#2b7bda) lands at
+  // 4.45:1 against #111 and only clears 4.5:1 against #000.
+  const dark = '#000000'
+  const light = '#ffffff'
+  return contrastRatio(dark, background) >= contrastRatio(light, background) ? dark : light
+}

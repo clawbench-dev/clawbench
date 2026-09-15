@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { TAG_PALETTE, hashTagName, tagAccent, tagAccentStyle } from '@/utils/tagColor'
+import { TAG_PALETTE, hashTagName, tagAccent, tagAccentStyle, readableTextOn, contrastRatio } from '@/utils/tagColor'
 
 /**
  * Parse the tool-call accent palette out of ContentBlocks.vue.
@@ -274,6 +274,120 @@ describe('tagColor', () => {
         }
       }
       expect(worst, `below 3:1:\n${worst.join('\n')}`).toEqual([])
+    })
+  })
+
+  describe('readableTextOn', () => {
+    it('picks the higher-contrast foreground', () => {
+      expect(readableTextOn('#ffffff')).toBe('#000000')
+      expect(readableTextOn('#000000')).toBe('#ffffff')
+    })
+
+    it('clears 4.5:1 on every accent the app ships', () => {
+      // Regression: the checkbox tick was hardcoded white and sat on the theme
+      // accent. Those accents are mid-to-light blues, so white scored as low as
+      // 1.69:1 — below 4.5:1 on 28 of 36 themes.
+      const path = resolve(process.cwd(), '../web/css/variables.css')
+      const src = readFileSync(path, 'utf8')
+      const accents = [...src.matchAll(/--accent-color:\s*(#[0-9a-fA-F]{6})\s*;/g)].map(m => m[1])
+      expect(accents.length).toBeGreaterThan(20)
+      const worst: string[] = []
+      for (const accent of accents) {
+        const cr = contrastRatio(readableTextOn(accent), accent)
+        if (cr < 4.5) worst.push(`${accent} = ${cr.toFixed(2)}`)
+      }
+      expect(worst, `below 4.5:1:\n${worst.join('\n')}`).toEqual([])
+    })
+
+    it('beats a fixed white on the accents where white is worst', () => {
+      // Guards the reason this helper exists: on a light accent, white is the
+      // wrong choice and the helper must not simply echo it.
+      const pale = '#89b4fa' // catppuccin-mocha accent
+      expect(contrastRatio('#ffffff', pale)).toBeLessThan(4.5)
+      expect(contrastRatio(readableTextOn(pale), pale)).toBeGreaterThanOrEqual(4.5)
+    })
+  })
+
+  describe('selected chip label (filter bar)', () => {
+    /**
+     * The filter bar's active chip fills with the tag accent and puts its label
+     * on top. The label colour has to follow the theme: light-theme accents are
+     * dark (they need a light label) and dark-theme accents are light (they need
+     * a dark label). A fixed #fff left every dark-theme chip at 1.67-2.46:1.
+     *
+     * The component encodes exactly this rule:
+     *   .active                 { color: #fff }          // light themes
+     *   [data-theme-base=dark] .active { color: #111 }   // dark themes
+     * so the test asserts that pairing rather than the CSS text.
+     */
+    function surfacesByMode() {
+      const path = resolve(process.cwd(), '../web/css/variables.css')
+      const src = readFileSync(path, 'utf8')
+      const root = /:root\s*\{([\s\S]*?)\n\}/.exec(src)
+      const base: Record<string, string> = {}
+      if (root) {
+        for (const [, k, v] of root[1].matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)) base[k] = v.trim()
+      }
+      const light: string[] = []
+      const dark: string[] = []
+      for (const m of src.matchAll(/\[data-theme="([a-z0-9-]+)"\]\s*\{([\s\S]*?)\n\}/g)) {
+        const vars = { ...base }
+        for (const [, k, v] of m[2].matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)) vars[k] = v.trim()
+        const surf = vars['bg-secondary'] || vars['bg-primary']
+        if (!surf) continue
+        const isDark = ((): boolean => {
+          const h = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(surf.trim())
+          if (!h) return false
+          const f = (c: number) => {
+            const s = c / 255
+            return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+          }
+          const [r, g, b] = h.slice(1).map(v => f(parseInt(v, 16)))
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.35
+        })()
+        ;(isDark ? dark : light).push(m[1])
+      }
+      return { light, dark }
+    }
+
+    it('has both modes represented', () => {
+      const { light, dark } = surfacesByMode()
+      expect(light.length).toBeGreaterThan(5)
+      expect(dark.length).toBeGreaterThan(5)
+    })
+
+    it('keeps the label readable on the filled chip in every theme', () => {
+      const { light, dark } = surfacesByMode()
+      // Read the label colours out of the component rather than restating them
+      // here: a test that asserts its own constants stays green when the CSS
+      // drifts, which is the failure mode this is meant to prevent.
+      const css = readFileSync(
+        resolve(process.cwd(), 'src/components/session/SessionTagFilterBar.vue'),
+        'utf8',
+      )
+      const base = /\.session-tag-filter-chip\.active\s*\{[^}]*color:\s*([^;]+);/.exec(css)
+      const darkRule = /\[data-theme-base="dark"\]\s*\.session-tag-filter-chip\.active\s*\{[^}]*color:\s*([^;]+);/.exec(css)
+      expect(base, '.active must declare a label colour').not.toBeNull()
+      expect(darkRule, 'dark themes must override the label colour').not.toBeNull()
+
+      const labelFor = (mode: 'light' | 'dark') => {
+        const raw = (mode === 'light' ? base![1] : darkRule![1]).trim()
+        // #fff / #ffffff -> #ffffff so contrastRatio can parse it.
+        const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(raw)
+        return short ? `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}` : raw
+      }
+
+      const worst: string[] = []
+      for (const mode of ['light', 'dark'] as const) {
+        const label = labelFor(mode)
+        for (const entry of TAG_PALETTE) {
+          const accent = mode === 'light' ? entry.light : entry.dark
+          const cr = contrastRatio(label, accent)
+          if (cr < 4.5) worst.push(`${mode}/${accent} ${label} = ${cr.toFixed(2)}`)
+        }
+      }
+      expect(light.length + dark.length).toBeGreaterThan(20)
+      expect(worst, `below 4.5:1:\n${worst.join('\n')}`).toEqual([])
     })
   })
 })

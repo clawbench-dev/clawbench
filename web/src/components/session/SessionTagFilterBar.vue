@@ -92,11 +92,21 @@ const { t } = useI18n()
 }
 
 /* Selected state: fill with the accent so the active filter is unmistakable
-   even when several chips are on screen. */
+   even when several chips are on screen.
+ *
+ * The label colour has to follow the theme, not be hardcoded white. The light
+ * palette entries are dark (their accent needs a light label: white scores
+ * 6.72:1) while the dark-theme entries are light (they need a dark label:
+ * black scores 8.54:1, white only 1.67:1). A fixed #fff left every dark-theme
+ * chip at 1.67-2.46:1, i.e. unreadable. */
 .session-tag-filter-chip.active {
   background: var(--tag-accent);
   border-color: var(--tag-accent);
   color: #fff;
+}
+
+:root[data-theme-base="dark"] .session-tag-filter-chip.active {
+  color: #111;
 }
 
 .session-tag-filter-chip:hover:not(.active) {

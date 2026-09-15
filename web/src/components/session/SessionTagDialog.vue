@@ -19,6 +19,7 @@
             <input
               type="checkbox"
               class="st-checkbox"
+              :style="{ '--st-tick': checkboxTickColor }"
               :checked="isSelected(tag.name)"
               @change="toggleTag(tag.name)"
             />
@@ -73,13 +74,13 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Trash2 } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiDelete, apiPatch } from '@/utils/api.ts'
-import { tagAccentStyle } from '@/utils/tagColor.ts'
+import { tagAccentStyle, readableTextOn } from '@/utils/tagColor.ts'
 import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
 
@@ -101,6 +102,33 @@ const saving = ref(false)
 const errorMsg = ref('')
 const newTagName = ref('')
 const newTagScope = ref('project')
+
+/**
+ * Tick colour for the checked checkbox.
+ *
+ * The box is filled with the theme's --accent-color and the tick sits on top,
+ * so the tick has to contrast with the ACCENT, not the dialog surface. A fixed
+ * white fails on most themes — the accents are mid-to-light blues, and white
+ * scored as low as 1.69:1, below 4.5:1 on 28 of 36 themes. Resolving the accent
+ * and picking the better of near-black/white puts every theme at or above
+ * 4.5:1, which no static CSS rule can do because it cannot evaluate luminance.
+ *
+ * Recomputed when `store.state.theme` changes; the CSS variable is read after
+ * the theme attribute has been applied, so `nextTick` is required for the new
+ * value to be visible.
+ */
+const checkboxTickColor = ref('#ffffff')
+watch(
+  () => store.state.theme,
+  async () => {
+    await nextTick()
+    const accent = getComputedStyle(document.documentElement)
+      .getPropertyValue('--accent-color')
+      .trim()
+    if (accent) checkboxTickColor.value = readableTextOn(accent)
+  },
+  { immediate: true },
+)
 
 /**
  * Normalize a tag name the same way the backend does (`strings.Fields` + join,
@@ -375,7 +403,9 @@ watch(() => props.open, (open) => {
   top: 45%;
   width: 4px;
   height: 8px;
-  border: solid #fff;
+  /* --st-tick is resolved per theme in JS (see checkboxTickColor): a fixed
+     white sits at 1.69:1 on the lightest accents. */
+  border: solid var(--st-tick, #fff);
   border-width: 0 2px 2px 0;
   transform: translate(-50%, -50%) rotate(45deg);
 }
