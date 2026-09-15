@@ -66,18 +66,20 @@
                  the two modes mean different things: a cron task is defined by
                  *when* it runs (a clock), an event task by *what* it watches.
 
-                 The event branch names the project's bound repository: every
-                 event task in a project watches that one binding, so the row
-                 states what will actually fire the task rather than repeating
-                 "event-triggered", which the badge above already says.
+                 The event branch lists the subscribed events: that is what
+                 actually fires the task, and it is what the user chose. The
+                 repository is deliberately not shown — every event task in a
+                 project watches the same project binding, so it is a property
+                 of the project rather than of the row, and repeating it on each
+                 row told the user nothing about *this* task.
 
                  The icon stays inside each branch because an unconditional
                  Clock told an event task's user it has a schedule, which it
                  never does — the backend leaves nextRunAt null for event tasks
                  (scheduler.go's event-task branch). -->
             <div v-if="task.triggerMode === 'event'" class="task-item-next">
-              <GitBranch class="meta-icon" :size="12" />
-              <span class="task-item-repo" :title="repoRowLabel">{{ repoRowLabel }}</span>
+              <Zap class="meta-icon" :size="12" />
+              <span class="task-item-events" :title="eventRowLabel(task)">{{ eventRowLabel(task) }}</span>
             </div>
             <div v-else class="task-item-next">
               <Clock class="meta-icon" :size="12" />
@@ -95,13 +97,13 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, CalendarX, Clock, Repeat, CheckCheck, GitBranch } from 'lucide-vue-next'
+import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useAgents } from '@/composables/useAgents'
 import { humanizeCron, repeatLabel, statusLabel, formatDateTimeWithYear } from '@/utils/format'
-import { useForgeBinding } from '@/composables/useForgeBinding'
+import { eventTypesSummary } from '@/utils/forgeEventLabels'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -126,20 +128,16 @@ interface TaskItem {
   nextRunAt?: string
   // Trigger mode: 'cron' (default/absent) or 'event'.
   triggerMode?: string
+  // Comma-separated event subscription; only meaningful for an event task.
+  eventTypes?: string
 }
 
-// Every event task watches its project's bound repository, so one shared
-// binding lookup covers the whole list — the repository is a property of the
-// project, not of each row. The shared store coalesces this with the lookups
-// the detail/form views and the dock icon perform.
-const { slug: boundRepoLabel, resolved: bindingResolved, refresh: refreshBinding } = useForgeBinding()
-
-// Before the binding resolves, the row must not claim the project is unbound:
-// "" is a real answer (confirmed unbound), a pending lookup is not.
-const repoRowLabel = computed(() => {
-  if (boundRepoLabel.value) return boundRepoLabel.value
-  return bindingResolved.value ? t('task.form.eventRepoUnbound') : t('common.loading')
-})
+// What fires an event task, in the user's own terms. The subscription can be
+// long ("Issues · Opened · Pull requests · Merged · …"), so the cell truncates
+// and the full text stays reachable via the title attribute.
+function eventRowLabel(task: TaskItem): string {
+  return eventTypesSummary(task.eventTypes) || t('task.form.eventTypesNone')
+}
 
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])
 const hasUnread = computed(() => store.state.taskUnreadCount > 0)
@@ -157,7 +155,7 @@ async function refresh() {
     // Minimum spin duration so the refresh animation is always visible,
     // even when the API responds almost instantly.
     await Promise.all([
-      Promise.all([loadTasks(), loadAgents(), refreshBinding()]),
+      Promise.all([loadTasks(), loadAgents()]),
       new Promise(resolve => setTimeout(resolve, 600)),
     ])
   } finally {
@@ -499,9 +497,10 @@ onMounted(refresh)
   max-width: 100%;
 }
 
-/* An owner/repo can be long; truncate rather than widen the row. The full
-   value stays available via the title attribute. */
-.task-item-repo {
+/* A subscription can list several kinds and transitions and get long;
+   truncate rather than widen the row. The full value stays available via the
+   title attribute. */
+.task-item-events {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

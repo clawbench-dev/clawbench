@@ -1,11 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TaskListPage from '../TaskListPage.vue'
-import { resetForgeBindingState } from '@/composables/useForgeBinding'
 
 // ── Mocks ──
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
+}))
+
+// The event-label helper (eventTypesSummary) resolves through the app i18n
+// instance, so the module-level singleton has to exist for this suite.
+vi.mock('@/i18n', () => ({
+  default: {
+    global: {
+      t: (key: string) => key,
+      locale: { value: 'en' },
+    },
+  },
 }))
 
 // Icons are stubbed with a stable component name so assertions can identify
@@ -24,17 +34,8 @@ vi.mock('lucide-vue-next', () => {
     Repeat: stub('Repeat'),
     CheckCheck: stub('CheckCheck'),
     Zap: stub('Zap'),
-    GitBranch: stub('GitBranch'),
   }
 })
-
-// The list resolves the project's forge binding once to label every event row.
-const { mockFetchForgeBinding } = vi.hoisted(() => ({
-  mockFetchForgeBinding: vi.fn(),
-}))
-vi.mock('@/utils/forgeApi', () => ({
-  fetchForgeBinding: mockFetchForgeBinding,
-}))
 
 vi.mock('@/composables/useTaskTab', () => ({
   useTaskTab: () => ({ loadTasks: vi.fn(), markAllTasksRead: vi.fn() }),
@@ -108,14 +109,6 @@ describe('TaskListPage — trigger-type distinction', () => {
   beforeEach(() => {
     mockStore.state.tasks = []
     mockStore.state.taskUnreadCount = 0
-    mockFetchForgeBinding.mockReset()
-    // The binding lives in a module-level singleton that survives between
-    // tests, and it caches for a few seconds. Drop it so each test starts from
-    // a clean lookup — a real project switch does the same via App.vue.
-    resetForgeBindingState()
-    mockFetchForgeBinding.mockResolvedValue({
-      binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' },
-    })
   })
 
   afterEach(() => {
@@ -152,48 +145,53 @@ describe('TaskListPage — trigger-type distinction', () => {
     const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
 
     const summary = wrapper.find('.task-item-next')
-    expect(summary.findComponent({ name: 'GitBranch' }).exists()).toBe(true)
+    expect(summary.findComponent({ name: 'Zap' }).exists()).toBe(true)
     expect(summary.findComponent({ name: 'Clock' }).exists()).toBe(false)
   })
 
-  // Every event task watches its project's binding, so the row names that
-  // repository instead of repeating the trigger type already shown by the badge.
-  it('shows the project-bound repository on an event task', async () => {
+  // The row states what fires the task. The repository used to be shown here,
+  // but every event task in a project watches the same project binding, so the
+  // repository said nothing about *this* task — the subscription does.
+  it('lists the subscribed events on an event task', async () => {
     const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
 
-    await vi.waitFor(() => {
-      expect(wrapper.find('.task-item-repo').text()).toBe('acme/widgets')
-    })
+    const row = wrapper.find('.task-item-events')
+    expect(row.text()).toBe('task.form.eventKindPr · task.form.eventOpened')
   })
 
-  // An unbound project can still host an event task (creation is allowed with a
-  // warning), but it will never fire. The row must say so rather than showing a
-  // stale or fabricated repository.
-  it('shows the unbound label when the project has no binding', async () => {
-    mockFetchForgeBinding.mockResolvedValue({ binding: null })
-    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
+  it('renders every subscribed event, joined on one line', async () => {
+    const wrapper = await mountWith([
+      makeTask({ id: 1, triggerMode: 'event', eventTypes: 'issue.opened,pr.merged' }),
+    ])
 
-    await vi.waitFor(() => {
-      expect(wrapper.find('.task-item-repo').text()).toBe('task.form.eventRepoUnbound')
-    })
+    const row = wrapper.find('.task-item-events')
+    expect(row.text()).toBe(
+      'task.form.eventKindIssue · task.form.eventOpened · ' +
+      'task.form.eventKindPr · task.form.eventMerged',
+    )
+    // The full text must stay reachable when the cell truncates it.
+    expect(row.attributes('title')).toBe(row.text())
   })
 
-  // Regression: the row rendered `boundRepoLabel || unbound`, and the label
-  // started at '', so an in-flight lookup claimed the project was unbound.
-  it('does not claim the project is unbound while the lookup is in flight', async () => {
-    let release: (v: unknown) => void = () => {}
-    mockFetchForgeBinding.mockReturnValue(new Promise(resolve => { release = resolve }))
+  // An event task is rejected at creation without a subscription, so this only
+  // covers a row that predates the validation or was edited around it. The row
+  // must not render an empty cell.
+  it('falls back to a placeholder when no event is configured', async () => {
+    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: '' })])
 
-    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
+    expect(wrapper.find('.task-item-events').text()).toBe('task.form.eventTypesNone')
+  })
 
-    const row = wrapper.find('.task-item-repo')
-    expect(row.text()).not.toBe('task.form.eventRepoUnbound')
-    expect(row.text()).toBe('common.loading')
+  // The list is a per-task view; it must not resolve the project binding at
+  // all (it used to, to label each event row). Any lookup here would be a
+  // regression to a redundant request.
+  it('does not query the forge binding for the list', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
 
-    release({ binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' } })
-    await vi.waitFor(() => {
-      expect(wrapper.find('.task-item-repo').text()).toBe('acme/widgets')
-    })
+    const bindingCalls = fetchSpy.mock.calls.filter(c => String(c[0]).includes('/forge/binding'))
+    expect(bindingCalls).toHaveLength(0)
+    fetchSpy.mockRestore()
   })
 
   it('shows the next-run time, with a clock, on a cron task', async () => {
@@ -238,12 +236,12 @@ describe('TaskListPage — trigger-type distinction', () => {
     expect(meta.text()).toContain('repeat')
   })
 
-  // The regression this guards: the subscription list was rendered into the
-  // shared meta line, where .cron span's max-width truncated a long
+  // The regression this guards: the subscription list was once rendered into
+  // the shared meta line, where .cron span's max-width truncated a long
   // subscription mid-word and pushed the neighbouring repeat label far to the
-  // right — so event rows never lined up with cron rows. The detail now lives
-  // in the task overview, and nothing subscription-related may return here.
-  it('does not render the event subscription in the list row', async () => {
+  // right — so event rows never lined up with cron rows. It now lives on its
+  // own line, which is why the meta line stays cron-only.
+  it('does not render the event subscription in the shared meta line', async () => {
     const wrapper = await mountWith([
       makeTask({
         id: 1,
@@ -252,10 +250,7 @@ describe('TaskListPage — trigger-type distinction', () => {
       }),
     ])
 
-    const row = wrapper.find('.task-item')
-    expect(row.text()).not.toContain('issue')
-    expect(row.text()).not.toContain('opened')
-    // The repository is the only trigger-related detail the row carries.
-    expect(row.find('.task-item-repo').exists()).toBe(true)
+    expect(wrapper.find('.task-item-meta').exists()).toBe(false)
+    expect(wrapper.find('.task-item-events').exists()).toBe(true)
   })
 })
