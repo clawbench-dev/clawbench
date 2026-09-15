@@ -103,19 +103,52 @@ func convertWorkflowRun(r *gogithub.WorkflowRun) forge.PipelineRun {
 	}
 
 	return forge.PipelineRun{
-		ID:        r.GetID(),
-		Name:      runName(r),
-		Number:    r.GetRunNumber(),
-		Status:    status,
-		Ref:       r.GetHeadBranch(),
-		SHA:       r.GetHeadSHA(),
-		Event:     r.GetEvent(),
-		Actor:     actorLogin(r),
-		URL:       r.GetHTMLURL(),
-		CreatedAt: r.GetCreatedAt().Time,
-		UpdatedAt: r.GetUpdatedAt().Time,
-		Duration:  runDuration(r),
+		ID:           r.GetID(),
+		Name:         runName(r),
+		Number:       r.GetRunNumber(),
+		Status:       status,
+		Ref:          r.GetHeadBranch(),
+		SHA:          r.GetHeadSHA(),
+		Event:        r.GetEvent(),
+		Actor:        actorLogin(r),
+		URL:          r.GetHTMLURL(),
+		CreatedAt:    r.GetCreatedAt().Time,
+		UpdatedAt:    r.GetUpdatedAt().Time,
+		Duration:     runDuration(r),
+		PullRequests: convertRunPullRequests(r),
 	}
+}
+
+// convertRunPullRequests extracts the change requests a run is attached to.
+//
+// GitHub reports these inline on every workflow run, so linking a run to its PR
+// costs no extra request. It is a LIST because a run can belong to more than one
+// PR — the same commit pushed to a branch with several open PRs against it runs
+// the workflow once per PR association.
+//
+// An entry with no number is dropped: it could not be opened, and rendering a
+// link that goes nowhere is worse than rendering none. Title and URL are
+// best-effort, since older payloads omit them.
+func convertRunPullRequests(r *gogithub.WorkflowRun) []forge.PipelinePullRequest {
+	prs := r.PullRequests
+	if len(prs) == 0 {
+		return nil
+	}
+	out := make([]forge.PipelinePullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr == nil || pr.GetNumber() == 0 {
+			continue
+		}
+		out = append(out, forge.PipelinePullRequest{
+			Number: pr.GetNumber(),
+			Title:  pr.GetTitle(),
+			URL:    pr.GetHTMLURL(),
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // runName prefers the display title, falling back to the workflow name.

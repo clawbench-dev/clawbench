@@ -73,6 +73,30 @@
                 {{ t('forge.pipeline.duration') }}: {{ durationText }}
               </span>
             </div>
+
+            <!-- Linked change requests. A run that belongs to a PR is much more
+                 useful when you can get to that PR, and the association is only
+                 known here (the run list does not show it). Absent entirely when
+                 there is no link, so a push-to-branch run shows nothing. -->
+            <div v-if="linkedPullRequests.length" class="forge-pipeline-prs">
+              <span class="forge-pipeline-prs-label">{{ t('forge.pipeline.linkedPrs') }}</span>
+              <button
+                v-for="pr in linkedPullRequests"
+                :key="pr.number"
+                class="forge-pipeline-pr"
+                :title="pr.title || t('forge.pipeline.openPr', { number: pr.number })"
+                @click="emit('open-pr', pr.number)"
+              >
+                <GitPullRequest :size="13" />
+                <span class="forge-pipeline-pr-text">
+                  <!-- GitHub supplies a title; GitLab's payload does not, so the
+                       number alone is the honest label there. -->
+                  <span v-if="pr.title" class="forge-pipeline-pr-title">{{ pr.title }}</span>
+                  <span v-else class="forge-pipeline-pr-number">#{{ pr.number }}</span>
+                </span>
+                <ChevronRight :size="13" class="forge-pipeline-pr-chevron" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -126,10 +150,13 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronLeft, ExternalLink, MessageSquare, AlertCircle, ListChecks } from 'lucide-vue-next'
+import {
+  ChevronLeft, ChevronRight, ExternalLink, MessageSquare, AlertCircle, ListChecks,
+  GitPullRequest,
+} from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useForgePipelineDetail } from '@/composables/useForge'
-import type { ForgePipelineRun } from '@/utils/forgeApi'
+import type { ForgePipelineRun, ForgePipelinePullRequest } from '@/utils/forgeApi'
 
 const props = defineProps<{
   runId: number
@@ -137,6 +164,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'back'): void
   (e: 'quote', run: ForgePipelineRun): void
+  /**
+   * Open a linked change request. The host owns navigation (this component only
+   * knows the run), so it switches tabs and opens the item.
+   */
+  (e: 'open-pr', number: number): void
 }>()
 
 const { t } = useI18n()
@@ -161,6 +193,16 @@ const durationText = computed(() => {
   const seconds = detail.run.value?.durationSeconds
   return seconds ? formatDuration(seconds) : ''
 })
+
+/**
+ * The run's linked change requests.
+ *
+ * The field is absent (not empty) when there are none, so this normalizes both
+ * to an empty list for the `v-if`.
+ */
+const linkedPullRequests = computed<ForgePipelinePullRequest[]>(
+  () => detail.run.value?.pullRequests ?? [],
+)
 
 function onQuote() {
   const run = detail.run.value
@@ -200,6 +242,57 @@ function formatTime(iso: string): string {
 }
 .forge-pipeline-duration {
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Linked change requests ──
+   Rendered as rows rather than inline links: they are navigation targets with
+   the same weight as the run itself, and a long PR title needs to ellipsise
+   rather than wrap the meta line. */
+.forge-pipeline-prs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+.forge-pipeline-prs-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+.forge-pipeline-pr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--duration-base) ease, color var(--duration-base) ease;
+}
+@media (hover: hover) {
+  .forge-pipeline-pr:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
+  .forge-pipeline-pr:hover .forge-pipeline-pr-chevron {
+    color: var(--accent-color);
+  }
+}
+.forge-pipeline-pr-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.forge-pipeline-pr-chevron {
+  flex-shrink: 0;
+  color: var(--text-hint);
+  transition: color var(--duration-base) ease;
 }
 .forge-pipeline-jobs {
   margin-top: var(--space-5);

@@ -2476,6 +2476,13 @@ paths:
 
         每项的 `unread` 为 true 表示该次运行有用户尚未查看的活动，与 dock 角标
         计数的是同一批数据。
+
+        每项的 `pullRequests` 列出该次运行关联的变更请求，供详情页跳转；**没有关联
+        时该字段整个缺失**（不是空数组）。平台差异：GitHub 在运行列表里内联返回
+        PR，因此总能给出编号、标题与链接；GitLab 的流水线载荷不含 MR 信息，仅当该
+        运行是合并请求流水线（ref 为 `refs/merge-requests/<iid>/head`）时才能从 ref
+        推出编号（无标题）。由分支推送触发的运行即使该分支存在开启的 MR，也不会
+        给出关联——补齐需要为每行额外请求，代价过高，故有意留空。
       parameters:
         - name: status
           in: query
@@ -2512,6 +2519,10 @@ paths:
 
         作业字段的平台差异：`stage` 与 `failureReason` 仅 GitLab 提供（GitHub 无
         stage 概念），缺失时省略。
+
+        `pipeline.pullRequests` 列出该次运行关联的变更请求（`number` / `title` /
+        `url`），供详情页跳转；没有关联时整个字段缺失。平台覆盖差异见
+        `/api/forge/pipelines` 的说明。
       parameters:
         - name: id
           in: query

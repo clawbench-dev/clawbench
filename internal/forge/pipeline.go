@@ -71,6 +71,29 @@ type PipelineRun struct {
 	// endpoint does not return a duration, so the adapter derives it from the
 	// start/update timestamps and leaves it zero when it cannot.
 	Duration time.Duration
+	// PullRequests lists the change requests this run is attached to.
+	//
+	// Empty is a normal outcome, not an error: a push-to-main run has no PR at
+	// all, and GitLab only reports the association for merge-request pipelines
+	// (see the adapter). A consumer must therefore render "no linked PR" as
+	// simply absent rather than as a failure.
+	PullRequests []PipelinePullRequest
+}
+
+// PipelinePullRequest identifies a change request a run belongs to.
+//
+// It carries only what is needed to render and open the link: the full item is
+// fetched separately when the user actually opens it, so this stays cheap enough
+// to travel with every run in a list response.
+type PipelinePullRequest struct {
+	// Number is the platform's change-request number (GitHub PR number /
+	// GitLab merge-request iid).
+	Number int
+	// Title is the change-request title, when the platform reports it. GitLab's
+	// pipeline payload does not, so it is empty there.
+	Title string
+	// URL is the web URL of the change request, when known.
+	URL string
 }
 
 // PipelineRunPage is a page of runs plus pagination metadata.

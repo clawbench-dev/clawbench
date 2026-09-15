@@ -40,6 +40,13 @@ type Provider struct {
 	baseURL string
 	token   string
 	project string // URL-encoded namespace/project path
+	// projectPath is the RAW namespace/project path, used to build web URLs.
+	// Kept beside the encoded form because url.PathEscape is not reversible by
+	// inspection: a web link needs "ns/repo", not "ns%2Frepo".
+	projectPath string
+	// webBase is the instance's web origin ("https://gitlab.com"), i.e. baseURL
+	// without the "/api/v4" suffix. Web links cannot be built from baseURL.
+	webBase string
 	client  *http.Client
 }
 
@@ -60,11 +67,14 @@ func New(cfg Config, namespace, repo string) (*Provider, error) {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	fullPath := namespace + "/" + repo
+	origin := fmt.Sprintf("%s://%s", scheme, cfg.Host)
 	return &Provider{
-		baseURL: fmt.Sprintf("%s://%s/api/v4", scheme, cfg.Host),
-		token:   cfg.Token,
-		project: url.PathEscape(fullPath),
-		client:  client,
+		baseURL:     origin + "/api/v4",
+		token:       cfg.Token,
+		project:     url.PathEscape(fullPath),
+		projectPath: fullPath,
+		webBase:     origin,
+		client:      client,
 	}, nil
 }
 

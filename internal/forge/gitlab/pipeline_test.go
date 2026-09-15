@@ -205,3 +205,82 @@ func TestProviderSatisfiesPipelineInterfaces(t *testing.T) {
 	var _ forge.PipelineLister = (*Provider)(nil)
 	var _ forge.PipelineJobLister = (*Provider)(nil)
 }
+
+// TestListPipelineRuns_AttachesMergeRequestFromRef: a merge-request pipeline
+// carries `refs/merge-requests/<iid>/head`, which is the only association GitLab
+// exposes in the pipeline payload — so it must be recovered from the ref.
+func TestListPipelineRuns_AttachesMergeRequestFromRef(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"id":47,"iid":12,"name":"MR pipeline","status":"success",
+			 "ref":"refs/merge-requests/42/head","sha":"a91957a8","source":"merge_request_event",
+			 "created_at":"2026-09-14T10:00:00.000Z","updated_at":"2026-09-14T10:05:00.000Z"}
+		]`))
+	}))
+
+	res, err := p.ListPipelineRuns(context.Background(), time.Time{}, 1, 30)
+	require.NoError(t, err)
+	require.Len(t, res.Runs, 1)
+	require.Len(t, res.Runs[0].PullRequests, 1, "an MR pipeline must link to its MR")
+
+	pr := res.Runs[0].PullRequests[0]
+	assert.Equal(t, 42, pr.Number, "the iid comes from the ref")
+	assert.Contains(t, pr.URL, "/acme/widgets/-/merge_requests/42",
+		"the web URL is built server-side from the project path")
+}
+
+// TestListPipelineRuns_BranchPushHasNoMergeRequest: a plain branch push reports
+// nothing about any open MR, and resolving it would cost a request per row — so
+// the association is deliberately absent rather than guessed.
+func TestListPipelineRuns_BranchPushHasNoMergeRequest(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"id":47,"iid":12,"name":"CI","status":"success","ref":"main",
+			 "sha":"a91957a8","source":"push",
+			 "created_at":"2026-09-14T10:00:00.000Z","updated_at":"2026-09-14T10:05:00.000Z"}
+		]`))
+	}))
+
+	res, err := p.ListPipelineRuns(context.Background(), time.Time{}, 1, 30)
+	require.NoError(t, err)
+	require.Len(t, res.Runs, 1)
+	assert.Nil(t, res.Runs[0].PullRequests, "a branch push must not claim an MR")
+}
+
+// TestMergeRequestRefIID pins the parser's boundary: it must recover a real iid
+// and reject every near-miss, since a bogus iid would render a link to a
+// non-existent merge request.
+func TestMergeRequestRefIID(t *testing.T) {
+	ok := []struct {
+		ref  string
+		want int
+	}{
+		{"refs/merge-requests/1/head", 1},
+		{"refs/merge-requests/42/head", 42},
+		{"refs/merge-requests/7/merge", 7},
+		{"refs/merge-requests/123456/head", 123456},
+	}
+	for _, tc := range ok {
+		got, found := mergeRequestRefIID(tc.ref)
+		assert.True(t, found, "ref %q should parse", tc.ref)
+		assert.Equal(t, tc.want, got, "ref %q", tc.ref)
+	}
+
+	bad := []string{
+		"main",
+		"refs/heads/merge-requests/1/head",
+		"refs/merge-requests/head",     // no digits
+		"refs/merge-requests/abc/head", // not a number
+		"refs/merge-requests//head",    // empty
+		"refs/merge-requests/12",       // truncated: no trailing segment
+		"refs/merge-requests/0/head",   // iid 0 is not a real MR
+		"refs/merge-requests/-3/head",  // negative
+		"",
+	}
+	for _, ref := range bad {
+		_, found := mergeRequestRefIID(ref)
+		assert.False(t, found, "ref %q must not parse into an iid", ref)
+	}
+}

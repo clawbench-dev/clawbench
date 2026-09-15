@@ -55,6 +55,16 @@ export interface ForgeComment {
 /** Normalized CI run status, shared by both platforms. */
 export type ForgePipelineStatus = 'success' | 'failure' | 'running' | 'cancelled' | 'skipped' | 'unknown'
 
+/** A change request a CI run is attached to. */
+export interface ForgePipelinePullRequest {
+    /** PR/MR number — what the client passes to open the item in-panel. */
+    number: number
+    /** Best-effort: GitHub reports it, GitLab's pipeline payload does not. */
+    title?: string
+    /** Web link, when the platform could provide one. */
+    url?: string
+}
+
 export interface ForgePipelineRun {
     platform: string
     host: string
@@ -80,6 +90,16 @@ export interface ForgePipelineRun {
     slug: string
     /** True when this run has activity the user has not seen. */
     unread?: boolean
+    /**
+     * Change requests this run is attached to. ABSENT (not an empty array) when
+     * there are none — which is the normal case for a push-to-branch run, so a
+     * consumer must render "no link" rather than an empty section.
+     *
+     * Platform coverage differs: GitHub reports these inline on every run;
+     * GitLab only exposes them for merge-request pipelines (derived from the
+     * ref), so a branch push with an open MR stays unlinked.
+     */
+    pullRequests?: ForgePipelinePullRequest[]
 }
 
 export interface ForgePipelineJob {

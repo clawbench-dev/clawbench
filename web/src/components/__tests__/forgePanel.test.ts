@@ -943,6 +943,43 @@ describe('ForgePanelContent unread tab', () => {
     expect(detail.props('runId')).toBe(555)
   })
 
+  it('opens a linked pull request in-panel when the pipeline detail emits open-pr', async () => {
+    // The pipeline detail only knows the run, so the host owns the navigation:
+    // switching to the PR tab and pointing the issue/PR detail at that number.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    // Get into the pipeline detail first, as a user would.
+    wrapper.findComponent({ name: 'ForgeOverviewList' }).vm.$emit('open-item', {
+      type: 'pipeline', number: 0, runId: 555, itemKey: 'pipeline/run:555',
+    })
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ForgePipelineDetail' }).exists()).toBe(true)
+
+    wrapper.findComponent({ name: 'ForgePipelineDetail' }).vm.$emit('open-pr', 455)
+    await flushPromises()
+
+    // The pipeline detail is gone and the PR detail is showing the linked PR.
+    expect(wrapper.findComponent({ name: 'ForgePipelineDetail' }).exists()).toBe(false)
+    const detail = wrapper.findComponent({ name: 'ForgeDetail' })
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('type')).toBe('pr')
+    expect(detail.props('number')).toBe(455)
+
+    // The tab bar is hidden while a detail is open (the detail replaces the list
+    // in place), so the selected tab is asserted after closing it: landing on
+    // the PR list — not the Pipelines list — is what proves the switch happened.
+    await detail.vm.$emit('back')
+    await flushPromises()
+    const tabs = wrapper.findAll('.forge-tab')
+    expect(tabs).toHaveLength(4)
+    expect(tabs[2].classes(), 'the PR tab must be the selected one').toContain('active')
+    expect(tabs[3].classes()).not.toContain('active')
+  })
+
   it('header "mark all read" also clears the unread rows', async () => {
     // Without this the badge would hit zero while the unread rows kept their
     // dots — the list and the badge disagreeing, which is the bug this feature

@@ -271,3 +271,70 @@ func TestProviderSatisfiesPipelineInterfaces(t *testing.T) {
 	var _ forge.PipelineLister = (*Provider)(nil)
 	var _ forge.PipelineJobLister = (*Provider)(nil)
 }
+
+// TestListPipelineRuns_AttachesLinkedPullRequests: GitHub reports the run's
+// pull requests inline, so linking a run to its PR costs no extra request.
+func TestListPipelineRuns_AttachesLinkedPullRequests(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workflow_runs":[
+			{"id":7,"name":"CI","run_number":3,"status":"completed","conclusion":"failure",
+			 "head_branch":"feat/x","event":"pull_request",
+			 "created_at":"2026-09-14T12:00:00Z","updated_at":"2026-09-14T12:05:00Z",
+			 "pull_requests":[{"number":455,"title":"Fix the thing",
+			   "html_url":"https://github.com/acme/widgets/pull/455"}]}
+		]}`))
+	}))
+
+	res, err := p.ListPipelineRuns(context.Background(), time.Time{}, 1, 30)
+	require.NoError(t, err)
+	require.Len(t, res.Runs, 1)
+	require.Len(t, res.Runs[0].PullRequests, 1)
+
+	pr := res.Runs[0].PullRequests[0]
+	assert.Equal(t, 455, pr.Number)
+	assert.Equal(t, "Fix the thing", pr.Title)
+	assert.Equal(t, "https://github.com/acme/widgets/pull/455", pr.URL)
+}
+
+// TestListPipelineRuns_MultiplePullRequests: one run can belong to several PRs
+// when the same commit is pushed to a branch with more than one open PR.
+func TestListPipelineRuns_MultiplePullRequests(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workflow_runs":[
+			{"id":7,"name":"CI","status":"completed","conclusion":"success",
+			 "created_at":"2026-09-14T12:00:00Z","updated_at":"2026-09-14T12:05:00Z",
+			 "pull_requests":[{"number":455},{"number":456}]}
+		]}`))
+	}))
+
+	res, err := p.ListPipelineRuns(context.Background(), time.Time{}, 1, 30)
+	require.NoError(t, err)
+	require.Len(t, res.Runs[0].PullRequests, 2, "both PRs must survive")
+	assert.Equal(t, 455, res.Runs[0].PullRequests[0].Number)
+	assert.Equal(t, 456, res.Runs[0].PullRequests[1].Number)
+}
+
+// TestListPipelineRuns_NoPullRequestsIsNilNotAnEmptyEntry: a push-to-branch run
+// has no PR, and a bogus entry must not be manufactured from a payload that
+// omits the number (it could not be opened).
+func TestListPipelineRuns_NoPullRequestsIsNilNotAnEmptyEntry(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workflow_runs":[
+			{"id":1,"name":"CI","status":"completed","conclusion":"success",
+			 "created_at":"2026-09-14T12:00:00Z","updated_at":"2026-09-14T12:05:00Z"},
+			{"id":2,"name":"CI","status":"completed","conclusion":"success",
+			 "created_at":"2026-09-14T12:00:00Z","updated_at":"2026-09-14T12:05:00Z",
+			 "pull_requests":[{"title":"no number"},null]}
+		]}`))
+	}))
+
+	res, err := p.ListPipelineRuns(context.Background(), time.Time{}, 1, 30)
+	require.NoError(t, err)
+	require.Len(t, res.Runs, 2)
+	assert.Nil(t, res.Runs[0].PullRequests, "a run with no PRs must carry none")
+	assert.Nil(t, res.Runs[1].PullRequests,
+		"an entry without a number cannot be opened, so it must not be reported")
+}

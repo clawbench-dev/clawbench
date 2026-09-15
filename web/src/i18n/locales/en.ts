@@ -132,6 +132,8 @@ export default {
       event: 'Trigger',
       duration: 'Duration',
       jobs: 'Jobs',
+      linkedPrs: 'Linked pull request',
+      openPr: 'Open pull request #{number}',
       openRun: 'Open in browser',
       quote: 'Quote in chat',
       detail: {

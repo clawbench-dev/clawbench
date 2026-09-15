@@ -63,6 +63,23 @@ type forgePipelineRunView struct {
 	// Unread is true when this run has activity the user has not seen. Filled
 	// from the same rows the dock badge counts.
 	Unread bool `json:"unread,omitempty"`
+	// PullRequests lists the change requests this run is attached to, so the
+	// detail view can link straight to them. Omitted when there are none, which
+	// is the normal case for a push-to-branch run — the client must treat the
+	// absent field as "no linked change request", not as a failure.
+	PullRequests []forgePipelinePullRequestView `json:"pullRequests,omitempty"`
+}
+
+// forgePipelinePullRequestView is one linked change request of a run.
+type forgePipelinePullRequestView struct {
+	// Number is the PR/MR number, which is what the client uses to open the
+	// item in-panel.
+	Number int `json:"number"`
+	// Title is best-effort: GitHub reports it, GitLab's pipeline payload does
+	// not. The client falls back to rendering just the number.
+	Title string `json:"title,omitempty"`
+	// URL is the web link, when the platform (or the adapter) could build one.
+	URL string `json:"url,omitempty"`
 }
 
 // forgePipelineJobView is the frontend-facing shape of one job in a run.
@@ -84,7 +101,7 @@ func toPipelineRunView(pf *service.ProjectForge, run forge.PipelineRun) forgePip
 	if pf != nil {
 		slug, host, owner, repo = pf.Slug(), pf.Host, pf.Owner, pf.Repo
 	}
-	return forgePipelineRunView{
+	view := forgePipelineRunView{
 		Platform:        pf.Platform,
 		Host:            host,
 		Owner:           owner,
@@ -103,6 +120,15 @@ func toPipelineRunView(pf *service.ProjectForge, run forge.PipelineRun) forgePip
 		DurationSeconds: int64(run.Duration / time.Second),
 		Slug:            slug,
 	}
+	for i := range run.PullRequests {
+		pr := run.PullRequests[i]
+		view.PullRequests = append(view.PullRequests, forgePipelinePullRequestView{
+			Number: pr.Number,
+			Title:  pr.Title,
+			URL:    pr.URL,
+		})
+	}
+	return view
 }
 
 func toPipelineJobView(job forge.PipelineJob) forgePipelineJobView {

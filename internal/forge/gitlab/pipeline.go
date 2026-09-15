@@ -7,9 +7,11 @@ package gitlab
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"clawbench/internal/forge"
@@ -54,7 +56,7 @@ func (p *Provider) ListPipelineRuns(ctx context.Context, since time.Time, page, 
 
 	out := make([]forge.PipelineRun, 0, len(raw))
 	for i := range raw {
-		out = append(out, raw[i].toPipelineRun())
+		out = append(out, raw[i].toPipelineRun(p.webBase, p.projectPath))
 	}
 	hasMore, nextPage := paginationFromHeader(hdr)
 	return forge.PipelineRunPage{
@@ -108,7 +110,13 @@ type gitlabPipeline struct {
 	} `json:"user"`
 }
 
-func (g gitlabPipeline) toPipelineRun() forge.PipelineRun {
+// toPipelineRun normalizes one GitLab pipeline.
+//
+// webBase and projectPath are passed in rather than read off the receiver
+// because this is a value method on the payload struct, and because building a
+// web link needs the RAW project path (the provider's `project` field is
+// URL-encoded for API calls).
+func (g gitlabPipeline) toPipelineRun(webBase, projectPath string) forge.PipelineRun {
 	return forge.PipelineRun{
 		ID:        g.ID,
 		Name:      g.pipelineName(),
@@ -124,7 +132,67 @@ func (g gitlabPipeline) toPipelineRun() forge.PipelineRun {
 		// The list endpoint does not return a duration; it is only available on
 		// the single-pipeline endpoint, so the run list shows none.
 		Duration: 0,
+		// Derived from the ref: see mergeRequestRefIID.
+		PullRequests: g.pullRequests(webBase, projectPath),
 	}
+}
+
+// mergeRequestRefPrefix is the ref namespace GitLab uses for merge-request
+// pipelines: `refs/merge-requests/<iid>/head`.
+//
+// GitLab's pipeline payload has no merge-request field, but a pipeline created
+// for a merge request carries this ref, so the iid is recoverable from it. That
+// is the ONLY association available without a second request — which is why the
+// branch-push case (a push to a branch that happens to have an open MR) stays
+// unlinked rather than being resolved with a lookup per row.
+const mergeRequestRefPrefix = "refs/merge-requests/"
+
+// mergeRequestRefIID recovers the merge-request iid from a merge-request pipeline
+// ref. It reports false for any other ref, including an ordinary branch that
+// merely starts with similar text.
+//
+// The exact shape is `<prefix><digits>/head`; both the digits and the trailing
+// segment are required, so `refs/merge-requests/abc/head` and a truncated
+// `refs/merge-requests/12` are rejected rather than parsed into a bogus iid.
+func mergeRequestRefIID(ref string) (int, bool) {
+	rest, ok := strings.CutPrefix(ref, mergeRequestRefPrefix)
+	if !ok {
+		return 0, false
+	}
+	// Split off the trailing "/head" (or "/merge", which some configurations
+	// use); the remainder must be all digits.
+	digits, _, ok := strings.Cut(rest, "/")
+	if !ok || digits == "" {
+		return 0, false
+	}
+	iid, err := strconv.Atoi(digits)
+	if err != nil || iid <= 0 {
+		return 0, false
+	}
+	return iid, true
+}
+
+// pullRequests returns the change requests this pipeline is attached to.
+//
+// Only merge-request pipelines are linkable from the payload alone. A pipeline
+// triggered by a plain branch push reports its branch in Ref and nothing about
+// any open merge request, so it returns nil — deliberately, rather than issuing
+// a lookup that would add a request per run row.
+//
+// The URL is built here rather than by the client so that URL construction for a
+// forge stays server-side (the client never has to know the instance's URL
+// shape). Title is left empty because the pipeline payload does not carry it;
+// the frontend shows the MR number and fetches the real item on open.
+func (g gitlabPipeline) pullRequests(webBase, projectPath string) []forge.PipelinePullRequest {
+	iid, ok := mergeRequestRefIID(g.Ref)
+	if !ok {
+		return nil
+	}
+	pr := forge.PipelinePullRequest{Number: iid}
+	if webBase != "" && projectPath != "" {
+		pr.URL = fmt.Sprintf("%s/%s/-/merge_requests/%d", webBase, projectPath, iid)
+	}
+	return []forge.PipelinePullRequest{pr}
 }
 
 // pipelineName falls back to the ref: `name` only appears in the pipeline API

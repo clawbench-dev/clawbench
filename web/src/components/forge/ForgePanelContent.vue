@@ -48,6 +48,7 @@
         :run-id="pipelineDetailId"
         @back="closeDetail"
         @quote="onPipelineQuote"
+        @open-pr="onOpenLinkedPr"
       />
 
       <ForgeDetail
@@ -617,6 +618,25 @@ function onOverviewOpenItem(payload: {
   detailOpen.value = true
 }
 
+/**
+ * Open a change request linked from a pipeline run.
+ *
+ * Reuses the issue/PR detail path rather than opening the browser: the linked PR
+ * is a first-class item in this panel, so landing in its detail (with comments
+ * and the quote action) is the useful destination. The run's own "open in
+ * browser" button remains available for the platform page.
+ *
+ * `items.type` is set directly rather than via `setType`, which would kick off
+ * its own load for the wrong list; `items.load()` below fetches the PR list the
+ * detail will return to.
+ */
+function onOpenLinkedPr(number: number) {
+  activeTab.value = 'pr'
+  items.type.value = 'pr'
+  pipelineDetailId.value = 0
+  detailNumber.value = number
+  void items.load()
+}
 
 // Register the drill-down back handler so the edge-swipe gesture and the Android
 // hardware back button close the detail view (same contract as tasks/git).

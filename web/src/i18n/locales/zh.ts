@@ -135,6 +135,8 @@ export default {
       event: '触发方式',
       duration: '耗时',
       jobs: '作业',
+      linkedPrs: '关联的合并请求',
+      openPr: '打开合并请求 #{number}',
       openRun: '在浏览器打开',
       quote: '引用对话',
       detail: {

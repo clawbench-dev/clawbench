@@ -433,3 +433,74 @@ func TestServeForgePipeline_JobsFailureStillReturnsRun(t *testing.T) {
 	assert.Equal(t, float64(47), resp["pipeline"].(map[string]any)["id"])
 	assert.Empty(t, resp["jobs"], "jobs fall back to an empty list, not an error")
 }
+
+// TestServeForgePipeline_LinksMergeRequest drives the whole path for the linked
+// change request: a merge-request pipeline's ref must surface as pullRequests,
+// which is what lets the detail view jump to the MR.
+func TestServeForgePipeline_LinksMergeRequest(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/jobs") {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[
+			{"id":47,"iid":12,"name":"MR pipeline","status":"success",
+			 "ref":"refs/merge-requests/42/head","sha":"a91957a8","source":"merge_request_event",
+			 "web_url":"https://gitlab.example.com/acme/widgets/-/pipelines/47",
+			 "created_at":"2026-09-14T10:00:00.000Z","updated_at":"2026-09-14T10:05:00.000Z"}
+		]`))
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/pipeline?id=47", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgePipeline, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Pipeline struct {
+			PullRequests []struct {
+				Number int    `json:"number"`
+				URL    string `json:"url"`
+			} `json:"pullRequests"`
+		} `json:"pipeline"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	require.Len(t, resp.Pipeline.PullRequests, 1, "the run must link to its merge request")
+	assert.Equal(t, 42, resp.Pipeline.PullRequests[0].Number)
+	assert.Contains(t, resp.Pipeline.PullRequests[0].URL, "/merge_requests/42")
+}
+
+// TestServeForgePipeline_NoMergeRequestOmitsTheField: a push-to-branch run has
+// no linked change request, and the field must be ABSENT (not an empty array)
+// so the client renders "no link" rather than an empty section.
+func TestServeForgePipeline_NoMergeRequestOmitsTheField(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/jobs") {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(pipelineListBody))
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/pipeline?id=47", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgePipeline, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	pipeline := resp["pipeline"].(map[string]any)
+	_, present := pipeline["pullRequests"]
+	assert.False(t, present, "omitempty must drop the field when there is no link")
+}

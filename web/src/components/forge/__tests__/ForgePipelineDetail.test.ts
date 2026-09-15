@@ -32,6 +32,8 @@ function makeI18n() {
             loadFailed: 'Failed to load',
             jobName: 'Job', jobStage: 'Stage', jobStatus: 'Status', jobDuration: 'Duration',
             runNumber: 'Run', event: 'Trigger', duration: 'Duration', jobs: 'Jobs',
+            linkedPrs: 'Linked pull request',
+            openPr: 'Open pull request #{number}',
             openRun: 'Open in browser', quote: 'Quote in chat',
             detail: { back: 'Back' },
           },
@@ -174,5 +176,61 @@ describe('ForgePipelineDetail', () => {
 
     await wrapper.find('.forge-back').trigger('click')
     expect(wrapper.emitted('back')).toHaveLength(1)
+  })
+
+  it('renders a linked pull request and emits open-pr on click', async () => {
+    // Opening the PR is what makes the association useful; the host owns the
+    // navigation, so this component's job is to emit the number.
+    detailState.run.value = run({
+      pullRequests: [{ number: 455, title: 'Fix the thing', url: 'https://github.com/acme/widgets/pull/455' }],
+    })
+    const wrapper = mount(ForgePipelineDetail, { props: { runId: 42 }, global: globalOpts })
+    await wrapper.vm.$nextTick()
+
+    const rows = wrapper.findAll('.forge-pipeline-pr')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('Fix the thing')
+
+    await rows[0].trigger('click')
+    expect(wrapper.emitted('open-pr')?.[0]).toEqual([455])
+  })
+
+  it('renders the number when the platform supplies no title', async () => {
+    // GitLab's pipeline payload has no MR title, so the number is the honest
+    // label rather than an empty row.
+    detailState.run.value = run({ pullRequests: [{ number: 42 }] })
+    const wrapper = mount(ForgePipelineDetail, { props: { runId: 42 }, global: globalOpts })
+    await wrapper.vm.$nextTick()
+
+    const rows = wrapper.findAll('.forge-pipeline-pr')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('#42')
+  })
+
+  it('shows no linked-PR section when the run has none', async () => {
+    // The field is absent (not empty) for a push-to-branch run, and an empty
+    // section would read as a rendering bug.
+    detailState.run.value = run()
+    const wrapper = mount(ForgePipelineDetail, { props: { runId: 42 }, global: globalOpts })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.forge-pipeline-prs').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Linked pull request')
+  })
+
+  it('renders every linked pull request, not just the first', async () => {
+    // One run can belong to several PRs (same commit, multiple open PRs).
+    detailState.run.value = run({
+      pullRequests: [{ number: 455, title: 'First' }, { number: 456, title: 'Second' }],
+    })
+    const wrapper = mount(ForgePipelineDetail, { props: { runId: 42 }, global: globalOpts })
+    await wrapper.vm.$nextTick()
+
+    const rows = wrapper.findAll('.forge-pipeline-pr')
+    expect(rows).toHaveLength(2)
+    expect(rows[1].text()).toContain('Second')
+
+    await rows[1].trigger('click')
+    expect(wrapper.emitted('open-pr')?.[0]).toEqual([456])
   })
 })
