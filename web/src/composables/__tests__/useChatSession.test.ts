@@ -384,6 +384,7 @@ import { useChatSession, loadSessionsOnce, resetChatSessionState } from '@/compo
 import { recordRecentSession } from '@/composables/useRecentSession'
 import { store } from '@/stores/app.ts'
 import { chatMessageReducer } from '@/utils/chatStreamUtils.ts'
+import { updatePlanEntries, clearPlanState, usePlanProgress } from '@/composables/usePlanProgress'
 
 // Get direct references to the mocked functions from useSessionIdentity
 const mockUpdateUsageState = vi.hoisted(() => vi.fn())
@@ -827,6 +828,66 @@ describe('onSessionEvent', () => {
         expect.objectContaining({ signal: expect.any(AbortSignal) })
       )
     })
+  })
+
+  // ── session_update "rewound" clears the plan (issue #457) ──
+  // The rewind handler broadcasts a "rewound" session_update so every open
+  // client reloads the truncated history. A client that did not issue the
+  // rewind has no other signal that its cached plan is now stale.
+
+  it('clears plan progress when the current session is rewound from another client', () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions: [], agents: [] }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+    updatePlanEntries([
+      { content: 'Step 1', priority: 'high', status: 'completed' },
+      { content: 'Step 2', priority: 'medium', status: 'in_progress' },
+    ])
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'rewound' })
+
+    expect(usePlanProgress().planEntries.value).toHaveLength(0)
+  })
+
+  it('does not clear plan progress when a different session is rewound', () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions: [], agents: [] }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+    updatePlanEntries([{ content: 'Mine', priority: 'high', status: 'in_progress' }])
+
+    // planEntries is a single module-level singleton — another session's
+    // rewind must not wipe the plan currently on screen.
+    session.onSessionEvent({ session_id: 'other-s2', status: 'rewound' })
+
+    expect(usePlanProgress().planEntries.value).toHaveLength(1)
+    expect(usePlanProgress().planEntries.value[0].content).toBe('Mine')
+  })
+
+  it('clears plan progress for a replayed rewound event (WS reconnect catch-up)', () => {
+    // A replayed "rewound" means this client was disconnected when the
+    // truncation happened — its plan is stale in exactly the same way, so the
+    // replay guard used for completion events must NOT apply here.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions: [], agents: [] }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+    mockIsReplayingEvents.value = true
+    updatePlanEntries([{ content: 'Stale', priority: 'low', status: 'completed' }])
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'rewound' })
+
+    expect(usePlanProgress().planEntries.value).toHaveLength(0)
   })
 
   // ── Current-session completion marks the session read ──
@@ -6206,6 +6267,92 @@ describe('rewindSession', () => {
     const restored = await session.rewindSession('s1', 42)
 
     expect(restored).toBe('')
+  })
+
+  // ── Plan clearing (issue #457) ──────────────────────────────────────────
+  // Plan progress is not persisted — it lives only on the ACP connection the
+  // rewind destroys, so the reload returns planState=null and the "only
+  // overwrite when non-empty" sync in syncSessionState leaves the old plan in
+  // place. rewindSession must clear it explicitly.
+
+  it('clears plan progress on a successful rewind', async () => {
+    globalThis.fetch = urlAwareFetch({})
+    mockState.currentSessionId = 's1'
+    updatePlanEntries([
+      { content: 'Step 1', priority: 'high', status: 'completed' },
+      { content: 'Step 2', priority: 'medium', status: 'in_progress' },
+    ])
+    expect(usePlanProgress().planEntries.value).toHaveLength(2)
+
+    const session = createSession()
+    await session.rewindSession('s1', 42)
+
+    expect(usePlanProgress().planEntries.value).toHaveLength(0)
+    expect(usePlanProgress().hasPlan.value).toBe(false)
+  })
+
+  it('clears plan progress before the reload, so a plan reported by the reload wins', async () => {
+    // Documents the ordering: the reload's own planState (should the backend
+    // ever report one) must survive, not be wiped by our clear.
+    const rewindPlanCalls: number[] = []
+    let planLenAtReload = -1
+    globalThis.fetch = vi.fn((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/ai/session/rewind')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ok: true, sessionId: 's1', restoredText: '', deletedCount: 1 }),
+        })
+      }
+      if (typeof url === 'string' && url.includes('/api/ai/chat')) {
+        // Observed during the reload: the clear must already have happened.
+        planLenAtReload = usePlanProgress().planEntries.value.length
+        rewindPlanCalls.push(planLenAtReload)
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessionId: 's1', sessionTitle: 'T', messages: [], total: 0, running: false }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], agents: [] }) })
+    })
+    mockState.currentSessionId = 's1'
+    updatePlanEntries([{ content: 'Stale step', priority: 'low', status: 'completed' }])
+
+    const session = createSession()
+    await session.rewindSession('s1', 42)
+
+    expect(planLenAtReload).toBe(0)
+  })
+
+  it('does not clear plan progress when the rewind fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: 'Internal error' }),
+    })
+    mockState.currentSessionId = 's1'
+    updatePlanEntries([{ content: 'Keep me', priority: 'high', status: 'in_progress' }])
+
+    const session = createSession()
+    const restored = await session.rewindSession('s1', 42)
+
+    expect(restored).toBe('')
+    expect(usePlanProgress().planEntries.value).toHaveLength(1)
+    expect(usePlanProgress().planEntries.value[0].content).toBe('Keep me')
+  })
+
+  it('does not clear plan progress when there is nothing to rewind', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ msgKey: 'NothingToRewind' }),
+    })
+    mockState.currentSessionId = 's1'
+    updatePlanEntries([{ content: 'Keep me', priority: 'high', status: 'in_progress' }])
+
+    const session = createSession()
+    await session.rewindSession('s1', 999)
+
+    expect(usePlanProgress().planEntries.value).toHaveLength(1)
   })
 })
 

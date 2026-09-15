@@ -1117,6 +1117,21 @@ export function useChatSession(options: UseChatSessionOptions) {
       loadSessionsOnce()
     } else {
       if (sid) { runningSessions.value.delete(sid); runningSessionsVersion.value++ }
+      // A rewind truncated this session's history in place — either from this
+      // client (which already cleared the plan in rewindSession) or from
+      // another one. Plan progress is not persisted: it lived only on the ACP
+      // connection the rewind destroyed, so whatever is cached describes a
+      // conversation that no longer exists. Clear it here so a client that did
+      // NOT issue the rewind drops the stale plan too. Guarded on the current
+      // session because planEntries is a single module-level singleton: an
+      // event for another session must not wipe the plan being displayed.
+      // No replay guard: a replayed rewound means this client was disconnected
+      // when the truncation happened, so its plan is stale in exactly the same
+      // way, and buffered events replay in order (any plan_update that follows
+      // re-populates the panel afterwards).
+      if (data.status === 'rewound' && sid === currentSessionId.value) {
+        clearPlanState()
+      }
       // Safety net: if the session completed/cancelled but loading is still true,
       // it means the chat_stream 'done'/'cancelled' event was missed or its
       // handler failed (e.g., sessionChanged() guard returned early, or the WS
@@ -1484,6 +1499,17 @@ export function useChatSession(options: UseChatSessionOptions) {
         toast.show(gt('chat.session.rewindFailed'), { icon: '⚠️', type: 'error' })
         return ''
       }
+      // Plan progress is NOT persisted: it lives only on the ACP connection
+      // object, and the rewind destroyed that connection (the handler removes
+      // it from the pool before responding). The reload below therefore gets
+      // planState=null, and syncSessionState only overwrites plan entries when
+      // the response carries a non-empty list ("absent" is indistinguishable
+      // from "empty") — without this clear, the panel would keep showing the
+      // pre-rewind plan, including steps already marked completed.
+      // Same reasoning as switchSession's clearPlanState: entries produced
+      // after the anchor must not survive. Clear BEFORE the reload so a plan
+      // the reload does report (not possible today, but cheap insurance) wins.
+      clearPlanState()
       // Reload the message list in place (skipIfUnchanged=false forces an
       // authoritative refresh that rebuilds from the truncated DB snapshot).
       // Unlike switchSession this keeps the identity, cookie, WS subscription
