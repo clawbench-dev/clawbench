@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -204,6 +205,97 @@ func TestListPipelineJobs_RejectsInvalidID(t *testing.T) {
 func TestProviderSatisfiesPipelineInterfaces(t *testing.T) {
 	var _ forge.PipelineLister = (*Provider)(nil)
 	var _ forge.PipelineJobLister = (*Provider)(nil)
+	// GitLab cannot report the MR association inline for a branch push, so it
+	// must implement the on-demand resolver.
+	var _ forge.PipelinePullRequestResolver = (*Provider)(nil)
+}
+
+// TestResolvePipelinePullRequests_FindsOpenMergeRequestForBranch: the branch-push
+// case the pipeline payload cannot answer. source_branch (not the commit
+// endpoint) is the right filter, because the commit endpoint means "the MR that
+// originally introduced this commit" — an already-merged MR.
+func TestResolvePipelinePullRequests_FindsOpenMergeRequestForBranch(t *testing.T) {
+	var gotQuery url.Values
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		assert.Equal(t, "/api/v4/projects/acme%2Fwidgets/merge_requests", r.URL.EscapedPath())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"iid":42,"title":"Fix the thing","state":"opened",
+			 "web_url":"https://gitlab.example.com/acme/widgets/-/merge_requests/42"}
+		]`))
+	}))
+
+	run := forge.PipelineRun{ID: 47, Ref: "feat/login-fix", Event: "push"}
+	prs, err := p.ResolvePipelinePullRequests(context.Background(), run)
+	require.NoError(t, err)
+
+	assert.Equal(t, "feat/login-fix", gotQuery.Get("source_branch"), "the lookup key is the source branch")
+	assert.Equal(t, "opened", gotQuery.Get("state"), "only an open MR is a useful destination")
+
+	require.Len(t, prs, 1)
+	assert.Equal(t, 42, prs[0].Number)
+	assert.Equal(t, "Fix the thing", prs[0].Title, "the MR list does carry a title, unlike the pipeline payload")
+	assert.Contains(t, prs[0].URL, "/merge_requests/42")
+}
+
+// TestResolvePipelinePullRequests_NoMatchIsNotAnError: a branch with no open MR
+// is the normal case, not a failure.
+func TestResolvePipelinePullRequests_NoMatchIsNotAnError(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+
+	prs, err := p.ResolvePipelinePullRequests(context.Background(), forge.PipelineRun{ID: 1, Ref: "main"})
+	require.NoError(t, err)
+	assert.Empty(t, prs)
+}
+
+// TestResolvePipelinePullRequests_SkipsTheQueryWhenAlreadyKnown: a
+// merge-request pipeline already carries its association from the ref, so the
+// extra request must not be spent.
+func TestResolvePipelinePullRequests_SkipsTheQueryWhenAlreadyKnown(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("no request should be issued when the association is already known")
+	}))
+
+	run := forge.PipelineRun{
+		ID:           47,
+		Ref:          "refs/merge-requests/42/head",
+		PullRequests: []forge.PipelinePullRequest{{Number: 42}},
+	}
+	prs, err := p.ResolvePipelinePullRequests(context.Background(), run)
+	require.NoError(t, err)
+	require.Len(t, prs, 1)
+	assert.Equal(t, 42, prs[0].Number)
+}
+
+// TestResolvePipelinePullRequests_EmptyRefSkipsTheQuery: a run with no ref has
+// nothing to match on, so it must not issue a request with an empty filter
+// (which would list the repository's MRs).
+func TestResolvePipelinePullRequests_EmptyRefSkipsTheQuery(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("no request should be issued for a run with no ref")
+	}))
+
+	prs, err := p.ResolvePipelinePullRequests(context.Background(), forge.PipelineRun{ID: 1})
+	require.NoError(t, err)
+	assert.Empty(t, prs)
+}
+
+// TestResolvePipelinePullRequests_DropsEntriesWithoutAnIID: an entry with no iid
+// could not be opened, so it must not become a dead link.
+func TestResolvePipelinePullRequests_DropsEntriesWithoutAnIID(t *testing.T) {
+	p := newPipelineTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"iid":0,"title":"bogus"},{"iid":7,"title":"real"}]`))
+	}))
+
+	prs, err := p.ResolvePipelinePullRequests(context.Background(), forge.PipelineRun{ID: 1, Ref: "feat/x"})
+	require.NoError(t, err)
+	require.Len(t, prs, 1)
+	assert.Equal(t, 7, prs[0].Number)
 }
 
 // TestListPipelineRuns_AttachesMergeRequestFromRef: a merge-request pipeline

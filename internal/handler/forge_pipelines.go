@@ -370,6 +370,18 @@ func ServeForgePipeline(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Resolve linked change requests for platforms that cannot report them
+	// inline (GitLab). This costs one request, which is why it lives HERE and
+	// not in the list path: the list is polled and paged, the detail is opened
+	// once by a user. Best-effort like jobs — a failed lookup must not hide the
+	// run itself, which is the primary payload.
+	if resolver, ok := provider.(forge.PipelinePullRequestResolver); ok {
+		resolved, err := resolver.ResolvePipelinePullRequests(forgeContext(r), run)
+		if err == nil {
+			run.PullRequests = resolved
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pipeline":  toPipelineRunView(pf, run),
 		"jobs":      jobs,

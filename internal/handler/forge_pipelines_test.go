@@ -338,6 +338,10 @@ func TestServeForgePipeline_ReturnsRunAndJobs(t *testing.T) {
 			]`))
 		case strings.HasSuffix(r.URL.Path, "/pipelines"):
 			_, _ = w.Write([]byte(pipelineListBody))
+		case strings.HasSuffix(r.URL.Path, "/merge_requests"):
+			// The detail view resolves the linked MR on demand; this run's branch
+			// has none.
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -434,9 +438,118 @@ func TestServeForgePipeline_JobsFailureStillReturnsRun(t *testing.T) {
 	assert.Empty(t, resp["jobs"], "jobs fall back to an empty list, not an error")
 }
 
+// TestServeForgePipeline_ResolvesBranchPushMergeRequest: the branch-push case,
+// where the pipeline payload carries no association and the detail view must
+// look it up. This is the whole point of the resolver — a push-to-branch run on
+// a branch with an open MR used to show nothing.
+func TestServeForgePipeline_ResolvesBranchPushMergeRequest(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	var sawMRQuery bool
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/jobs"):
+			_, _ = w.Write([]byte(`[]`))
+		case strings.HasSuffix(r.URL.Path, "/merge_requests"):
+			sawMRQuery = true
+			assert.Equal(t, "release/1.2", r.URL.Query().Get("source_branch"))
+			assert.Equal(t, "opened", r.URL.Query().Get("state"))
+			_, _ = w.Write([]byte(`[{"iid":99,"title":"Ship 1.2","state":"opened"}]`))
+		default:
+			// pipelineListBody's run 48 is a push on branch "release/1.2".
+			_, _ = w.Write([]byte(pipelineListBody))
+		}
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/pipeline?id=48", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgePipeline, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, sawMRQuery, "the detail view must look the association up")
+
+	var resp struct {
+		Pipeline struct {
+			PullRequests []struct {
+				Number int    `json:"number"`
+				Title  string `json:"title"`
+			} `json:"pullRequests"`
+		} `json:"pipeline"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Pipeline.PullRequests, 1)
+	assert.Equal(t, 99, resp.Pipeline.PullRequests[0].Number)
+	assert.Equal(t, "Ship 1.2", resp.Pipeline.PullRequests[0].Title)
+}
+
+// TestServeForgePipelines_DoesNotResolveMergeRequests is the budget guard: the
+// resolver costs a request per run, so the LIST path must never call it. A
+// regression here would multiply the poll's request count by the page size.
+func TestServeForgePipelines_DoesNotResolveMergeRequests(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	var mrQueries int
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/merge_requests") {
+			mrQueries++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(pipelineListBody))
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/pipelines", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgePipelines, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Zero(t, mrQueries, "listing must not spend a request per run on MR lookups")
+}
+
+// TestServeForgePipeline_ResolverFailureStillReturnsRun: the lookup is
+// best-effort. Losing it must not hide the run, which is the primary payload.
+func TestServeForgePipeline_ResolverFailureStillReturnsRun(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/jobs"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case strings.HasSuffix(r.URL.Path, "/merge_requests"):
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"boom"}`))
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(pipelineListBody))
+		}
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/pipeline?id=48", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgePipeline, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	pipeline := resp["pipeline"].(map[string]any)
+	assert.Equal(t, float64(48), pipeline["id"], "the run must survive a failed lookup")
+	_, present := pipeline["pullRequests"]
+	assert.False(t, present, "a failed lookup contributes no links")
+}
+
 // TestServeForgePipeline_LinksMergeRequest drives the whole path for the linked
 // change request: a merge-request pipeline's ref must surface as pullRequests,
 // which is what lets the detail view jump to the MR.
+//
+// This is the ref-derived case, which needs no lookup — the request count is
+// asserted so a future change cannot start spending one here either.
 func TestServeForgePipeline_LinksMergeRequest(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
@@ -476,20 +589,28 @@ func TestServeForgePipeline_LinksMergeRequest(t *testing.T) {
 	assert.Contains(t, resp.Pipeline.PullRequests[0].URL, "/merge_requests/42")
 }
 
-// TestServeForgePipeline_NoMergeRequestOmitsTheField: a push-to-branch run has
-// no linked change request, and the field must be ABSENT (not an empty array)
-// so the client renders "no link" rather than an empty section.
+// TestServeForgePipeline_NoMergeRequestOmitsTheField: a run whose branch has no
+// open merge request gets no link, and the field must be ABSENT (not an empty
+// array) so the client renders "no link" rather than an empty section.
+//
+// The MR lookup is answered with an empty list rather than being left
+// unanswered: the detail view now performs it, so a mock that fell through to
+// the pipeline body would feed the resolver a page of PIPELINES and manufacture
+// a bogus match.
 func TestServeForgePipeline_NoMergeRequestOmitsTheField(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
 	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if strings.HasSuffix(r.URL.Path, "/jobs") {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/jobs"):
 			_, _ = w.Write([]byte(`[]`))
-			return
+		case strings.HasSuffix(r.URL.Path, "/merge_requests"):
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			_, _ = w.Write([]byte(pipelineListBody))
 		}
-		_, _ = w.Write([]byte(pipelineListBody))
 	}))
 
 	req := newRequest(t, http.MethodGet, "/api/forge/pipeline?id=47", nil)

@@ -150,6 +150,26 @@ type PipelineJobLister interface {
 	ListPipelineJobs(ctx context.Context, runID int64) ([]PipelineJob, error)
 }
 
+// PipelinePullRequestResolver is the OPTIONAL capability for finding the change
+// requests a run belongs to, for platforms that cannot report the association
+// inline.
+//
+// It is deliberately separate from PipelineLister because it costs a request per
+// run: callers must invoke it only where the extra latency and rate-limit budget
+// are acceptable (the detail view), never while listing. An adapter that already
+// reports the association inline (GitHub) simply does not implement it.
+type PipelinePullRequestResolver interface {
+	// ResolvePipelinePullRequests returns the change requests attached to a run,
+	// or an empty slice when there are none.
+	//
+	// `run` is the whole run rather than just its id because the lookup key
+	// differs per platform (GitLab matches on the run's source branch).
+	//
+	// Implementations must treat "no association found" as an empty result, not
+	// an error: a run that belongs to no change request is the normal case.
+	ResolvePipelinePullRequests(ctx context.Context, run PipelineRun) ([]PipelinePullRequest, error)
+}
+
 // NormalizeConclusion maps a platform conclusion/status string to a
 // PipelineStatus. It is shared by both adapters so the mapping cannot drift
 // between them.

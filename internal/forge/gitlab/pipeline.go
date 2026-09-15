@@ -172,12 +172,14 @@ func mergeRequestRefIID(ref string) (int, bool) {
 	return iid, true
 }
 
-// pullRequests returns the change requests this pipeline is attached to.
+// pullRequests returns the change requests this pipeline is attached to, using
+// ONLY what the pipeline payload carries.
 //
-// Only merge-request pipelines are linkable from the payload alone. A pipeline
-// triggered by a plain branch push reports its branch in Ref and nothing about
-// any open merge request, so it returns nil — deliberately, rather than issuing
-// a lookup that would add a request per run row.
+// Only merge-request pipelines are linkable this way. A pipeline triggered by a
+// plain branch push reports its branch in Ref and nothing about any open merge
+// request, so this returns nil — the branch-push case is handled on demand by
+// ResolvePipelinePullRequests, which costs a request and is therefore only
+// called from the detail view.
 //
 // The URL is built here rather than by the client so that URL construction for a
 // forge stays server-side (the client never has to know the instance's URL
@@ -188,11 +190,70 @@ func (g gitlabPipeline) pullRequests(webBase, projectPath string) []forge.Pipeli
 	if !ok {
 		return nil
 	}
-	pr := forge.PipelinePullRequest{Number: iid}
+	return []forge.PipelinePullRequest{mergeRequestRef(iid, "", webBase, projectPath)}
+}
+
+// mergeRequestRef assembles one linked change request, building its web URL when
+// the caller knows the instance origin and project path.
+func mergeRequestRef(iid int, title, webBase, projectPath string) forge.PipelinePullRequest {
+	pr := forge.PipelinePullRequest{Number: iid, Title: title}
 	if webBase != "" && projectPath != "" {
 		pr.URL = fmt.Sprintf("%s/%s/-/merge_requests/%d", webBase, projectPath, iid)
 	}
-	return []forge.PipelinePullRequest{pr}
+	return pr
+}
+
+// ResolvePipelinePullRequests finds the open merge requests for a run's source
+// branch.
+//
+// This exists because the pipeline payload carries no MR association for a
+// branch-push pipeline, and it costs one request — so it is only invoked from the
+// detail view, never while listing. Adapters that already know the association
+// (GitHub) do not implement this interface at all.
+//
+// `source_branch` is the right filter rather than the commit-based endpoint: the
+// latter returns "the merge request that originally introduced this commit",
+// which means an already-MERGED MR. A branch-push pipeline is by definition
+// running against a branch whose MR is still open, so the commit endpoint would
+// answer the wrong question and usually return nothing.
+//
+// state=opened is applied because only an open MR is a meaningful destination
+// from a running pipeline; a merged or closed one would link the user to
+// history rather than to the change under review.
+//
+// A run whose ref is a merge-request ref already has its association from the
+// payload, so it is returned as-is rather than re-queried.
+func (p *Provider) ResolvePipelinePullRequests(ctx context.Context, run forge.PipelineRun) ([]forge.PipelinePullRequest, error) {
+	if len(run.PullRequests) > 0 {
+		return run.PullRequests, nil
+	}
+	ref := strings.TrimSpace(run.Ref)
+	// A tag or an empty ref has no branch to look up. Tags are distinguishable
+	// only by asking the API, which is not worth a request: GitLab reports a tag
+	// pipeline's ref as the bare tag name, and the MR filter would simply return
+	// nothing for it.
+	if ref == "" {
+		return nil, nil
+	}
+
+	q := url.Values{}
+	q.Set("source_branch", ref)
+	q.Set("state", "opened")
+	q.Set("per_page", "20")
+
+	var raw []gitlabItem
+	if err := p.get(ctx, "/projects/"+p.project+"/merge_requests", q, &raw); err != nil {
+		return nil, err
+	}
+
+	out := make([]forge.PipelinePullRequest, 0, len(raw))
+	for i := range raw {
+		if raw[i].IID <= 0 {
+			continue
+		}
+		out = append(out, mergeRequestRef(raw[i].IID, raw[i].Title, p.webBase, p.projectPath))
+	}
+	return out, nil
 }
 
 // pipelineName falls back to the ref: `name` only appears in the pipeline API
