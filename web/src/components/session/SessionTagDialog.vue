@@ -23,7 +23,6 @@
               @change="toggleTag(tag.name)"
             />
             <span class="st-chip" :style="tagAccentStyle(tag.name)">
-              <span class="st-chip-dot"></span>
               <span class="st-chip-name">{{ tag.name }}</span>
             </span>
             <span v-if="tag.scope === 'global'" class="st-scope-badge">{{ t('sessionTags.scopeGlobal') }}</span>
@@ -334,14 +333,61 @@ watch(() => props.open, (open) => {
   cursor: pointer;
 }
 
+/* Custom-drawn checkbox: the native control renders at its own weight and
+   corner radius, which reads as crude next to the pill chips. Same recipe as
+   .form-checkbox in QuickCommandEditModal.vue, so both dialogs match.
+   The checked colour stays the single accent rather than the tag's own colour:
+   tag hues come from a hash palette and the pale ones (yellow, light green)
+   would leave a white tick with almost no contrast. */
 .st-checkbox {
+  -webkit-appearance: none;
+  appearance: none;
   flex-shrink: 0;
   width: 16px;
   height: 16px;
-  /* Without an explicit size the UA default (13px) sits noticeably smaller
-     than the 16px used by other checkboxes in the app. */
-  accent-color: var(--accent-color, #0066cc);
+  margin: 0;
+  position: relative;
+  /* --border-color is too faint against the dialog surface for an unchecked
+     box to read as a control, so darken it toward the text colour. */
+  border: 1.5px solid color-mix(in srgb, var(--text-muted) 60%, transparent);
+  border-radius: var(--radius-xs, 3px);
+  background: var(--bg-primary, #fff);
   cursor: pointer;
+  transition: background var(--duration-base), border-color var(--duration-base);
+}
+
+.st-checkbox:checked {
+  background: var(--accent-color, #0066cc);
+  border-color: var(--accent-color, #0066cc);
+}
+
+/* The tick, drawn as two borders of a rotated box. Centred by transform rather
+   than by hand-tuned offsets: absolute left/top values depend on the border
+   width and box-sizing and drift as soon as either changes (the copied
+   left:4px/top:1px put the tick 0.1px from the right edge).
+   45% rather than 50% on the vertical axis: the rotated glyph's bounding box
+   is taller than its visual mass, so 50% sits ~0.75px low. Measured on an 8x
+   render, 44-46% all land within 0.25px of centred. */
+.st-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.st-checkbox:focus-visible {
+  outline: 2px solid var(--accent-color, #0066cc);
+  outline-offset: 1px;
+}
+
+/* Unchecked rows dim slightly on hover so the row reads as one click target. */
+.st-candidate:hover .st-checkbox:not(:checked) {
+  border-color: var(--accent-color, #0066cc);
 }
 
 .st-scope-badge {
@@ -462,7 +508,6 @@ watch(() => props.open, (open) => {
 .st-chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
   min-width: 0;
   padding: 1px var(--space-3);
   border-radius: 999px;
@@ -475,14 +520,6 @@ watch(() => props.open, (open) => {
 
 [data-theme-base="dark"] .st-chip {
   --tag-accent: var(--tag-accent-dark);
-}
-
-.st-chip-dot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--tag-accent);
 }
 
 .st-chip-name {

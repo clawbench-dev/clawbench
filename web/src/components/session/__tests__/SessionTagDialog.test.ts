@@ -364,10 +364,28 @@ describe('SessionTagDialog', () => {
       expect(rule).toMatch(/padding:/)
     })
 
-    it('.st-checkbox declares an explicit size', () => {
+    it('.st-checkbox is custom-drawn, not left to the UA', () => {
       const rule = ruleFor('.st-checkbox')
       expect(rule).toMatch(/width:/)
       expect(rule).toMatch(/height:/)
+      // Without appearance:none the UA paints its own chrome and the size and
+      // radius below are ignored, so the control reverts to looking crude.
+      expect(rule).toMatch(/appearance:\s*none/)
+      expect(rule).toMatch(/border-radius:/)
+    })
+
+    it('.st-checkbox centres its tick instead of using hand-tuned offsets', () => {
+      // The tick is a rotated ::after box. Fixed left/top offsets depend on the
+      // border width and box-sizing and silently drift; centring by transform
+      // keeps it correct. (The copied left:4px/top:1px sat 0.1px off the right
+      // edge at 16px.)
+      const m = /:checked::after\s*\{([^}]*)\}/.exec(src)
+      expect(m, 'the tick rule must exist').not.toBeNull()
+      const rule = m![1]
+      expect(rule).toMatch(/left:\s*50%/)
+      expect(rule).toMatch(/top:\s*\d+%/)
+      expect(rule).toMatch(/translate\(-50%,\s*-50%\)/)
+      expect(rule).toMatch(/rotate\(45deg\)/)
     })
 
     it('.session-tags-dialog insets its content from the card edge', () => {
