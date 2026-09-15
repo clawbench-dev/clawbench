@@ -652,3 +652,33 @@ describe('ChatMessageList — scroll FAB is fully opaque', () => {
   })
 })
 
+// ── send-message forwards the ask-card key ──
+//
+// An AskUserQuestion answer carries the card's key so a FAILED send can revert
+// the submitted flag and leave the card answerable (see revertAskSubmission).
+// The key travels through every layer between the card and ChatPanelContent —
+// dropping it at any hop silently strands a failed answer with no way to retry.
+describe('ChatMessageList — ask-card key forwarding', () => {
+  async function source(component: string): Promise<string> {
+    const mod = await import(/* @vite-ignore */ `@/components/chat/${component}?raw`)
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('forwards both the text and the card key from the inner list', async () => {
+    const src = await source('ChatMessageList.vue')
+    // The old single-argument form dropped the key.
+    expect(src).not.toMatch(/@send-message="\$emit\('send-message', \$event\)"/)
+    expect(src).toMatch(/@send-message="\(text, cardKey\) => \$emit\('send-message', text, cardKey\)"/)
+  })
+
+  it('forwards both the text and the card key from the message item', async () => {
+    const src = await source('ChatMessageItem.vue')
+    expect(src).not.toMatch(/@send-message="\$emit\('send-message', \$event\)"/)
+    expect(src).toMatch(/@send-message="\(text, cardKey\) => \$emit\('send-message', text, cardKey\)"/)
+  })
+
+  it('forwards both the text and the card key from ContentBlocks', async () => {
+    const src = await source('ContentBlocks.vue')
+    expect(src).toMatch(/@send-message="\(text, cardKey\) => \$emit\('send-message', text, cardKey\)"/)
+  })
+})

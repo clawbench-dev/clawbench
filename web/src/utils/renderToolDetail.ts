@@ -18,6 +18,7 @@ import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { getSessionId } from '@/composables/useSessionIdentity.ts'
 import { copyText } from '@/utils/clipboard.ts'
+import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
 
 // ────────────────────────────────────────────────────────────
 // Shared SVG icons for tool content headers
@@ -327,7 +328,7 @@ export function hasRenderableAskQuestions(input: unknown): boolean {
  * Clicking an option is handled by the AskUserQuestion action handler
  * registered at the bottom of this file.
  */
-function renderAskUserQuestion(input: ToolInput): string {
+function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): string {
   const kind = classifyAskQuestionsInput(input)
   if (kind === 'malformed') {
     // Malformed-data notice — can never be answered.
@@ -339,7 +340,11 @@ function renderAskUserQuestion(input: ToolInput): string {
   }
   const questions = input.questions as Array<Record<string, unknown>>
 
-  let html = '<div class="ask-question-view">'
+  // Identity for the answer-state store. A card without it is still fully
+  // usable — it just cannot survive a re-render (the historical behaviour).
+  const askKeyAttr = blockCtx?.askKey ? ` data-ask-key="${escapeHtml(blockCtx.askKey)}"` : ''
+
+  let html = `<div class="ask-question-view"${askKeyAttr}>`
 
   for (let qi = 0; qi < questions.length; qi++) {
     const q = questions[qi]
@@ -1322,13 +1327,28 @@ export interface ToolBlockCtx {
   done?: boolean
   status?: string
   output?: string
+  /**
+   * Stable identity of the ask card this input belongs to, written into the
+   * rendered markup as `data-ask-key`. The card body is rendered through
+   * `v-html`, so without a key there is no way to associate a freshly-rebuilt
+   * card with the answer state the user already entered (see
+   * askQuestionState.ts). Callers that render an AskUserQuestion card must
+   * supply it; other tools ignore it.
+   */
+  askKey?: string
 }
 
 export type ToolRenderer = (input: ToolInput, blockCtx?: ToolBlockCtx) => string
 
 export type ToolActionHandler = (
   event: Event,
-  emit: (type: string, payload?: unknown) => void
+  /**
+   * Forward an event to the host component. `payload` is the event's primary
+   * value; `detail` carries an optional secondary value — currently the ask
+   * card key an answer came from, so a failed send can revert its submitted
+   * flag (see revertAskSubmission).
+   */
+  emit: (type: string, payload?: unknown, detail?: unknown) => void
 ) => boolean
 
 const TOOL_RENDERERS: Record<string, ToolRenderer> = {}
@@ -1740,6 +1760,206 @@ async function respondPermission(sessionId: string, toolCallId: string, optionId
   }
 }
 
+/** The key identifying an ask card's answer state, from its container. */
+function askKeyOf(view: Element): string {
+  return (view as HTMLElement).dataset?.askKey || ''
+}
+
+/**
+ * Read the current selection out of the DOM, keyed by question index.
+ * Question index comes from `data-qi` (assigned by renderAskUserQuestion for
+ * every option, in both single and merged cards), so the mapping is stable
+ * regardless of how many questions the card holds.
+ */
+function readSelectedFromDom(view: Element): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  const options = view.querySelectorAll('.ask-question-option.selected')
+  for (const opt of options) {
+    const el = opt as HTMLElement
+    const qi = el.dataset.qi ?? '0'
+    const label = el.dataset.label ?? ''
+    if (!out[qi]) out[qi] = []
+    out[qi].push(label)
+  }
+  return out
+}
+
+/**
+ * Persist the card's current answer state into the module-level store.
+ * Called after every user interaction with the card so a later re-render can
+ * rebuild it (see askQuestionState.ts for why the state cannot stay in the DOM).
+ */
+function persistAskState(view: Element): void {
+  const key = askKeyOf(view)
+  if (!key) return
+  const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+  patchAskState(key, {
+    selected: readSelectedFromDom(view),
+    supplementary: input?.value ?? '',
+  })
+}
+
+/**
+ * Rebuild a freshly-rendered ask card from the stored answer state.
+ *
+ * The card body is produced by `v-html` from an HTML string, so any re-render
+ * that changes that string (a loadHistory reload after switching tabs or
+ * backgrounding the app, a merged-card branch flip, a list remount) replaces
+ * the subtree — discarding the user's selection, note and submitted flag. This
+ * runs after such an update and writes the stored state back into the DOM.
+ *
+ * A no-op when the card has no key or the user never touched it, so it is safe
+ * (and cheap) to call on every update, including during streaming.
+ */
+export function restoreAskStateFromStore(view: Element): void {
+  const key = askKeyOf(view)
+  if (!key) return
+  const state = getAskState(key)
+  if (!state) return
+
+  // 1. Selection — restore the class and the indicator glyph. Both glyph sets
+  //    are handled because the same card can be rendered single- or
+  //    multi-select, and the glyph is what the user actually reads.
+  const options = view.querySelectorAll('.ask-question-option')
+  for (const opt of options) {
+    const el = opt as HTMLElement
+    const labels = state.selected[el.dataset.qi ?? '0'] ?? []
+    const isSelected = labels.includes(el.dataset.label ?? '')
+    const multiSelect = (el.closest('.ask-question-item') as HTMLElement | null)?.dataset.multi === 'true'
+    el.classList.toggle('selected', isSelected)
+    const indicator = el.querySelector('.ask-option-indicator')
+    if (indicator) {
+      indicator.textContent = multiSelect ? (isSelected ? '☑' : '☐') : (isSelected ? '●' : '◯')
+    }
+  }
+
+  // 2. Supplementary text.
+  const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+  if (input && input.value !== state.supplementary) {
+    input.value = state.supplementary
+  }
+
+  // 3. Submitted — mirror the terminal look the handler applies on submit:
+  //    badge class, non-interactive options, disabled input, disabled submit.
+  if (state.submitted) {
+    view.classList.add('ask-submitted')
+    for (const opt of options) {
+      const el = opt as HTMLElement
+      el.style.pointerEvents = 'none'
+      if (!el.classList.contains('selected')) el.style.opacity = 'var(--opacity-disabled)'
+    }
+    if (input) {
+      input.disabled = true
+      input.style.opacity = 'var(--opacity-muted)'
+    }
+    const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
+    if (submitBtn) {
+      submitBtn.disabled = true
+      submitBtn.textContent = gt('tool.askUser.submitted')
+    }
+    const recommendBtn = view.querySelector('.ask-question-recommend') as HTMLElement | null
+    if (recommendBtn) {
+      recommendBtn.textContent = gt('tool.askUser.recommended')
+      recommendBtn.style.pointerEvents = 'none'
+    }
+    return
+  }
+
+  // Not submitted — the store is the authority. A freshly rebuilt card is
+  // already answerable, but a card that was submitted and then reverted (a
+  // failed send) still carries the terminal DOM; makeAskViewAnswerable resets
+  // it and recomputes whether the restored answer re-enables Submit (a note
+  // alone is a valid answer).
+  makeAskViewAnswerable(view)
+}
+
+/**
+ * Restore every keyed ask card inside a `v-html` container.
+ *
+ * This is the entry point the components call from their update hook. It is
+ * deliberately cheap for containers without an ask card — the hook fires on
+ * every streaming frame, and the overwhelmingly common case is "no card, or a
+ * card the user never touched".
+ */
+export function restoreAskStatesInContainer(container: Element): void {
+  const views = container.querySelectorAll('.ask-question-view[data-ask-key]')
+  for (const view of views) {
+    restoreAskStateFromStore(view)
+  }
+}
+
+/**
+ * Reset a card's DOM back to the answerable state, undoing a submission.
+ *
+ * Submitting writes terminal state directly into the DOM (.ask-submitted, dead
+ * pointer events, dimmed options, a disabled input, a "Submitted" label). When
+ * that submission has to be undone — a failed send, or a rebuild against a
+ * store that no longer says submitted — every one of those must be reversed,
+ * otherwise the card looks and behaves answered even though it is not, and the
+ * user has no way to retry.
+ */
+function makeAskViewAnswerable(view: Element): void {
+  view.classList.remove('ask-submitted')
+
+  for (const opt of view.querySelectorAll('.ask-question-option')) {
+    const el = opt as HTMLElement
+    el.style.pointerEvents = ''
+    el.style.opacity = ''
+  }
+
+  const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+  if (input) {
+    input.disabled = false
+    input.style.opacity = ''
+  }
+
+  const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
+  if (submitBtn) {
+    submitBtn.textContent = gt('tool.askUser.submit')
+  }
+
+  const recommendBtn = view.querySelector('.ask-question-recommend') as HTMLElement | null
+  if (recommendBtn) {
+    recommendBtn.textContent = gt('tool.askUser.recommend')
+    recommendBtn.style.pointerEvents = ''
+  }
+
+  // The user's answer is still in the DOM, so Submit is usually re-enabled.
+  updateAskSubmitState(view)
+}
+
+/**
+ * Undo the submitted flag after a FAILED send, keeping the user's work.
+ *
+ * The submitted flag is persisted (see the submit branch) so an answered card
+ * stays answered across a reload. But when the reply never reached the backend
+ * the user must be able to try again — and a persisted flag would otherwise
+ * leave the card permanently marked submitted with no way back. This restores
+ * it to answerable while preserving the selection and the note, so retrying is
+ * a single tap.
+ *
+ * Clears BOTH the store and the live DOM. Clearing only the store left the
+ * rendered card stuck in its submitted look with dead controls — the retry the
+ * revert exists to enable was still impossible. Found by end-to-end testing.
+ *
+ * Every rendered instance of the card is released, because the chat list and
+ * the tool-detail drawer can show the same card at the same time.
+ *
+ * A no-op for a card the user never touched.
+ */
+export function revertAskSubmission(key: string): void {
+  if (!key) return
+  const state = getAskState(key)
+  if (!state?.submitted) return
+  patchAskState(key, { submitted: false })
+
+  // Match by dataset rather than a selector: the key contains '|' and ':', and
+  // comparing values avoids any selector-escaping pitfalls.
+  for (const view of document.querySelectorAll('.ask-question-view[data-ask-key]')) {
+    if ((view as HTMLElement).dataset?.askKey === key) makeAskViewAnswerable(view)
+  }
+}
+
 export function updateAskSubmitState(view: Element) {
   const items = view.querySelectorAll('.ask-question-item')
   let allAnswered = true
@@ -1794,6 +2014,7 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
       }
 
       updateAskSubmitState(view)
+      persistAskState(view)
     }
     return true
   }
@@ -1869,7 +2090,24 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
       submitBtn.textContent = gt('tool.askUser.submitted')
       ;(submitBtn as HTMLButtonElement).disabled = true
 
-      emit('send-message', answers.join('\n'))
+      // Record the terminal state BEFORE emitting. It is deliberately NOT
+      // cleared on a successful send: the card must still render as submitted
+      // after a reload, and `restoreAskStateFromStore` bails out entirely when
+      // no state exists — so dropping it here would resurrect the very bug this
+      // fixes (the card coming back answerable). Entries are swept when the
+      // session is archived/destroyed (see useSessionManager).
+      //
+      // On a FAILED send the caller reverts `submitted` so the card becomes
+      // answerable again, keeping the selection and note for a retry — see
+      // revertAskSubmission.
+      patchAskState(askKeyOf(view), { selected: readSelectedFromDom(view), submitted: true })
+
+      // The card key rides along so the caller can revert this submission if
+      // the send fails (see revertAskSubmission). Sent only when the card has a
+      // key, so every other send-message emit keeps its single-argument shape.
+      const cardKey = askKeyOf(view)
+      if (cardKey) emit('send-message', answers.join('\n'), cardKey)
+      else emit('send-message', answers.join('\n'))
     }
     return true
   }
@@ -1877,6 +2115,24 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
   // Not an AskUserQuestion-specific click — fall through
   return false
 })
+
+/**
+ * Handle typing in the supplementary-info field.
+ *
+ * Kept as an exported entry point (rather than inlined in the components)
+ * because both the chat list and the tool-detail drawer render the same card
+ * and must persist the note identically. Returns true when the event belonged
+ * to an ask card, so callers can keep their own fallback logic.
+ */
+export function handleAskSupplementaryInput(event: Event): boolean {
+  const target = event.target as HTMLElement | null
+  if (!target || !target.classList?.contains('ask-supplementary-input')) return false
+  const view = target.closest('.ask-question-view')
+  if (!view) return false
+  updateAskSubmitState(view)
+  persistAskState(view)
+  return true
+}
 
 // ── PermissionApproval action handler ──
 

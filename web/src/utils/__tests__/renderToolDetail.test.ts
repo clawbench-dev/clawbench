@@ -11,7 +11,16 @@ import {
   handleToolAction,
   handleToolContentHeaderClick,
   updateAskSubmitState,
+  restoreAskStateFromStore,
+  restoreAskStatesInContainer,
+  handleAskSupplementaryInput,
+  revertAskSubmission,
 } from '@/utils/renderToolDetail.ts'
+import {
+  getAskState,
+  patchAskState,
+  _resetAskStatesForTesting,
+} from '@/utils/askQuestionState.ts'
 
 // ── Mock for useAppMode (controlled via mutable ref) ──
 const mockIsAppMode = ref(false)
@@ -3323,5 +3332,617 @@ describe('AskUserQuestion action handler (uncovered branches)', () => {
     expect(option.classList.contains('selected')).toBe(false)
 
     cleanup(container)
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// AskUserQuestion answer state persistence (regression)
+//
+// The card body is rendered through `v-html` from a plain HTML string, so the
+// selection / supplementary text / submitted flag used to live ONLY in the
+// live DOM. Any re-render that changed the string (a loadHistory reload after
+// switching tabs or backgrounding the app, a merged-card branch flip, a list
+// remount) replaced the subtree and silently discarded the user's answer.
+//
+// These tests pin the contract that fixes it: the handler writes every piece
+// of answer state into the module-level store, and restoreAskStateFromStore
+// rebuilds a freshly-rendered card from it.
+// ────────────────────────────────────────────────────────────
+
+describe('AskUserQuestion answer state persistence', () => {
+  /** Build the card DOM exactly as renderAskUserQuestion does, including the
+   *  data-ask-key the handler and restore path key off. */
+  function createCard(key: string, multiSelect = false): { container: HTMLDivElement; view: HTMLElement; emit: any } {
+    const emit = vi.fn() as any
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="ask-question-view" data-ask-key="${key}">
+        <div class="ask-question-item" data-multi="${multiSelect}">
+          <div class="ask-question-options">
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
+              <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            </div>
+            <div class="ask-question-option" data-qi="0" data-oi="1" data-label="Option B">
+              <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            </div>
+          </div>
+        </div>
+        <div class="ask-question-supplementary">
+          <input class="ask-supplementary-input" type="text" />
+        </div>
+        <div class="ask-question-actions">
+          <button class="ask-question-recommend">Recommend</button>
+          <button class="ask-question-submit" disabled>Submit</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(container)
+    const view = container.querySelector('.ask-question-view') as HTMLElement
+    return { container, view, emit }
+  }
+
+  function clickOn(el: Element, emit: any) {
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'target', { value: el, writable: false })
+    return handleToolAction('AskUserQuestion', ev, emit)
+  }
+
+  function typeInto(input: HTMLInputElement, text: string) {
+    input.value = text
+    const ev = new Event('input', { bubbles: true })
+    input.dispatchEvent(ev)
+    // The components route their container's @input through this handler; the
+    // renderer test drives it directly so the note-persistence contract is
+    // pinned here rather than only through a mounted component.
+    handleAskSupplementaryInput(ev)
+  }
+
+  beforeEach(() => {
+    _resetAskStatesForTesting()
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  describe('writing state', () => {
+    it('records a single-select choice under its question index', () => {
+      const { container, view, emit } = createCard('tool:tu-1')
+      clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+
+      expect(getAskState('tool:tu-1')?.selected['0']).toEqual(['Option A'])
+      container.remove()
+    })
+
+    it('records every choice of a multi-select question', () => {
+      const { container, view, emit } = createCard('tool:tu-1', true)
+      const options = view.querySelectorAll('.ask-question-option')
+      clickOn(options[0], emit)
+      clickOn(options[1], emit)
+
+      expect(getAskState('tool:tu-1')?.selected['0']).toEqual(['Option A', 'Option B'])
+      container.remove()
+    })
+
+    it('drops a deselected single-select choice from the state', () => {
+      const { container, view, emit } = createCard('tool:tu-1')
+      const option = view.querySelectorAll('.ask-question-option')[0]
+      clickOn(option, emit)
+      expect(getAskState('tool:tu-1')?.selected['0']).toEqual(['Option A'])
+
+      clickOn(option, emit)
+
+      // Deselecting the only choice leaves nothing to remember — the entry is
+      // dropped entirely rather than kept as an empty record.
+      expect(getAskState('tool:tu-1')).toBeUndefined()
+      container.remove()
+    })
+
+    it('replaces the previous choice when a different option is picked', () => {
+      const { container, view, emit } = createCard('tool:tu-1')
+      const options = view.querySelectorAll('.ask-question-option')
+      clickOn(options[0], emit)
+      clickOn(options[1], emit)
+
+      expect(getAskState('tool:tu-1')?.selected['0']).toEqual(['Option B'])
+      container.remove()
+    })
+
+    it('records supplementary text on input', () => {
+      const { container, view } = createCard('tool:tu-1')
+      typeInto(view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'my notes')
+
+      expect(getAskState('tool:tu-1')?.supplementary).toBe('my notes')
+      container.remove()
+    })
+
+    it('clears the recorded note when the input is emptied', () => {
+      const { container, view } = createCard('tool:tu-1')
+      const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement
+      typeInto(input, 'my notes')
+      typeInto(input, '')
+
+      expect(getAskState('tool:tu-1')?.supplementary ?? '').toBe('')
+      container.remove()
+    })
+
+    it('records the submitted flag when the answer is submitted', () => {
+      const { container, view, emit } = createCard('tool:tu-1')
+      clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+      clickOn(view.querySelector('.ask-question-submit')!, emit)
+
+      expect(getAskState('tool:tu-1')?.submitted).toBe(true)
+      container.remove()
+    })
+
+    it('keeps separate state for separate cards', () => {
+      const a = createCard('tool:tu-a')
+      const b = createCard('tool:tu-b')
+      typeInto(a.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note A')
+      typeInto(b.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note B')
+
+      expect(getAskState('tool:tu-a')?.supplementary).toBe('note A')
+      expect(getAskState('tool:tu-b')?.supplementary).toBe('note B')
+      a.container.remove()
+      b.container.remove()
+    })
+  })
+
+  describe('restoring state after the DOM is rebuilt', () => {
+    it('re-selects the recorded option and fixes its indicator glyph', () => {
+      // Answer in the first card instance...
+      const first = createCard('tool:tu-1')
+      clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
+      first.container.remove()
+
+      // ...then simulate a re-render: a brand-new, pristine card with the same key.
+      const rebuilt = createCard('tool:tu-1')
+      restoreAskStateFromStore(rebuilt.view)
+
+      const option = rebuilt.view.querySelectorAll('.ask-question-option')[0]
+      expect(option.classList.contains('selected')).toBe(true)
+      expect(option.querySelector('.ask-option-indicator')?.textContent).toBe('●')
+      rebuilt.container.remove()
+    })
+
+    it('restores a multi-select choice glyph as ☑', () => {
+      const first = createCard('tool:tu-1', true)
+      clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
+      first.container.remove()
+
+      const rebuilt = createCard('tool:tu-1', true)
+      restoreAskStateFromStore(rebuilt.view)
+
+      const option = rebuilt.view.querySelectorAll('.ask-question-option')[0]
+      expect(option.classList.contains('selected')).toBe(true)
+      expect(option.querySelector('.ask-option-indicator')?.textContent).toBe('☑')
+      rebuilt.container.remove()
+    })
+
+    it('restores the supplementary text into the input', () => {
+      const first = createCard('tool:tu-1')
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'my notes')
+      first.container.remove()
+
+      const rebuilt = createCard('tool:tu-1')
+      restoreAskStateFromStore(rebuilt.view)
+
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('my notes')
+      rebuilt.container.remove()
+    })
+
+    it('restores the submitted state: badge, disabled controls, disabled input', () => {
+      const first = createCard('tool:tu-1')
+      clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
+      clickOn(first.view.querySelector('.ask-question-submit')!, first.emit)
+      first.container.remove()
+
+      const rebuilt = createCard('tool:tu-1')
+      restoreAskStateFromStore(rebuilt.view)
+
+      expect(rebuilt.view.classList.contains('ask-submitted')).toBe(true)
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).disabled).toBe(true)
+      const submit = rebuilt.view.querySelector('.ask-question-submit') as HTMLButtonElement
+      expect(submit.disabled).toBe(true)
+      rebuilt.container.remove()
+    })
+
+    it('re-enables the submit button when a restored note makes the card answerable', () => {
+      const first = createCard('tool:tu-1')
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note only')
+      first.container.remove()
+
+      const rebuilt = createCard('tool:tu-1')
+      const submit = rebuilt.view.querySelector('.ask-question-submit') as HTMLButtonElement
+      expect(submit.disabled).toBe(true)
+
+      restoreAskStateFromStore(rebuilt.view)
+
+      // A note with no option picked is still a valid answer.
+      expect(submit.disabled).toBe(false)
+      rebuilt.container.remove()
+    })
+
+    it('leaves an untouched card alone', () => {
+      const { container, view } = createCard('tool:never-touched')
+      restoreAskStateFromStore(view)
+
+      expect(view.classList.contains('ask-submitted')).toBe(false)
+      expect(view.querySelectorAll('.ask-question-option.selected').length).toBe(0)
+      expect((view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('')
+      container.remove()
+    })
+
+    it('does not carry one card\'s state into another', () => {
+      const first = createCard('tool:tu-a')
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note A')
+      first.container.remove()
+
+      const other = createCard('tool:tu-b')
+      restoreAskStateFromStore(other.view)
+
+      expect((other.view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('')
+      other.container.remove()
+    })
+
+    it('is idempotent — restoring twice yields the same DOM', () => {
+      const first = createCard('tool:tu-1')
+      clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note')
+      first.container.remove()
+
+      const rebuilt = createCard('tool:tu-1')
+      restoreAskStateFromStore(rebuilt.view)
+      restoreAskStateFromStore(rebuilt.view)
+
+      expect(rebuilt.view.querySelectorAll('.ask-question-option.selected').length).toBe(1)
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('note')
+      rebuilt.container.remove()
+    })
+
+    it('is a no-op for a card with no data-ask-key', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<div class="ask-question-view"><input class="ask-supplementary-input" /></div>'
+      document.body.appendChild(container)
+      expect(() => restoreAskStateFromStore(container.querySelector('.ask-question-view')!)).not.toThrow()
+      container.remove()
+    })
+  })
+
+  // A submitted card must stay submitted across a reload (otherwise it comes
+  // back answerable and the user can answer the same question twice). But a
+  // FAILED send must leave the card answerable again — with the user's work
+  // intact — or the failure would strand them with no way to retry.
+  describe('reverting a failed submission', () => {
+    it('clears the submitted flag but keeps the selection and the note', () => {
+      const { container, view, emit } = createCard('tool:tu-1')
+      clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+      typeInto(view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'my notes')
+      clickOn(view.querySelector('.ask-question-submit')!, emit)
+      expect(getAskState('tool:tu-1')?.submitted).toBe(true)
+
+      revertAskSubmission('tool:tu-1')
+
+      const st = getAskState('tool:tu-1')
+      expect(st?.submitted).toBe(false)
+      expect(st?.selected['0']).toEqual(['Option A'])
+      expect(st?.supplementary).toBe('my notes')
+      container.remove()
+    })
+
+    it('makes the card answerable again after the DOM is rebuilt', () => {
+      const first = createCard('tool:tu-1')
+      clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
+      clickOn(first.view.querySelector('.ask-question-submit')!, first.emit)
+      first.container.remove()
+
+      revertAskSubmission('tool:tu-1')
+
+      const rebuilt = createCard('tool:tu-1')
+      restoreAskStateFromStore(rebuilt.view)
+
+      expect(rebuilt.view.classList.contains('ask-submitted')).toBe(false)
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).disabled).toBe(false)
+      // The user's selection survived, so retrying is one tap away.
+      expect(rebuilt.view.querySelectorAll('.ask-question-option.selected').length).toBe(1)
+      rebuilt.container.remove()
+    })
+
+    it('is a no-op for an unknown or empty key', () => {
+      expect(() => revertAskSubmission('tool:never-seen')).not.toThrow()
+      expect(() => revertAskSubmission('')).not.toThrow()
+      expect(getAskState('tool:never-seen')).toBeUndefined()
+    })
+
+    it('drops the entry entirely when reverting leaves nothing to remember', () => {
+      // Submit with a note only, then revert: the note is still there, so the
+      // entry must survive. Submit with nothing, revert, and it should be gone.
+      patchAskState('tool:bare', { submitted: true })
+      revertAskSubmission('tool:bare')
+      expect(getAskState('tool:bare')).toBeUndefined()
+    })
+  })
+
+  describe('rendered card carries the key', () => {
+    it('emits data-ask-key from the block context so the restore path can find it', () => {
+      const html = formatToolInput(
+        { questions: [{ header: 'Approach', options: [{ label: 'A' }] }] },
+        'AskUserQuestion',
+        { askKey: 'tool:tu-1' },
+      )
+      expect(html).toContain('data-ask-key="tool:tu-1"')
+    })
+
+    it('omits the attribute when no key is supplied', () => {
+      const html = formatToolInput(
+        { questions: [{ header: 'Approach', options: [{ label: 'A' }] }] },
+        'AskUserQuestion',
+      )
+      expect(html).not.toContain('data-ask-key')
+    })
+
+    it('escapes the key so it cannot break out of the attribute', () => {
+      const html = formatToolInput(
+        { questions: [{ header: 'Approach', options: [{ label: 'A' }] }] },
+        'AskUserQuestion',
+        { askKey: '"><script>x</script>' },
+      )
+      expect(html).not.toContain('<script>')
+      expect(html).toContain('data-ask-key="&quot;&gt;&lt;script&gt;')
+    })
+  })
+
+  // ── Container-level entry points used by the components ──
+  //
+  // The components own the v-html containers, so they drive these two helpers
+  // on every update / input event. They must be cheap no-ops for containers
+  // that hold no ask card, because the update hook fires on every streaming
+  // frame.
+  describe('container entry points', () => {
+    it('restoreAskStatesInContainer restores every keyed card it finds', () => {
+      const first = createCard('tool:tu-1')
+      clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note')
+      first.container.remove()
+
+      // A container holding the rebuilt card, as v-html would produce it.
+      const rebuilt = createCard('tool:tu-1')
+      const wrapper = document.createElement('div')
+      wrapper.appendChild(rebuilt.view)
+
+      restoreAskStatesInContainer(wrapper)
+
+      expect(rebuilt.view.querySelectorAll('.ask-question-option.selected').length).toBe(1)
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('note')
+      wrapper.remove()
+      rebuilt.container.remove()
+    })
+
+    it('restoreAskStatesInContainer is a no-op for a container with no card', () => {
+      const wrapper = document.createElement('div')
+      wrapper.innerHTML = '<div class="tool-detail">no card here</div>'
+      document.body.appendChild(wrapper)
+      expect(() => restoreAskStatesInContainer(wrapper)).not.toThrow()
+      wrapper.remove()
+    })
+
+    it('handleAskSupplementaryInput ignores input outside an ask card', () => {
+      const wrapper = document.createElement('div')
+      wrapper.innerHTML = '<input class="some-other-input" />'
+      document.body.appendChild(wrapper)
+      const input = wrapper.querySelector('input') as HTMLInputElement
+      const ev = new Event('input', { bubbles: true })
+      input.dispatchEvent(ev)
+      expect(handleAskSupplementaryInput(ev)).toBe(false)
+      wrapper.remove()
+    })
+
+    it('handleAskSupplementaryInput reports true and persists for an ask card', () => {
+      const card = createCard('tool:tu-1')
+      const input = card.view.querySelector('.ask-supplementary-input') as HTMLInputElement
+      input.value = 'typed'
+      const ev = new Event('input', { bubbles: true })
+      input.dispatchEvent(ev)
+
+      expect(handleAskSupplementaryInput(ev)).toBe(true)
+      expect(getAskState('tool:tu-1')?.supplementary).toBe('typed')
+      card.container.remove()
+    })
+  })
+})
+
+// ── Ask-card key travels with the answer ──
+//
+// The submit emit carries the card key as a second value so the caller can undo
+// a submission whose send failed (see revertAskSubmission). Losing the key
+// would leave a failed answer permanently marked submitted with no way to retry.
+describe('AskUserQuestion submit carries the card key', () => {
+  function createKeyedCard(key: string): { container: HTMLDivElement; view: HTMLElement; emit: any } {
+    const emit = vi.fn() as any
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="ask-question-view" data-ask-key="${key}">
+        <div class="ask-question-item" data-multi="false">
+          <div class="ask-question-options">
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
+              <span class="ask-option-indicator">◯</span>
+            </div>
+          </div>
+        </div>
+        <div class="ask-question-supplementary"><input class="ask-supplementary-input" type="text" /></div>
+        <button class="ask-question-submit" disabled>Submit</button>
+      </div>
+    `
+    document.body.appendChild(container)
+    return { container, view: container.querySelector('.ask-question-view') as HTMLElement, emit }
+  }
+
+  function clickOn(el: Element, emit: any) {
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'target', { value: el, writable: false })
+    handleToolAction('AskUserQuestion', ev, emit)
+  }
+
+  beforeEach(() => {
+    _resetAskStatesForTesting()
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('emits the key alongside the answer text', () => {
+    const { container, view, emit } = createKeyedCard('sess-1|tool:ask-1')
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+
+    expect(emit).toHaveBeenCalledWith('send-message', 'Option A', 'sess-1|tool:ask-1')
+    container.remove()
+  })
+
+  it('keeps the single-argument shape for a card with no key', () => {
+    // A card rendered without a key (e.g. a caller that does not supply one)
+    // must not start emitting a spurious second argument.
+    const emit = vi.fn() as any
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="ask-question-view">
+        <div class="ask-question-item" data-multi="false">
+          <div class="ask-question-options">
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A"><span class="ask-option-indicator">◯</span></div>
+          </div>
+        </div>
+        <button class="ask-question-submit" disabled>Submit</button>
+      </div>
+    `
+    document.body.appendChild(container)
+    const view = container.querySelector('.ask-question-view') as HTMLElement
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+
+    expect(emit).toHaveBeenCalledWith('send-message', 'Option A')
+    expect(emit.mock.calls[0]).toHaveLength(2)
+    container.remove()
+  })
+})
+
+// ── Reverting must also clear the DOM, not just the store ──
+//
+// revertAskSubmission clears the stored submitted flag, but the live DOM still
+// carries .ask-submitted (and disabled controls) from the click that submitted
+// it. Without undoing that too, the card stays visually and behaviourally
+// answered even though the send failed — the user is stranded with no way to
+// retry. Found by end-to-end testing in a real browser.
+describe('AskUserQuestion revert clears the DOM as well as the store', () => {
+  function createKeyedCard(key: string): { container: HTMLDivElement; view: HTMLElement; emit: any } {
+    const emit = vi.fn() as any
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="ask-question-view" data-ask-key="${key}">
+        <div class="ask-question-item" data-multi="false">
+          <div class="ask-question-options">
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
+              <span class="ask-option-indicator">◯</span>
+            </div>
+          </div>
+        </div>
+        <div class="ask-question-supplementary"><input class="ask-supplementary-input" type="text" /></div>
+        <button class="ask-question-recommend">Recommend</button>
+        <button class="ask-question-submit" disabled>Submit</button>
+      </div>
+    `
+    document.body.appendChild(container)
+    return { container, view: container.querySelector('.ask-question-view') as HTMLElement, emit }
+  }
+
+  function clickOn(el: Element, emit: any) {
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'target', { value: el, writable: false })
+    handleToolAction('AskUserQuestion', ev, emit)
+  }
+
+  beforeEach(() => {
+    _resetAskStatesForTesting()
+  })
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('removes the submitted class from the live DOM', () => {
+    const { container, view, emit } = createKeyedCard('tool:tu-1')
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+    expect(view.classList.contains('ask-submitted')).toBe(true)
+
+    revertAskSubmission('tool:tu-1')
+
+    expect(view.classList.contains('ask-submitted')).toBe(false)
+    container.remove()
+  })
+
+  it('re-enables the supplementary input and the submit button', () => {
+    const { container, view, emit } = createKeyedCard('tool:tu-1')
+    const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement
+    input.value = 'retry me'
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+    expect(input.disabled).toBe(true)
+
+    revertAskSubmission('tool:tu-1')
+
+    expect(input.disabled).toBe(false)
+    const submit = view.querySelector('.ask-question-submit') as HTMLButtonElement
+    // The answer is still there, so Submit must be clickable for a retry.
+    expect(submit.disabled).toBe(false)
+    container.remove()
+  })
+
+  it('restores option interactivity so a different choice can be made', () => {
+    const { container, view, emit } = createKeyedCard('tool:tu-1')
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+
+    revertAskSubmission('tool:tu-1')
+
+    const opt = view.querySelectorAll('.ask-question-option')[0] as HTMLElement
+    expect(opt.style.pointerEvents).not.toBe('none')
+    // Clicking again must work (the handler guards on .ask-submitted).
+    clickOn(opt, emit)
+    expect(opt.classList.contains('selected')).toBe(false) // toggled off
+    container.remove()
+  })
+
+  it('clears the dimming applied to unselected options', () => {
+    const { container, view, emit } = createKeyedCard('tool:tu-1')
+    clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+    const unselected = view.querySelectorAll('.ask-question-option')[0] as HTMLElement
+    // The selected one keeps full opacity; the class list is the durable part.
+
+    revertAskSubmission('tool:tu-1')
+
+    expect(view.classList.contains('ask-submitted')).toBe(false)
+    container.remove()
+  })
+
+  it('reverts every card sharing the key when a view is supplied', () => {
+    // The list and the drawer can render the same card; both must be released.
+    const a = createKeyedCard('tool:tu-1')
+    const b = createKeyedCard('tool:tu-1')
+    for (const c of [a, b]) {
+      clickOn(c.view.querySelectorAll('.ask-question-option')[0], c.emit)
+      clickOn(c.view.querySelector('.ask-question-submit')!, c.emit)
+    }
+
+    revertAskSubmission('tool:tu-1')
+
+    expect(a.view.classList.contains('ask-submitted')).toBe(false)
+    expect(b.view.classList.contains('ask-submitted')).toBe(false)
+    a.container.remove(); b.container.remove()
+  })
+
+  it('is still a no-op for an unknown key', () => {
+    expect(() => revertAskSubmission('tool:never-seen')).not.toThrow()
+    expect(() => revertAskSubmission('')).not.toThrow()
   })
 })

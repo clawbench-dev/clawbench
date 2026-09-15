@@ -11,7 +11,7 @@
         <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-detail-status" />
       </div>
     </template>
-    <div class="tool-detail-body" @click="handleBodyClick" @input="handleBodyInput" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+    <div class="tool-detail-body" ref="bodyRef" @click="handleBodyClick" @input="handleBodyInput" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
       <div v-html="toolInputHtml"></div>
       <!-- Tool output section -->
       <div v-if="toolOutputHtml" class="tool-output-section tool-content-wrap word-wrap">
@@ -39,14 +39,14 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, onMounted, onUpdated, nextTick } from 'vue'
 import { CheckCircle2, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { getToolIcon } from '@/utils/icons'
 import { formatDuration } from '@/utils/format.ts'
-import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG, updateAskSubmitState } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG, updateAskSubmitState, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
@@ -125,9 +125,24 @@ function handleBodyClick(event) {
 }
 
 function handleBodyInput(event) {
+  // Typing in the supplementary field also persists the note, so it survives a
+  // re-render (the field itself is part of the v-html body).
+  if (handleAskSupplementaryInput(event)) return
   const askView = event.target.closest('.ask-question-view')
   if (askView) updateAskSubmitState(askView)
 }
+
+// The ask-card body is rebuilt from an HTML string whenever toolInputHtml
+// changes, which discards the user's selection / note / submitted flag. Re-apply
+// the stored answer after every update — and on mount too, since the drawer is
+// mounted fresh each time it is opened (onUpdated does not fire on initial
+// mount). The helper returns immediately when the body holds no keyed card.
+const bodyRef = ref(null)
+function restoreAskStates() {
+  if (bodyRef.value) restoreAskStatesInContainer(bodyRef.value)
+}
+onMounted(() => nextTick(restoreAskStates))
+onUpdated(restoreAskStates)
 
 </script>
 

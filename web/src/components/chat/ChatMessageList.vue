@@ -81,7 +81,7 @@
       @show-metadata="$emit('show-metadata', $event)"
       @file-tag-click="$emit('file-tag-click', $event)"
       @task-card-click="$emit('task-card-click', $event)"
-      @send-message="$emit('send-message', $event)"
+      @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
       @render-flush="emit('render-flush')"
       @toggle-summary="$emit('toggle-summary', $event)"
       @ensure-content="$emit('ensure-content', $event)"

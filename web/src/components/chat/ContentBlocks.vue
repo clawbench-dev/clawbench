@@ -1,5 +1,5 @@
 <template>
-  <div class="content-blocks" :class="{ 'content-blocks-nested': nested }">
+  <div class="content-blocks" :class="{ 'content-blocks-nested': nested }" ref="contentRootRef">
     <!-- Summary mode: render summary as a single text block.
          Using v-show for summary to avoid Vue Fragment patching issues when
          switching between v-if/v-else branches with nested template v-for.
@@ -66,7 +66,7 @@
             <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
           </div>
           <div class="chat-card-body">
-            <div v-html="formatToolInput(tool.input || {}, tool.name, { done: tool.done, status: tool.status, output: tool.output })"></div>
+            <div v-html="formatToolInput(tool.input || {}, tool.name, { done: tool.done, status: tool.status, output: tool.output, askKey: askKeyForSummaryTool(tool) })"></div>
           </div>
         </div>
         <template v-else>
@@ -116,7 +116,7 @@
             <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
           </div>
           <div class="chat-card-body">
-            <div v-html="formatToolInput({ questions: mergedSummaryAskQuestions }, 'AskUserQuestion')"></div>
+            <div v-html="formatToolInput({ questions: mergedSummaryAskQuestions }, 'AskUserQuestion', { askKey: summaryAskKey })"></div>
           </div>
         </div>
       </template>
@@ -190,8 +190,8 @@
             <!-- Merged card: one body holding every question in the message. Only
                  the anchor hosts it — a malformed/slim ask block keeps its own body
                  (invalid-format notice / lazy input) instead of duplicating it. -->
-            <div v-if="isMergedAskAnchor(bi)" v-html="formatToolInput({ questions: mergedAskQuestions }, 'AskUserQuestion')"></div>
-            <div v-else v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
+            <div v-if="isMergedAskAnchor(bi)" v-html="formatToolInput({ questions: mergedAskQuestions }, 'AskUserQuestion', { askKey: mergedAskKey(bi) })"></div>
+            <div v-else v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output, askKey: askKeyForBlock(bi, block) })"></div>
           </div>
         </div>
         <template v-else>
@@ -267,7 +267,7 @@
                 @toggle-tool="$emit('toggle-tool', $event)"
                 @show-tool-detail="forwardSubagentToolDetail"
                 @task-card-click="$emit('task-card-click', $event)"
-                @send-message="$emit('send-message', $event)"
+                @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
                 @render-flush="$emit('render-flush')"
                 @resume-session="$emit('resume-session', $event)"
                 @reset-session="$emit('reset-session', $event)"
@@ -360,8 +360,8 @@
             </div>
             <div class="chat-card-body">
               <!-- Merged card: one body holding every question in the message. -->
-              <div v-if="isMergedAskAnchor(bi)" v-html="formatToolInput({ questions: mergedAskQuestions }, 'AskUserQuestion')"></div>
-              <div v-else v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
+              <div v-if="isMergedAskAnchor(bi)" v-html="formatToolInput({ questions: mergedAskQuestions }, 'AskUserQuestion', { askKey: mergedAskKey(bi) })"></div>
+              <div v-else v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion', { askKey: askKeyForTextBlock(bi) })"></div>
             </div>
           </div>
         </template>
@@ -387,9 +387,10 @@
 
 <script setup lang="ts">
 /* eslint-disable @typescript-eslint/no-explicit-any -- defineProps runtime declarations require any for complex prop types */
-import { ref, watch, onUnmounted, computed, onMounted, reactive, nextTick } from 'vue'
+import { ref, watch, onUnmounted, computed, onMounted, onUpdated, reactive, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
+import { askCardKey } from '@/utils/askQuestionState.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronRight, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Clock, Archive } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -813,6 +814,34 @@ const mergedSummaryAskQuestions = computed(() => {
   return out
 })
 
+// ── Ask-card identity for the answer-state store ──
+//
+// The card body is rendered through `v-html`, so its selection / note /
+// submitted flag would otherwise live only in the DOM and be lost on any
+// re-render (see askQuestionState.ts). Each card therefore carries a stable
+// `data-ask-key`, and the update hook below writes the stored state back after
+// every re-render.
+//
+// The key must survive a reload. Tool cards use `block.id` — the backend's
+// `ask-<uuid>`, persisted to chat_tool_calls — which is stable. Text-mode
+// cards have no such id before the backend converts them at Finalize, so they
+// are keyed by position and, by design, do not carry answers across that
+// conversion (a re-answer of the converted card is a fresh card).
+function askKeyForBlock(bi: number, block: any): string {
+  return askCardKey(props.sessionId, 'tool', String(block?.id || `idx-${absIdx(bi)}`))
+}
+function mergedAskKey(bi: number): string {
+  // One merged card per message, anchored at its first contributing block.
+  return askCardKey(props.sessionId, 'msg', String(props.msgId || absIdx(bi)))
+}
+function askKeyForTextBlock(bi: number): string {
+  return askCardKey(props.sessionId, 'text', String(blockTaskKey(bi)))
+}
+function askKeyForSummaryTool(tool: any): string {
+  return askCardKey(props.sessionId, 'tool', String(tool?.id || tool?.name || 'unknown'))
+}
+const summaryAskKey = computed(() => askCardKey(props.sessionId, 'summary', String(props.msgId || 'summary')))
+
 // ── Sub-agent grouping (recursive) ──
 // Blocks carrying a `parent_tool_call_id` were produced by a sub-agent spawned
 // by that Agent tool call; they render nested under the Agent block instead of
@@ -1217,12 +1246,37 @@ function handleToolDetailClick(event: Event) {
 }
 
 function handleToolDetailInput(event: Event) {
+  // Typing in the supplementary field also persists the note, so it survives a
+  // re-render (the field itself is part of the v-html body).
+  if (handleAskSupplementaryInput(event)) return
   const target = event.target as HTMLElement
   const askView = target.closest('.ask-question-view')
   if (askView) {
     updateAskSubmitState(askView)
   }
 }
+
+// The ask-card body is rebuilt from an HTML string whenever the rendered
+// content changes (a loadHistory reload after switching tabs or backgrounding,
+// a merged-card branch flip) OR the component is remounted wholesale.
+//
+// Both paths must be covered. ChatMessageList binds :key="listKey"
+// (sessionId|msgs.length|first|last), so a message arriving — e.g. a reply that
+// landed while the app was backgrounded — remounts the entire list. onUpdated
+// does NOT fire on initial mount, and an AskUserQuestion card carries its input
+// inline (interactive tool) so nothing triggers a later update: an update-only
+// hook silently left the restored answer unapplied. Found via end-to-end
+// testing in a real browser after the update-only version passed every test.
+//
+// `restoreAskStatesInContainer` returns immediately when the subtree holds no
+// keyed card, so the streaming-frame cost is a single querySelectorAll.
+const contentRootRef = ref<HTMLElement | null>(null)
+function restoreAskStates() {
+  const root = contentRootRef.value
+  if (root) restoreAskStatesInContainer(root)
+}
+onMounted(() => nextTick(restoreAskStates))
+onUpdated(restoreAskStates)
 
 // ── Throttled streaming render ──
 const blockHtmlCache = ref<Record<string, any>>({})
