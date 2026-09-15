@@ -1,4 +1,19 @@
 <template>
+  <!-- Read-state filter. Same chip affordance as the state/mine chips on the
+       issues and PR tabs, and the status chips on the pipelines tab, so all four
+       views of this panel are filtered the same way. -->
+  <div class="forge-toolbar">
+    <div class="forge-chips forge-chips-scroll">
+      <button
+        v-for="f in FORGE_ACTIVITY_FILTERS"
+        :key="f"
+        class="forge-chip"
+        :class="{ active: unread.filter.value === f }"
+        @click="unread.setFilter(f)"
+      >{{ t(`forge.overview.filter.${f}`) }}</button>
+    </div>
+  </div>
+
   <div v-if="unread.error.value" class="forge-error-card">
     <AlertCircle :size="18" class="forge-error-icon" />
     <div class="forge-error-text">
@@ -15,8 +30,11 @@
   <div v-else-if="unread.items.value.length === 0" class="forge-state">
     <div class="forge-empty-card">
       <Rss :size="34" :stroke-width="1.5" class="forge-empty-icon" />
-      <div class="forge-empty-title">{{ t('forge.overview.empty') }}</div>
-      <div class="forge-empty-hint">{{ t('forge.overview.emptyHint') }}</div>
+      <!-- The empty state names the view it belongs to: "nothing unread" and
+           "nothing read yet" are different facts, and one shared string would
+           read as a bug in whichever view it did not describe. -->
+      <div class="forge-empty-title">{{ t(`forge.overview.empty.${unread.filter.value}`) }}</div>
+      <div class="forge-empty-hint">{{ t(`forge.overview.emptyHint.${unread.filter.value}`) }}</div>
     </div>
   </div>
 
@@ -25,7 +43,7 @@
       v-for="row in unread.items.value"
       :key="row.itemKey"
       class="forge-row forge-overview-row"
-      :class="{ unread: !row.read, read: row.read }"
+      :class="{ unread: !isRead(row), read: isRead(row) }"
       @click="onRowClick(row)"
     >
       <span class="forge-state-dot" :class="dotClass(row)"></span>
@@ -33,7 +51,7 @@
         <div class="forge-row-title">
           <span class="forge-row-text">{{ label(row) }}</span>
           <span
-            v-if="!row.read"
+            v-if="!isRead(row)"
             class="forge-unread-dot"
             :title="t('forge.unreadItem')"
             :aria-label="t('forge.unreadItem')"
@@ -56,7 +74,7 @@ import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, ChevronRight, Rss } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { useForgeUnreadItems } from '@/composables/useForge'
+import { useForgeUnreadItems, FORGE_ACTIVITY_FILTERS } from '@/composables/useForge'
 import { forgeOverviewLabel } from '@/utils/forgeEventLabels'
 import type { ForgeUnreadItem } from '@/utils/forgeApi'
 
@@ -109,6 +127,18 @@ function label(row: ForgeUnreadItem): string {
   return forgeOverviewLabel(row)
 }
 
+/**
+ * Whether the row should render as read.
+ *
+ * Server state OR the local optimistic flag: the server flag is authoritative
+ * for a freshly loaded row, while `locallyRead` covers the moment between the
+ * click and the next reload — without it the dot would pop back on for a frame
+ * after the user opened a row.
+ */
+function isRead(row: ForgeUnreadItem): boolean {
+  return Boolean(row.read || row.locallyRead)
+}
+
 /** Status dot: a pipeline shows its run outcome, an item its state. */
 function dotClass(row: ForgeUnreadItem): string {
   return row.type === 'pipeline' ? 'pipeline-unknown' : 'open'
@@ -147,14 +177,23 @@ function errorTitle(code: string): string {
 }
 
 /**
- * Drop the rows without a request.
+ * Apply "mark all read" to the rows without a request.
  *
  * The host's "mark all read" already performs the repo-wide write through the
  * shared badge composable; calling the list's own markAllRead here would issue a
  * second identical POST.
+ *
+ * What "read" means for the LIST depends on the view: in the unread view the
+ * rows no longer belong once they are read, so they go; in the all/read views
+ * the same items are still valid, they are simply read now — dropping them there
+ * would make "mark all read" look like "delete everything".
  */
 function clearLocal() {
-  unread.items.value = []
+  if (unread.filter.value === 'unread') {
+    unread.items.value = []
+    return
+  }
+  for (const row of unread.items.value) row.locallyRead = true
 }
 
 defineExpose({ reload, clearLocal })

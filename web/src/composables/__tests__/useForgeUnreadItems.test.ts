@@ -43,6 +43,9 @@ function row(itemKey: string, overrides: Record<string, unknown> = {}) {
     url: 'https://example.com/x',
     slug: 'acme/widgets',
     updatedAt: '2026-09-14T12:00:00Z',
+    // The server always states the read state; defaulting it here keeps the
+    // fixtures faithful to the wire shape.
+    read: false,
     ...overrides,
   }
 }
@@ -114,8 +117,11 @@ describe('useForgeUnreadItems', () => {
     await u.markRowRead('pr/1')
 
     expect(u.items.value).toHaveLength(2)
-    expect(u.items.value[0].read).toBe(true)
-    expect(u.items.value[1].read).toBeUndefined()
+    // The LOCAL flag, not the server one: writing `read` here would make a
+    // failed write indistinguishable from a successful one.
+    expect(u.items.value[0].locallyRead).toBe(true)
+    expect(u.items.value[0].read).toBe(false, 'the server flag is left untouched')
+    expect(u.items.value[1].locallyRead).toBeUndefined()
   })
 
   it('markRowRead persists the read server-side with the key verbatim', async () => {
@@ -143,7 +149,7 @@ describe('useForgeUnreadItems', () => {
 
     await u.markRowRead('pr/1')
 
-    expect(u.items.value[0].read).toBe(false,
+    expect(u.items.value[0].locallyRead).toBe(false,
       'a failed mark must not leave the row claiming it was seen')
   })
 
@@ -155,6 +161,73 @@ describe('useForgeUnreadItems', () => {
     await u.markRowRead('pr/999')
 
     expect(u.items.value).toHaveLength(1)
-    expect(u.items.value[0].read).toBeUndefined()
+    expect(u.items.value[0].locallyRead).toBeUndefined()
+  })
+
+  it('loads the unread view by default and sends the filter to the server', async () => {
+    // The read/unread split is an aggregate over each item's events, which the
+    // client cannot recompute from a page of rows — so it must be the SERVER
+    // that filters.
+    mockFetchForgeUnreadItems.mockResolvedValue({ count: 0, items: [] })
+    const u = useForgeUnreadItems(() => '/proj')
+
+    await u.load()
+    expect(mockFetchForgeUnreadItems).toHaveBeenCalledWith('unread', expect.anything())
+
+    u.setFilter('read')
+    await new Promise(r => setTimeout(r, 0))
+    expect(mockFetchForgeUnreadItems).toHaveBeenCalledWith('read', expect.anything())
+  })
+
+  it('clears the previous view rows when the filter changes', async () => {
+    // Otherwise the read rows would linger under the "unread" chip until the
+    // response lands, showing exactly the rows the chip excludes.
+    mockFetchForgeUnreadItems.mockResolvedValue({ count: 1, items: [row('pr/1', { read: true })] })
+    const u = useForgeUnreadItems(() => '/proj')
+    await u.load()
+    expect(u.items.value).toHaveLength(1)
+
+    // Make the next load hang so the assertion sees the in-between state.
+    let resolveNext: ((v: unknown) => void) | null = null
+    mockFetchForgeUnreadItems.mockImplementation(() => new Promise(res => { resolveNext = res }))
+
+    // Start from 'read' so switching to 'unread' is a real change (setting the
+    // current value is a deliberate no-op, covered separately).
+    u.setFilter('read')
+    u.setFilter('unread')
+
+    expect(u.items.value).toEqual([], 'the old view must not linger')
+    expect(u.loaded.value).toBe(false, 'and it must not read as "empty" either')
+
+    resolveNext?.({ count: 0, items: [] })
+    await new Promise(r => setTimeout(r, 0))
+  })
+
+  it('does not re-request when the filter is set to its current value', async () => {
+    mockFetchForgeUnreadItems.mockResolvedValue({ count: 0, items: [] })
+    const u = useForgeUnreadItems(() => '/proj')
+    await u.load()
+    mockFetchForgeUnreadItems.mockClear()
+
+    u.setFilter('unread')
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(mockFetchForgeUnreadItems).not.toHaveBeenCalled()
+  })
+
+  it('keeps the server read flag distinct from the local one', async () => {
+    // A row loaded from the read view carries read:true from the server and no
+    // local flag; one the user just opened carries only the local flag. The two
+    // must not be conflated, or a failed write becomes invisible.
+    mockFetchForgeUnreadItems.mockResolvedValue({
+      count: 2,
+      items: [row('pr/1', { read: true }), row('pr/2')],
+    })
+    const u = useForgeUnreadItems(() => '/proj')
+    await u.load()
+
+    expect(u.items.value[0].read).toBe(true)
+    expect(u.items.value[0].locallyRead).toBeUndefined()
+    expect(u.items.value[1].read).toBe(false)
   })
 })

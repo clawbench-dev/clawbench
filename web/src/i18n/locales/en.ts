@@ -86,8 +86,17 @@ export default {
     retry: 'Retry',
     overview: {
       title: 'Activity',
-      empty: 'No activity yet',
-      emptyHint: 'Issues, pull requests and pipelines with new activity show up here',
+      filter: { unread: 'Unread', read: 'Read', all: 'All' },
+      empty: {
+        unread: 'Nothing unread',
+        read: 'Nothing read yet',
+        all: 'No activity yet',
+      },
+      emptyHint: {
+        unread: 'Issues, pull requests and pipelines with new activity show up here',
+        read: 'Items you have opened stay here, and are cleaned up after 30 days',
+        all: 'New activity on issues, pull requests and pipelines shows up here',
+      },
       pipelineRef: 'Pipeline run {runId}',
       eventCount: '{count} events',
       reason: {

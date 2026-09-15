@@ -525,9 +525,40 @@ func UnreadForgeItemKeys(repo ForgeRepoKey) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-// UnreadForgeItem is one row of the unread overview: a single thing (issue, PR
-// or CI run) with at least one unread event.
-type UnreadForgeItem struct {
+// ForgeActivityFilter selects which items the activity list returns, by read
+// state. It is a filter over ITEMS, not over events: an item counts as read only
+// when every one of its events has been read.
+type ForgeActivityFilter string
+
+const (
+	// ForgeActivityUnread returns only items with at least one unread event.
+	// This is the default: the panel exists to answer "what changed?".
+	ForgeActivityUnread ForgeActivityFilter = "unread"
+	// ForgeActivityRead returns items whose events have all been read.
+	ForgeActivityRead ForgeActivityFilter = "read"
+	// ForgeActivityAll returns every item that has any event.
+	ForgeActivityAll ForgeActivityFilter = "all"
+)
+
+// ParseForgeActivityFilter normalizes a client-supplied filter value.
+//
+// An unknown value falls back to unread rather than erroring: the parameter is a
+// view selector, so the worst case of a typo is the default view, not a broken
+// panel. An empty value is the default for the same reason.
+func ParseForgeActivityFilter(raw string) ForgeActivityFilter {
+	switch ForgeActivityFilter(raw) {
+	case ForgeActivityRead:
+		return ForgeActivityRead
+	case ForgeActivityAll:
+		return ForgeActivityAll
+	default:
+		return ForgeActivityUnread
+	}
+}
+
+// ForgeActivityItem is one row of the activity overview: a single thing (issue,
+// PR or CI run) together with its read state.
+type ForgeActivityItem struct {
 	// ItemKey is the identity the read endpoint expects. Callers must pass it
 	// back verbatim rather than rebuilding it from Type/Number: a pipeline's
 	// Number is 0, so a rebuilt key would be "pipeline/0" and match nothing.
@@ -545,41 +576,63 @@ type UnreadForgeItem struct {
 	Payload string
 	// EventCount is how many events this item has in total.
 	EventCount int
-	CreatedAt  time.Time
+	// Read reports that every event for this item has been read. It is derived
+	// in the same query as the rows themselves, so a row's styling can never
+	// disagree with the filter that selected it.
+	Read      bool
+	CreatedAt time.Time
 }
 
-// UnreadForgeItems lists the items with unread activity in one repository,
-// newest activity first, for the unread-overview panel.
+// ListForgeActivityItems lists items with activity in one repository, newest
+// activity first, for the activity panel.
 //
 // This is a separate query from CountUnreadForgeEvents on purpose: the count is
 // fetched on every live event and on every project switch, so it must stay O(1);
-// the rows are only needed while the overview is on screen.
+// the rows are only needed while the panel is on screen.
 //
 // The newest event per item is selected with a MAX(id) self-join rather than a
 // bare MAX(id) alongside the other columns — SQLite does not define which row's
-// non-aggregated columns a bare MAX returns. The join is exact, and MAX(id) is
-// guaranteed to be an unread row: MarkForgeEventsRead sets read_at on every
-// unread row of an item at once, and ids only grow, so if the newest row were
-// read the item would have no unread rows left and be excluded by the HAVING.
-func UnreadForgeItems(repo ForgeRepoKey, limit int) ([]UnreadForgeItem, error) {
-	out := []UnreadForgeItem{}
+// non-aggregated columns a bare MAX returns.
+//
+// Read state is per ITEM and is computed as "no unread rows remain", which is
+// why the filter is expressed as a HAVING on the unread count rather than a
+// condition on read_at: reading one event of an item does not make the item read
+// (MarkForgeEventsRead sets every unread row of the item at once, so in practice
+// the counts are all-or-nothing — but the aggregate is what the row styling
+// shows, so the filter must use the same aggregate or the two could disagree).
+func ListForgeActivityItems(repo ForgeRepoKey, filter ForgeActivityFilter, limit int) ([]ForgeActivityItem, error) {
+	out := []ForgeActivityItem{}
 	if dbRead == nil {
 		return out, nil
 	}
 	if limit <= 0 {
 		limit = 200
 	}
+
+	// The HAVING clause is the only part that varies by filter; it is chosen
+	// from a closed set rather than interpolated from caller input.
+	having := ""
+	switch filter {
+	case ForgeActivityRead:
+		having = "HAVING SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) = 0"
+	case ForgeActivityAll:
+		having = ""
+	default: // ForgeActivityUnread
+		having = "HAVING SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) > 0"
+	}
+
 	rows, err := dbRead.Query(
 		`SELECT e.item_key, e.item_type, e.number, e.event_type, e.payload,
-		        e.created_at, g.event_count
+		        e.created_at, g.event_count, g.unread_count
 		   FROM forge_events e
 		   JOIN (
-		         SELECT item_key, COUNT(*) AS event_count, MAX(id) AS last_id
+		         SELECT item_key, COUNT(*) AS event_count, MAX(id) AS last_id,
+		                SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) AS unread_count
 		           FROM forge_events
 		          WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
 		            AND item_key != ''
 		          GROUP BY item_key
-		         HAVING SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) > 0
+		          `+having+`
 		        ) g
 		     ON g.item_key = e.item_key AND e.id = g.last_id
 		  WHERE e.platform = ? AND e.host = ? AND e.owner = ? AND e.repo = ?
@@ -594,11 +647,13 @@ func UnreadForgeItems(repo ForgeRepoKey, limit int) ([]UnreadForgeItem, error) {
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var it UnreadForgeItem
+		var it ForgeActivityItem
+		var unreadCount int
 		if err := rows.Scan(&it.ItemKey, &it.ItemType, &it.Number, &it.EventType,
-			&it.Payload, &it.CreatedAt, &it.EventCount); err != nil {
+			&it.Payload, &it.CreatedAt, &it.EventCount, &unreadCount); err != nil {
 			return nil, err
 		}
+		it.Read = unreadCount == 0
 		// The run id only exists inside the key, and only for pipelines.
 		if it.ItemType == string(forge.ItemTypePipeline) {
 			if id, ok := forge.ParsePipelineRunID(it.ItemKey); ok {
@@ -608,6 +663,14 @@ func UnreadForgeItems(repo ForgeRepoKey, limit int) ([]UnreadForgeItem, error) {
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// UnreadForgeItems lists the items with unread activity in one repository.
+//
+// Kept as the narrow spelling for callers that only ever want the unread set, so
+// "unread" stays the obvious default and cannot be forgotten at a call site.
+func UnreadForgeItems(repo ForgeRepoKey, limit int) ([]ForgeActivityItem, error) {
+	return ListForgeActivityItems(repo, ForgeActivityUnread, limit)
 }
 
 // MarkForgeEventsRead marks unread events as read.

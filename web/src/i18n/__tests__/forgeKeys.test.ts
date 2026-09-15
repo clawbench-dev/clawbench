@@ -72,6 +72,35 @@ describe('forge locale values', () => {
     }
   })
 
+  it('has matching activity filter and per-view empty-state keys in both locales', () => {
+    // These are looked up DYNAMICALLY (`t('forge.overview.filter.' + f)`), so a
+    // missing key would not fail a type check — it would render the raw key path
+    // in the chip. The top-level key-parity check above cannot see this, because
+    // it only compares the first level of the namespace.
+    const filters = ['unread', 'read', 'all'] as const
+    const views = ['unread', 'read', 'all'] as const
+    for (const [name, loc] of [['en', en], ['zh', zh]] as const) {
+      for (const f of filters) {
+        expect(loc.forge.overview.filter[f], `${name} overview.filter.${f}`).toBeTruthy()
+      }
+      for (const v of views) {
+        expect(loc.forge.overview.empty[v], `${name} overview.empty.${v}`).toBeTruthy()
+        expect(loc.forge.overview.emptyHint[v], `${name} overview.emptyHint.${v}`).toBeTruthy()
+      }
+    }
+  })
+
+  it('distinguishes the unread empty state from the read one', () => {
+    // "Nothing unread" and "nothing read yet" are different facts. If they read
+    // the same, one of the two views is showing a lie.
+    for (const [name, loc] of [['en', en], ['zh', zh]] as const) {
+      expect(
+        loc.forge.overview.empty.unread,
+        `${name}: the unread and read empty states must differ`,
+      ).not.toBe(loc.forge.overview.empty.read)
+    }
+  })
+
   it('no forge values are empty strings in either locale', () => {
     // Shallow check over the leaf string values of the namespace.
     const walk = (obj: Record<string, unknown>, prefix: string) => {

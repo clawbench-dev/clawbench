@@ -73,7 +73,9 @@ const unreadListState = {
   loading: { value: false },
   loaded: { value: false },
   error: { value: null as unknown },
+  filter: { value: 'unread' as const },
   load: vi.fn(),
+  setFilter: vi.fn(),
   markAllRead: vi.fn(),
   markRowRead: vi.fn(),
 }
@@ -83,6 +85,7 @@ vi.mock('@/composables/useForge', () => ({
   useForgePipelines: () => pipelineState,
   useForgeUnreadItems: () => unreadListState,
   FORGE_PIPELINE_FILTERS: ['failure', 'running', 'all'],
+  FORGE_ACTIVITY_FILTERS: ['unread', 'read', 'all'],
   useForgeDetail: () => ({
     item: { value: null },
     comments: { value: [] },
@@ -152,8 +155,17 @@ function makeI18n() {
           unreadItem: 'New activity',
           overview: {
             title: 'Activity',
-            empty: 'Nothing unread',
-            emptyHint: 'New activity shows up here',
+            filter: { unread: 'Unread', read: 'Read', all: 'All' },
+            empty: {
+              unread: 'Nothing unread',
+              read: 'Nothing read yet',
+              all: 'No activity yet',
+            },
+            emptyHint: {
+              unread: 'New activity shows up here',
+              read: 'Opened items stay here',
+              all: 'Activity shows up here',
+            },
             markAllRead: 'Mark all read',
             pipelineRef: 'Pipeline run {runId}',
             eventCount: '{count} events',

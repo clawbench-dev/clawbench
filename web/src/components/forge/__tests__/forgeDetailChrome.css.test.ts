@@ -62,6 +62,14 @@ const SHARED_CHROME = [
   'forge-empty-title',
   'forge-empty-hint',
   'forge-overview-count-badge',
+  // Filter toolbar + chips. The activity tab renders its own toolbar from
+  // ForgeOverviewList, the other tabs render theirs from ForgePanelContent, so
+  // these belong to no single component.
+  'forge-toolbar',
+  'forge-chips',
+  'forge-chips-scroll',
+  'forge-chips-divider',
+  'forge-chip',
 ]
 
 /** `pipeline-<status>` modifiers, used by both the dot and the badge. */

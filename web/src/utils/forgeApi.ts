@@ -344,7 +344,7 @@ export function fetchForgeUnread(signal?: AbortSignal): Promise<{ count: number 
 }
 
 /**
- * One unread item in the overview panel.
+ * One activity row in the overview panel.
  *
  * `itemKey` is opaque and must be passed back verbatim to markForgeRead: a
  * pipeline's `number` is always 0, so rebuilding the key from type+number would
@@ -366,18 +366,42 @@ export interface ForgeUnreadItem {
     slug: string
     updatedAt: string
     /**
-     * Set locally after the user opens the row, so it can be greyed out without
-     * being removed (removing it would shift the rows below mid-click). Never
-     * sent by the server — the endpoint only returns unread items.
+     * Server-reported read state: true when EVERY event of this item has been
+     * read. It comes from the same query that selected the row, so the styling
+     * cannot disagree with the filter.
+     *
+     * Distinct from `locallyRead` below: this is what the server said, that is
+     * what this client did a moment ago. Keeping them separate is what lets a
+     * row be greyed out instantly without the optimistic flag ever being mistaken
+     * for persisted state (or vice versa).
      */
     read?: boolean
+    /**
+     * Set locally after the user opens the row, so it can be greyed out without
+     * being removed (removing it would shift the rows below mid-click).
+     */
+    locallyRead?: boolean
 }
 
-export function fetchForgeUnreadItems(signal?: AbortSignal): Promise<{
+/** The read-state filter offered by the activity view. */
+export type ForgeActivityFilter = 'unread' | 'read' | 'all'
+
+/**
+ * List the bound repository's activity items.
+ *
+ * `filter` selects by ITEM read state: an item counts as read only when all of
+ * its events have been read.
+ */
+export function fetchForgeUnreadItems(
+    filter: ForgeActivityFilter = 'unread',
+    signal?: AbortSignal,
+): Promise<{
     count: number
     items: ForgeUnreadItem[]
 }> {
-    return forgeFetch('/api/forge/unread-items', { signal })
+    const q = new URLSearchParams()
+    q.set('filter', filter)
+    return forgeFetch(`/api/forge/unread-items?${q.toString()}`, { signal })
 }
 
 /**

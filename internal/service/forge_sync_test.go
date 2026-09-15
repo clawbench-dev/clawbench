@@ -754,3 +754,115 @@ func TestUnreadForgeItems_RespectsLimit(t *testing.T) {
 	assert.Equal(t, "pr/5", got[0].ItemKey)
 	assert.Equal(t, "pr/4", got[1].ItemKey)
 }
+
+// ── ListForgeActivityItems (the read/unread filter) ──
+
+// TestListForgeActivityItems_ReadFilterReturnsOnlyFullyReadItems is the core
+// contract of the "read" view: an item shows up there only once EVERY one of its
+// events has been read.
+//
+// This is the mutation-sensitive half of the feature. A filter implemented as a
+// condition on `read_at` (rather than on the aggregate) would also return items
+// that merely have one read event, so an item with a read older event plus a
+// fresh unread one would leak into the read view — which is exactly the bug this
+// asserts against.
+func TestListForgeActivityItems_ReadFilterReturnsOnlyFullyReadItems(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "pr/1", "pr", 1, "closed", "k1")
+	insertEvent(t, "pr/2", "pr", 2, "closed", "k2")
+	// pr/3 gets a read event and then a NEW unread one: it is unread, not read.
+	insertEvent(t, "pr/3", "pr", 3, "opened", "k3")
+	require.NoError(t, service.MarkForgeEventsRead(testRepoKey(), "pr/3"))
+	insertEvent(t, "pr/3", "pr", 3, "commented", "k4")
+
+	require.NoError(t, service.MarkForgeEventsRead(testRepoKey(), "pr/1"))
+
+	got, err := service.ListForgeActivityItems(testRepoKey(), service.ForgeActivityRead, 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "only the fully read item belongs in the read view")
+	assert.Equal(t, "pr/1", got[0].ItemKey)
+	assert.True(t, got[0].Read, "a row in the read view must report itself read")
+}
+
+// TestListForgeActivityItems_UnreadFilterMatchesUnreadForgeItems pins the two
+// spellings together: the generic filter's unread case must return exactly what
+// the narrow UnreadForgeItems helper does.
+func TestListForgeActivityItems_UnreadFilterMatchesUnreadForgeItems(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "pr/1", "pr", 1, "closed", "k1")
+	insertEvent(t, "pr/2", "pr", 2, "closed", "k2")
+	require.NoError(t, service.MarkForgeEventsRead(testRepoKey(), "pr/2"))
+
+	viaFilter, err := service.ListForgeActivityItems(testRepoKey(), service.ForgeActivityUnread, 0)
+	require.NoError(t, err)
+	viaHelper, err := service.UnreadForgeItems(testRepoKey(), 0)
+	require.NoError(t, err)
+
+	require.Len(t, viaFilter, 1)
+	require.Len(t, viaHelper, 1)
+	assert.Equal(t, viaHelper[0].ItemKey, viaFilter[0].ItemKey)
+	assert.False(t, viaFilter[0].Read, "an unread row must report itself unread")
+}
+
+// TestListForgeActivityItems_AllFilterReturnsBothStates: the "all" view is the
+// union, newest activity first, with each row carrying its own state.
+func TestListForgeActivityItems_AllFilterReturnsBothStates(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "pr/1", "pr", 1, "closed", "k1")
+	require.NoError(t, service.MarkForgeEventsRead(testRepoKey(), "pr/1"))
+	insertEvent(t, "pr/2", "pr", 2, "commented", "k2")
+
+	got, err := service.ListForgeActivityItems(testRepoKey(), service.ForgeActivityAll, 0)
+	require.NoError(t, err)
+	require.Len(t, got, 2, "the all view is the union of both states")
+
+	// Newest activity first: pr/2 was inserted last.
+	assert.Equal(t, "pr/2", got[0].ItemKey)
+	assert.False(t, got[0].Read)
+	assert.Equal(t, "pr/1", got[1].ItemKey)
+	assert.True(t, got[1].Read)
+}
+
+// TestListForgeActivityItems_ScopesToRepoAndSkipsEmptyKey: the filter must not
+// loosen the two guards the unread query already had.
+func TestListForgeActivityItems_ScopesToRepoAndSkipsEmptyKey(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	insertEvent(t, "", "pr", 3, "closed", "k1")
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "other", Repo: "thing",
+		ItemType: "pr", Number: 1, ItemKey: "pr/1",
+		EventType: "closed", DedupeKey: "k1",
+	})
+	require.NoError(t, err)
+
+	got, err := service.ListForgeActivityItems(testRepoKey(), service.ForgeActivityAll, 0)
+	require.NoError(t, err)
+	assert.Empty(t, got, "another repo's rows and keyless rows are not this repo's activity")
+}
+
+// TestParseForgeActivityFilter covers the fallback contract: an unknown or empty
+// value is the DEFAULT view, not an error and not "all".
+func TestParseForgeActivityFilter(t *testing.T) {
+	// A slice rather than a map: two of these inputs are whitespace variants
+	// that must stay distinct from their trimmed spelling, and the keys are the
+	// thing under test.
+	cases := []struct {
+		raw  string
+		want service.ForgeActivityFilter
+	}{
+		{"", service.ForgeActivityUnread},
+		{"unread", service.ForgeActivityUnread},
+		{"read", service.ForgeActivityRead},
+		{"all", service.ForgeActivityAll},
+		{"bogus", service.ForgeActivityUnread},
+		{"READ", service.ForgeActivityUnread},   // case-sensitive on purpose
+		{" read ", service.ForgeActivityUnread}, // not trimmed: a query typo is not a value
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, service.ParseForgeActivityFilter(tc.raw), "input %q", tc.raw)
+	}
+}

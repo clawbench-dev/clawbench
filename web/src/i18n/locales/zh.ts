@@ -86,8 +86,20 @@ export default {
     retry: '重试',
     overview: {
       title: '动态',
-      empty: '暂无动态',
-      emptyHint: '有新动态的议题、合并请求与流水线会出现在这里',
+      filter: { unread: '未读', read: '已读', all: '全部' },
+      empty: {
+        // One string per view: "nothing unread" and "nothing read yet" are
+        // different facts, and a shared string would read as a bug in whichever
+        // view it did not describe.
+        unread: '暂无未读动态',
+        read: '暂无已读动态',
+        all: '暂无动态',
+      },
+      emptyHint: {
+        unread: '有新动态的议题、合并请求与流水线会出现在这里',
+        read: '打开过的条目会留在这里，30 天后自动清理',
+        all: '议题、合并请求与流水线的新动态会出现在这里',
+      },
       pipelineRef: '流水线 run:{runId}',
       eventCount: '{count} 条动态',
       reason: {

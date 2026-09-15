@@ -11,6 +11,7 @@ import {
     type ForgeComment,
     type ForgePipelineRun,
     type ForgeUnreadItem,
+    type ForgeActivityFilter,
     type ForgePipelineJob,
     type ForgePipelineStatus,
     ForgeApiError,
@@ -495,12 +496,26 @@ export function useForgePipelineDetail() {
 }
 
 /**
- * useForgeUnreadItems lists the items with unread activity in the project's
- * bound repository, for the unread-overview tab.
+ * Read-state filters offered on the activity tab, in display order.
+ *
+ * "unread" comes first because it is the default: the active chip should be the
+ * leftmost one, and the order reads as "what needs me → what I have seen".
+ */
+export const FORGE_ACTIVITY_FILTERS: readonly ForgeActivityFilter[] = ['unread', 'read', 'all']
+
+/**
+ * useForgeUnreadItems lists the activity items for the project's bound
+ * repository, for the activity tab.
  *
  * Kept apart from useForgeUnread (which owns the dock badge): the badge is a
  * single number refreshed on every live event, so it must stay a cheap count.
- * These rows are only fetched while the overview is on screen.
+ * These rows are only fetched while the activity view is on screen.
+ *
+ * The filter is applied SERVER-side rather than by trimming the returned rows.
+ * The read/unread split is an aggregate over each item's events ("all of them
+ * read"), which the client cannot recompute from a page of rows — and filtering
+ * client-side would silently show an empty "read" view whenever the unread set
+ * happened to fill the page.
  */
 export function useForgeUnreadItems(getProjectPath: () => string) {
     const items = ref<ForgeUnreadItem[]>([])
@@ -509,6 +524,8 @@ export function useForgeUnreadItems(getProjectPath: () => string) {
     /** False until the first load settles, so the panel can tell "empty" from
      *  "not fetched yet" and avoid flashing the empty state. */
     const loaded = ref(false)
+    /** Which read state is shown. Defaults to unread — the reason to look. */
+    const filter = ref<ForgeActivityFilter>('unread')
 
     let requestSeq = 0
     let abort: AbortController | null = null
@@ -527,7 +544,7 @@ export function useForgeUnreadItems(getProjectPath: () => string) {
         loading.value = true
         error.value = null
         try {
-            const res = await fetchForgeUnreadItems(abort.signal)
+            const res = await fetchForgeUnreadItems(filter.value, abort.signal)
             if (seq !== requestSeq) return
             items.value = res.items ?? []
             loaded.value = true
@@ -544,6 +561,17 @@ export function useForgeUnreadItems(getProjectPath: () => string) {
         } finally {
             if (seq === requestSeq) loading.value = false
         }
+    }
+
+    /** Switch the read-state filter and reload. */
+    function setFilter(f: ForgeActivityFilter) {
+        if (filter.value === f) return
+        filter.value = f
+        // Rows from the previous view would otherwise linger until the response
+        // lands, showing e.g. read rows under the "unread" chip.
+        items.value = []
+        loaded.value = false
+        void load()
     }
 
     /**
@@ -565,10 +593,14 @@ export function useForgeUnreadItems(getProjectPath: () => string) {
      *
      * The row is greyed out rather than spliced: removing it would shift every
      * row below the cursor mid-click. It drops on the next load().
+     *
+     * Only `locallyRead` is touched. Writing the server field `read` here would
+     * make a failed write indistinguishable from a successful one — the
+     * rollback below relies on being able to tell what the server actually said.
      */
     async function markRowRead(itemKey: string) {
         const row = items.value.find(r => r.itemKey === itemKey)
-        if (row) row.read = true
+        if (row) row.locallyRead = true
         try {
             await markForgeRead(itemKey)
             // Re-derive the badge rather than decrementing, so a missed event
@@ -577,9 +609,9 @@ export function useForgeUnreadItems(getProjectPath: () => string) {
         } catch (err) {
             appLog.w(TAG, 'markRowRead failed', err)
             // Restore, so the row does not claim it was seen.
-            if (row) row.read = false
+            if (row) row.locallyRead = false
         }
     }
 
-    return { items, loading, loaded, error, load, markAllRead, markRowRead }
+    return { items, loading, loaded, error, filter, load, setFilter, markAllRead, markRowRead }
 }

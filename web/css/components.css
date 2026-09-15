@@ -312,6 +312,69 @@
     color: var(--text-secondary, #6b7280);
 }
 
+/* ── Filter toolbar and chips ──
+   Global for the same reason as the list chrome above: the activity tab renders
+   its own toolbar (read/unread/all) from ForgeOverviewList, while the issue/PR
+   and pipeline tabs render theirs from ForgePanelContent. Declaring these in
+   either component's <style scoped> leaves the OTHER one unstyled — scoped rules
+   only apply to the component that declares them.
+
+   Kept identical across all four views on purpose: the filter affordance is the
+   same control, so a per-view variant would be a gratuitous inconsistency. */
+
+/* Filter rows sit under the tab bar. */
+.forge-toolbar {
+    padding: var(--space-4) var(--space-6) 0;
+    flex-shrink: 0;
+}
+
+.forge-chips {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+}
+
+.forge-chips-scroll {
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: var(--space-1);
+}
+.forge-chips-scroll::-webkit-scrollbar { display: none; }
+
+/* Separates the state group from the mine group without a second row. */
+.forge-chips-divider {
+    width: 1px;
+    height: 14px;
+    background: var(--border-color);
+    flex-shrink: 0;
+    margin: 0 var(--space-1);
+}
+
+.forge-chip {
+    padding: var(--space-2) var(--space-6);
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--font-size-md);
+    line-height: 18px;
+    white-space: nowrap;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background var(--duration-base) ease, border-color var(--duration-base) ease, color var(--duration-base) ease;
+}
+@media (hover: hover) {
+    .forge-chip:not(.active):hover {
+        border-color: var(--accent-color);
+        color: var(--accent-color);
+    }
+}
+.forge-chip.active {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: #fff;
+}
+
 /* ── Status dot: baseline-aligned with the title's first line ── */
 .forge-state-dot {
     width: 8px;

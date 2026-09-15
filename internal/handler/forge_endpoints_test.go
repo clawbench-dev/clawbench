@@ -898,3 +898,109 @@ func TestServeForgeUnreadItems_ExcludesReadItems(t *testing.T) {
 
 	assert.Equal(t, 1, count(), "the read item drops out of the overview")
 }
+
+// TestServeForgeUnreadItems_FilterSelectsReadState covers the ?filter= parameter
+// that backs the activity panel's read/unread/all chips.
+//
+// The three views must partition the same underlying set: unread and read are
+// disjoint, and "all" is exactly their union. Asserting the union (not just the
+// counts) is what catches a filter that drops rows instead of selecting them.
+func TestServeForgeUnreadItems_FilterSelectsReadState(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	bindProject(t, env.ProjectDir, "github", "github.com")
+
+	seedEvent(t, service.ForgeEvent{
+		ItemType: "pr", Number: 1, ItemKey: "pr/1", EventType: "closed", DedupeKey: "k1",
+	})
+	seedEvent(t, service.ForgeEvent{
+		ItemType: "pr", Number: 2, ItemKey: "pr/2", EventType: "closed", DedupeKey: "k2",
+	})
+	// Read pr/2 through the real endpoint, so the fixture matches what the UI
+	// produces rather than what a test would like the state to be.
+	req := newRequest(t, http.MethodPost, "/api/forge/read", map[string]string{"itemKey": "pr/2"})
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	require.Equal(t, http.StatusOK, callHandler(ServeForgeMarkRead, req).Code)
+
+	// fetch returns the item keys and their read flags for one filter value.
+	fetch := func(filter string) []struct {
+		Key  string
+		Read bool
+	} {
+		t.Helper()
+		url := "/api/forge/unread-items"
+		if filter != "" {
+			url += "?filter=" + filter
+		}
+		req := newRequest(t, http.MethodGet, url, nil)
+		withAuthCookie(req, model.SessionToken)
+		withProjectCookie(req, env.ProjectDir)
+		w := callHandler(ServeForgeUnreadItems, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var resp struct {
+			Items []struct {
+				ItemKey string `json:"itemKey"`
+				Read    bool   `json:"read"`
+			} `json:"items"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		out := make([]struct {
+			Key  string
+			Read bool
+		}, 0, len(resp.Items))
+		for _, it := range resp.Items {
+			out = append(out, struct {
+				Key  string
+				Read bool
+			}{it.ItemKey, it.Read})
+		}
+		return out
+	}
+
+	// No filter is the default view: unread only, so the read row is absent.
+	def := fetch("")
+	require.Len(t, def, 1, "the default view is unread")
+	assert.Equal(t, "pr/1", def[0].Key)
+	assert.False(t, def[0].Read, "an unread row must not claim to be read")
+
+	unread := fetch("unread")
+	require.Len(t, unread, 1)
+	assert.Equal(t, "pr/1", unread[0].Key)
+
+	read := fetch("read")
+	require.Len(t, read, 1, "the read view holds exactly the fully-read items")
+	assert.Equal(t, "pr/2", read[0].Key)
+	assert.True(t, read[0].Read)
+
+	all := fetch("all")
+	require.Len(t, all, 2, "all is the union of both views")
+	seen := map[string]bool{}
+	for _, it := range all {
+		seen[it.Key] = it.Read
+	}
+	assert.Equal(t, map[string]bool{"pr/1": false, "pr/2": true}, seen,
+		"each row carries its own state, so the union is not uniform")
+
+	// An unknown value is the default view rather than an error.
+	assert.Len(t, fetch("bogus"), 1)
+}
+
+// TestServeForgeUnreadItems_ReadFilterUnboundIsEmpty: an unbound project has no
+// activity in any view, and that is a normal state rather than an error.
+func TestServeForgeUnreadItems_ReadFilterUnboundIsEmpty(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/forge/unread-items?filter=all", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeUnreadItems, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(0), resp["count"])
+	assert.Equal(t, []any{}, resp["items"], "items must be an array, never null")
+}

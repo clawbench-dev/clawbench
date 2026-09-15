@@ -76,6 +76,9 @@ function row(itemKey: string, overrides: Record<string, unknown> = {}) {
     url: 'https://example.com/x',
     slug: 'acme/widgets',
     updatedAt: '2026-09-14T12:00:00Z',
+    // The server always states the read state; defaulting it keeps the fixtures
+    // faithful to the wire shape.
+    read: false,
     ...overrides,
   }
 }
@@ -117,7 +120,10 @@ describe('ForgeOverviewList', () => {
     await nextTick()
     await nextTick()
 
-    expect(w.text()).toContain('forge.overview.empty')
+    // The empty state names the VIEW: "nothing unread" and "nothing read yet"
+    // are different facts, so the unread view must not borrow the read wording.
+    expect(w.text()).toContain('forge.overview.empty.unread')
+    expect(w.text()).not.toContain('forge.overview.empty.read')
     expect(w.findAll('.forge-overview-row')).toHaveLength(0)
   })
 
@@ -193,6 +199,57 @@ describe('ForgeOverviewList', () => {
     expect(rows[1].classes()).toContain('unread')
   })
 
+  it('renders a row the server reports as read in the read style', async () => {
+    // A row from the read view arrives with read:true and no local flag; it must
+    // be styled read without the user having clicked anything.
+    mockFetchForgeUnreadItems.mockResolvedValue({
+      count: 2,
+      items: [row('pr/1', { read: true }), row('pr/2', { number: 2, read: false })],
+    })
+    const w = mountPanel()
+    await nextTick()
+    await nextTick()
+
+    const rows = w.findAll('.forge-overview-row')
+    expect(rows[0].classes()).toContain('read')
+    expect(rows[0].find('.forge-unread-dot').exists()).toBe(false)
+    expect(rows[1].classes()).toContain('unread')
+    expect(rows[1].find('.forge-unread-dot').exists()).toBe(true)
+  })
+
+  it('offers the read-state filter as chips, with unread active by default', async () => {
+    // Same chip affordance as the issues/PR/pipeline tabs. The default must be
+    // unread — that is the reason to open this view.
+    const w = mountPanel()
+    await nextTick()
+    await nextTick()
+
+    const chips = w.findAll('.forge-chip')
+    expect(chips.map(c => c.text())).toEqual([
+      'forge.overview.filter.unread',
+      'forge.overview.filter.read',
+      'forge.overview.filter.all',
+    ])
+    const active = chips.filter(c => c.classes().includes('active'))
+    expect(active).toHaveLength(1)
+    expect(active[0].text()).toBe('forge.overview.filter.unread')
+  })
+
+  it('loads with the selected filter and re-requests when a chip is clicked', async () => {
+    // The split is an aggregate over each item's events, so the SERVER must do
+    // the filtering; the client only sends which view it wants.
+    const w = mountPanel()
+    await nextTick()
+    await nextTick()
+    expect(mockFetchForgeUnreadItems).toHaveBeenCalledWith('unread', expect.anything())
+
+    await w.findAll('.forge-chip')[1].trigger('click')
+    await nextTick()
+    await nextTick()
+
+    expect(mockFetchForgeUnreadItems).toHaveBeenCalledWith('read', expect.anything())
+  })
+
   it('clearLocal empties the rows without a request', async () => {
     // The host's "mark all read" already performed the repo-wide write through
     // the shared badge composable; this must not issue a second POST.
@@ -207,6 +264,28 @@ describe('ForgeOverviewList', () => {
 
     expect(w.findAll('.forge-overview-row')).toHaveLength(0)
     expect(mockMarkForgeRead).not.toHaveBeenCalled()
+  })
+
+  it('clearLocal keeps the rows in the all view, merely read', async () => {
+    // "Mark all read" must not look like "delete everything" in a view whose
+    // definition does not exclude read items.
+    mockFetchForgeUnreadItems.mockResolvedValue({ count: 1, items: [row('pr/1')] })
+    const w = mountPanel()
+    await nextTick()
+    await nextTick()
+
+    await w.findAll('.forge-chip')[2].trigger('click') // "All"
+    await nextTick()
+    await nextTick()
+    expect(w.findAll('.forge-overview-row')).toHaveLength(1)
+
+    w.vm.clearLocal()
+    await nextTick()
+
+    const rows = w.findAll('.forge-overview-row')
+    expect(rows).toHaveLength(1, 'the item still belongs in the all view')
+    expect(rows[0].classes()).toContain('read')
+    expect(rows[0].classes()).not.toContain('unread')
   })
 
   it('shows the error card on a failed load rather than the empty state', async () => {

@@ -2606,17 +2606,29 @@ paths:
   /api/forge/unread-items:
     get:
       tags: [Forge]
-      summary: 未读条目列表（按项目绑定的仓库）
+      summary: 动态条目列表（按项目绑定的仓库）
       description: |
-        返回该项目的仓库中有新活动的条目，最近活动在前，供「未读总览」面板使用。
+        返回该项目的仓库中有活动的条目，最近活动在前，供 forge 面板的「动态」页签使用。
         每个条目给出最新的 eventType（用于生成「有新评论」这类说明）与事件总数。
         流水线的 number 恒为 0，其运行 id 在 runId 字段；客户端应原样回传 itemKey
         给 /api/forge/read，不要用 type/number 重新拼装。
+        `filter` 按条目的已读状态筛选：unread（默认）/ read / all。已读状态是**条目级**
+        的——只有该条目的全部事件都已读，read 才为 true。非法或缺省的 filter 一律回落
+        unread（它是视图选择器，写错最多回到默认视图，不应报错）。
         未绑定仓库时返回 count 为 0、items 为空（正常状态，非错误）。
       operationId: forgeUnreadItems
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [unread, read, all]
+            default: unread
+          description: 按条目已读状态筛选；非法值回落 unread
       responses:
         "200":
-          description: 未读条目列表
+          description: 动态条目列表
           content:
             application/json:
               schema:
@@ -2654,6 +2666,9 @@ paths:
                           description: owner/repo
                         updatedAt:
                           type: string
+                        read:
+                          type: boolean
+                          description: 该条目是否已全部读完（条目级，非事件级）
 
   /api/forge/read:
     post:

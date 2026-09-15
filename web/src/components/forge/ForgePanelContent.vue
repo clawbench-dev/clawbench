@@ -967,56 +967,9 @@ function formatTime(iso: string): string {
   background: var(--accent-color);
 }
 
-/* Filter rows sit under the tab bar. */
-.forge-toolbar {
-  padding: var(--space-4) var(--space-6) 0;
-  flex-shrink: 0;
-}
-
-/* ── Filter chips ── */
-.forge-chips {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-}
-.forge-chips-scroll {
-  overflow-x: auto;
-  scrollbar-width: none;
-  padding-bottom: var(--space-1);
-}
-.forge-chips-scroll::-webkit-scrollbar { display: none; }
-/* Separates the state group from the mine group without a second row. */
-.forge-chips-divider {
-  width: 1px;
-  height: 14px;
-  background: var(--border-color);
-  flex-shrink: 0;
-  margin:0 var(--space-1);
-}
-.forge-chip {
-  padding: var(--space-2) var(--space-6);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border-color);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--font-size-md);
-  line-height: 18px;
-  white-space: nowrap;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background var(--duration-base) ease, border-color var(--duration-base) ease, color var(--duration-base) ease;
-}
-@media (hover: hover) {
-  .forge-chip:not(.active):hover {
-    border-color: var(--accent-color);
-    color: var(--accent-color);
-  }
-}
-.forge-chip.active {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
-  color: #fff;
-}
+/* Filter rows and chips are declared GLOBALLY (web/css/components.css): the
+   activity tab renders its own toolbar from a child component, and a scoped rule
+   only applies to the component that declares it. See the note there. */
 
 /* ── Search ── */
 .forge-search {

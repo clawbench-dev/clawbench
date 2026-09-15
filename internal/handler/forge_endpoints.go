@@ -711,14 +711,18 @@ func ServeForgeUnread(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{jsonCount: n})
 }
 
-// ServeForgeUnreadItems lists the items with unread activity in the project's
-// bound repository, for the unread-overview panel.
+// ServeForgeUnreadItems lists the items with activity in the project's bound
+// repository, for the activity panel.
+//
+// `filter` selects the read state: "unread" (default), "read" or "all". An
+// unrecognized value falls back to "unread" rather than erroring — it is a view
+// selector, so the worst case of a typo is the default view.
 //
 // Separate from /api/forge/unread on purpose: that one is the badge path and is
 // fetched on every live event, so it must stay a cheap count. These rows are
-// only needed while the overview is on screen.
+// only needed while the panel is on screen.
 //
-//	GET /api/forge/unread-items
+//	GET /api/forge/unread-items?filter=unread|read|all
 func ServeForgeUnreadItems(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -739,7 +743,8 @@ func ServeForgeUnreadItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := service.UnreadForgeItems(pf.RepoKey(), 0)
+	filter := service.ParseForgeActivityFilter(r.URL.Query().Get("filter"))
+	items, err := service.ListForgeActivityItems(pf.RepoKey(), filter, 0)
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
@@ -761,6 +766,9 @@ func ServeForgeUnreadItems(w http.ResponseWriter, r *http.Request) {
 			"url":        it.Payload,
 			jsonSlug:     slug,
 			"updatedAt":  formatForgeTime(it.CreatedAt),
+			// Read state comes from the same query that selected the row, so a
+			// row's styling cannot disagree with the filter that produced it.
+			"read": it.Read,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
