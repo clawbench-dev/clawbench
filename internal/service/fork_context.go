@@ -159,26 +159,28 @@ func RenderForkContextMessages(msgs []model.ChatMessage, toolCallMap map[string]
 
 // BoundForkContext renders entries into the final injected string.
 //
-// Entries are kept as a trailing window (newest first) until the budget is
-// exhausted, but the drop order is role-aware: assistant entries are sacrificed
-// before user entries, so every user message is preserved whenever it fits.
+// Selection is priority-based rather than a plain trailing window:
 //
-// The asymmetry is worth exploiting. Measured against a real installation, user
-// messages average ~51 characters while assistant entries average ~12 KB — they
-// carry the tool_use input/output that dominates the budget. Dropping an
-// assistant entry costs a little context; dropping a user entry loses the task
-// constraints the model was asked to honor, and all user messages together are
-// a rounding error next to the assistant traffic.
+//   - User entries are chosen first, newest-first, and an entry that does not
+//     fit is TRUNCATED rather than dropped — a partial instruction still
+//     constrains the model, a missing one does not. Measured against a real
+//     installation, user messages average ~51 characters while assistant entries
+//     average ~12 KB (they carry the tool_use input/output that dominates the
+//     budget), so keeping all of them costs almost nothing.
+//   - Assistant entries then fill whatever budget is left, newest-first. They are
+//     skipped rather than truncated: their bodies are tool payloads, where a
+//     partial excerpt rarely helps.
 //
-// The newest entry is never dropped: if it alone exceeds the budget its body is
-// hard-truncated instead. (The current turn's user message also travels in
-// req.Prompt, so truncating a body cannot lose the user's actual question.)
+// So "every user message is preserved" holds for every user message that fits;
+// a single user message larger than the whole budget is truncated, not dropped.
 //
-// The returned string is bounded by BudgetChars whenever the budget leaves room
-// for the wrapper (header + notice + footer) plus at least one entry. A budget
-// below that floor cannot be honored: the wrapper is always emitted so the model
-// still learns history was compressed. The effective floor is
-// runes(header + notice + footer) + 1.
+// The returned string is bounded by BudgetChars whenever the budget can hold the
+// wrapper (header + notice + footer) plus one rune. Below that floor the wrapper
+// alone already exceeds the budget, so only the wrapper is emitted — the model
+// still learns that history was compressed. Measured floor: 118 runes without a
+// header/footer, 281 with the handler's wrapper. Both config layers keep real
+// budgets far above it (PATCH validator rejects < 1, the frontend enforces
+// min 1000, the default is 100000).
 func BoundForkContext(entries []ForkContextMessage, o ForkContextOptions) string {
 	if len(entries) == 0 {
 		return ""
@@ -190,80 +192,126 @@ func BoundForkContext(entries []ForkContextMessage, o ForkContextOptions) string
 	}
 
 	// Reserve the wrapper and the notice's upper bound (as if every entry were
-	// omitted) so the notice can never push the rendered string over budget.
+	// omitted), so the notice can never push the rendered string over budget.
 	// The over-reservation is at most a few digits.
 	reserve := utf8.RuneCountInString(o.Header) +
 		utf8.RuneCountInString(o.Footer) +
 		utf8.RuneCountInString(forkOmissionNotice(len(entries)))
 	avail := budget - reserve
 	if avail < 1 {
-		// The wrapper alone exceeds the budget. There is nothing to trim — the
-		// header/notice/footer are always emitted so the model still learns that
-		// history was compressed. The frontend enforces min 1000 and the PATCH
-		// validator rejects < 1, so this only arises from a hand-edited config.
+		// Below the floor: nothing can be selected, and the guards below keep
+		// even a truncated entry out so the overflow stays at the wrapper.
 		avail = 1
 	}
 
-	// Walk newest-first, sacrificing assistant entries when an entry does not
-	// fit. kept is newest-first with no gaps, so it renders chronologically when
-	// walked backwards.
-	var kept []ForkContextMessage
-	used := 0
+	// chosen maps entry index -> body to render (already truncated when needed).
+	// Two passes fill it, so rendering walks entries in index order to restore
+	// chronology.
+	chosen := selectForkEntries(entries, avail)
 
-	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
-		cost := forkEntryCost(e)
-
-		if used+cost <= avail {
-			kept = append(kept, e)
-			used += cost
-			continue
-		}
-
-		// Does not fit. An assistant entry is expendable — skip it and keep
-		// scanning for older user messages. This applies to the newest entry too:
-		// a recent assistant reply is not worth sacrificing the user's earlier
-		// instructions for.
-		if e.Role != roleUser {
-			continue
-		}
-
-		// A user entry ends the window: the budget cannot hold it, and dropping
-		// user instructions to reach older assistant chatter would invert the
-		// priority this function exists to enforce.
-		break
-	}
-
-	// Nothing fit at all — e.g. a single oversized assistant entry. Fall back to
-	// a truncated newest entry so the model still receives recent context rather
-	// than an empty history.
-	if len(kept) == 0 {
-		e := entries[len(entries)-1]
-		kept = append(kept, ForkContextMessage{
-			Role: e.Role,
-			Body: forkTruncateBody(e.Body, avail-forkEntryOverhead(e)),
-		})
-	}
-
-	// Everything not kept was dropped. Deriving the count instead of tallying it
-	// while scanning keeps the notice correct no matter which entries the loop
-	// skipped (kept has no gaps, so the arithmetic is exact).
-	omitted := len(entries) - len(kept)
+	// Everything not kept was dropped.
+	omitted := len(entries) - len(chosen)
 
 	var sb strings.Builder
 	sb.WriteString(o.Header)
 	if omitted > 0 {
 		sb.WriteString(forkOmissionNotice(omitted))
 	}
-	// Render chronologically: kept is newest-first, so walk it backwards.
-	for n := len(kept) - 1; n >= 0; n-- {
-		sb.WriteString(kept[n].Role)
+	for i := range entries {
+		body, ok := chosen[i]
+		if !ok {
+			continue
+		}
+		sb.WriteString(entries[i].Role)
 		sb.WriteString(": ")
-		sb.WriteString(kept[n].Body)
+		sb.WriteString(body)
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString(o.Footer)
 	return sb.String()
+}
+
+// selectForkEntries picks which entries to inject and returns a map from entry
+// index to the body to render (already truncated where needed). Rendering walks
+// the entries in index order, so chronology is preserved regardless of the order
+// in which entries were selected here.
+//
+// Selection is priority-based rather than a plain trailing window:
+//
+//   - User entries first, newest-first. One that does not fit is truncated
+//     rather than dropped, because a partial instruction still constrains the
+//     model while a missing one does not. Each is capped at an equal share of the
+//     remaining room so a single oversized message (a pasted log, say) cannot
+//     consume the budget and evict every older instruction.
+//   - Assistant entries then fill the leftover room, newest-first. They are
+//     skipped rather than truncated: their bodies are tool payloads, where a
+//     partial excerpt rarely helps.
+func selectForkEntries(entries []ForkContextMessage, avail int) map[int]string {
+	chosen := make(map[int]string, len(entries))
+	used := 0
+
+	// Indices of user entries, newest-first.
+	var userIdx []int
+	for i := len(entries) - 1; i >= 0; i-- {
+		if isUserEntry(entries[i]) {
+			userIdx = append(userIdx, i)
+		}
+	}
+
+	for pos, i := range userIdx {
+		e := entries[i]
+		if cost := forkEntryCost(e); used+cost <= avail {
+			chosen[i] = e.Body
+			used += cost
+			continue
+		}
+		room := avail - used - forkEntryOverhead(e)
+		if remaining := len(userIdx) - pos; remaining > 1 {
+			room /= remaining
+		}
+		if room <= utf8.RuneCountInString(forkTruncatedSuffix) {
+			// Not even a truncated body fits. `used` only grows and every entry
+			// has the same overhead, so no older user entry can fit either.
+			break
+		}
+		body := forkTruncateBody(e.Body, room)
+		chosen[i] = body
+		used += forkEntryOverhead(e) + utf8.RuneCountInString(body)
+	}
+
+	// Assistant entries fill whatever budget the user entries left.
+	for i := len(entries) - 1; i >= 0; i-- {
+		if isUserEntry(entries[i]) {
+			continue
+		}
+		e := entries[i]
+		if cost := forkEntryCost(e); used+cost <= avail {
+			chosen[i] = e.Body
+			used += cost
+		}
+	}
+
+	// Degenerate case: nothing fit at all, i.e. the session's entries are all
+	// oversized assistant replies. Truncate the newest so the model still gets
+	// recent context rather than an empty history.
+	if len(chosen) == 0 {
+		last := len(entries) - 1
+		if room := avail - forkEntryOverhead(entries[last]); room > utf8.RuneCountInString(forkTruncatedSuffix) {
+			chosen[last] = forkTruncateBody(entries[last].Body, room)
+		}
+	}
+
+	return chosen
+}
+
+// isUserEntry reports whether an entry is a user message.
+//
+// The role may be capitalized for display (ForkContextOptions.CapitalizeRoles,
+// used by the web chat path), so this compares case-insensitively. Matching the
+// lowercase role constant directly would classify every entry on that path as an
+// assistant and silently invert the priority this file exists to enforce.
+func isUserEntry(e ForkContextMessage) bool {
+	return strings.EqualFold(e.Role, roleUser)
 }
 
 // forkEntryOverhead is the per-entry cost that is not the body: the "role: "
@@ -278,7 +326,9 @@ func forkEntryCost(e ForkContextMessage) int {
 }
 
 // forkTruncateBody truncates a body to fit bodyRoom runes including the
-// truncation suffix, never returning fewer than one rune of content.
+// truncation suffix. Callers must ensure bodyRoom exceeds the suffix length;
+// otherwise truncateRunes' own floor would produce a body longer than the room
+// reserved for it, pushing the rendered line over the budget.
 func forkTruncateBody(body string, bodyRoom int) string {
 	limit := bodyRoom - utf8.RuneCountInString(forkTruncatedSuffix)
 	if limit < 1 {

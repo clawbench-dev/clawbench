@@ -52,8 +52,10 @@ func TestBoundForkContext_EmitsOmissionNoticeWithCount(t *testing.T) {
 	}
 	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 260})
 
-	// Two of the three entries are dropped (the 200-char ones).
-	assert.Contains(t, out, "2 earlier messages were omitted")
+	// The assistant entry is dropped; the older user entry is truncated rather
+	// than dropped, so exactly one message is omitted.
+	assert.Contains(t, out, "1 earlier messages were omitted")
+	assert.Contains(t, out, forkTruncatedSuffix, "the older user message is truncated, not dropped")
 }
 
 // TestBoundForkContext_PreservesAllUserMessages is the core guarantee of the
@@ -139,11 +141,11 @@ func TestBoundForkContext_ChronologicalOrderAfterSkipping(t *testing.T) {
 	assert.Less(t, iBeta, iGamma)
 }
 
-// TestBoundForkContext_OmissionCountIncludesSkippedAssistant covers the counting
-// bug this change introduced and fixed: assistant entries skipped mid-scan must
-// still be counted in the notice, otherwise the model is told fewer messages
-// were dropped than actually were.
-func TestBoundForkContext_OmissionCountIncludesSkippedAssistant(t *testing.T) {
+// TestBoundForkContext_OmissionCountCountsEveryDroppedEntry pins the omission
+// count to "total entries minus kept entries". A manual tally during selection
+// under-counts, because entries skipped in one phase are re-examined in the next
+// and the running counter can be overwritten.
+func TestBoundForkContext_OmissionCountCountsEveryDroppedEntry(t *testing.T) {
 	entries := []ForkContextMessage{
 		{Role: "user", Body: "old"},
 		{Role: "assistant", Body: strings.Repeat("a", 300)},
@@ -152,25 +154,82 @@ func TestBoundForkContext_OmissionCountIncludesSkippedAssistant(t *testing.T) {
 		{Role: "user", Body: strings.Repeat("d", 300)},
 	}
 
-	// The two 300-rune user entries fit; all three assistant entries do not.
+	// All three user entries are kept (the older two truncated in); the two
+	// assistant entries are dropped, so exactly two messages are omitted.
 	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 800})
 
-	assert.Contains(t, out, "3 earlier messages were omitted",
-		"all three dropped assistant entries must be counted")
+	assert.Contains(t, out, "2 earlier messages were omitted",
+		"both dropped assistant entries must be counted")
+	assert.Contains(t, out, "old", "the oldest user entry survives")
 }
 
-func TestBoundForkContext_NewestNeverDropped(t *testing.T) {
-	// A single entry larger than the whole budget must be truncated, not lost:
-	// dropping it would leave the model with no history at all.
+// TestBoundForkContext_NewestUserSurvivesTinyBudget guards the priority this
+// whole file exists to enforce: a user message larger than the budget is
+// truncated, never dropped. (The budget here must clear the wrapper floor of 118
+// runes, below which only the wrapper can be emitted.)
+func TestBoundForkContext_NewestUserSurvivesTinyBudget(t *testing.T) {
 	entries := []ForkContextMessage{
 		{Role: "user", Body: strings.Repeat("z", 5000)},
 	}
-	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 100})
+	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 200})
 
 	assert.Contains(t, out, "user: ")
 	assert.Contains(t, out, forkTruncatedSuffix)
-	assert.LessOrEqual(t, utf8.RuneCountInString(out), 100,
+	assert.LessOrEqual(t, utf8.RuneCountInString(out), 200,
 		"the budget must bound the output even on the truncate path")
+}
+
+// TestBoundForkContext_HugeUserEntrySurvivesDespiteOlderAssistant is the
+// regression test for the capitalized-role bug: the handler capitalizes roles for
+// display, so comparing e.Role against the lowercase role constant classified
+// every entry as an assistant and inverted the priority. Here the newest entry is
+// a huge USER message and an older assistant entry would fit — the user must win.
+func TestBoundForkContext_HugeUserEntrySurvivesDespiteOlderAssistant(t *testing.T) {
+	entries := []ForkContextMessage{
+		{Role: "Assistant", Body: "OLD ASSISTANT CHATTER"},
+		{Role: "User", Body: strings.Repeat("L", 5000)},
+	}
+	out := BoundForkContext(entries, ForkContextOptions{
+		CapitalizeRoles: true,
+		Header:          "[Below is the conversation history from before this session. Continue based on this context.]\n\n",
+		Footer:          "[End of conversation history. Now answer the user's new question.]\n\n",
+		BudgetChars:     400,
+	})
+
+	assert.Contains(t, out, "User: ", "the newest user message must be kept")
+	assert.NotContains(t, out, "OLD ASSISTANT CHATTER",
+		"an older assistant entry must not displace the newest user message")
+}
+
+// TestBoundForkContext_OversizedUserDoesNotEvictOlderUser covers the fair-share
+// rule: one oversized user message must not consume the entire budget and evict
+// older instructions. The older (small) user entry is kept in full; the oversized
+// newer one is truncated into what remains.
+func TestBoundForkContext_OversizedUserDoesNotEvictOlderUser(t *testing.T) {
+	entries := []ForkContextMessage{
+		{Role: "user", Body: "CONSTRAINT: never touch prod"},
+		{Role: "user", Body: strings.Repeat("L", 5000)},
+		{Role: "assistant", Body: strings.Repeat("A", 5000)},
+	}
+	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 1000})
+
+	assert.Contains(t, out, "CONSTRAINT: never touch prod",
+		"an older user instruction must survive a newer oversized user message")
+	assert.LessOrEqual(t, utf8.RuneCountInString(out), 1000)
+}
+
+// TestBoundForkContext_UserEntriesWinOverAssistantBudget verifies user entries are
+// selected before assistant entries: an older user message is kept even though a
+// newer assistant entry could have used that budget.
+func TestBoundForkContext_UserEntriesWinOverAssistantBudget(t *testing.T) {
+	entries := []ForkContextMessage{
+		{Role: "user", Body: "keep this instruction"},
+		{Role: "assistant", Body: strings.Repeat("A", 250)},
+	}
+	// Room for roughly one entry only.
+	out := BoundForkContext(entries, ForkContextOptions{BudgetChars: 200})
+
+	assert.Contains(t, out, "keep this instruction")
 }
 
 // TestBoundForkContext_TruncatePathStaysWithinBudget pins the budget invariant
@@ -477,7 +536,7 @@ func TestBuildForkContext_RespectsConfiguredBudget(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	sessionID := "fork-budget"
-	// Old message big enough that only the newest can fit.
+	// Old message big enough that it cannot fit alongside the newest one.
 	_, err := WriteExec(
 		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"`+strings.Repeat("o", 900)+`"}]}`, sessionID,
@@ -494,8 +553,39 @@ func TestBuildForkContext_RespectsConfiguredBudget(t *testing.T) {
 	defer func() { model.ChatForkContextBudget = prev }()
 
 	out := BuildForkContext(sessionID)
+	// Both are user messages, so both survive: the newest verbatim and the older
+	// one truncated. Nothing is omitted.
 	assert.Contains(t, out, "newest question")
-	assert.Contains(t, out, "omitted")
-	assert.NotContains(t, out, strings.Repeat("o", 900))
+	assert.NotContains(t, out, strings.Repeat("o", 900), "the oversized body is truncated")
+	assert.LessOrEqual(t, utf8.RuneCountInString(out), 400)
+}
+
+// TestBuildForkContext_DropsAssistantWhenBudgetTight is the DB-level counterpart:
+// with an assistant entry competing for the same budget, the assistant is the one
+// dropped while the user message survives.
+func TestBuildForkContext_DropsAssistantWhenBudgetTight(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-budget-asst"
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"the user instruction"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"`+strings.Repeat("a", 900)+`"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	prev := model.ChatForkContextBudget
+	model.ChatForkContextBudget = 400
+	defer func() { model.ChatForkContextBudget = prev }()
+
+	out := BuildForkContext(sessionID)
+	assert.Contains(t, out, "the user instruction", "the user message must win the budget")
+	assert.NotContains(t, out, strings.Repeat("a", 900))
+	assert.Contains(t, out, "omitted", "the dropped assistant entry is disclosed")
 	assert.LessOrEqual(t, utf8.RuneCountInString(out), 400)
 }
