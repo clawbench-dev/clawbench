@@ -102,6 +102,7 @@
           </button>
         </div>
         <textarea class="chat-textarea"
+          :key="inputEpoch"
           ref="textareaRef"
           v-model="inputText"
           :disabled="inputDisabled"
@@ -111,6 +112,8 @@
           @paste="onPaste"
           @focus="onTextareaFocus"
           @blur="onTextareaBlur"
+          @beforeinput="onRecoveryBeforeInput"
+          @input="onRecoveryInput"
           @touchstart="onTextareaTouchStart"
           @touchend="onTextareaTouchEnd"
           @touchcancel="onTextareaTouchCancel"
@@ -346,6 +349,7 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useChatContext } from '@/composables/useChatContext'
 import { setChatDraft, getChatDraft, hasChatDraft, deleteChatDraft } from '@/utils/chatDraftStore.ts'
 import { useCompletionMenu } from '@/composables/useCompletionMenu'
+import { useSelectAllDeleteRecovery } from '@/composables/useSelectAllDeleteRecovery'
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
@@ -1296,10 +1300,42 @@ function handleStopClick() {
 // switching back. Backed by a module-level store (not component state) so the
 // draft survives the component remount caused by an SPA project switch — see
 // chatDraftStore.ts for why.
+
+// Android WebView recovery. Deleting a non-collapsed selection in one go kills
+// the IME's InputConnection, after which every keystroke is dropped silently —
+// the chat input becomes unresponsive until its textarea is rebuilt.
+// `inputEpoch` is the textarea's :key; the rebuild is what restores input.
+//
+// The rebuild removes the focused element, so the browser fires `blur` and
+// `onTextareaBlur` runs: it closes both completion menus and calls
+// chatKeyboard.debounceDeactivate(). Closing the menus is what we want anyway —
+// the deleted selection took the `@query`/`/query` trigger with it. The
+// debounced deactivate is cancelled by the focus() below, which lands in the
+// same nextTick and well inside its 150ms window.
+const {
+  inputEpoch,
+  onBeforeInput: onRecoveryBeforeInput,
+  onInput: onRecoveryInput,
+  reset: resetInputRecovery,
+} = useSelectAllDeleteRecovery({
+  getElement: () => textareaRef.value,
+  onRebuilt: () => {
+    // focus() re-fires onTextareaFocus, but not before this runs — set the flag
+    // now so the selectionchange guard sees a focused textarea and refreshes
+    // the menus' trigger state.
+    isTextareaFocused.value = true
+    // The inline height lived on the removed node; recompute it for the new one.
+    autoResizeTextarea()
+  },
+})
+
 watch(() => props.currentSessionId, (newId, oldId) => {
   // History navigation is per-session: a session switch must start fresh from
   // the new session's newest history entry.
   resetInputHistory()
+  // A detection whose input event never arrived must not survive into the next
+  // session's first keystroke.
+  resetInputRecovery()
   // Save draft from the old session
   if (oldId) {
     const text = inputText.value

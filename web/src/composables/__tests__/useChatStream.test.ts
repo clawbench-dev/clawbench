@@ -1720,6 +1720,32 @@ describe('useChatStream', () => {
       localStorage.removeItem('clawbench_client_id')
     })
 
+    it('self-echo with queued:false adopts the pending bubble and clears pending', () => {
+      // Counterpart to the case above. `queued: false` means the message joined
+      // the RUNNING turn (mid-turn injection) instead of waiting for the drain
+      // loop, so no queue_drain will ever arrive for it. The bubble must shed
+      // `pending` here or it spins forever — see the clearPending branch in
+      // chatStreamUtils. Without the flag reaching the reducer, the guard
+      // `if (target.pending && !action.clearPending) return state` bails out
+      // and the bubble stays pending.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      localStorage.setItem('clawbench_client_id', 'my-device-456')
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-3', content: '3', blocks: [{ type: 'text', text: '3' }],
+        pending: true, seq: 13,
+      } })
+
+      simulateWsEvent('user_message', { messageId: 100, content: '3', queueId: 'pending-3', senderClientId: 'my-device-456', queued: false })
+
+      const msg3 = options.messages.value.find((m: any) => m.role === 'user')
+      expect(msg3.id).toBe(100)            // adopted the DB id
+      expect(msg3.queueId).toBe('pending-3') // old id preserved for the reply anchor
+      expect(msg3.pending).toBeUndefined()
+      localStorage.removeItem('clawbench_client_id')
+    })
+
     it('should push to end when no streaming assistant message exists', () => {
       const options = createOptions()
 
