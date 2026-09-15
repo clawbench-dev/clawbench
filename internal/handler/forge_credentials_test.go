@@ -108,21 +108,25 @@ func TestServeForgeCredentials_SetAndClear(t *testing.T) {
 	assert.Equal(t, "", model.ConfigInstance.ForgeToken("github.com"))
 }
 
-func TestServeForgeCredentials_RejectsUnsafeHost(t *testing.T) {
+// TestServeForgeCredentials_AcceptsPrivateHost is the regression pin for
+// self-hosted instances: tokens must be storable for a private-network host.
+//
+// These hosts used to be rejected so a token could never be pointed at an
+// internal address. That gate is gone by design — the user runs an internal
+// GitLab and the UI warns before binding instead.
+func TestServeForgeCredentials_AcceptsPrivateHost(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
 	model.ConfigInstance = model.Config{}
 
-	// Loopback / private / metadata hosts must be rejected so a token can never
-	// be pointed at an internal address.
 	for _, host := range []string{"127.0.0.1", "10.0.0.5", "169.254.169.254", "localhost"} {
 		req := newRequest(t, http.MethodPost, "/api/forge/credentials",
 			map[string]any{"host": host, "token": "secret"})
 		withAuthCookie(req, model.SessionToken)
 		w := callHandler(ServeForgeCredentials, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code, "host %s must be rejected", host)
-		assert.False(t, model.ConfigInstance.ForgeHasToken(host), "no token may be stored for %s", host)
+		assert.Equal(t, http.StatusOK, w.Code, "host %s must be accepted", host)
+		assert.True(t, model.ConfigInstance.ForgeHasToken(host), "the token must be stored for %s", host)
 	}
 }
 
@@ -246,16 +250,6 @@ func TestServeConfig_PatchRejectsUnknownForgeField(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code, "credentials must not be PATCHable directly")
 }
 
-// allowLoopbackForgeHost relaxes the SSRF guard so a test can point the
-// verifier at a local httptest server. The guard itself is covered separately
-// by TestServeForgeVerifyToken_RejectsUnsafeHost.
-func allowLoopbackForgeHost(t *testing.T) {
-	t.Helper()
-	orig := forgeHostGuard
-	forgeHostGuard = func(string) error { return nil }
-	t.Cleanup(func() { forgeHostGuard = orig })
-}
-
 // TestServeForgeVerifyToken_RejectsMissingHost guards basic input validation.
 func TestServeForgeVerifyToken_RejectsMissingHost(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
@@ -265,22 +259,6 @@ func TestServeForgeVerifyToken_RejectsMissingHost(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeForgeVerifyToken, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestServeForgeVerifyToken_RejectsUnsafeHost guards that the SSRF guard also
-// applies to verification: we must never send a token to an internal address.
-func TestServeForgeVerifyToken_RejectsUnsafeHost(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
-	defer teardown()
-
-	for _, host := range []string{"127.0.0.1", "localhost", "169.254.169.254", "10.0.0.5"} {
-		req := newRequest(t, http.MethodPost, "/api/forge/verify-token", map[string]any{
-			"host": host, "token": "ghp_x",
-		})
-		withAuthCookie(req, model.SessionToken)
-		w := callHandler(ServeForgeVerifyToken, req)
-		assert.NotEqual(t, http.StatusOK, w.Code, "host %s must be rejected", host)
-	}
 }
 
 // TestServeForgeVerifyToken_NoStoredToken covers verifying with no explicit
@@ -307,7 +285,6 @@ func TestServeForgeVerifyToken_NoStoredToken(t *testing.T) {
 func TestServeForgeVerifyToken_BadTokenIsAuthError(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
-	allowLoopbackForgeHost(t)
 	// Non-github.com hosts verify through the GitLab client, which always uses
 	// https; the test server must therefore be TLS, with the same InsecureTLS
 	// opt-in that self-hosted users enable for self-signed certs.
@@ -339,7 +316,6 @@ func TestServeForgeVerifyToken_BadTokenIsAuthError(t *testing.T) {
 func TestServeForgeVerifyToken_GoodTokenReturnsIdentity(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
-	allowLoopbackForgeHost(t)
 	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{InsecureTLS: true}}
 
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -369,7 +345,6 @@ func TestServeForgeVerifyToken_GoodTokenReturnsIdentity(t *testing.T) {
 func TestServeForgeVerifyToken_VerifiesStoredTokenWhenOmitted(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
-	allowLoopbackForgeHost(t)
 
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "stored-token", r.Header.Get("Private-Token"))
@@ -399,7 +374,6 @@ func TestServeForgeVerifyToken_VerifiesStoredTokenWhenOmitted(t *testing.T) {
 func TestServeForgeVerifyToken_DoesNotPersist(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
-	allowLoopbackForgeHost(t)
 
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -441,7 +415,6 @@ func TestForgeVerifyToken_PlatformRouting(t *testing.T) {
 func TestServeForgeVerifyToken_NetworkErrorDistinctFromAuth(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
-	allowLoopbackForgeHost(t)
 	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{InsecureTLS: true}}
 
 	// Start then immediately close a server so the port refuses connections.

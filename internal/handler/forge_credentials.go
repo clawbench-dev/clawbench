@@ -45,12 +45,9 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 			return
 		}
-		// Refuse to store a credential for a host that is unsafe to contact, so
-		// the token can never be pointed at loopback/private/metadata addresses.
-		if err := checkForgeHostAllowed(host); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: err.Error()})
-			return
-		}
+		// Any host is accepted, including self-hosted instances on private
+		// networks and unresolvable internal names. The UI warns before binding
+		// a non-official host; the server does not gate it.
 		if err := setForgeToken(host, req.Token); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError", nil)
 			return
@@ -110,12 +107,6 @@ func setForgeToken(host, token string) error {
 	return nil
 }
 
-// checkForgeHostAllowed rejects hosts that must never receive a credential.
-// It is the same guard the binding flow uses.
-func checkForgeHostAllowed(host string) error {
-	return forgeHostGuard(host)
-}
-
 // forgeVerifyRequest is the body for verifying a forge token.
 type forgeVerifyRequest struct {
 	// Host is the forge host to authenticate against.
@@ -152,13 +143,6 @@ func ServeForgeVerifyToken(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 		return
 	}
-	// Same SSRF guard as storing a credential: we must not be tricked into
-	// sending a token (or an unauthenticated probe) to an internal address.
-	if err := checkForgeHostAllowed(host); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: err.Error()})
-		return
-	}
-
 	// An explicit token verifies what the user just typed; an empty one verifies
 	// the stored credential.
 	token := req.Token
@@ -237,14 +221,4 @@ func forgeHTTPClient() *http.Client {
 		}
 	}
 	return httpClient
-}
-
-// forgeHostGuard rejects hosts that must never receive a credential (loopback,
-// private, link-local, metadata addresses). It delegates to the forge package's
-// SSRF guard so the binding flow and the credential flow share one rule.
-//
-// It is a var so tests can point the verifier at a local httptest server, which
-// the real guard deliberately blocks.
-var forgeHostGuard = func(host string) error {
-	return forge.CheckHostSafety(host, nil)
 }

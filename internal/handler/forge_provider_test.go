@@ -48,7 +48,6 @@ func TestForgeCredentialLogin_ResolvesIdentity(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
 	resetForgeIdentityCache(t)
-	allowLoopbackForgeHost(t)
 
 	var calls int
 	srv := httptestTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +108,6 @@ func TestForgeCredentialLogin_FailureIsNegativeCached(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
 	resetForgeIdentityCache(t)
-	allowLoopbackForgeHost(t)
 
 	var calls int
 	srv := httptestTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -143,7 +141,6 @@ func TestForgeCredentialLogin_ExpiredEntryRefetches(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
 	resetForgeIdentityCache(t)
-	allowLoopbackForgeHost(t)
 
 	var calls int
 	srv := httptestTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -26,7 +26,6 @@ import (
 // callers can assert which endpoint was hit.
 func mockGitLab(t *testing.T, handler http.Handler) string {
 	t.Helper()
-	allowLoopbackForgeHost(t)
 	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{InsecureTLS: true}}
 	srv := httptest.NewTLSServer(handler)
 	t.Cleanup(srv.Close)
@@ -421,9 +420,12 @@ func TestToForgeItemView_NilBindingDoesNotPanic(t *testing.T) {
 	assert.Equal(t, "a", v.Author)
 }
 
-// TestPickForgeRemote_SkipsUnsafeHost verifies the SSRF guard is applied when
-// choosing a candidate binding: a loopback remote is never suggested.
-func TestPickForgeRemote_SkipsUnsafeHost(t *testing.T) {
+// TestPickForgeRemote_AcceptsPrivateHost is the regression pin for internal
+// instances: a remote on a private address must be offered as a candidate.
+//
+// It used to be skipped by the SSRF guard, which left an internal GitLab with
+// no way to be bound at all — not even as a suggestion.
+func TestPickForgeRemote_AcceptsPrivateHost(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -431,8 +433,11 @@ func TestPickForgeRemote_SkipsUnsafeHost(t *testing.T) {
 	runGitInDir(t, dir, "init")
 	runGitInDir(t, dir, "remote", "add", "origin", "https://127.0.0.1/acme/widgets.git")
 
-	_, _, ok := pickForgeRemote(dir)
-	assert.False(t, ok, "a loopback remote must never be picked as a binding")
+	remote, name, ok := pickForgeRemote(dir)
+	require.True(t, ok, "a private-address remote must be picked")
+	assert.Equal(t, "origin", name)
+	assert.Equal(t, "127.0.0.1", remote.Host)
+	assert.Equal(t, "acme/widgets", remote.Slug())
 }
 
 // TestPickForgeRemote_PrefersOrigin verifies priority: origin wins even when a

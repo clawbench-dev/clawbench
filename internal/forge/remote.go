@@ -64,9 +64,10 @@ var (
 // local paths, file:// and other schemes.
 //
 // Host is classified as GitHub only when it is github.com; every other host is
-// treated as GitLab (self-hosted GitLab is a first-class target). Callers must
-// still run CheckHostSafety and require explicit user confirmation before
-// sending credentials to a non-official host.
+// treated as GitLab (self-hosted GitLab is a first-class target). Any host is
+// accepted here — including private-network addresses and internal names that
+// do not resolve. The UI warns before binding a non-official host, since
+// binding sends that host the stored credential.
 func ParseRemoteURL(raw string) (Remote, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
