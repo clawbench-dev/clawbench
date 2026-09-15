@@ -13,6 +13,11 @@ vi.mock('@/utils/renderToolDetail.ts', () => ({
   handleToolAction: vi.fn().mockReturnValue(false),
   shouldAutoExpandTool: (name: string) => name === 'AskUserQuestion' || name === 'PermissionApproval',
   updateAskSubmitState: vi.fn(),
+  // Answer-state plumbing: the component calls these from its input handler and
+  // its update hook. Default to "not an ask-card event" so the handler falls
+  // through to updateAskSubmitState, which the tests below assert on.
+  restoreAskStatesInContainer: vi.fn(),
+  handleAskSupplementaryInput: vi.fn().mockReturnValue(false),
   classifyAskQuestionsInput: (input: any) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return 'empty'
     const questions = input.questions
@@ -909,9 +914,12 @@ describe('ContentBlocks', () => {
         },
         formatToolInput,
       })
+      // The card also receives an askKey so its answer state can be restored
+      // after a re-render (see askQuestionState.ts).
       expect(formatToolInput).toHaveBeenCalledWith(
         { questions: [{ header: '', multiSelect: false, question: 'Continue?', options: [{ label: 'Yes' }] }] },
         'AskUserQuestion',
+        { askKey: 'no-session|summary:msg-1' },
       )
       expect(wrapper.html()).toContain('Continue?')
       // summaryCards.askQuestions renders as a unified inline card

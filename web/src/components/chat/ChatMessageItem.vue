@@ -33,7 +33,7 @@
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @task-card-click="$emit('task-card-click', $event)"
-        @send-message="$emit('send-message', $event)"
+        @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
         @render-flush="$emit('render-flush')"
         @toggle-summary="$emit('toggle-summary', msg.id)"
         @resume-session="$emit('resume-session', $event)"

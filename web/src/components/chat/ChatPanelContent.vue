@@ -177,7 +177,7 @@ import ChatMessageList from './ChatMessageList.vue'
 import PlanPanel from './PlanPanel.vue'
 import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
-import { formatToolOutput } from '@/utils/renderToolDetail.ts'
+import { formatToolOutput, revertAskSubmission } from '@/utils/renderToolDetail.ts'
 import { useChatStream } from '@/composables/useChatStream.ts'
 import { useChatSession, loadSessionsOnce } from '@/composables/useChatSession.ts'
 import { useSessionIdentity, getSessionId } from '@/composables/useSessionIdentity.ts'
@@ -825,13 +825,13 @@ async function sendMessage(text) {
 
      const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quotes.length > 0
 
-     if ((!inputText && !hasFiles) || inputDisabled.value) return
+     if ((!inputText && !hasFiles) || inputDisabled.value) return false
 
      // A pending upload has no server path yet. Sending it would silently submit
      // an empty attachment and let the request complete against the next draft.
      if (pendingFiles.value.some(file => file.uploading)) {
        toast.show(t('chat.attach.uploading'), { icon: '⚠️', type: 'info' })
-       return
+       return false
      }
 
      // If AI is generating, enqueue the message instead of sending immediately
@@ -870,8 +870,9 @@ async function sendMessage(text) {
          } catch (e) {
            appLog.e(TAG, 'restoreInput failed', e)
          }
+         return false
        }
-       return
+       return true
      }
 
     // Build file paths and entries from attachedFiles (unified channel).
@@ -903,7 +904,13 @@ async function sendMessage(text) {
       } catch (e) {
         appLog.e(TAG, 'restoreInput failed', e)
       }
+      // Report the failure to the caller. Returning rather than throwing keeps
+      // the fire-and-forget call sites (@send, the registered identity action)
+      // free of unhandled rejections, while still letting an ask-card answer
+      // learn that it must become answerable again.
+      return false
     }
+    return true
 }
 
 /** Actually send a message to the backend (no queue check). */
@@ -1022,14 +1029,20 @@ async function sendMessageNow(text, filePaths, files) {
 }
 
 /** Handle a tool-triggered message send (e.g. AskUserQuestion answer).
- *  If the AI stream is still running, enqueues the message for delivery after stream ends. */
-async function handleToolSendMessage(text) {
+ *  If the AI stream is still running, enqueues the message for delivery after stream ends.
+ *
+ *  `cardKey` identifies the ask card the answer came from. Submitting an answer
+ *  persists a `submitted` flag so the card still reads as answered after a
+ *  reload; when the send does NOT go through that flag must be undone, or the
+ *  user would be stuck with a card they can no longer answer. */
+async function handleToolSendMessage(text, cardKey) {
     if (!text) return
+    let delivered = true
     if (loading.value) {
       // Shared with the normal input path: push a pending user message and
       // enqueue it. The backend's B2 self-heal handles the session-ended race.
       // On failure, enqueueMessage already shows the toast and rolls back the
-      // pending message — nothing to restore here (no input box involved).
+      // pending message.
       try {
         await enqueueAndMaybeStart({
           sessionId: identity.currentSessionId.value,
@@ -1042,10 +1055,14 @@ async function handleToolSendMessage(text) {
         })
       } catch {
         /* failure already surfaced by enqueueMessage */
+        delivered = false
       }
     } else {
-      await sendMessage(text)
+      delivered = await sendMessage(text)
     }
+    // The answer never reached the backend — make the card answerable again,
+    // keeping the selection and note so retrying is one tap.
+    if (!delivered && cardKey) revertAskSubmission(cardKey)
 }
 
 function scrollBottom(force = false) {

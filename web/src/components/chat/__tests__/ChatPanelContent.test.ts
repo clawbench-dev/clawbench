@@ -597,3 +597,57 @@ describe('ChatPanelContent — first open scrolls to bottom', () => {
     expect(region).not.toMatch(/loadHistory\(false, true, true\)/)
   })
 })
+
+// ── AskUserQuestion: a failed answer send must not strand the card ──
+//
+// Submitting an ask card persists `submitted: true` so the card still reads as
+// answered after a reload (see askQuestionState.ts). That persistence is what
+// makes the card unretryable when the send FAILS — the user would be left with
+// a card they can no longer answer. The failure path must therefore revert the
+// flag while keeping the selection and the note.
+
+describe('ChatPanelContent — ask-card answer send failure', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('handleToolSendMessage accepts the card key and reverts the submission on failure', async () => {
+    const src = await source()
+    const region = src.slice(
+      src.indexOf('async function handleToolSendMessage'),
+      src.indexOf('function scrollBottom'),
+    )
+    // The key travels with the send so the failure path can address the card.
+    expect(region).toMatch(/handleToolSendMessage\(text, cardKey\)/)
+    // A failed send must undo the persisted submitted flag.
+    expect(region).toMatch(/revertAskSubmission\(/)
+  })
+
+  it('reverts only on failure, not on success', async () => {
+    const src = await source()
+    const region = src.slice(
+      src.indexOf('async function handleToolSendMessage'),
+      src.indexOf('function scrollBottom'),
+    )
+    const catchIdx = region.lastIndexOf('catch')
+    const revertIdx = region.indexOf('revertAskSubmission(')
+    expect(revertIdx).toBeGreaterThan(catchIdx)
+  })
+
+  it('sendMessage reports failure to its caller so the revert can happen', async () => {
+    const src = await source()
+    const region = src.slice(
+      src.indexOf('async function sendMessage(text)'),
+      src.indexOf('async function sendMessageNow'),
+    )
+    // sendMessageNow's failure was previously swallowed here, leaving
+    // handleToolSendMessage unable to tell a delivered answer from a lost one.
+    // It reports via the return value (not a rethrow) so the fire-and-forget
+    // call sites — @send and the registered identity action — stay free of
+    // unhandled rejections.
+    expect(region).toMatch(/return false/)
+    expect(region).toMatch(/return true/)
+    expect(region).not.toMatch(/throw err/)
+  })
+})

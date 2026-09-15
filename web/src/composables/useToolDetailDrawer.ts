@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { shouldRetryToolFetch, resolveEffectiveMsgId, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import { formatToolOutput, verifyToolOutputAnnotations } from '@/utils/renderToolDetail.ts'
+import { askCardKey } from '@/utils/askQuestionState.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ToolDetailDrawer'
@@ -10,6 +11,10 @@ const TAG = 'ToolDetailDrawer'
 interface ToolBlock {
   msgId?: string | number
   blockIdx?: number
+  /** Tool call id (the backend's `ask-<uuid>` for AskUserQuestion cards).
+   *  Preferred over tool_id for the answer-state key: it is the same value the
+   *  chat list keys its card by, so both views share one answer. */
+  id?: string | number
   name?: string
   display_name?: string
   summary?: string
@@ -67,6 +72,18 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
   // Tracks which tool block is being shown for reactive updates
   const activeToolOverlay = ref<{ msgId: string; blockIdx: number } | null>(null)
 
+  /**
+   * Ask-card identity for the answer-state store.
+   *
+   * Must match the key ContentBlocks.vue builds for the same card, so an answer
+   * typed in the drawer and one typed in the list are the same answer rather
+   * than two divergent copies. Uses the tool call id (the backend's
+   * `ask-<uuid>`, persisted to chat_tool_calls), which is stable across reloads.
+   */
+  function askKeyForToolBlock(block: ToolBlock | null | undefined): string {
+    const id = block?.id ?? block?.tool_id
+    return askCardKey(sessionId?.() || '', 'tool', String(id ?? 'unknown'))
+  }
   // Fetch-in-flight guard: prevents concurrent fetchToolCallDetail calls from polling timer
   let _fetchInFlight = false
   // If user clicks retry while a fetch is in flight, flag to re-fetch after current one completes
@@ -109,7 +126,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       name: block.name || '',
       subagentType: block.display_name || (block.input as Record<string, unknown>)?.subagent_type as string || '',
       summary: block.summary || toolCallSummary(block),
-      inputHtml: hasInput ? formatToolInput(block.input!, block.name || '', { done: block.done, status: block.status, output: block.output }) : '',
+      inputHtml: hasInput ? formatToolInput(block.input!, block.name || '', { done: block.done, status: block.status, output: block.output, askKey: askKeyForToolBlock(block) }) : '',
       outputHtml: hasOutput ? formatToolOutput(block.output as string, block.name || '') : '',
       status: block.status || '',
       done: !!block.done,
@@ -182,7 +199,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       const { formatToolInput } = chatRender
       if (data.input) {
         const input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
-        toolDetailData.value.inputHtml = formatToolInput(input, block.name || data.name || '', { done: block.done, status: block.status, output: data.output || '' })
+        toolDetailData.value.inputHtml = formatToolInput(input, block.name || data.name || '', { done: block.done, status: block.status, output: data.output || '', askKey: askKeyForToolBlock(block || data) })
       } else {
         toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
       }

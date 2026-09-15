@@ -38,6 +38,7 @@ vi.mock('vue', async () => {
 })
 
 import { useSessionManager } from '@/composables/useSessionManager'
+import { getAskState, patchAskState, askCardKey, _resetAskStatesForTesting } from '@/utils/askQuestionState.ts'
 import { chatMessageReducer } from '@/utils/chatStreamUtils'
 
 function createMockOptions() {
@@ -71,6 +72,7 @@ describe('useSessionManager', () => {
         mockCurrentBackend.value = 'claude'
         mockRunningSessions.value = new Set()
         mockCancelChat.mockResolvedValue(undefined)
+        _resetAskStatesForTesting()
     })
 
     // ── cleanupActiveStream ──
@@ -368,6 +370,23 @@ describe('useSessionManager', () => {
 
             expect(mockCancelChat).toHaveBeenCalledWith('session-1')
             expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-1', 'claude')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('sweeps the archived session\'s ask-card answers', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+            const deleteDraft = vi.fn()
+
+            patchAskState(askCardKey('session-1', 'tool', 'tu-1'), { supplementary: 'gone soon' })
+            patchAskState(askCardKey('session-2', 'tool', 'tu-2'), { supplementary: 'keep me' })
+
+            await mgr.archiveCurrentSession(deleteDraft)
+
+            expect(getAskState(askCardKey('session-1', 'tool', 'tu-1'))).toBeUndefined()
+            expect(getAskState(askCardKey('session-2', 'tool', 'tu-2'))?.supplementary).toBe('keep me')
 
             fetchSpy.mockRestore()
         })
@@ -718,6 +737,21 @@ describe('useSessionManager', () => {
 
             expect(opts.destroySessionCore).toHaveBeenCalledWith('session-1')
             expect(deleteDraft).toHaveBeenCalledWith('session-1')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('sweeps the destroyed session\'s ask-card answers', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+            const deleteDraft = vi.fn()
+
+            patchAskState(askCardKey('session-1', 'tool', 'tu-1'), { supplementary: 'gone soon' })
+
+            await mgr.destroyCurrentSession(deleteDraft)
+
+            expect(getAskState(askCardKey('session-1', 'tool', 'tu-1'))).toBeUndefined()
 
             fetchSpy.mockRestore()
         })
