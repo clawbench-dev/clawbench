@@ -102,7 +102,7 @@ elif [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
         npm install || { echo "ERROR: npm install failed" >&2; exit 1; }
     fi
 
-    # 1a. Build the isolated Excalidraw editor (React) into public/vendor/excalidraw/.
+    # 1a. Build the isolated Excalidraw editor (React) into .clawbench-web/vendor/excalidraw/.
     # It is intentionally a separate build (react + @excalidraw/excalidraw ~8MB) so
     # the Vue main bundle never grows. The iframe host is served at
     # /vendor/excalidraw/index.html and lazy-loaded only when a .excalidraw file opens.
@@ -111,7 +111,7 @@ elif [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
         echo "  Building isolated Excalidraw editor..."
         (cd "$EXCALIDRAW_BUILD_DIR" && npm install --no-audit --no-fund && npm run build) \
             || { echo "ERROR: Excalidraw vendor build failed" >&2; exit 1; }
-        echo "  Excalidraw: web/public/vendor/excalidraw/"
+        echo "  Excalidraw: .clawbench-web/vendor/excalidraw/"
     else
         echo "  Warning: $EXCALIDRAW_BUILD_DIR not found, skipping Excalidraw build"
     fi
@@ -120,19 +120,19 @@ elif [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
     # Vite generates new hashed filenames each build but does not remove old ones,
     # so leftover chunks (diagram JS, CSS, fonts, etc.) accumulate indefinitely.
     # Preserve only index.html and assets/ (static user assets); Vite regenerates the rest.
-    find public/ -maxdepth 1 -type f ! -name 'index.html' -delete 2>/dev/null || true
+    find .clawbench-web/ -maxdepth 1 -type f ! -name 'index.html' -delete 2>/dev/null || true
     npm run build || { echo "ERROR: npm run build failed" >&2; exit 1; }
-    echo "  Frontend: public/"
+    echo "  Frontend: .clawbench-web/"
 
     # Copy ALL frontend build output for Go embed (go:embed all:dist in internal/frontend/)
     # Vite outputs index.html, JS/CSS chunks, fonts (woff2), images (png),
     # manifest, service worker, etc. — all must be embedded.
     rm -rf internal/frontend/dist
-    cp -r public internal/frontend/dist
+    cp -r .clawbench-web internal/frontend/dist
     echo "  Frontend copied for embedding: internal/frontend/dist/"
 else
     echo "  npm not found or no package.json, skipping frontend build"
-    echo "  (Go binary will use empty embed — serve from disk public/ if available)"
+    echo "  (Go binary will use empty embed — serve from disk .clawbench-web/ if available)"
 fi
 
 # 2. Build Android APK (optional, before Go build so APK is embedded)
@@ -204,7 +204,7 @@ if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
 else
     echo "  ./$NAME              # Go binary (frontend+APK embedded)"
 fi
-echo "  public/              # Frontend on disk (used if present, overrides embed)"
+echo "  .clawbench-web/      # Frontend on disk (used if present, overrides embed)"
 
 # === Restart logic ===
 # Build runs in the foreground so compile errors are visible directly. Only

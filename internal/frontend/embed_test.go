@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 )
 
 func TestGetFS_EmbedFallback(t *testing.T) {
-	// In test environment, public/ likely doesn't exist at CWD,
+	// In test environment, the disk build dir likely doesn't exist at CWD,
 	// so GetFS should return the embedded distFS.
 	fsys := GetFS()
 
@@ -25,9 +26,9 @@ func TestGetFS_EmbedFallback(t *testing.T) {
 	}
 
 	// Verify it's the embed FS by checking that it's not os.DirFS
-	// (os.DirFS("public") would fail if public/ doesn't exist)
-	if _, err := os.Stat("public"); err != nil {
-		// No public/ on disk — must be using embed
+	// (os.DirFS(DiskDirName) would fail if the dir doesn't exist)
+	if _, err := os.Stat(DiskDirName); err != nil {
+		// No disk build dir — must be using embed
 		_, err := fs.Stat(fsys, "index.html")
 		if err != nil {
 			// Empty embed (no build) — expected in test env
@@ -38,17 +39,17 @@ func TestGetFS_EmbedFallback(t *testing.T) {
 	}
 }
 
-func TestDiskPublicExists(t *testing.T) {
-	result := DiskPublicExists()
-	// In test environment, public/ typically doesn't exist at CWD
+func TestDiskDirExists(t *testing.T) {
+	result := DiskDirExists()
+	// In test environment, the disk build dir typically doesn't exist at CWD
 	if result {
-		// public/ exists — verify it's actually a directory
-		fi, err := os.Stat("public")
+		// dir exists — verify it's actually a directory
+		fi, err := os.Stat(DiskDirName)
 		if err != nil {
-			t.Fatalf("DiskPublicExists() = true but os.Stat failed: %v", err)
+			t.Fatalf("DiskDirExists() = true but os.Stat failed: %v", err)
 		}
 		if !fi.IsDir() {
-			t.Fatal("DiskPublicExists() = true but public/ is not a directory")
+			t.Fatal("DiskDirExists() = true but the disk dir is not a directory")
 		}
 	}
 	// If false, that's expected in test environment
@@ -175,7 +176,7 @@ func (m *responseWriterMock) WriteHeader(statusCode int) {
 	m.status = statusCode
 }
 
-func TestGetFS_DiskPublic(t *testing.T) {
+func TestGetFS_DiskDir(t *testing.T) {
 	// Save and restore CWD so we don't break other tests.
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -184,12 +185,12 @@ func TestGetFS_DiskPublic(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// Place a sentinel file to verify DirFS is used.
-	if err := os.WriteFile(filepath.Join(publicDir, "sentinel.txt"), []byte("disk"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "sentinel.txt"), []byte("disk"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,7 +203,7 @@ func TestGetFS_DiskPublic(t *testing.T) {
 		t.Fatal("GetFS() returned nil")
 	}
 
-	// Since public/ exists, GetFS should return os.DirFS("public"),
+	// Since the disk build dir exists, GetFS should return os.DirFS(DiskDirName),
 	// which can read the sentinel file we placed.
 	data, err := fs.ReadFile(fsys, "sentinel.txt")
 	if err != nil {
@@ -216,7 +217,7 @@ func TestGetFS_DiskPublic(t *testing.T) {
 // TestVendorExcalidrawServed verifies that the isolated Excalidraw host is
 // reachable through the same frontend FS the backend serves at
 // /vendor/excalidraw/index.html. This is the contract that makes the iframe
-// editor work: the vendor build output (public/vendor/excalidraw/) must be
+// editor work: the vendor build output (DiskDirName/vendor/excalidraw/) must be
 // embedded alongside the Vue app and served by ServeIndex.
 func TestVendorExcalidrawServed(t *testing.T) {
 	origDir, err := os.Getwd()
@@ -226,11 +227,11 @@ func TestVendorExcalidrawServed(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public", "vendor", "excalidraw")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, DiskDirName, "vendor", "excalidraw")
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(publicDir, "index.html"), []byte(`<div id="root"></div>`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "index.html"), []byte(`<div id="root"></div>`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chdir(tmpDir); err != nil {
@@ -405,7 +406,7 @@ func TestModeLabel_Embedded(t *testing.T) {
 	}
 	defer func() { _ = os.Chdir(origDir) }()
 
-	// Chdir to a temp dir without public/ → ModeLabel should say "embedded"
+	// Chdir to a temp dir without the disk build dir → ModeLabel should say "embedded"
 	tmpDir := t.TempDir()
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatal(err)
@@ -423,8 +424,8 @@ func TestModeLabel_Disk(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chdir(tmpDir); err != nil {
@@ -432,10 +433,10 @@ func TestModeLabel_Disk(t *testing.T) {
 	}
 
 	label := ModeLabel()
-	assert.Equal(t, "disk (public/)", label)
+	assert.Equal(t, "disk ("+DiskDirName+"/)", label)
 }
 
-func TestDiskPublicExists_NonexistentDir(t *testing.T) {
+func TestDiskDirExists_NonexistentDir(t *testing.T) {
 	origDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -447,10 +448,10 @@ func TestDiskPublicExists_NonexistentDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assert.False(t, DiskPublicExists())
+	assert.False(t, DiskDirExists())
 }
 
-func TestDiskPublicExists_ExistingDir(t *testing.T) {
+func TestDiskDirExists_ExistingDir(t *testing.T) {
 	origDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -458,15 +459,15 @@ func TestDiskPublicExists_ExistingDir(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatal(err)
 	}
 
-	assert.True(t, DiskPublicExists())
+	assert.True(t, DiskDirExists())
 }
 
 func TestGetFS_ConsistencyWithModeLabel(t *testing.T) {
@@ -477,20 +478,20 @@ func TestGetFS_ConsistencyWithModeLabel(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// Write a file to verify DirFS is returned
-	if err := os.WriteFile(filepath.Join(publicDir, "test.txt"), []byte("disk-content"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "test.txt"), []byte("disk-content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatal(err)
 	}
 
-	// When public/ exists, ModeLabel should say disk and GetFS should return DirFS
-	assert.Equal(t, "disk (public/)", ModeLabel())
+	// When the disk build dir exists, ModeLabel says disk and GetFS returns DirFS
+	assert.Equal(t, "disk ("+DiskDirName+"/)", ModeLabel())
 
 	fsys := GetFS()
 	data, err := fs.ReadFile(fsys, "test.txt")
@@ -503,22 +504,22 @@ func TestGetFS_ConsistencyWithModeLabel(t *testing.T) {
 // TestEmbeddedFS_IgnoresDiskPublic locks the contract that EmbeddedFS() always
 // returns the build-time embedded filesystem and never consults the working
 // directory. This is what makes build-time artifacts such as the Android APK
-// immune to a stray public/ dir in the CWD (which previously shadowed the
+// immune to a stray disk build dir in the CWD (which previously shadowed the
 // embedded copy and produced a 404 from /api/apk).
-func TestEmbeddedFS_IgnoresDiskPublic(t *testing.T) {
+func TestEmbeddedFS_IgnoresDiskDir(t *testing.T) {
 	origDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chdir(origDir) }()
 
-	// CWD has a public/ dir holding a sentinel that must NOT be reachable.
+	// CWD has a disk build dir holding a sentinel that must NOT be reachable.
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(publicDir, "sentinel.txt"), []byte("disk"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "sentinel.txt"), []byte("disk"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chdir(tmpDir); err != nil {
@@ -533,8 +534,55 @@ func TestEmbeddedFS_IgnoresDiskPublic(t *testing.T) {
 	}
 	assert.Equal(t, "disk", string(diskData))
 
-	// EmbeddedFS() must ignore public/ entirely — the sentinel is invisible.
+	// EmbeddedFS() must ignore the disk dir entirely — the sentinel is invisible.
 	if _, err := fs.ReadFile(EmbeddedFS(), "sentinel.txt"); err == nil {
 		t.Fatal("EmbeddedFS() read sentinel.txt from disk; it must never consult the CWD")
+	}
+}
+
+// TestDiskDirName_DoesNotCollideWithUnrelatedDirs is the regression guard for
+// issue #461: the disk build dir must be a name that cannot be produced by
+// anything other than this project's build.
+//
+// The original name "public" was resolved against the CWD, and macOS ships a
+// system directory ~/Public. Because the default APFS volume is
+// case-insensitive, os.Stat("public") from a home-directory CWD matched it, so
+// the server served that empty directory instead of the embedded frontend and
+// every page 404'd (the Android app then hung on its splash screen). The
+// reproduction the reporter hit is macOS-only; the invariant it violates is not
+// — the name must be distinctive enough that a collision is impossible
+// anywhere, which is what this test pins on every platform.
+func TestDiskDirName_DoesNotCollideWithUnrelatedDirs(t *testing.T) {
+	// Names that exist by default or are otherwise plausible in a user's CWD.
+	// A collision with any of these reintroduces the shadowing bug.
+	forbidden := map[string]string{
+		"public":       "macOS ships ~/Public; APFS is case-insensitive, so os.Stat matches it",
+		"Public":       "the system directory itself",
+		"static":       "common web-server convention",
+		"dist":         "generic build-output name",
+		"build":        "generic build-output name",
+		"web":          "this repo has a web/ source dir",
+		"www":          "common web-root name",
+		"site":         "common web-root name",
+		"html":         "generic",
+		"assets":       "this repo has a top-level assets/ dir",
+		"node_modules": "would be a catastrophic mixup",
+	}
+
+	lower := strings.ToLower(DiskDirName)
+	if reason, bad := forbidden[lower]; bad {
+		t.Fatalf("DiskDirName = %q collides with an unrelated directory (%s)", DiskDirName, reason)
+	}
+
+	// A leading dot keeps it out of casual listings and out of the way of any
+	// conventional web root, and makes an accidental name match even less likely.
+	if !strings.HasPrefix(DiskDirName, ".") {
+		t.Errorf("DiskDirName = %q should start with '.' so it is hidden and clearly project-internal", DiskDirName)
+	}
+
+	// It must be a single path element — a nested path would change the
+	// CWD-relative resolution this whole mechanism depends on.
+	if strings.ContainsAny(DiskDirName, `/\`) {
+		t.Errorf("DiskDirName = %q must be a single path element, not a path", DiskDirName)
 	}
 }

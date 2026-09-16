@@ -1,5 +1,5 @@
 # Exclude everything not needed for the Docker image
-# Only clawbench, public/, and docker-staging/ are needed
+# Only clawbench, .clawbench-web/, and docker-staging/ are needed
 
 # Git
 .git
@@ -7,7 +7,7 @@
 # Worktrees (huge — can be 1GB+)
 .worktrees
 
-# Node modules (rebuilt via npm run build, output is in public/)
+# Node modules (rebuilt via npm run build, output is in .clawbench-web/)
 node_modules
 
 # Android project (not needed in Docker)

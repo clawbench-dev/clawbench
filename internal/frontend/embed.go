@@ -14,24 +14,37 @@ var embeddedFS embed.FS
 // so files are accessible at root level (e.g. "index.html", "assets/favicon.png").
 var distFS, _ = fs.Sub(embeddedFS, "dist")
 
+// DiskDirName is the CWD-relative directory the frontend build is written to,
+// consulted at request time so a rebuild can be hot-swapped without recompiling.
+//
+// It is deliberately not named "public": this is resolved against the process's
+// working directory, and a generic name collides with unrelated directories. On
+// macOS the default APFS volume is case-insensitive, so `os.Stat("public")` from
+// a home-directory CWD matched the system-provided ~/Public, and the server then
+// served that empty directory instead of the embedded frontend — every page 404
+// (issue #461). A distinctive name also means build output left behind by older
+// installs is never picked up again.
+const DiskDirName = ".clawbench-web"
+
 // GetFS returns the appropriate filesystem for serving frontend assets.
-// Priority: disk public/ dir (if exists) > embedded dist/ content.
+// Priority: disk DiskDirName/ dir (if exists) > embedded dist/ content.
 // This allows hot-swapping frontend files on disk without recompiling,
 // while the embedded content serves as a fallback for single-binary deployment.
 func GetFS() fs.FS {
-	if fi, err := os.Stat("public"); err == nil && fi.IsDir() {
-		slog.Info("frontend: serving from disk", slog.String("dir", "public/"))
-		return os.DirFS("public")
+	if DiskDirExists() {
+		slog.Info("frontend: serving from disk", slog.String("dir", DiskDirName+"/"))
+		return os.DirFS(DiskDirName)
 	}
 	slog.Info("frontend: serving from embedded binary")
 	return distFS
 }
 
-// DiskPublicExists returns true if the public/ directory exists on disk.
-// Used to determine whether ISS-055 path traversal guards are needed
-// (embed.FS is inherently safe against traversal).
-func DiskPublicExists() bool {
-	fi, err := os.Stat("public")
+// DiskDirExists reports whether the disk build directory exists in the CWD.
+// The static handlers use it to apply their ISS-055 traversal guards exactly
+// when GetFS() resolves to the disk filesystem (embed.FS is inherently safe
+// against traversal).
+func DiskDirExists() bool {
+	fi, err := os.Stat(DiskDirName)
 	return err == nil && fi.IsDir()
 }
 
@@ -46,8 +59,8 @@ func EmbeddedFS() fs.FS {
 
 // ModeLabel returns a human-readable label for the current frontend serving mode.
 func ModeLabel() string {
-	if DiskPublicExists() {
-		return "disk (public/)"
+	if DiskDirExists() {
+		return "disk (" + DiskDirName + "/)"
 	}
 	return "embedded"
 }

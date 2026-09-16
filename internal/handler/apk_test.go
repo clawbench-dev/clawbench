@@ -60,22 +60,22 @@ func TestServeAPK_ServesFromFS(t *testing.T) {
 	}
 }
 
-// TestServeAPK_IgnoresDiskPublic is the regression test for the bug where a
-// public/ directory in the CWD shadowed the embedded APK: ServeAPK used
+// TestServeAPK_IgnoresDiskDir is the regression test for the bug where the
+// disk frontend directory in the CWD shadowed the embedded APK: ServeAPK used
 // frontend.GetFS() (disk-first) so /api/apk 404'd whenever the server was
-// started from a directory containing public/. ServeAPK must now always serve
-// the build-time embedded copy, regardless of the CWD.
-func TestServeAPK_IgnoresDiskPublic(t *testing.T) {
+// started from a directory containing it. ServeAPK must now always serve the
+// build-time embedded copy, regardless of the CWD.
+func TestServeAPK_IgnoresDiskDir(t *testing.T) {
 	origDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chdir(origDir) }()
 
-	// Reproduce the failing environment: CWD contains public/assets/ with a
+	// Reproduce the failing environment: CWD contains the disk dir with a
 	// DIFFERENT (stale) APK. The served bytes must never come from disk.
 	tmpDir := t.TempDir()
-	pubAssets := filepath.Join(tmpDir, "public", "assets")
+	pubAssets := filepath.Join(tmpDir, frontend.DiskDirName, "assets")
 	if err := os.MkdirAll(pubAssets, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestServeAPK_IgnoresDiskPublic(t *testing.T) {
 }
 
 // TestServeAPK_InjectedFSWinsOverDisk proves the injection point itself is
-// disk-agnostic: even with a public/assets/ APK in the CWD, serveAPK serves
+// disk-agnostic: even with a disk-dir APK in the CWD, serveAPK serves
 // the FS it was given.
 func TestServeAPK_InjectedFSWinsOverDisk(t *testing.T) {
 	origDir, err := os.Getwd()
@@ -123,7 +123,7 @@ func TestServeAPK_InjectedFSWinsOverDisk(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir := t.TempDir()
-	pubAssets := filepath.Join(tmpDir, "public", "assets")
+	pubAssets := filepath.Join(tmpDir, frontend.DiskDirName, "assets")
 	if err := os.MkdirAll(pubAssets, 0o755); err != nil {
 		t.Fatal(err)
 	}

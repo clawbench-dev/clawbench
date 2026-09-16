@@ -104,18 +104,20 @@ func ServeIndex(w http.ResponseWriter, r *http.Request) {
 	// For other paths (e.g. /index-*.css, /index-*.js), serve from frontend FS
 	cleanRelPath := strings.TrimPrefix(urlPath, "/")
 
-	// ISS-055: When serving from disk, ensure the cleaned path stays within public/
-	if frontend.DiskPublicExists() {
-		absPublic, _ := filepath.Abs("public")
-		absTarget := filepath.Join("public", cleanRelPath)
+	// ISS-055: When serving from disk, ensure the cleaned path stays within the
+	// disk build dir. embed.FS rejects ".." itself, so the guard only matters on
+	// the os.DirFS branch — gated on the same condition GetFS() used.
+	if frontend.DiskDirExists() {
+		absDiskDir, _ := filepath.Abs(frontend.DiskDirName)
+		absTarget := filepath.Join(frontend.DiskDirName, cleanRelPath)
 		absTarget, _ = filepath.Abs(absTarget)
-		if !strings.HasPrefix(absTarget, absPublic+string(filepath.Separator)) && absTarget != absPublic {
+		if !strings.HasPrefix(absTarget, absDiskDir+string(filepath.Separator)) && absTarget != absDiskDir {
 			http.NotFound(w, r)
 			return
 		}
 	}
 
-	// Try serving from frontend filesystem (disk public/ or embed)
+	// Try serving from frontend filesystem (disk build dir or embed)
 	if fi, err := fsys.Open(cleanRelPath); err == nil {
 		_ = fi.Close()
 		// Vite outputs hash-named assets (e.g. pdf-D-oSvAqu.js, index-CaOuUlWb.js).

@@ -6,24 +6,29 @@ import { fileURLToPath } from 'url'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const publicDir = resolve(__dirname, 'public')
+// Build output dir. Deliberately NOT named "public": the server resolves it as a
+// CWD-relative path for hot-swapping, and a generic name collides with unrelated
+// directories (macOS ships ~/Public, and `os.Stat` on a case-insensitive APFS
+// volume matches it — issue #461). A distinctive name also means leftover
+// build output from older installs is simply never picked up again.
+const outDir = resolve(__dirname, '.clawbench-web')
 const srcAssets = resolve(__dirname, 'assets')
 
-// Ensure public/ exists
-if (!existsSync(publicDir)) mkdirSync(publicDir, { recursive: true })
+// Ensure the output dir exists
+if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
 
-// Copy logo files to public/ so they are served at /assets/*
+// Copy logo files to the output dir so they are served at /assets/*
 if (existsSync(srcAssets)) {
-  // Ensure public/assets directory exists
-  const publicAssets = resolve(publicDir, 'assets')
-  if (!existsSync(publicAssets)) mkdirSync(publicAssets, { recursive: true })
+  // Ensure .clawbench-web/assets directory exists
+  const outAssets = resolve(outDir, 'assets')
+  if (!existsSync(outAssets)) mkdirSync(outAssets, { recursive: true })
 
   for (const f of readdirSync(srcAssets)) {
-    cpSync(resolve(srcAssets, f), resolve(publicAssets, f), { force: true })
+    cpSync(resolve(srcAssets, f), resolve(outAssets, f), { force: true })
   }
 }
 
-// Vite plugin: copy material-icon-theme SVGs to public/material-icons/
+// Vite plugin: copy material-icon-theme SVGs to .clawbench-web/material-icons/
 // so they are served as static assets at /material-icons/<name>.svg.
 //
 // The icons are NOT part of the JS module graph: materialIcons.ts resolves
@@ -32,7 +37,7 @@ if (existsSync(srcAssets)) {
 // which previously pushed peak build memory to ~3.4GB.
 function materialIconsCopy(): Plugin {
   const srcDir = resolve(__dirname, 'node_modules/material-icon-theme/icons')
-  const destDir = resolve(__dirname, 'public/material-icons')
+  const destDir = resolve(outDir, 'material-icons')
 
   function copy() {
     if (!existsSync(srcDir)) {
@@ -52,8 +57,8 @@ function materialIconsCopy(): Plugin {
     // Build: copy after bundle is written so `emptyOutDir: true` (if ever
     // enabled) cannot wipe the icons before they are emitted.
     closeBundle() { copy() },
-    // Dev: public/ (the build outDir) is NOT served by the dev server — only
-    // publicDir is. Serve /material-icons/* straight from public/material-icons
+    // Dev: the build output dir is NOT served by the dev server — only
+    // publicDir is. Serve /material-icons/* straight from .clawbench-web/material-icons
     // so getIconUrl() works identically in dev and production.
     configureServer(server) {
       copy()
@@ -140,13 +145,13 @@ function xtermRequestModeFix(): Plugin {
 }
 
 // Vite plugin: serve the isolated Excalidraw editor build during development.
-// The React+Excalidraw bundle lives in public/vendor/excalidraw/ (built by
+// The React+Excalidraw bundle lives in .clawbench-web/vendor/excalidraw/ (built by
 // build.sh step 1a) and is NOT part of the Vue module graph. The Vue dev server
 // only serves publicDir (assets/), so this middleware exposes /vendor/excalidraw/*
-// straight from public/vendor/excalidraw/ — mirroring the production path
+// straight from .clawbench-web/vendor/excalidraw/ — mirroring the production path
 // where the backend serves it at /vendor/excalidraw/index.html.
 function excalidrawVendorServe(): Plugin {
-  const destDir = resolve(__dirname, 'public/vendor/excalidraw')
+  const destDir = resolve(__dirname, '.clawbench-web/vendor/excalidraw')
   return {
     name: 'excalidraw-vendor-serve',
     configureServer(server) {
@@ -233,7 +238,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: publicDir,
+    outDir,
     emptyOutDir: false,
     assetsDir: '.',
     rollupOptions: {

@@ -26,7 +26,7 @@ nohup.out
 node_modules/
 node_modules
 vite.log
-public/
+.clawbench-web/
 internal/frontend/dist/
 !internal/frontend/dist/.gitkeep
 web/coverage/

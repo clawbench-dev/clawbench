@@ -528,7 +528,7 @@ func ServeSharePage(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveShareHTML serves the share SPA entry (share.html), preferring the disk
-// public/ dir then falling back to embedded dist (mirrors ServeIndex).
+// build dir then falling back to embedded dist (mirrors ServeIndex).
 func serveShareHTML(w http.ResponseWriter, r *http.Request) {
 	fsys := frontend.GetFS()
 	if fi, err := fsys.Open("share.html"); err == nil {

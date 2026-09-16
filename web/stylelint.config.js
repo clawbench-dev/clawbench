@@ -80,6 +80,6 @@ export default {
     'dist/**',
     'node_modules/**',
     'coverage/**',
-    'public/vendor/**',
+    '.clawbench-web/vendor/**',
   ],
 }

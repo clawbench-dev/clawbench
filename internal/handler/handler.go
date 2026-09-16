@@ -502,14 +502,14 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/upgrade/start", ServeUpgradeStart)
 	register("/api/upgrade/status", ServeUpgradeStatus)
 
-	// Serve static assets from frontend filesystem (disk public/ > embed fallback)
+	// Serve static assets from frontend filesystem (disk build dir > embed fallback)
 	// http.FileServerFS internally cleans paths before Open(), preventing traversal.
 	// For embed.FS, Open() additionally rejects ".." paths. No explicit ISS-055 guard needed.
 	// NOTE: all other static paths (/index-*.js, /material-icons/*, etc.) are
 	// handled by ServeIndex, which reads directly from the frontend FS.
 	fsys := frontend.GetFS()
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServerFS(fsys)))
-	if !frontend.DiskPublicExists() {
+	if !frontend.DiskDirExists() {
 		// Dev mode fallbacks: Vite dev server needs these routes
 		mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir(filepath.Join("web", "css")))))
 		mux.Handle("/js/", http.StripPrefix("/js/", http.FileServer(http.Dir(filepath.Join("web", "js")))))

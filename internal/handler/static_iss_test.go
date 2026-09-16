@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"testing"
 
+	"clawbench/internal/frontend"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,8 +21,8 @@ func TestServeIndex_PathTraversal(t *testing.T) {
 	}
 	// Create a temporary public directory with a known file
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatalf("failed to create public dir: %v", err)
 	}
 	// Create a secret file outside public that should NOT be accessible
@@ -29,7 +31,7 @@ func TestServeIndex_PathTraversal(t *testing.T) {
 		t.Fatalf("failed to write secret file: %v", err)
 	}
 	// Create a legitimate file inside public
-	if err := os.WriteFile(filepath.Join(publicDir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
 		t.Fatalf("failed to write index.html: %v", err)
 	}
 
@@ -85,8 +87,8 @@ func TestServeIndex_PathTraversal(t *testing.T) {
 
 func TestServeIndex_PathTraversalDoesNotLeakSecret(t *testing.T) {
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatalf("failed to create public dir: %v", err)
 	}
 	// Secret file at root level
@@ -95,7 +97,7 @@ func TestServeIndex_PathTraversalDoesNotLeakSecret(t *testing.T) {
 		t.Fatalf("failed to write secret: %v", err)
 	}
 	// index.html in public
-	if err := os.WriteFile(filepath.Join(publicDir, "index.html"), []byte("OK"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "index.html"), []byte("OK"), 0o644); err != nil {
 		t.Fatalf("failed to write index: %v", err)
 	}
 

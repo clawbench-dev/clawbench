@@ -20,7 +20,7 @@ const (
 //
 // The APK is always read from the build-time embedded FS, never from disk.
 // The APK must match the running binary's version (the upgrade overlay relies
-// on it), and frontend.GetFS() would instead return the disk public/ dir
+// on it), and frontend.GetFS() would instead return the disk build dir
 // whenever the server's CWD contains one — shadowing the embedded copy and
 // making /api/apk 404 even though the APK is embedded.
 func ServeAPK(w http.ResponseWriter, r *http.Request) {
