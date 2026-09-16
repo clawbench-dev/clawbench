@@ -826,7 +826,10 @@ export type ChatMessageAction =
   | { type: 'ws_metadata'; metadata: Record<string, unknown> }
   | { type: 'ws_warning'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string }
   // ── DB rebuild (loadHistory) ──
-  | { type: 'db_load'; dbMessages: ChatMessage[] }
+  // `sessionRunning` lets the rebuild distinguish a stale snapshot (fetched
+  // before the backend committed the streaming row) from real convergence —
+  // see rebuildFromDb.
+  | { type: 'db_load'; dbMessages: ChatMessage[]; sessionRunning?: boolean }
 
 function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: string): ContentBlock | undefined {
   const wantParent = parent || ''
@@ -948,8 +951,14 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
  * any message not present there is garbage. This makes every loadHistory
  * converge to exactly what an app restart would show, which is what makes the
  * refresh button behave identically to a restart.
+ *
+ * `sessionRunning` is the ONE exception to "the DB is authoritative". When the
+ * session is still running, a snapshot with no counterpart row for the live
+ * placeholder is a STALE SNAPSHOT (fetched before the backend committed the
+ * streaming row), not convergence — see the preserveLive block below. When the
+ * session is not running the DB really is final, so nothing is preserved.
  */
-export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[]): ChatMessage[] {
+export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], sessionRunning = false): ChatMessage[] {
   // The live streaming placeholder (at most one) — the object whose identity
   // must be preserved so the streamed content already rendered keeps its DOM.
   const live = state.find((m) => m.role === 'assistant' && m.streaming)
@@ -1121,9 +1130,48 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[]): 
   // every loadHistory converges to exactly what an app restart would show.
   // While dropping, record any dropped user bubble that HAS a DB row so replies
   // anchored to the bubble's string id can be rewritten to the DB id.
+  //
+  // The live placeholder is preserved in exactly one case (see below): the
+  // snapshot contains NO streaming assistant row at all while the session is
+  // still running. Requiring "no streaming row in the snapshot" — rather than
+  // merely "no row matched the placeholder" — is what makes the preserve safe
+  // from duplicates: if the snapshot DOES carry a streaming row, the normal
+  // matching above already claimed it (channel 3 matches any streaming row
+  // while the placeholder is empty), so an unmatched placeholder then means a
+  // genuine mismatch and must be dropped rather than rendered alongside the
+  // snapshot's row.
+  const dbHasStreamingRow = dbMessages.some((r) => r.role === 'assistant' && r.streaming === true)
   const parentAdoption = new Map<string, string>()
   for (const m of state) {
     if (used.has(m)) continue
+
+    // Live streaming placeholder whose row is missing from this snapshot.
+    //
+    // While the session is still running, "no row in the snapshot" does NOT
+    // mean "no row in the DB": the backend commits the streaming assistant row
+    // only after the ACP connection is spawned/resumed (seconds), while this
+    // GET can be served in ~200ms. Every loadHistory trigger that can fire in
+    // that window — the WS reconnect resync (each send-queue-full reconnect),
+    // the panel-open load, a foreground return — therefore returns a snapshot
+    // that contains the user row but not the streaming row.
+    //
+    // Dropping the placeholder in that case is unrecoverable for the rest of
+    // the turn: content/thinking/tool events carry no message id, so they are
+    // buffered until the NEXT stream_start (useChatStream), which for this turn
+    // has already passed. The user then sees an assistant bubble with no
+    // content and no loading indicator until a refresh rebuilds it from the
+    // (by then flushed) DB row.
+    //
+    // This is the same class of protection as the in-flight direct-send guard
+    // below: a snapshot that provably predates a known-live write is stale, not
+    // authoritative. Gated on !dbHasStreamingRow so a snapshot that DOES carry
+    // the streaming row still converges through the normal path, and on
+    // sessionRunning so a finished session still converges strictly to the DB
+    // (a genuinely orphaned placeholder is dropped).
+    if (m === live && sessionRunning && !dbHasStreamingRow) {
+      merged.push(m)
+      continue
+    }
 
     // In-flight direct-send bubble: its POST is still awaiting DB ack, so the
     // snapshot may legitimately predate the row. Keep the bubble — a restart at
@@ -1613,7 +1661,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'db_load': {
-      return rebuildFromDb(state, action.dbMessages)
+      return rebuildFromDb(state, action.dbMessages, action.sessionRunning === true)
     }
     default:
       return state

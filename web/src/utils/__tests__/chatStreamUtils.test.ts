@@ -1777,6 +1777,87 @@ describe('duplicate message root causes (regression)', () => {
     expect(userBuilds.map((m: any) => m.id)).toEqual([10, 11])
   })
 
+  it('keeps the LIVE streaming placeholder when a stale db_load snapshot predates its DB row', () => {
+    // Reported: right after sending, the assistant bubble appears with NO
+    // content and NO loading indicator; a page refresh then shows the reply.
+    //
+    // The loadHistory GET can be served BEFORE the backend commits the
+    // streaming assistant row (the row is inserted after the ACP connection is
+    // spawned/resumed, which takes seconds; the GET takes ~200ms). Its snapshot
+    // therefore contains the user row but NOT the streaming row. rebuildFromDb's
+    // three matching channels all miss, so the live placeholder was dropped as
+    // "a transient with no DB row" — and every subsequent content/thinking/tool
+    // event then had no target (they are buffered until the NEXT stream_start,
+    // which for this turn already passed). The bubble stayed empty with no
+    // spinner until a refresh rebuilt it from the (by then flushed) DB row.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'partial' }], streaming: true, parentQueueId: '1' },
+    ]
+    // Snapshot predates the streaming row entirely.
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    const live = merged.find((m: any) => m.role === 'assistant')
+    expect(live).toBeDefined()
+    expect(live.streaming).toBe(true)
+    expect((live.blocks || []).some((b: any) => b.text === 'partial')).toBe(true)
+  })
+
+  it('keeps an EMPTY live placeholder against a stale snapshot so later content still lands', () => {
+    // Same race, but the placeholder has not received content yet (the GET beat
+    // even the first content delta). Dropping it is equally fatal: the content
+    // events that follow have nowhere to go, so the user sees an empty bubble
+    // with no spinner and only a refresh recovers the reply.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+    ]
+    let merged = rebuildFromDb(messages, dbMsgs as any, true)
+    expect(merged.filter((m: any) => m.role === 'assistant' && m.streaming)).toHaveLength(1)
+    // The live stream continues: content events still find their placeholder.
+    merged = chatMessageReducer(merged, { type: 'ws_content', text: ' the answer' } as any)
+    const reply = merged.find((m: any) => m.role === 'assistant')
+    expect((reply.blocks || []).map((b: any) => b.text).join('')).toBe(' the answer')
+  })
+
+  it('does NOT preserve an unmatched placeholder when the snapshot has its own streaming row (no duplicate)', () => {
+    // The preserve path above only applies when the snapshot carries NO
+    // streaming row. If it does carry one — even if the placeholder could not
+    // be matched to it by id/queueId — the snapshot's row is authoritative and
+    // the placeholder must be dropped, or the same reply would render twice.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 'drain-orphan', content: '', blocks: [{ type: 'text', text: 'partial' }], streaming: true, parentQueueId: 'nonexistent' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 7, content: '', blocks: [{ type: 'text', text: 'partial' }], streaming: true, queueId: 'other' },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    expect(merged.filter((m: any) => m.role === 'assistant')).toHaveLength(1)
+    expect(merged.find((m: any) => m.role === 'assistant').id).toBe(7)
+  })
+
+  it('still drops the live placeholder once the session is NOT running (DB is final)', () => {
+    // The preserve path above must not defeat convergence: with running=false
+    // the DB is authoritative, so a placeholder with no row is a genuine orphan
+    // and must go — otherwise a crashed turn would leave a permanent spinner.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    expect(merged.filter((m: any) => m.role === 'assistant')).toHaveLength(0)
+  })
+
   it('RC3d: a _remote bubble is preserved when its DB row is in the snapshot', () => {
     // A remote device's message persisted as a DB row; the _remote bubble must
     // be adopted (cleared of _remote markers) rather than duplicated.
