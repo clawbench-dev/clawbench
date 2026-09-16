@@ -29,13 +29,14 @@ package gitignore
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-git/go-billy/v5/osfs"
+	gogitconfig "github.com/go-git/go-git/v5/config"
 	gogitignore "github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/plumbing/format/index"
 )
@@ -379,10 +380,7 @@ func commonGitDir(gitDir string) string {
 func loadBasePatterns(gitDir string) []gogitignore.Pattern {
 	var ps []gogitignore.Pattern
 
-	// Best-effort: a missing or unreadable global config contributes nothing.
-	if global, err := gogitignore.LoadGlobalPatterns(osfs.New("/")); err == nil {
-		ps = append(ps, global...)
-	}
+	ps = append(ps, loadGlobalExcludePatterns()...)
 
 	// .git/info/exclude is shared by all worktrees, so read it from the common
 	// git dir rather than the per-worktree one.
@@ -393,10 +391,97 @@ func loadBasePatterns(gitDir string) []gogitignore.Pattern {
 	return ps
 }
 
+// loadGlobalExcludePatterns reads core.excludesFile from the user's global git
+// config and parses that file.
+//
+// go-git's LoadGlobalPatterns cannot be used here: it locates the global config
+// with os.UserHomeDir, which on Windows resolves to %USERPROFILE% and ignores
+// HOME entirely. git itself honors HOME on every platform, so on Windows the
+// two disagree whenever HOME differs from the profile directory and the user's
+// excludes file is silently dropped. Resolving home the way git does keeps this
+// package agreeing with git.
+func loadGlobalExcludePatterns() []gogitignore.Pattern {
+	// Ascending priority: XDG config is read first, then ~/.gitconfig, whose
+	// value wins — the same order git applies.
+	var excludesFile string
+	for _, cfgPath := range globalGitConfigPaths() {
+		b, err := os.ReadFile(cfgPath)
+		if err != nil {
+			continue
+		}
+		cfg, err := gogitconfig.ReadConfig(bytes.NewReader(b))
+		if err != nil || cfg.Raw == nil {
+			continue
+		}
+		if v := cfg.Raw.Section("core").Option("excludesfile"); v != "" {
+			excludesFile = v
+		}
+	}
+	if excludesFile == "" {
+		return nil
+	}
+
+	b, err := os.ReadFile(expandHome(excludesFile))
+	if err != nil {
+		return nil
+	}
+	return parsePatterns(string(b), nil)
+}
+
+// globalGitConfigPaths returns the user's global git config files in ascending
+// priority order, matching git's lookup: the XDG config (honoring
+// XDG_CONFIG_HOME, defaulting to ~/.config) and then ~/.gitconfig, whose value
+// wins.
+func globalGitConfigPaths() []string {
+	home := homeDir()
+	var out []string
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		out = append(out, filepath.Join(xdg, "git", "config"))
+	} else if home != "" {
+		// git falls back to ~/.config when XDG_CONFIG_HOME is unset.
+		out = append(out, filepath.Join(home, ".config", "git", "config"))
+	}
+	if home != "" {
+		out = append(out, filepath.Join(home, ".gitconfig"))
+	}
+	return out
+}
+
+// homeDir returns the home directory as git resolves it: $HOME first, falling
+// back to os.UserHomeDir. git prefers HOME on every platform, whereas
+// os.UserHomeDir ignores it on Windows — the divergence this exists to avoid.
+func homeDir() string {
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
+// expandHome expands a leading "~" in a config path, as git does for
+// core.excludesFile. Other paths are returned unchanged.
+func expandHome(p string) string {
+	if p == "~" {
+		return homeDir()
+	}
+	if !strings.HasPrefix(p, "~/") && !strings.HasPrefix(p, `~\`) {
+		return p
+	}
+	home := homeDir()
+	if home == "" {
+		return p
+	}
+	return filepath.Join(home, p[2:])
+}
+
 // parsePatterns turns .gitignore file content into patterns bound to domain.
 // Blank and whitespace-only lines and comments are skipped; every other line is
-// passed through verbatim so the engine applies git's own rules (negation,
-// trailing-space handling, directory-only, anchoring, "**").
+// passed through the engine so it applies git's own rules (negation, anchoring,
+// directory-only, "**"), with backslash escapes rewritten first — see
+// translateEscapes for why that is necessary.
 func parsePatterns(content string, domain []string) []gogitignore.Pattern {
 	var ps []gogitignore.Pattern
 	sc := bufio.NewScanner(strings.NewReader(content))
@@ -410,9 +495,60 @@ func parsePatterns(content string, domain []string) []gogitignore.Pattern {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		ps = append(ps, gogitignore.ParsePattern(line, domain))
+		ps = append(ps, gogitignore.ParsePattern(translateEscapes(line), domain))
 	}
 	return ps
+}
+
+// translateEscapes rewrites git's backslash escapes into an equivalent pattern
+// with no backslashes.
+//
+// The go-git engine matches with filepath.Match, and Go's filepath.Match
+// DISABLES backslash escaping on Windows, treating "\" as a path separator
+// instead. A pattern like `spaced\ name.txt` therefore never matches on Windows
+// even though git ignores the file, so escaped patterns silently stop working
+// there. Rewriting each escaped character as a one-character class ("[ ]",
+// "[#]") expresses the same literal without any backslash, so both platforms
+// agree.
+//
+// A backslash not followed by anything (a trailing "\") is kept as-is: git
+// treats such a pattern as matching nothing, and filepath.Match reports it as
+// ErrBadPattern, which the engine already treats as "no match" — the same
+// outcome on both platforms.
+func translateEscapes(p string) string {
+	if !strings.Contains(p, `\`) {
+		return p
+	}
+	var b strings.Builder
+	b.Grow(len(p) + 8)
+	for i := 0; i < len(p); i++ {
+		if p[i] != '\\' || i+1 == len(p) {
+			b.WriteByte(p[i])
+			continue
+		}
+		i++
+		b.WriteString(escapeLiteral(p[i]))
+	}
+	return b.String()
+}
+
+// escapeLiteral renders one byte as a glob literal that contains no backslash.
+//
+// Characters that are glob metacharacters (or that need a class to stay
+// literal, like the space git escapes) become a single-character class; every
+// other byte is already a literal and is written through. "]" is left bare
+// because it is only special inside a class.
+func escapeLiteral(c byte) string {
+	switch c {
+	case '*', '?', '[', '!', ' ':
+		return "[" + string(c) + "]"
+	case '\\':
+		// A class is required: a bare backslash is the escape character on
+		// Unix and a separator on Windows.
+		return `[\\]`
+	default:
+		return string(c)
+	}
 }
 
 // readTracked decodes the git index into a set of repo-root-relative slash

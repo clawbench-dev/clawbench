@@ -2,6 +2,7 @@ package gitignore
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	gogitignore "github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,9 +47,28 @@ func gitRun(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// pinnedGitHomeEnv marks that a test has deliberately pinned HOME for its
+// fixture. gitIgnored then uses the ambient environment instead of its own
+// scratch dirs, so the git CLI and the matcher see the same global config.
+const pinnedGitHomeEnv = "CLAWBENCH_TEST_PINNED_GIT_HOME"
+
+// pinGitHome points HOME (and XDG_CONFIG_HOME) at home for both the matcher and
+// the git CLI. Without this the CLI helper would isolate itself and never read
+// the global config the test just wrote.
+func pinGitHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv(pinnedGitHomeEnv, "1")
+}
+
 // gitIgnored returns the subset of repo-relative paths that `git check-ignore`
 // reports as ignored. It queries from rootDir so relative paths resolve against
 // the repository, and passes -z to survive spaces and newlines in names.
+//
+// By default it pins HOME to scratch dirs so the developer's real global config
+// cannot change the expected set. A test that deliberately pins HOME for its
+// fixture (see pinGitHome) opts out.
 func gitIgnored(t *testing.T, rootDir string, paths []string) map[string]bool {
 	t.Helper()
 	if len(paths) == 0 {
@@ -55,9 +76,13 @@ func gitIgnored(t *testing.T, rootDir string, paths []string) map[string]bool {
 	}
 	cmd := exec.Command("git", "check-ignore", "--stdin", "-z")
 	cmd.Dir = rootDir
-	cmd.Env = append(os.Environ(),
-		"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(),
-	)
+	if os.Getenv(pinnedGitHomeEnv) != "" {
+		cmd.Env = os.Environ()
+	} else {
+		cmd.Env = append(os.Environ(),
+			"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(),
+		)
+	}
 	var in strings.Builder
 	for _, p := range paths {
 		in.WriteString(p)
@@ -313,6 +338,71 @@ func TestMatchesGit_InfoExclude(t *testing.T) {
 
 	paths := listTree(t, repo)
 	diffIgnored(t, repo, repo, paths)
+}
+
+// TestMatchesGit_GlobalExcludesFile covers core.excludesFile from the user's
+// global git config, read through the same HOME that git itself uses.
+//
+// This is the regression test for a Windows-only divergence: go-git's
+// LoadGlobalPatterns locates the config with os.UserHomeDir, which on Windows
+// returns %USERPROFILE% and ignores HOME, so a global excludes file pinned via
+// HOME was silently dropped there while git honored it.
+func TestMatchesGit_GlobalExcludesFile(t *testing.T) {
+	gitAvailable(t)
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "-q")
+
+	// Pin HOME/XDG to a scratch dir so neither the matcher nor the git CLI can
+	// see the developer's real global config.
+	home := t.TempDir()
+	pinGitHome(t, home)
+
+	excludes := filepath.Join(home, "global-ignore")
+	require.NoError(t, os.WriteFile(excludes, []byte("global-excluded.txt\nglobal-dir/\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
+		[]byte("[core]\n\texcludesFile = "+excludes+"\n"), 0o644))
+
+	writeFixture(t, repo, map[string]string{
+		"global-excluded.txt": "g\n",
+		"global-dir/inner.js": "i\n",
+		"kept.txt":            "k\n",
+	})
+
+	paths := listTree(t, repo)
+	diffIgnored(t, repo, repo, paths)
+
+	// Guard against a fixture that silently ignores nothing: without these the
+	// test would pass even if the global config were never read.
+	got := matcherIgnored(t, repo, repo, paths)
+	assert.True(t, got["global-excluded.txt"], "core.excludesFile must be honored")
+	assert.True(t, got["global-dir"], "a directory pattern from core.excludesFile must apply")
+	assert.False(t, got["kept.txt"], "an unlisted file stays visible")
+}
+
+// TestMatchesGit_GlobalExcludesFileTilde covers a "~" in core.excludesFile,
+// which git expands against HOME.
+func TestMatchesGit_GlobalExcludesFileTilde(t *testing.T) {
+	gitAvailable(t)
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "-q")
+
+	home := t.TempDir()
+	pinGitHome(t, home)
+
+	require.NoError(t, os.WriteFile(filepath.Join(home, "tilde-ignore"), []byte("tilde-excluded.txt\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
+		[]byte("[core]\n\texcludesFile = ~/tilde-ignore\n"), 0o644))
+
+	writeFixture(t, repo, map[string]string{
+		"tilde-excluded.txt": "t\n",
+		"kept.txt":           "k\n",
+	})
+
+	paths := listTree(t, repo)
+	diffIgnored(t, repo, repo, paths)
+
+	got := matcherIgnored(t, repo, repo, paths)
+	assert.True(t, got["tilde-excluded.txt"], "a ~ path must expand against HOME")
 }
 
 // TestMatchesGit_AncestorExclusion covers the rule that a path stays ignored
@@ -640,4 +730,294 @@ func TestFindRepoRoot(t *testing.T) {
 	t.Run("no repository", func(t *testing.T) {
 		assert.Equal(t, "", findRepoRoot(t.TempDir()))
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Backslash-escape translation
+//
+// The go-git engine matches with filepath.Match, which disables backslash
+// escaping on Windows ("\" is a path separator there). An escaped pattern like
+// `spaced\ name.txt` therefore never matched on Windows, so git-ignored files
+// were reported as trackable. These tests pin the translated form directly: the
+// differential tests against git only caught this on Windows CI, and asserting
+// the translation here makes the regression visible on every platform.
+// ---------------------------------------------------------------------------
+
+// TestTranslateEscapes_ProducesBackslashFreePattern is the invariant that makes
+// the fix platform-independent: with no backslash left, filepath.Match behaves
+// identically on Unix and Windows.
+//
+// The one exception is a pattern that denotes a LITERAL backslash. A glob can
+// only express that as the class "[\\]", so the output necessarily contains a
+// backslash there. It is still OS-independent: on Unix the escape is stripped
+// and on Windows it is not, but both end up with the single-member set {'\'}.
+// That case is covered by TestTranslateEscapes_MatchesGitLiterals instead.
+func TestTranslateEscapes_ProducesBackslashFreePattern(t *testing.T) {
+	for _, in := range []string{
+		`spaced\ name.txt`,
+		`\#hash.txt`,
+		`\!bang.txt`,
+		`\*star.txt`,
+		`\?q.txt`,
+		`\[br.txt`,
+		`a\b.txt`,
+		`trail\ `,
+	} {
+		assert.NotContains(t, translateEscapes(in), `\`,
+			"translated pattern for %q must contain no backslash", in)
+	}
+}
+
+// TestEscapeLiteral_BackslashClassIsExact pins the encoding used for a literal
+// backslash: the class must match exactly one backslash and nothing else, so it
+// cannot absorb neighboring characters. Verified as single-member on both
+// platforms (Windows skips the escape-strip, yielding the same set).
+func TestEscapeLiteral_BackslashClassIsExact(t *testing.T) {
+	got := escapeLiteral('\\')
+	require.Equal(t, `[\\]`, got)
+
+	assert.Equal(t, gogitignore.Exclude,
+		gogitignore.ParsePattern(got, nil).Match([]string{`\`}, false),
+		"the class must match a single backslash")
+	assert.Equal(t, gogitignore.NoMatch,
+		gogitignore.ParsePattern(got, nil).Match([]string{"x"}, false),
+		"the class must not match an unrelated name")
+
+	// Embedded: it consumes exactly one character, leaving the rest intact.
+	p := gogitignore.ParsePattern("back"+got+"slash.txt", nil)
+	assert.Equal(t, gogitignore.Exclude, p.Match([]string{`back\slash.txt`}, false))
+	assert.Equal(t, gogitignore.NoMatch, p.Match([]string{"backslash.txt"}, false),
+		"the class must not match the backslash-free name")
+}
+
+// TestTranslateEscapes_MatchesGitLiterals checks the translation against the
+// literal each git escape denotes, using the engine itself so the assertion
+// tracks real matching rather than string equality.
+func TestTranslateEscapes_MatchesGitLiterals(t *testing.T) {
+	cases := []struct {
+		pattern string // as written in .gitignore
+		name    string // the file git says it matches
+	}{
+		{`spaced\ name.txt`, "spaced name.txt"},
+		{`\#hash.txt`, "#hash.txt"},
+		{`\!bang.txt`, "!bang.txt"},
+		{`\*star.txt`, "*star.txt"},
+		{`\?q.txt`, "?q.txt"},
+		{`\[br.txt`, "[br.txt"},
+		{`\]br.txt`, "]br.txt"},
+		{`a\b.txt`, "ab.txt"},
+		{`back\\slash.txt`, `back\slash.txt`},
+	}
+	for _, c := range cases {
+		p := gogitignore.ParsePattern(translateEscapes(c.pattern), nil)
+		assert.Equal(t, gogitignore.Exclude, p.Match([]string{c.name}, false),
+			"pattern %q must still match %q after translation", c.pattern, c.name)
+	}
+}
+
+// TestTranslateEscapes_LeavesPlainPatternsAlone guards against the translation
+// changing patterns that contain no escape: those are the common case, and
+// rewriting them would alter semantics.
+func TestTranslateEscapes_LeavesPlainPatternsAlone(t *testing.T) {
+	for _, in := range []string{"*.log", "build/", "node_modules/", "**/anywhere.md", "!keep.txt"} {
+		assert.Equal(t, in, translateEscapes(in), "unescaped pattern must pass through unchanged")
+	}
+}
+
+// TestTranslateEscapes_TrailingBackslashStaysInert documents the one case that
+// is deliberately not rewritten: a trailing "\" escapes nothing, git treats the
+// pattern as matching nothing, and filepath.Match reports ErrBadPattern (also
+// "no match") on both platforms.
+func TestTranslateEscapes_TrailingBackslashStaysInert(t *testing.T) {
+	got := translateEscapes(`trailback\`)
+	assert.Equal(t, `trailback\`, got, "a dangling backslash is left as-is")
+
+	p := gogitignore.ParsePattern(got, nil)
+	assert.Equal(t, gogitignore.NoMatch, p.Match([]string{"trailback"}, false),
+		"a dangling-backslash pattern must not match anything")
+}
+
+// ---------------------------------------------------------------------------
+// core.excludesFile resolution
+// ---------------------------------------------------------------------------
+
+// TestHomeDirPrefersHomeEnv pins the precedence that broke Windows: git honors
+// $HOME on every platform, while os.UserHomeDir ignores it on Windows and
+// returns the profile directory instead.
+//
+// On Linux this cannot distinguish the two implementations (os.UserHomeDir also
+// reads HOME), so it is a structural guard rather than a behavioral one: it
+// states the intended precedence explicitly and would fail on Windows if the
+// lookup were swapped back to os.UserHomeDir.
+func TestHomeDirPrefersHomeEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	assert.Equal(t, dir, homeDir(), "HOME must win over the OS home lookup")
+}
+
+// TestExpandHome covers the "~" forms git accepts in core.excludesFile.
+func TestExpandHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	assert.Equal(t, home, expandHome("~"))
+	assert.Equal(t, filepath.Join(home, "ignores"), expandHome("~/ignores"))
+	// An absolute or relative path is not a home reference.
+	assert.Equal(t, "/etc/ignores", expandHome("/etc/ignores"))
+	assert.Equal(t, "rel/ignores", expandHome("rel/ignores"))
+}
+
+// TestGlobalGitConfigPaths_Precedence asserts XDG is read before ~/.gitconfig,
+// so a value in ~/.gitconfig wins — the order git itself applies (verified
+// against git: with both files defining core.excludesFile, the ~/.gitconfig
+// value is returned).
+func TestGlobalGitConfigPaths_Precedence(t *testing.T) {
+	home := t.TempDir()
+	xdg := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	paths := globalGitConfigPaths()
+	require.Len(t, paths, 2)
+	assert.Equal(t, filepath.Join(xdg, "git", "config"), paths[0], "XDG config is read first")
+	assert.Equal(t, filepath.Join(home, ".gitconfig"), paths[1], "~/.gitconfig is read last and wins")
+}
+
+// TestParsePatterns_AppliesEscapeTranslation is the guard that parsePatterns
+// actually routes through translateEscapes.
+//
+// This must assert on the COMPILED pattern rather than on matching behavior:
+// on Linux filepath.Match honors backslash escapes, so a raw `\#hash.txt` and
+// the translated `[#]hash.txt` match identically and a behavior-only test
+// cannot tell them apart. It would therefore pass with the translation removed
+// and only fail on Windows CI — the exact blind spot that let the original bug
+// ship. Comparing the compiled form makes the difference visible everywhere.
+func TestParsePatterns_AppliesEscapeTranslation(t *testing.T) {
+	ps := parsePatterns(`\#hash.txt`+"\n", nil)
+	require.Len(t, ps, 1)
+
+	translated := gogitignore.ParsePattern(translateEscapes(`\#hash.txt`), nil)
+	raw := gogitignore.ParsePattern(`\#hash.txt`, nil)
+
+	got := fmt.Sprintf("%#v", ps[0])
+	assert.Equal(t, fmt.Sprintf("%#v", translated), got,
+		"parsePatterns must compile the escaped literal, not pass it through raw")
+	assert.NotEqual(t, fmt.Sprintf("%#v", raw), got,
+		"a raw (untranslated) pattern would diverge from git on Windows")
+}
+
+// TestExpandHome_NoHomeLeavesPathUnchanged covers the fallback when no home can
+// be resolved: a "~" path must be returned as-is rather than turned into a
+// bogus relative path.
+func TestExpandHome_NoHomeLeavesPathUnchanged(t *testing.T) {
+	t.Setenv("HOME", "")
+	// Force the OS lookup to fail too, so homeDir() returns "".
+	t.Setenv("USERPROFILE", "")
+
+	if homeDir() != "" {
+		t.Skip("cannot force home lookup to fail on this platform")
+	}
+	assert.Equal(t, "~/ignores", expandHome("~/ignores"))
+}
+
+// TestLoadGlobalExcludePatterns_MissingFileIsIgnored covers the best-effort
+// contract: a core.excludesFile pointing at a nonexistent path contributes no
+// patterns instead of failing the whole matcher.
+func TestLoadGlobalExcludePatterns_MissingFileIsIgnored(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
+		[]byte("[core]\n\texcludesFile = "+filepath.Join(home, "does-not-exist")+"\n"), 0o644))
+
+	assert.Empty(t, loadGlobalExcludePatterns(), "a missing excludes file yields no patterns")
+}
+
+// TestLoadGlobalExcludePatterns_NoConfig covers the common case of a user with
+// no global git config at all.
+func TestLoadGlobalExcludePatterns_NoConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	assert.Empty(t, loadGlobalExcludePatterns(), "no global config means no global patterns")
+}
+
+// TestLoadGlobalExcludePatterns_MalformedConfigIsSkipped covers a corrupt global
+// config: it must not abort the lookup, and a later valid file still applies.
+func TestLoadGlobalExcludePatterns_MalformedConfigIsSkipped(t *testing.T) {
+	home := t.TempDir()
+	xdg := filepath.Join(home, ".config")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	// Malformed: an unterminated section header.
+	require.NoError(t, os.MkdirAll(filepath.Join(xdg, "git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(xdg, "git", "config"),
+		[]byte("[core\n\texcludesFile = /nope\n"), 0o644))
+
+	excludes := filepath.Join(home, "ok-ignore")
+	require.NoError(t, os.WriteFile(excludes, []byte("from-valid-config.txt\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
+		[]byte("[core]\n\texcludesFile = "+excludes+"\n"), 0o644))
+
+	ps := loadGlobalExcludePatterns()
+	require.Len(t, ps, 1, "the valid config must still be read")
+	assert.Equal(t, gogitignore.Exclude, ps[0].Match([]string{"from-valid-config.txt"}, false))
+}
+
+// TestLoadGlobalExcludePatterns_LaterConfigWins pins git's precedence through
+// the loader itself: ~/.gitconfig overrides the XDG file.
+func TestLoadGlobalExcludePatterns_LaterConfigWins(t *testing.T) {
+	home := t.TempDir()
+	xdg := filepath.Join(home, ".config")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(xdg, "git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(xdg, "git", "config"),
+		[]byte("[core]\n\texcludesFile = "+filepath.Join(home, "from-xdg")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "from-xdg"), []byte("xdg-only.txt\n"), 0o644))
+
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
+		[]byte("[core]\n\texcludesFile = "+filepath.Join(home, "from-home")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "from-home"), []byte("home-only.txt\n"), 0o644))
+
+	ps := loadGlobalExcludePatterns()
+	require.Len(t, ps, 1, "only the winning config's file is read")
+	assert.Equal(t, gogitignore.Exclude, ps[0].Match([]string{"home-only.txt"}, false),
+		"~/.gitconfig must override the XDG config")
+}
+
+// TestGlobalGitConfigPaths_DefaultsToXDGDir covers git's fallback when
+// XDG_CONFIG_HOME is unset: the XDG config is then read from ~/.config/git/config.
+func TestGlobalGitConfigPaths_DefaultsToXDGDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	paths := globalGitConfigPaths()
+	require.Len(t, paths, 2)
+	assert.Equal(t, filepath.Join(home, ".config", "git", "config"), paths[0],
+		"XDG_CONFIG_HOME unset must fall back to ~/.config")
+	assert.Equal(t, filepath.Join(home, ".gitconfig"), paths[1])
+}
+
+// TestLoadGlobalExcludePatterns_DefaultXDGIsRead proves the fallback is wired
+// through the loader, not just the path list.
+func TestLoadGlobalExcludePatterns_DefaultXDGIsRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	excludes := filepath.Join(home, "xdg-ignore")
+	require.NoError(t, os.WriteFile(excludes, []byte("default-xdg.txt\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".config", "git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".config", "git", "config"),
+		[]byte("[core]\n\texcludesFile = "+excludes+"\n"), 0o644))
+
+	ps := loadGlobalExcludePatterns()
+	require.Len(t, ps, 1, "the ~/.config fallback must be read")
+	assert.Equal(t, gogitignore.Exclude, ps[0].Match([]string{"default-xdg.txt"}, false))
 }

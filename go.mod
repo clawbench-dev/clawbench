@@ -9,7 +9,6 @@ require (
 	github.com/fatedier/frp v0.69.1
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-ego/gse v1.0.2
-	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/google/go-github/v85 v85.0.0
 	github.com/google/uuid v1.6.0
@@ -41,6 +40,7 @@ require (
 	github.com/go-enry/go-enry/v2 v2.8.0 // indirect
 	github.com/go-enry/go-oniguruma v1.2.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
+	github.com/go-git/go-billy/v5 v5.9.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
