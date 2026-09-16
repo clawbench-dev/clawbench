@@ -471,7 +471,7 @@ function errorSourceLabel(block: any) { return getErrorSourceLabel(block, t) }
 /** Reasons that indicate a stuck/broken agent session — showing a "reset session"
  *  button lets the user recycle the agent connection and recover.
  *  User-initiated cancels (user_cancel/context_cancel) are excluded. */
-const RESETABLE_REASONS = new Set(['empty', 'request_failed', 'refused', 'backend_exit', 'timeout', 'parse_error', 'panic', 'disconnect'])
+const RESETABLE_REASONS = new Set(['empty', 'agent_no_run', 'request_failed', 'refused', 'backend_exit', 'timeout', 'parse_error', 'panic', 'disconnect'])
 function isResetableReason(reason: string | undefined): boolean {
   return !!reason && RESETABLE_REASONS.has(reason)
 }
@@ -2430,24 +2430,20 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .edit-diff-del {
-  background: rgba(239, 68, 68, 0.08);
   color: #dc2626;
   white-space: pre;
 }
 
 .content-blocks .tool-detail .edit-diff-add {
-  background: rgba(34, 197, 94, 0.08);
   color: #16a34a;
   white-space: pre;
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .edit-diff-del {
-  background: rgba(248, 113, 113, 0.1);
   color: #fca5a5;
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .edit-diff-add {
-  background: rgba(74, 222, 128, 0.1);
   color: #86efac;
 }
 

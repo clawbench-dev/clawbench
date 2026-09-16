@@ -156,8 +156,13 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 
 			// If the error is a retryable disconnect (peer disconnect or config-killed
 			// connection), retry once after respawn + ResumeSession.
-			if isACPPeerDisconnected(err) || isConfigKilledConnection(err) {
-				slog.Warn("acp: connection lost during prompt, retrying after respawn",
+			//
+			// agentNoRunError joins this set: the turn ended "successfully" but the
+			// model was never called, which the ACP protocol cannot signal. The
+			// connection has already been marked dead by Prompt, so the respawn
+			// below is what actually clears the stuck agent.
+			if isACPPeerDisconnected(err) || isConfigKilledConnection(err) || isAgentNoRun(err) {
+				slog.Warn("acp: prompt failed, retrying after respawn",
 					"session_id", req.SessionID, "acp_sid", acpSessionID, "error", err)
 
 				// The first Prompt may have already streamed partial content events
@@ -202,6 +207,25 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 				if retryPromptErr != nil {
 					if ctx.Err() != nil {
 						slog.Info("acp: prompt cancelled after retry", "session_id", req.SessionID)
+						forwardACPEvent(ch, StreamEvent{Type: "done"})
+						return
+					}
+					// A retry that again ran no model means the agent is
+					// reproducibly skipping the turn — surface it as such (with
+					// its own reason code) instead of a generic backend exit, so
+					// the user gets the actionable message rather than a
+					// misleading "AI returned no content".
+					if isAgentNoRun(retryPromptErr) {
+						slog.Error("acp: agent ran no model request on both attempts",
+							"session_id", req.SessionID,
+							"original_error", err.Error(),
+							"retry_error", retryPromptErr.Error())
+						forwardACPEvent(ch, StreamEvent{
+							Type:        "warning",
+							Content:     "The agent did not run this request",
+							Reason:      ReasonAgentNoRun,
+							ErrorSource: "agent",
+						})
 						forwardACPEvent(ch, StreamEvent{Type: "done"})
 						return
 					}

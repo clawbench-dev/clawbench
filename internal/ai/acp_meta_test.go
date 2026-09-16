@@ -868,3 +868,32 @@ func TestExtractClaudeMeta_MultiModelUsageNoStitching(t *testing.T) {
 	require.NotNil(t, ext.Trace)
 	assert.Equal(t, "claude-sonnet-4-6", ext.Trace.ResponseModelID)
 }
+
+// ---------------------------------------------------------------------------
+// metaExtraction.traceRequestID — nil-safe accessor used by replay-drop logging
+// ---------------------------------------------------------------------------
+
+// TestMetaExtraction_TraceRequestID_NilReceiver covers the nil guard: the accessor
+// is called on the result of extractMetaUsage, which returns nil when the backend
+// has no adapter for the payload. Logging must not panic in that case, because it
+// runs on the event path for every replayed usage_update.
+func TestMetaExtraction_TraceRequestID_NilReceiver(t *testing.T) {
+	var ext *metaExtraction
+	assert.Equal(t, "", ext.traceRequestID(), "a nil extraction must yield an empty id")
+}
+
+// TestMetaExtraction_TraceRequestID_NoTrace covers the second guard: an extraction
+// that carries usage but no trace identity (usage_update payloads often omit
+// requestId) must yield "", not dereference the nil Trace.
+func TestMetaExtraction_TraceRequestID_NoTrace(t *testing.T) {
+	ext := &metaExtraction{Usage: &metaTokenUsage{Present: true}}
+	assert.Equal(t, "", ext.traceRequestID(), "usage-only extraction has no request id")
+}
+
+// TestMetaExtraction_TraceRequestID_ReturnsRequestID covers the happy path, so the
+// value that lands in the replay-drop log is actually the trace identity.
+func TestMetaExtraction_TraceRequestID_ReturnsRequestID(t *testing.T) {
+	ext := &metaExtraction{Trace: &metaTrace{RequestID: "req-abc", TraceID: "trace-xyz"}}
+	assert.Equal(t, "req-abc", ext.traceRequestID(),
+		"the accessor must return RequestID, not TraceID")
+}

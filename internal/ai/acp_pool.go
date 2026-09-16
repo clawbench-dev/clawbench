@@ -69,6 +69,62 @@ func isConfigKilledConnection(err error) bool {
 }
 
 // ---------------------------------------------------------------------------
+// agentNoRunError — typed error for a structurally successful but empty turn
+// ---------------------------------------------------------------------------
+
+// agentNoRunError indicates the agent accepted a prompt and returned a normal
+// PromptResponse (stopReason=end_turn, no transport error) yet produced no
+// model output and consumed no tokens — i.e. the model was never called.
+//
+// Why this needs its own type: the ACP protocol has no way to express "the
+// turn was skipped". StopReason only carries end_turn/cancelled/refusal and
+// PromptResponse has no content field, so a skipped turn is wire-identical to
+// "the model answered with nothing". Without this check ClawBench renders the
+// skipped turn as "AI returned no content", which sends the user down the wrong
+// path — retrying the same prompt against the same unhealthy agent fails again,
+// while reconnecting fixes it.
+//
+// Retryable: the connection is marked dead so the next attempt respawns the
+// agent and recovers the session via ResumeSession.
+type agentNoRunError struct {
+	stopReason string
+	wallMs     int
+}
+
+func (e *agentNoRunError) Error() string {
+	return fmt.Sprintf("acp: agent ran no model request (stopReason=%s, wall_ms=%d)", e.stopReason, e.wallMs)
+}
+
+// StopReason returns the PromptResponse stop reason that accompanied the empty turn.
+func (e *agentNoRunError) StopReason() string { return e.stopReason }
+
+// isAgentNoRun reports whether the error indicates a skipped (no-model) turn.
+func isAgentNoRun(err error) bool {
+	var e *agentNoRunError
+	return errors.As(err, &e)
+}
+
+// looksLikeAgentNoRun reports whether a completed turn produced no work at all.
+//
+// Detection is deliberately conservative — every condition must hold:
+//   - the turn ended normally (stopReason=end_turn, not cancelled/refusal)
+//   - zero model-output notifications (no text, thinking, or tool call)
+//   - zero token usage, from both the PromptResponse and the turn accumulator
+//
+// Requiring zero usage as well as zero output keeps this from firing on a
+// genuinely empty-but-real model response, which still bills input tokens.
+// Only a turn that touched no model at all has both at zero.
+func looksLikeAgentNoRun(stopReason string, outputEvents int64, inputTokens, outputTokens, totalTokens int) bool {
+	if stopReason != string(acp.StopReasonEndTurn) {
+		return false
+	}
+	if outputEvents != 0 {
+		return false
+	}
+	return inputTokens == 0 && outputTokens == 0 && totalTokens == 0
+}
+
+// ---------------------------------------------------------------------------
 // ACPConnManager — singleton managing one ACP connection per ClawBench session
 // ---------------------------------------------------------------------------
 
@@ -859,6 +915,12 @@ type ACPConn struct {
 	// legitimate tools (e.g. `sleep`, builds) are never killed.
 	toolInFlight atomic.Bool
 
+	// turnOutputEvents counts the model-output notifications observed during
+	// the current turn (agent text, thinking, tool calls). Reset at prompt
+	// start. A turn that ends with stopReason=end_turn and zero output events
+	// plus zero token usage never ran the model — see agentNoRunError.
+	turnOutputEvents atomic.Int64
+
 	// stallTimeout bounds how long a running prompt may go without any
 	// SessionUpdate and without an in-flight tool before the connection is
 	// terminated. Zero uses defaultACPStallTimeout; negative disables the
@@ -1055,6 +1117,25 @@ func (c *ACPConn) effectiveStallTimeout() time.Duration {
 // so the stall watchdog treats long-running tools as active.
 func (c *ACPConn) SetToolInFlight(inFlight bool) {
 	c.toolInFlight.Store(inFlight)
+}
+
+// ResetTurnOutput zeroes the per-turn model-output counter. Called at prompt
+// start so the count reflects only the current turn.
+func (c *ACPConn) ResetTurnOutput() {
+	c.turnOutputEvents.Store(0)
+}
+
+// RecordTurnOutput notes that the agent produced one model-output notification
+// this turn (text, thinking, or a tool call). Lock-free so the ACP
+// notification goroutine can call it without risking a deadlock.
+func (c *ACPConn) RecordTurnOutput() {
+	c.turnOutputEvents.Add(1)
+}
+
+// TurnOutputEvents returns how many model-output notifications the current
+// turn produced. Zero after a completed turn means the model never ran.
+func (c *ACPConn) TurnOutputEvents() int64 {
+	return c.turnOutputEvents.Load()
 }
 
 // isStalled reports whether the running prompt has made no progress for the
@@ -1485,6 +1566,19 @@ func (c *ACPConn) getAndClearMetaAccum() *metaExtraction {
 	acc := c.metaAccum
 	c.metaAccum = nil
 	return acc
+}
+
+// peekMetaAccumUsage returns the accumulated turn-level token counters without
+// clearing the accumulator. Callers use it to classify a turn (see
+// looksLikeAgentNoRun) before the metadata event consumes the accumulation.
+func (c *ACPConn) peekMetaAccumUsage() (input, output, total int) {
+	c.metaMu.Lock()
+	defer c.metaMu.Unlock()
+	if c.metaAccum == nil || c.metaAccum.Usage == nil {
+		return 0, 0, 0
+	}
+	u := c.metaAccum.Usage
+	return u.InputTokens, u.OutputTokens, u.TotalTokens
 }
 
 // getLastCompletedRequestID returns the requestId of the most recently

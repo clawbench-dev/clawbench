@@ -391,6 +391,60 @@ describe('CompletionPopover', () => {
         expect(el.querySelector('strong')!.textContent).toBe('加粗摘要')
     })
 
+    it('clamps summary headings so a reply cannot outshout the card title', () => {
+        // The summary renders through the global .markdown-body rules, whose
+        // heading scale targets long-form reading: h1 = 1.6em, which on this
+        // 13px container computes to 20.8px — LARGER than the card's own title
+        // (14px). A reply opening with `#` therefore made the body louder than
+        // the heading labelling it. The popover clamps the three levels to the
+        // same values ChatMessageItem uses for chat bubbles.
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+
+        // jsdom does not resolve var(), so assert the token names (16px/14px/
+        // 13px per variables.css — pinned by designTokens.css.test.ts).
+        const h1 = cssText.split('\n').filter((l) => l.includes('.completion-popover-summary.markdown-body h1')).join('\n')
+        const h2 = cssText.split('\n').filter((l) => l.includes('.completion-popover-summary.markdown-body h2')).join('\n')
+        const h3 = cssText.split('\n').filter((l) => l.includes('.completion-popover-summary.markdown-body h3')).join('\n')
+        expect(h1).toContain('font-size: var(--font-size-2xl)')
+        expect(h2).toContain('font-size: var(--font-size-lg)')
+        expect(h3).toContain('font-size: var(--font-size-md)')
+
+        // Specificity guard: the clamp must OUTRANK the global
+        // `.markdown-body h1` (0,1,1). The scoped selector here is (0,3,0)
+        // because it carries both classes — dropping either class would leave
+        // the rule losing to content.css and silently restore the 20.8px h1.
+        expect(h1).toMatch(/\.completion-popover-summary\.markdown-body h1/)
+    })
+
+    it('leaves the leading gap above an opening heading to the global first-block reset', () => {
+        // The popover deliberately does NOT re-declare margin-top here: the
+        // reset lives in css/content.css (`.markdown-body > :first-child`), so
+        // it also fixes the file preview and share page. Re-adding a margin
+        // rule in this component would be the wrong layer.
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        const headingRules = cssText
+            .split('\n')
+            .filter((l) => l.includes('.completion-popover-summary.markdown-body h'))
+            .join('\n')
+        expect(headingRules).not.toContain('margin-top')
+    })
+
     it('collapses by default: no scroll (clipped preview) and no visible input', () => {
         mockState.active = ref(makeItem())
         mountPopover()
@@ -784,7 +838,7 @@ describe('CompletionPopover', () => {
         expect(document.querySelector('.completion-popover-send')!.classList.contains('disabled')).toBe(false)
     })
 
-    it('aligns the input box with the chat input bar (radius 20px, 16px textarea, 28px send button)', async () => {
+    it('aligns the input box with the chat input bar (radius 20px, chat-body type scale, 26px send button)', async () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
@@ -795,14 +849,14 @@ describe('CompletionPopover', () => {
         await nextTick()
 
         expect(document.querySelector('.completion-popover-input')).toBeTruthy()
-        // textarea 与聊天输入框对齐：16px 字号（--font-size-2xl）、行高 20px、上下 padding 4px
-        // jsdom 不解析 var()：字号断言 token 名，padding 改断言 CSS 规则文本
+        // textarea 与聊天输入框对齐：字号/行高与聊天正文同 token（--font-size-md /
+        // --line-height-snug），上下 padding 4px
+        // jsdom 不解析 var()：字号/行高断言 token 名，padding 改断言 CSS 规则文本
         // （简写含两个 var()，computed 值一律解成 0）。4px/8px 由 --space-2/--space-4 保证
         const ta = document.querySelector('.completion-popover-textarea')!
         const taStyles = window.getComputedStyle(ta)
-        expect(taStyles.fontSize).toBe('var(--font-size-2xl)')
-        expect(taStyles.lineHeight).toBe('20px')
-        expect(taStyles.minHeight).toBe('28px')
+        expect(taStyles.fontSize).toBe('var(--font-size-md)')
+        expect(taStyles.lineHeight).toBe('var(--line-height-snug)')
         const taRule = Array.from(document.styleSheets)
             .map((s) => {
                 try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
@@ -813,11 +867,13 @@ describe('CompletionPopover', () => {
             .filter((line) => line.includes('.completion-popover-textarea'))
             .join('\n')
         expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
-        // 发送按钮与聊天输入框对齐：28px 圆形
+        // 高度上限由同一行盒推导（3 行 + 上下 padding），不再写死 px
+        expect(taRule).toContain('max-height: calc(1em * var(--line-height-snug) * 3')
+        // 发送按钮与聊天输入框对齐：26px 圆形
         const btn = document.querySelector('.completion-popover-send')!
         const btnStyles = window.getComputedStyle(btn)
-        expect(btnStyles.width).toBe('28px')
-        expect(btnStyles.height).toBe('28px')
+        expect(btnStyles.width).toBe('26px')
+        expect(btnStyles.height).toBe('26px')
         // jsdom 不解析 border-radius 简写计算值，改为断言 CSS 规则
         const cssText = Array.from(document.styleSheets)
             .map((s) => {

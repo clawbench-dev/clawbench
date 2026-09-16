@@ -258,8 +258,7 @@ func TestProcessClawbenchCommand_ChatSearchExcludesIndexMaintenance(t *testing.T
 	result, err := processClawbenchCommand("/cb-chatsearch auth bug", "/project", "sess-1")
 	require.NoError(t, err)
 
-	assert.NotContains(t, result, "reset-vector")
-	assert.NotContains(t, result, "rebuild-fts")
+	assert.NotContains(t, result, "/api/rag/rebuild")
 	assert.NotContains(t, result, "message/summarize")
 }
 

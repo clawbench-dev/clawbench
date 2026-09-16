@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/gitignore"
 	"clawbench/internal/model"
 
 	"github.com/sahilm/fuzzy"
@@ -87,6 +88,9 @@ type DirSearchResult struct {
 	Size           int64  `json:"size"`
 	Modified       string `json:"modified"`
 	MatchedIndices []int  `json:"matchedIndices"`
+	// Ignored mirrors DirEntry.Ignored so the file manager can dim a hit the
+	// same way it dims a browsed entry; search and browse share one renderer.
+	Ignored bool `json:"ignored,omitempty"`
 }
 
 // DirSearchDone is sent as the SSE done event.
@@ -201,12 +205,17 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	flusher, canFlush := w.(http.Flusher)
 	ctx := r.Context()
 
+	// Recursive search reaches deep below absPath, so each hit is resolved
+	// against its own directory (see onMatch) rather than the search root — a
+	// nested .gitignore must apply to the hits it covers.
+	ign := gitignore.ForDir(absPath)
+
 	// Streaming search: walk + fuzzy match + push results on the fly
 	var sentCount int
 	var totalMatchCount int
 	var truncated bool
 
-	onMatch := func(name, relPathStr, entryType string, matchedIndexes []int, info fs.FileInfo) {
+	onMatch := func(name, relPathStr, entryType string, matchedIndexes []int, info fs.FileInfo, absMatchPath string) {
 		totalMatchCount++
 		if sentCount >= params.limit {
 			truncated = true
@@ -224,6 +233,7 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 			Path:           relPathStr,
 			Type:           entryType,
 			MatchedIndices: matchedIndexes,
+			Ignored:        isIgnored(ign, filepath.Dir(absMatchPath), name, entryType == entryTypeDir),
 		}
 		if info != nil {
 			result.Size = info.Size()
@@ -261,8 +271,8 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // walkAndMatchRecursive walks the directory tree, fuzzy-matching each entry against the query.
-// On match, it calls onMatch. It respects context cancellation.
-func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int, fs.FileInfo)) {
+// On match, it calls onMatch with the entry's absolute path. It respects context cancellation.
+func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int, fs.FileInfo, string)) {
 	err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil //nolint:nilerr // skip inaccessible entries
@@ -297,7 +307,7 @@ func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string,
 			if infoErr != nil {
 				info = nil
 			}
-			onMatch(name, relPathSlash, entryType, matchedIndexes, info)
+			onMatch(name, relPathSlash, entryType, matchedIndexes, info, path)
 		}
 
 		return nil
@@ -308,7 +318,7 @@ func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string,
 }
 
 // walkAndMatchFlat reads only the top-level entries and fuzzy-matches against the query.
-func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int, fs.FileInfo)) {
+func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int, fs.FileInfo, string)) {
 	select {
 	case <-ctx.Done():
 		return
@@ -341,7 +351,7 @@ func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, quer
 			if infoErr != nil {
 				info = nil
 			}
-			onMatch(name, filepath.ToSlash(relPath), entryType, matchedIndexes, info)
+			onMatch(name, filepath.ToSlash(relPath), entryType, matchedIndexes, info, fullPath)
 		}
 	}
 }

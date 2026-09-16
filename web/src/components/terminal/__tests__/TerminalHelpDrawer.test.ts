@@ -21,6 +21,10 @@ const i18n = createI18n({
         helpShortcutCtrlCDesc: '中断',
         helpCommonCopy: '复制文本',
         helpCommonCopyDesc: '选区复制',
+        helpCommonCopyInsert: 'Ctrl+Insert',
+        helpCommonCopyInsertDesc: '任意情况下复制',
+        helpCommonRightClick: '右键菜单',
+        helpCommonRightClickDesc: '右键复制',
         helpVolumeKeys: '音量键',
         helpVolumeKeysDesc: 'Android：音量上/下键',
       },
@@ -106,5 +110,36 @@ describe('TerminalHelpDrawer', () => {
     await new Promise((r) => setTimeout(r, 50))
 
     expect(document.body.querySelector('.th-section')).toBeNull()
+  })
+
+  describe('copy shortcuts', () => {
+    function copyLabels() {
+      return $items().map((el) => el.querySelector('.th-name')?.textContent)
+    }
+
+    it('lists the copy chord, Ctrl+Insert and the right-click path', async () => {
+      wrapper = mount(TerminalHelpDrawer, {
+        props: { open: true, gestures: false, appMode: false, mac: false },
+        global: { plugins: [i18n] },
+      })
+      await new Promise((r) => setTimeout(r, 50))
+
+      const labels = copyLabels()
+      expect(labels).toContain('Ctrl+C / Ctrl+Shift+C')
+      expect(labels).toContain('Ctrl+Insert')
+      expect(labels).toContain('右键菜单')
+    })
+
+    it('shows Cmd+C on macOS (Ctrl+C stays reserved for SIGINT)', async () => {
+      wrapper = mount(TerminalHelpDrawer, {
+        props: { open: true, gestures: false, appMode: false, mac: true },
+        global: { plugins: [i18n] },
+      })
+      await new Promise((r) => setTimeout(r, 50))
+
+      const labels = copyLabels()
+      expect(labels).toContain('Cmd+C')
+      expect(labels).not.toContain('Ctrl+C / Ctrl+Shift+C')
+    })
   })
 })

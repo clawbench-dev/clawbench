@@ -97,7 +97,8 @@
     </div>
 
     <Transition name="copy-bar">
-      <!-- PC 模式用原生复制（Ctrl+C / 右键），不需要弹出复制栏；移动端保留悬浮复制栏 -->
+      <!-- PC 模式用键盘/右键复制（Ctrl+C 有选区时复制、Ctrl+Shift+C、Ctrl+Insert、右键），
+           不需要弹出复制栏；移动端保留悬浮复制栏 -->
       <div v-if="selectionActive && !isPC" class="selection-copy-bar">
         <span class="selection-copy-count">{{ t('terminal.selectedChars', { n: selectedText.length }) }}</span>
         <button class="selection-copy-btn" @click="handleCopySelection" @contextmenu.prevent>{{ t('common.copy') }}</button>
@@ -189,6 +190,7 @@
       :open="helpDrawer.effectiveOpen.value"
       :gestures="!isPC"
       :app-mode="isAppMode"
+      :mac="isMacDesktopUA"
       @close="helpDrawer.close()"
     />
 
@@ -274,13 +276,14 @@ import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import type { Terminal as TerminalType, ITheme } from '@xterm/xterm'
 import { copyText } from '@/utils/clipboard.ts'
+import { isCopySelectionShortcut } from '@/utils/terminalClipboardUtils'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys'
 import { selectionCellsToSelect, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
-import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { usePlatformDetect, isMacDesktopUA } from '@/composables/usePlatformDetect'
 import { useAppMode } from '@/composables/useAppMode'
 import { getNative } from '@/utils/clawbenchNative'
 import { useKeyConfig } from '@/composables/useKeyConfig'
@@ -663,6 +666,25 @@ const tabManager = useTerminalTabs(getWsUrl, {
   },
   onTermCreated: (term) => {
     term.onSelectionChange(() => updateSelectionFromTerm(term))
+    // Ctrl+C in xterm.js sends ETX (\x03) to the PTY and calls preventDefault(),
+    // which suppresses the browser's native copy. So with text selected there was
+    // no keyboard way to copy — only the undiscoverable Ctrl+Insert worked.
+    // Intercept the copy chord here and copy the selection ourselves; without a
+    // selection we return true so Ctrl+C still interrupts (SIGINT).
+    term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
+      if (!isCopySelectionShortcut(ev, term.hasSelection(), isMacDesktopUA)) return true
+      const text = term.getSelection()
+      if (!text) return true
+      ev.preventDefault()
+      copyText(text, () => {
+        term.clearSelection()
+        updateSelectionFromTerm(term)
+        toast.show(t('terminal.copied'), { icon: '✅', type: 'success' })
+      }, () => {
+        toast.show(t('terminal.copyFailed'), { icon: '⚠️', type: 'error' })
+      })
+      return false
+    })
   },
   onCloseSessionViaHttp: (sessionId: string) => {
     fetch(`/api/terminal/close?session=${encodeURIComponent(sessionId)}`, { method: 'POST' }).catch(() => {})

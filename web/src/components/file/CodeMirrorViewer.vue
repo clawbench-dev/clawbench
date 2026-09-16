@@ -856,14 +856,14 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
         background: color-mix(in srgb, var(--accent-color) 20%, transparent);
     }
 }
-.cm-diff-gutter-M { color: var(--color-yellow); }
-.cm-diff-gutter-D { color: var(--color-red); }
-.cm-diff-gutter-A { color: var(--color-green); }
-
-/* Diff line backgrounds */
-.cm-diff-line-M { background: color-mix(in srgb, var(--color-yellow) 8%, transparent); }
-.cm-diff-line-D { background: color-mix(in srgb, var(--color-red) 8%, transparent); }
-.cm-diff-line-A { background: color-mix(in srgb, var(--color-green) 8%, transparent); }
+/* Diff line backgrounds + leading rail.
+   Declared in the shared diff-row stylesheet (css/diff-rows.css) so a changed
+   line reads the same here as in the git history, the diff drawer and the chat
+   tool-call edits. The gutter labels below stay local: they are this surface's
+   own M/D/+ affordance. */
+.cm-diff-gutter-M { color: var(--diff-mod-accent); }
+.cm-diff-gutter-D { color: var(--diff-del-accent); }
+.cm-diff-gutter-A { color: var(--diff-add-accent); }
 
 /* Word-wrap mode */
 .cm-viewer .cm-lineWrapping { word-break: break-all; }

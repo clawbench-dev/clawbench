@@ -392,6 +392,30 @@ func (c *ACPConn) reapplyConfigOption(ctx context.Context, acpSID, configID, val
 }
 
 // isAliveLocked checks if the connection is still alive (must hold c.mu).
+//
+// Two independent conditions, because either can fail on its own:
+//
+//   - The SDK connection is not done. This catches a closed pipe.
+//   - The OS still has the process. This catches a process that exited while
+//     its pipe stayed open, so the SDK never observes EOF and c.conn.Done()
+//     never fires — typically because an orphaned grandchild (e.g. an MCP
+//     server spawned by the agent) inherited the write end of stdout/stderr.
+//     Without this check such a connection is reused indefinitely and every
+//     prompt fails against a process that no longer exists.
+//
+// Limits worth knowing before extending this:
+//
+//   - A zombie (exited, not yet reaped) still answers signal 0, and a reused
+//     PID would look alive. Neither is distinguishable from a live process by
+//     PID alone; the check is a cheap improvement, not a guarantee.
+//   - It does NOT detect a wedged-but-running agent (event loop stopped,
+//     process alive). That is the shape of the incident this area was
+//     investigated for, and it is handled after the fact by the empty-turn
+//     detection in acp_conn_prompt.go, which respawns the agent.
+//
+// Deliberately NOT an idle/heartbeat timeout. An agent legitimately goes quiet
+// for minutes while a long tool runs, and Prompt must never be given a timeout
+// (see acp_pool.go) — a quiet-but-healthy agent must stay reusable.
 func (c *ACPConn) isAliveLocked() bool {
 	if c.conn == nil {
 		return false
@@ -400,8 +424,13 @@ func (c *ACPConn) isAliveLocked() bool {
 	case <-c.conn.Done():
 		return false
 	default:
-		return true
 	}
+	if c.cmd != nil && c.cmd.Process != nil && !agentProcessAlive(c.cmd.Process.Pid) {
+		slog.Warn("acp conn: agent process no longer exists, treating connection as dead",
+			"clawbench_sid", c.clawbenchSID, "pid", c.cmd.Process.Pid)
+		return false
+	}
+	return true
 }
 
 // killProcessLocked kills the agent subprocess and waits for it to exit.

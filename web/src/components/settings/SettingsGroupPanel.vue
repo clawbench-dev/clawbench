@@ -97,8 +97,8 @@
       <div v-if="isRagPanel" class="group-panel__rag-actions">
         <button
           class="fbtn fbtn-danger refresh-spin"
-          :class="{ 'refresh-spin--active': ragFtsRebuilding }"
-          :disabled="ragFtsRebuilding || ragVectorRebuilding"
+          :class="{ 'refresh-spin--active': ragRebuildKind === 'fts' }"
+          :disabled="ragRebuilding"
           @click="handleRagRebuild('fts')"
         >
           <RotateCcw :size="14" />
@@ -106,13 +106,28 @@
         </button>
         <button
           class="fbtn fbtn-danger refresh-spin"
-          :class="{ 'refresh-spin--active': ragVectorRebuilding }"
-          :disabled="ragFtsRebuilding || ragVectorRebuilding || !localValues['rag.vector_enabled']"
+          :class="{ 'refresh-spin--active': ragRebuildKind === 'vector' }"
+          :disabled="ragRebuilding || !localValues['rag.vector_enabled']"
           @click="handleRagRebuild('vector')"
         >
           <RotateCcw :size="14" />
           {{ t('settings.items.ragVectorRebuild') }}
         </button>
+        <button
+          class="fbtn fbtn-danger refresh-spin"
+          :class="{ 'refresh-spin--active': ragRebuildKind === 'full' }"
+          :disabled="ragRebuilding"
+          @click="handleRagRebuild('full')"
+        >
+          <RotateCcw :size="14" />
+          {{ t('settings.items.ragFullRebuild') }}
+        </button>
+        <!-- Live progress for the running rebuild. The message-index progress
+             rows elsewhere in this panel describe backlog, not rebuild progress,
+             so the rebuild needs its own indicator. -->
+        <span v-if="ragRebuilding" class="group-panel__rag-progress">
+          {{ ragRebuildProgressText }}
+        </span>
       </div>
       <div class="group-panel__save-row">
         <button
@@ -186,8 +201,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useFrp } from '@/composables/useFrp'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
-import { startFtsRebuild } from '@/composables/useFtsRebuild'
-import { apiPost } from '@/utils/api'
+import { startRebuild, rebuildStatus, type RebuildKind } from '@/composables/useRagRebuild'
 import { formatFileSize } from '@/utils/fileType'
 import '@/assets/modal-footer-btn.css'
 import { SORTED_THEME_IDS, buildTerminalThemePreviews, formatThemeName, loadThemesModule } from '@/utils/terminalThemes'
@@ -551,12 +565,39 @@ async function onSave() {
 
 // ── Custom field actions (RAG progress) ──
 
-const ragVectorRebuilding = ref(false)
-const ragFtsRebuilding = ref(false)
+// Which rebuild kind is currently running, or null when idle. A single ref
+// because the server allows only one rebuild at a time across all kinds.
+const ragRebuildKind = ref<RebuildKind | null>(null)
+const ragRebuilding = computed(() => ragRebuildKind.value !== null)
 const ragRefreshing = ref(false)
 // Set on unmount so an in-flight status poller stops instead of looping after
 // the panel is gone. The rebuild continues server-side regardless.
 let ragRebuildUnmounted = false
+
+// Confirm/title/success keys per kind, kept as maps so the handler stays flat.
+const RAG_REBUILD_CONFIRM: Record<RebuildKind, string> = {
+  fts: 'settings.items.ragFtsRebuildConfirm',
+  vector: 'settings.items.ragVectorRebuildConfirm',
+  full: 'settings.items.ragFullRebuildConfirm',
+}
+const RAG_REBUILD_TITLE: Record<RebuildKind, string> = {
+  fts: 'settings.items.ragFtsRebuild',
+  vector: 'settings.items.ragVectorRebuild',
+  full: 'settings.items.ragFullRebuild',
+}
+const RAG_REBUILD_SUCCESS: Record<RebuildKind, string> = {
+  fts: 'settings.items.ragFtsRebuildSuccess',
+  vector: 'settings.items.ragVectorRebuildSuccess',
+  full: 'settings.items.ragFullRebuildSuccess',
+}
+
+// Live progress text for the running rebuild, e.g. "12300/44434 · 28%".
+const ragRebuildProgressText = computed(() => {
+  const s = rebuildStatus.value
+  if (s.total <= 0) return t('settings.items.ragRebuildStarting')
+  const label = `${s.processed}/${s.total}`
+  return `${label} · ${s.progress_pct}%`
+})
 
 const isRagPanel = computed(() => props.config.panelId === 'rag')
 
@@ -570,20 +611,24 @@ async function handleRagRefresh() {
 }
 
 /**
- * Rebuild one RAG index independently.
- * - fts: re-segments every chunk from its source text and rebuilds the
- *   full-text index (vectors untouched). Re-segmentation is what makes this
- *   useful after a segmenter change; a bare index rebuild would reproduce the
- *   same content.
- * - vector: re-embeds all chunks with the current model (FTS/chunks untouched)
+ * Rebuild one layer of the RAG index.
+ *
+ * All three kinds run in the background on the server (202 + status polling);
+ * they differ in how much work is redone:
+ * - fts:    re-segments existing chunks. Used after a segmenter/dictionary change,
+ *           or to repair chunks indexed while the segmenter was unavailable.
+ * - vector: re-embeds existing chunks. Used after switching embedding models.
+ * - full:   deletes all chunks and rebuilds from the source messages, so it is the
+ *           only kind that re-chunks — required after changing chunk_size/overlap.
+ *
+ * The work is never awaited inline: a full re-segmentation takes minutes on a
+ * large store and the shared API timeout is 10s, which previously made a
+ * successful rebuild report as a failure.
  */
-async function handleRagRebuild(kind: 'fts' | 'vector') {
-  const isVector = kind === 'vector'
-  const rebuildingRef = isVector ? ragVectorRebuilding : ragFtsRebuilding
-  if (rebuildingRef.value) return
-  const confirmKey = isVector ? 'settings.items.ragVectorRebuildConfirm' : 'settings.items.ragFtsRebuildConfirm'
-  const titleKey = isVector ? 'settings.items.ragVectorRebuild' : 'settings.items.ragFtsRebuild'
-  const successKey = isVector ? 'settings.items.ragVectorRebuildSuccess' : 'settings.items.ragFtsRebuildSuccess'
+async function handleRagRebuild(kind: RebuildKind) {
+  if (ragRebuilding.value) return
+  const confirmKey = RAG_REBUILD_CONFIRM[kind]
+  const titleKey = RAG_REBUILD_TITLE[kind]
 
   const confirmed = await dialog.confirm(
     t(confirmKey),
@@ -591,29 +636,24 @@ async function handleRagRebuild(kind: 'fts' | 'vector') {
   )
   if (!confirmed) return
 
-  rebuildingRef.value = true
+  ragRebuildKind.value = kind
   try {
-    if (isVector) {
-      await apiPost('/api/rag/reset-vector', {})
-      toast.show(t(successKey), { icon: '✅', type: 'success', duration: 3000 })
-      refreshRagStatus()
-      return
-    }
-
-    // FTS rebuild runs in the background: the server answers 202 and we poll
-    // for the outcome. Holding the request open does not work — the rebuild
-    // re-segments every chunk (~minutes on a large store) and the shared API
-    // timeout is 10s, which made successful rebuilds report as failures.
-    const status = await startFtsRebuild(() => ragRebuildUnmounted)
+    const status = await startRebuild(kind, () => ragRebuildUnmounted)
     if (status === null) {
-      // Polling gave up (unmounted or runaway). Not a server failure.
-      toast.show(t('settings.items.ragFtsRebuildStillRunning'), { icon: '⏳', type: 'info', duration: 5000 })
+      // Polling gave up (unmounted or runaway). Not a server failure: the
+      // rebuild is still running server-side.
+      toast.show(t('settings.items.ragRebuildStillRunning'), { icon: '⏳', type: 'info', duration: 5000 })
       return
     }
     if (status.status === 'done') {
+      toast.show(t(RAG_REBUILD_SUCCESS[kind]), { icon: '✅', type: 'success', duration: 5000 })
+    } else if (status.status === 'blocked') {
+      // The work cannot finish (e.g. embedding service down during a vector
+      // rebuild). Distinct from an error: nothing is broken, it just needs the
+      // dependency back.
       toast.show(
-        t('settings.items.ragFtsRebuildSuccessCount', { count: status.resegmented }),
-        { icon: '✅', type: 'success', duration: 5000 },
+        t('settings.items.ragRebuildBlocked', { reason: status.error || '' }),
+        { icon: '⏸️', type: 'info', duration: 8000 },
       )
     } else if (status.status === 'error') {
       toast.show(
@@ -621,7 +661,7 @@ async function handleRagRebuild(kind: 'fts' | 'vector') {
         { icon: '⚠️', type: 'error', duration: 5000 },
       )
     } else if (status.status === 'cancelled') {
-      toast.show(t('settings.items.ragFtsRebuildCancelled'), { icon: '⏹️', type: 'info', duration: 3000 })
+      toast.show(t('settings.items.ragRebuildCancelled'), { icon: '⏹️', type: 'info', duration: 3000 })
     }
     refreshRagStatus()
   } catch (err) {
@@ -636,7 +676,7 @@ async function handleRagRebuild(kind: 'fts' | 'vector') {
       { icon: '⚠️', type: 'error', duration: 5000 },
     )
   } finally {
-    rebuildingRef.value = false
+    ragRebuildKind.value = null
   }
 }
 
@@ -883,10 +923,22 @@ watch(localValues, () => {
   display: flex;
   gap: var(--space-4);
   margin-bottom: var(--space-4);
+  /* Three rebuild buttons plus a progress label wrap on narrow panels. */
+  flex-wrap: wrap;
 }
 
 .group-panel__rag-actions .fbtn {
   flex: 1;
+}
+
+/* Live progress for the running rebuild, e.g. "12300/44434 · 28%". Takes its own
+   row so it does not squeeze the buttons. */
+.group-panel__rag-progress {
+  flex-basis: 100%;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .group-panel__restart-hint {

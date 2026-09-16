@@ -263,11 +263,12 @@
             active: (!multiSelect.active && selectedPath === pathOf(entry)) || (multiSelect.active && multiSelect.selected.has(pathOf(entry))),
             'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === pathOf(entry),
             'cut-item': isCutItem(pathOf(entry)),
+            'git-ignored': entry.ignored,
             'drag-target': dropTargetPath === pathOf(entry) && entry.type === 'dir'
           }"
           :data-action="entry.type === 'dir' ? 'dir' : 'file'"
           :data-path="pathOf(entry)"
-          :title="searchHasQuery ? pathOf(entry) : undefined"
+          :title="entryTitle(entry)"
         >
           <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }">
             <img v-if="entry.type !== 'dir' && isThumbLoaded(entry)" class="file-thumb" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
@@ -336,10 +337,12 @@
           'grid-active': (!multiSelect.active && selectedPath === pathOf(entry)) || (multiSelect.active && multiSelect.selected.has(pathOf(entry))),
           'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === pathOf(entry),
           'cut-item': isCutItem(pathOf(entry)),
+          'git-ignored': entry.ignored,
           'drag-target': dropTargetPath === pathOf(entry) && entry.type === 'dir'
         }"
         :data-action="entry.type === 'dir' ? 'dir' : 'file'"
         :data-path="pathOf(entry)"
+        :title="entryTitle(entry)"
       >
         <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }">
           <img v-if="isThumbLoaded(entry)" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
@@ -1331,6 +1334,7 @@ function browseToDisplay(entry) {
         modified: entry.modified,
         symlink: entry.symlink,
         broken: entry.broken,
+        ignored: entry.ignored,
     }
 }
 
@@ -1349,6 +1353,18 @@ function pathOf(entry) {
 
 function keyOf(entry) {
     return entry.path != null ? entry.path : entry.name
+}
+
+/**
+ * Tooltip for a row. Search hits always show their full path (they may live
+ * outside the browsed directory); a gitignored entry explains the dimming so the
+ * faded look does not read as a bug.
+ */
+function entryTitle(entry) {
+    const parts = []
+    if (searchHasQuery.value) parts.push(pathOf(entry))
+    if (entry.ignored) parts.push(t('file.gitIgnored'))
+    return parts.length ? parts.join('\n') : undefined
 }
 
 function entryByPath(path) {
@@ -2641,6 +2657,32 @@ function scrollSelectedIntoView(path) {
 .file-item.cut-item,
 .grid-item.cut-item {
     opacity: var(--opacity-muted);
+}
+
+/* ── Gitignored entry: dim the text and icon only ──
+   The row stays fully interactive (open/rename/delete all still work), so only
+   the label, meta and icon fade — dimming the whole row would read as disabled.
+   Selection/active states below intentionally win, so a selected ignored entry
+   still looks selected. */
+.file-item.git-ignored .file-name,
+.file-item.git-ignored .file-parent-dir,
+.file-item.git-ignored .file-meta,
+.file-item.git-ignored .file-icon,
+.file-item.git-ignored .file-thumb,
+.grid-item.git-ignored .grid-name,
+.grid-item.git-ignored .grid-parent-dir,
+.grid-item.git-ignored .grid-icon,
+.grid-item.git-ignored .grid-thumb img {
+    opacity: var(--opacity-muted);
+}
+
+.file-item.git-ignored.active .file-name,
+.file-item.git-ignored.active .file-parent-dir,
+.file-item.git-ignored.active .file-meta,
+.file-item.git-ignored.active .file-icon,
+.file-item.git-ignored.active .file-thumb,
+.grid-item.git-ignored.grid-active .grid-name {
+    opacity: 1;
 }
 
 /* ── File list area ── */

@@ -91,6 +91,10 @@ interface DirEntry {
     supported?: boolean
     symlink?: boolean
     broken?: boolean
+    /** Git would not track this entry (matched by .gitignore, or under an
+     *  excluded directory). Advisory only: the entry stays fully operable, the
+     *  UI just dims it. Absent outside a git repository. */
+    ignored?: boolean
 }
 
 interface CurrentFile {

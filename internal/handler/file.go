@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/gitignore"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 )
@@ -97,7 +98,7 @@ func ListDir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	within := func(absPath string) bool { return isPathUnderBase(absPath, basePath) }
-	items := buildDirEntries(absPath, entries, within)
+	items := buildDirEntries(absPath, entries, within, gitignore.ForDir(absPath))
 
 	relFromBase, _ := filepath.Rel(basePath, absPath)
 	relFromBase = filepath.ToSlash(relFromBase)
@@ -660,7 +661,7 @@ func ServeProjects(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo //
 		return
 	}
 
-	items := buildDirEntries(absPath, entries, isPathUnderAnyRoot)
+	items := buildDirEntries(absPath, entries, isPathUnderAnyRoot, gitignore.ForDir(absPath))
 
 	// Compute parent — stop at root level (no parent above root/drives)
 	var parent *string
@@ -925,6 +926,10 @@ type DirEntry struct {
 	Supported bool   `json:"supported"`
 	Symlink   bool   `json:"symlink,omitempty"`
 	Broken    bool   `json:"broken,omitempty"`
+	// Ignored marks an entry git would not track (matched by .gitignore, or
+	// sitting under an excluded directory). It is advisory only: ignored entries
+	// stay listed and fully operable, the UI just dims them.
+	Ignored bool `json:"ignored,omitempty"`
 }
 
 // FileContent represents file content in API responses
@@ -983,7 +988,10 @@ func isNotDirError(err error) bool {
 // preventing symlink traversal. A symlink-to-directory is typed as "dir" so the
 // frontend can navigate into it; symlinks whose target escapes the base or is
 // dangling stay listed but non-navigable.
-func buildDirEntries(parentDir string, entries []os.DirEntry, within func(absPath string) bool) []DirEntry {
+//
+// ign may be nil (not a git repository), in which case no entry is flagged as
+// ignored.
+func buildDirEntries(parentDir string, entries []os.DirEntry, within func(absPath string) bool, ign *gitignore.Matcher) []DirEntry {
 	var items []DirEntry
 	for _, entry := range entries {
 		name := entry.Name()
@@ -992,7 +1000,13 @@ func buildDirEntries(parentDir string, entries []os.DirEntry, within func(absPat
 		// Resolve symlink-to-directory before classifying so linked dirs can be
 		// entered (entry.IsDir()/Info() use lstat and would misclassify them).
 		if isSymlink {
-			items = append(items, classifySymlinkEntry(parentDir, entry, within))
+			item := classifySymlinkEntry(parentDir, entry, within)
+			// gitignore matching uses lstat, so a symlink counts as a FILE even
+			// when its target is a directory: a directory-only pattern like
+			// "build/" does not match a symlink named "build". The entry's Type
+			// is still "dir" so the UI can navigate into it.
+			item.Ignored = isIgnored(ign, parentDir, name, false)
+			items = append(items, item)
 			continue
 		}
 
@@ -1004,7 +1018,11 @@ func buildDirEntries(parentDir string, entries []os.DirEntry, within func(absPat
 			// so the entry still appears in the listing (without size/modTime).
 			slog.Warn("failed to get file info, using fallback", slog.String("name", name), slog.String("err", infoErr.Error()))
 			if entry.IsDir() {
-				items = append(items, DirEntry{Name: name, Type: "dir"})
+				items = append(items, DirEntry{
+					Name:    name,
+					Type:    "dir",
+					Ignored: isIgnored(ign, parentDir, name, true),
+				})
 			} else {
 				entryType := "file"
 				if model.IsImageFile(name) {
@@ -1014,13 +1032,19 @@ func buildDirEntries(parentDir string, entries []os.DirEntry, within func(absPat
 					Name:      name,
 					Type:      entryType,
 					Supported: model.IsSupportedFile(name),
+					Ignored:   isIgnored(ign, parentDir, name, false),
 				})
 			}
 			continue
 		}
 		if entry.IsDir() {
 			modified := info.ModTime().Format(time.RFC3339)
-			items = append(items, DirEntry{Name: name, Type: "dir", Modified: modified})
+			items = append(items, DirEntry{
+				Name:     name,
+				Type:     "dir",
+				Modified: modified,
+				Ignored:  isIgnored(ign, parentDir, name, true),
+			})
 		} else {
 			entryType := "file"
 			if model.IsImageFile(name) {
@@ -1032,6 +1056,7 @@ func buildDirEntries(parentDir string, entries []os.DirEntry, within func(absPat
 				Modified:  info.ModTime().Format(time.RFC3339),
 				Size:      info.Size(),
 				Supported: model.IsSupportedFile(name),
+				Ignored:   isIgnored(ign, parentDir, name, false),
 			})
 		}
 	}
@@ -1042,6 +1067,15 @@ func buildDirEntries(parentDir string, entries []os.DirEntry, within func(absPat
 		return items[i].Name < items[j].Name
 	})
 	return items
+}
+
+// isIgnored reports whether git would ignore the child of parentDir. It is a
+// thin nil-safe wrapper so the listing code stays free of repository details.
+func isIgnored(ign *gitignore.Matcher, parentDir, name string, isDir bool) bool {
+	if ign == nil {
+		return false
+	}
+	return ign.Ignored(filepath.Join(parentDir, name), isDir)
 }
 
 // classifySymlinkEntry classifies a symlink entry by following its target.

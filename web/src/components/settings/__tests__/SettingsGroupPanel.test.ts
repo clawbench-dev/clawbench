@@ -118,12 +118,27 @@ vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
 }))
 
-// The FTS rebuild is triggered then polled to completion by this composable.
+// The rebuild is triggered then polled to completion by this composable.
 // Mocking it lets the panel tests assert the UI reaction to each outcome
-// without exercising the polling loop (covered by useFtsRebuild.test.ts).
-const mockStartFtsRebuild = vi.fn()
-vi.mock('@/composables/useFtsRebuild', () => ({
-  startFtsRebuild: (...args: unknown[]) => mockStartFtsRebuild(...args),
+// without exercising the polling loop (covered by useRagRebuild.test.ts).
+// vi.mock factories are hoisted above module-level consts, so the shared state
+// must live inside the factory (same pattern as useRagStatus above) and be
+// re-exposed through a holder declared before it is used.
+// vi.mock factories are hoisted above module-level consts, so the state is
+// created inside vi.hoisted (which runs first) and referenced from the factory.
+// A real ref (not a plain object) is required: the panel's progress label is a
+// computed derived from it and must update when the poller writes to it.
+const _rebuildMock = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { ref } = require('vue') as typeof import('vue')
+  return {
+    status: ref({ kind: '', status: 'idle', phase: '', total: 0, processed: 0, progress_pct: 0, elapsed_ms: 0 }),
+    start: vi.fn(),
+  }
+})
+vi.mock('@/composables/useRagRebuild', () => ({
+  startRebuild: (...args: unknown[]) => _rebuildMock.start(...args),
+  rebuildStatus: _rebuildMock.status,
 }))
 
 vi.mock('@/utils/api', () => ({
@@ -133,6 +148,8 @@ vi.mock('@/utils/api', () => ({
 // Accessible references for test manipulation
 const mockRagStatus = _ragMockState.status
 const mockRagRefresh = _ragMockState.refresh
+const mockStartRebuild = _rebuildMock.start
+const mockRebuildStatus = _rebuildMock.status
 
 // ── Mock engineVoiceOptions ──
 
@@ -221,6 +238,13 @@ const i18n = createI18n({
           ragFtsRebuildSuccessCount: '全文索引已重建，{count} 个文本块的分词已更新',
           ragFtsRebuildStillRunning: '重建仍在后台进行，可稍后刷新查看进度',
           ragFtsRebuildCancelled: '重建已取消',
+          ragFullRebuild: '全部重建',
+          ragFullRebuildConfirm: '全部重建会删除所有索引数据',
+          ragFullRebuildSuccess: '全部重建已完成',
+          ragRebuildStillRunning: '重建仍在后台进行，可稍后刷新查看进度',
+          ragRebuildCancelled: '重建已取消',
+          ragRebuildStarting: '正在启动…',
+          ragRebuildBlocked: '重建无法完成：{reason}',
           ragVectorRebuild: '重建向量索引',
           ragVectorRebuildConfirm: '重建向量将清空所有向量嵌入数据',
           ragVectorRebuildSuccess: '向量索引已清空，正在重新嵌入',
@@ -1457,20 +1481,25 @@ describe('SettingsGroupPanel', () => {
       vi.mocked(apiPost).mockClear()
       vi.mocked(apiPost).mockResolvedValue(undefined)
       mockToastShow.mockClear()
-      mockStartFtsRebuild.mockReset()
+      mockStartRebuild.mockReset()
+      mockRebuildStatus.value = {
+        kind: '', status: 'idle', phase: '', total: 0, processed: 0,
+        progress_pct: 0, elapsed_ms: 0,
+      }
       // Default: rebuild completes with nothing to change.
-      mockStartFtsRebuild.mockResolvedValue({
-        status: 'done', phase: 'indexing', total: 0, processed: 0,
-        progress_pct: 100, indexed: 0, resegmented: 0, elapsed_ms: 1,
+      mockStartRebuild.mockResolvedValue({
+        kind: 'fts', status: 'done', phase: 'indexing',
+        total: 0, processed: 0, progress_pct: 100, elapsed_ms: 1,
       })
     })
 
-    it('renders two rebuild buttons in the footer for the RAG panel', () => {
+    it('renders three rebuild buttons in the footer for the RAG panel', () => {
       const wrapper = mountPanel(makeRagConfig())
       const buttons = wrapper.findAll('.group-panel__rag-actions .fbtn')
-      expect(buttons).toHaveLength(2)
+      expect(buttons).toHaveLength(3)
       expect(buttons[0].text()).toContain('重建全文索引')
       expect(buttons[1].text()).toContain('重建向量索引')
+      expect(buttons[2].text()).toContain('全部重建')
     })
 
     it('does not render rebuild buttons for non-RAG panels', () => {
@@ -1478,27 +1507,32 @@ describe('SettingsGroupPanel', () => {
       expect(wrapper.findAll('.group-panel__rag-actions')).toHaveLength(0)
     })
 
-    it('calls the independent FTS rebuild endpoint', async () => {
-      mockStartFtsRebuild.mockResolvedValue({
-        status: 'done', phase: 'indexing', total: 1, processed: 1,
-        progress_pct: 100, indexed: 1, resegmented: 0, elapsed_ms: 5,
-      })
+    it('triggers the fts kind for the first button', async () => {
       const wrapper = mountPanel(makeRagConfig())
       const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
       await ftsBtn.trigger('click')
       await nextTick()
       // The composable owns the POST + polling; the panel must not call the
       // endpoint directly, or the request would be held open for the rebuild.
-      expect(mockStartFtsRebuild).toHaveBeenCalled()
-      expect(apiPost).not.toHaveBeenCalledWith('/api/rag/rebuild-fts', {})
+      expect(mockStartRebuild).toHaveBeenCalledWith('fts', expect.any(Function))
     })
 
-    it('calls the vector rebuild endpoint', async () => {
+    it('triggers the vector kind for the second button', async () => {
       const wrapper = mountPanel(makeRagConfig())
       const vecBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[1]
       await vecBtn.trigger('click')
       await nextTick()
-      expect(apiPost).toHaveBeenCalledWith('/api/rag/reset-vector', {})
+      expect(mockStartRebuild).toHaveBeenCalledWith('vector', expect.any(Function))
+    })
+
+    it('triggers the full kind for the third button', async () => {
+      // A full rebuild is the only kind that re-chunks, so it must be reachable
+      // independently of the other two.
+      const wrapper = mountPanel(makeRagConfig())
+      const fullBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[2]
+      await fullBtn.trigger('click')
+      await nextTick()
+      expect(mockStartRebuild).toHaveBeenCalledWith('full', expect.any(Function))
     })
 
     it('disables the vector rebuild button when vector embedding is off', () => {
@@ -1508,48 +1542,100 @@ describe('SettingsGroupPanel', () => {
       expect(vecBtn.attributes('disabled')).toBeDefined()
     })
 
-    it('reports the re-segmented chunk count from the terminal status', async () => {
-      // 0 is the interesting value: it means the stored segmentation was already
-      // current, and the user should see that rather than assume nothing ran.
-      mockStartFtsRebuild.mockResolvedValue({
-        status: 'done', phase: 'indexing', total: 10, processed: 10,
-        progress_pct: 100, indexed: 10, resegmented: 0, elapsed_ms: 5,
-      })
+    it('keeps the full rebuild available when vector embedding is off', () => {
+      // Full rebuild re-chunks; it is useful in FTS-only mode too.
+      localValues['rag.vector_enabled'] = false
       const wrapper = mountPanel(makeRagConfig())
-      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
-      await ftsBtn.trigger('click')
-      await nextTick()
-      await flushPromises()
-
-      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
-      expect(messages.some(m => m.includes('0 个文本块'))).toBe(true)
+      const fullBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[2]
+      expect(fullBtn.attributes('disabled')).toBeUndefined()
     })
 
-    it('reports a non-zero re-segmented count', async () => {
-      mockStartFtsRebuild.mockResolvedValue({
-        status: 'done', phase: 'indexing', total: 10, processed: 10,
-        progress_pct: 100, indexed: 10, resegmented: 42, elapsed_ms: 5,
-      })
+    it('disables every rebuild button while one is running', async () => {
+      // The server allows only one rebuild at a time, so the UI must not offer
+      // a second one that would be rejected with 409.
+      let release: (v: unknown) => void = () => {}
+      mockStartRebuild.mockReturnValue(new Promise(resolve => { release = resolve }))
+
       const wrapper = mountPanel(makeRagConfig())
-      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
-      await ftsBtn.trigger('click')
+      const buttons = wrapper.findAll('.group-panel__rag-actions .fbtn')
+      await buttons[0].trigger('click')
+      await nextTick()
+
+      const after = wrapper.findAll('.group-panel__rag-actions .fbtn')
+      expect(after[0].attributes('disabled')).toBeDefined()
+      expect(after[1].attributes('disabled')).toBeDefined()
+      expect(after[2].attributes('disabled')).toBeDefined()
+
+      release({ kind: 'fts', status: 'done', phase: 'indexing', total: 0, processed: 0, progress_pct: 100, elapsed_ms: 1 })
+      await flushPromises()
+    })
+
+    it('shows live progress while the rebuild runs', async () => {
+      // The message-index progress rows describe backlog, not rebuild progress,
+      // so the rebuild needs its own indicator.
+      mockRebuildStatus.value = {
+        kind: 'fts', status: 'running', phase: 'resegmenting',
+        total: 44434, processed: 12300, progress_pct: 28, elapsed_ms: 1000,
+      }
+      let release: (v: unknown) => void = () => {}
+      mockStartRebuild.mockReturnValue(new Promise(resolve => { release = resolve }))
+
+      const wrapper = mountPanel(makeRagConfig())
+      await wrapper.findAll('.group-panel__rag-actions .fbtn')[0].trigger('click')
+      await nextTick()
+
+      const progress = wrapper.find('.group-panel__rag-progress')
+      expect(progress.exists()).toBe(true)
+      expect(progress.text()).toContain('12300/44434')
+      expect(progress.text()).toContain('28%')
+
+      release({ kind: 'fts', status: 'done', phase: 'indexing', total: 44434, processed: 44434, progress_pct: 100, elapsed_ms: 1 })
+      await flushPromises()
+    })
+
+    it('hides the progress indicator when idle', () => {
+      const wrapper = mountPanel(makeRagConfig())
+      expect(wrapper.find('.group-panel__rag-progress').exists()).toBe(false)
+    })
+
+    it('reports success for a completed rebuild', async () => {
+      const wrapper = mountPanel(makeRagConfig())
+      await wrapper.findAll('.group-panel__rag-actions .fbtn')[0].trigger('click')
       await nextTick()
       await flushPromises()
 
       const messages = mockToastShow.mock.calls.map(c => String(c[0]))
-      expect(messages.some(m => m.includes('42 个文本块'))).toBe(true)
+      expect(messages.some(m => m.includes('全文索引已重新分词并重建'))).toBe(true)
+    })
+
+    it('reports a blocked rebuild distinctly from a failure', async () => {
+      // A vector rebuild whose embedding service is down is blocked, not failed:
+      // nothing is broken, it just needs the dependency back. Showing "failed"
+      // would send the user looking for a bug that is not there.
+      mockStartRebuild.mockResolvedValue({
+        kind: 'vector', status: 'blocked', phase: 'embedding',
+        total: 100, processed: 0, progress_pct: 0, elapsed_ms: 5,
+        error: 'embedding service unavailable',
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      await wrapper.findAll('.group-panel__rag-actions .fbtn')[1].trigger('click')
+      await nextTick()
+      await flushPromises()
+
+      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
+      expect(messages.some(m => m.includes('重建无法完成'))).toBe(true)
+      expect(messages.some(m => m.includes('重建索引失败'))).toBe(false)
     })
 
     it('shows the server error message when the background rebuild fails', async () => {
-      // A failure now arrives via the polled status, not as a rejected request.
-      mockStartFtsRebuild.mockResolvedValue({
-        status: 'error', phase: '', total: 10, processed: 3,
-        progress_pct: 30, indexed: 0, resegmented: 0, elapsed_ms: 5,
+      // A failure arrives via the polled status, not as a rejected request.
+      mockStartRebuild.mockResolvedValue({
+        kind: 'fts', status: 'error', phase: '',
+        total: 10, processed: 3, progress_pct: 30, elapsed_ms: 5,
         error: '分词阶段失败：磁盘已满',
       })
       const wrapper = mountPanel(makeRagConfig())
-      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
-      await ftsBtn.trigger('click')
+      await wrapper.findAll('.group-panel__rag-actions .fbtn')[0].trigger('click')
       await nextTick()
       await flushPromises()
 
@@ -1561,10 +1647,9 @@ describe('SettingsGroupPanel', () => {
       // null means the poller stopped (panel closed or runaway guard). The
       // rebuild itself is still going server-side, so this must NOT be
       // reported as a failure.
-      mockStartFtsRebuild.mockResolvedValue(null)
+      mockStartRebuild.mockResolvedValue(null)
       const wrapper = mountPanel(makeRagConfig())
-      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
-      await ftsBtn.trigger('click')
+      await wrapper.findAll('.group-panel__rag-actions .fbtn')[0].trigger('click')
       await nextTick()
       await flushPromises()
 
@@ -1578,11 +1663,10 @@ describe('SettingsGroupPanel', () => {
       // more actionable than the generic "rebuild failed".
       const refusal = new Error('已拒绝重建：分词器不可用') as Error & { msgKey?: string }
       refusal.msgKey = 'RAGSegmenterUnavailable'
-      mockStartFtsRebuild.mockRejectedValue(refusal)
+      mockStartRebuild.mockRejectedValue(refusal)
 
       const wrapper = mountPanel(makeRagConfig())
-      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
-      await ftsBtn.trigger('click')
+      await wrapper.findAll('.group-panel__rag-actions .fbtn')[0].trigger('click')
       await nextTick()
       await flushPromises()
 

@@ -9,6 +9,9 @@ export interface FileSearchResult {
   size?: number
   modified?: string
   matchedIndices: number[]
+  /** Git would not track this hit (see DirEntry.ignored); the file manager dims
+   *  it exactly like a browsed entry. Absent outside a git repository. */
+  ignored?: boolean
 }
 
 export type SearchScope = 'current' | 'global'

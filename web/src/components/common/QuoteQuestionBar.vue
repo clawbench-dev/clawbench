@@ -46,10 +46,10 @@
               @input="autoResizeTextarea"
             />
             <button class="qq-add-btn" @click="handleAdd" :title="t('quoteBar.addToChat')" :aria-label="t('quoteBar.addToChat')">
-              <Plus :size="14" />
+              <Plus :size="13" />
             </button>
             <button class="qq-send-btn" :class="{ disabled: !canSend }" @click="handleSend" :title="t('quoteBar.send')">
-              <Send :size="14" />
+              <Send :size="13" />
             </button>
           </div>
         </div>
@@ -198,7 +198,10 @@ function autoResizeTextarea() {
   if (!el) return
   el.style.height = 'auto'
   const computed = getComputedStyle(el)
-  const lineHeight = parseFloat(computed.lineHeight) || 20
+  // Unitless line-height resolves to px here; fall back to the ratio off the
+  // font size so the cap tracks the CSS rather than a hard-coded box.
+  const lineHeight = parseFloat(computed.lineHeight)
+    || (parseFloat(computed.fontSize) || 13) * 1.4
   const paddingTop = parseFloat(computed.paddingTop) || 0
   const paddingBottom = parseFloat(computed.paddingBottom) || 0
   const maxContentHeight = lineHeight * 3
@@ -425,13 +428,15 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: var(--font-size-2xl);
-  line-height: 20px;
+  /* Mirrors .chat-textarea: same type scale as the chat message body, and the
+     height caps are derived from that same line box. */
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-snug);
   outline: none;
   resize: none;
   overflow-y: auto;
-  min-height: 28px;
-  max-height: calc(20px * 3 + 4px + 4px); /* 3 lines + padding-top + padding-bottom */
+  min-height: calc(1em * var(--line-height-snug) + var(--space-2) * 2);
+  max-height: calc(1em * var(--line-height-snug) * 3 + var(--space-2) * 2); /* 3 lines + padding-top + padding-bottom */
   font-family: inherit;
 }
 
@@ -444,8 +449,8 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   background: var(--accent-color);
   color: #fff;

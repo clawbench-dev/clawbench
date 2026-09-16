@@ -48,7 +48,7 @@
               @input="autoResizeTextarea"
             />
             <button class="completion-popover-send" :class="{ disabled: !canSend }" @click="handleSend" :title="gt('chat.popover.send')" :aria-label="gt('chat.popover.send')">
-              <Send :size="14" />
+              <Send :size="13" />
             </button>
           </div>
           <div class="completion-popover-actions">
@@ -194,7 +194,10 @@ function autoResizeTextarea(): void {
     if (!el) return
     el.style.height = 'auto'
     const computedStyle = getComputedStyle(el)
-    const lineHeight = parseFloat(computedStyle.lineHeight) || 20
+    // Unitless line-height resolves to px here; fall back to the ratio off the
+    // font size so the cap tracks the CSS rather than a hard-coded box.
+    const lineHeight = parseFloat(computedStyle.lineHeight)
+        || (parseFloat(computedStyle.fontSize) || 13) * 1.4
     const paddingTop = parseFloat(computedStyle.paddingTop) || 0
     const paddingBottom = parseFloat(computedStyle.paddingBottom) || 0
     const maxContentHeight = lineHeight * 3
@@ -566,6 +569,20 @@ function handleSummaryClick(event: MouseEvent): void {
     padding-top: var(--space-1);
 }
 
+/* ── Headings inside the summary ──
+   The summary renders AI reply Markdown through the global .markdown-body
+   rules, whose heading scale is sized for long-form reading (h1 = 1.6em). In
+   this 13px card that computes to 20.8px — larger than the card's OWN title
+   (14px), so a reply opening with `#` makes the body shout louder than the
+   heading that labels it. Clamp the three heading levels to the same values
+   ChatMessageItem uses for chat bubbles, so one reply renders identically
+   whether it lands in the transcript or in this notification.
+   (The leading gap above an opening heading is handled globally by
+   `css/content.css` → `.markdown-body > :first-child`.) */
+.completion-popover-summary.markdown-body h1 { font-size: var(--font-size-2xl); }
+.completion-popover-summary.markdown-body h2 { font-size: var(--font-size-lg); }
+.completion-popover-summary.markdown-body h3 { font-size: var(--font-size-md); }
+
 /* ── 折叠态摘要：富文本预览按固定高度裁剪（不滚动），底部淡出渐变，
    暗示下方还有更多内容。图片此态不展示（CSS 隐藏）。点击内容区展开。
    底部留出淡出带，与下方按钮行重叠（负 margin）以省纵向空间。
@@ -666,13 +683,15 @@ function handleSummaryClick(event: MouseEvent): void {
     border: none;
     background: transparent;
     color: var(--text-primary);
-    font-size: var(--font-size-2xl);
-    line-height: 20px;
+    /* Mirrors .chat-textarea: same type scale as the chat message body, and the
+       height caps are derived from that same line box. */
+    font-size: var(--font-size-md);
+    line-height: var(--line-height-snug);
     outline: none;
     resize: none;
     overflow-y: auto;
-    min-height: 28px;
-    max-height: calc(20px * 3 + 4px + 4px); /* 3 行 + 上下 padding */
+    min-height: calc(1em * var(--line-height-snug) + var(--space-2) * 2);
+    max-height: calc(1em * var(--line-height-snug) * 3 + var(--space-2) * 2); /* 3 行 + 上下 padding */
     font-family: inherit;
 }
 
@@ -685,8 +704,8 @@ function handleSummaryClick(event: MouseEvent): void {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     padding: 0;
     background: var(--accent-color);
     color: #fff;

@@ -89,6 +89,15 @@ func (e *metaExtraction) HasData() bool {
 		(e.Category != nil && e.Category.Present))
 }
 
+// traceRequestID returns the trace requestId carried by this extraction, or ""
+// when absent. Used for replay-drop logging.
+func (e *metaExtraction) traceRequestID() string {
+	if e == nil || e.Trace == nil {
+		return ""
+	}
+	return e.Trace.RequestID
+}
+
 // extractMetaUsage dispatches _meta parsing to the per-agent adapter.
 // backend is the BackendID (e.g. "codebuddy", "claude", "codex", "opencode").
 func extractMetaUsage(backend string, meta map[string]any) *metaExtraction {

@@ -275,20 +275,17 @@ function onDiffClick(event: MouseEvent) {
   display: none;
 }
 
-/* Line type colors */
-.git-diff-scroll :deep(.diff-line-del) {
-  background: rgba(239, 68, 68, 0.08);
-}
+/* Line type colors.
+   The tint and the leading rail come from the shared diff-row stylesheet
+   (css/diff-rows.css) — see it for why a rail is required alongside the
+   colour. Only the gutter's own colouring is per-surface. */
 .git-diff-scroll :deep(.diff-line-del .diff-linum) {
-  color: #dc2626;
+  color: var(--diff-del-accent);
   opacity: var(--opacity-muted);
 }
 
-.git-diff-scroll :deep(.diff-line-add) {
-  background: rgba(34, 197, 94, 0.08);
-}
 .git-diff-scroll :deep(.diff-line-add .diff-linum) {
-  color: #16a34a;
+  color: var(--diff-add-accent);
   opacity: var(--opacity-muted);
 }
 

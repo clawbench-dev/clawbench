@@ -10,7 +10,7 @@
         <h3 class="th-section-title">{{ t(sec.titleKey) }}</h3>
         <ul class="th-list">
           <li v-for="item in sec.items" :key="item.key" class="th-item">
-            <span class="th-name">{{ t(item.nameKey) }}</span>
+            <span class="th-name">{{ item.name ?? t(item.nameKey) }}</span>
             <span class="th-desc">{{ t(item.descKey) }}</span>
           </li>
         </ul>
@@ -31,6 +31,8 @@ const props = defineProps({
   gestures: Boolean,
   /** Android app mode — hardware volume keys forward arrows. */
   appMode: Boolean,
+  /** macOS desktop — the copy chord is Cmd+C there, not Ctrl+Shift+C. */
+  mac: Boolean,
 })
 defineEmits(['close'])
 
@@ -40,6 +42,8 @@ interface HelpItem {
   key: string
   nameKey: string
   descKey: string
+  /** Literal label shown instead of t(nameKey) — used when the key label varies by platform. */
+  name?: string
 }
 interface HelpSection {
   key: string
@@ -82,7 +86,16 @@ const sections = computed<HelpSection[]>(() => {
   const common: HelpItem[] = [
     { key: 'keys', nameKey: 'terminal.helpCommonKeys', descKey: 'terminal.helpCommonKeysDesc' },
     { key: 'repeat', nameKey: 'terminal.helpCommonRepeat', descKey: 'terminal.helpCommonRepeatDesc' },
-    { key: 'copy', nameKey: 'terminal.helpCommonCopy', descKey: 'terminal.helpCommonCopyDesc' },
+    // The copy chord differs by platform, so show a literal label rather than a
+    // single translated string (macOS reserves Cmd+C and keeps Ctrl+C as SIGINT).
+    {
+      key: 'copy',
+      nameKey: 'terminal.helpCommonCopy',
+      descKey: 'terminal.helpCommonCopyDesc',
+      name: props.mac ? 'Cmd+C' : 'Ctrl+C / Ctrl+Shift+C',
+    },
+    { key: 'copyInsert', nameKey: 'terminal.helpCommonCopyInsert', descKey: 'terminal.helpCommonCopyInsertDesc' },
+    { key: 'rightClick', nameKey: 'terminal.helpCommonRightClick', descKey: 'terminal.helpCommonRightClickDesc' },
     { key: 'tools', nameKey: 'terminal.helpCommonTools', descKey: 'terminal.helpCommonToolsDesc' },
   ]
   // Android app mode: hardware volume keys forward arrows.

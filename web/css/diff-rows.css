@@ -1,0 +1,75 @@
+/* ==========================================================================
+   Diff rows — one visual language for every diff surface
+
+   Consumers:
+     GitDiffView.vue          .diff-line-add / -del       (git history tab + drawer)
+     DiffDrawer.vue           .diff-line-add / -del       (markdown/code diff drawer)
+     renderToolDetail.ts      .edit-diff-add / -del       (chat tool-call edits, drawn
+                              by ContentBlocks.vue and ToolDetailDrawer.vue)
+     CodeMirrorViewer.vue     .cm-diff-line-A / -D / -M   (changed-line overlay)
+
+   Why this file exists: each of those surfaces used to tint its own rows at ~8%
+   alpha with a hard-coded red/green, and none had a dark-theme override. Over a
+   light surface that left an added row (#EDFAF2) and a deleted row (#FEF0F0) at
+   ~1.04:1 against each other — the tint carried no information, and on a dark
+   surface it was worse. Colour alone cannot encode add-vs-delete: red and green
+   tints over one surface stay within ~1.1:1 of each other however deep they go,
+   and red-green is the most common colour-vision deficiency.
+
+   So each row carries two signals:
+     1. The tint, from the --diff-*-bg tokens (variables.css), mixed from each
+        theme's own status colours and carrying a dark-surface override.
+     2. A 3px rail down the leading edge, from --diff-*-accent. This is the
+        shape channel that survives a colour-vision deficiency — do not drop it
+        when adding a surface.
+
+   The rail is a `background-image` gradient rather than `border-left` or an
+   inset `box-shadow`:
+     - A border would shift only the changed lines. Diff rows sit in code where
+       every line must share one left inset, and CodeMirror decorates only the
+       changed lines — the text would visibly jitter at every edit.
+     - Unified-diff rows are `<tr>` in a `border-collapse: collapse` table,
+       where an inset box-shadow on the row is not reliably painted.
+
+   Layout (white-space, min-width, padding, font) stays at the call sites; only
+   the parts that must look identical everywhere live here.
+   ========================================================================== */
+
+/* ── Row tint + rail ──
+   background-color carries the tint, background-image the rail. Kept as two
+   longhands rather than the `background` shorthand so a call site that sets
+   `background-color` alone cannot wipe the rail. ── */
+.diff-line-add,
+.edit-diff-add,
+.cm-diff-line-A {
+    background-color: var(--diff-add-bg);
+    background-image: linear-gradient(to right, var(--diff-add-accent) 3px, transparent 3px);
+}
+
+.diff-line-del,
+.edit-diff-del,
+.cm-diff-line-D {
+    background-color: var(--diff-del-bg);
+    background-image: linear-gradient(to right, var(--diff-del-accent) 3px, transparent 3px);
+}
+
+.cm-diff-line-M {
+    background-color: var(--diff-mod-bg);
+    background-image: linear-gradient(to right, var(--diff-mod-accent) 3px, transparent 3px);
+}
+
+/* ── Line-number gutter on changed rows ──
+   GitDiffView's .diff-linum carries an opaque --bg-tertiary, which paints over
+   the row background and would hide both the tint and the rail in the gutter —
+   the rail sits at x=0..3px, i.e. entirely inside the gutter when line numbers
+   are shown. Dropping the gutter fill on changed rows lets the row's own
+   background through, so the band spans the full row width.
+
+   The selector is deliberately deeper than GitDiffView's scoped
+   `.git-diff-scroll[data-v-*] .diff-linum` (0,3,0): at equal specificity the
+   winner would depend on whether the <link> or Vite's injected <style> lands
+   last. Only the hunk table is targeted — DiffDrawer renders no gutter. ── */
+.diff-hunk .diff-table .diff-line-add > .diff-linum,
+.diff-hunk .diff-table .diff-line-del > .diff-linum {
+    background-color: transparent;
+}

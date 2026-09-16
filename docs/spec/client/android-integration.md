@@ -88,6 +88,7 @@ flowchart LR
 ### 功能清单
 
 - **WebView 容器**：Android WebView 承载前端 Vue App，通过 `AndroidNative` JS Bridge 暴露原生能力。Web 和原生之间通过 Bridge 双向通信
+- **启动 splash 兜底**：启动 splash 的正常关闭路径是 JS 侧初始化完成后调 `dismissSplash()`，但"JS 初始化失败"恰恰会让这一步永不发生——原生若只等回调，用户就永久停在启动页（issue #449）。因此原生侧在 `onPageFinished` 时同时布防一个 15 秒 fail-safe 定时器：无论 JS 是否活着，超时即撤掉 splash 露出 WebView（此时页面可能报错，但至少可交互、可看日志）。JS 侧初始化统一走 `guardStartupWithSplash()` 包裹——单出口 try/catch/finally，异常不向上抛（避免变成未处理的 rejection 再阻断后续初始化），先置就绪再关 splash
 - **统一日志 AppLog**：所有 Android Java/Kotlin 代码**必须**使用 `AppLog.d/i/w/e()` 替代原始 `android.util.Log`（仅 `AppLog.java` 自身和测试代码允许裸 `android.util.Log`）。`AppLog` 同时写入 logcat 并 POST `/api/client-log`，服务端汇入统一 `client.log`（`[android]` 标记）；Web 前端同样使用 `/api/client-log`（`[js]` 标记）
 - **BackgroundService（后台服务）**：管理 SSH 端口映射和原生 WebSocket 事件通道，App 在后台时仍能接收通知
   - 关键 API：`setNativePushEnabled(boolean)`（总开关）、`getTrustAllSSLContext()`（给 PendingEventsWorker 共享 TLS）、`postEventNotificationFromWorker(ctx, eventType, data)`（跨进程触发通知）
@@ -147,6 +148,7 @@ flowchart LR
 
 ### 设计要点
 
+- **启动 splash 必须原生兜底，不能只等 JS**：splash 的关闭权在 JS 手上，而它要遮住的恰恰是"JS 起不来"这种情形——只依赖回调等于让故障本身成为永久遮挡。原生侧独立布防超时是最小代价的解法：正常路径下 JS 先关、定时器取消；异常路径下超时接管。JS 侧则用单出口的 guard 包裹初始化，保证任何异常都走同一条"就绪 + 关 splash"路径，而不是抛出去变成第二轮故障
 - **后台服务是端口映射的前提**：没有 BackgroundService，Android 杀进程后 SSH 端口映射断开，已映射的端口全部不可达。后台服务保持 SSH 心跳，维持隧道活跃
 - **悬浮窗与 Live Updates 共享事件通道与解析器**：悬浮窗不建立新连接，直接消费 BackgroundService 原生 WS 的 `session_update` / `chat_stream` 事件；Live Update 同样复用同一份 overview 快照，并委托给同一个 `computeStats` 解析器——省电、与 App 内状态天然一致，且两处展示永不出现数字打架。胶囊本身保持轻量（只做展示 + 展开面板），交互集中在展开后的会话面板上：按项目分组浏览各会话状态、一眼看到未读、点击行直达目标会话。overview 拉取有最小间隔节流（2s），避免展开时高频刷新
 - **空闲时隐藏而非常驻**：悬浮窗无任务、无未读时直接隐藏——空闲状态没有任何值得展示的信息，常驻一个空胶囊只会干扰桌面且让人误以为有内容。Live Updates 同样在无会话时移除状态栏通知，保持系统通知栏干净（两者在「无内容即不显示」上口径一致）

@@ -49,6 +49,43 @@ sequenceDiagram
     前端->>ws.Manager: {type:"pong"}
 ```
 
+### 投递分级：关键事件等待，高频增量丢弃
+
+```mermaid
+flowchart TD
+    A[StreamHub.EmitToSession] --> B{有订阅者?}
+    B -->|无| C[按类型分级计数 + 关键事件 WARN]
+    B -->|有| D{通道满?}
+    D -->|未满| E[写入通道]
+    D -->|已满| F{事件是关键类型?}
+    F -->|否| G[直接丢弃并计数]
+    F -->|是| H{来源是 ACP 通知?}
+    H -->|是| G2[仍丢弃——阻塞会撑爆 SDK 有界队列并杀连接]
+    H -->|否| I[等待空位，默认 200ms]
+    I --> J{等到空位?}
+    J -->|是| E
+    J -->|否| K[记 Error 并放弃]
+```
+
+关键事件（`done`/`cancelled`/`error`/`stream_start`/`content_reset`）与高频增量（`content`/`thinking`/`tool_use`）被区别对待：丢一条 thinking 用户无感，丢一条 `done` 会让 UI 永久停在 loading。但 ACP 来源必须例外——ACP 通知由 SDK 单条共享 goroutine 处理，其队列有界且溢出会直接关掉连接，因此在该来源上禁止阻塞，否则"丢一个增量"会升级成"连接死亡"。
+
+### 前端缓冲回放：占位符未到时先攒着
+
+```mermaid
+sequenceDiagram
+    participant 后端
+    participant useChatStream
+    participant UI
+
+    后端->>useChatStream: content 事件
+    Note over useChatStream: 尚无 streaming 占位符
+    useChatStream->>useChatStream: 存入有界缓冲（200 条）
+    后端->>useChatStream: stream_start
+    useChatStream->>UI: 建立占位符
+    useChatStream->>UI: 按到达顺序回放缓冲
+    Note over useChatStream: 终态事件 / 会话切换 / 断连 → 清空缓冲
+```
+
 ## 功能与设计要点
 
 ### 功能清单
@@ -60,6 +97,9 @@ sequenceDiagram
   - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong` 六种客户端消息
 - **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`。后端重放时给缓冲事件打 `Replayed` 标记（`replayed: true`），前端据此进入 `isReplayingEvents` 状态——补发的历史终态事件（如断线期间已完成的 `session_update`/`task_update`）不再被当作 live 事件处理，避免刷新后误弹历史完成通知/完成弹窗
 - **订阅超时清理**：客户端超过 120s 无活动即清理订阅，避免僵尸连接
+- **投递可观测**：`EmitToSession` 对无订阅者的会话不再静默丢弃——按原因（`no_subscribers` / `no_manager`）原子计数并通过 `GET /api/ws/delivery-stats` 暴露；日志按事件类型分级（关键事件 WARN、高频增量 DEBUG）且**每个 (原因, 类型) 只记一次**，量级交给计数、事实交给日志。此前"UI 卡在缺少终态事件"与"后端根本没发"在日志上完全无法区分
+- **关键事件可靠投递**：通道满时按事件类型分流（见上图）——关键事件等待空位（默认 200ms，超时记 Error），高频增量保持非阻塞丢弃。ACP 来源是明确的例外
+- **前端缓冲回放**：内容类事件在 `streaming` 占位符尚未建立时不再被丢弃，改为有界缓冲（200 条），`stream_start` 到达后按到达顺序回放。此前 `stream_start` 延迟或丢失会让用户看到空回复，尽管后端已产出内容。缓冲满时丢弃最旧一条（新事件才是用户即将看到的，且无界缓冲会在 `stream_start` 永不出现时泄漏）；终态事件到达、会话切换与断连都清空缓冲——否则一个迟到的 `stream_start`（重连回放、后端重试）会把上一轮的陈旧内容回放进新建的占位符，产生永远收不到终态事件的僵尸气泡
 - **重连时 ACP 状态重发**：`StreamHub` 在客户端重新订阅时，重新推送该会话缓存的 ACP 状态（mode/effort/config/commands），使断线后状态保持一致
 - **前端重连状态同步**：WS 重连是唯一的前端完整状态同步触发点——App 从后台恢复或前台切换时不再单独重载历史，统一由重连分支负责 `reset → connect → 检查会话状态`。重连后前端主动检查当前会话是否仍在运行（通过 `loadSessionsOnce` 刷新状态）：若会话在断线期间完成，清理卡住的流式状态并重新加载历史；空闲时也重载当前会话历史以补齐断线期间遗漏的消息。重连采用自包含的前景分支，不依赖后台分支中可能被 Android `pauseTimers()` 冻结的 `setTimeout`——消除旧方案中 reset 定时器被冻结导致重连状态不一致的竞态。`session_update` 事件到达时若流式状态不一致（如 `completed` 但 `loading` 仍为 true），强制清理并重载历史——防止因 WS 事件丢失导致界面卡死
 - **subscribeOnly 模式**：前端在回放等待中的会话使用 `subscribeOnly` 模式连接 WS 流——仅接收事件，不触发流式 assistant 消息创建。适用于 LoadSession 异步回放尚未完成的场景
@@ -84,3 +124,4 @@ sequenceDiagram
 - **客户端 ack 用 `permission_respond`**：WS 客户端消息支持 `permission_respond`（替代旧 HTTP `/api/ai/permission`），ACP 权限待审场景下前端用此消息回传决策
 - **HTTP cancel 兜底**：WS 不可达时（弱网），HTTP cancel 端点仍可工作——`SessionExecutor` 同时监听 WS cancel 消息和 HTTP cancel 调用
 - **WS 写入失败立即断连**：`writeMessage` 统一所有 WS 写入路径（广播 + ping），写入失败（对端消失、缓冲满、超时）立即 `CloseNow`，触发客户端 `onclose` 立即重连。之前 ping 写入失败时 goroutine 静默退出，导致半死连接只能靠客户端心跳缓慢检测
+- **可靠投递以事件语义分级，而非一刀切**：把"不丢"施加到所有事件上会让通道满时把生产者（AI 后端）拖住；施加到所有来源上更会让 ACP 通知阻塞进而杀死连接。因此判据有两层——事件是否承载状态机终态（决定是否值得等），以及发送方是否承受得起等待（决定是否允许等）。缺任一层都会引入更严重的故障

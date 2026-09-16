@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -235,4 +236,137 @@ func repeatLines(s string, n int) string {
 		out += s
 	}
 	return out
+}
+
+// --- gitignore-aware exclusion ---
+
+// TestCollectClocExcludesGitignoredFiles covers the core behavior: files the
+// project's .gitignore excludes must not be counted, and the language totals
+// must shrink accordingly.
+func TestCollectClocExcludesGitignoredFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	isolateGitEnv(t)
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	writeClocFile(t, dir, ".gitignore", "generated/\n*.gen.go\n")
+	// Counted: 2 code lines.
+	writeClocFile(t, dir, "main.go", "package main\nfunc main() {}\n")
+	// Excluded by directory rule and by suffix rule: 8 code lines total.
+	writeClocFile(t, dir, "generated/big.go", repeatLines("func gen%d() {}\n", 4))
+	writeClocFile(t, dir, "api.gen.go", repeatLines("func g%d() {}\n", 4))
+
+	res, err := collectCloc(dir)
+	require.NoError(t, err)
+
+	goRow := goRowOrFail(t, res)
+	assert.Equal(t, int64(2), goRow.Code, "gitignored Go files must not be counted")
+	assert.Equal(t, 1, goRow.Files, "only main.go should be counted")
+}
+
+// TestCollectClocKeepsTrackedFilesDespitePattern covers the tracked-file rule:
+// a file that matches a pattern but is in the index must still be counted,
+// because git does track it.
+func TestCollectClocKeepsTrackedFilesDespitePattern(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	isolateGitEnv(t)
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	writeClocFile(t, dir, ".gitignore", "*.go\n")
+	writeClocFile(t, dir, "tracked.go", "package main\nfunc main() {}\n")
+	writeClocFile(t, dir, "untracked.go", repeatLines("func u%d() {}\n", 5))
+	gitAdd(t, dir, "-f", "tracked.go", ".gitignore")
+
+	res, err := collectCloc(dir)
+	require.NoError(t, err)
+
+	goRow := goRowOrFail(t, res)
+	assert.Equal(t, int64(2), goRow.Code, "the tracked file must be counted")
+	assert.Equal(t, 1, goRow.Files)
+}
+
+// TestCollectClocNestedGitignore covers a .gitignore inside a subdirectory,
+// whose patterns are scoped to that subdirectory.
+func TestCollectClocNestedGitignore(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	isolateGitEnv(t)
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	writeClocFile(t, dir, "sub/.gitignore", "local.go\n")
+	writeClocFile(t, dir, "sub/local.go", repeatLines("func l%d() {}\n", 4))
+	writeClocFile(t, dir, "sub/kept.go", "package sub\nfunc K() {}\n")
+	// The same name outside sub/ is unaffected by the nested rule.
+	writeClocFile(t, dir, "local.go", "package main\nfunc L() {}\n")
+
+	res, err := collectCloc(dir)
+	require.NoError(t, err)
+
+	goRow := goRowOrFail(t, res)
+	assert.Equal(t, int64(4), goRow.Code, "only sub/local.go is excluded (2 + 2 remain)")
+	assert.Equal(t, 2, goRow.Files)
+}
+
+// TestCollectClocNotGitRepoUnchanged covers the fallback: without a repository
+// the scan keeps its previous behavior, so nothing regresses outside git.
+func TestCollectClocNotGitRepoUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	// No repository here, so the .gitignore has no effect.
+	writeClocFile(t, dir, ".gitignore", "*.go\n")
+	writeClocFile(t, dir, "a.go", "package main\nfunc A() {}\n")
+	writeClocFile(t, dir, "b.go", repeatLines("func B%d() {}\n", 4))
+
+	res, err := collectCloc(dir)
+	require.NoError(t, err)
+
+	goRow := goRowOrFail(t, res)
+	assert.Equal(t, int64(6), goRow.Code, "without git every source file still counts")
+	assert.Equal(t, 2, goRow.Files)
+}
+
+// TestCollectClocKeepsGithubDirectory covers the interaction with gocloc's own
+// VCS check, which does a substring match on the path: it drops a tracked
+// .github/ tree while walking a directory (".github" contains ".git"). The
+// filter runs after the scan and must not make that worse, and must not drop
+// the directory's files itself.
+func TestCollectClocKeepsGithubDirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	isolateGitEnv(t)
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	writeClocFile(t, dir, ".gitignore", "*.log\n")
+	writeClocFile(t, dir, ".github/workflows/ci.yml", "name: ci\non: push\n")
+	writeClocFile(t, dir, "a.log", "noise\n")
+
+	res, err := collectCloc(dir)
+	require.NoError(t, err)
+
+	// The YAML file is tracked and not gitignored, so the filter must keep it
+	// even though gocloc's own walk may or may not have reached it.
+	for _, l := range res.Languages {
+		assert.NotEqual(t, "Log", l.Name, "the ignored .log file must not be counted")
+	}
+}
+
+// goRowOrFail returns the Go row, failing when it is absent. These tests all
+// write Go fixtures, so the language is fixed rather than parameterised.
+func goRowOrFail(t *testing.T, res clocResult) clocLanguageSummary {
+	t.Helper()
+	for _, l := range res.Languages {
+		if l.Name == "Go" {
+			return l
+		}
+	}
+	t.Fatalf("Go missing from result: %+v", res.Languages)
+	return clocLanguageSummary{}
 }

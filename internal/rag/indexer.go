@@ -19,6 +19,7 @@ type Indexer struct {
 	cfg             model.RAGConfig
 	stopCh          chan struct{}
 	doneCh          chan struct{}
+	wakeCh          chan struct{}
 	mu              sync.Mutex
 	running         bool
 	modelWarn       bool
@@ -35,6 +36,21 @@ func NewIndexer(store *Store, embedder *EmbeddingClient, cfg model.RAGConfig) *I
 		cfg:      cfg,
 		stopCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
+		wakeCh:   make(chan struct{}, 1),
+	}
+}
+
+// Trigger wakes the indexer immediately instead of waiting for the next poll
+// tick. Used after a rebuild marks work as stale (re-segmentation, re-embedding,
+// or a full reset) so the user sees progress start right away rather than after
+// up to one poll interval.
+//
+// Non-blocking: a wake already pending is enough to guarantee the next loop
+// iteration runs, so a second Trigger before the loop picks it up is a no-op.
+func (idx *Indexer) Trigger() {
+	select {
+	case idx.wakeCh <- struct{}{}:
+	default:
 	}
 }
 
@@ -88,6 +104,11 @@ func (idx *Indexer) Stop() {
 // run is the main indexer loop.
 // Uses continuous mode: after each batch, if more work remains, immediately
 // processes the next batch instead of waiting for the poll interval.
+//
+// The ticker is only a fallback (new messages arrive via DB writes the indexer
+// cannot observe, and it doubles as the retry for embedding-service recovery).
+// Rebuilds call Trigger() to wake the loop immediately rather than waiting out
+// a tick.
 func (idx *Indexer) run() {
 	defer close(idx.doneCh)
 
@@ -107,26 +128,27 @@ func (idx *Indexer) run() {
 		select {
 		case <-idx.stopCh:
 			return
+		case <-idx.wakeCh:
+			// Rebuild marked work as stale; start now instead of waiting a tick.
+			idx.drain()
 		case <-ticker.C:
-			select {
-			case <-idx.stopCh:
-				return
-			default:
-			}
-			// After each batch, check if more work remains.
-			// If so, loop immediately instead of waiting for the next tick.
-			for {
-				hasMore := idx.indexBatch()
-				if !hasMore {
-					break
-				}
-				// Check stop signal between continuous batches
-				select {
-				case <-idx.stopCh:
-					return
-				default:
-				}
-			}
+			idx.drain()
+		}
+	}
+}
+
+// drain processes batches back-to-back until no work remains.
+func (idx *Indexer) drain() {
+	for {
+		hasMore := idx.indexBatch()
+		if !hasMore {
+			return
+		}
+		// Check stop signal between continuous batches
+		select {
+		case <-idx.stopCh:
+			return
+		default:
 		}
 	}
 }
@@ -180,6 +202,15 @@ func (idx *Indexer) indexBatch() bool {
 	// Check embedding API health
 	idx.checkEmbedderHealth(ctx)
 
+	// Phase 0: Re-segment chunks invalidated by a full-text rebuild trigger.
+	// Deliberately independent of embedder health: re-segmentation is local CPU
+	// work, and an embedding outage must not block it.
+	resegmentMore := idx.resegmentPending(ctx)
+
+	if ctx.Err() != nil {
+		return false
+	}
+
 	// Phase 1: Index new messages from SQLite
 	hasMore := idx.indexNewMessages(ctx)
 
@@ -192,7 +223,61 @@ func (idx *Indexer) indexBatch() bool {
 		idx.backfillEmbeddings(ctx)
 	}
 
-	return hasMore
+	return hasMore || resegmentMore
+}
+
+// resegmentBatchSize bounds one re-segmentation transaction. Segmentation costs
+// ~3.4ms per chunk, so this caps a single batch at roughly a second of CPU plus
+// the UPDATE/FTS work — small enough that progress moves visibly and a cancel is
+// honored promptly, large enough to amortize the transaction.
+const resegmentBatchSize = 200
+
+// resegmentPending re-segments queued chunks, one bounded batch per call.
+// Returns true if more work remains.
+//
+// ctx is honored before each batch so a cancelled pass (indexer shutdown, or the
+// per-batch timeout) stops instead of starting another ~1s of segmentation. The
+// queue flag is only cleared by a committed batch, so unprocessed chunks stay
+// queued and are picked up on the next pass.
+func (idx *Indexer) resegmentPending(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+
+	pending, err := idx.store.PendingResegmentCount()
+	if err != nil {
+		slog.Error("rag: failed to count chunks awaiting re-segmentation", slog.String("err", err.Error()))
+		return false
+	}
+	if pending == 0 {
+		return false
+	}
+
+	chunks, err := idx.store.GetPendingResegmentChunks(resegmentBatchSize)
+	if err != nil {
+		slog.Error("rag: failed to fetch chunks for re-segmentation", slog.String("err", err.Error()))
+		return false
+	}
+	if len(chunks) == 0 {
+		return false
+	}
+
+	changed, err := idx.store.BatchResegment(chunks)
+	if err != nil {
+		// Leave the batch queued so it is retried on the next pass rather than
+		// silently dropping the work.
+		slog.Error("rag: re-segmentation batch failed, chunks remain queued",
+			slog.Int("batch", len(chunks)), slog.String("err", err.Error()))
+		return false
+	}
+
+	remaining := pending - len(chunks)
+	slog.Info("rag: re-segmented batch",
+		slog.Int("batch", len(chunks)),
+		slog.Int("changed", changed),
+		slog.Int("remaining", remaining),
+	)
+	return remaining > 0
 }
 
 // resetDimensionSync clears the one-shot dimension-sync latch so the next health

@@ -114,6 +114,17 @@ const (
 	ReasonRefused       = "refused"        // ACP stopReason=refusal (agent declined / model unavailable / upstream error)
 	ReasonPanic         = "panic"          // AI goroutine panicked
 	ReasonRestart       = "restart"        // Server restart/graceful shutdown interrupted the stream
+	// ReasonAgentNoRun is a structurally successful ACP turn (stopReason=end_turn,
+	// no transport error) that consumed no tokens and produced no content — i.e.
+	// the agent accepted the prompt but never ran the model.
+	//
+	// Distinct from ReasonEmpty: "the model answered with nothing" and "the model
+	// was never called" need different remedies. ReasonEmpty means retrying may
+	// well fail again; ReasonAgentNoRun means the agent/connection is unhealthy,
+	// so a reconnect+retry usually fixes it. The ACP protocol cannot express this
+	// distinction (StopReason has no "skipped" value and PromptResponse carries no
+	// content field), so it is inferred from the zero-usage + zero-content pair.
+	ReasonAgentNoRun = "agent_no_run"
 )
 
 // SelectOptionDef describes a single selectable option (e.g., mode, thinking effort level).

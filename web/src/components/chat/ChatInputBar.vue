@@ -65,7 +65,7 @@
     <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space -->
     <Transition name="recommend-slide">
       <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
-        <Sparkles :size="14" :stroke-width="1.5" class="recommendation-icon" />
+        <Sparkles :size="13" :stroke-width="1.5" class="recommendation-icon" />
         <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('chat.recommendationCollapse') : t('chat.recommendationExpand')">{{ recommendation }}</span>
         <button class="recommendation-accept" @click.stop="acceptRecommendation" :title="t('tool.askUser.recommendationFill')">{{ t('tool.askUser.recommendationFill') }}</button>
       </div>
@@ -98,7 +98,7 @@
             <LoadingIndicator v-else class="attach-btn-spinner" size="sm" inline />
           </button>
           <button v-else class="chat-attach-btn" @click.stop="toggleAttachMenu" :disabled="inputDisabled" :title="t('chat.actions.attachment')">
-            <Paperclip :size="16" />
+            <Paperclip :size="15" />
           </button>
         </div>
         <textarea class="chat-textarea"
@@ -120,15 +120,15 @@
           ></textarea>
         <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
           <!-- Empty input: green lightning (quick-menu shortcut) -->
-          <Zap v-if="!hasInputContent" :size="16" />
+          <Zap v-if="!hasInputContent" :size="15" />
           <!-- Queue mode: inbox with down arrow (enqueue) -->
-          <Inbox v-else-if="loading" :size="16" />
+          <Inbox v-else-if="loading" :size="15" />
           <!-- Normal mode: paper plane (send) -->
-          <Send v-else :size="16" />
+          <Send v-else :size="15" />
         </button>
         <button v-if="loading" class="chat-stop-btn" :class="{ primed: stopPrimed, cancelling: cancelling }" @click="handleStopClick" :title="stopPrimed ? t('chat.input.confirmStop') : t('chat.input.stopGenerating')" :disabled="cancelling">
           <LoadingIndicator v-if="cancelling" class="stop-spinner" size="sm" inline />
-          <Square v-else :size="16" fill="currentColor" />
+          <Square v-else :size="15" fill="currentColor" />
         </button>
       </div>
       <!-- Attach drawer (BottomSheet) -->
@@ -1434,7 +1434,11 @@ function autoResizeTextarea() {
   if (!el) return
   el.style.height = 'auto'
   const computed = getComputedStyle(el)
-  const lineHeight = parseFloat(computed.lineHeight) || 20
+  // Line-height is unitless (--line-height-snug), so getComputedStyle resolves
+  // it to px. Fall back to the same ratio off the font size rather than a
+  // hard-coded box, so the cap tracks the CSS if either token is retuned.
+  const lineHeight = parseFloat(computed.lineHeight)
+    || (parseFloat(computed.fontSize) || 13) * 1.4
   const paddingTop = parseFloat(computed.paddingTop) || 0
   const paddingBottom = parseFloat(computed.paddingBottom) || 0
   const maxContentHeight = lineHeight * 10
@@ -2212,18 +2216,24 @@ defineExpose({
   opacity: 0;
 }
 
-/* Attach button (inside input row) */
+/* Attach button (inside input row).
+   A square box the same size as the send/stop buttons, so the row's
+   align-items: flex-end lines all three controls up on one baseline. Sizing it
+   to the icon instead would leave the paperclip hanging below the text line. */
 .chat-attach-btn {
   background: none;
   border: none;
   cursor: pointer;
   color: var(--text-muted, #999);
-  padding: var(--space-2);
+  width: 26px;
+  height: 26px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-xs);
   transition: color var(--duration-base), background var(--duration-base);
+  flex-shrink: 0;
 }
 
 @media (hover: hover) {
@@ -2293,17 +2303,21 @@ defineExpose({
   }
 }
 
-/* Conversation recommendation banner (推荐回复) — rendered above the input box */
+/* Conversation recommendation banner (推荐回复) — rendered above the input box.
+   Shorter than the original (tight line box instead of the inherited 1.6 body
+   leading) but still airy: the padding keeps a full 6px above and below, so the
+   single line of text does not touch the border. */
 .recommendation-chip {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  margin:0 0 var(--space-3);
+  margin: 0 0 var(--space-3);
   padding: var(--space-3) var(--space-5);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
   color: var(--text-primary);
 }
 
@@ -2331,9 +2345,10 @@ defineExpose({
   border: none;
   background: var(--accent-color, #0066cc);
   color: #fff;
-  border-radius: var(--radius-sm);
-  padding:3px var(--space-5);
+  border-radius: var(--radius-xs);
+  padding: var(--space-1) var(--space-4);
   font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
   cursor: pointer;
 }
 
@@ -2472,13 +2487,16 @@ defineExpose({
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: var(--font-size-2xl);
-  line-height: 20px;
+  /* Same type scale as the message body (.chat-message) so what you type reads
+     as part of the conversation rather than a separate, larger surface. The
+     height caps below are derived from this line box, so they move together. */
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-snug);
   outline: none;
   resize: none;
   overflow-y: auto;
-  min-height: 28px;
-  max-height: calc(20px * 10 + 4px + 4px); /* 10 lines + padding-top + padding-bottom */
+  min-height: calc(1em * var(--line-height-snug) + var(--space-2) * 2);
+  max-height: calc(1em * var(--line-height-snug) * 10 + var(--space-2) * 2); /* 10 lines + padding-top + padding-bottom */
   font-family: inherit;
 }
 
@@ -2494,8 +2512,8 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   background: var(--accent-color, #0066cc);
   color: #fff;
@@ -2532,8 +2550,8 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   background: color-mix(in srgb, var(--color-red) 40%, transparent);
   color: color-mix(in srgb, #fff 60%, var(--color-red));
@@ -2579,15 +2597,13 @@ defineExpose({
   50%      { box-shadow: 0 0 0 8px rgba(220, 53, 69, 0); }
 }
 
-/* Voice recording indicator — red circle with animation, shown in the attach slot */
+/* Voice recording indicator — red circle with animation, shown in the attach
+   slot. Geometry (26px square) comes from the base .chat-attach-btn rule; only
+   the shape and colour differ. */
 .chat-attach-btn.voice-rec-btn {
-  width: 26px;
-  height: 26px;
   border-radius: 50%;
   background: #ff3b30;
   color: #fff;
-  padding: 0;
-  flex-shrink: 0;
 }
 .chat-attach-btn.voice-rec-btn:disabled {
   opacity: 1;

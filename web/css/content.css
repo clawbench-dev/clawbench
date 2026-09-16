@@ -49,6 +49,25 @@
     color: var(--text-primary);
 }
 
+/* The first block never needs leading space above it — the container already
+   supplies the inset, and `1.5em` on a heading is scaled by that heading's own
+   (largest) font size, so a document or summary that opens with `#` loses a
+   conspicuous band of blank space before any text appears. Measured on a
+   13px container: 33px above an opening h1 in the completion popover (25% of
+   its 132px collapsed budget) and 41px in the file preview.
+
+   Two selectors because `.markdown-body` comes in two shapes: most call sites
+   (`CompletionPopover`, `TaskOverviewTab`, `ForgeDetail`, session-search
+   chunks) put the rendered blocks directly inside it, while the file preview
+   (`MarkdownPreview.vue`, reused by the share page) wraps them in an extra
+   `.markdown-content` div for diff-marker positioning. Without the second
+   selector the rule matches that wrapper — which has no margin of its own — and
+   silently does nothing, leaving the preview's 41px band in place. */
+.markdown-body > :first-child,
+.markdown-body > .markdown-content > :first-child {
+    margin-top: 0;
+}
+
 .markdown-body h1 { font-size: 1.6em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.3em; }
 .markdown-body h2 { font-size: 1.3em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.3em; }
 .markdown-body h3 { font-size: 1.1em; }

@@ -182,7 +182,17 @@ export function useChatSession(options: UseChatSessionOptions) {
     // snapshot, preserving only the live streaming placeholder, pending queued
     // bubbles and adopted _remote rows — so every loadHistory converges to what
     // an app restart would show (the ActionBar refresh behaves like a restart).
-    dispatch({ type: 'db_load', dbMessages: parsed as ChatMessage[] })
+    //
+    // isRunning is passed through because "the snapshot has no row for the live
+    // placeholder" is ambiguous: while the session is still running it usually
+    // means the snapshot was served before the backend committed the streaming
+    // row (the row is inserted after the ACP connection spawns/resumes, which
+    // takes seconds, while this GET takes ~200ms). Dropping the placeholder
+    // then strands the rest of the turn — content events carry no message id,
+    // so they are buffered until a stream_start that already passed, leaving an
+    // empty bubble with no spinner until a refresh. Only when the session is no
+    // longer running is the DB genuinely final and the placeholder disposable.
+    dispatch({ type: 'db_load', dbMessages: parsed as ChatMessage[], sessionRunning: isRunning })
     // The loaded-window cursor follows the authoritative DB snapshot: after a
     // db_load the oldest loaded row IS the snapshot's oldest DB row. This
     // update is idempotent for repeated loads of the same window, and a new

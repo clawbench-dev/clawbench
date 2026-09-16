@@ -38,6 +38,7 @@ import {
   loadThemesModule,
   resetThemesCache,
   buildTerminalThemePreviews,
+  ensureVisibleSelection,
   darkTheme,
   lightTheme,
 } from '@/utils/terminalThemes'
@@ -200,6 +201,92 @@ describe('terminalThemes', () => {
     await loadThemesModule()
     expect(resolveAutoThemeSync(true).background).toBe(darkTheme.background)
     expect(resolveAutoThemeSync(false).background).toBe(lightTheme.background)
+  })
+
+  describe('ensureVisibleSelection', () => {
+    /**
+     * 复刻 xterm ThemeService 的选区上色：selectionBackground 与 background
+     * blend 后写入 CSS。用于断言「选区与背景是否真的分得开」，而不是只断言字段被赋值。
+     */
+    function blendedSelectionCss(theme: import('@xterm/xterm').ITheme): string {
+      const bg = parseHexColor(theme.background!)!
+      const raw = theme.selectionBackground!.replace('#', '')
+      const fg = [
+        parseInt(raw.slice(0, 2), 16),
+        parseInt(raw.slice(2, 4), 16),
+        parseInt(raw.slice(4, 6), 16),
+      ]
+      const a = raw.length === 8 ? parseInt(raw.slice(6, 8), 16) / 255 : 1
+      const mixed = bg.map((c, i) => Math.round(c + (fg[i] - c) * a))
+      return '#' + mixed.map(c => c.toString(16).padStart(2, '0')).join('')
+    }
+
+    it('injects a dark selection on light backgrounds so it is visible', () => {
+      const theme = ensureVisibleSelection({ background: '#fafafa', foreground: '#383a42' })
+      expect(theme.selectionBackground).toBe('#00000040')
+      // 核心诉求：叠色后必须与背景有可见差异（回归前的 xterm 默认是 #fcfcfc）。
+      const blended = blendedSelectionCss(theme)
+      expect(colorDistance(blended, '#fafafa')).toBeGreaterThan(40)
+    })
+
+    it('injects a light selection on dark backgrounds (matches xterm default)', () => {
+      const theme = ensureVisibleSelection({ background: '#1e1f29', foreground: '#f8f8f2' })
+      expect(theme.selectionBackground).toBe('#ffffff4d')
+      expect(colorDistance(blendedSelectionCss(theme), '#1e1f29')).toBeGreaterThan(40)
+    })
+
+    it('keeps an existing selectionBackground untouched', () => {
+      const original = { background: '#eff1f5', selectionBackground: '#acb0be66' }
+      const theme = ensureVisibleSelection(original)
+      expect(theme.selectionBackground).toBe('#acb0be66')
+      expect(theme).toBe(original)
+    })
+
+    it('does not mutate the input theme (module cache must stay clean)', () => {
+      const original: import('@xterm/xterm').ITheme = { background: '#fafafa' }
+      ensureVisibleSelection(original)
+      expect(original.selectionBackground).toBeUndefined()
+    })
+
+    it('treats a missing/unparseable background as dark', () => {
+      expect(ensureVisibleSelection({}).selectionBackground).toBe('#ffffff4d')
+      expect(ensureVisibleSelection({ background: 'nope' }).selectionBackground).toBe('#ffffff4d')
+    })
+
+    it('is idempotent for the same input', () => {
+      const original = { background: '#fafafa' }
+      expect(ensureVisibleSelection(original)).toEqual(ensureVisibleSelection(original))
+    })
+  })
+
+  describe('selection visibility through the resolve paths', () => {
+    it('resolveAutoTheme injects a visible selection on the matched light preset', () => {
+      // LightTheme (#ffffff) is nearest to a white app background and, like all
+      // xterm-theme presets, carries no selectionBackground.
+      const theme = resolveAutoTheme('#ffffff', { LightTheme: { background: '#ffffff' } }, false)
+      expect(theme.selectionBackground).toBe('#00000040')
+    })
+
+    it('resolveAutoTheme fallback constants keep their own visible selection', () => {
+      expect(resolveAutoTheme('#ffffff', null, false).selectionBackground).toBe(lightTheme.selectionBackground)
+      expect(resolveAutoTheme('#ffffff', null, true).selectionBackground).toBe(darkTheme.selectionBackground)
+    })
+
+    it('resolveThemeSync injects a selection for a fixed preset', async () => {
+      await loadThemesModule()
+      expect(resolveThemeSync('Dracula', true).selectionBackground).toBe('#ffffff4d')
+    })
+
+    it('resolveTheme injects a selection for a fixed preset', async () => {
+      const theme = await resolveTheme('LightTheme', false)
+      expect(theme.selectionBackground).toBe('#00000040')
+    })
+
+    it('does not pollute the module cache with injected values', async () => {
+      const themes = await loadThemesModule()
+      resolveThemeSync('Dracula', true)
+      expect(themes.Dracula.selectionBackground).toBeUndefined()
+    })
   })
 
   describe('SORTED_THEME_IDS', () => {

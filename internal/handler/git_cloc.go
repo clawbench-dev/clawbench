@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"clawbench/internal/gitignore"
+
 	"github.com/hhatto/gocloc"
 )
 
@@ -17,6 +19,12 @@ import (
 //
 // It does NOT require the project to be a git repository — cloc just walks the
 // directory tree. The frontend shows this block regardless of isGit.
+//
+// Exclusion is two-layered and intersected: the name-based regex below always
+// applies, and in a git repository the project's own .gitignore rules are
+// applied on top (see collectCloc). The regex is kept as the fallback for
+// projects whose .gitignore is missing or incomplete, so a tree holding a Python
+// virtualenv or a model directory cannot inflate the inventory.
 
 // gitClocDefaultExclude matches directory components that are never source
 // code: build artifacts, vendored deps, VCS internals, virtualenvs, tool data
@@ -64,6 +72,21 @@ const clocCacheTTL = 60 * time.Second
 // collectCloc runs the gocloc scan over projectPath and returns a sorted
 // summary. scan errors are returned; empty (no source files) returns an empty
 // result without error.
+//
+// Two exclusion layers apply, intersected:
+//
+//  1. gitClocDefaultExclude / the generated-file suffix regex, which prune the
+//     tree gocloc walks. These are name-based heuristics and stay as the
+//     fallback for projects whose .gitignore is missing or incomplete.
+//  2. The project's own gitignore rules. gocloc cannot consult them, so the
+//     per-file results are filtered afterwards and re-aggregated.
+//
+// Filtering after the scan (rather than feeding gocloc an explicit file list)
+// keeps the subtraction exact: the result is precisely "what gocloc counted,
+// minus the files git would not track". Passing an explicit list instead would
+// change unrelated behavior, because gocloc's VCS check does a substring match
+// on the path — it drops a tracked .github/ tree when walking a directory but
+// keeps it for an explicit list.
 func collectCloc(projectPath string) (clocResult, error) {
 	langs := gocloc.NewDefinedLanguages()
 	opts := gocloc.NewClocOptions()
@@ -78,17 +101,46 @@ func collectCloc(projectPath string) (clocResult, error) {
 		return clocResult{}, err
 	}
 
+	// nil for a non-repository, in which case nothing extra is excluded.
+	ign := gitignore.ForDir(projectPath)
+
+	// Re-aggregate the per-file results, dropping gitignored files. Aggregating
+	// here rather than reusing res.Languages is what makes the filter apply to
+	// the line counts and the file totals alike.
+	type langAgg struct {
+		files   int
+		code    int64
+		comment int64
+		blank   int64
+	}
+	byLang := make(map[string]*langAgg)
+
+	for path, cf := range res.Files {
+		if ign.Ignored(path, false) {
+			continue
+		}
+		agg := byLang[cf.Lang]
+		if agg == nil {
+			agg = &langAgg{}
+			byLang[cf.Lang] = agg
+		}
+		agg.files++
+		agg.code += int64(cf.Code)
+		agg.comment += int64(cf.Comments)
+		agg.blank += int64(cf.Blanks)
+	}
+
 	out := clocResult{ScannedAt: time.Now()}
-	for _, l := range res.Languages {
-		if l.Code == 0 && l.Comments == 0 && l.Blanks == 0 {
+	for name, agg := range byLang {
+		if agg.code == 0 && agg.comment == 0 && agg.blank == 0 {
 			continue // nothing countable (e.g. empty file)
 		}
 		out.Languages = append(out.Languages, clocLanguageSummary{
-			Name:    l.Name,
-			Files:   len(l.Files),
-			Code:    int64(l.Code),
-			Comment: int64(l.Comments),
-			Blank:   int64(l.Blanks),
+			Name:    name,
+			Files:   agg.files,
+			Code:    agg.code,
+			Comment: agg.comment,
+			Blank:   agg.blank,
 		})
 	}
 	sort.Slice(out.Languages, func(i, j int) bool {
