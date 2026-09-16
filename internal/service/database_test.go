@@ -3841,3 +3841,70 @@ func TestTimedWrite_ReleasesLockOnPanic(t *testing.T) {
 		t.Fatal("writeMu is still held after exec panicked — later writers would block forever")
 	}
 }
+
+// TestSchema_FileSharesRootColumnExists verifies the additive migration that
+// confines public share links to a directory captured at creation time.
+func TestSchema_FileSharesRootColumnExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "file_shares")
+	assert.Contains(t, columns, "root", "file_shares should have root column")
+}
+
+// TestSchema_FileSharesRootMigration_AddsColumnToLegacyTable proves the ALTER
+// path (not just the CREATE path): a database whose file_shares predates the
+// column must gain it on upgrade, and the migration must be idempotent.
+func TestSchema_FileSharesRootMigration_AddsColumnToLegacyTable(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Pre-create the legacy shape (no root column) with a live row.
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	legacy, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = legacy.Exec(`CREATE TABLE file_shares (
+		token TEXT PRIMARY KEY,
+		path TEXT NOT NULL,
+		name TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+	_, err = legacy.Exec(
+		"INSERT INTO file_shares (token, path, name) VALUES ('legacy', '/proj/a.md', 'a.md')")
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	require.NoError(t, InitDB())
+	// Re-run: the pragma_table_info guard must skip the ALTER instead of erroring.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "file_shares")
+	assert.Contains(t, columns, "root")
+
+	// The pre-existing row survives and reads back an empty root.
+	var root string
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		"SELECT root FROM file_shares WHERE token = 'legacy'").Scan(&root))
+	assert.Empty(t, root)
+}

@@ -15,7 +15,7 @@ import (
 // shareExistsByToken reports whether the share record is still present.
 func shareExistsByToken(t *testing.T, token string) bool {
 	t.Helper()
-	_, _, ok, err := service.GetFileShareByToken(token)
+	_, _, _, ok, err := service.GetFileShareByToken(token)
 	require.NoError(t, err)
 	return ok
 }
@@ -26,7 +26,7 @@ func TestShareCleanup_OnFileDelete(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "clean/delete.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 	require.True(t, shareExistsByToken(t, token))
 
 	req := newRequest(t, http.MethodPost, "/api/file/delete", map[string]string{"path": absPath})
@@ -45,8 +45,8 @@ func TestShareCleanup_OnDirectoryDelete(t *testing.T) {
 	createTestFile(t, env.ProjectDir, "clean/docs/a.md", "a")
 	createTestFile(t, env.ProjectDir, "clean/docs/sub/b.md", "b")
 
-	tokA := createShareViaAPI(t, filepath.Join(dir, "a.md"))
-	tokB := createShareViaAPI(t, filepath.Join(dir, "sub", "b.md"))
+	tokA := createShareViaAPI(t, env, filepath.Join(dir, "a.md"))
+	tokB := createShareViaAPI(t, env, filepath.Join(dir, "sub", "b.md"))
 
 	req := newRequest(t, http.MethodPost, "/api/file/delete", map[string]string{"path": dir})
 	w := callHandler(ServeFileDelete, req)
@@ -62,7 +62,7 @@ func TestShareCleanup_OnRename(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "clean/old.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodPost, "/api/file/rename", map[string]string{
 		"path": absPath,
@@ -81,7 +81,7 @@ func TestShareCleanup_OnMove(t *testing.T) {
 
 	src := filepath.Join(env.ProjectDir, "clean", "move.md")
 	createTestFile(t, env.ProjectDir, "clean/move.md", "hi")
-	token := createShareViaAPI(t, src)
+	token := createShareViaAPI(t, env, src)
 
 	dest := filepath.Join(env.ProjectDir, "clean", "dest", "move.md")
 	require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0o755))
@@ -101,7 +101,7 @@ func TestShareCleanup_WriteDoesNotRevoke(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "clean/edit.md", "v1")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodPost, "/api/file/write", map[string]string{
 		"path":    absPath,

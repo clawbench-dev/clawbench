@@ -170,7 +170,7 @@ func TestSharePublic_UnknownSubPath_404(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/readme.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	// A rest path that matches no public endpoint → uniform 404.
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/bogus", nil)
@@ -183,7 +183,7 @@ func TestSharePublic_RequireGetMethod(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodPost, "/api/share/"+token+"/file", nil)
 	w := callHandler(ServeSharePublic, req)
@@ -205,7 +205,7 @@ func TestSharePublic_FileTooLarge_400(t *testing.T) {
 	require.NoError(t, f.Close())
 	defer func() { _ = os.Remove(big) }()
 
-	token := createShareViaAPI(t, big)
+	token := createShareViaAPI(t, env, big)
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/file", nil)
 	w := callHandler(ServeSharePublic, req)
@@ -222,7 +222,7 @@ func TestSharePublic_BinaryContentSniffedAndSanitized(t *testing.T) {
 	bin := filepath.Join(env.ProjectDir, "docs", "blob.dat")
 	createTestFile(t, env.ProjectDir, "docs/blob.dat", "line1\x00line2")
 
-	token := createShareViaAPI(t, bin)
+	token := createShareViaAPI(t, env, bin)
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/file", nil)
 	w := callHandler(ServeSharePublic, req)
@@ -240,7 +240,7 @@ func TestSharePublic_LocalBareServesSharedFile(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/readme.md", "SELF")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local", nil)
 	w := callHandler(ServeSharePublic, req)
@@ -253,7 +253,7 @@ func TestSharePublic_LocalRelativeMissingFile_404(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/readme.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local/img/missing.png", nil)
 	w := callHandler(ServeSharePublic, req)
@@ -265,7 +265,7 @@ func TestSharePublic_LocalNonAbsoluteQueryPath_404(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/readme.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	// ?path= must be absolute or start with '/'; a relative value is rejected.
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local?path=rel%2Fimg.png", nil)
@@ -273,12 +273,22 @@ func TestSharePublic_LocalNonAbsoluteQueryPath_404(t *testing.T) {
 	assertStatus(t, w, http.StatusNotFound)
 }
 
+// TestSharePublic_LocalQueryPathOutsideRoot_404 asserts ?path= cannot reach a
+// file outside the share's scope.
+//
+// NOTE: on its own this test is a weak signal. The fixture narrows
+// model.RootPaths to a temp dir, so before the traversal fix it passed because
+// of that narrowing rather than because the share was confined — with the
+// production value (["/"]) the same request returned 200. The
+// RootPaths=["/"] variant lives in
+// TestSharePublic_LocalAbsolutePathOutsideProject_404, which is the guard that
+// actually covers production.
 func TestSharePublic_LocalQueryPathOutsideRoot_404(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/readme.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local?path=/etc/passwd", nil)
 	w := callHandler(ServeSharePublic, req)
@@ -292,7 +302,7 @@ func TestSharePublic_DownloadFileGone_404(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/gone.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 	require.NoError(t, os.Remove(absPath))
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/download", nil)
@@ -305,7 +315,7 @@ func TestSharePublic_DownloadDirectory_404(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/real.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	// /file endpoint 404s when the shared file is a directory (defensive).
 	// Point the share token at a directory by replacing the shared file on disk.

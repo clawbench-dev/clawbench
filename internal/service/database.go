@@ -764,10 +764,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- Public file share links (capability tokens). A row maps an opaque,
 		-- unguessable token to an absolute file path. Public endpoints accept the
 		-- token WITHOUT auth; removing the row revokes the link immediately.
+		-- root confines the link to a directory (resolved at creation time,
+		-- while the request is still authenticated); see FileSharesDDL.
 		CREATE TABLE IF NOT EXISTS file_shares (
 			token TEXT PRIMARY KEY,
 			path TEXT NOT NULL,
 			name TEXT NOT NULL,
+			root TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_file_shares_path ON file_shares(path);
@@ -1482,6 +1485,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasRecMessageID == 0 {
 		if _, err := WriteExec("ALTER TABLE chat_recommendations ADD COLUMN message_id INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add message_id column to chat_recommendations: %w", err)
+		}
+	}
+
+	// Migrate: add root column to file_shares. Pre-existing rows get '' and
+	// readers fall back to the shared file's own directory — the safe
+	// direction, since it can only narrow what the link exposes.
+	var hasShareRoot int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('file_shares') WHERE name='root'").Scan(&hasShareRoot)
+	if hasShareRoot == 0 {
+		if _, err := WriteExec("ALTER TABLE file_shares ADD COLUMN root TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add root column to file_shares: %w", err)
 		}
 	}
 

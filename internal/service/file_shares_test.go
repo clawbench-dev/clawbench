@@ -30,12 +30,12 @@ func TestFileShares_UpsertCreatesNewToken(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	token, created, err := service.UpsertFileShare("/tmp/a.md", "a.md")
+	token, created, err := service.UpsertFileShare("/tmp/a.md", "a.md", "/tmp")
 	require.NoError(t, err)
 	assert.True(t, created)
 	assert.Len(t, token, 32)
 
-	path, name, ok, err := service.GetFileShareByToken(token)
+	path, name, _, ok, err := service.GetFileShareByToken(token)
 	require.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, "/tmp/a.md", path)
@@ -46,20 +46,20 @@ func TestFileShares_UpsertRotatesToken(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	token1, created, err := service.UpsertFileShare("/tmp/a.md", "a.md")
+	token1, created, err := service.UpsertFileShare("/tmp/a.md", "a.md", "/tmp")
 	require.NoError(t, err)
 	assert.True(t, created)
 
-	token2, created, err := service.UpsertFileShare("/tmp/a.md", "a.md")
+	token2, created, err := service.UpsertFileShare("/tmp/a.md", "a.md", "/tmp")
 	require.NoError(t, err)
 	assert.False(t, created)
 	assert.NotEqual(t, token1, token2, "rotating must issue a fresh token")
 
 	// Old token revoked, new token live.
-	_, _, ok, err := service.GetFileShareByToken(token1)
+	_, _, _, ok, err := service.GetFileShareByToken(token1)
 	require.NoError(t, err)
 	assert.False(t, ok, "old token must be invalid after rotation")
-	_, _, ok, err = service.GetFileShareByToken(token2)
+	_, _, _, ok, err = service.GetFileShareByToken(token2)
 	require.NoError(t, err)
 	assert.True(t, ok)
 }
@@ -73,7 +73,7 @@ func TestFileShares_GetFileShareByPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok)
 
-	token, _, err := service.UpsertFileShare("/tmp/b.md", "b.md")
+	token, _, err := service.UpsertFileShare("/tmp/b.md", "b.md", "/tmp")
 	require.NoError(t, err)
 
 	gotToken, name, ok, err := service.GetFileShareByPath("/tmp/b.md")
@@ -87,11 +87,11 @@ func TestFileShares_GetByTokenUnknownReturnsFalse(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	_, _, ok, err := service.GetFileShareByToken("deadbeefdeadbeefdeadbeefdeadbeef")
+	_, _, _, ok, err := service.GetFileShareByToken("deadbeefdeadbeefdeadbeefdeadbeef")
 	require.NoError(t, err)
 	assert.False(t, ok)
 	// Empty token also resolves false without error.
-	_, _, ok, err = service.GetFileShareByToken("")
+	_, _, _, ok, err = service.GetFileShareByToken("")
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -100,11 +100,11 @@ func TestFileShares_DeleteByToken(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	token, _, err := service.UpsertFileShare("/tmp/c.md", "c.md")
+	token, _, err := service.UpsertFileShare("/tmp/c.md", "c.md", "/tmp")
 	require.NoError(t, err)
 
 	require.NoError(t, service.DeleteFileShareByToken(token))
-	_, _, ok, err := service.GetFileShareByToken(token)
+	_, _, _, ok, err := service.GetFileShareByToken(token)
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -113,11 +113,11 @@ func TestFileShares_DeleteByPath(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	token, _, err := service.UpsertFileShare("/tmp/d.md", "d.md")
+	token, _, err := service.UpsertFileShare("/tmp/d.md", "d.md", "/tmp")
 	require.NoError(t, err)
 
 	require.NoError(t, service.DeleteFileShareByPath("/tmp/d.md"))
-	_, _, ok, err := service.GetFileShareByToken(token)
+	_, _, _, ok, err := service.GetFileShareByToken(token)
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -127,14 +127,14 @@ func TestFileShares_DeleteSharesUnderPath(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// Shares at the dir itself, directly under it, and nested.
-	_, _, err := service.UpsertFileShare("/tmp/docs", "docs")
+	_, _, err := service.UpsertFileShare("/tmp/docs", "docs", "/tmp")
 	require.NoError(t, err)
-	_, _, err = service.UpsertFileShare("/tmp/docs/readme.md", "readme.md")
+	_, _, err = service.UpsertFileShare("/tmp/docs/readme.md", "readme.md", "/tmp")
 	require.NoError(t, err)
-	_, _, err = service.UpsertFileShare("/tmp/docs/sub/deep.txt", "deep.txt")
+	_, _, err = service.UpsertFileShare("/tmp/docs/sub/deep.txt", "deep.txt", "/tmp")
 	require.NoError(t, err)
 	// Unrelated path sharing a prefix must survive.
-	unrelated, _, err := service.UpsertFileShare("/tmp/docs-other/x.md", "x.md")
+	unrelated, _, err := service.UpsertFileShare("/tmp/docs-other/x.md", "x.md", "/tmp")
 	require.NoError(t, err)
 
 	require.NoError(t, service.DeleteFileSharesUnderPath("/tmp/docs"))
@@ -144,7 +144,7 @@ func TestFileShares_DeleteSharesUnderPath(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, ok, "share for %s should be removed", p)
 	}
-	_, _, ok, err := service.GetFileShareByToken(unrelated)
+	_, _, _, ok, err := service.GetFileShareByToken(unrelated)
 	require.NoError(t, err)
 	assert.True(t, ok, "unrelated prefix share must survive")
 }
@@ -155,16 +155,16 @@ func TestFileShares_DeleteSharesUnderPath_EscapesLikeWildcards(t *testing.T) {
 
 	// A directory containing SQL LIKE wildcards — must still be literal.
 	dir := "/tmp/doc_100%/readme.md"
-	token, _, err := service.UpsertFileShare(dir, "readme.md")
+	token, _, err := service.UpsertFileShare(dir, "readme.md", "/tmp")
 	require.NoError(t, err)
 
 	// A share under a directory that would match if wildcards were not escaped.
-	_, _, err = service.UpsertFileShare("/tmp/docX100Xreadme.md", "readme.md")
+	_, _, err = service.UpsertFileShare("/tmp/docX100Xreadme.md", "readme.md", "/tmp")
 	require.NoError(t, err)
 
 	require.NoError(t, service.DeleteFileSharesUnderPath("/tmp/doc_100%"))
 
-	_, _, ok, err := service.GetFileShareByToken(token)
+	_, _, _, ok, err := service.GetFileShareByToken(token)
 	require.NoError(t, err)
 	assert.False(t, ok, "literal-prefix share should be removed")
 
@@ -188,23 +188,23 @@ func TestFileShares_DeleteSharesUnderPath_WindowsBackslashChildren(t *testing.T)
 	childFile := dir + `\a.md`
 	nestedFile := dir + `\sub\b.md`
 
-	childTok, _, err := service.UpsertFileShare(childFile, "a.md")
+	childTok, _, err := service.UpsertFileShare(childFile, "a.md", "/tmp")
 	require.NoError(t, err)
-	nestedTok, _, err := service.UpsertFileShare(nestedFile, "b.md")
+	nestedTok, _, err := service.UpsertFileShare(nestedFile, "b.md", "/tmp")
 	require.NoError(t, err)
 	// Sibling sharing a prefix (docs-other) must survive.
-	otherTok, _, err := service.UpsertFileShare(dir+`-other\x.md`, "x.md")
+	otherTok, _, err := service.UpsertFileShare(dir+`-other\x.md`, "x.md", "/tmp")
 	require.NoError(t, err)
 
 	require.NoError(t, service.DeleteFileSharesUnderPath(dir))
 
-	_, _, ok, err := service.GetFileShareByToken(childTok)
+	_, _, _, ok, err := service.GetFileShareByToken(childTok)
 	require.NoError(t, err)
 	assert.False(t, ok, "direct child share must be revoked")
-	_, _, ok, err = service.GetFileShareByToken(nestedTok)
+	_, _, _, ok, err = service.GetFileShareByToken(nestedTok)
 	require.NoError(t, err)
 	assert.False(t, ok, "nested child share must be revoked")
-	_, _, ok, err = service.GetFileShareByToken(otherTok)
+	_, _, _, ok, err = service.GetFileShareByToken(otherTok)
 	require.NoError(t, err)
 	assert.True(t, ok, "prefix sibling share must survive")
 }
@@ -213,11 +213,11 @@ func TestFileShares_DeleteByPaths(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	_, _, err := service.UpsertFileShare("/tmp/e1.md", "e1.md")
+	_, _, err := service.UpsertFileShare("/tmp/e1.md", "e1.md", "/tmp")
 	require.NoError(t, err)
-	_, _, err = service.UpsertFileShare("/tmp/e2.md", "e2.md")
+	_, _, err = service.UpsertFileShare("/tmp/e2.md", "e2.md", "/tmp")
 	require.NoError(t, err)
-	keepToken, _, err := service.UpsertFileShare("/tmp/keep.md", "keep.md")
+	keepToken, _, err := service.UpsertFileShare("/tmp/keep.md", "keep.md", "/tmp")
 	require.NoError(t, err)
 
 	require.NoError(t, service.DeleteFileShareByPaths([]string{"/tmp/e1.md", "/tmp/e2.md", ""}))
@@ -228,7 +228,7 @@ func TestFileShares_DeleteByPaths(t *testing.T) {
 	_, _, ok, err = service.GetFileShareByPath("/tmp/e2.md")
 	require.NoError(t, err)
 	assert.False(t, ok)
-	_, _, ok, err = service.GetFileShareByToken(keepToken)
+	_, _, _, ok, err = service.GetFileShareByToken(keepToken)
 	require.NoError(t, err)
 	assert.True(t, ok)
 
@@ -255,7 +255,7 @@ func TestFileShares_Upsert_GetByPathReadError(t *testing.T) {
 	cleanup := service.SetDBForTest(db, closedSQLite(t))
 	defer cleanup()
 
-	_, _, err := service.UpsertFileShare("/tmp/err.md", "err.md")
+	_, _, err := service.UpsertFileShare("/tmp/err.md", "err.md", "/tmp")
 	assert.Error(t, err, "read failure in UpsertFileShare must surface")
 }
 
@@ -268,7 +268,7 @@ func TestFileShares_Upsert_WriteErrorOnInsert(t *testing.T) {
 	cleanup := service.SetDBForTest(closedSQLite(t), db)
 	defer cleanup()
 
-	_, _, err := service.UpsertFileShare("/tmp/err2.md", "err2.md")
+	_, _, err := service.UpsertFileShare("/tmp/err2.md", "err2.md", "/tmp")
 	assert.Error(t, err, "write failure in UpsertFileShare must surface")
 }
 
@@ -276,7 +276,7 @@ func TestFileShares_Upsert_RotateWriteError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 
 	// Pre-create an existing share so the rotate path (DELETE then INSERT) runs.
-	token, created, err := service.UpsertFileShare("/tmp/rot.md", "rot.md")
+	token, created, err := service.UpsertFileShare("/tmp/rot.md", "rot.md", "/tmp")
 	require.NoError(t, err)
 	require.True(t, created)
 	require.NotEmpty(t, token)
@@ -285,7 +285,7 @@ func TestFileShares_Upsert_RotateWriteError(t *testing.T) {
 	cleanup := service.SetDBForTest(closedSQLite(t), db)
 	defer cleanup()
 
-	_, _, err = service.UpsertFileShare("/tmp/rot.md", "rot.md")
+	_, _, err = service.UpsertFileShare("/tmp/rot.md", "rot.md", "/tmp")
 	assert.Error(t, err, "rotate DELETE failure must surface")
 }
 
@@ -300,7 +300,7 @@ func TestFileShares_GetByToken_ScanError(t *testing.T) {
 	_, err = db.Exec("INSERT INTO file_shares (token, path) VALUES (?, ?)", "tok1", "/tmp/t.md")
 	require.NoError(t, err)
 
-	_, _, ok, err := service.GetFileShareByToken("tok1")
+	_, _, _, ok, err := service.GetFileShareByToken("tok1")
 	assert.False(t, ok)
 	assert.Error(t, err, "scan failure must surface as an error")
 }
@@ -312,7 +312,7 @@ func TestFileShares_GetByToken_SQLQueryError(t *testing.T) {
 	cleanup := service.SetDBForTest(db, closedSQLite(t))
 	defer cleanup()
 
-	_, _, _, err := service.GetFileShareByToken("abc")
+	_, _, _, _, err := service.GetFileShareByToken("abc")
 	assert.Error(t, err, "query on a closed read DB must error")
 }
 
@@ -416,9 +416,9 @@ func TestListFileShares_ReturnsAllNewestFirst(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	_, _, err := service.UpsertFileShare("/tmp/l1.md", "l1.md")
+	_, _, err := service.UpsertFileShare("/tmp/l1.md", "l1.md", "/tmp")
 	require.NoError(t, err)
-	_, _, err = service.UpsertFileShare("/tmp/l2.md", "l2.md")
+	_, _, err = service.UpsertFileShare("/tmp/l2.md", "l2.md", "/tmp")
 	require.NoError(t, err)
 
 	shares, err := service.ListFileShares()
@@ -440,9 +440,9 @@ func TestDeleteAllFileShares_RemovesEveryShare(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	_, _, err := service.UpsertFileShare("/tmp/a.md", "a.md")
+	_, _, err := service.UpsertFileShare("/tmp/a.md", "a.md", "/tmp")
 	require.NoError(t, err)
-	_, _, err = service.UpsertFileShare("/tmp/b.md", "b.md")
+	_, _, err = service.UpsertFileShare("/tmp/b.md", "b.md", "/tmp")
 	require.NoError(t, err)
 
 	require.NoError(t, service.DeleteAllFileShares())
@@ -453,4 +453,67 @@ func TestDeleteAllFileShares_RemovesEveryShare(t *testing.T) {
 
 	// Double delete is a no-op, not an error.
 	require.NoError(t, service.DeleteAllFileShares())
+}
+
+// ─── root confinement column ─────────────────────────────────────────────────
+
+func TestFileShares_UpsertPersistsRoot(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	token, _, err := service.UpsertFileShare("/proj/docs/a.md", "a.md", "/proj")
+	require.NoError(t, err)
+
+	path, name, root, ok, err := service.GetFileShareByToken(token)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "/proj/docs/a.md", path)
+	assert.Equal(t, "a.md", name)
+	assert.Equal(t, "/proj", root)
+}
+
+func TestFileShares_RotateUpdatesRoot(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	tok1, _, err := service.UpsertFileShare("/proj/docs/a.md", "a.md", "/proj")
+	require.NoError(t, err)
+
+	// Re-sharing the same path rotates the token AND refreshes the boundary:
+	// the project may have been re-selected since the first share.
+	tok2, created, err := service.UpsertFileShare("/proj/docs/a.md", "a.md", "/proj/sub")
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.NotEqual(t, tok1, tok2)
+
+	_, _, root, ok, err := service.GetFileShareByToken(tok2)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "/proj/sub", root)
+}
+
+func TestFileShares_RootDefaultsEmptyForLegacyRows(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	// Simulate a row written before the root column existed.
+	_, err := service.WriteExec(
+		"INSERT INTO file_shares (token, path, name) VALUES (?, ?, ?)",
+		"legacytoken", "/proj/docs/old.md", "old.md")
+	require.NoError(t, err)
+
+	_, _, root, ok, err := service.GetFileShareByToken("legacytoken")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Empty(t, root, "legacy rows must read back an empty root so readers fail closed")
+}
+
+func TestFileSharesDDL_HasRootColumn(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	var hasRoot int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('file_shares') WHERE name='root'").Scan(&hasRoot))
+	assert.Equal(t, 1, hasRoot, "file_shares must define the root column")
 }
