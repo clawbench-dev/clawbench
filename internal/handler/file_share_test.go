@@ -674,3 +674,84 @@ func TestShareLocal_LegacyRowWithoutRootFailsClosed(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.NotContains(t, w.Body.String(), "PROJECTSECRET")
 }
+
+// TestResolveShareRoot_NoCookieNeverWidensToHome is the regression guard for a
+// boundary-widening defect: resolveShareRoot must NOT fall back to
+// service.GetDefaultProject() when the project cookie is absent. That function's
+// own fallback chain ends at the home directory and then at RootPaths[0]
+// (== "/" on Unix), and production projects live UNDER the home directory — so
+// isPathUnderBase would accept it and confine the share to $HOME, exposing
+// ~/.ssh, config files, and everything else to any token holder.
+func TestResolveShareRoot_NoCookieNeverWidensToHome(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	require.NotEmpty(t, home)
+
+	// Make GetDefaultProject's first two steps unusable so that, if it were
+	// still consulted, it would reach the home-directory fallback.
+	_, err = service.WriteExec("DELETE FROM recent_projects")
+	require.NoError(t, err)
+
+	// A project under $HOME — the normal production layout.
+	projectDir := filepath.Join(home, "clawbench-share-root-test")
+	docDir := filepath.Join(projectDir, "docs")
+	require.NoError(t, os.MkdirAll(docDir, 0o755))
+	t.Cleanup(func() { _ = os.RemoveAll(projectDir) })
+
+	sharedFile := filepath.Join(docDir, "m.md")
+	require.NoError(t, os.WriteFile(sharedFile, []byte("hi"), 0o644))
+
+	// No project cookie on the request.
+	req := newRequest(t, http.MethodPost, "/api/share", nil)
+
+	got := resolveShareRoot(req, sharedFile)
+
+	assert.NotEqual(t, home, got,
+		"share must not be confined to the home directory (would expose ~/.ssh)")
+	assert.NotEqual(t, "/", got,
+		"share must not be confined to the filesystem root")
+	assert.Equal(t, docDir, got,
+		"with no project cookie the boundary must narrow to the file's own directory")
+
+	_ = env
+}
+
+// TestResolveShareRoot_ProjectCookieConfinesToProject covers the normal path:
+// a cookie pointing at a project that contains the file yields the project root,
+// which is what keeps `../images/x.png` references working.
+func TestResolveShareRoot_ProjectCookieConfinesToProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sharedFile := createShareTestFile(t, env, "docs/m.md", "hi")
+
+	req := newRequest(t, http.MethodPost, "/api/share", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	got := resolveShareRoot(req, sharedFile)
+	assert.Equal(t, env.ProjectDir, got,
+		"a file inside the active project must be bounded by the project root")
+}
+
+// TestResolveShareRoot_FileOutsideProjectNarrowsToFileDir covers the fail-closed
+// path: a cookie for a project that does NOT contain the file must not grant the
+// project root.
+func TestResolveShareRoot_FileOutsideProjectNarrowsToFileDir(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	outsideDir := filepath.Join(env.WatchDir, "elsewhere")
+	require.NoError(t, os.MkdirAll(outsideDir, 0o755))
+	sharedFile := filepath.Join(outsideDir, "doc.md")
+	require.NoError(t, os.WriteFile(sharedFile, []byte("hi"), 0o644))
+
+	req := newRequest(t, http.MethodPost, "/api/share", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	got := resolveShareRoot(req, sharedFile)
+	assert.Equal(t, outsideDir, got,
+		"a file outside the active project must be bounded by its own directory")
+}

@@ -106,30 +106,26 @@ func resolveShareTarget(w http.ResponseWriter, r *http.Request, pathStr string) 
 // reference like ../images/pic.jpg legitimately resolves above that directory
 // but still inside the project.
 //
-// Anything else (a file outside the project, or no project selected) falls
-// back to the shared file's own directory — the safe direction, since it can
-// only narrow what the link exposes.
+// Only the project cookie is consulted. service.GetDefaultProject() must NOT
+// be used as a fallback here: its own chain ends at the home directory and then
+// at RootPaths[0] (== "/" on Unix), and production projects live *under* the
+// home directory, so isPathUnderBase would accept it and confine the share to
+// $HOME — handing a token holder ~/.ssh, config files, and everything else.
+// With no cookie we therefore fall back to the shared file's own directory,
+// the only choice that cannot widen what the link exposes.
 func resolveShareRoot(r *http.Request, absPath string) string {
 	fileDir := filepath.Dir(absPath)
 
 	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" {
-		if def, err := service.GetDefaultProject(); err == nil {
-			projectPath = def
-		}
-	}
 	if projectPath == "" {
 		return fileDir
 	}
 	if !isPathUnderBase(absPath, projectPath) {
 		return fileDir
 	}
-	// Store the symlink-resolved form: readers compare against it with
-	// isPathUnderBase, which resolves both sides, so an unresolved project
-	// path containing a symlinked component would otherwise never match.
-	if resolved, err := filepath.EvalSymlinks(projectPath); err == nil {
-		return resolved
-	}
+	// Store the path as given: readers compare with isPathUnderBase, which
+	// resolves symlinks on BOTH sides, so a symlinked component in the project
+	// path is handled at read time and needs no pre-resolution here.
 	return projectPath
 }
 
@@ -472,16 +468,15 @@ func serveShareLocal(w http.ResponseWriter, r *http.Request, sharedAbsPath, shar
 			http.NotFound(w, r)
 			return
 		}
-		absTarget, aerr := filepath.Abs(queryPath)
-		if aerr != nil {
-			http.NotFound(w, r)
-			return
-		}
 		root := shareRoot
 		if root == "" {
 			root = filepath.Dir(sharedAbsPath)
 		}
-		if !isPathUnderBase(absTarget, root) {
+		// filepath.Abs only errors for a drive-relative path whose working
+		// directory is gone (Windows); treat that exactly like an out-of-scope
+		// target so there is a single rejection path.
+		absTarget, aerr := filepath.Abs(queryPath)
+		if aerr != nil || !isPathUnderBase(absTarget, root) {
 			http.NotFound(w, r)
 			return
 		}
