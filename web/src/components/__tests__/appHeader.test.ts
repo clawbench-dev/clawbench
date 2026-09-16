@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { reactive } from 'vue'
 import AppHeader from '@/components/common/AppHeader.vue'
+import { pendingSettingsCategory } from '@/composables/useSettingsNavigation'
 
 // ── Mock setup ──
 const {
@@ -237,6 +238,29 @@ describe('AppHeader', () => {
   it('has logo', () => {
     mountAndTrack()
     expect($('.header-logo')).toBeTruthy()
+  })
+  it('logo is wrapped in a button that deep-links into the About settings', async () => {
+    const switchTabMock = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const wrapper = mount(AppHeader, {
+      props: { projectRoot: '/home/user/my-project' },
+      attachTo: container,
+      global: {
+        plugins: [i18n],
+        stubs: { PopupMenu: PopupMenuStub, 'lucide-vue-next': LucideStub },
+        provide: { switchTab: switchTabMock, toast: { show: vi.fn() }, hotSwitchProject: vi.fn() },
+      },
+    })
+    activeWrapper = wrapper
+    activeContainer = container
+    pendingSettingsCategory.value = null
+
+    await $(('.header-logo-btn'))!.click()
+
+    expect(pendingSettingsCategory.value).toBe('about')
+    expect(switchTabMock).toHaveBeenCalledWith('settings')
+    pendingSettingsCategory.value = null
   })
   it('has server toggle button', () => {
     mountAndTrack()

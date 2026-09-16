@@ -1,8 +1,15 @@
 <template>
   <Teleport to="body">
   <header class="header">
-    <!-- Logo: hidden in APP mode -->
-    <img class="header-logo" src="/logo-64.png" alt="ClawBench">
+    <button
+      class="header-logo-btn"
+      type="button"
+      :title="t('appHeader.aboutClawBench')"
+      :aria-label="t('appHeader.aboutClawBench')"
+      @click="openAboutSettings"
+    >
+      <img class="header-logo" src="/logo-64.png" alt="ClawBench">
+    </button>
 
     <div class="badge-capsule">
       <div class="project-dropdown-wrapper" ref="dropdownRef" :class="segmentClass('project', true)">
@@ -289,6 +296,13 @@ function selectTheme(value: string) {
 function openMoreAppearanceOptions() {
   themeMenuOpen.value = false
   setPendingSettingsCategory('appearance')
+  switchTab?.('settings')
+}
+
+/** Logo click → About category (version info, upgrade, restart). Same
+ *  module-level pending request + tab switch as the appearance deep-link. */
+function openAboutSettings() {
+  setPendingSettingsCategory('about')
   switchTab?.('settings')
 }
 
@@ -790,11 +804,30 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 </script>
 
 <style scoped>
+.header-logo-btn {
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity var(--duration-base);
+}
+
 .header-logo {
     width: 22px;
     height: 22px;
     border-radius: 50%;
     flex-shrink: 0;
+}
+
+@media (hover: hover) {
+    .header-logo-btn:hover {
+        opacity: 0.75;
+    }
 }
 
 /* Badge capsule: combines project + branch into one pill shape.

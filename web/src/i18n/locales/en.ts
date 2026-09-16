@@ -303,6 +303,7 @@ export default {
     themePicker: 'Switch theme',
     moreAppearanceOptions: 'More appearance options',
     settings: 'Settings',
+    aboutClawBench: 'About ClawBench',
     reconfigureServer: 'Reconfigure Server',
     debugLog: 'Debug Log',
     shortcutTip: {
