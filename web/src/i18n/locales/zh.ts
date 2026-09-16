@@ -2273,6 +2273,8 @@ export default {
       ragFtsRebuildConfirm: '将基于现有文本块重新执行分词并重建全文检索索引，不影响向量嵌入。适用于更换分词器或修复中文检索失效。是否继续？',
       ragFtsRebuildSuccess: '全文索引已重新分词并重建',
       ragFtsRebuildSuccessCount: '全文索引已重建，{count} 个文本块的分词已更新',
+      ragFtsRebuildStillRunning: '重建仍在后台进行，可稍后刷新查看进度',
+      ragFtsRebuildCancelled: '重建已取消',
       ragRebuildFailed: '重建索引失败',
       ragEmbedderHealthy: '可用',
       ragEmbedderUnhealthy: '不可用',

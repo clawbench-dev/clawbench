@@ -2,7 +2,6 @@
 package handler
 
 import (
-	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -353,10 +352,15 @@ func ServeRAGSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeRAGRebuildFTS handles POST /api/rag/rebuild-fts — re-segments every chunk
-// from its source text and rebuilds the full-text index, independent of the
-// vector layer: no re-chunking, no re-embedding, no message indexed flags reset.
+// ServeRAGRebuildFTS handles POST /api/rag/rebuild-fts — starts an asynchronous
+// full-text index rebuild that re-segments every chunk from its source text.
 // Vector embeddings and chunk rows are left untouched.
+//
+// The work is NOT performed inline. Re-segmentation measured ~149s on a
+// 44k-chunk production store, which exceeds the frontend's 10s request timeout,
+// so an inline rebuild completed successfully on the server while the UI
+// reported failure. The handler now only starts the worker and returns
+// immediately; clients poll GET /api/rag/rebuild-fts/status for progress.
 //
 // Re-segmentation is the point of this endpoint: FTS5's own 'rebuild' command
 // only re-reads the stored segmented column, so it cannot pick up a change to
@@ -370,41 +374,48 @@ func ServeRAGRebuildFTS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rag.GlobalStore == nil {
+	if rag.GlobalStore == nil || rag.GlobalFTSRebuildWorker == nil {
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotAvailable")
 		return
 	}
 
-	// Prevent concurrent resets/rebuilds
-	if ragResetting.Swap(true) {
+	// Refuse synchronously when the segmenter is missing: SegmentText would
+	// fall back to returning raw text, so the rebuild would overwrite correctly
+	// segmented CJK with unsplittable text. Better to fail the trigger than to
+	// let the client poll and discover it.
+	if !rag.SegmenterAvailable() {
+		slog.Error("rag: fts rebuild refused, segmenter unavailable")
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSegmenterUnavailable")
+		return
+	}
+
+	if !rag.GlobalFTSRebuildWorker.Start(rag.GlobalStore) {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "RAGResetInProgress")
 		return
 	}
-	defer ragResetting.Store(false)
 
-	chunksRebuilt, chunksResegmented, err := rag.GlobalStore.RebuildFTS()
-	if err != nil {
-		// Without a segmenter the rebuild would overwrite correctly segmented
-		// text with raw input, so it is refused rather than run degraded.
-		if errors.Is(err, rag.ErrSegmenterUnavailable) {
-			slog.Error("rag: fts rebuild refused, segmenter unavailable")
-			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSegmenterUnavailable")
-			return
-		}
-		slog.Error("rag: fts rebuild failed", slog.String("err", err.Error()))
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
+	slog.Info("rag: fts rebuild accepted (running in background)")
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status": "accepted",
+	})
+}
+
+// ServeRAGRebuildFTSStatus handles GET /api/rag/rebuild-fts/status — returns
+// the progress of the background full-text rebuild so the UI can poll instead
+// of holding a request open for the duration.
+func ServeRAGRebuildFTSStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
-	slog.Info("rag: fts rebuild triggered",
-		slog.Int64("chunks_rebuilt", chunksRebuilt),
-		slog.Int64("chunks_resegmented", chunksResegmented))
+	if rag.GlobalFTSRebuildWorker == nil {
+		// No worker (RAG disabled): report idle rather than an error so the
+		// client can treat it as "nothing running" uniformly.
+		writeJSON(w, http.StatusOK, rag.FTSRebuildStatus{Status: "idle"})
+		return
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":             "ok",
-		"chunks_rebuilt":     chunksRebuilt,
-		"chunks_resegmented": chunksResegmented,
-	})
+	writeJSON(w, http.StatusOK, rag.GlobalFTSRebuildWorker.GetStatus())
 }
 
 // ServeRAGResetVector handles POST /api/rag/reset-vector — vector-only rebuild:

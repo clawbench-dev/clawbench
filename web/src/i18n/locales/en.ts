@@ -2270,6 +2270,8 @@ export default {
       ragFtsRebuildConfirm: 'Re-runs text segmentation over existing chunks and rebuilds the full-text index. Vector embeddings are not affected. Use this after changing the segmenter or to repair broken Chinese search. Continue?',
       ragFtsRebuildSuccess: 'Full-text index re-segmented and rebuilt',
       ragFtsRebuildSuccessCount: 'Full-text index rebuilt; {count} chunks re-segmented',
+      ragFtsRebuildStillRunning: 'Rebuild is still running in the background; refresh later to check progress',
+      ragFtsRebuildCancelled: 'Rebuild cancelled',
       ragRebuildFailed: 'Failed to rebuild index',
       ragEmbedderHealthy: 'Healthy',
       ragEmbedderUnhealthy: 'Unhealthy',

@@ -727,7 +727,7 @@ func TestSQLiteStore_RebuildFTS_KeepsChunksAndVectors(t *testing.T) {
 	require.True(t, store.HasFTSData())
 	require.True(t, store.HasVecData())
 
-	rebuilt, resegmented, err := store.RebuildFTS()
+	rebuilt, resegmented, err := store.RebuildFTS(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), rebuilt, "should report all chunks re-indexed")
 	assert.Equal(t, int64(0), resegmented,
@@ -756,7 +756,7 @@ func TestSQLiteStore_RebuildFTS_KeepsChunksAndVectors(t *testing.T) {
 func TestSQLiteStore_RebuildFTS_EmptyStore(t *testing.T) {
 	store := setupSQLiteStore(t)
 
-	rebuilt, resegmented, err := store.RebuildFTS()
+	rebuilt, resegmented, err := store.RebuildFTS(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), rebuilt)
 	assert.Equal(t, int64(0), resegmented)
@@ -802,7 +802,7 @@ func TestSQLiteStore_RebuildFTS_ResegmentsFromSourceText(t *testing.T) {
 	require.Zero(t, search("中文"),
 		"precondition: un-segmented CJK is indexed as one token, so partial queries miss")
 
-	rebuilt, resegmented, err := store.RebuildFTS()
+	rebuilt, resegmented, err := store.RebuildFTS(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), rebuilt)
 	assert.Equal(t, int64(1), resegmented, "the mis-segmented chunk must be rewritten")
@@ -855,7 +855,7 @@ func TestSQLiteStore_RebuildFTS_RefusesWithoutSegmenter(t *testing.T) {
 	prev := SetSegmenterForTest(nil)
 	t.Cleanup(func() { RestoreSegmenterForTest(prev) })
 
-	_, _, err := store.RebuildFTS()
+	_, _, err := store.RebuildFTS(context.Background(), nil)
 	require.ErrorIs(t, err, ErrSegmenterUnavailable)
 
 	// Nothing may have been rewritten.
@@ -867,6 +867,75 @@ func TestSQLiteStore_RebuildFTS_RefusesWithoutSegmenter(t *testing.T) {
 	hits, err := store.SearchFTS("中文", 5, "", "", "", "", "", "", "")
 	require.NoError(t, err)
 	assert.NotEmpty(t, hits, "the previously good index must remain searchable")
+}
+
+// TestSQLiteStore_RebuildFTS_ReportsProgress asserts the progress callback
+// reports monotonically increasing processed counts ending at the total, and
+// that the final report lands on 100% rather than the last throttled tick.
+func TestSQLiteStore_RebuildFTS_ReportsProgress(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	insertTestChunksSQLite(t, store, 5)
+
+	var processed, totals []int
+	cb := func(p, total int) {
+		processed = append(processed, p)
+		totals = append(totals, total)
+	}
+
+	indexed, _, err := store.RebuildFTS(context.Background(), cb)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), indexed)
+
+	require.NotEmpty(t, processed, "progress must be reported at least once")
+	// Monotonic non-decreasing.
+	for i := 1; i < len(processed); i++ {
+		require.GreaterOrEqual(t, processed[i], processed[i-1],
+			"processed must not go backwards: %v", processed)
+	}
+	require.Equal(t, 5, processed[len(processed)-1],
+		"final callback must report all chunks processed, got %v", processed)
+	for _, total := range totals {
+		require.Equal(t, 5, total, "total must stay constant across callbacks")
+	}
+}
+
+// TestSQLiteStore_RebuildFTS_HonoursCancellation asserts a cancelled context
+// aborts the rebuild without opening the write transaction, so a cancel cannot
+// leave the index half-rewritten.
+func TestSQLiteStore_RebuildFTS_HonoursCancellation(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	insertTestChunksSQLite(t, store, 5)
+
+	var before []string
+	rows, err := store.db.Query("SELECT chunk_text_segmented FROM rag_chunks ORDER BY id")
+	require.NoError(t, err)
+	for rows.Next() {
+		var s string
+		require.NoError(t, rows.Scan(&s))
+		before = append(before, s)
+	}
+	require.NoError(t, rows.Err())
+	rows.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+
+	_, _, err = store.RebuildFTS(ctx, nil)
+	require.ErrorIs(t, err, context.Canceled)
+
+	// Data must be untouched.
+	var after []string
+	rows, err = store.db.Query("SELECT chunk_text_segmented FROM rag_chunks ORDER BY id")
+	require.NoError(t, err)
+	for rows.Next() {
+		var s string
+		require.NoError(t, rows.Scan(&s))
+		after = append(after, s)
+	}
+	require.NoError(t, rows.Err())
+	rows.Close()
+
+	assert.Equal(t, before, after, "a cancelled rebuild must not modify stored segmentation")
 }
 
 // ---------- IndexDiskUsage ----------

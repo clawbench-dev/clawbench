@@ -29,6 +29,9 @@ var (
 	globalCleanup       *CleanupWorker
 	globalClusterWorker *ClusterWorker
 	GlobalClusterWorker *ClusterWorker // exposed for handler access
+
+	globalFTSRebuildWorker *FTSRebuildWorker
+	GlobalFTSRebuildWorker *FTSRebuildWorker // exposed for handler access
 )
 
 var embedderHealthyFlag atomic.Bool
@@ -122,9 +125,36 @@ func StopClusterWorker() {
 	mu.Unlock()
 }
 
+// StartFTSRebuildWorker initializes the on-demand full-text rebuild worker
+// (no cron). The worker only rebuilds when explicitly triggered via Start.
+func StartFTSRebuildWorker(hub *ws.StreamHub) {
+	mu.Lock()
+	globalFTSRebuildWorker = NewFTSRebuildWorker(hub)
+	GlobalFTSRebuildWorker = globalFTSRebuildWorker
+	mu.Unlock()
+	slog.Info("fts rebuild worker initialized (on-demand, no cron)")
+}
+
+// StopFTSRebuildWorker cancels any running rebuild and clears the worker.
+func StopFTSRebuildWorker() {
+	mu.Lock()
+	if globalFTSRebuildWorker != nil {
+		globalFTSRebuildWorker.Cancel()
+	}
+	globalFTSRebuildWorker = nil
+	GlobalFTSRebuildWorker = nil
+	mu.Unlock()
+}
+
 // Shutdown closes the RAG store, indexer, cleanup worker, and cluster worker.
 func Shutdown() {
 	mu.Lock()
+
+	if globalFTSRebuildWorker != nil {
+		globalFTSRebuildWorker.Cancel()
+	}
+	globalFTSRebuildWorker = nil
+	GlobalFTSRebuildWorker = nil
 
 	if globalClusterWorker != nil {
 		globalClusterWorker.Stop()
