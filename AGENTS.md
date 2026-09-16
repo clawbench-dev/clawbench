@@ -96,14 +96,16 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
   - 字段名、参数名、方法**必须从 handler 代码里抄**（`decodeJSON` 结构体的 JSON tag、`r.URL.Query().Get(...)`、`requireMethod(...)` / `switch r.Method`），**禁止凭路由名望文生义**。
   - 路由唯一来源是 `internal/handler/handler.go` 的 `RegisterRoutes`；`internal/handler/openapi_drift_test.go` 双向校验路径与鉴权（**不校验字段名**）。
   - 完整维护清单见 `docs/spec/api/README.md`。
-- **纯前端改动完成后必须自觉编译**：若只涉及 `web/src/`、`web/index.html` 等（未动 Go / Android），跑通测试后直接构建并同步 embed 目录，供用户立即在浏览器 / App 中测试，无需用户再要求：
+- **纯前端改动完成后必须自觉编译**：若只涉及 `web/src/`、`web/index.html` 等（未动 Go / Android），跑通测试后直接构建，供用户立即在浏览器 / App 中测试，无需用户再要求：
 
   ```bash
-  cd web && npm run build        # 或项目根目录：npm run build
-  rm -rf internal/frontend/dist && cp -r public internal/frontend/dist
+  npm run build        # 仓库根目录（web/package.json 的 build 会 cd .. 转调同一脚本）
   ```
 
-  `internal/frontend/dist` 是 gitignore 的构建产物，不同步则运行中的服务看不到改动，不进提交。
+  vite 的 `outDir` 就是仓库根 `public/`，而服务端在 CWD 存在 `public/` 时走 disk 模式（`frontend.GetFS()`）直接读该目录，因此构建后**立即生效，无需同步 embed 目录**。`internal/frontend/dist` 仅在 CWD 无 `public/` 时被读取（单二进制分发场景）。
+- **embed 只在两种情况下需要处理**：
+  - **APK**：`ServeAPK` 恒定读 `EmbeddedFS()`（`internal/handler/apk.go`），**不查 CWD**——`/api/apk` 下发的是**构建 Go 二进制时**嵌入的 APK，与磁盘 `public/` 无关，换了 APK 必须重编二进制才生效。且 APK 必须放进 `public/assets/`：`build.sh` 会 `rm -rf internal/frontend/dist && cp -r public internal/frontend/dist`，只存在于 `dist/` 的 APK 会被冲掉（实测发生过，`/api/apk` 静默退回 404），放 `public/assets/` 才随 `cp -r` 带回。
+  - **可分发二进制**：`go build` / 交叉编译前必须同步 embed（`cp -r public internal/frontend/dist`），否则二进制内没有前端。
 - **覆盖率门槛**：每 PR / 推送到 main 强制执行——包级覆盖率不低于基线、变更行覆盖率 ≥ 80%。
 - **推送前必须运行本地检查**：`./scripts/pre-push-checks.sh`
 - **跑全量测试前先评估成本，且不得与并发 agent 争抢**：主工作区可能同时有多个 agent 在改同一棵树，全量测试是**共享的稀缺资源**——实测全量 vitest 约 14 分钟、`go test ./internal/service` 约 128 秒、前端构建 1.5–4 分钟；并发时彼此争抢 CPU/内存，会把对方拖到超时（同一命令并发下撞 600s 超时，单独跑仅 128s）并产生假失败。
