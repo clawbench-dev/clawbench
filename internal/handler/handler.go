@@ -417,6 +417,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/status", ServeRAGStatus)
 	register("/api/rag/reset-vector", ServeRAGResetVector)
 	register("/api/rag/rebuild-fts", ServeRAGRebuildFTS)
+	register("/api/rag/rebuild-fts/status", ServeRAGRebuildFTSStatus)
 	register("/api/rag/session-search", ServeRAGSessionSearch)
 	register("/api/rag/session-first-message", ServeRAGSessionFirstMessage)
 

@@ -122,3 +122,8 @@ Session: Untitled Session
 SearchQueryRequired: Search query is required
 UpgradeInProgress: Upgrade already in progress
 AlreadyLatestVersion: Already on the latest version
+RAGNotAvailable: RAG is not available
+RAGResetInProgress: An index rebuild is already running
+RAGResetFailed: Index rebuild failed
+RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Rebuilding now would replace correctly segmented text with unsplit text and break Chinese search — restart the service and try again."
+RAGRebuildAccepted: Rebuild started in the background

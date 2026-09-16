@@ -1,6 +1,7 @@
 package rag
 
 import (
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"errors"
@@ -1306,29 +1307,93 @@ func (s *Store) ResetForDimensionMismatch(newDim int) error {
 	return nil
 }
 
-// RebuildFTS rebuilds the full-text index from the existing chunk text without
-// touching chunk rows, the vector index, or message indexed flags.
+// FTSRebuildProgressCallback is invoked periodically during a rebuild with the
+// number of chunks processed so far and the total to process.
+type FTSRebuildProgressCallback func(processed, total int)
+
+// RebuildFTS re-segments every chunk from its source text and rebuilds the
+// full-text index. It does not touch the vector index or message indexed flags.
 //
-// Because rag_chunks_fts is an external-content FTS5 table (content='rag_chunks'),
-// its index can be regenerated directly from rag_chunks via the FTS5 'rebuild'
-// command. Dropping and recreating the table first guarantees a clean slate even
-// if the index was corrupted or out of sync, and keeps the operation independent
-// of the vector layer.
+// Segmentation is the part that makes this more than a no-op. rag_chunks_fts is
+// an external-content FTS5 table (content='rag_chunks'), so FTS5's own 'rebuild'
+// command only re-reads the STORED chunk_text_segmented column — it re-tokenizes
+// with the table's fixed tokenize='unicode61' setting, but it cannot re-run gse
+// word segmentation, which happens in Go before the row is written. Rebuilding
+// without re-segmenting therefore reproduces byte-identical index content, which
+// is useless when the segmenter itself changed (dictionary update, or a build
+// where segmentation silently degraded to a no-op). This method closes that gap
+// by recomputing chunk_text_segmented from chunk_text first.
 //
-// Returns the number of chunks re-indexed.
-func (s *Store) RebuildFTS() (int64, error) {
+// Cost is dominated by segmentation, not by SQLite. Measured on a 44k-chunk
+// production store (38 MB of chunk text): gse segmentation 149s (99.9%), row
+// reads 0.09s, FTS index rebuild 2.0s, UPDATEs ~0. Callers must therefore treat
+// this as a long-running operation and run it off the request path (see
+// FTSRebuildWorker) rather than blocking an HTTP handler on it.
+//
+// Because segmentation dominates, it runs BEFORE the write lock is taken and
+// only the UPDATE + index rebuild happens inside it, keeping lock hold time at
+// roughly the FTS rebuild cost (~2s for the store above).
+//
+// ctx is checked between chunks, so cancellation stops the run before the write
+// transaction opens; progressCb (optional, may be nil) reports progress during
+// the segmentation pass, which is the only phase long enough to matter.
+//
+// If the segmenter is unavailable this returns ErrSegmenterUnavailable without
+// modifying anything: SegmentText would fall back to returning raw text, which
+// would overwrite correctly-segmented CJK with unsplittable text.
+//
+// Returns the number of chunks indexed and the number whose segmented text
+// actually changed.
+func (s *Store) RebuildFTS(ctx context.Context, progressCb FTSRebuildProgressCallback) (indexed int64, resegmented int64, err error) {
+	if !SegmenterAvailable() {
+		return 0, 0, ErrSegmenterUnavailable
+	}
+
+	// Read source text and compute new segmented values outside the lock.
+	resegmentedRows, err := s.prepareResegmentation(ctx, progressCb)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// A cancelled run must not open the write transaction: the caller sees
+	// context.Canceled and the index is left as it was.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return 0, 0, ctxErr
+	}
+
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
 	tx, err := s.db.Begin()
 	if err != nil {
-		return 0, fmt.Errorf("begin fts rebuild transaction: %w", err)
+		return 0, 0, fmt.Errorf("begin fts rebuild transaction: %w", err)
+	}
+
+	// Only rewrite rows whose segmented text actually differs, so repeated
+	// rebuilds are cheap and do not churn the content table.
+	if len(resegmentedRows) > 0 {
+		stmt, prepErr := tx.Prepare(`UPDATE rag_chunks SET chunk_text_segmented = ? WHERE id = ?`)
+		if prepErr != nil {
+			_ = tx.Rollback()
+			return 0, 0, fmt.Errorf("prepare resegment update: %w", prepErr)
+		}
+		for _, row := range resegmentedRows {
+			if _, execErr := stmt.Exec(row.segmented, row.id); execErr != nil {
+				_ = stmt.Close()
+				_ = tx.Rollback()
+				return 0, 0, fmt.Errorf("resegment chunk %d: %w", row.id, execErr)
+			}
+		}
+		if closeErr := stmt.Close(); closeErr != nil {
+			_ = tx.Rollback()
+			return 0, 0, fmt.Errorf("close resegment update: %w", closeErr)
+		}
 	}
 
 	_, err = tx.Exec("DROP TABLE IF EXISTS rag_chunks_fts")
 	if err != nil {
 		_ = tx.Rollback()
-		return 0, fmt.Errorf("drop rag_chunks_fts: %w", err)
+		return 0, 0, fmt.Errorf("drop rag_chunks_fts: %w", err)
 	}
 
 	_, err = tx.Exec(`
@@ -1341,27 +1406,101 @@ func (s *Store) RebuildFTS() (int64, error) {
 	`)
 	if err != nil {
 		_ = tx.Rollback()
-		return 0, fmt.Errorf("recreate rag_chunks_fts: %w", err)
+		return 0, 0, fmt.Errorf("recreate rag_chunks_fts: %w", err)
 	}
 
 	if _, err = tx.Exec(`INSERT INTO rag_chunks_fts(rag_chunks_fts) VALUES('rebuild')`); err != nil {
 		_ = tx.Rollback()
-		return 0, fmt.Errorf("rebuild rag_chunks_fts: %w", err)
+		return 0, 0, fmt.Errorf("rebuild rag_chunks_fts: %w", err)
 	}
 
-	var indexed int64
 	if err = tx.QueryRow("SELECT COUNT(*) FROM rag_chunks").Scan(&indexed); err != nil {
 		_ = tx.Rollback()
-		return 0, fmt.Errorf("count rebuilt chunks: %w", err)
+		return 0, 0, fmt.Errorf("count rebuilt chunks: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit fts rebuild: %w", err)
+		return 0, 0, fmt.Errorf("commit fts rebuild: %w", err)
 	}
 
-	slog.Info("rag: FTS index rebuilt from existing chunks", slog.Int64("chunks", indexed))
-	return indexed, nil
+	resegmented = int64(len(resegmentedRows))
+	slog.Info("rag: FTS index rebuilt and chunks re-segmented",
+		slog.Int64("chunks", indexed), slog.Int64("resegmented", resegmented))
+	return indexed, resegmented, nil
 }
+
+// resegmentRow carries a chunk id together with the newly segmented text.
+type resegmentRow struct {
+	id        int64
+	segmented string
+}
+
+// prepareResegmentation reads every chunk and returns the rows whose stored
+// chunk_text_segmented differs from a fresh segmentation of chunk_text.
+//
+// Runs without the write lock: it only reads, and the columns it reads are
+// immutable after insert (chunk_text is never updated; chunk_text_segmented is
+// only written by this method), so a concurrent indexer inserting new chunks
+// cannot invalidate the result — rows inserted after the read are already
+// segmented with the current segmenter and are picked up by the index rebuild.
+//
+// This is the long phase (segmentation dominates the whole rebuild), so it is
+// where ctx is honored and progress is reported. Progress is throttled to
+// every ftsRebuildProgressEvery chunks to keep callback overhead negligible
+// against a ~3.4ms/chunk segmentation cost.
+func (s *Store) prepareResegmentation(ctx context.Context, progressCb FTSRebuildProgressCallback) ([]resegmentRow, error) {
+	total, err := s.ChunkCount()
+	if err != nil {
+		return nil, fmt.Errorf("count chunks for resegmentation: %w", err)
+	}
+
+	rows, err := s.db.Query("SELECT id, chunk_text, chunk_text_segmented FROM rag_chunks")
+	if err != nil {
+		return nil, fmt.Errorf("query chunks for resegmentation: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var changed []resegmentRow
+	processed := 0
+	for rows.Next() {
+		// Check cancellation before doing the expensive work for this chunk, so
+		// a cancel is observed within one chunk rather than at the end.
+		if processed%ftsRebuildProgressEvery == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if progressCb != nil {
+				progressCb(processed, total)
+			}
+		}
+
+		var id int64
+		var text, stored string
+		if err := rows.Scan(&id, &text, &stored); err != nil {
+			return nil, fmt.Errorf("scan chunk for resegmentation: %w", err)
+		}
+		segmented := SegmentText(text)
+		processed++
+		if segmented == stored {
+			continue
+		}
+		changed = append(changed, resegmentRow{id: id, segmented: segmented})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chunks for resegmentation: %w", err)
+	}
+	// Final report so the UI lands on 100% rather than the last throttled tick.
+	if progressCb != nil {
+		progressCb(processed, total)
+	}
+	return changed, nil
+}
+
+// ftsRebuildProgressEvery throttles progress callbacks during the segmentation
+// pass. Segmentation costs ~3.4ms/chunk on production data, so reporting every
+// 200 chunks is ~0.7s of granularity — fine for a progress bar and effectively
+// free compared to the work itself.
+const ftsRebuildProgressEvery = 200
 
 // ResetVectorOnly clears vector embedding data only, keeping FTS and chunk text intact.
 // Drops the rag_vec table and resets has_embedding flags so the indexer will re-embed

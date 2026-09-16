@@ -76,7 +76,7 @@ npm test                                              # Vitest 前端测试
 | `internal/system/` | 系统资源监控：CPU / 内存 / 磁盘 / 网络实时采集与推送 |
 | `internal/cli/` | AI Agent 自助命令：task、rag、upgrade-replace |
 | `internal/middleware/` | 鉴权、请求日志、panic 恢复、请求 ID |
-| `internal/platform/` | 跨平台路径解析、Shell 检测 |
+| `internal/platform/` | 跨平台路径解析、Shell 检测、二进制替换原语（`ReplaceBinary`，升级路径共用） |
 
 ### 前端（Vue 3 + TypeScript）
 

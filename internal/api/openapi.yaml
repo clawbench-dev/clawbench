@@ -3417,11 +3417,89 @@ paths:
   /api/rag/rebuild-fts:
     post:
       tags: [RAG]
-      summary: 仅重建全文索引
+      summary: 启动重新分词并重建全文索引（异步）
+      description: |
+        启动后台任务：从 `chunk_text` 重新执行分词（gse），写回
+        `chunk_text_segmented`，再重建 FTS5 全文索引。不重新分块、不重新嵌入、
+        不重置消息索引标记，向量索引与 chunk 行保持不变。
+
+        **异步执行**：立即返回 202，客户端轮询
+        `GET /api/rag/rebuild-fts/status` 获取进度。不内联执行的原因见下——
+        大库上该操作耗时数分钟，超过前端请求超时（10s），内联会让服务端已成功
+        的重建在前端显示为失败。
+
+        之所以要重新分词：FTS5 自身的 `rebuild` 命令只会按表固定的
+        `tokenize='unicode61'` 重新读取**已存储**的分词列，无法重跑 gse 分词
+        （分词发生在 Go 侧入库之前）。因此仅重建索引会产生与原来逐字节相同的索引
+        内容，在分词器变更（词典更新）或历史数据入库时分词器不可用的情况下毫无作用。
+
+        实测成本（44k chunk / 38MB 文本的生产库）：分词约 149s（占 99.9%），
+        读行 0.09s，FTS 索引重建 2.0s。因此分词在写锁**外**完成，仅 UPDATE 与
+        索引重建在锁内。
+
+        分词器不可用时返回 503（`RAGSegmenterUnavailable`）并**不做任何修改**：
+        此时 `SegmentText` 会退化为原样返回，重建会把已正确分词的中文替换为
+        无法切分的原文。
       operationId: ragRebuildFTS
       responses:
+        "202":
+          description: 已接受，后台执行中
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    description: 固定为 `accepted`。
+        "409":
+          description: 已有重建任务在执行（`RAGResetInProgress`）
+        "503":
+          description: RAG 不可用（`RAGNotAvailable`），或分词器未初始化（`RAGSegmenterUnavailable`）
+
+  /api/rag/rebuild-fts/status:
+    get:
+      tags: [RAG]
+      summary: 查询全文索引重建进度
+      description: |
+        返回后台重建任务的状态快照，供前端轮询。`status` 为 `idle` /
+        `running` / `done` / `error` / `cancelled`；`phase` 为 `resegmenting`
+        （分词阶段，耗时主体）或 `indexing`。完成后 `resegmented` 为实际改写的
+        chunk 数（0 表示数据已是最新分词）。
+      operationId: ragRebuildFTSStatus
+      responses:
         "200":
-          description: 结果
+          description: 当前状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [idle, running, done, error, cancelled]
+                  phase:
+                    type: string
+                    enum: ["", resegmenting, indexing]
+                  total:
+                    type: integer
+                    description: 待处理的 chunk 总数。
+                  processed:
+                    type: integer
+                    description: 已处理的 chunk 数。
+                  progress_pct:
+                    type: integer
+                    description: 进度百分比（0-100）。
+                  indexed:
+                    type: integer
+                    description: 重建后索引中的 chunk 总数（完成后有效）。
+                  resegmented:
+                    type: integer
+                    description: 分词结果发生变化、被重写的 chunk 数（完成后有效）。
+                  elapsed_ms:
+                    type: integer
+                  error:
+                    type: string
 
   /api/rag/session-search:
     post:

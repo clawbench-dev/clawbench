@@ -1243,6 +1243,33 @@ export function useChatSession(options: UseChatSessionOptions) {
   async function runReload(opts: { force: boolean }) {
     if (!currentSessionId.value) return
     const { force } = opts
+
+    // WS reconnect only: if the app is in the foreground, the user has been
+    // looking at this session the whole time — a WS blip is not a reason to
+    // leave its unread badge lit.
+    //
+    // Why this is needed even though the completion paths already mark read:
+    // they are all gated on !isReplayingEvents, and a reconnect delivers the
+    // missed terminal event as a REPLAY. When the WS dropped right as the reply
+    // landed, the backend's EmitToSession found no subscriber and dropped the
+    // 'done' event entirely (logged as "dropped critical stream event,
+    // reason=no_subscribers"), so the live completion never arrives at all and
+    // the replay is suppressed — the badge would stick until the user switched
+    // away and back.
+    //
+    // appInForeground is the correct discriminator: it separates "the app was
+    // genuinely backgrounded when the reply landed" (badge must survive — the
+    // Android floating window shows it) from "the socket merely hiccuped while
+    // the user was watching". The force path (manual refresh / foreground
+    // return) is excluded: onAppForeground already marks read there, and a
+    // manual refresh is not itself evidence about what the user saw.
+    //
+    // Await before the loadSessionsOnce below so the session list reflects the
+    // cleared unread state — same ordering requirement as switchSession.
+    if (!force && appInForeground.value) {
+      await markSessionRead(currentSessionId.value).catch(() => {})
+    }
+
     // Refresh runningSessions from the backend so the current-session decision
     // below reflects any change that happened on the server side.
     await loadSessionsOnceInner()

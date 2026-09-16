@@ -5,20 +5,30 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
+
+	"clawbench/internal/platform"
+)
+
+// Test hooks: each maps to one side effect of the replacement so the post-kill
+// sequence can be exercised without killing a real parent process, launching a
+// real server or waiting in real time. Production uses the real functions.
+var (
+	replaceBinary     = platform.ReplaceBinary
+	startServerBinary = startDetachedServer
+	serverAlive       = processAlive
+	upgradeWait       = time.Sleep
 )
 
 // RunUpgradeReplaceCommand handles the "clawbench upgrade-replace" subcommand.
 // This is launched as a subprocess by the upgrade service.
 // It:
-// 1. Kills the parent process (the old server)
-// 2. Waits for parent to die
-// 3. Replaces the target binary with the new one
-// 4. Starts the new binary with the original arguments
-// 5. Cleans up temp directory
-func RunUpgradeReplaceCommand(args []string) int { //nolint:gocyclo,gocognit // upgrade-replace is inherently multi-step
+//  1. Kills the parent process (the old server)
+//  2. Waits for parent to die
+//  3. Swaps in the new binary, then starts the target with the original
+//     arguments — see performReplacement for why starting is unconditional
+func RunUpgradeReplaceCommand(args []string) int { //nolint:gocyclo // upgrade-replace is inherently multi-step
 	var newBinPath, targetPath, tmpDir string
 	var serverArgs []string
 
@@ -84,81 +94,110 @@ func RunUpgradeReplaceCommand(args []string) int { //nolint:gocyclo,gocognit // 
 
 	slog.Info("upgrade-replace: parent is dead, proceeding with replacement")
 
-	// 3. Verify new binary exists and is executable
+	return performReplacement(newBinPath, targetPath, tmpDir, serverArgs)
+}
+
+// performReplacement swaps the new binary into place and (re)starts the server.
+// It runs after the old process is dead, split out of RunUpgradeReplaceCommand
+// so tests can drive it without killing a parent process.
+//
+// The central guarantee is that targetPath holds a runnable binary no matter
+// how this function ends. platform.ReplaceBinary never moves the existing
+// binary aside before its replacement exists, so after a failed swap
+// targetPath is still the previous version — and this function starts it. An
+// upgrade that cannot complete therefore leaves the service running on the old
+// version, which the user can retry, rather than leaving the install directory
+// without a binary and the service permanently down.
+func performReplacement(newBinPath, targetPath, tmpDir string, serverArgs []string) int {
+	swapped := swapBinary(newBinPath, targetPath)
+
+	// Clean up regardless of the swap outcome: a failed swap would otherwise
+	// leave a ~90MB download behind, and the next attempt re-downloads anyway.
+	removeTempDir(tmpDir)
+
+	// Wait for the port to be released
+	slog.Info("upgrade-replace: waiting for port to be released...")
+	upgradeWait(2 * time.Second)
+
+	// Bring the service back. This runs on every path — successful swap, failed
+	// swap, or a download that never made it — because targetPath always holds
+	// a runnable binary (the new version, or the previous one if the swap did
+	// not happen). Skipping it is what turned a failed upgrade into a service
+	// that never came back.
+	slog.Info("upgrade-replace: starting binary", "target", targetPath, "args", serverArgs)
+	pid, startErr := startServerBinary(targetPath, serverArgs)
+	if startErr != nil {
+		slog.Error("upgrade-replace: failed to start binary", "target", targetPath, "error", startErr)
+		return 1
+	}
+
+	slog.Info("upgrade-replace: binary started, waiting for it to initialize...", "pid", pid)
+
+	// Verify the process is still alive
+	upgradeWait(3 * time.Second)
+	if !serverAlive(pid) {
+		slog.Error("upgrade-replace: binary exited prematurely — check logs above for errors", "pid", pid)
+		return 1
+	}
+
+	if !swapped {
+		// The service is back, but on the previous version. Report failure so
+		// this is not mistaken for a completed upgrade.
+		return 1
+	}
+
+	slog.Info("upgrade-replace: upgrade complete", "pid", pid)
+	return 0
+}
+
+// swapBinary puts the new binary at targetPath, reporting whether it succeeded.
+// Every failure is logged and returns false; none of them leave targetPath
+// without a binary, so the caller can still start the service.
+func swapBinary(newBinPath, targetPath string) bool {
 	info, err := os.Stat(newBinPath)
 	if err != nil {
-		slog.Error("upgrade-replace: new binary not found", "path", newBinPath, "error", err)
-		return 1
+		slog.Error("upgrade-replace: new binary not found; the existing binary will be restarted",
+			"path", newBinPath, "error", err)
+		return false
 	}
 	slog.Info("upgrade-replace: new binary found", "path", newBinPath, "size", info.Size(), "mode", info.Mode())
 
-	// 4. Replace binary
 	slog.Info("upgrade-replace: replacing binary", "new", newBinPath, "target", targetPath)
-
-	if runtime.GOOS == "windows" {
-		// Windows: rename old to .old first (can't replace running exe, but it's dead now)
-		oldPath := targetPath + ".old"
-		_ = os.Rename(targetPath, oldPath)
-		if err := os.Rename(newBinPath, targetPath); err != nil {
-			slog.Error("upgrade-replace: failed to rename", "error", err)
-			return 1
-		}
-		_ = os.Remove(oldPath)
-	} else {
-		// Unix: mv new binary to target location
-		if err := os.Rename(newBinPath, targetPath); err != nil {
-			slog.Warn("upgrade-replace: rename failed, trying copy", "error", err)
-			if err := copyFile(newBinPath, targetPath); err != nil {
-				slog.Error("upgrade-replace: copy also failed", "error", err)
-				return 1
-			}
-		}
-		if err := os.Chmod(targetPath, 0o755); err != nil { //nolint:gosec // G302: binary must be executable
-			slog.Warn("upgrade-replace: failed to chmod target", "path", targetPath, "error", err)
-		}
+	if err := replaceBinary(newBinPath, targetPath); err != nil {
+		slog.Error("upgrade-replace: replacement failed; the existing binary will be restarted",
+			"error", err, "target", targetPath)
+		return false
 	}
-
 	slog.Info("upgrade-replace: binary replaced successfully")
+	return true
+}
 
-	// 5. Clean up temp directory
-	if tmpDir != "" {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			slog.Warn("upgrade-replace: failed to clean temp dir", "path", tmpDir, "error", err)
-		} else {
-			slog.Info("upgrade-replace: temp dir cleaned", "path", tmpDir)
-		}
-	}
-
-	// 6. Wait for port to be released
-	slog.Info("upgrade-replace: waiting for port to be released...")
-	time.Sleep(2 * time.Second)
-
-	// 7. Start new binary with original server flags
-	slog.Info("upgrade-replace: starting new binary", "target", targetPath, "args", serverArgs)
-
-	cmd := exec.Command(targetPath, serverArgs...)
+// startDetachedServer launches the binary with the given args and returns its
+// PID. The child is put in its own process group so it outlives this helper.
+func startDetachedServer(path string, args []string) (int, error) {
+	cmd := exec.Command(path, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
 	setNewProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
-		slog.Error("upgrade-replace: failed to start new binary", "error", err)
-		return 1
+		return 0, err
 	}
+	return cmd.Process.Pid, nil
+}
 
-	slog.Info("upgrade-replace: new binary started, waiting for it to initialize...", "pid", cmd.Process.Pid)
-
-	// Wait a moment and check if the new process is still alive
-	time.Sleep(3 * time.Second)
-	if processAlive(cmd.Process.Pid) {
-		slog.Info("upgrade-replace: new binary is running", "pid", cmd.Process.Pid)
-	} else {
-		slog.Error("upgrade-replace: new binary exited prematurely — check logs above for errors")
-		return 1
+// removeTempDir deletes the upgrade's working directory, logging rather than
+// failing: a leftover directory is a disk-space concern, not a correctness one.
+func removeTempDir(tmpDir string) {
+	if tmpDir == "" {
+		return
 	}
-
-	return 0
+	if err := os.RemoveAll(tmpDir); err != nil {
+		slog.Warn("upgrade-replace: failed to clean temp dir", "path", tmpDir, "error", err)
+		return
+	}
+	slog.Info("upgrade-replace: temp dir cleaned", "path", tmpDir)
 }
 
 // startsWithServerFlag checks if an arg is a server flag that should be passed through.
@@ -166,28 +205,4 @@ func startsWithServerFlag(arg string) bool {
 	return strings.HasPrefix(arg, "--data-dir=") ||
 		strings.HasPrefix(arg, "--port=") ||
 		strings.HasPrefix(arg, "--host=")
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Close() }()
-
-	if _, copyErr := out.ReadFrom(in); copyErr != nil {
-		return copyErr
-	}
-
-	info, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	return os.Chmod(dst, info.Mode())
 }

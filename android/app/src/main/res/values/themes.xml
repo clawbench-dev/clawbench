@@ -46,6 +46,30 @@
         <item name="android:paddingEnd">16dp</item>
     </style>
 
+    <!--
+      Web-style dialog window. Framework dialogs draw their own opaque panel and
+      title strip, so this theme strips all of it: the window is transparent and
+      the inflated dialog_web_card supplies the scrim + card. Layout geometry and
+      colors live in that layout (and are refined at runtime from the persisted
+      theme palette), matching web/src/components/common/DialogOverlay.vue.
+    -->
+    <style name="Theme.ClawBench.WebDialog" parent="Theme.MaterialComponents.Dialog.Alert">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowMinWidthMajor">0%</item>
+        <item name="android:windowMinWidthMinor">0%</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowAnimationStyle">@style/Animation.ClawBench.WebDialog</item>
+    </style>
+
+    <!-- Card entrance/exit, mirroring modal-scaleIn / modal-scaleOut. -->
+    <style name="Animation.ClawBench.WebDialog" parent="@android:style/Animation.Dialog">
+        <item name="android:windowEnterAnimation">@anim/dialog_web_in</item>
+        <item name="android:windowExitAnimation">@anim/dialog_web_out</item>
+    </style>
+
     <!-- Negative button: muted -->
     <style name="Widget.ClawBench.Button.Negative" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
         <item name="android:textColor">@color/dialog_button_negative</item>

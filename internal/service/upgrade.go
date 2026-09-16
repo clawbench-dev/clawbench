@@ -1024,66 +1024,13 @@ func copyFile(src, dst string) error {
 	return os.Chmod(dst, info.Mode())
 }
 
-// upgradeRename overrides os.Rename so tests can force a cross-device error and
-// exercise the copy fallback. Real deployments use os.Rename.
-var upgradeRename = os.Rename
-
-// replaceBinaryInPlace replaces the target binary with the new binary,
-// preferring an atomic rename and falling back to a staged copy when the new
-// binary lives on a different filesystem (e.g. /tmp vs the install dir). The
-// target is made executable. On Unix this is safe even while the current
-// process is running — the running process keeps its old inode, and future
-// starts use the new file.
-//
-// The fallback copies into a temp file in the target's directory and renames it
-// over the target, rather than writing the target in place. That keeps the
-// requirement to directory write permission, matching what the preflight
-// checks: overwriting the target directly would additionally require the target
-// file itself to be writable, which fails for e.g. a root-owned 0755 binary in
-// a user-writable directory.
-func replaceBinaryInPlace(newPath, target string) error {
-	if err := upgradeRename(newPath, target); err == nil {
-		return os.Chmod(target, 0o755) //nolint:gosec // G302: binary must be executable
-	}
-
-	// Staged copy: temp file in the target dir, then atomic rename over target.
-	src, err := os.Open(newPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = src.Close() }()
-
-	tmp, err := os.CreateTemp(filepath.Dir(target), ".clawbench-replace-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := io.Copy(tmp, src); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-
-	// Use os.Rename directly (not the test hook): the source now lives in the
-	// target directory, so this is the real same-filesystem rename.
-	if err := os.Rename(tmpName, target); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	return os.Chmod(target, 0o755) //nolint:gosec // G302: binary must be executable
-}
-
 // performSupervisedUpgrade replaces the running binary in place and triggers a
 // graceful shutdown so an external supervisor (e.g. systemd) restarts the
 // service with the new binary. It returns an error if the replacement fails;
 // shutdown is only triggered after a successful replacement.
 func performSupervisedUpgrade(newBinPath, currentBin string) error {
 	setStateAndBroadcast(UpgradePhaseReplacing, 90, "Replacing binary...")
-	if err := replaceBinaryInPlace(newBinPath, currentBin); err != nil {
+	if err := platform.ReplaceBinary(newBinPath, currentBin); err != nil {
 		return fmt.Errorf("failed to replace binary: %w", err)
 	}
 	setStateAndBroadcast(UpgradePhaseRestarting, 95, "Restarting...")

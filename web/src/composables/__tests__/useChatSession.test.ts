@@ -4641,10 +4641,13 @@ describe('handleWsReconnect', () => {
     vi.restoreAllMocks()
   })
 
-  it('does NOT mark the session read (no /chat/read call) on WS reconnect refresh', async () => {
-    // Automatic reloads (WS reconnect) only refresh message history — they
-    // must NOT clear the unread badge. Marking read is reserved for explicit
-    // user intent (switchSession).
+  it('marks the session read on WS reconnect while the app is in the foreground', async () => {
+    // A WS blip is not a reason to leave the badge lit: the user has been
+    // looking at this session the whole time. This matters because the live
+    // 'done' event can be dropped outright when the socket is down
+    // (no_subscribers) and its replay is suppressed by the isReplayingEvents
+    // guard — so no other path would ever clear the badge.
+    mockAppInForeground.value = true
     const loading = ref(false)
     const options = {
       currentSessionId: ref('s1'),
@@ -4666,24 +4669,127 @@ describe('handleWsReconnect', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        // First call: loadSessionsOnce — s1 idle.
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: false }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', running: false }],
-          totalCount: 1,
-        }),
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: false }),
       })
-      .mockResolvedValueOnce({
-        // Second call: loadHistory.
-        ok: true,
-        json: () => Promise.resolve({
-          sessionId: 's1', messages: [], total: 0, running: false,
-        }),
-      })
+    })
 
     await session.handleWsReconnect()
+
+    const readCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([url, init]) =>
+        typeof url === 'string' &&
+        url.startsWith('/api/ai/chat/read') &&
+        (init as RequestInit | undefined)?.method === 'POST'
+    )
+    expect(readCalls.length).toBe(1)
+    expect(String(readCalls[0][0])).toContain('session_id=s1')
+
+    vi.restoreAllMocks()
+  })
+
+  it('does NOT mark the session read on WS reconnect while the app is backgrounded', async () => {
+    // Backgrounded app (Android onPause): the reply may well have landed while
+    // the user was away, so the badge must survive for the floating window.
+    // This is the discriminator the reconnect mark-read is gated on — the
+    // reconnect itself says nothing about whether the user was watching.
+    mockAppInForeground.value = false
+    const loading = ref(false)
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: false }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: false }),
+      })
+    })
+
+    await session.handleWsReconnect()
+
+    const readCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([url, init]) =>
+        typeof url === 'string' &&
+        url.startsWith('/api/ai/chat/read') &&
+        (init as RequestInit | undefined)?.method === 'POST'
+    )
+    expect(readCalls.length).toBe(0)
+
+    vi.restoreAllMocks()
+  })
+
+  it('does NOT mark the session read on manual refresh (force path)', async () => {
+    // The force path is the manual refresh button / foreground return. A manual
+    // refresh is not evidence about what the user saw, and onAppForeground
+    // already marks read on a genuine foreground transition — so the reconnect
+    // mark-read must stay on the non-force path only.
+    mockAppInForeground.value = true
+    const loading = ref(false)
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: false }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: false }),
+      })
+    })
+
+    await session.handleManualRefresh()
 
     const readCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([url, init]) =>

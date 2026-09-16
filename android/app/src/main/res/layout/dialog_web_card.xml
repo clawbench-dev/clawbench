@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Web-style centered dialog.
+
+  Deliberately mirrors web/src/components/common/DialogOverlay.vue (and the
+  identical markup already in android/assets/login.html) so the native
+  version-mismatch prompt reads as the same UI as the web dialogs:
+  - scrim: rgba(0,0,0,0.45), content centered, 20dp side padding
+  - card: bg-secondary, radius 14dp, max width 320dp, padding 18/16/14
+  - title row: 24dp rounded icon chip (accent 12% bg) + 14sp semibold title
+  - message: 13sp secondary text, line-height 1.5, newlines preserved
+  - actions: right-aligned, 8dp gap, 6dp-radius buttons (6x16 padding, 13sp)
+
+  All colors and the card's background are applied at runtime from the active
+  theme palette (VersionMismatchDialog / WebDialogColors) — that keeps one
+  source of truth for theme colors and avoids a parallel set of drawables that
+  could drift. Only the scrim and the text sizes/geometry live here.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/webDialogRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#73000000"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp">
+
+    <LinearLayout
+        android:id="@+id/webDialogCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="18dp"
+        android:paddingBottom="14dp">
+
+        <LinearLayout
+            android:id="@+id/webDialogTitleRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <ImageView
+                android:id="@+id/webDialogIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="8dp"
+                android:padding="4dp"
+                android:src="@drawable/ic_dialog_info"
+                android:contentDescription="@null" />
+
+            <TextView
+                android:id="@+id/webDialogTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/webDialogMessage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="14dp"
+            android:textSize="13sp"
+            android:lineSpacingMultiplier="1.5" />
+
+        <LinearLayout
+            android:id="@+id/webDialogActions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="end|center_vertical">
+
+            <TextView
+                android:id="@+id/webDialogCancel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:textSize="13sp"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <TextView
+                android:id="@+id/webDialogConfirm"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:clickable="true"
+                android:focusable="true" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+</FrameLayout>

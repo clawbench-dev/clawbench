@@ -84,6 +84,48 @@ public final class FloatingThemeColors {
         return 0xFF000000 | (nr << 16) | (ng << 8) | nb;
     }
 
+    /**
+     * Derive a "tertiary surface" color from the base surface and the primary
+     * text color: the surface nudged slightly toward the text, which is how the
+     * web themes define {@code --bg-tertiary} relative to {@code --bg-secondary}.
+     * Used for dialog cancel buttons, where the web stylesheet uses bg-tertiary.
+     *
+     * <p>Verified against the shipped palettes: github-dark
+     * ({@code #161b22} + {@code #c9d1d9}) yields {@code #21262d}, and
+     * github-light ({@code #f8f9fa} + {@code #212529}) yields {@code #ebeced}
+     * — both within a few units of the hand-picked {@code --bg-tertiary} values
+     * in web/css/variables.css. Pure: no framework deps.
+     */
+    public static int tertiaryColor(int bg, int text) {
+        return mixArgb(bg, text, TERTIARY_TEXT_MIX);
+    }
+
+    /** How far a surface is nudged toward the text color to form bg-tertiary. */
+    private static final float TERTIARY_TEXT_MIX = 0.06f;
+
+    /**
+     * The translucent accent wash used behind dialog title icons, matching the
+     * web's {@code color-mix(in srgb, accent 12%, transparent)}. Pure: no
+     * framework deps.
+     */
+    public static int accentTint(int accent) {
+        // 0x1F == 31/255 ≈ 12.2%, matching the web's 12% mix.
+        return (0x1F << 24) | (accent & 0x00FFFFFF);
+    }
+
+    /**
+     * Linear RGB mix of two opaque colors at the given fraction of {@code b}.
+     * Alpha is taken from {@code a}. Pure: no framework deps.
+     */
+    static int mixArgb(int a, int b, float frac) {
+        int r = (a >> 16) & 0xFF, g = (a >> 8) & 0xFF, bl = a & 0xFF;
+        int r2 = (b >> 16) & 0xFF, g2 = (b >> 8) & 0xFF, bl2 = b & 0xFF;
+        int nr = Math.round(r + (r2 - r) * frac);
+        int ng = Math.round(g + (g2 - g) * frac);
+        int nb = Math.round(bl + (bl2 - bl) * frac);
+        return (a & 0xFF000000) | ((nr & 0xFF) << 16) | ((ng & 0xFF) << 8) | (nb & 0xFF);
+    }
+
     private static int channel(int v, float mix) {
         if (mix >= 0) {
             return Math.min(255, Math.round(v + (255 - v) * mix));

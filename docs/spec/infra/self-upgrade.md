@@ -1,6 +1,6 @@
 # 应用自升级
 
-应用自升级让已部署的 ClawBench 在 Web 界面内完成版本检查、二进制替换和服务恢复，不需要用户登录服务器手工下载。升级期间服务会短暂断开，因此流程同时处理备份、进度通知、断线轮询和升级后的版本确认。Android 客户端还提供版本不匹配检测——原生层在加载 WebView **之前**对比 APK 版本与 `/api/health` 返回的服务器版本，APK 落后时弹出阻塞式原生弹窗引导下载新版 APK（用户可强制跳过）。服务端升级后客户端版本可能落后，检测确保前后端版本一致性。
+应用自升级让已部署的 ClawBench 在 Web 界面内完成版本检查、二进制替换和服务恢复，不需要用户登录服务器手工下载。升级期间服务会短暂断开，因此流程同时处理备份、进度通知、断线轮询和升级后的版本确认。Android 客户端还提供版本不匹配检测——原生层在加载 WebView **之前**对比 APK 版本与 `/api/health` 返回的服务器版本，APK 落后时弹出阻塞式 web 风格卡片提示版本可能不兼容，并引导下载新版 APK（用户可强制跳过）。服务端升级后客户端版本可能落后，检测确保前后端版本一致性。
 
 ## 流程图
 
@@ -43,7 +43,7 @@ sequenceDiagram
 - **安装目录可写预检**：升级前先探测二进制所在目录是否可写（实际创建并删除临时文件，以反映 ACL、只读挂载和 MAC 而不只是 mode 位）——不可写时立即以 `install_dir_not_writable` 错误码给出可操作的提示，而非下载完约 40MB 压缩包后才在备份步骤报 `permission denied`。`/api/upgrade/check` 同时返回 `install_writable` 与 `install_dir`，让界面在用户开始升级前就能预警。约束在**目录**而非二进制：备份要新建 `.bak` 文件、`rename(2)` 也是目录操作
 - **自身路径固化**：启动时把 `os.Executable()` 的绝对路径写入 `{data-dir}/self-path`。升级与重启都以该记录解析「正在运行的二进制」，而非实时调用 `os.Executable()`——后者解析 `/proc/self/exe`，在包管理器（npm 覆盖安装走 retire：旧目录改名成 `.clawbench-<sha1 前 8 位>` 后删除）替换过运行中的包之后，会返回一个**已被删除的路径**且 `err == nil`，拿去 `os.Open` 就在备份步骤 ENOENT 失败。数据目录是包管理器不会触碰的位置，故记录在包被替换后仍然有效。记录失效（手动迁移过安装目录）时回退 `os.Executable()`，两者皆不可用才以 `self_path_unresolved` 报错
 - **版本短路**：升级前探测磁盘上二进制的版本，若已 ≥ 目标版本（典型场景：用户已通过 `npm install/update` 更新了包，只是进程还在跑旧版），跳过下载直接重启加载。避免为同一版本重复下载约 42MB。探测失败或重启函数未接线时**回退**正常下载流程，不做乐观假设；开发版（`dev` / git 短哈希）不参与比较
-- **Android 版本不匹配检测**：原生层在健康检查（`GET /api/health`）通过后、加载 WebView 之前对比 APK 版本与服务器版本（`VersionCompare.shouldShowMismatch`）。APK 落后时展示阻塞式原生 `AlertDialog`（`MainActivity.showVersionMismatchDialog`），提供「下载 APK」与「强制跳过」两个动作；点下载会启动 DownloadManager 下载并退回原生登录页，完成后自动拉起系统安装器。该弹窗**不记忆跳过**（每次冷启动都会重新提示）。任一侧版本不可解析（`dev`、短哈希、缺 `version` 字段）时一律 fail-open，不阻塞登录。服务端升级后客户端可能落后，检测确保版本一致性
+- **Android 版本不匹配检测**：原生层在健康检查（`GET /api/health`）通过后、加载 WebView 之前对比 APK 版本与服务器版本（`VersionCompare.shouldShowMismatch`）。APK 落后时展示阻塞式 web 风格原生卡片（`MainActivity.showVersionMismatchDialog` → `WebStyleDialog`，样式对齐 web 的 `DialogOverlay.vue`，配色跟随持久化主题调色板），提示新旧版本可能不兼容，提供「下载 APK」与「强制跳过」两个动作；点下载会启动 DownloadManager 下载并退回原生登录页，完成后经 `getUriForDownloadedFile` 的 content URI 拉起系统安装器（scoped storage 下不能用 File API 定位下载文件），失败路径均有 toast 提示。该弹窗**不记忆跳过**（每次冷启动都会重新提示）。任一侧版本不可解析（`dev`、短哈希、缺 `version` 字段）时一律 fail-open，不阻塞登录。服务端升级后客户端可能落后，检测确保版本一致性
 - **下载校验**：升级包从 registry 拉取，落地前做两层校验——npm 的 `dist.integrity`（SRI，缺省时回退旧式 `dist.shasum`）与 npm 的 registry 签名（对 `<包名>@<版本>:<integrity>` 的 ECDSA P-256 签名，公钥固定取自 `registry.npmjs.org`，不跟随用户配置的镜像）。`/api/upgrade/check` 返回 `verification_warning`，列出本次升级中**无法完成**的校验原因
 
 ### 校验策略：能校验就校验，校验不了由用户决定
@@ -78,6 +78,9 @@ sequenceDiagram
 - **失败必须可操作，不留无反馈的中间态**：升级失败以稳定的 `error_code` 结束，前端映射为本地化、可操作的文案，而非裸 ENOENT。已知码：`install_dir_not_writable`（安装目录不可写）、`self_path_unresolved`（找不到运行中的二进制，重启后自愈）、`restart_failed`（新版本已落盘但重启未能触发，需手动重启）。`restart_failed` 专门覆盖版本短路：该分支没有下载兜底，静默失败会让界面永远停在 "restarting" 转圈
 - **镜像 tarball URL 需归一化**：Nexus 等 npm 镜像在 `dist.tarball` 的包名段里保留 dist-tag（`.../@scope/pkg@latest/-/pkg-0.91.0.tgz`），而标准 npm 格式省略该 tag（`.../@scope/pkg/-/pkg-0.91.0.tgz`）。直接用镜像返回的 URL 会 404、下载步骤失败，因此下载前先归一化路径
 - **备份优先于替换**：升级状态暴露备份路径，使失败恢复和人工排障有明确落点
+- **替换前不销毁旧二进制（跨盘升级的硬约束）**：替换统一走 `platform.ReplaceBinary`——先 `rename(src, dst)`，失败则把 `src` 复制到 **dst 同目录**的临时文件再 rename 覆盖。两条路径都不先把 `dst` 改名或删除，因此 `dst` 在替换成功前始终是一个可运行的二进制。这条不变量是升级助手唯一能依赖的兜底：助手本身是被替换的目标进程的子进程，一旦安装目录里没有二进制，就再没有任何进程能把它拉起来，用户也无法从界面重试（前端连不上服务）。约束来自 Windows：`os.Rename` 映射到 `MoveFileEx` 带 `MOVEFILE_REPLACE_EXISTING` 但不带 `MOVEFILE_COPY_ALLOWED`，因此跨卷（`%TEMP%` 在 C:，安装目录在 D:/E:/F:）必然失败。历史上 Windows 分支采用「先把旧 exe 改名成 `.old`，再 rename 新 exe」的顺序，跨盘时前一步成功、后一步失败，安装目录只剩 `.old`/`.bak`——服务永久下线，只能手工把备份复制回去
+- **替换失败仍要拉起服务**：`upgrade-replace` 的替换失败路径不停在"报错退出"，而是照常启动 `target`（此时仍是旧版本）并以非零码退出。这样一次失败的升级表现为"服务还在跑旧版本、升级未完成"，而不是"服务消失"。旧实现失败时直接 `return 1`，跳过了清理与启动两步，同时泄漏下载目录（约 90MB）
+- **替换原语只有一份**：升级助手（`internal/cli`）与受托管就地替换（`internal/service`）共用 `platform.ReplaceBinary`。此前两处各有一份实现，受托管那份有跨盘回退、助手那份没有，于是同一个跨盘场景在 systemd 下成功、在非托管 Windows 下丢文件——重复实现是这条 bug 能长期存在的直接原因
 - **WS 优先、轮询兜底**：正常阶段使用低延迟事件，进程重启阶段使用无状态 HTTP 查询，两种通道覆盖升级的完整生命周期
 - **容器内强制走就地替换路径**：容器（Docker / Podman / Kubernetes，经 `platform.IsContainer` 判定）一律视为"受托管"，走就地替换 + 退出，由容器重启策略拉起新版本。该判定优先于 supervisor 探测——k8s / runit / supervisord 探测不到时会错误地指向自重启子进程路径，而该路径在容器中必然失败：PID 1 退出时运行时会拆除命名空间并杀掉 `upgrade-replace` 子进程，替换永远执行不到，服务静默回到旧二进制。同样的强制也适用于 `IsRunningUnderSupervisor()`，从而覆盖配置面板重启（哨兵进程同样会被容器拆除杀掉）
 - **容器类型区分提示与决策**：`platform.IsDockerLike`（Docker/Podman）用于 UI 提示，`platform.IsContainer`（含 k8s）用于路径决策。k8s Pod 是容器（自重启不可行）但 Docker CLI 建议不适用，故 `/api/upgrade/check` 的 `is_docker` 只对 Docker/Podman 为真

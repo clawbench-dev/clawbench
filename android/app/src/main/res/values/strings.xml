@@ -83,9 +83,12 @@
     <string name="conn_render_crash">Page rendering error, please reconnect.</string>
     <!-- Native pre-WebView version mismatch gate (APK older than server) -->
     <string name="version_mismatch_title">Version mismatch</string>
-    <string name="version_mismatch_message">APK version: %1$s\nServer version: %2$s\n\nThe app is older than the server. Updating the APK is recommended for the best experience.</string>
+    <string name="version_mismatch_message">APK version: %1$s\nServer version: %2$s\n\nThe app is older than the server. The two versions may be incompatible: some features of the old APK may behave unexpectedly or stop working. Updating the APK is recommended.</string>
     <string name="version_mismatch_download">Download APK</string>
     <string name="version_mismatch_skip">Force skip</string>
+    <!-- APK download / install failures surfaced to the user -->
+    <string name="apk_download_failed">APK download failed. Check your network and try again.</string>
+    <string name="apk_install_failed">Downloaded APK could not be opened for installation.</string>
     <!-- Background service notifications -->
     <string name="ssh_notification_reconnecting">SSH tunnel disconnected, reconnecting…</string>
     <string name="ssh_notification_recovering">SSH tunnel reconnected</string>

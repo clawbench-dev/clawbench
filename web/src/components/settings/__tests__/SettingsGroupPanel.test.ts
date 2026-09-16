@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
@@ -117,6 +118,14 @@ vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
 }))
 
+// The FTS rebuild is triggered then polled to completion by this composable.
+// Mocking it lets the panel tests assert the UI reaction to each outcome
+// without exercising the polling loop (covered by useFtsRebuild.test.ts).
+const mockStartFtsRebuild = vi.fn()
+vi.mock('@/composables/useFtsRebuild', () => ({
+  startFtsRebuild: (...args: unknown[]) => mockStartFtsRebuild(...args),
+}))
+
 vi.mock('@/utils/api', () => ({
   apiPost: vi.fn().mockResolvedValue(undefined),
 }))
@@ -208,7 +217,10 @@ const i18n = createI18n({
           ragRebuildFailed: '重建向量索引失败',
           ragFtsRebuild: '重建全文索引',
           ragFtsRebuildConfirm: '重建全文索引将基于现有文本块重新生成，不影响向量嵌入',
-          ragFtsRebuildSuccess: '全文索引已重建',
+          ragFtsRebuildSuccess: '全文索引已重新分词并重建',
+          ragFtsRebuildSuccessCount: '全文索引已重建，{count} 个文本块的分词已更新',
+          ragFtsRebuildStillRunning: '重建仍在后台进行，可稍后刷新查看进度',
+          ragFtsRebuildCancelled: '重建已取消',
           ragVectorRebuild: '重建向量索引',
           ragVectorRebuildConfirm: '重建向量将清空所有向量嵌入数据',
           ragVectorRebuildSuccess: '向量索引已清空，正在重新嵌入',
@@ -1444,6 +1456,13 @@ describe('SettingsGroupPanel', () => {
       localValues['rag.vector_enabled'] = true
       vi.mocked(apiPost).mockClear()
       vi.mocked(apiPost).mockResolvedValue(undefined)
+      mockToastShow.mockClear()
+      mockStartFtsRebuild.mockReset()
+      // Default: rebuild completes with nothing to change.
+      mockStartFtsRebuild.mockResolvedValue({
+        status: 'done', phase: 'indexing', total: 0, processed: 0,
+        progress_pct: 100, indexed: 0, resegmented: 0, elapsed_ms: 1,
+      })
     })
 
     it('renders two rebuild buttons in the footer for the RAG panel', () => {
@@ -1460,11 +1479,18 @@ describe('SettingsGroupPanel', () => {
     })
 
     it('calls the independent FTS rebuild endpoint', async () => {
+      mockStartFtsRebuild.mockResolvedValue({
+        status: 'done', phase: 'indexing', total: 1, processed: 1,
+        progress_pct: 100, indexed: 1, resegmented: 0, elapsed_ms: 5,
+      })
       const wrapper = mountPanel(makeRagConfig())
       const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
       await ftsBtn.trigger('click')
       await nextTick()
-      expect(apiPost).toHaveBeenCalledWith('/api/rag/rebuild-fts', {})
+      // The composable owns the POST + polling; the panel must not call the
+      // endpoint directly, or the request would be held open for the rebuild.
+      expect(mockStartFtsRebuild).toHaveBeenCalled()
+      expect(apiPost).not.toHaveBeenCalledWith('/api/rag/rebuild-fts', {})
     })
 
     it('calls the vector rebuild endpoint', async () => {
@@ -1480,6 +1506,89 @@ describe('SettingsGroupPanel', () => {
       const wrapper = mountPanel(makeRagConfig())
       const vecBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[1]
       expect(vecBtn.attributes('disabled')).toBeDefined()
+    })
+
+    it('reports the re-segmented chunk count from the terminal status', async () => {
+      // 0 is the interesting value: it means the stored segmentation was already
+      // current, and the user should see that rather than assume nothing ran.
+      mockStartFtsRebuild.mockResolvedValue({
+        status: 'done', phase: 'indexing', total: 10, processed: 10,
+        progress_pct: 100, indexed: 10, resegmented: 0, elapsed_ms: 5,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
+      await ftsBtn.trigger('click')
+      await nextTick()
+      await flushPromises()
+
+      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
+      expect(messages.some(m => m.includes('0 个文本块'))).toBe(true)
+    })
+
+    it('reports a non-zero re-segmented count', async () => {
+      mockStartFtsRebuild.mockResolvedValue({
+        status: 'done', phase: 'indexing', total: 10, processed: 10,
+        progress_pct: 100, indexed: 10, resegmented: 42, elapsed_ms: 5,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
+      await ftsBtn.trigger('click')
+      await nextTick()
+      await flushPromises()
+
+      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
+      expect(messages.some(m => m.includes('42 个文本块'))).toBe(true)
+    })
+
+    it('shows the server error message when the background rebuild fails', async () => {
+      // A failure now arrives via the polled status, not as a rejected request.
+      mockStartFtsRebuild.mockResolvedValue({
+        status: 'error', phase: '', total: 10, processed: 3,
+        progress_pct: 30, indexed: 0, resegmented: 0, elapsed_ms: 5,
+        error: '分词阶段失败：磁盘已满',
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
+      await ftsBtn.trigger('click')
+      await nextTick()
+      await flushPromises()
+
+      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
+      expect(messages.some(m => m.includes('磁盘已满'))).toBe(true)
+    })
+
+    it('reports that the rebuild is still running when polling gives up', async () => {
+      // null means the poller stopped (panel closed or runaway guard). The
+      // rebuild itself is still going server-side, so this must NOT be
+      // reported as a failure.
+      mockStartFtsRebuild.mockResolvedValue(null)
+      const wrapper = mountPanel(makeRagConfig())
+      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
+      await ftsBtn.trigger('click')
+      await nextTick()
+      await flushPromises()
+
+      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
+      expect(messages.some(m => m.includes('仍在后台进行'))).toBe(true)
+      expect(messages.some(m => m.includes('重建索引失败'))).toBe(false)
+    })
+
+    it('surfaces the server explanation when the rebuild is refused', async () => {
+      // The segmenter-unavailable refusal carries a localized reason that is far
+      // more actionable than the generic "rebuild failed".
+      const refusal = new Error('已拒绝重建：分词器不可用') as Error & { msgKey?: string }
+      refusal.msgKey = 'RAGSegmenterUnavailable'
+      mockStartFtsRebuild.mockRejectedValue(refusal)
+
+      const wrapper = mountPanel(makeRagConfig())
+      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
+      await ftsBtn.trigger('click')
+      await nextTick()
+      await flushPromises()
+
+      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
+      expect(messages.some(m => m.includes('分词器不可用'))).toBe(true)
+      expect(messages.some(m => m.includes('重建索引失败'))).toBe(false)
     })
   })
 })

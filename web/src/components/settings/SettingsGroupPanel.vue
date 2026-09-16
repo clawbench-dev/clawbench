@@ -186,6 +186,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useFrp } from '@/composables/useFrp'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
+import { startFtsRebuild } from '@/composables/useFtsRebuild'
 import { apiPost } from '@/utils/api'
 import { formatFileSize } from '@/utils/fileType'
 import '@/assets/modal-footer-btn.css'
@@ -311,6 +312,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   unregisterGuard(`panel-${props.config.panelId}`)
+  // Stop polling for the FTS rebuild. The rebuild itself keeps running
+  // server-side; only the client's progress tracking is abandoned.
+  ragRebuildUnmounted = true
 })
 
 // ── Enable toggle ──
@@ -550,6 +554,9 @@ async function onSave() {
 const ragVectorRebuilding = ref(false)
 const ragFtsRebuilding = ref(false)
 const ragRefreshing = ref(false)
+// Set on unmount so an in-flight status poller stops instead of looping after
+// the panel is gone. The rebuild continues server-side regardless.
+let ragRebuildUnmounted = false
 
 const isRagPanel = computed(() => props.config.panelId === 'rag')
 
@@ -564,7 +571,10 @@ async function handleRagRefresh() {
 
 /**
  * Rebuild one RAG index independently.
- * - fts: regenerates the full-text index from existing chunks (vectors untouched)
+ * - fts: re-segments every chunk from its source text and rebuilds the
+ *   full-text index (vectors untouched). Re-segmentation is what makes this
+ *   useful after a segmenter change; a bare index rebuild would reproduce the
+ *   same content.
  * - vector: re-embeds all chunks with the current model (FTS/chunks untouched)
  */
 async function handleRagRebuild(kind: 'fts' | 'vector') {
@@ -583,12 +593,48 @@ async function handleRagRebuild(kind: 'fts' | 'vector') {
 
   rebuildingRef.value = true
   try {
-    const endpoint = isVector ? '/api/rag/reset-vector' : '/api/rag/rebuild-fts'
-    await apiPost(endpoint, {})
-    toast.show(t(successKey), { icon: '✅', type: 'success', duration: 3000 })
+    if (isVector) {
+      await apiPost('/api/rag/reset-vector', {})
+      toast.show(t(successKey), { icon: '✅', type: 'success', duration: 3000 })
+      refreshRagStatus()
+      return
+    }
+
+    // FTS rebuild runs in the background: the server answers 202 and we poll
+    // for the outcome. Holding the request open does not work — the rebuild
+    // re-segments every chunk (~minutes on a large store) and the shared API
+    // timeout is 10s, which made successful rebuilds report as failures.
+    const status = await startFtsRebuild(() => ragRebuildUnmounted)
+    if (status === null) {
+      // Polling gave up (unmounted or runaway). Not a server failure.
+      toast.show(t('settings.items.ragFtsRebuildStillRunning'), { icon: '⏳', type: 'info', duration: 5000 })
+      return
+    }
+    if (status.status === 'done') {
+      toast.show(
+        t('settings.items.ragFtsRebuildSuccessCount', { count: status.resegmented }),
+        { icon: '✅', type: 'success', duration: 5000 },
+      )
+    } else if (status.status === 'error') {
+      toast.show(
+        status.error || t('settings.items.ragRebuildFailed'),
+        { icon: '⚠️', type: 'error', duration: 5000 },
+      )
+    } else if (status.status === 'cancelled') {
+      toast.show(t('settings.items.ragFtsRebuildCancelled'), { icon: '⏹️', type: 'info', duration: 3000 })
+    }
     refreshRagStatus()
-  } catch {
-    toast.show(t('settings.items.ragRebuildFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  } catch (err) {
+    // The server refuses the trigger when the segmenter is unavailable or a
+    // rebuild is already running, and returns a localized explanation — prefer
+    // it over the generic message.
+    const serverMsg = (err as Error & { msgKey?: string })?.msgKey
+      ? (err as Error).message
+      : ''
+    toast.show(
+      serverMsg || t('settings.items.ragRebuildFailed'),
+      { icon: '⚠️', type: 'error', duration: 5000 },
+    )
   } finally {
     rebuildingRef.value = false
   }
