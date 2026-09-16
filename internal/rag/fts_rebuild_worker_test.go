@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/ws"
 )
 
 // TestFTSRebuildWorker_StartRunsInBackground asserts the worker returns
@@ -191,4 +193,130 @@ func TestFTSRebuildWorker_ContextIsHonouredByStore(t *testing.T) {
 
 	_, _, err := store.RebuildFTS(ctx, nil)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestFTSRebuildWorker_RecordsCancelledOutcome asserts the worker's own
+// cancelled branch: when the context is cancelled the run must report
+// "cancelled" (not "error"), clear the phase, and clear the running flag so the
+// session is startable again. The UI distinguishes these — a cancel is a user
+// action, not a failure.
+func TestFTSRebuildWorker_RecordsCancelledOutcome(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	insertTestChunksSQLite(t, store, 3)
+
+	w := NewFTSRebuildWorker(nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Run directly with a matching generation so the guard lets the outcome
+	// through; a real Cancel() bumps the generation and would suppress it.
+	w.mu.Lock()
+	w.generation = 11
+	w.running = true
+	w.mu.Unlock()
+
+	w.run(ctx, 11, store)
+
+	st := w.GetStatus()
+	assert.Equal(t, "cancelled", st.Status, "a cancelled context must report cancelled, not error")
+	assert.Empty(t, st.Phase, "cancelled runs have no phase")
+	assert.False(t, w.IsRunning(), "a cancelled run must clear the running flag")
+	assert.Empty(t, st.Error, "cancelling is not an error")
+}
+
+// TestFTSRebuildWorker_RecordsErrorOutcome asserts the worker surfaces a store
+// failure as an error status with the underlying message, so the polling client
+// can show why the rebuild failed instead of hanging on "running".
+func TestFTSRebuildWorker_RecordsErrorOutcome(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	insertTestChunksSQLite(t, store, 2)
+	// Closing the store makes RebuildFTS fail deterministically.
+	require.NoError(t, store.Close())
+
+	w := NewFTSRebuildWorker(nil)
+	w.mu.Lock()
+	w.generation = 12
+	w.running = true
+	w.mu.Unlock()
+
+	w.run(context.Background(), 12, store)
+
+	st := w.GetStatus()
+	assert.Equal(t, "error", st.Status)
+	assert.Empty(t, st.Phase, "failed runs have no phase")
+	assert.False(t, w.IsRunning(), "a failed run must clear the running flag")
+	assert.NotEmpty(t, st.Error, "the underlying failure must be reported to the client")
+}
+
+// TestFTSRebuildWorker_RecoversFromPanic asserts a panic inside the store does
+// not take down the process and does not leave the worker stuck in "running"
+// forever — which would permanently wedge the rebuild button with no way to
+// retry short of a restart.
+func TestFTSRebuildWorker_RecoversFromPanic(t *testing.T) {
+	w := NewFTSRebuildWorker(nil)
+	w.mu.Lock()
+	w.generation = 13
+	w.running = true
+	w.mu.Unlock()
+
+	// A nil store panics inside RebuildFTS. The deferred recover must convert it
+	// into an error status.
+	require.NotPanics(t, func() { w.run(context.Background(), 13, nil) })
+
+	st := w.GetStatus()
+	assert.Equal(t, "error", st.Status)
+	assert.False(t, w.IsRunning(), "a panicking run must not leave the worker wedged as running")
+}
+
+// TestFTSRebuildWorker_PanicDoesNotClobberNewerRun asserts the panic recovery
+// honours the same generation guard as the normal exit path: a stale goroutine
+// that panics after a newer run started must not reset the newer run's state.
+func TestFTSRebuildWorker_PanicDoesNotClobberNewerRun(t *testing.T) {
+	w := NewFTSRebuildWorker(nil)
+
+	// Simulate a newer run in flight.
+	w.mu.Lock()
+	w.generation = 21
+	w.running = true
+	w.status = FTSRebuildStatus{Status: "running", Phase: "resegmenting", ProgressPct: 55}
+	w.mu.Unlock()
+
+	// A stale goroutine (generation 20) panics on its way out.
+	require.NotPanics(t, func() { w.run(context.Background(), 20, nil) })
+
+	st := w.GetStatus()
+	assert.Equal(t, "running", st.Status, "a stale panic must not overwrite the current run's status")
+	assert.Equal(t, 55, st.ProgressPct)
+	assert.True(t, w.IsRunning(), "a stale panic must not clear the running flag")
+}
+
+// TestBroadcastFTSRebuild asserts the broadcast seam reaches subscribed clients
+// and is a no-op when no hub is configured (polling is the authoritative path,
+// so a missing hub must not panic).
+func TestBroadcastFTSRebuild(t *testing.T) {
+	t.Run("nil hub is a no-op", func(t *testing.T) {
+		require.NotPanics(t, func() {
+			broadcastFTSRebuild(nil, FTSRebuildStatus{Status: "done"})
+		})
+	})
+
+	t.Run("hub without manager is a no-op", func(t *testing.T) {
+		require.NotPanics(t, func() {
+			broadcastFTSRebuild(ws.NewStreamHub(nil), FTSRebuildStatus{Status: "done"})
+		})
+	})
+
+	t.Run("delivers to a subscribed client", func(t *testing.T) {
+		mgr := ws.NewManagerForTest()
+		var writeMu sync.Mutex
+		sub := mgr.Subscribe(nil, &writeMu, "client-1", "")
+		mgr.DisconnectClient("client-1") // buffer instead of writing to a nil conn
+
+		broadcastFTSRebuild(mgr.StreamHub(), FTSRebuildStatus{Status: "done", ProgressPct: 100})
+
+		buffered := sub.GetBufferedEvents()
+		require.Len(t, buffered, 1, "the rebuild status must reach the subscribed client")
+		assert.Equal(t, "rag_fts_rebuild", buffered[0].Event)
+	})
 }

@@ -157,6 +157,37 @@ func TestReplaceBinary_UnwritableDir_LeavesTargetIntact(t *testing.T) {
 	assert.Equal(t, "old-binary", string(data))
 }
 
+// TestReplaceBinary_FinalRenameFailure_LeavesTargetIntact covers the failure
+// path of the staged copy's own rename. Here the target is a directory, so the
+// final os.Rename(tmp, dst) cannot succeed even though the temp file was staged
+// correctly in dst's parent. The invariant under test is the one the whole
+// function exists for: the staging temp file is cleaned up and dst is left
+// exactly as it was, rather than half-replaced.
+func TestReplaceBinary_FinalRenameFailure_LeavesTargetIntact(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "clawbench-new")
+	dst := filepath.Join(dir, "install-dir")
+	require.NoError(t, os.WriteFile(src, []byte("new-binary"), 0o600))
+	require.NoError(t, os.Mkdir(dst, 0o755))
+
+	// Force the fast path to fail so the staged copy runs; the staged rename is
+	// the real os.Rename and still fails because dst is a directory.
+	forceCrossDevice(t)
+
+	require.Error(t, ReplaceBinary(src, dst))
+
+	info, err := os.Stat(dst)
+	require.NoError(t, err, "target must survive a failed replacement")
+	assert.True(t, info.IsDir(), "target must be untouched")
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".clawbench-replace-",
+			"staging temp file must be cleaned up when the final rename fails")
+	}
+}
+
 // TestReplaceBinary_StagingFileCleanedUpOnCopyFailure verifies a partial copy
 // does not leave a staging file behind in the install directory.
 func TestReplaceBinary_StagingFileCleanedUpOnCopyFailure(t *testing.T) {

@@ -2907,6 +2907,90 @@ func assertSessionHasNoUnread(t *testing.T, sid, when string) {
 	}
 }
 
+// TestSessionExecutor_SteerBoundary_DegradedSplitStillReanchors pins the
+// subtle half of the split's return contract: when the "after" row cannot be
+// created, the split degrades — but the "before" half was ALREADY finalized, so
+// its completed_at was stamped and last_read_at still has to be re-anchored.
+//
+// The degraded branch therefore must report "finalized" (true), not "split
+// failed" (false). Reporting false would skip UpdateLastRead and flip the very
+// session the user is typing in back to unread — the exact bug this PR fixes,
+// resurfacing only on the rare path where the second insert fails. A test that
+// only covers the happy path would let that regression through.
+//
+// The failure is forced by archiving the session: AddChatMessage refuses writes
+// to archived sessions, so CreateStreamingMessage (which goes through it) fails
+// while FinalizeStreamingMessage — a plain UPDATE — still succeeds.
+func TestSessionExecutor_SteerBoundary_DegradedSplitStillReanchors(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamMsgID := GetStreamingMessageID(sid)
+	if streamMsgID == 0 {
+		t.Fatal("expected a streaming placeholder to exist")
+	}
+
+	// Anchor last_read_at in the past so the finalize's completed_at stamp would
+	// overtake it and produce a spurious unread row.
+	if _, err := WriteExec(
+		"UPDATE chat_sessions SET last_read_at = '2020-01-01 00:00:00' WHERE id = ?", sid); err != nil {
+		t.Fatalf("failed to set last_read_at: %v", err)
+	}
+
+	// Archiving makes the "after" row's insert fail, forcing the degraded path.
+	if _, err := WriteExec("UPDATE chat_sessions SET archived = 1 WHERE id = ?", sid); err != nil {
+		t.Fatalf("failed to archive session: %v", err)
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "before half"},
+		{Type: "steer_boundary", SteerBoundary: &ai.SteerBoundaryData{ClientUserMessageID: "pending-inject-degraded"}},
+		{Type: "content", Content: "after half"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:               ModeScheduled,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamMsgID,
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// Precondition: the split really did degrade. If the after-row had been
+	// created, this test would be silently exercising the happy path instead.
+	var queueIDs int
+	if err := dbRead.QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id = ?",
+		sid, "pending-inject-degraded").Scan(&queueIDs); err != nil {
+		t.Fatalf("failed to count after-half rows: %v", err)
+	}
+	if queueIDs != 0 {
+		t.Fatalf("precondition: the anchored after-row must NOT exist for the degraded path "+
+			"to be under test, found %d row(s)", queueIDs)
+	}
+
+	// The before-half was finalized despite the degraded split, so the unread
+	// anchor must still have been corrected.
+	assertSessionHasNoUnread(t, sid, "after a degraded steer split")
+}
+
 // TestSessionExecutor_SteerBoundary_NoDBIsNoop verifies a boundary event with no
 // DB (bare executor) is swallowed instead of being accumulated as a content
 // block or panicking.
