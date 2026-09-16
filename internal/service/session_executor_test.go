@@ -2806,6 +2806,107 @@ func TestSessionExecutor_SteerBoundary_SplitsReply(t *testing.T) {
 	}
 }
 
+// TestSessionExecutor_SteerBoundary_KeepsSessionRead is the regression guard for
+// the unread badge lighting up on the session the user is actively typing in.
+//
+// The split finalizes the "before" half, which stamps its completed_at with the
+// CURRENT time. The unread query compares COALESCE(completed_at, created_at)
+// against last_read_at, so that stamp jumps the row's timestamp forward past the
+// user's last read — flipping the session to unread even though the injection
+// could only have been made from this session's own UI. The split must re-anchor
+// last_read_at past the row it just finalized.
+func TestSessionExecutor_SteerBoundary_KeepsSessionRead(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamMsgID := GetStreamingMessageID(sid)
+	if streamMsgID == 0 {
+		t.Fatal("expected a streaming placeholder to exist")
+	}
+
+	// The user read the session at the start of the turn, then injected a
+	// message while the reply was still streaming. Anchor last_read_at to a time
+	// BEFORE the split so the completed_at stamp the split writes would
+	// otherwise overtake it.
+	if _, err := WriteExec(
+		"UPDATE chat_sessions SET last_read_at = '2020-01-01 00:00:00' WHERE id = ?", sid); err != nil {
+		t.Fatalf("failed to set last_read_at: %v", err)
+	}
+
+	// The injected question is persisted mid-turn, AFTER the "before" row but
+	// BEFORE the "after" row is created by the split.
+	if _, err := AddChatMessage("/test", "test", sid, "user", "injected question", nil, false, "", "pending-inject-1"); err != nil {
+		t.Fatalf("failed to persist injected question: %v", err)
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "before half"},
+		{Type: "steer_boundary", SteerBoundary: &ai.SteerBoundaryData{ClientUserMessageID: "pending-inject-1"}},
+		{Type: "content", Content: "after half"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:               ModeScheduled,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamMsgID,
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// Assert at the split, BEFORE the terminal Finalize runs: the "after" half is
+	// still streaming, exactly the state the user is in when they see the badge
+	// appear mid-turn.
+	assertSessionHasNoUnread(t, sid, "after the steer split (mid-turn, after-half still streaming)")
+
+	// And it must still hold once the turn completes.
+	emptyCh := make(chan ai.StreamEvent)
+	close(emptyCh)
+	executor.Finalize(result, emptyCh)
+	assertSessionHasNoUnread(t, sid, "after the turn finalized")
+}
+
+// assertSessionHasNoUnread fails when the session reports any unread assistant
+// message. Uses the same predicate as GetSessions' unread subquery
+// (COALESCE(completed_at, created_at) > last_read_at on finalized assistant
+// rows) so the assertion tracks what the session list actually renders — but as
+// a bare query, because the executor test DB carries a reduced schema that
+// GetSessions' wider SELECT does not fit.
+func assertSessionHasNoUnread(t *testing.T, sid, when string) {
+	t.Helper()
+	var unread int
+	if err := dbRead.QueryRow(`
+		SELECT COUNT(*) FROM chat_history h
+		JOIN chat_sessions s ON s.id = h.session_id
+		WHERE h.session_id = ? AND h.role = 'assistant' AND h.streaming = 0
+		  AND (s.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s.last_read_at)`,
+		sid,
+	).Scan(&unread); err != nil {
+		t.Fatalf("%s: unread query failed: %v", when, err)
+	}
+	if unread != 0 {
+		t.Fatalf("%s: session %s has %d unread assistant row(s), want 0 — the user "+
+			"injected from this session, so the finalized before-half must not flip it unread",
+			when, sid, unread)
+	}
+}
+
 // TestSessionExecutor_SteerBoundary_NoDBIsNoop verifies a boundary event with no
 // DB (bare executor) is swallowed instead of being accumulated as a content
 // block or panicking.

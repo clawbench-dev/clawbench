@@ -985,6 +985,30 @@ func (e *SessionExecutor) splitAtSteerBoundary(event ai.StreamEvent) {
 		return
 	}
 
+	if !e.splitAtSteerBoundaryLocked(queueID) {
+		return
+	}
+
+	// The user injected this message from THIS session's own UI, so they are
+	// provably looking at it — a stronger signal than the cancel path's, which
+	// only assumes presence. Finalizing the "before" half just stamped its
+	// completed_at, moving that row's timestamp past last_read_at and flipping
+	// the session the user is staring at back to unread. Re-anchor last_read_at
+	// now that the stamp exists.
+	//
+	// MAX(CURRENT_TIMESTAMP, newest completed_at) inside UpdateLastRead makes
+	// this robust to the same-second race: the anchor can never land before the
+	// row it must cover. Called after the lock is released — the split holds
+	// e.mu across its DB writes, and this adds another write plus a WS
+	// broadcast that have no reason to run under it.
+	UpdateLastRead(e.cfg.SessionID)
+}
+
+// splitAtSteerBoundaryLocked performs the split and reports whether the
+// "before" half was finalized (i.e. whether its completed_at was stamped, and
+// therefore whether the caller must re-anchor last_read_at). Caller must NOT
+// hold e.mu.
+func (e *SessionExecutor) splitAtSteerBoundaryLocked(queueID string) bool {
 	// Serialize against the accumulator and the flush ticker. The split replaces
 	// e.blocks and the streaming-row identity, so it must not interleave with a
 	// concurrent flush.
@@ -1008,7 +1032,9 @@ func (e *SessionExecutor) splitAtSteerBoundary(event ai.StreamEvent) {
 			slog.String("session", e.cfg.SessionID),
 			slog.Int64("before_msg_id", beforeID),
 			slog.String("err", err.Error()))
-		return
+		// Nothing was finalized, so no completed_at was stamped and the session's
+		// unread state is unchanged — the caller must not re-anchor.
+		return false
 	}
 
 	// Open the "after" half: a fresh streaming assistant row anchored to the
@@ -1026,7 +1052,9 @@ func (e *SessionExecutor) splitAtSteerBoundary(event ai.StreamEvent) {
 		if fallbackID, ferr := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, ""); ferr == nil {
 			e.resetForSplitLocked(fallbackID, "")
 		}
-		return
+		// The "before" half IS finalized (its completed_at was stamped) even
+		// though the split degraded — the unread flip must still be corrected.
+		return true
 	}
 
 	slog.Info("session executor: split assistant reply at steer boundary",
@@ -1044,6 +1072,7 @@ func (e *SessionExecutor) splitAtSteerBoundary(event ai.StreamEvent) {
 	})
 
 	e.resetForSplitLocked(afterID, queueID)
+	return true
 }
 
 // resetForSplitLocked re-points the executor at a newly created streaming row
