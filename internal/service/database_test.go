@@ -1060,6 +1060,122 @@ func TestInitDB_ServerModeCleansOrphans(t *testing.T) {
 	assert.Equal(t, true, result["cancelled"])
 }
 
+// TestInitDB_ServerStartupFinalizesOrphansEndToEnd drives the REAL InitDB
+// (runFromServer=true) against an on-disk database that already holds a
+// streaming=1 row, and asserts the row is finalized.
+//
+// The four tests above (CleansOrphanedStreamingJSON/Plain, CLIMode/ServerMode)
+// each RE-IMPLEMENT the cleanup — they hand-write the UPDATE and assert on
+// their own write — so they pass even if production cleanup is deleted
+// entirely. That was verified by mutation: wrapping the production
+// `if isServerStartup` block in `if false &&` left all four green. This test
+// exists so the production path itself is covered.
+func TestInitDB_ServerStartupFinalizesOrphansEndToEnd(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Phase 1: build the real schema, then plant an orphaned streaming row the
+	// way a hard kill (no graceful shutdown) leaves one behind.
+	require.NoError(t, InitDB(true))
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	orphanContent, _ := json.Marshal(map[string]any{
+		"blocks": []any{map[string]any{"type": "text", "text": "partial response"}},
+	})
+	_, err = raw.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/p', 'assistant', ?, 'sess-orphan', 'claude', 1)",
+		string(orphanContent),
+	)
+	require.NoError(t, err)
+	// A finalized row must be left alone — the cleanup is not "clear all".
+	_, err = raw.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/p', 'assistant', '{\"blocks\":[]}', 'sess-done', 'claude', 0)",
+	)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+	CloseDB()
+
+	// Phase 2: a real server start must finalize the orphan.
+	require.NoError(t, InitDB(true))
+	defer CloseDB()
+
+	var streaming int
+	var content string
+	require.NoError(t, db.QueryRow(
+		"SELECT streaming, content FROM chat_history WHERE session_id = 'sess-orphan'",
+	).Scan(&streaming, &content))
+	assert.Equal(t, 0, streaming, "server start must clear streaming=1")
+	assert.NotEmpty(t, content, "content must be preserved, not blanked")
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(content), &parsed))
+	assert.Equal(t, true, parsed["cancelled"], "orphan must be marked cancelled")
+	blocks, _ := parsed["blocks"].([]any)
+	require.Len(t, blocks, 2, "original block + restart warning")
+	warning, _ := blocks[1].(map[string]any)
+	assert.Equal(t, "warning", warning["type"])
+	assert.Equal(t, "restart", warning["reason"])
+	// completed_at must be stamped so the interrupted reply can register unread.
+	var completedAt *string
+	require.NoError(t, db.QueryRow(
+		"SELECT completed_at FROM chat_history WHERE session_id = 'sess-orphan'",
+	).Scan(&completedAt))
+	assert.NotNil(t, completedAt, "completed_at must be stamped on the finalized orphan")
+
+	// The already-finalized row must be untouched.
+	var doneStreaming int
+	var doneContent string
+	require.NoError(t, db.QueryRow(
+		"SELECT streaming, content FROM chat_history WHERE session_id = 'sess-done'",
+	).Scan(&doneStreaming, &doneContent))
+	assert.Equal(t, 0, doneStreaming)
+	assert.Equal(t, `{"blocks":[]}`, doneContent, "finalized rows must not be rewritten")
+}
+
+// TestInitDB_CLIModeLeavesOrphansEndToEnd is the counterpart: InitDB called
+// WITHOUT runFromServer (CLI subcommands: task/rag) must NOT touch streaming
+// rows, because a live server may still be streaming into them.
+func TestInitDB_CLIModeLeavesOrphansEndToEnd(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, InitDB(true))
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/p', 'assistant', '{\"blocks\":[]}', 'sess-live', 'claude', 1)",
+	)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+	CloseDB()
+
+	// CLI mode: no runFromServer flag.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	var streaming int
+	require.NoError(t, db.QueryRow(
+		"SELECT streaming FROM chat_history WHERE session_id = 'sess-live'",
+	).Scan(&streaming))
+	assert.Equal(t, 1, streaming, "CLI mode must not finalize a possibly-live stream")
+}
+
 // orphanCleanup replicates the orphan cleanup logic from InitDB for testing.
 func orphanCleanup(t *testing.T, db *sql.DB, isServerStartup bool) {
 	t.Helper()
