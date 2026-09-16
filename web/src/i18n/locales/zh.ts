@@ -816,7 +816,6 @@ export default {
       statusPaused: '已禁用',
       statusCompleted: '已完成',
       statusExecutions: '{count} 次执行',
-      viewDetail: '查看详情',
       justNow: '刚刚',
       fromNow: '后',
       ago: '前',

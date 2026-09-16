@@ -813,7 +813,6 @@ export default {
       statusPaused: 'Disabled',
       statusCompleted: 'Completed',
       statusExecutions: '{count} executions',
-      viewDetail: 'View details',
       justNow: 'just now',
       fromNow: 'from now',
       ago: 'ago',

@@ -252,8 +252,6 @@ provide('chatRender', {
   formatMessageTime: chatRender.formatMessageTime,
   toolCallSummary: chatRender.toolCallSummary,
   formatToolInput: chatRender.formatToolInput,
-  humanizeCron: chatRender.humanizeCron,
-  repeatLabel: chatRender.repeatLabel,
   truncate: chatRender.truncate,
   hasImagesInContent: chatRender.hasImagesInContent,
 })

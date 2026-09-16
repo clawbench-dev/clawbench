@@ -26,10 +26,6 @@ import {
   formatDetailTime,
   truncate,
 } from '@/utils/chatBlocks.ts'
-import {
-  humanizeCron,
-  repeatLabel,
-} from '@/utils/format.ts'
 
 export function useChatRender(options: { messages: { value: Array<Record<string, unknown>> }; theme: { value: unknown }; currentSessionId: { value: unknown } }) {
   const { messages, theme, currentSessionId } = options
@@ -316,8 +312,6 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
     hasImagesInContent,
     formatMessageTime,
     formatDetailTime,
-    humanizeCron,
-    repeatLabel,
     truncate,
     // Expose cache for ContentBlocks.vue integration
     staticBlockCache,

@@ -134,7 +134,6 @@ const i18n = createI18n({
         status: 'Status',
         lastRun: 'Last run',
         nextRun: 'Next run',
-        viewDetail: 'View detail',
         taskDeleted: 'Task deleted',
         thinkingLoadFailed: 'Failed to load thinking',
         retry: 'Retry',
@@ -148,6 +147,21 @@ const i18n = createI18n({
     tool: {
       askUser: { name: 'Ask' },
       permission: { title: 'Permission Request' },
+    },
+    task: {
+      form: {
+        eventTypes: 'Events to watch',
+        eventTypesNone: 'No events configured',
+        eventKindIssue: 'Issues',
+        eventKindPr: 'Pull requests',
+        eventKindRepo: 'Repository pipelines',
+        eventOpened: 'Opened',
+        eventClosed: 'Closed',
+        eventMerged: 'Merged',
+        eventReopened: 'Reopened',
+        eventCommented: 'Commented',
+        eventPipeline: 'Pipeline finished',
+      },
     },
   } },
 })
@@ -967,6 +981,40 @@ describe('ContentBlocks', () => {
       await card.trigger('click')
       expect(wrapper.emitted('task-card-click')).toBeTruthy()
       expect(wrapper.emitted('task-card-click')![0][0]).toBe(42)
+    })
+
+    it('renders an event task card with its subscription rather than cron-only fields', async () => {
+      // The card was extracted from this component precisely so both trigger
+      // modes render from one implementation; this pins the summary-mode wiring
+      // (data fetched from /api/tasks) to the event branch.
+      const apiGetMock = vi.mocked(apiGet)
+      apiGetMock.mockResolvedValue({
+        tasks: [
+          {
+            id: 41, name: 'Review new PRs', status: 'active', agentId: 'a1',
+            triggerMode: 'event', eventTypes: 'pr.opened',
+            // Inert for event tasks — must not be rendered as the trigger.
+            cronExpr: '', repeatMode: 'unlimited', maxRuns: 0, lastRunAt: '', nextRunAt: '',
+          },
+        ],
+      })
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: { tools: [], taskIDs: [41], askQuestions: [] },
+      })
+      await flushPromises()
+      await nextTick()
+      const card = wrapper.find('.scheduled-task-card')
+      expect(card.exists()).toBe(true)
+      expect(card.classes()).toContain('is-event')
+      expect(card.find('.stask-chip').text()).toContain('Opened')
+      expect(card.text()).toContain('Events to watch')
+      // No blank schedule line, no fabricated repeat mode, no "next run: none".
+      expect(card.text()).not.toContain('Frequency')
+      expect(card.text()).not.toContain('Repeat')
+      expect(card.text()).not.toContain('Next run')
     })
 
     it('does NOT mark a summary task deleted when the store list is empty (app reset / not yet populated)', async () => {

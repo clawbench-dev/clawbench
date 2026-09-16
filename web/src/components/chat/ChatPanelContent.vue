@@ -640,8 +640,6 @@ provide('chatRender', {
   formatMessageTime: render.formatMessageTime,
   toolCallSummary: render.toolCallSummary,
   formatToolInput: render.formatToolInput,
-  humanizeCron: render.humanizeCron,
-  repeatLabel: render.repeatLabel,
   truncate: render.truncate,
   hasImagesInContent: render.hasImagesInContent,
 })
