@@ -89,4 +89,35 @@ describe('chat input type scale matches the message body', () => {
     expect(block).not.toMatch(/max-height:\s*calc\(20px/)
     expect(block).toContain(`calc(var(--input-line-height) * ${lines}`)
   })
+
+  it.each([
+    ['chat input bar', () => inputBar, '.chat-input-row'],
+    ['quote bar', () => quoteBar, '.qq-input-row'],
+    ['completion popover', () => popover, '.completion-popover-input'],
+  ])('%s row has symmetric vertical padding', (_name, source, selector) => {
+    // These rows are `align-items: flex-end`, so a top/bottom padding difference
+    // shows up directly as the icon buttons sitting off-centre against the
+    // textarea — the controls share a baseline, not a centre. The original
+    // 4px/6px (and 2px/4px) asymmetry was invisible while the buttons were
+    // larger; it became obvious once they shrank to 26px squares.
+    const block = ruleBlock(source(), selector)
+    const padding = block.match(/padding:\s*([^;]+);/)?.[1].trim()
+    expect(padding, `${selector} should declare padding`).toBeTruthy()
+    const parts = padding!.split(/\s+/)
+    const resolve = (v: string) => {
+      const token: Record<string, number> = {
+        'var(--space-1)': 2, 'var(--space-2)': 4, 'var(--space-3)': 6, 'var(--space-4)': 8,
+      }
+      if (v in token) return token[v]
+      const px = v.match(/^(\d+)px$/)
+      return px ? Number(px[1]) : NaN
+    }
+    // 2-value shorthand (top/bottom + left/right) is inherently symmetric.
+    if (parts.length === 2) {
+      expect(resolve(parts[0])).not.toBeNaN()
+      return
+    }
+    expect(parts, `${selector} padding should be 2 or 3 values`).toHaveLength(3)
+    expect(resolve(parts[0]), `${selector} top vs bottom padding`).toBe(resolve(parts[2]))
+  })
 })

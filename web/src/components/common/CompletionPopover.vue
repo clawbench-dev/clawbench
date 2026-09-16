@@ -654,7 +654,10 @@ function handleSummaryClick(event: MouseEvent): void {
 }
 
 /* 快捷输入框 — 与聊天界面 ChatInputBar 输入框样式对齐（圆角 20px、固定不随高度变化）。
-   背景用 --bg-primary（白/更亮）与卡片的 --bg-tertiary 底色区分，避免融合 */
+   背景用 --bg-primary（白/更亮）与卡片的 --bg-tertiary 底色区分，避免融合。
+   纵向 padding 必须上下对称：行是 align-items: flex-end，任何上下差都会直接
+   表现为按钮相对 textarea 偏心（原先 4px 上 / 6px 下，按钮偏下 1px）。5px 是
+   字面值，因为间距刻度从 4px 直接跳到 6px，中间没有 token。 */
 .completion-popover-input {
     flex: 1;
     min-width: 0;
@@ -662,7 +665,7 @@ function handleSummaryClick(event: MouseEvent): void {
     align-items: flex-end;
     gap: var(--space-1);
     margin-top: var(--space-3);
-    padding: var(--space-2) var(--space-3) var(--space-3);
+    padding: 5px var(--space-3);
     background: var(--bg-primary, #fff);
     border: none;
     border-radius: 20px;

@@ -2472,12 +2472,22 @@ defineExpose({
   color: var(--accent-color, #4f9cf7);
 }
 
-/* Input row */
+/* Input row.
+   The vertical padding is symmetric on purpose: the row is `align-items:
+   flex-end`, so any top/bottom difference shows up directly as the buttons
+   sitting off-centre against the textarea. It used to be 4px top / 6px bottom
+   (an extra 2px of bottom breathing room from the original design), which went
+   unnoticed while the controls were larger but became visible once the buttons
+   shrank to 26px squares.
+
+   5px is a literal rather than a token because the spacing scale steps 4px → 6px
+   (--space-2 → --space-3) with nothing between; 5px keeps the row's total height
+   at 36px while making the padding equal. */
 .chat-input-row {
   display: flex;
   align-items: flex-end;
   gap: var(--space-1);
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  padding: 5px var(--space-3);
 }
 
 .chat-textarea {

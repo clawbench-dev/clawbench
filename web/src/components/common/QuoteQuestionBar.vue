@@ -444,11 +444,15 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   box-shadow: inset 0 0 0 1px var(--accent-color);
 }
 
+/* Vertical padding is symmetric on purpose: the row is `align-items:
+   flex-end`, so any top/bottom difference reads directly as the buttons sitting
+   off-centre against the textarea (it was 2px top / 4px bottom). 3px keeps the
+   row's total height while making the two equal. */
 .qq-input-row {
   display: flex;
   align-items: flex-end;
   gap: var(--space-1);
-  padding: var(--space-1) var(--space-2) var(--space-2);
+  padding: 3px var(--space-2);
 }
 
 .qq-textarea {
