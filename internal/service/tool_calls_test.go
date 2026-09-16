@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUpsertAndGetToolCall(t *testing.T) {
@@ -45,9 +46,7 @@ func TestUpsertAndGetToolCall(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetToolCall: %v", err)
 		}
-		if record == nil {
-			t.Fatal("GetToolCall returned nil")
-		}
+		require.NotNil(t, record, "GetToolCall returned nil")
 		if record.ToolID != "toolu_01" {
 			t.Errorf("ToolID = %q, want %q", record.ToolID, "toolu_01")
 		}

@@ -11,6 +11,8 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 
+	"github.com/stretchr/testify/require"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -668,9 +670,7 @@ func TestNewSessionExecutor_DoesNotWrapContext(t *testing.T) {
 	}
 
 	executor := NewSessionExecutor(context.TODO(), cfg)
-	if executor == nil {
-		t.Fatal("NewSessionExecutor returned nil")
-	}
+	require.NotNil(t, executor, "NewSessionExecutor returned nil")
 	// Executor should store the context as-is, not wrap it
 	if executor.cfg.Mode != ModeInteractive {
 		t.Fatal("mode not stored correctly")
@@ -1796,9 +1796,7 @@ func TestSessionExecutor_BuildResult_AskUserQuestionToolCallPersisted(t *testing
 			break
 		}
 	}
-	if askBlock == nil {
-		t.Fatal("expected AskUserQuestion block in finalized result")
-	}
+	require.NotNil(t, askBlock, "expected AskUserQuestion block in finalized result")
 	if !strings.HasPrefix(askBlock.ID, "ask-") {
 		t.Fatalf("expected AskUserQuestion block ID to start with 'ask-', got %q", askBlock.ID)
 	}
@@ -1810,9 +1808,7 @@ func TestSessionExecutor_BuildResult_AskUserQuestionToolCallPersisted(t *testing
 	if err != nil {
 		t.Fatalf("GetToolCall failed: %v", err)
 	}
-	if rec == nil {
-		t.Fatal("expected tool call record in chat_tool_calls for converted AskUserQuestion block")
-	}
+	require.NotNil(t, rec, "expected tool call record in chat_tool_calls for converted AskUserQuestion block")
 	if rec.Name != "AskUserQuestion" {
 		t.Errorf("expected tool call name=AskUserQuestion, got %q", rec.Name)
 	}

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	"github.com/stretchr/testify/require"
 )
 
 // parseSearchSSEEvents reads SSE events from a dir search response body.
@@ -774,9 +775,7 @@ func TestDirSearch_SizeModifiedFields(t *testing.T) {
 			break
 		}
 	}
-	if matched == nil {
-		t.Fatal("expected main.go to match")
-	}
+	require.NotNil(t, matched, "expected main.go to match")
 	if matched.Size != int64(len(content)) {
 		t.Errorf("expected size %d, got %d", len(content), matched.Size)
 	}
