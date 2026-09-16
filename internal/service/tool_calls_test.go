@@ -140,9 +140,7 @@ func TestUpsertAndGetToolCall(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetToolCallBySession: %v", err)
 		}
-		if record == nil {
-			t.Fatal("GetToolCallBySession returned nil")
-		}
+		require.NotNil(t, record, "GetToolCallBySession returned nil")
 		if record.ToolID != "toolu_01" {
 			t.Errorf("ToolID = %q, want %q", record.ToolID, "toolu_01")
 		}
