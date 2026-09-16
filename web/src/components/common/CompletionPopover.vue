@@ -194,10 +194,9 @@ function autoResizeTextarea(): void {
     if (!el) return
     el.style.height = 'auto'
     const computedStyle = getComputedStyle(el)
-    // Unitless line-height resolves to px here; fall back to the ratio off the
-    // font size so the cap tracks the CSS rather than a hard-coded box.
-    const lineHeight = parseFloat(computedStyle.lineHeight)
-        || (parseFloat(computedStyle.fontSize) || 13) * 1.4
+    // Line-height resolves to px (--input-line-height is a px value); fall back
+    // to that token's own 18px so the cap stays a whole number.
+    const lineHeight = parseFloat(computedStyle.lineHeight) || 18
     const paddingTop = parseFloat(computedStyle.paddingTop) || 0
     const paddingBottom = parseFloat(computedStyle.paddingBottom) || 0
     const maxContentHeight = lineHeight * 3
@@ -684,14 +683,15 @@ function handleSummaryClick(event: MouseEvent): void {
     background: transparent;
     color: var(--text-primary);
     /* Mirrors .chat-textarea: same type scale as the chat message body, and the
-       height caps are derived from that same line box. */
+       line box is the integer --input-line-height so a single line stays
+       vertically centred in WebView (see the token's comment). */
     font-size: var(--font-size-md);
-    line-height: var(--line-height-snug);
+    line-height: var(--input-line-height);
     outline: none;
     resize: none;
     overflow-y: auto;
-    min-height: calc(1em * var(--line-height-snug) + var(--space-2) * 2);
-    max-height: calc(1em * var(--line-height-snug) * 3 + var(--space-2) * 2); /* 3 行 + 上下 padding */
+    min-height: calc(var(--input-line-height) + var(--space-2) * 2);
+    max-height: calc(var(--input-line-height) * 3 + var(--space-2) * 2); /* 3 行 + 上下 padding */
     font-family: inherit;
 }
 

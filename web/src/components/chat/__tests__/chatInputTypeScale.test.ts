@@ -45,10 +45,37 @@ describe('chat input type scale matches the message body', () => {
   ])('%s textarea uses the same type scale as the body', (_name, source, selector) => {
     const block = ruleBlock(source(), selector)
     expect(block).toMatch(/font-size:\s*var\(--font-size-md\)/)
-    expect(block).toMatch(/line-height:\s*var\(--line-height-snug\)/)
     // The pre-fix scale: 16px text in a fixed 20px line box.
     expect(block).not.toMatch(/font-size:\s*var\(--font-size-2xl\)/)
     expect(block).not.toMatch(/line-height:\s*20px/)
+  })
+
+  it.each([
+    ['chat input bar', () => inputBar, '.chat-textarea'],
+    ['quote bar', () => quoteBar, '.qq-textarea'],
+    ['completion popover', () => popover, '.completion-popover-textarea'],
+  ])('%s textarea uses the INTEGER line box, not the unitless ratio', (_name, source, selector) => {
+    const block = ruleBlock(source(), selector)
+    // A unitless --line-height-snug resolves to 13px × 1.4 = 18.2px. Android
+    // WebView rounds a form control's line box and content-box height
+    // independently, so at a fractional line box the two roundings stop
+    // cancelling and a single line of text sits visibly high. Only the integer
+    // token keeps the caret centred; desktop Chrome hides the bug by rounding
+    // both the same way.
+    expect(block).toMatch(/line-height:\s*var\(--input-line-height\)/)
+    expect(block).not.toMatch(/line-height:\s*var\(--line-height-snug\)/)
+    expect(block).not.toMatch(/line-height:\s*[\d.]+em/)
+  })
+
+  it('keeps --input-line-height a whole number of px', () => {
+    // The integer constraint is the entire point of the token, and nothing else
+    // in the design system enforces it — a retune to e.g. 1.4em or 18.2px would
+    // silently reintroduce the WebView drift.
+    const vars = readWebFile('css/variables.css')
+    const m = vars.match(/--input-line-height:\s*([^;]+);/)
+    expect(m, 'token --input-line-height should be defined').not.toBeNull()
+    const raw = m![1].trim()
+    expect(raw).toMatch(/^\d+px$/)
   })
 
   it.each([
@@ -60,6 +87,6 @@ describe('chat input type scale matches the message body', () => {
     // A hard-coded min-height would no longer track the token if it is retuned.
     expect(block).not.toMatch(/min-height:\s*\d+px/)
     expect(block).not.toMatch(/max-height:\s*calc\(20px/)
-    expect(block).toContain(`calc(1em * var(--line-height-snug) * ${lines}`)
+    expect(block).toContain(`calc(var(--input-line-height) * ${lines}`)
   })
 })

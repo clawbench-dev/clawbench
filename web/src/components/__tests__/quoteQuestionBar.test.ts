@@ -170,14 +170,15 @@ describe('QuoteQuestionBar component', () => {
     await wrapper.find('.quote-bar-row').trigger('click')
     const container = wrapper.find('.qq-input-container')
     expect(container.exists()).toBe(true)
-    // textarea 与聊天输入框对齐：字号/行高与聊天正文同 token（--font-size-md /
-    // --line-height-snug），上下 padding 4px
+    // textarea 与聊天输入框对齐：字号与聊天正文同 token（--font-size-md）；
+    // 行盒用整数 --input-line-height（无单位 1.4 在 WebView 下会让单行文字偏上，
+    // 见该 token 注释），上下 padding 4px
     // jsdom 不解析 var()：字号/行高断言 token 名；padding 简写含两个 var()，computed 值
     // 一律解成 0，改在下方按 CSS 规则文本断言
     const ta = wrapper.find('.qq-textarea')
     const taStyles = window.getComputedStyle(ta.element)
     expect(taStyles.fontSize).toBe('var(--font-size-md)')
-    expect(taStyles.lineHeight).toBe('var(--line-height-snug)')
+    expect(taStyles.lineHeight).toBe('var(--input-line-height)')
     // 发送/添加按钮与聊天输入框对齐：26px 圆形
     const sendBtn = wrapper.find('.qq-send-btn')
     const sendStyles = window.getComputedStyle(sendBtn.element)
@@ -200,7 +201,7 @@ describe('QuoteQuestionBar component', () => {
     const taRule = cssText.split('\n').filter((line) => line.includes('.qq-textarea')).join('\n')
     expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
     // 高度上限由同一行盒推导（3 行 + 上下 padding），不再写死 px
-    expect(taRule).toContain('max-height: calc(1em * var(--line-height-snug) * 3')
+    expect(taRule).toContain('max-height: calc(var(--input-line-height) * 3')
   })
 
   it('does not render when visible is false', () => {
