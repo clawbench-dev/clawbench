@@ -94,6 +94,41 @@ func resolveShareTarget(w http.ResponseWriter, r *http.Request, pathStr string) 
 	return absPath, true
 }
 
+// resolveShareRoot determines the directory a new share is confined to.
+//
+// The public read endpoints run WITHOUT auth, so they cannot consult the
+// project cookie — the boundary must be captured here, while the request is
+// still authenticated.
+//
+// A shared file inside the active project gets the project root as its
+// boundary, which is what the share SPA needs: the markdown renderer rewrites
+// media references to ?path=<abs> using the document's own directory, and a
+// reference like ../images/pic.jpg legitimately resolves above that directory
+// but still inside the project.
+//
+// Only the project cookie is consulted. service.GetDefaultProject() must NOT
+// be used as a fallback here: its own chain ends at the home directory and then
+// at RootPaths[0] (== "/" on Unix), and production projects live *under* the
+// home directory, so isPathUnderBase would accept it and confine the share to
+// $HOME — handing a token holder ~/.ssh, config files, and everything else.
+// With no cookie we therefore fall back to the shared file's own directory,
+// the only choice that cannot widen what the link exposes.
+func resolveShareRoot(r *http.Request, absPath string) string {
+	fileDir := filepath.Dir(absPath)
+
+	projectPath := middleware.GetProjectFromCookie(r)
+	if projectPath == "" {
+		return fileDir
+	}
+	if !isPathUnderBase(absPath, projectPath) {
+		return fileDir
+	}
+	// Store the path as given: readers compare with isPathUnderBase, which
+	// resolves symlinks on BOTH sides, so a symlinked component in the project
+	// path is handled at read time and needs no pre-resolution here.
+	return projectPath
+}
+
 func serveShareCreate(w http.ResponseWriter, r *http.Request) {
 	pathStr, ok := shareRequestPath(w, r)
 	if !ok {
@@ -105,7 +140,7 @@ func serveShareCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	name := filepath.Base(absPath)
 
-	token, _, err := service.UpsertFileShare(absPath, name)
+	token, _, err := service.UpsertFileShare(absPath, name, resolveShareRoot(r, absPath))
 	if err != nil {
 		slog.Error("share: upsert failed", "path", absPath, "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -290,7 +325,7 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath, name, exists, err := service.GetFileShareByToken(token)
+	absPath, name, shareRoot, exists, err := service.GetFileShareByToken(token)
 	if err != nil {
 		slog.Error("share: public token lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -308,7 +343,7 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	case rest == "download":
 		serveShareRaw(w, r, absPath, name, true)
 	case rest == shareLocalSegment || strings.HasPrefix(rest, shareLocalSegment+"/"):
-		serveShareLocal(w, r, absPath, rest)
+		serveShareLocal(w, r, absPath, shareRoot, rest)
 	default:
 		http.NotFound(w, r)
 	}
@@ -418,16 +453,30 @@ func serveShareRaw(w http.ResponseWriter, r *http.Request, absPath, name string,
 
 // serveShareLocal serves a file referenced by the shared document (markdown
 // images etc.). Relative paths resolve against the shared file's directory;
-// absolute paths are accepted via ?path= and validated against root paths.
-func serveShareLocal(w http.ResponseWriter, r *http.Request, sharedAbsPath, rest string) {
+// absolute paths are accepted via ?path= and confined to shareRoot.
+//
+// shareRoot is the directory captured when the share was created (see
+// resolveShareRoot). It is the ONLY boundary here: these endpoints are public
+// and unauthenticated, so a token holder must not be able to reach beyond the
+// share's own scope. An empty shareRoot means a row created before the column
+// existed — fall back to the shared file's own directory, which is the safe
+// direction.
+func serveShareLocal(w http.ResponseWriter, r *http.Request, sharedAbsPath, shareRoot, rest string) {
 	// Absolute path via ?path= — referenced outside the shared file's dir.
 	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
 		if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
 			http.NotFound(w, r)
 			return
 		}
+		root := shareRoot
+		if root == "" {
+			root = filepath.Dir(sharedAbsPath)
+		}
+		// filepath.Abs only errors for a drive-relative path whose working
+		// directory is gone (Windows); treat that exactly like an out-of-scope
+		// target so there is a single rejection path.
 		absTarget, aerr := filepath.Abs(queryPath)
-		if aerr != nil || !isPathUnderAnyRoot(absTarget) {
+		if aerr != nil || !isPathUnderBase(absTarget, root) {
 			http.NotFound(w, r)
 			return
 		}

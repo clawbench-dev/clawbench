@@ -12,11 +12,18 @@ import (
 // FileSharesDDL creates the file_shares table.
 // Exported so handler tests and other external packages can create this table
 // in their test databases.
+//
+// root is the directory the share is confined to. It is resolved once, at
+// creation time (when the request is still authenticated), because the public
+// read endpoints have no cookie and therefore cannot recompute the project
+// boundary. An empty root means "legacy row" — readers fall back to the shared
+// file's own directory (fail closed).
 const FileSharesDDL = `
 CREATE TABLE IF NOT EXISTS file_shares (
 	token TEXT PRIMARY KEY,
 	path TEXT NOT NULL,
 	name TEXT NOT NULL,
+	root TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_file_shares_path ON file_shares(path);
@@ -36,7 +43,11 @@ func GenerateShareToken() (string, error) {
 // share already exists for path, rotates it to a fresh token (created=false).
 // Rotating invalidates the previous link immediately — only the returned token
 // is valid afterwards.
-func UpsertFileShare(path, name string) (token string, created bool, err error) {
+//
+// root is the directory the public read endpoints confine this share to. The
+// caller must supply it because only the (authenticated) creation request can
+// determine the project boundary; see FileSharesDDL.
+func UpsertFileShare(path, name, root string) (token string, created bool, err error) {
 	_, _, existing, getErr := GetFileShareByPath(path)
 	if getErr != nil {
 		return "", false, getErr
@@ -53,26 +64,28 @@ func UpsertFileShare(path, name string) (token string, created bool, err error) 
 			return "", false, fmt.Errorf("delete stale share: %w", err)
 		}
 	}
-	if _, err := WriteExec("INSERT INTO file_shares (token, path, name) VALUES (?, ?, ?)", token, path, name); err != nil {
+	if _, err := WriteExec("INSERT INTO file_shares (token, path, name, root) VALUES (?, ?, ?, ?)", token, path, name, root); err != nil {
 		return "", false, fmt.Errorf("insert share: %w", err)
 	}
 	return token, !existing, nil
 }
 
 // GetFileShareByToken looks up a share by its capability token. Returns ok=false
-// when no share matches (link is unknown or has been revoked).
-func GetFileShareByToken(token string) (path, name string, ok bool, err error) {
+// when no share matches (link is unknown or has been revoked). root is the
+// stored confinement directory, or "" for rows created before the column
+// existed (callers must then fail closed).
+func GetFileShareByToken(token string) (path, name, root string, ok bool, err error) {
 	if token == "" {
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
-	row := ReadDB().QueryRow("SELECT path, name FROM file_shares WHERE token = ?", token)
-	if err := row.Scan(&path, &name); err != nil {
+	row := ReadDB().QueryRow("SELECT path, name, root FROM file_shares WHERE token = ?", token)
+	if err := row.Scan(&path, &name, &root); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", false, nil
+			return "", "", "", false, nil
 		}
-		return "", "", false, fmt.Errorf("query share by token: %w", err)
+		return "", "", "", false, fmt.Errorf("query share by token: %w", err)
 	}
-	return path, name, true, nil
+	return path, name, root, true, nil
 }
 
 // GetFileShareByPath returns the active token (and stored name) for a file path.
