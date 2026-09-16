@@ -566,6 +566,20 @@ function handleSummaryClick(event: MouseEvent): void {
     padding-top: var(--space-1);
 }
 
+/* ── Headings inside the summary ──
+   The summary renders AI reply Markdown through the global .markdown-body
+   rules, whose heading scale is sized for long-form reading (h1 = 1.6em). In
+   this 13px card that computes to 20.8px — larger than the card's OWN title
+   (14px), so a reply opening with `#` makes the body shout louder than the
+   heading that labels it. Clamp the three heading levels to the same values
+   ChatMessageItem uses for chat bubbles, so one reply renders identically
+   whether it lands in the transcript or in this notification.
+   (The leading gap above an opening heading is handled globally by
+   `css/content.css` → `.markdown-body > :first-child`.) */
+.completion-popover-summary.markdown-body h1 { font-size: var(--font-size-2xl); }
+.completion-popover-summary.markdown-body h2 { font-size: var(--font-size-lg); }
+.completion-popover-summary.markdown-body h3 { font-size: var(--font-size-md); }
+
 /* ── 折叠态摘要：富文本预览按固定高度裁剪（不滚动），底部淡出渐变，
    暗示下方还有更多内容。图片此态不展示（CSS 隐藏）。点击内容区展开。
    底部留出淡出带，与下方按钮行重叠（负 margin）以省纵向空间。

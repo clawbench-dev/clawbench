@@ -391,6 +391,60 @@ describe('CompletionPopover', () => {
         expect(el.querySelector('strong')!.textContent).toBe('加粗摘要')
     })
 
+    it('clamps summary headings so a reply cannot outshout the card title', () => {
+        // The summary renders through the global .markdown-body rules, whose
+        // heading scale targets long-form reading: h1 = 1.6em, which on this
+        // 13px container computes to 20.8px — LARGER than the card's own title
+        // (14px). A reply opening with `#` therefore made the body louder than
+        // the heading labelling it. The popover clamps the three levels to the
+        // same values ChatMessageItem uses for chat bubbles.
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+
+        // jsdom does not resolve var(), so assert the token names (16px/14px/
+        // 13px per variables.css — pinned by designTokens.css.test.ts).
+        const h1 = cssText.split('\n').filter((l) => l.includes('.completion-popover-summary.markdown-body h1')).join('\n')
+        const h2 = cssText.split('\n').filter((l) => l.includes('.completion-popover-summary.markdown-body h2')).join('\n')
+        const h3 = cssText.split('\n').filter((l) => l.includes('.completion-popover-summary.markdown-body h3')).join('\n')
+        expect(h1).toContain('font-size: var(--font-size-2xl)')
+        expect(h2).toContain('font-size: var(--font-size-lg)')
+        expect(h3).toContain('font-size: var(--font-size-md)')
+
+        // Specificity guard: the clamp must OUTRANK the global
+        // `.markdown-body h1` (0,1,1). The scoped selector here is (0,3,0)
+        // because it carries both classes — dropping either class would leave
+        // the rule losing to content.css and silently restore the 20.8px h1.
+        expect(h1).toMatch(/\.completion-popover-summary\.markdown-body h1/)
+    })
+
+    it('leaves the leading gap above an opening heading to the global first-block reset', () => {
+        // The popover deliberately does NOT re-declare margin-top here: the
+        // reset lives in css/content.css (`.markdown-body > :first-child`), so
+        // it also fixes the file preview and share page. Re-adding a margin
+        // rule in this component would be the wrong layer.
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        const headingRules = cssText
+            .split('\n')
+            .filter((l) => l.includes('.completion-popover-summary.markdown-body h'))
+            .join('\n')
+        expect(headingRules).not.toContain('margin-top')
+    })
+
     it('collapses by default: no scroll (clipped preview) and no visible input', () => {
         mockState.active = ref(makeItem())
         mountPopover()
