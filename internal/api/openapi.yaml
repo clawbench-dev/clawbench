@@ -339,6 +339,12 @@ paths:
     get:
       tags: [System]
       summary: 代码行数统计
+      description: |
+        对当前工作区做快照式盘点（gocloc），按语言统计代码/注释/空白行与文件数。
+
+        排除分两层取交集：一是内置的构建产物/依赖目录名与生成文件后缀正则；
+        二是项目自身的 .gitignore 规则（含嵌套 .gitignore 与 .git/info/exclude），
+        已跟踪文件即使命中规则也会保留。非 git 仓库时只应用第一层。
       operationId: gitCloc
       responses:
         "200":

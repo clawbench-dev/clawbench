@@ -351,6 +351,7 @@ const i18n = createI18n({
         emptyDir: '空目录',
         noFiles: '无文件',
         truncateHint: '截断提示',
+        gitIgnored: '已被 .gitignore 忽略',
         multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档', share: '分享' },
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
@@ -4533,5 +4534,83 @@ describe('FileManagerContent — directory quick preview', () => {
 
     expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
     expect(mockShowPreview).not.toHaveBeenCalled()
+  })
+})
+
+// ── Gitignored entry visual effect ──
+
+describe('FileManagerContent — gitignored entries', () => {
+  // A listing where one file is flagged by the backend as gitignored.
+  const ignoredEntries = [
+    { name: 'src', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 },
+    { name: 'kept.ts', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
+    { name: 'node_modules', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0, ignored: true },
+    { name: 'build.log', type: 'file', modified: '2025-01-01T00:00:00Z', size: 10, ignored: true },
+  ]
+
+  it('marks only the gitignored rows in list view', async () => {
+    const wrapper = mountContent({ entries: ignoredEntries })
+    await nextTick()
+
+    const rows = wrapper.findAll('.file-item')
+    const byPath = new Map<string, boolean>()
+    rows.forEach(row => {
+      byPath.set(row.attributes('data-path') ?? '', row.classes().includes('git-ignored'))
+    })
+
+    expect(byPath.get('node_modules')).toBe(true)
+    expect(byPath.get('build.log')).toBe(true)
+    expect(byPath.get('src')).toBe(false)
+    expect(byPath.get('kept.ts')).toBe(false)
+  })
+
+  it('keeps ignored entries fully operable (still rendered and clickable)', async () => {
+    const wrapper = mountContent({ entries: ignoredEntries })
+    await nextTick()
+
+    const ignoredRow = wrapper.findAll('.file-item').find(r => r.attributes('data-path') === 'build.log')
+    expect(ignoredRow).toBeTruthy()
+    // Not disabled: the row must remain selectable, so no disabled attribute or
+    // aria-disabled marker may be applied.
+    expect(ignoredRow!.attributes('disabled')).toBeUndefined()
+    expect(ignoredRow!.attributes('aria-disabled')).toBeUndefined()
+  })
+
+  it('explains the dimming in the row tooltip', async () => {
+    const wrapper = mountContent({ entries: ignoredEntries })
+    await nextTick()
+
+    const ignoredRow = wrapper.findAll('.file-item').find(r => r.attributes('data-path') === 'build.log')
+    expect(ignoredRow!.attributes('title')).toContain('.gitignore')
+
+    const keptRow = wrapper.findAll('.file-item').find(r => r.attributes('data-path') === 'kept.ts')
+    expect(keptRow!.attributes('title')).toBeUndefined()
+  })
+
+  it('marks gitignored rows in grid view too', async () => {
+    const wrapper = mountContent({ entries: ignoredEntries })
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    wrapper.vm.$forceUpdate?.()
+    await nextTick()
+
+    const items = wrapper.findAll('.grid-item')
+    const byPath = new Map<string, boolean>()
+    items.forEach(item => {
+      byPath.set(item.attributes('data-path') ?? '', item.classes().includes('git-ignored'))
+    })
+    expect(byPath.get('node_modules')).toBe(true)
+    expect(byPath.get('kept.ts')).toBe(false)
+  })
+
+  it('leaves every row undimmed when the backend sends no flag', async () => {
+    // Outside a git repository the field is absent; nothing may be dimmed.
+    const wrapper = mountContent()
+    await nextTick()
+
+    wrapper.findAll('.file-item').forEach(row => {
+      expect(row.classes()).not.toContain('git-ignored')
+      expect(row.attributes('title')).toBeUndefined()
+    })
   })
 })

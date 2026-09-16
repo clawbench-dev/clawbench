@@ -25,6 +25,9 @@ export interface DisplayEntry {
   matchedIndices?: number[]
   size?: number
   modified?: string
+  /** Git would not track this entry; the file manager dims it. Search and
+   *  browse share one renderer, so both carry the flag. */
+  ignored?: boolean
 }
 
 /** Adapt a live search result into the shared DisplayEntry shape. */
@@ -40,6 +43,7 @@ export function toDisplayEntry(r: FileSearchResult): DisplayEntry {
     matchedIndices: r.matchedIndices,
     size: r.size,
     modified: r.modified,
+    ignored: r.ignored,
   }
 }
 
