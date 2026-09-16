@@ -128,6 +128,33 @@ export function colorDistance(a: string, b: string): number {
   )
 }
 
+// ── 选区底色补齐 ────────────────────────────────────────────────────────────
+
+/** 浅色背景下的选区底色（半透明黑，叠在 #fafafa 上约 #bbbbbb）。 */
+const LIGHT_SELECTION_BACKGROUND = '#00000040'
+/** 深色背景下的选区底色（半透明白，与 xterm 内置默认 rgba(255,255,255,0.3) 一致）。 */
+const DARK_SELECTION_BACKGROUND = '#ffffff4d'
+/** 判定背景为浅色的亮度阈值（0~255，与 isTerminalThemeDark 的 0.5 对齐）。 */
+const LIGHT_BACKGROUND_MIN_LUMINANCE = 128
+
+/**
+ * 补齐选区底色：xterm-theme 的 156 个预设均未定义 selectionBackground，
+ * 缺该字段时 xterm 回退到内置 rgba(255,255,255,0.3)——半透明白叠在浅色
+ * 背景上（OneHalfLight #fafafa → #fcfcfc）与背景几乎同色，划选完全不可见。
+ * 这里按背景明暗极性注入可见的选区色：浅底用半透明黑，深底保持半透明白。
+ *
+ * 已定义 selectionBackground 的主题（如 Catppuccin 常量）原样返回。
+ * 返回浅拷贝，避免把注入值写进模块级 cachedThemes 污染缓存。
+ */
+export function ensureVisibleSelection(theme: ITheme): ITheme {
+  if (theme.selectionBackground) return theme
+  const isLight = backgroundLuminance(theme.background || '') >= LIGHT_BACKGROUND_MIN_LUMINANCE
+  return {
+    ...theme,
+    selectionBackground: isLight ? LIGHT_SELECTION_BACKGROUND : DARK_SELECTION_BACKGROUND,
+  }
+}
+
 /**
  * 在所有终端主题里找背景色与 targetBg 最接近的一个，返回其 id。
  * 主题无 background 或不可解析 → 跳过；themes 为空 → 返回 null。
@@ -160,8 +187,8 @@ export function resolveAutoTheme(
   isAppDark: boolean,
 ): ITheme {
   const id = themes ? findClosestThemeByBackground(appThemeBg, themes) : null
-  if (!id) return isAppDark ? darkTheme : lightTheme
-  return themes![id]
+  if (!id) return ensureVisibleSelection(isAppDark ? darkTheme : lightTheme)
+  return ensureVisibleSelection(themes![id])
 }
 
 /** 把主题 id 转成展示名（下划线 → 空格）。 */
@@ -184,17 +211,17 @@ export async function resolveTheme(
     const themes = preloaded ?? (await safeLoadThemes())
     const appThemeBg = getAppThemeBg()
     // 无 App 主题或主题未加载 → 回退 Catppuccin；否则匹配背景色最近的终端主题。
-    if (!appThemeBg || !themes) return isAppDark ? darkTheme : lightTheme
+    if (!appThemeBg || !themes) return ensureVisibleSelection(isAppDark ? darkTheme : lightTheme)
     return resolveAutoTheme(appThemeBg, themes, isAppDark)
   }
   try {
     const themes = preloaded ?? (await loadThemesModule())
     const theme = themes[selection]
-    if (theme) return theme
+    if (theme) return ensureVisibleSelection(theme)
   } catch {
     // 加载失败或 id 缺失 → 回退
   }
-  return isAppDark ? darkTheme : lightTheme
+  return ensureVisibleSelection(isAppDark ? darkTheme : lightTheme)
 }
 
 /** 懒加载 xterm-theme，失败返回 null（供 auto 匹配回退用）。 */
@@ -225,7 +252,7 @@ export function getAppThemeBg(): string | null {
  */
 export function resolveAutoThemeSync(isAppDark: boolean): ITheme {
   const appThemeBg = getAppThemeBg()
-  if (!appThemeBg || !cachedThemes) return isAppDark ? darkTheme : lightTheme
+  if (!appThemeBg || !cachedThemes) return ensureVisibleSelection(isAppDark ? darkTheme : lightTheme)
   return resolveAutoTheme(appThemeBg, cachedThemes, isAppDark)
 }
 
@@ -238,11 +265,11 @@ export function resolveAutoThemeSync(isAppDark: boolean): ITheme {
  */
 export function resolveThemeSync(selection: string, isAppDark: boolean): ITheme {
   if (selection === TERMINAL_THEME_AUTO) {
-    return isAppDark ? darkTheme : lightTheme
+    return ensureVisibleSelection(isAppDark ? darkTheme : lightTheme)
   }
   const theme = cachedThemes?.[selection]
-  if (theme) return theme
-  return isAppDark ? darkTheme : lightTheme
+  if (theme) return ensureVisibleSelection(theme)
+  return ensureVisibleSelection(isAppDark ? darkTheme : lightTheme)
 }
 
 /** 当前 App 是否为深色主题（同步判定）。 */
