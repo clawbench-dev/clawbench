@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -66,7 +67,8 @@ func gitIgnoredNames(t *testing.T, dir string, names []string) map[string]bool {
 	cmd.Stdin = strings.NewReader(in.String())
 	out, err := cmd.Output()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 1 {
 			t.Fatalf("git check-ignore failed: %v", err)
 		}
 	}
@@ -253,7 +255,7 @@ func TestListDir_IgnoredFlagNestedGitignore(t *testing.T) {
 	assert.True(t, deepGot["nested.log"], "root pattern *.log applies inside sub/deep")
 }
 
-// TestListDir_IgnoredFlagInfoExclude covers .git/info/exclude, which git honours
+// TestListDir_IgnoredFlagInfoExclude covers .git/info/exclude, which git honors
 // alongside .gitignore.
 func TestListDir_IgnoredFlagInfoExclude(t *testing.T) {
 	env := gitRepoEnv(t)
@@ -264,7 +266,7 @@ func TestListDir_IgnoredFlagInfoExclude(t *testing.T) {
 	createTestFile(t, env.ProjectDir, "kept.txt", "k\n")
 
 	got := ignoredFlags(t, env.ProjectDir, "")
-	assert.True(t, got["info-excluded.txt"], ".git/info/exclude must be honoured")
+	assert.True(t, got["info-excluded.txt"], ".git/info/exclude must be honored")
 	assert.False(t, got["kept.txt"], "unlisted file stays visible")
 }
 
@@ -283,7 +285,7 @@ func TestListDir_IgnoredFlagGlobalExcludesFile(t *testing.T) {
 	createTestFile(t, env.ProjectDir, "kept.txt", "k\n")
 
 	got := ignoredFlags(t, env.ProjectDir, "")
-	assert.True(t, got["global-excluded.txt"], "core.excludesFile must be honoured")
+	assert.True(t, got["global-excluded.txt"], "core.excludesFile must be honored")
 	assert.False(t, got["kept.txt"], "unlisted file stays visible")
 }
 

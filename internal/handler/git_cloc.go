@@ -84,7 +84,7 @@ const clocCacheTTL = 60 * time.Second
 // Filtering after the scan (rather than feeding gocloc an explicit file list)
 // keeps the subtraction exact: the result is precisely "what gocloc counted,
 // minus the files git would not track". Passing an explicit list instead would
-// change unrelated behaviour, because gocloc's VCS check does a substring match
+// change unrelated behavior, because gocloc's VCS check does a substring match
 // on the path — it drops a tracked .github/ tree when walking a directory but
 // keeps it for an explicit list.
 func collectCloc(projectPath string) (clocResult, error) {

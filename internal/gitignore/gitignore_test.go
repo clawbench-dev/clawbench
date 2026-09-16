@@ -1,6 +1,7 @@
 package gitignore
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +20,7 @@ import (
 // rules that a hand-written expectation set would miss.
 
 // gitAvailable reports whether the git binary can be used. Tests that need the
-// real thing skip when it is absent rather than asserting weaker behaviour.
+// real thing skip when it is absent rather than asserting weaker behavior.
 func gitAvailable(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -66,7 +67,8 @@ func gitIgnored(t *testing.T, rootDir string, paths []string) map[string]bool {
 	out, err := cmd.Output()
 	// check-ignore exits 1 when nothing matched, which is not an error here.
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 1 {
 			t.Fatalf("git check-ignore failed: %v", err)
 		}
 	}
@@ -171,7 +173,7 @@ func listTree(t *testing.T, root string) []string {
 	return out
 }
 
-// --- non-repository behaviour ---
+// --- non-repository behavior ---
 
 func TestForDir_NotARepository(t *testing.T) {
 	dir := t.TempDir()
@@ -293,7 +295,7 @@ func TestMatchesGit_NestedGitignore(t *testing.T) {
 	diffIgnored(t, repo, filepath.Join(repo, "sub", "deep"), paths)
 }
 
-// TestMatchesGit_InfoExclude covers .git/info/exclude, which git honours in
+// TestMatchesGit_InfoExclude covers .git/info/exclude, which git honors in
 // addition to .gitignore files.
 func TestMatchesGit_InfoExclude(t *testing.T) {
 	gitAvailable(t)

@@ -240,7 +240,7 @@ func repeatLines(s string, n int) string {
 
 // --- gitignore-aware exclusion ---
 
-// TestCollectClocExcludesGitignoredFiles covers the core behaviour: files the
+// TestCollectClocExcludesGitignoredFiles covers the core behavior: files the
 // project's .gitignore excludes must not be counted, and the language totals
 // must shrink accordingly.
 func TestCollectClocExcludesGitignoredFiles(t *testing.T) {
@@ -261,7 +261,7 @@ func TestCollectClocExcludesGitignoredFiles(t *testing.T) {
 	res, err := collectCloc(dir)
 	require.NoError(t, err)
 
-	goRow := findClocLanguage(t, res, "Go")
+	goRow := goRowOrFail(t, res)
 	assert.Equal(t, int64(2), goRow.Code, "gitignored Go files must not be counted")
 	assert.Equal(t, 1, goRow.Files, "only main.go should be counted")
 }
@@ -285,7 +285,7 @@ func TestCollectClocKeepsTrackedFilesDespitePattern(t *testing.T) {
 	res, err := collectCloc(dir)
 	require.NoError(t, err)
 
-	goRow := findClocLanguage(t, res, "Go")
+	goRow := goRowOrFail(t, res)
 	assert.Equal(t, int64(2), goRow.Code, "the tracked file must be counted")
 	assert.Equal(t, 1, goRow.Files)
 }
@@ -309,13 +309,13 @@ func TestCollectClocNestedGitignore(t *testing.T) {
 	res, err := collectCloc(dir)
 	require.NoError(t, err)
 
-	goRow := findClocLanguage(t, res, "Go")
+	goRow := goRowOrFail(t, res)
 	assert.Equal(t, int64(4), goRow.Code, "only sub/local.go is excluded (2 + 2 remain)")
 	assert.Equal(t, 2, goRow.Files)
 }
 
 // TestCollectClocNotGitRepoUnchanged covers the fallback: without a repository
-// the scan keeps its previous behaviour, so nothing regresses outside git.
+// the scan keeps its previous behavior, so nothing regresses outside git.
 func TestCollectClocNotGitRepoUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	// No repository here, so the .gitignore has no effect.
@@ -326,7 +326,7 @@ func TestCollectClocNotGitRepoUnchanged(t *testing.T) {
 	res, err := collectCloc(dir)
 	require.NoError(t, err)
 
-	goRow := findClocLanguage(t, res, "Go")
+	goRow := goRowOrFail(t, res)
 	assert.Equal(t, int64(6), goRow.Code, "without git every source file still counts")
 	assert.Equal(t, 2, goRow.Files)
 }
@@ -358,14 +358,15 @@ func TestCollectClocKeepsGithubDirectory(t *testing.T) {
 	}
 }
 
-// findClocLanguage returns the row for a language, failing when it is absent.
-func findClocLanguage(t *testing.T, res clocResult, name string) clocLanguageSummary {
+// goRowOrFail returns the Go row, failing when it is absent. These tests all
+// write Go fixtures, so the language is fixed rather than parameterised.
+func goRowOrFail(t *testing.T, res clocResult) clocLanguageSummary {
 	t.Helper()
 	for _, l := range res.Languages {
-		if l.Name == name {
+		if l.Name == "Go" {
 			return l
 		}
 	}
-	t.Fatalf("language %q missing from result: %+v", name, res.Languages)
+	t.Fatalf("Go missing from result: %+v", res.Languages)
 	return clocLanguageSummary{}
 }

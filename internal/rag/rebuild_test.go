@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -275,4 +276,139 @@ func TestRebuildCoordinator_CancelStopsWatcherBeforeTeardown(t *testing.T) {
 
 	assert.Equal(t, "cancelled", coord.GetStatus().Status,
 		"the cancelled state must survive; nothing should have revived it")
+}
+
+// ---------------------------------------------------------------------------
+// Start guard: nil store
+// ---------------------------------------------------------------------------
+
+// TestRebuildCoordinator_RejectsNilStore asserts the nil-store guard runs before
+// anything is mutated. The coordinator is reachable from an HTTP handler where
+// the store is nil until RAG initializes, so this path is live, not theoretical.
+func TestRebuildCoordinator_RejectsNilStore(t *testing.T) {
+	coord := NewRebuildCoordinator(nil)
+	coord.SetIndexer(NewIndexer(nil, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"}))
+
+	err := coord.Start(nil, RebuildFTS)
+	require.ErrorIs(t, err, ErrStoreUnavailable)
+	assert.False(t, coord.IsRunning(), "a rejected start must not occupy the slot")
+}
+
+// ---------------------------------------------------------------------------
+// remaining: unknown kind
+// ---------------------------------------------------------------------------
+
+// TestRebuildCoordinator_RemainingRejectsUnknownKind asserts the counter reports an
+// error for a kind it cannot measure, rather than silently returning 0 — a 0 would
+// be read as "nothing left" and mark the rebuild done immediately.
+func TestRebuildCoordinator_RemainingRejectsUnknownKind(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	coord := newTestCoordinator(t, store)
+
+	n, err := coord.remaining(store, RebuildKind("bogus"))
+	require.Error(t, err)
+	assert.Equal(t, 0, n)
+}
+
+// ---------------------------------------------------------------------------
+// watch: blocked vector rebuild without a healthy embedder
+// ---------------------------------------------------------------------------
+
+// TestRebuildCoordinator_VectorBlockedWithoutEmbedder covers the blockage report.
+// A vector rebuild drains PendingEmbeddingCount, which only the embedder can
+// lower; without a healthy embedder the watcher would otherwise poll at 0% forever
+// and the UI would show a run that can never progress. It must report "blocked".
+//
+// The chunks are inserted with HasEmbedding=true, then ResetVectorOnly flips them
+// back to pending — so there IS work queued, which is the condition for the guard.
+func TestRebuildCoordinator_VectorBlockedWithoutEmbedder(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	insertTestChunksSQLite(t, store, 3)
+
+	prev := EmbedderHealthy()
+	SetEmbedderHealthy(false)
+	t.Cleanup(func() { SetEmbedderHealthy(prev) })
+
+	coord := newTestCoordinator(t, store)
+	require.NoError(t, coord.Start(store, RebuildVector))
+
+	status := waitForCoordinatorTerminal(t, coord)
+	assert.Equal(t, "blocked", status.Status,
+		"a vector rebuild with pending work and no embedder must report blocked")
+	assert.Contains(t, status.Error, "embedding service unavailable")
+}
+
+// ---------------------------------------------------------------------------
+// watch: finish is ignored for a superseded generation
+// ---------------------------------------------------------------------------
+
+// TestRebuildCoordinator_FinishIgnoresSupersededGeneration asserts a stale watcher
+// cannot revive state after Cancel bumped the generation. Without the guard the
+// cancelled status would be overwritten by the abandoned run's own verdict.
+func TestRebuildCoordinator_FinishIgnoresSupersededGeneration(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	coord := newTestCoordinator(t, store)
+
+	require.NoError(t, coord.Start(store, RebuildFTS))
+	coord.Cancel()
+
+	// Simulate the superseded watcher waking up after Cancel: it still holds the
+	// pre-Cancel generation.
+	coord.mu.Lock()
+	staleGen := coord.generation - 1
+	coord.mu.Unlock()
+
+	coord.finish(staleGen, "done", "", time.Now())
+
+	assert.Equal(t, "cancelled", coord.GetStatus().Status,
+		"a superseded watcher must not overwrite the terminal state")
+	assert.False(t, coord.IsRunning())
+}
+
+// ---------------------------------------------------------------------------
+// broadcastRebuild: hub/manager wiring
+// ---------------------------------------------------------------------------
+
+// TestBroadcastRebuild_NilHubIsNoOp asserts a missing hub is tolerated: the status
+// endpoint is authoritative, so broadcast is best-effort and must not panic before
+// the WebSocket layer exists.
+func TestBroadcastRebuild_NilHubIsNoOp(t *testing.T) {
+	assert.NotPanics(t, func() { broadcastRebuild(nil, RebuildStatus{Status: "done"}) })
+}
+
+// TestBroadcastRebuild_NilManagerIsNoOp covers a hub that exists but was built
+// without a Manager. The guard must return instead of dereferencing nil.
+func TestBroadcastRebuild_NilManagerIsNoOp(t *testing.T) {
+	hub := ws.NewStreamHub(nil)
+	assert.Nil(t, hub.Manager(), "precondition: this hub has no manager")
+	assert.NotPanics(t, func() { broadcastRebuild(hub, RebuildStatus{Status: "done"}) })
+}
+
+// TestBroadcastRebuild_DeliversToDisconnectedSubscriber asserts the event actually
+// reaches the fan-out layer with the documented type/event name. A disconnected
+// subscription is used so the message lands in the replay buffer, which is
+// observable without standing up a real WebSocket connection.
+func TestBroadcastRebuild_DeliversToDisconnectedSubscriber(t *testing.T) {
+	mgr := ws.NewManagerForTest()
+	hub := mgr.StreamHub()
+
+	sub := mgr.Subscribe(nil, nil, "client-1", "")
+	require.NotNil(t, sub)
+	mgr.DisconnectClient("client-1") // start the buffer window
+
+	broadcastRebuild(hub, RebuildStatus{Kind: "fts", Status: "done", ProgressPct: 100})
+
+	events := sub.GetBufferedEvents()
+	require.NotEmpty(t, events, "the rebuild event must be buffered for replay")
+
+	var found bool
+	for _, ev := range events {
+		if ev.Event != "rag_rebuild" {
+			continue
+		}
+		found = true
+		assert.Equal(t, ws.MessageTypeEvent, ev.Type)
+		assert.NotEmpty(t, ev.ID, "each broadcast event carries a generated id")
+	}
+	assert.True(t, found, "expected a rag_rebuild event, got %+v", events)
 }
