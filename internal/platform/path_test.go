@@ -189,6 +189,16 @@ func TestListRootPaths(t *testing.T) {
 	}
 }
 
+// TestIsPathUnderAnyRoot pins the SEMANTICS of root containment, not a security
+// boundary. On Unix the app's root is "/" (ListRootPaths), so with that value
+// the predicate is equivalent to "is this an absolute path" — which is correct
+// for what it is used for (authenticated file-browser endpoints that are meant
+// to reach the whole machine).
+//
+// It must therefore never be the sole guard on an UNauthenticated endpoint: a
+// root of "/" would confine nothing. The public share endpoints capture their
+// own confinement directory at share-creation time and compare against that
+// instead (see handler.serveShareLocal / resolveShareRoot).
 func TestIsPathUnderAnyRoot(t *testing.T) {
 	tests := []struct {
 		name     string

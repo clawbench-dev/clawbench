@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -22,10 +23,15 @@ func createShareTestFile(t *testing.T, env *testEnv, relPath, content string) st
 }
 
 // createShareViaAPI creates a share through the auth endpoint and returns the token.
-func createShareViaAPI(t *testing.T, absPath string) string {
+//
+// The project cookie is set to env.ProjectDir — the project root, matching what
+// production sends (the user's selected project). Using filepath.Dir(absPath)
+// instead would understate the real boundary and hide the confinement logic
+// under test.
+func createShareViaAPI(t *testing.T, env *testEnv, absPath string) string {
 	t.Helper()
 	req := newRequest(t, http.MethodPost, "/api/share", map[string]string{"path": absPath})
-	withProjectCookie(req, filepath.Dir(absPath))
+	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeShareManage, req)
 	assertOK(t, w)
 
@@ -43,7 +49,7 @@ func TestShareManage_CreateStatusRevoke(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/a.md", "# Hello\n\nbody")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	// GET status → share exists
 	req := newRequest(t, http.MethodGet, "/api/share?path="+absPath, nil)
@@ -75,10 +81,10 @@ func TestShareManage_CreateRotatesToken(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/rotate.md", "v1")
-	token1 := createShareViaAPI(t, absPath)
+	token1 := createShareViaAPI(t, env, absPath)
 
 	// Re-create (regenerate) → new token, old invalid.
-	token2 := createShareViaAPI(t, absPath)
+	token2 := createShareViaAPI(t, env, absPath)
 	assert.NotEqual(t, token1, token2)
 
 	// Old token's public endpoint 404s.
@@ -136,7 +142,7 @@ func TestSharePublic_FileContent(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/content.md", "# Doc\n\n**bold** text")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/file", nil)
 	w := callHandler(ServeSharePublic, req)
@@ -170,7 +176,7 @@ func TestSharePublic_FileDeletedAfterShare_404(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/tmp.md", "x")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	require.NoError(t, os.Remove(absPath))
 
@@ -184,7 +190,7 @@ func TestSharePublic_Download(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/dl.md", "# download me")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/download", nil)
 	w := callHandler(ServeSharePublic, req)
@@ -201,7 +207,7 @@ func TestSharePublic_LocalResolvesRelativeToSharedFileDir(t *testing.T) {
 	// Shared markdown references ./img/pic.png in the same directory.
 	createTestFile(t, env.ProjectDir, "docs/img/pic.png", "PNGDATA")
 	absPath := createShareTestFile(t, env, "docs/readme.md", "![p](img/pic.png)")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local/img/pic.png", nil)
 	w := callHandler(ServeSharePublic, req)
@@ -215,7 +221,7 @@ func TestSharePublic_LocalTraversalRejected(t *testing.T) {
 
 	createTestFile(t, env.ProjectDir, "secret.txt", "SECRET")
 	absPath := createShareTestFile(t, env, "docs/readme.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	// ../secret.txt must NOT escape the shared file's dir.
 	for _, p := range []string{
@@ -235,10 +241,14 @@ func TestSharePublic_LocalAbsolutePath(t *testing.T) {
 	defer teardown()
 
 	// A file in the project root, referenced absolutely by the shared markdown.
+	// docs/m.md referencing ../images/abs.png is the real-world case: the share
+	// SPA rewrites every local media reference to the ?path= form using the
+	// document's own directory, so a `..` hop that stays inside the project must
+	// keep working.
 	absTarget := filepath.Join(env.ProjectDir, "images", "abs.png")
 	createTestFile(t, env.ProjectDir, "images/abs.png", "ABSDATA")
 	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local?path="+absTarget, nil)
 	w := callHandler(ServeSharePublic, req)
@@ -246,12 +256,85 @@ func TestSharePublic_LocalAbsolutePath(t *testing.T) {
 	assert.Equal(t, "ABSDATA", w.Body.String())
 }
 
+// TestSharePublic_LocalAbsolutePathOutsideProject_404 is the regression guard
+// for the path-traversal fix: the public endpoints are unauthenticated, so a
+// token holder must not be able to read anything outside the share's scope —
+// regardless of how wide model.RootPaths is.
+//
+// The companion test in file_share_errors_test.go
+// (TestSharePublic_LocalQueryPathOutsideRoot_404) covers the same shape, but it
+// passes for the WRONG reason when the fixture narrows RootPaths: it then
+// asserts on the fixture's boundary, not the share's. This test restores the
+// production value so the share's own confinement is what is actually
+// exercised.
+func TestSharePublic_LocalAbsolutePathOutsideProject_404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// The share covers only docs/m.md.
+	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+
+	// A secret living outside the project root, but still inside the temp tree
+	// so the test is hermetic.
+	secretDir := filepath.Join(env.WatchDir, "outside")
+	require.NoError(t, os.MkdirAll(secretDir, 0o755))
+	secret := filepath.Join(secretDir, "secret.txt")
+	require.NoError(t, os.WriteFile(secret, []byte("TOP_SECRET"), 0o600))
+
+	for _, tc := range []struct {
+		name  string
+		roots []string
+	}{
+		// Production semantics on Unix: the app browses the whole machine.
+		// Before the fix this made the ?path= check degenerate to "is absolute".
+		{"production roots", []string{"/"}},
+		{"narrowed roots", []string{env.WatchDir}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model.RootPaths = tc.roots
+
+			req := newRequest(t, http.MethodGet,
+				"/api/share/"+token+"/local?path="+secret, nil)
+			w := callHandler(ServeSharePublic, req)
+
+			assert.NotEqual(t, http.StatusOK, w.Code,
+				"share token must not reach outside the shared scope")
+			assert.NotContains(t, w.Body.String(), "TOP_SECRET",
+				"share token leaked content outside the shared scope")
+		})
+	}
+}
+
+// TestSharePublic_LocalAbsolutePathEtcPasswd_404 pins the exact reported
+// exploit: an unrelated share token plus ?path=/etc/passwd. Skipped when the
+// file is unreadable so the test stays hermetic across environments.
+func TestSharePublic_LocalAbsolutePathEtcPasswd_404(t *testing.T) {
+	if _, err := os.Stat("/etc/passwd"); err != nil {
+		t.Skip("/etc/passwd not available")
+	}
+
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+
+	model.RootPaths = []string{"/"} // production semantics
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local?path=/etc/passwd", nil)
+	w := callHandler(ServeSharePublic, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.NotContains(t, w.Body.String(), "root:")
+}
+
 func TestSharePublic_NoAuthNeeded(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "pub.md", "public")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	// Bypass Auth middleware entirely — direct call without cookie must work.
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/file", nil)
@@ -279,7 +362,7 @@ func TestShareRoutes_Precedence(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "prec.md", "prec")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 
 	mux := http.NewServeMux()
 	RegisterRoutes(mux)
@@ -343,14 +426,14 @@ func TestShareList_ListsAllSharesWithDisplayPath(t *testing.T) {
 
 	// File inside the project → display path should be project-relative.
 	inProject := createShareTestFile(t, env, "docs/inside.md", "x")
-	createShareViaAPI(t, inProject)
+	createShareViaAPI(t, env, inProject)
 
 	// File outside the project but under a root → display path stays absolute.
 	outsideDir := filepath.Join(env.WatchDir, "other")
 	require.NoError(t, os.MkdirAll(outsideDir, 0o755))
 	outside := filepath.Join(outsideDir, "outside.md")
 	createTestFile(t, outsideDir, "outside.md", "y")
-	createShareViaAPI(t, outside)
+	createShareViaAPI(t, env, outside)
 
 	req := newRequest(t, http.MethodGet, "/api/share/list", nil)
 	withProjectCookie(req, env.ProjectDir)
@@ -383,7 +466,7 @@ func TestShareList_MarksDeletedFileAsNotExists(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "docs/doomed.md", "x")
-	createShareViaAPI(t, absPath)
+	createShareViaAPI(t, env, absPath)
 	require.NoError(t, os.Remove(absPath))
 
 	req := newRequest(t, http.MethodGet, "/api/share/list", nil)
@@ -406,7 +489,7 @@ func TestShareList_RevokeByToken(t *testing.T) {
 
 	// Share a file then delete it — stale share must still be revocable by token.
 	absPath := createShareTestFile(t, env, "docs/stale.md", "x")
-	token := createShareViaAPI(t, absPath)
+	token := createShareViaAPI(t, env, absPath)
 	require.NoError(t, os.Remove(absPath))
 
 	req := newRequest(t, http.MethodDelete, "/api/share/list", map[string]string{"token": token})
@@ -414,7 +497,7 @@ func TestShareList_RevokeByToken(t *testing.T) {
 	w := callHandler(ServeShareList, req)
 	assertOK(t, w)
 
-	_, _, ok, err := service.GetFileShareByToken(token)
+	_, _, _, ok, err := service.GetFileShareByToken(token)
 	require.NoError(t, err)
 	assert.False(t, ok, "share must be revoked")
 }
@@ -445,7 +528,7 @@ func TestShareList_RoutePrecedence(t *testing.T) {
 	defer teardown()
 
 	absPath := createShareTestFile(t, env, "prec2.md", "x")
-	createShareViaAPI(t, absPath)
+	createShareViaAPI(t, env, absPath)
 
 	mux := http.NewServeMux()
 	RegisterRoutes(mux)
@@ -466,9 +549,9 @@ func TestShareList_DeleteAll(t *testing.T) {
 	defer teardown()
 
 	abs1 := createShareTestFile(t, env, "docs/one.md", "x")
-	createShareViaAPI(t, abs1)
+	createShareViaAPI(t, env, abs1)
 	abs2 := createShareTestFile(t, env, "docs/two.md", "y")
-	createShareViaAPI(t, abs2)
+	createShareViaAPI(t, env, abs2)
 
 	// Sanity: two shares exist.
 	list := newRequest(t, http.MethodGet, "/api/share/list", nil)
@@ -493,4 +576,182 @@ func TestShareList_DeleteAll(t *testing.T) {
 	assertOK(t, w)
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Empty(t, resp.Shares)
+}
+
+// ─── share root resolution ───────────────────────────────────────────────────
+
+// TestShareCreate_RootConfinesToProject verifies a share of a file inside the
+// active project is bounded by the PROJECT root, not the file's own directory.
+// That is what keeps `../images/x.png` references working (the share SPA
+// rewrites every local media ref to ?path=), while still refusing anything
+// outside the project.
+func TestShareCreate_RootConfinesToProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Share docs/m.md; a sibling directory one level up must stay reachable.
+	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+
+	sibling := filepath.Join(env.ProjectDir, "images", "pic.png")
+	createTestFile(t, env.ProjectDir, "images/pic.png", "PICDATA")
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local?path="+sibling, nil)
+	w := callHandler(ServeSharePublic, req)
+	assertOK(t, w)
+	assert.Equal(t, "PICDATA", w.Body.String())
+
+	// ...but a file outside the project must not be.
+	outside := filepath.Join(env.WatchDir, "outside.txt")
+	require.NoError(t, os.WriteFile(outside, []byte("NOPE"), 0o600))
+
+	req = newRequest(t, http.MethodGet, "/api/share/"+token+"/local?path="+outside, nil)
+	w = callHandler(ServeSharePublic, req)
+	assert.NotEqual(t, http.StatusOK, w.Code)
+	assert.NotContains(t, w.Body.String(), "NOPE")
+}
+
+// TestShareCreate_OutsideProjectFallsBackToFileDir verifies that sharing a file
+// outside the active project narrows the boundary to that file's own directory
+// (fail closed) instead of inheriting the project root.
+func TestShareCreate_OutsideProjectFallsBackToFileDir(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	outsideDir := filepath.Join(env.WatchDir, "elsewhere")
+	require.NoError(t, os.MkdirAll(outsideDir, 0o755))
+	shared := filepath.Join(outsideDir, "doc.md")
+	require.NoError(t, os.WriteFile(shared, []byte("hi"), 0o644))
+	createTestFile(t, outsideDir, "sibling.txt", "SIBLING")
+
+	token := createShareViaAPI(t, env, shared)
+
+	// Sibling in the same directory is fine.
+	req := newRequest(t, http.MethodGet,
+		"/api/share/"+token+"/local?path="+filepath.Join(outsideDir, "sibling.txt"), nil)
+	w := callHandler(ServeSharePublic, req)
+	assertOK(t, w)
+	assert.Equal(t, "SIBLING", w.Body.String())
+
+	// A file inside the project must NOT become reachable through this share.
+	inProject := filepath.Join(env.ProjectDir, "secret.txt")
+	createTestFile(t, env.ProjectDir, "secret.txt", "PROJECTSECRET")
+
+	req = newRequest(t, http.MethodGet, "/api/share/"+token+"/local?path="+inProject, nil)
+	w = callHandler(ServeSharePublic, req)
+	assert.NotEqual(t, http.StatusOK, w.Code)
+	assert.NotContains(t, w.Body.String(), "PROJECTSECRET")
+}
+
+// TestShareLocal_LegacyRowWithoutRootFailsClosed verifies rows written before
+// the root column existed fall back to the shared file's directory rather than
+// reopening the traversal hole.
+func TestShareLocal_LegacyRowWithoutRootFailsClosed(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+
+	// Blank the root to simulate a pre-migration row.
+	_, err := service.WriteExec("UPDATE file_shares SET root = '' WHERE token = ?", token)
+	require.NoError(t, err)
+
+	// Same-directory media still works.
+	createTestFile(t, env.ProjectDir, "docs/pic.png", "DOCPIC")
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local?path="+filepath.Join(env.ProjectDir, "docs", "pic.png"), nil)
+	w := callHandler(ServeSharePublic, req)
+	assertOK(t, w)
+	assert.Equal(t, "DOCPIC", w.Body.String())
+
+	// Anything above that directory is refused, even under RootPaths=["/"].
+	model.RootPaths = []string{"/"}
+	outside := filepath.Join(env.ProjectDir, "secret.txt")
+	createTestFile(t, env.ProjectDir, "secret.txt", "PROJECTSECRET")
+
+	req = newRequest(t, http.MethodGet, "/api/share/"+token+"/local?path="+outside, nil)
+	w = callHandler(ServeSharePublic, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.NotContains(t, w.Body.String(), "PROJECTSECRET")
+}
+
+// TestResolveShareRoot_NoCookieNeverWidensToHome is the regression guard for a
+// boundary-widening defect: resolveShareRoot must NOT fall back to
+// service.GetDefaultProject() when the project cookie is absent. That function's
+// own fallback chain ends at the home directory and then at RootPaths[0]
+// (== "/" on Unix), and production projects live UNDER the home directory — so
+// isPathUnderBase would accept it and confine the share to $HOME, exposing
+// ~/.ssh, config files, and everything else to any token holder.
+func TestResolveShareRoot_NoCookieNeverWidensToHome(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	require.NotEmpty(t, home)
+
+	// Make GetDefaultProject's first two steps unusable so that, if it were
+	// still consulted, it would reach the home-directory fallback.
+	_, err = service.WriteExec("DELETE FROM recent_projects")
+	require.NoError(t, err)
+
+	// A project under $HOME — the normal production layout.
+	projectDir := filepath.Join(home, "clawbench-share-root-test")
+	docDir := filepath.Join(projectDir, "docs")
+	require.NoError(t, os.MkdirAll(docDir, 0o755))
+	t.Cleanup(func() { _ = os.RemoveAll(projectDir) })
+
+	sharedFile := filepath.Join(docDir, "m.md")
+	require.NoError(t, os.WriteFile(sharedFile, []byte("hi"), 0o644))
+
+	// No project cookie on the request.
+	req := newRequest(t, http.MethodPost, "/api/share", nil)
+
+	got := resolveShareRoot(req, sharedFile)
+
+	assert.NotEqual(t, home, got,
+		"share must not be confined to the home directory (would expose ~/.ssh)")
+	assert.NotEqual(t, "/", got,
+		"share must not be confined to the filesystem root")
+	assert.Equal(t, docDir, got,
+		"with no project cookie the boundary must narrow to the file's own directory")
+
+	_ = env
+}
+
+// TestResolveShareRoot_ProjectCookieConfinesToProject covers the normal path:
+// a cookie pointing at a project that contains the file yields the project root,
+// which is what keeps `../images/x.png` references working.
+func TestResolveShareRoot_ProjectCookieConfinesToProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sharedFile := createShareTestFile(t, env, "docs/m.md", "hi")
+
+	req := newRequest(t, http.MethodPost, "/api/share", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	got := resolveShareRoot(req, sharedFile)
+	assert.Equal(t, env.ProjectDir, got,
+		"a file inside the active project must be bounded by the project root")
+}
+
+// TestResolveShareRoot_FileOutsideProjectNarrowsToFileDir covers the fail-closed
+// path: a cookie for a project that does NOT contain the file must not grant the
+// project root.
+func TestResolveShareRoot_FileOutsideProjectNarrowsToFileDir(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	outsideDir := filepath.Join(env.WatchDir, "elsewhere")
+	require.NoError(t, os.MkdirAll(outsideDir, 0o755))
+	sharedFile := filepath.Join(outsideDir, "doc.md")
+	require.NoError(t, os.WriteFile(sharedFile, []byte("hi"), 0o644))
+
+	req := newRequest(t, http.MethodPost, "/api/share", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	got := resolveShareRoot(req, sharedFile)
+	assert.Equal(t, outsideDir, got,
+		"a file outside the active project must be bounded by its own directory")
 }
