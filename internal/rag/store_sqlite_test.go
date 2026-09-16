@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/model"
+
 	_ "modernc.org/sqlite"
 
 	"github.com/stretchr/testify/assert"
@@ -714,139 +716,82 @@ func TestSQLiteStore_ResetVectorOnly(t *testing.T) {
 	assert.True(t, store.HasFTSData())
 }
 
-// ---------- RebuildFTS ----------
+// ---------- Re-segmentation (fts rebuild primitive) ----------
+//
+// The former inline Store.RebuildFTS was split so the indexer owns the work:
+// MarkAllChunksForResegment queues, BatchResegment does one bounded batch. These
+// tests assert the invariants that survived the split — an FTS rebuild must not
+// disturb chunks, vectors, or message-indexed flags.
 
-func TestSQLiteStore_RebuildFTS_KeepsChunksAndVectors(t *testing.T) {
+// TestSQLiteStore_Resegment_KeepsChunksAndVectors asserts re-segmenting touches
+// only the segmentation column: chunk rows, vectors, and the FTS entry count all
+// survive, which is what makes this safe to run on a live store.
+func TestSQLiteStore_Resegment_KeepsChunksAndVectors(t *testing.T) {
 	store := setupSQLiteStoreWithDim(t)
 	insertTestChunksSQLite(t, store, 4)
 
-	// Sanity: chunks, FTS, and vectors all present
 	count, err := store.ChunkCount()
 	require.NoError(t, err)
 	require.Equal(t, 4, count)
 	require.True(t, store.HasFTSData())
 	require.True(t, store.HasVecData())
 
-	rebuilt, resegmented, err := store.RebuildFTS(context.Background(), nil)
+	queued, err := store.MarkAllChunksForResegment()
 	require.NoError(t, err)
-	assert.Equal(t, int64(4), rebuilt, "should report all chunks re-indexed")
-	assert.Equal(t, int64(0), resegmented,
-		"chunks inserted through the store are already segmented with the current "+
-			"segmenter, so a rebuild must not report spurious changes")
+	assert.Equal(t, int64(4), queued)
 
-	// Chunks untouched
+	chunks, err := store.GetPendingResegmentChunks(100)
+	require.NoError(t, err)
+	changed, err := store.BatchResegment(chunks)
+	require.NoError(t, err)
+	assert.Equal(t, 0, changed,
+		"chunks inserted through the store are already segmented with the current "+
+			"segmenter, so re-segmenting must not report spurious changes")
+
+	// Chunk rows untouched.
 	count, err = store.ChunkCount()
 	require.NoError(t, err)
 	assert.Equal(t, 4, count, "chunk rows must be preserved")
 
-	// Vectors untouched — independent FTS rebuild must not drop rag_vec
-	assert.True(t, store.HasVecData(), "vector index must survive an FTS rebuild")
+	// Vectors untouched — re-segmentation must not drop rag_vec.
+	assert.True(t, store.HasVecData(), "vector index must survive re-segmentation")
 	embCount, err := store.EmbeddedChunkCount()
 	require.NoError(t, err)
 	assert.Equal(t, 4, embCount, "embeddings must be preserved")
 
-	// FTS still queryable after rebuild
-	assert.True(t, store.HasFTSData())
-
+	// FTS still complete and queryable.
 	var ftsCount int
 	require.NoError(t, store.db.QueryRow("SELECT COUNT(*) FROM rag_chunks_fts").Scan(&ftsCount))
-	assert.Equal(t, 4, ftsCount)
+	assert.Equal(t, 4, ftsCount, "FTS entry count must be preserved")
 }
 
-func TestSQLiteStore_RebuildFTS_EmptyStore(t *testing.T) {
+// TestSQLiteStore_Resegment_EmptyStore asserts an empty store is a no-op rather
+// than an error, so the trigger is safe to call on a fresh install.
+func TestSQLiteStore_Resegment_EmptyStore(t *testing.T) {
 	store := setupSQLiteStore(t)
 
-	rebuilt, resegmented, err := store.RebuildFTS(context.Background(), nil)
+	queued, err := store.MarkAllChunksForResegment()
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), rebuilt)
-	assert.Equal(t, int64(0), resegmented)
-	assert.False(t, store.HasFTSData())
+	assert.Equal(t, int64(0), queued, "an empty store has nothing to queue")
+
+	chunks, err := store.GetPendingResegmentChunks(100)
+	require.NoError(t, err)
+	assert.Empty(t, chunks)
+
+	changed, err := store.BatchResegment(chunks)
+	require.NoError(t, err)
+	assert.Equal(t, 0, changed)
 }
 
-// TestSQLiteStore_RebuildFTS_ResegmentsFromSourceText is the regression test for
-// the reason this method re-segments at all.
+// TestSQLiteStore_Resegment_RefusesWithoutSegmenter asserts the guard: with no
+// segmenter, SegmentText degrades to an identity function, so re-segmenting would
+// overwrite correctly split text with raw text.
 //
-// The chunk is inserted with a DELIBERATELY WRONG segmented value (simulating a
-// chunk written while the segmenter was unavailable, or by an older segmenter).
-// Before the fix, RebuildFTS only re-ran FTS5's own 'rebuild', which re-reads the
-// stored column verbatim — so the bad text stayed indexed forever and this test
-// failed. Assertions go through SearchFTS (the real user-facing path) so they
-// cannot pass vacuously on a raw MATCH against a phantom row.
-func TestSQLiteStore_RebuildFTS_ResegmentsFromSourceText(t *testing.T) {
+// The guard lives in the coordinator (which refuses to queue at all); this asserts
+// the store-level consequence — nothing is modified.
+func TestSQLiteStore_Resegment_RefusesWithoutSegmenter(t *testing.T) {
 	store := setupSQLiteStoreWithDim(t)
-
-	const sentence = "这是一个中文分词测试"
-
-	// Insert with the source text but un-segmented (whole sentence as one token),
-	// exactly what SegmentText returns when the segmenter is missing.
-	require.NoError(t, store.InsertChunks([]Chunk{{
-		SessionID:          testSession1,
-		MessageID:          1,
-		ChunkText:          sentence,
-		ChunkTextSegmented: sentence, // NOT segmented
-		ChunkIndex:         0,
-		TokenCount:         3,
-		ProjectPath:        testProjectPath,
-		Backend:            testBackendClaude,
-		Role:               testRoleAssistant,
-		CreatedAt:          time.Now().Truncate(time.Millisecond),
-	}}))
-
-	search := func(q string) int {
-		hits, err := store.SearchFTS(q, 5, "", "", "", "", "", "", "")
-		require.NoError(t, err, "SearchFTS(%q)", q)
-		return len(hits)
-	}
-
-	// Precondition: a partial Chinese query cannot match un-segmented text.
-	require.Zero(t, search("中文"),
-		"precondition: un-segmented CJK is indexed as one token, so partial queries miss")
-
-	rebuilt, resegmented, err := store.RebuildFTS(context.Background(), nil)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), rebuilt)
-	assert.Equal(t, int64(1), resegmented, "the mis-segmented chunk must be rewritten")
-
-	// The stored column must now hold a freshly segmented value.
-	var stored string
-	require.NoError(t, store.db.QueryRow(
-		"SELECT chunk_text_segmented FROM rag_chunks WHERE message_id = 1").Scan(&stored))
-	assert.Equal(t, SegmentText(sentence), stored,
-		"rebuild must recompute chunk_text_segmented from chunk_text")
-	assert.Contains(t, stored, " ",
-		"re-segmented CJK must contain token separators")
-
-	// The user-visible payoff: partial Chinese queries now match.
-	assert.NotZero(t, search("中文"), "partial Chinese query must match after re-segmentation")
-	assert.NotZero(t, search("分词"), "partial Chinese query must match after re-segmentation")
-
-	// Source text is never modified.
-	var text string
-	require.NoError(t, store.db.QueryRow(
-		"SELECT chunk_text FROM rag_chunks WHERE message_id = 1").Scan(&text))
-	assert.Equal(t, sentence, text, "chunk_text is the source of truth and must be untouched")
-}
-
-// TestSQLiteStore_RebuildFTS_RefusesWithoutSegmenter asserts the safety guard:
-// with no segmenter, SegmentText returns its input, so re-segmenting would
-// overwrite correctly segmented data with raw text. The rebuild must refuse and
-// leave the store byte-identical instead.
-func TestSQLiteStore_RebuildFTS_RefusesWithoutSegmenter(t *testing.T) {
-	store := setupSQLiteStoreWithDim(t)
-
-	const sentence = "这是一个中文分词测试"
-	require.NoError(t, store.InsertChunks([]Chunk{{
-		SessionID:          testSession1,
-		MessageID:          1,
-		ChunkText:          sentence,
-		ChunkTextSegmented: SegmentText(sentence),
-		ChunkIndex:         0,
-		TokenCount:         3,
-		ProjectPath:        testProjectPath,
-		Backend:            testBackendClaude,
-		Role:               testRoleAssistant,
-		CreatedAt:          time.Now().Truncate(time.Millisecond),
-	}}))
+	insertTestChunksSQLite(t, store, 1)
 
 	var before string
 	require.NoError(t, store.db.QueryRow(
@@ -855,87 +800,58 @@ func TestSQLiteStore_RebuildFTS_RefusesWithoutSegmenter(t *testing.T) {
 	prev := SetSegmenterForTest(nil)
 	t.Cleanup(func() { RestoreSegmenterForTest(prev) })
 
-	_, _, err := store.RebuildFTS(context.Background(), nil)
+	// The coordinator refuses before marking anything stale. It needs an indexer
+	// bound, otherwise it rejects on that check first (there would be nobody to
+	// do the work).
+	coord := NewRebuildCoordinator(nil)
+	coord.SetIndexer(NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"}))
+	err := coord.Start(store, RebuildFTS)
 	require.ErrorIs(t, err, ErrSegmenterUnavailable)
 
-	// Nothing may have been rewritten.
+	pending, err := store.PendingResegmentCount()
+	require.NoError(t, err)
+	assert.Equal(t, 0, pending, "a refused rebuild must not queue any work")
+
 	var after string
 	require.NoError(t, store.db.QueryRow(
 		"SELECT chunk_text_segmented FROM rag_chunks WHERE message_id = 1").Scan(&after))
 	assert.Equal(t, before, after, "a refused rebuild must not modify stored segmentation")
 
-	hits, err := store.SearchFTS("中文", 5, "", "", "", "", "", "", "")
+	// The existing index must stay usable. Search for text the helper actually
+	// inserted ("chunk text N"), not a CJK term that was never indexed.
+	hits, err := store.SearchFTS("chunk", 5, "", "", "", "", "", "", "")
 	require.NoError(t, err)
 	assert.NotEmpty(t, hits, "the previously good index must remain searchable")
 }
 
-// TestSQLiteStore_RebuildFTS_ReportsProgress asserts the progress callback
-// reports monotonically increasing processed counts ending at the total, and
-// that the final report lands on 100% rather than the last throttled tick.
-func TestSQLiteStore_RebuildFTS_ReportsProgress(t *testing.T) {
+// TestSQLiteStore_Resegment_ProgressCountIsObservable asserts the pending count
+// decreases monotonically as batches are processed — this is what the coordinator
+// polls to derive progress, so it must reflect real remaining work.
+func TestSQLiteStore_Resegment_ProgressCountIsObservable(t *testing.T) {
 	store := setupSQLiteStoreWithDim(t)
 	insertTestChunksSQLite(t, store, 5)
 
-	var processed, totals []int
-	cb := func(p, total int) {
-		processed = append(processed, p)
-		totals = append(totals, total)
-	}
-
-	indexed, _, err := store.RebuildFTS(context.Background(), cb)
+	_, err := store.MarkAllChunksForResegment()
 	require.NoError(t, err)
-	require.Equal(t, int64(5), indexed)
 
-	require.NotEmpty(t, processed, "progress must be reported at least once")
-	// Monotonic non-decreasing.
-	for i := 1; i < len(processed); i++ {
-		require.GreaterOrEqual(t, processed[i], processed[i-1],
-			"processed must not go backwards: %v", processed)
+	remaining := func() int {
+		n, err := store.PendingResegmentCount()
+		require.NoError(t, err)
+		return n
 	}
-	require.Equal(t, 5, processed[len(processed)-1],
-		"final callback must report all chunks processed, got %v", processed)
-	for _, total := range totals {
-		require.Equal(t, 5, total, "total must stay constant across callbacks")
+
+	assert.Equal(t, 5, remaining())
+	var seen []int
+	for remaining() > 0 {
+		chunks, err := store.GetPendingResegmentChunks(2)
+		require.NoError(t, err)
+		_, err = store.BatchResegment(chunks)
+		require.NoError(t, err)
+		seen = append(seen, remaining())
 	}
-}
 
-// TestSQLiteStore_RebuildFTS_HonoursCancellation asserts a cancelled context
-// aborts the rebuild without opening the write transaction, so a cancel cannot
-// leave the index half-rewritten.
-func TestSQLiteStore_RebuildFTS_HonoursCancellation(t *testing.T) {
-	store := setupSQLiteStoreWithDim(t)
-	insertTestChunksSQLite(t, store, 5)
-
-	var before []string
-	rows, err := store.db.Query("SELECT chunk_text_segmented FROM rag_chunks ORDER BY id")
-	require.NoError(t, err)
-	for rows.Next() {
-		var s string
-		require.NoError(t, rows.Scan(&s))
-		before = append(before, s)
-	}
-	require.NoError(t, rows.Err())
-	rows.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already cancelled
-
-	_, _, err = store.RebuildFTS(ctx, nil)
-	require.ErrorIs(t, err, context.Canceled)
-
-	// Data must be untouched.
-	var after []string
-	rows, err = store.db.Query("SELECT chunk_text_segmented FROM rag_chunks ORDER BY id")
-	require.NoError(t, err)
-	for rows.Next() {
-		var s string
-		require.NoError(t, rows.Scan(&s))
-		after = append(after, s)
-	}
-	require.NoError(t, rows.Err())
-	rows.Close()
-
-	assert.Equal(t, before, after, "a cancelled rebuild must not modify stored segmentation")
+	require.Equal(t, []int{3, 1, 0}, seen,
+		"the pending count must decrease by the batch size until empty")
 }
 
 // ---------- IndexDiskUsage ----------

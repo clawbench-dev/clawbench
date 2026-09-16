@@ -1360,18 +1360,18 @@ func browseTimeRangeFilter(t *testing.T, projectDir string) {
 	assert.Equal(t, 0, empty.Total)
 }
 
-// ---------- ServeRAGResetVector ----------
+// ---------- ServeRAGRebuild ----------
 
-func TestServeRAGResetVector_MethodNotAllowed(t *testing.T) {
+func TestServeRAGRebuild_MethodNotAllowed(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodGet, "/api/rag/reset-vector", nil)
-	w := callHandlerWithAuth(ServeRAGResetVector, req)
+	req := newRequest(t, http.MethodGet, "/api/rag/rebuild", nil)
+	w := callHandlerWithAuth(ServeRAGRebuild, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-func TestServeRAGResetVector_NilStoreReturns503(t *testing.T) {
+func TestServeRAGRebuild_NilStoreReturns503(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -1379,192 +1379,219 @@ func TestServeRAGResetVector_NilStoreReturns503(t *testing.T) {
 	t.Cleanup(func() { rag.GlobalStore = origStore })
 	rag.GlobalStore = nil
 
-	req := newRequest(t, http.MethodPost, "/api/rag/reset-vector", nil)
-	w := callHandlerWithAuth(ServeRAGResetVector, req)
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild", nil)
+	w := callHandlerWithAuth(ServeRAGRebuild, req)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-func TestServeRAGResetVector_Success(t *testing.T) {
+// TestServeRAGRebuild_AcceptedWithoutBlocking is the core contract: the trigger
+// must return 202 immediately instead of performing the rebuild inline.
+//
+// An inline rebuild takes minutes on a real store and exceeds the frontend's 10s
+// request timeout, which previously made a successful rebuild report as failure.
+func TestServeRAGRebuild_AcceptedWithoutBlocking(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	origStore := rag.GlobalStore
-	origEmbedder := rag.GlobalEmbedder
+	origCoord := rag.GlobalRebuildCoordinator
 	t.Cleanup(func() {
 		rag.GlobalStore = origStore
-		rag.GlobalEmbedder = origEmbedder
+		rag.GlobalRebuildCoordinator = origCoord
 	})
 
 	store := setupRAGStore(t)
 	rag.GlobalStore = store
-	embedder := setupWorkingMockEmbedder(t)
-	rag.GlobalEmbedder = embedder
 
-	// Insert a message, index it, and embed it
-	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
+	// Insert a message + chunk so the rebuild has real work.
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello world", nil, false, "NewSession")
 	require.NoError(t, err)
-	err = service.MarkMessageIndexed(msgID)
-	require.NoError(t, err)
+	require.NoError(t, service.MarkMessageIndexed(msgID))
+	require.NoError(t, store.InsertChunks([]rag.Chunk{{
+		SessionID: "sess-1", MessageID: msgID, ChunkText: "hello world",
+		ChunkTextSegmented: rag.SegmentText("hello world"), ChunkIndex: 0, TokenCount: 2,
+		ProjectPath: env.ProjectDir, Backend: "claude", Role: "user",
+	}}))
 
-	req := newRequest(t, http.MethodPost, "/api/rag/reset-vector", nil)
-	w := callHandlerWithAuth(ServeRAGResetVector, req)
-	assert.Equal(t, http.StatusOK, w.Code)
+	idx := rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"})
+	coord := rag.NewRebuildCoordinator(nil)
+	coord.SetIndexer(idx)
+	rag.GlobalRebuildCoordinator = coord
+
+	start := time.Now()
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild", nil)
+	w := callHandlerWithAuth(ServeRAGRebuild, req)
+	elapsed := time.Since(start)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+	require.Less(t, elapsed, 2*time.Second,
+		"the trigger must not wait for the rebuild to run")
 
 	var result map[string]any
-	err = json.Unmarshal(w.Body.Bytes(), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "ok", result["status"])
-	assert.Contains(t, result, "chunks_reset")
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "accepted", result["status"])
+	// An empty body defaults to the FTS kind (bare POST must keep working).
+	assert.Equal(t, "fts", result["kind"])
 
-	// Verify the message's indexed flag was NOT reset (vector-only reset keeps FTS)
-	var indexed int
-	err = service.UnsafeDBForTest().QueryRow("SELECT indexed FROM chat_history WHERE id = ?", msgID).Scan(&indexed)
-	require.NoError(t, err)
-	assert.Equal(t, 1, indexed)
+	assert.True(t, coord.IsRunning(), "the rebuild must be tracked after 202")
 }
 
-func TestServeRAGResetVector_ConcurrencyConflict(t *testing.T) {
+// TestServeRAGRebuild_KindSelection asserts each kind is routed to its own
+// invalidation, so the UI can offer the three operations independently.
+func TestServeRAGRebuild_KindSelection(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	for _, kind := range []string{"fts", "vector", "full"} {
+		t.Run(kind, func(t *testing.T) {
+			origStore := rag.GlobalStore
+			origCoord := rag.GlobalRebuildCoordinator
+			t.Cleanup(func() {
+				rag.GlobalStore = origStore
+				rag.GlobalRebuildCoordinator = origCoord
+			})
+
+			store := setupRAGStore(t)
+			rag.GlobalStore = store
+			msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "kind test", nil, false, "NewSession")
+			require.NoError(t, err)
+			require.NoError(t, service.MarkMessageIndexed(msgID))
+
+			idx := rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"})
+			coord := rag.NewRebuildCoordinator(nil)
+			coord.SetIndexer(idx)
+			rag.GlobalRebuildCoordinator = coord
+
+			// newRequest marshals the body itself; passing a reader would
+			// double-encode and silently fall back to the default kind.
+			req := newRequest(t, http.MethodPost, "/api/rag/rebuild", map[string]string{"kind": kind})
+			w := callHandlerWithAuth(ServeRAGRebuild, req)
+			require.Equal(t, http.StatusAccepted, w.Code, "kind %s must be accepted", kind)
+
+			var result map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+			assert.Equal(t, kind, result["kind"])
+			assert.Equal(t, kind, coord.GetStatus().Kind)
+		})
+	}
+}
+
+// TestServeRAGRebuild_UnknownKindRejected asserts a typo is a 400 rather than a
+// silently-ignored request that appears to succeed.
+func TestServeRAGRebuild_UnknownKindRejected(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	origStore := rag.GlobalStore
-	origEmbedder := rag.GlobalEmbedder
+	origCoord := rag.GlobalRebuildCoordinator
 	t.Cleanup(func() {
 		rag.GlobalStore = origStore
-		rag.GlobalEmbedder = origEmbedder
-		ragResetting.Store(false)
+		rag.GlobalRebuildCoordinator = origCoord
 	})
 
 	store := setupRAGStore(t)
 	rag.GlobalStore = store
-	rag.GlobalEmbedder = setupWorkingMockEmbedder(t)
+	coord := rag.NewRebuildCoordinator(nil)
+	coord.SetIndexer(rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"}))
+	rag.GlobalRebuildCoordinator = coord
 
-	// Simulate an in-progress reset by setting the flag
-	ragResetting.Store(true)
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild", map[string]string{"kind": "bogus"})
+	w := callHandlerWithAuth(ServeRAGRebuild, req)
 
-	req := newRequest(t, http.MethodPost, "/api/rag/reset-vector", nil)
-	w := callHandlerWithAuth(ServeRAGResetVector, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.False(t, coord.IsRunning(), "a rejected kind must not start anything")
+}
+
+// TestServeRAGRebuild_ConcurrencyConflict asserts all three kinds share ONE
+// slot: previously the FTS and vector paths used separate flags and could run
+// concurrently, which interleaved their writes.
+func TestServeRAGRebuild_ConcurrencyConflict(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origCoord := rag.GlobalRebuildCoordinator
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalRebuildCoordinator = origCoord
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+
+	idx := rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"})
+	coord := rag.NewRebuildCoordinator(nil)
+	coord.SetIndexer(idx)
+	rag.GlobalRebuildCoordinator = coord
+
+	require.NoError(t, coord.Start(store, rag.RebuildFTS), "first rebuild must start")
+
+	// A DIFFERENT kind must also be rejected: one rebuild at a time, globally.
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild", map[string]string{"kind": "vector"})
+	w := callHandlerWithAuth(ServeRAGRebuild, req)
+
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
-// ---------- ServeRAGRebuildFTS ----------
-
-func TestServeRAGRebuildFTS_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodGet, "/api/rag/rebuild-fts", nil)
-	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-func TestServeRAGRebuildFTS_NilStoreReturns503(t *testing.T) {
+// TestServeRAGRebuild_SegmenterUnavailable asserts the guard for the FTS kind:
+// without a segmenter, re-segmentation would overwrite correctly split text with
+// raw text (SegmentText degrades to an identity function).
+//
+// The refusal must be synchronous on the trigger, not discovered later by
+// polling, and nothing may be marked stale.
+func TestServeRAGRebuild_SegmenterUnavailable(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	origStore := rag.GlobalStore
-	t.Cleanup(func() { rag.GlobalStore = origStore })
-	rag.GlobalStore = nil
-
-	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
-	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestServeRAGRebuildFTS_Success(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	origStore := rag.GlobalStore
-	origEmbedder := rag.GlobalEmbedder
-	origWorker := rag.GlobalFTSRebuildWorker
+	origCoord := rag.GlobalRebuildCoordinator
 	t.Cleanup(func() {
 		rag.GlobalStore = origStore
-		rag.GlobalEmbedder = origEmbedder
-		rag.GlobalFTSRebuildWorker = origWorker
+		rag.GlobalRebuildCoordinator = origCoord
+		rag.RestoreSegmenterForTest(nil)
 	})
 
 	store := setupRAGStore(t)
 	rag.GlobalStore = store
-	rag.GlobalEmbedder = setupWorkingMockEmbedder(t)
-	rag.GlobalFTSRebuildWorker = rag.NewFTSRebuildWorker(nil)
-	store.SetEmbeddingDim(1024)
+	require.NoError(t, store.InsertChunks([]rag.Chunk{{
+		SessionID: "s", MessageID: 1, ChunkText: "hello", ChunkTextSegmented: "hello",
+		ChunkIndex: 0, TokenCount: 1, ProjectPath: "/p", Backend: "claude", Role: "user",
+	}}))
 
-	// Insert a message, index it, and embed it
-	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello world", nil, false, "NewSession")
-	require.NoError(t, err)
-	err = service.MarkMessageIndexed(msgID)
-	require.NoError(t, err)
+	coord := rag.NewRebuildCoordinator(nil)
+	coord.SetIndexer(rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"}))
+	rag.GlobalRebuildCoordinator = coord
+	rag.RestoreSegmenterForTest(nil)
 
-	chunks := []rag.Chunk{{
-		SessionID: "sess-1", MessageID: msgID, ChunkText: "hello world",
-		// Use the real segmenter output so this chunk counts as already current;
-		// hardcoding "hello world" would make the rebuild report a change.
-		ChunkTextSegmented: rag.SegmentText("hello world"), ChunkIndex: 0, TokenCount: 2,
-		Embedding: make([]float64, 1024), HasEmbedding: true,
-		ProjectPath: env.ProjectDir, Backend: "claude", Role: "user",
-	}}
-	require.NoError(t, store.InsertChunks(chunks))
-
-	// The trigger must return immediately with 202, NOT run the rebuild inline:
-	// an inline rebuild takes minutes on a real store and exceeds the frontend's
-	// request timeout, which surfaced as a false failure in the UI.
-	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
-	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
-	assert.Equal(t, http.StatusAccepted, w.Code)
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild", nil)
+	w := callHandlerWithAuth(ServeRAGRebuild, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 
 	var result map[string]any
-	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "RAGSegmenterUnavailable", result["msgKey"])
+
+	assert.False(t, coord.IsRunning(), "a refused trigger must not start a rebuild")
+
+	// Nothing may have been queued: the refusal must precede the marking step.
+	pending, err := store.PendingResegmentCount()
 	require.NoError(t, err)
-	assert.Equal(t, "accepted", result["status"])
-
-	// The background run must reach a terminal state and report the resegmented
-	// count via the status endpoint (this is what the UI polls).
-	status := waitForFTSRebuildDone(t, rag.GlobalFTSRebuildWorker)
-	assert.Equal(t, "done", status.Status)
-	assert.Equal(t, int64(1), status.Indexed)
-	assert.Equal(t, int64(0), status.Resegmented,
-		"chunk text already matches the current segmenter")
-	assert.Equal(t, 100, status.ProgressPct)
-
-	// Independent rebuild must not reset message indexed flags (FTS layer only)
-	var indexed int
-	err = service.UnsafeDBForTest().QueryRow("SELECT indexed FROM chat_history WHERE id = ?", msgID).Scan(&indexed)
-	require.NoError(t, err)
-	assert.Equal(t, 1, indexed)
-
-	// Vectors must survive
-	assert.True(t, store.HasVecData())
+	assert.Equal(t, 0, pending, "a refused rebuild must not mark chunks stale")
 }
 
-// waitForFTSRebuildDone polls the worker until it leaves the running state.
-func waitForFTSRebuildDone(t *testing.T, w *rag.FTSRebuildWorker) rag.FTSRebuildStatus {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		st := w.GetStatus()
-		if st.Status != "running" {
-			return st
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("fts rebuild did not finish within 30s; last status: %+v", w.GetStatus())
-	return rag.FTSRebuildStatus{}
-}
-
-// TestServeRAGRebuildFTSStatus_ReportsProgress covers the polling endpoint that
+// TestServeRAGRebuildStatus_ReportsProgress covers the polling endpoint that
 // replaces holding a request open for the duration of the rebuild.
-func TestServeRAGRebuildFTSStatus_ReportsProgress(t *testing.T) {
+func TestServeRAGRebuildStatus_ReportsProgress(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	origWorker := rag.GlobalFTSRebuildWorker
-	t.Cleanup(func() { rag.GlobalFTSRebuildWorker = origWorker })
+	origCoord := rag.GlobalRebuildCoordinator
+	t.Cleanup(func() { rag.GlobalRebuildCoordinator = origCoord })
 
-	rag.GlobalFTSRebuildWorker = rag.NewFTSRebuildWorker(nil)
+	rag.GlobalRebuildCoordinator = rag.NewRebuildCoordinator(nil)
 
-	req := newRequest(t, http.MethodGet, "/api/rag/rebuild-fts/status", nil)
-	w := callHandlerWithAuth(ServeRAGRebuildFTSStatus, req)
+	req := newRequest(t, http.MethodGet, "/api/rag/rebuild/status", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildStatus, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var status map[string]any
@@ -1572,89 +1599,28 @@ func TestServeRAGRebuildFTSStatus_ReportsProgress(t *testing.T) {
 	assert.Equal(t, "idle", status["status"])
 
 	// Method must be enforced.
-	req = newRequest(t, http.MethodPost, "/api/rag/rebuild-fts/status", nil)
-	w = callHandlerWithAuth(ServeRAGRebuildFTSStatus, req)
+	req = newRequest(t, http.MethodPost, "/api/rag/rebuild/status", nil)
+	w = callHandlerWithAuth(ServeRAGRebuildStatus, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-// TestServeRAGRebuildFTSStatus_NoWorkerReportsIdle asserts the disabled-RAG
+// TestServeRAGRebuildStatus_NoCoordinatorReportsIdle asserts the disabled-RAG
 // path reports idle rather than an error, so clients treat it uniformly.
-func TestServeRAGRebuildFTSStatus_NoWorkerReportsIdle(t *testing.T) {
+func TestServeRAGRebuildStatus_NoCoordinatorReportsIdle(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	origWorker := rag.GlobalFTSRebuildWorker
-	t.Cleanup(func() { rag.GlobalFTSRebuildWorker = origWorker })
-	rag.GlobalFTSRebuildWorker = nil
+	origCoord := rag.GlobalRebuildCoordinator
+	t.Cleanup(func() { rag.GlobalRebuildCoordinator = origCoord })
+	rag.GlobalRebuildCoordinator = nil
 
-	req := newRequest(t, http.MethodGet, "/api/rag/rebuild-fts/status", nil)
-	w := callHandlerWithAuth(ServeRAGRebuildFTSStatus, req)
+	req := newRequest(t, http.MethodGet, "/api/rag/rebuild/status", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildStatus, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var status map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &status))
 	assert.Equal(t, "idle", status["status"])
-}
-
-func TestServeRAGRebuildFTS_ConcurrencyConflict(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	origStore := rag.GlobalStore
-	origWorker := rag.GlobalFTSRebuildWorker
-	t.Cleanup(func() {
-		rag.GlobalStore = origStore
-		rag.GlobalFTSRebuildWorker = origWorker
-	})
-
-	rag.GlobalStore = setupRAGStore(t)
-
-	// A worker that is already running must reject the second trigger with 409
-	// rather than queueing a duplicate rebuild.
-	worker := rag.NewFTSRebuildWorker(nil)
-	rag.GlobalFTSRebuildWorker = worker
-	require.True(t, worker.Start(rag.GlobalStore), "first start must be accepted")
-	t.Cleanup(func() { worker.Cancel() })
-
-	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
-	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
-	assert.Equal(t, http.StatusConflict, w.Code)
-}
-
-// TestServeRAGRebuildFTS_SegmenterUnavailable asserts the guard: a rebuild with
-// no segmenter must be refused rather than allowed to overwrite correctly
-// segmented text with raw CJK (SegmentText degrades to an identity function).
-//
-// The refusal must be SYNCHRONOUS on the trigger (503), not discovered later by
-// polling — otherwise the client would see "accepted" for work that never ran.
-func TestServeRAGRebuildFTS_SegmenterUnavailable(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	origStore := rag.GlobalStore
-	origWorker := rag.GlobalFTSRebuildWorker
-	t.Cleanup(func() {
-		rag.GlobalStore = origStore
-		rag.GlobalFTSRebuildWorker = origWorker
-		rag.RestoreSegmenterForTest(nil)
-	})
-
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
-	rag.GlobalFTSRebuildWorker = rag.NewFTSRebuildWorker(nil)
-	rag.RestoreSegmenterForTest(nil)
-
-	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
-	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-
-	var result map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.Equal(t, "RAGSegmenterUnavailable", result["msgKey"])
-
-	// Nothing may have been started.
-	assert.False(t, rag.GlobalFTSRebuildWorker.IsRunning(),
-		"a refused trigger must not start a rebuild")
 }
 
 // setupRAGStore creates a temporary SQLite store for handler tests.

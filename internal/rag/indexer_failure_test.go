@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -608,4 +609,145 @@ func newMockEmbedderDim(t *testing.T, dim int) *EmbeddingClient {
 	require.NoError(t, err)
 	require.Equal(t, dim, client.Dim())
 	return client
+}
+
+// TestIndexer_TriggerWakesWithoutWaitingForPoll verifies Trigger() makes the
+// indexer act immediately instead of waiting out the poll interval.
+//
+// This matters because rebuilds mark work as stale and then rely on the indexer
+// to process it; with only the ticker, the user would watch a progress bar sit
+// at zero for up to a full poll interval before anything happened.
+//
+// The poll interval is set to an hour so a pass can only come from the wake
+// channel, not from a tick.
+func TestIndexer_TriggerWakesWithoutWaitingForPoll(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+
+	cfg := defaultTestRAGConfig()
+	cfg.PollInterval = "1h"
+
+	store := setupSQLiteStore(t)
+	idx := NewIndexer(store, nil, cfg)
+
+	idx.Start()
+	t.Cleanup(idx.Stop)
+
+	// Nothing to do yet: wait until the initial pass has run and the loop is idle.
+	require.Eventually(t, func() bool {
+		n, err := service.UnindexedCount()
+		return err == nil && n == 0
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// Queue work AFTER the indexer went idle, so the only way it gets picked up
+	// before the 1h tick is the wake signal.
+	_, err := serviceDB.Exec(
+		`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming, indexed)
+		 VALUES ('/proj', 'user', 'woken up immediately', 'sess-wake', 'claude', 0, 0)`,
+	)
+	require.NoError(t, err)
+
+	idx.Trigger()
+
+	require.Eventually(t, func() bool {
+		n, err := service.UnindexedCount()
+		return err == nil && n == 0
+	}, 2*time.Second, 10*time.Millisecond,
+		"Trigger must cause indexing without waiting for the poll interval")
+
+	chunks, err := store.ChunkCount()
+	require.NoError(t, err)
+	assert.Greater(t, chunks, 0, "the triggered message must have been indexed")
+}
+
+// TestIndexer_ResegmentPhase_DrainsQueueWithoutEmbedder verifies the indexer's
+// re-segmentation phase end to end: a queued chunk is re-segmented and its FTS
+// entry rewritten, even with no embedder configured.
+//
+// Embedder independence is the point: re-segmentation is local CPU work, so an
+// embedding-service outage must not block repairing the full-text index.
+func TestIndexer_ResegmentPhase_DrainsQueueWithoutEmbedder(t *testing.T) {
+	setupIndexerServiceDB(t)
+
+	store := setupSQLiteStore(t)
+
+	const cjk = "中文分词测试内容"
+	require.NoError(t, store.InsertChunks([]Chunk{{
+		SessionID: testSession1, MessageID: 1, ChunkIndex: 0,
+		ChunkText:          cjk,
+		ChunkTextSegmented: cjk, // degraded: stored unsplit
+		TokenCount:         4,
+		ProjectPath:        testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+	}}))
+
+	// Queue it for repair, then drain with no embedder available.
+	_, err := store.MarkAllChunksForResegment()
+	require.NoError(t, err)
+	require.Equal(t, 1, mustPendingResegment(t, store))
+
+	idx := NewIndexer(store, nil, defaultTestRAGConfig()) // nil embedder on purpose
+
+	// The single queued chunk is the whole queue, so this call drains it and
+	// correctly reports that no work remains.
+	require.False(t, idx.resegmentPending(context.Background()),
+		"draining the last chunk must report no remaining work")
+
+	require.Equal(t, 0, mustPendingResegment(t, store), "queue must be drained")
+
+	var stored string
+	require.NoError(t, store.db.QueryRow(
+		"SELECT chunk_text_segmented FROM rag_chunks WHERE message_id = 1").Scan(&stored))
+	assert.Equal(t, SegmentText(cjk), stored, "chunk must be re-segmented from its source text")
+
+	// The repaired text must be searchable by a partial CJK query.
+	hits, err := store.SearchFTS("分词", 5, "", "", "", "", "", "", "")
+	require.NoError(t, err)
+	assert.NotEmpty(t, hits, "the repaired chunk must be searchable")
+}
+
+// TestIndexer_ResegmentPhase_NoopWhenQueueEmpty asserts the new phase costs one
+// cheap count query in the common case and reports no remaining work, so it does
+// not turn every indexer pass into an extra loop.
+func TestIndexer_ResegmentPhase_NoopWhenQueueEmpty(t *testing.T) {
+	setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+	require.NoError(t, store.InsertChunks([]Chunk{
+		makeTestChunk(testSession1, 1, 0, "already fine"),
+	}))
+
+	idx := NewIndexer(store, nil, defaultTestRAGConfig())
+
+	assert.False(t, idx.resegmentPending(context.Background()),
+		"an empty queue must report no remaining work")
+}
+
+// TestIndexer_ResegmentPhase_StopsAtBatchBoundary asserts the phase processes a
+// bounded batch and reports that more remains, rather than trying to drain 44k
+// chunks in one pass (which would hold the write lock for minutes).
+func TestIndexer_ResegmentPhase_StopsAtBatchBoundary(t *testing.T) {
+	setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+
+	chunks := make([]Chunk, 0, resegmentBatchSize+5)
+	for i := range resegmentBatchSize + 5 {
+		chunks = append(chunks, makeTestChunk(testSession1, int64(i+1), 0, "chunk text"))
+	}
+	require.NoError(t, store.InsertChunks(chunks))
+	_, err := store.MarkAllChunksForResegment()
+	require.NoError(t, err)
+
+	idx := NewIndexer(store, nil, defaultTestRAGConfig())
+
+	// One call drains exactly one batch and must ask to be called again.
+	require.True(t, idx.resegmentPending(context.Background()),
+		"a full batch must report that more work remains")
+
+	remaining := mustPendingResegment(t, store)
+	assert.Equal(t, 5, remaining, "exactly one batch should have been processed")
+}
+
+func mustPendingResegment(t *testing.T, store *Store) int {
+	t.Helper()
+	n, err := store.PendingResegmentCount()
+	require.NoError(t, err)
+	return n
 }

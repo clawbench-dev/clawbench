@@ -1143,9 +1143,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	mgr := ws.GetManager()
 	if mgr != nil {
 		rag.StartClusterWorker(mgr.StreamHub())
-		// FTS rebuild worker: the rebuild re-segments every chunk and takes
-		// minutes on a large store, so it must run off the request path.
-		rag.StartFTSRebuildWorker(mgr.StreamHub())
+		// Rebuild coordinator: all three rebuild kinds re-segment/re-embed/re-chunk
+		// in the background (a full re-segmentation takes minutes on a large
+		// store), so they must run off the request path.
+		rag.StartRebuildCoordinator(mgr.StreamHub())
 	}
 
 	// Register WS chat stream callbacks (breaks import cycle between ws and service)

@@ -12,6 +12,18 @@ import (
 // live segmenter, because their result would be worse than doing nothing.
 var ErrSegmenterUnavailable = errors.New("gse segmenter not initialized")
 
+// Errors returned by RebuildCoordinator.Start so callers can map them to HTTP
+// status codes without matching on message text.
+var (
+	// ErrRebuildInProgress means another rebuild is already running.
+	ErrRebuildInProgress = errors.New("a rebuild is already in progress")
+	// ErrStoreUnavailable means the RAG store is not initialized.
+	ErrStoreUnavailable = errors.New("rag store not available")
+	// ErrIndexerUnavailable means the indexer (which performs the work) is not
+	// running, so marking work stale would never be picked up.
+	ErrIndexerUnavailable = errors.New("rag indexer not available")
+)
+
 var segmenter *gse.Segmenter
 
 // InitSegmenter initializes the gse segmenter for Chinese text segmentation.

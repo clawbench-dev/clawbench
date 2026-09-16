@@ -30,8 +30,8 @@ var (
 	globalClusterWorker *ClusterWorker
 	GlobalClusterWorker *ClusterWorker // exposed for handler access
 
-	globalFTSRebuildWorker *FTSRebuildWorker
-	GlobalFTSRebuildWorker *FTSRebuildWorker // exposed for handler access
+	globalRebuildCoordinator *RebuildCoordinator
+	GlobalRebuildCoordinator *RebuildCoordinator // exposed for handler access
 )
 
 var embedderHealthyFlag atomic.Bool
@@ -125,24 +125,31 @@ func StopClusterWorker() {
 	mu.Unlock()
 }
 
-// StartFTSRebuildWorker initializes the on-demand full-text rebuild worker
-// (no cron). The worker only rebuilds when explicitly triggered via Start.
-func StartFTSRebuildWorker(hub *ws.StreamHub) {
+// StartRebuildCoordinator initializes the on-demand index rebuild coordinator
+// (no cron). Rebuilds only run when explicitly triggered via Start.
+//
+// The coordinator is bound to the running indexer, which performs the actual
+// re-segmentation/re-embedding/re-chunking work.
+func StartRebuildCoordinator(hub *ws.StreamHub) {
 	mu.Lock()
-	globalFTSRebuildWorker = NewFTSRebuildWorker(hub)
-	GlobalFTSRebuildWorker = globalFTSRebuildWorker
+	globalRebuildCoordinator = NewRebuildCoordinator(hub)
+	GlobalRebuildCoordinator = globalRebuildCoordinator
+	idx := globalIndexer
 	mu.Unlock()
-	slog.Info("fts rebuild worker initialized (on-demand, no cron)")
+	if idx != nil {
+		globalRebuildCoordinator.SetIndexer(idx)
+	}
+	slog.Info("rebuild coordinator initialized (on-demand, no cron)")
 }
 
-// StopFTSRebuildWorker cancels any running rebuild and clears the worker.
-func StopFTSRebuildWorker() {
+// StopRebuildCoordinator cancels any tracked rebuild and clears the coordinator.
+func StopRebuildCoordinator() {
 	mu.Lock()
-	if globalFTSRebuildWorker != nil {
-		globalFTSRebuildWorker.Cancel()
+	if globalRebuildCoordinator != nil {
+		globalRebuildCoordinator.Cancel()
 	}
-	globalFTSRebuildWorker = nil
-	GlobalFTSRebuildWorker = nil
+	globalRebuildCoordinator = nil
+	GlobalRebuildCoordinator = nil
 	mu.Unlock()
 }
 
@@ -150,11 +157,11 @@ func StopFTSRebuildWorker() {
 func Shutdown() {
 	mu.Lock()
 
-	if globalFTSRebuildWorker != nil {
-		globalFTSRebuildWorker.Cancel()
+	if globalRebuildCoordinator != nil {
+		globalRebuildCoordinator.Cancel()
 	}
-	globalFTSRebuildWorker = nil
-	GlobalFTSRebuildWorker = nil
+	globalRebuildCoordinator = nil
+	GlobalRebuildCoordinator = nil
 
 	if globalClusterWorker != nil {
 		globalClusterWorker.Stop()
