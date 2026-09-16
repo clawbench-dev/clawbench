@@ -164,7 +164,7 @@ describe('QuoteQuestionBar component', () => {
     expect(wrapper.find('.quote-bar-row').exists()).toBe(true)
   })
 
-  it('aligns the input container with the chat input bar (radius 20px, chat-body type scale, 26px buttons)', async () => {
+  it('uses one sharp-corner geometry and the chat-body type scale in the input', async () => {
     const wrapper = mountBar()
     // 输入容器只在 expanded 状态渲染，点击折叠行展开
     await wrapper.find('.quote-bar-row').trigger('click')
@@ -179,7 +179,7 @@ describe('QuoteQuestionBar component', () => {
     const taStyles = window.getComputedStyle(ta.element)
     expect(taStyles.fontSize).toBe('var(--font-size-md)')
     expect(taStyles.lineHeight).toBe('var(--input-line-height)')
-    // 发送/添加按钮与聊天输入框对齐：26px 圆形
+    // 发送/添加按钮：26px 方形（尖角风格里不能有圆形）
     const sendBtn = wrapper.find('.qq-send-btn')
     const sendStyles = window.getComputedStyle(sendBtn.element)
     expect(sendStyles.width).toBe('26px')
@@ -192,16 +192,86 @@ describe('QuoteQuestionBar component', () => {
       })
       .join('\n')
     const containerRule = cssText.split('\n').filter((line) => line.includes('.qq-input-container')).join('\n')
-    expect(containerRule).toContain('border-radius: 20px')
+    // 输入框改为尖角，与栏的硬朗几何一致（不再是 20px 胶囊）
+    expect(containerRule).toContain('border-radius: 0')
+    expect(containerRule).not.toContain('20px')
     // 背景用 --bg-primary，与栏的 tertiary 底色区分（避免融合）
     expect(containerRule).toContain('background: var(--bg-primary')
-    // 不再使用胶囊圆角 999px
-    expect(containerRule).not.toContain('999px')
     // textarea 上下 4px / 左右 8px 走间距 token（与聊天输入框对齐）
     const taRule = cssText.split('\n').filter((line) => line.includes('.qq-textarea')).join('\n')
     expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
     // 高度上限由同一行盒推导（3 行 + 上下 padding），不再写死 px
     expect(taRule).toContain('max-height: calc(var(--input-line-height) * 3')
+  })
+
+  it('keeps every corner on the sharp scale (no rounded controls)', async () => {
+    const wrapper = mountBar()
+    await wrapper.find('.quote-bar-row').trigger('click')
+    const cssText = Array.from(document.styleSheets)
+      .map((s) => {
+        try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+        catch { return '' }
+      })
+      .join('\n')
+    // 这个浮层刻意硬朗：容器 3px、内部块 0。曾经混用 14px/6px/0/20px/50%
+    // 五套半径，任何新元素都不得再引入 --radius-md/lg/full。
+    expect(cssText).not.toContain('border-radius: 50%')
+    expect(cssText).not.toContain('border-radius: var(--radius-md)')
+    expect(cssText).not.toContain('border-radius: var(--radius-lg)')
+    expect(cssText).not.toContain('border-radius: var(--radius-full)')
+    expect(cssText).not.toContain('999px')
+
+    // 取「声明块」而不是按行筛：选择器列表（.a,\n.b {）会跨行，且后面还跟着
+    // scoped 的 [data-v-xxx]，所以按「含该 class 的选择器 + 其声明块」整体匹配，
+    // 选择器部分允许跨行。
+    const blockOf = (sel: string) => {
+      const re = new RegExp(`([^{}]*\\${sel}[^{}]*)\\{([^{}]*)\\}`, 'g')
+      for (const m of cssText.matchAll(re)) {
+        if (m[2].includes('width:')) return m[2]
+      }
+      throw new Error(`no sized rule found for ${sel}`)
+    }
+    const size = (block: string, prop: string) =>
+      block.match(new RegExp(`${prop}:\\s*(\\d+px)`))?.[1]
+
+    // 三个图标按钮统一 26px 方形
+    for (const sel of ['.quote-bar-add', '.qq-add-btn']) {
+      const block = blockOf(sel)
+      expect(size(block, 'width'), `${sel} width`).toBe('26px')
+      expect(size(block, 'height'), `${sel} height`).toBe('26px')
+      expect(block).toContain('border-radius: var(--radius-xs)')
+    }
+    // 收起态与展开态的「添加」必须是同一个尺寸，否则同一动作会在两态间跳变
+    expect(size(blockOf('.quote-bar-add'), 'width')).toBe(size(blockOf('.qq-add-btn'), 'width'))
+    expect(size(blockOf('.quote-bar-add'), 'height')).toBe(size(blockOf('.qq-add-btn'), 'height'))
+  })
+
+  it('renders only two states: collapsed needs a quote, otherwise expanded', async () => {
+    // 有引用 + 未展开 → 收起行
+    const collapsed = mountBar({ quoteData: { text: 'quoted', filePath: 'a.ts' } })
+    expect(collapsed.vm.showCollapsed).toBe(true)
+    expect(collapsed.find('.quote-bar-row').exists()).toBe(true)
+    expect(collapsed.find('.quote-bar-expanded').exists()).toBe(false)
+
+    // 无引用 → 收起行不可达（没有可预览内容），始终展开
+    const noQuote = mountBar({ quoteData: null, composerMode: true })
+    await noQuote.vm.$nextTick()
+    await noQuote.vm.$nextTick()
+    expect(noQuote.vm.showCollapsed).toBe(false)
+    expect(noQuote.find('.quote-bar-row').exists()).toBe(false)
+    expect(noQuote.find('.quote-bar-expanded').exists()).toBe(true)
+
+    // 关键回归路径：composer 模式下 handleSend() 会把 expanded 置回 false，
+    // 而此刻没有引用。若 showCollapsed 只看 !expanded，就会渲染出一个没有
+    // 引用文本、只剩「＋」按钮的空收起行（正是收敛成两态要杜绝的状态）。
+    noQuote.vm.inputText = 'hi'
+    await noQuote.vm.$nextTick()
+    noQuote.vm.handleSend()
+    await noQuote.vm.$nextTick()
+    expect(noQuote.vm.expanded).toBe(false)
+    expect(noQuote.vm.showCollapsed).toBe(false)
+    expect(noQuote.find('.quote-bar-row').exists()).toBe(false)
+    expect(noQuote.find('.quote-bar-expanded').exists()).toBe(true)
   })
 
   it('does not render when visible is false', () => {
