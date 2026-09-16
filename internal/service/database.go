@@ -535,6 +535,33 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- Without this, the unread subquery can only use the project_path prefix of idx_history_session,
 		-- requiring a full scan of all messages in the project to filter by role and streaming.
 		CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
+		-- Covering index for the PER-SESSION unread count subquery (GetSessions,
+		-- GetSessionsPaged, GetOverviewSessions). Those queries ask "how many unread
+		-- replies does THIS session have", so session_id must lead.
+		--
+		-- session_id must come first, and that is the whole point of this index.
+		-- idx_history_unread leads with project_path, and the moment the subquery
+		-- mentions project_path (which it must — a message row's project_path is
+		-- not guaranteed to equal its session's, see the ISS-420 note below) the
+		-- planner prefers idx_history_unread and rescans the whole project for
+		-- EVERY listed session. That turned a 0.0ms seek into a 186ms scan.
+		--
+		-- The column list stops at project_path deliberately. Adding completed_at
+		-- or created_at (to make it fully covering) was measured to be no faster
+		-- (0.01ms either way — the seek already narrows to a handful of rows), and
+		-- it BREAKS the completed_at migration: SQLite refuses
+		-- "ALTER TABLE ... DROP COLUMN completed_at" while any index references
+		-- that column, and TestSchema_CompletedAtMigration simulates exactly that
+		-- pre-completed_at database. Keep this list to columns that migrations
+		-- never drop.
+		--
+		-- NOTE: the equality on h.project_path = s.project_path is kept even though
+		-- it is redundant for rows written by current code. Historic rows can
+		-- disagree (messages persisted under the cookie's project rather than the
+		-- session's), and dropping the predicate would count those as unread here
+		-- while UpdateLastRead anchors on a different set — the two sides must
+		-- agree or the badge never clears.
+		CREATE INDEX IF NOT EXISTS idx_history_sess_unread ON chat_history(session_id, role, streaming, project_path);
 		-- Covering index for RAG indexing progress queries:
 		-- TotalMessageCount (WHERE streaming = 0) and IndexedMessageCount (WHERE indexed = 1 AND streaming = 0)
 		CREATE INDEX IF NOT EXISTS idx_history_indexing ON chat_history(streaming, indexed);

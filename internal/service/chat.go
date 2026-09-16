@@ -1172,26 +1172,78 @@ func generateSessionID() string {
 	return generateUUID("", "chat_sessions", "id")
 }
 
+// unreadCountSubquery is the per-session unread-reply count, correlated on the
+// outer session alias `s`. Shared by GetSessions, GetSessionsPaged and
+// GetOverviewSessions so all three agree on what "unread" means — if they
+// drifted, the badge and the list would disagree about the same session.
+//
+// It is a correlated scalar subquery, NOT a grouped LEFT JOIN. The join form
+// materialized every assistant message in the project (archived sessions
+// included) into a temp B-tree and then grouped it, only to join a handful of
+// surviving rows back — with 15.9k assistant messages in one project that
+// measured ~79ms per call, on a read pool of just 2 connections. The correlated
+// form seeks per listed session via idx_history_sess_unread and measures ~0ms.
+// Both forms return identical rows (verified against a real DB).
+//
+// Two details are load-bearing, and both are asserted by tests:
+//
+//  1. h.project_path = s.project_path must stay. It is redundant for rows
+//     written by current code, but historic rows can disagree (messages
+//     persisted under the cookie's project instead of the session's, ISS-420).
+//     Dropping it would count those as unread here while UpdateLastRead anchors
+//     on a different set — the two sides must agree or the badge never clears.
+//  2. idx_history_sess_unread must exist. The subquery always mentions
+//     project_path (see point 1), and idx_history_unread also leads with
+//     project_path — so without a session_id-leading alternative the planner
+//     picks idx_history_unread and rescans the whole project once per listed
+//     session (~186ms vs 0.01ms measured on a 15.9k-message project). The
+//     index is what makes the seek win; it is not merely an optimisation.
+//
+// COUNT never returns NULL, so no COALESCE is needed (the old LEFT JOIN did
+// need one, because a missed join yields NULL).
+const unreadCountSubquery = `(SELECT COUNT(*) FROM chat_history h
+			WHERE h.session_id = s.id
+			  AND h.project_path = s.project_path
+			  AND h.role = 'assistant' AND h.streaming = 0
+			  AND (s.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s.last_read_at)
+		) AS unread_count`
+
+// sessionsQueryBase is the prefix of GetSessions' query, up to (not including)
+// the backend filter and ORDER BY. Package-level so the query-plan test can
+// EXPLAIN the query production actually runs — asserting on unreadCountSubquery
+// alone would miss a caller that switched back to the grouped-join form.
+const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
+		` + unreadCountSubquery + `
+		FROM chat_sessions s
+		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
+
+// overviewSessionsQuery is GetOverviewSessions' full query. Package-level for
+// the same reason as sessionsQueryBase.
+const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, s.project_path,
+		` + unreadCountSubquery + `
+		FROM chat_sessions s
+		WHERE s.archived = 0 AND s.session_type = 'chat'
+		ORDER BY s.updated_at DESC, s.id DESC`
+
+// pagedSessionsQueryBase is the prefix of GetSessionsPaged' query, up to (not
+// including) the backend/tag/cursor filters and ORDER BY/LIMIT. Package-level
+// for the same reason as sessionsQueryBase.
+const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
+		` + unreadCountSubquery + `
+		FROM chat_sessions s
+		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
+
 // GetSessions retrieves chat sessions for a given project path,
 // ordered by pinned DESC, created_at DESC (pinned sessions first, then newest first).
 // If backend is non-empty, filters by backend; otherwise returns all backends.
 // Only returns sessions with session_type='chat' (excludes scheduled sessions).
+//
+// The unread count is unreadCountSubquery — see its doc comment for why it is a
+// correlated subquery rather than a grouped join.
 func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 	sessions := []model.ChatSession{}
-	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
-		COALESCE(unread.cnt, 0) AS unread_count
-		FROM chat_sessions s
-		LEFT JOIN (
-			SELECT h.session_id, COUNT(*) AS cnt
-			FROM chat_history h
-			JOIN chat_sessions s2 ON s2.id = h.session_id
-			WHERE h.project_path = ?
-			  AND h.role = 'assistant' AND h.streaming = 0
-			  AND (s2.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s2.last_read_at)
-			GROUP BY h.session_id
-		) unread ON unread.session_id = s.id
-		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
-	args := []interface{}{projectPath, projectPath}
+	query := sessionsQueryBase
+	args := []interface{}{projectPath}
 	if backend != "" {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
@@ -1224,23 +1276,14 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 
 // GetOverviewSessions returns all non-archived chat sessions across every
 // project (for the floating window overview panel), including per-session
-// unread counts. Unread is computed per-project (joined by project_path) so
+// unread counts. Unread is computed per-project (matched by project_path) so
 // sessions in different projects don't interfere.
+//
+// The unread count is unreadCountSubquery — see its doc comment for why it is a
+// correlated subquery rather than a grouped join.
 func GetOverviewSessions() ([]model.ChatSession, error) {
 	sessions := []model.ChatSession{}
-	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, s.project_path,
-		COALESCE(unread.cnt, 0) AS unread_count
-		FROM chat_sessions s
-		LEFT JOIN (
-			SELECT h.session_id, h.project_path, COUNT(*) AS cnt
-			FROM chat_history h
-			JOIN chat_sessions s2 ON s2.id = h.session_id AND s2.project_path = h.project_path
-			WHERE h.role = 'assistant' AND h.streaming = 0
-			  AND (s2.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s2.last_read_at)
-			GROUP BY h.session_id, h.project_path
-		) unread ON unread.session_id = s.id AND unread.project_path = s.project_path
-		WHERE s.archived = 0 AND s.session_type = 'chat'
-		ORDER BY s.updated_at DESC, s.id DESC`
+	query := overviewSessionsQuery
 	rows, err := dbRead.Query(query)
 	if err != nil {
 		return sessions, err
@@ -1301,21 +1344,11 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		return sessions, false, nil
 	}
 
-	// Build main query with cursor and limit+1
-	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
-		COALESCE(unread.cnt, 0) AS unread_count
-		FROM chat_sessions s
-		LEFT JOIN (
-			SELECT h.session_id, COUNT(*) AS cnt
-			FROM chat_history h
-			JOIN chat_sessions s2 ON s2.id = h.session_id
-			WHERE h.project_path = ?
-			  AND h.role = 'assistant' AND h.streaming = 0
-			  AND (s2.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s2.last_read_at)
-			GROUP BY h.session_id
-		) unread ON unread.session_id = s.id
-		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
-	args := []interface{}{projectPath, projectPath}
+	// Build main query with cursor and limit+1.
+	// The unread count is unreadCountSubquery — see its doc comment for why it
+	// is a correlated subquery rather than a grouped join.
+	query := pagedSessionsQueryBase
+	args := []interface{}{projectPath}
 	if backend != "" {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
