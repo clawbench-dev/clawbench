@@ -122,6 +122,16 @@ describe('getWarningText', () => {
     expect(getWarningText({ reason: 'empty' }, tFound)).toBe('AI returned no content')
   })
 
+  // agent_no_run is a distinct reason from empty: the agent never ran the
+  // model, so the copy must not claim the AI "returned no content".
+  it('resolves agent_no_run to its own message, not the empty fallback', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.agent_no_run'
+      ? 'The agent did not run this request — reset the session'
+      : key
+    expect(getWarningText({ reason: 'agent_no_run', text: 'The agent did not run this request' }, tFound))
+      .toBe('The agent did not run this request — reset the session')
+  })
+
   it('appends suffix to parse_error detail path', () => {
     const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.parse_error' ? 'Parse error' : key
     expect(getWarningText({ reason: 'parse_error', text: 'parse error: unexpected token', error_code: -32602 }, tFound)).toBe('Parse error: unexpected token [code -32602]')

@@ -840,6 +840,7 @@ export default {
         context_cancel: 'AI 响应被中断',
         timeout: 'AI 响应超时（30分钟）',
         empty: 'AI 未返回任何内容',
+        agent_no_run: 'Agent 未执行本轮请求，建议重置会话',
         parse_error: 'AI 输出解析错误',
         backend_exit: 'AI 后端异常退出',
         request_failed: 'AI 请求失败',

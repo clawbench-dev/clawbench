@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -57,6 +58,9 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	// previous turn can't suppress it.
 	c.TouchSessionUpdate()
 	c.SetToolInFlight(false)
+	// Reset the per-turn model-output counter: a turn that ends with
+	// stopReason=end_turn but zero output events never ran the model.
+	c.ResetTurnOutput()
 
 	if conn == nil || acpSID == "" {
 		return fmt.Errorf("acp: connection not initialized")
@@ -133,9 +137,66 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	}
 
 	c.emitRefusalWarningIfRefused(resp, streamCh, acpSID)
+
+	// A structurally successful turn that produced no output and billed no
+	// tokens means the agent accepted the prompt but never ran the model. The
+	// ACP protocol cannot express this (StopReason has no "skipped" value and
+	// PromptResponse carries no content field), so it is inferred here.
+	//
+	// Treated as a retryable connection failure rather than an empty answer:
+	// retrying the same prompt against the same unhealthy agent fails again,
+	// while respawning the agent and resuming the session fixes it. Checked
+	// BEFORE emitPromptTailMetadata because that call consumes the accumulated
+	// _meta — and its stale trace fields would otherwise be persisted as if
+	// this turn had really completed.
+	//
+	// Slash commands are exempt: ACP agents route them to their own
+	// CommandExecutor instead of the LLM, so "no model output" is the expected
+	// result there and respawning would be wrong. Agents normally emit their
+	// command output as a chunk (which also trips the output counter), but a
+	// command that prints nothing must not be mistaken for a wedged agent.
+	if !IsACPSlashCommand(promptText(prompt)) {
+		if in, out, total := promptResponseTokens(resp, c); looksLikeAgentNoRun(string(resp.StopReason), c.TurnOutputEvents(), in, out, total) {
+			slog.Error("acp conn: turn produced no model output",
+				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
+				"stop_reason", resp.StopReason,
+				"elapsed", time.Since(promptStart))
+			// Kill the agent so the caller's retry respawns it and recovers the
+			// session via ResumeSession. acpSID is preserved for that recovery.
+			c.killAndMarkDead()
+			return &agentNoRunError{stopReason: string(resp.StopReason), wallMs: int(time.Since(promptStart).Milliseconds())}
+		}
+	}
+
 	c.emitPromptTailMetadata(resp, streamCh)
 
 	return nil
+}
+
+// promptText returns the concatenated text of the prompt's text blocks. Used to
+// tell a slash command (which never reaches the model) from a real user prompt.
+func promptText(blocks []acp.ContentBlock) string {
+	var b strings.Builder
+	for i := range blocks {
+		if blocks[i].Text != nil {
+			b.WriteString(blocks[i].Text.Text)
+		}
+	}
+	return b.String()
+}
+
+// promptResponseTokens resolves the turn's token counters from the
+// PromptResponse usage and, when that is absent, the accumulated per-turn _meta.
+// CodeBuddy reports no PromptResponse.Usage at all (has_usage=false) and carries
+// its counters on session/update _meta instead, so both sources must be checked
+// before concluding a turn billed nothing.
+func promptResponseTokens(resp acp.PromptResponse, c *ACPConn) (input, output, total int) {
+	if resp.Usage != nil {
+		input = resp.Usage.InputTokens
+		output = resp.Usage.OutputTokens
+	}
+	accIn, accOut, accTotal := c.peekMetaAccumUsage()
+	return max(input, accIn), max(output, accOut), max(input+output, accTotal)
 }
 
 // emitRefusalWarningIfRefused surfaces a structured warning event when the

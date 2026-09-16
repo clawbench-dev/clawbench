@@ -87,13 +87,11 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		//     legitimately reuse a requestId, and thinking duplication is
 		//     already handled by the frontend's think_id mechanism.
 		replayed := false
-		if conn != nil && content.Text != nil && backendID == "codebuddy" {
-			if rid := metaString(update.AgentMessageChunk.Meta[metaKeyCodeBuddyRequestID]); rid != "" && rid == conn.getLastCompletedRequestID() {
-				slog.Warn("acp: dropping replayed agent_message_chunk from previous turn",
-					slog.String("request_id", rid),
-					slog.String("clawbench_sid", conn.clawbenchSID))
-				replayed = true
-			}
+		if content.Text != nil && isReplayedTurnMeta(conn, backendID, update.AgentMessageChunk.Meta) {
+			slog.Warn("acp: dropping replayed agent_message_chunk from previous turn",
+				slog.String("request_id", metaString(update.AgentMessageChunk.Meta[metaKeyCodeBuddyRequestID])),
+				slog.String("clawbench_sid", conn.clawbenchSID))
+			replayed = true
 		}
 		if !replayed {
 			parentID := extractParentToolCallID(backendID, update.AgentMessageChunk.Meta)
@@ -106,6 +104,10 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			if conn != nil {
 				mergeMetaExtractionToConn(conn, backendID, update.AgentMessageChunk.Meta)
 			}
+			// Model output observed: this turn really did run the model.
+			if conn != nil {
+				conn.RecordTurnOutput()
+			}
 		}
 
 	case update.AgentThoughtChunk != nil:
@@ -113,6 +115,9 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if content.Text != nil {
 			parentID := extractParentToolCallID(backendID, update.AgentThoughtChunk.Meta)
 			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID})
+			if conn != nil {
+				conn.RecordTurnOutput()
+			}
 		}
 
 	case update.ToolCall != nil:
@@ -123,6 +128,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// treats the agent as active while it runs the tool.
 		if conn != nil {
 			conn.SetToolInFlight(true)
+			conn.RecordTurnOutput()
 		}
 		tc := update.ToolCall
 		// Flush any pending debounce batch for this tool ID before the new call.
@@ -358,7 +364,25 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// state before forwarding so the frontend receives the full picture,
 		// and accumulate onto the connection so the turn-final message metadata
 		// event persists usageByCategory / trace as well.
+		//
+		// The same replay defect the agent_message_chunk path guards against
+		// applies here: CodeBuddy re-emits the previous turn's usage_update when
+		// a session is reused across prompts, carrying the previous turn's
+		// requestId/messageId. Without this filter the stale identity lands in
+		// metaAccum and gets persisted as the current turn's metadata — observed
+		// in production as a skipped turn recorded with the previous turn's
+		// messageId, which made it look like a normal completion.
+		//
+		// Only the trace identity is dropped: the usage counters describe the
+		// context window and remain valid, so the occupancy still flows to the
+		// frontend and the accumulator.
 		if ext := extractMetaUsage(backendID, update.UsageUpdate.Meta); ext != nil {
+			if isReplayedTurnMeta(conn, backendID, update.UsageUpdate.Meta) {
+				slog.Warn("acp: dropping replayed usage_update trace identity from previous turn",
+					slog.String("request_id", ext.traceRequestID()),
+					slog.String("clawbench_sid", conn.clawbenchSID))
+				ext.Trace = nil
+			}
 			applyMetaExtractionToUsageState(usageState, ext)
 			if conn != nil {
 				conn.mergeMetaExtraction(ext)
@@ -956,4 +980,30 @@ func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelLi
 // tests that verify LoadSession replay parsing. Production code must not use this.
 func MapACPSessionUpdateForTest(update acp.SessionUpdate, ch chan<- StreamEvent) {
 	mapACPSessionUpdate(update, ch, nil, nil, nil)
+}
+
+// isReplayedTurnMeta reports whether a notification's _meta belongs to the
+// previous, already-completed turn rather than the current one.
+//
+// CodeBuddy re-emits the tail of the previous turn when an ACP session is
+// reused across prompts: both agent_message_chunk (stale text) and
+// usage_update (stale trace identity) have been observed carrying the previous
+// turn's requestId. Anything derived from that _meta would otherwise be
+// attributed to the current turn.
+//
+// Deliberately scoped to CodeBuddy and compared against the last COMPLETED
+// turn's requestId (not a rolling per-chunk value): genuine notifications of
+// one turn share a single requestId, so a rolling comparison would mute the
+// live stream. Safe to call from the ACP notification goroutine — it only
+// reads immutable fields and takes metaMu.
+func isReplayedTurnMeta(conn *ACPConn, backendID string, meta map[string]any) bool {
+	if conn == nil || backendID != "codebuddy" || len(meta) == 0 {
+		return false
+	}
+	rid := metaString(meta[metaKeyCodeBuddyRequestID])
+	if rid == "" {
+		return false
+	}
+	last := conn.getLastCompletedRequestID()
+	return last != "" && rid == last
 }

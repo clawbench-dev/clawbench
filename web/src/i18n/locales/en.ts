@@ -837,6 +837,7 @@ export default {
         context_cancel: 'AI response cancelled',
         timeout: 'AI response timed out (30 min)',
         empty: 'AI returned no content',
+        agent_no_run: 'The agent did not run this request — reset the session',
         parse_error: 'AI output parse error',
         backend_exit: 'AI backend exited abnormally',
         request_failed: 'AI request failed',

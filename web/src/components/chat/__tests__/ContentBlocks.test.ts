@@ -609,6 +609,20 @@ describe('ContentBlocks', () => {
       expect(wrapper.emitted('reset-session')![0]).toEqual([{ reason: 'backend_exit' }])
     })
 
+    // A turn where the agent accepted the prompt but never ran the model is
+    // recoverable by resetting the session, so it must offer the button — the
+    // user otherwise has no way out of a stuck agent.
+    it('shows reset button for agent_no_run', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'agent_no_run', text: 'The agent did not run this request' }],
+      })
+      const btn = wrapper.find('.warning-reset-btn')
+      expect(btn.exists()).toBe(true)
+      await btn.trigger('click')
+      expect(wrapper.emitted('reset-session')).toBeTruthy()
+      expect(wrapper.emitted('reset-session')![0]).toEqual([{ reason: 'agent_no_run' }])
+    })
+
     it('shows reset button on severe warning (timeout)', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'warning', reason: 'timeout', text: 'Timed out' }],
