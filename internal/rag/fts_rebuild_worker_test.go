@@ -222,7 +222,7 @@ func TestFTSRebuildWorker_RecordsCancelledOutcome(t *testing.T) {
 	assert.Equal(t, "cancelled", st.Status, "a cancelled context must report cancelled, not error")
 	assert.Empty(t, st.Phase, "cancelled runs have no phase")
 	assert.False(t, w.IsRunning(), "a cancelled run must clear the running flag")
-	assert.Empty(t, st.Error, "cancelling is not an error")
+	assert.Empty(t, st.Error, "canceling is not an error")
 }
 
 // TestFTSRebuildWorker_RecordsErrorOutcome asserts the worker surfaces a store
@@ -270,7 +270,7 @@ func TestFTSRebuildWorker_RecoversFromPanic(t *testing.T) {
 }
 
 // TestFTSRebuildWorker_PanicDoesNotClobberNewerRun asserts the panic recovery
-// honours the same generation guard as the normal exit path: a stale goroutine
+// honors the same generation guard as the normal exit path: a stale goroutine
 // that panics after a newer run started must not reset the newer run's state.
 func TestFTSRebuildWorker_PanicDoesNotClobberNewerRun(t *testing.T) {
 	w := NewFTSRebuildWorker(nil)
