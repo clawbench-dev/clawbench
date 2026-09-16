@@ -3,6 +3,8 @@ package service
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestThinkingCRUD(t *testing.T) {
@@ -33,9 +35,7 @@ func TestThinkingCRUD(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetThinking: %v", err)
 		}
-		if rec == nil {
-			t.Fatal("GetThinking returned nil")
-		}
+		require.NotNil(t, rec, "GetThinking returned nil")
 		if rec.ThinkID != "th_abc123" || rec.Text != "thinking text" || rec.MessageID != msgID || rec.SessionID != sessionID {
 			t.Errorf("record mismatch: %+v", rec)
 		}
@@ -114,9 +114,7 @@ func TestAppendThinkingSegment_GetThinkingConcat(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetThinking: %v", err)
 		}
-		if rec == nil {
-			t.Fatal("GetThinking returned nil")
-		}
+		require.NotNil(t, rec, "GetThinking returned nil")
 		if rec.Text != "part1part2part3" {
 			t.Errorf("Text = %q, want concatenated part1part2part3", rec.Text)
 		}

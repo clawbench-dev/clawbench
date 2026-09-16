@@ -131,6 +131,165 @@ func setupTestDBForQuickSend(t *testing.T) func() {
 
 // ---------- Schema: session_type, task_executions columns, new indexes ----------
 
+// TestUnreadCountSubquery_UsesSessionLeadingIndex guards the query plan, not the
+// result: the correlated unread subquery must seek per session via
+// idx_history_sess_unread rather than scanning the project through
+// idx_history_unread once per listed session.
+//
+// A result-only test cannot catch a regression here — both plans return the
+// same rows, one just takes ~186ms per call on a 15.9k-message project. So this
+// asserts on the planner's own output.
+//
+// It EXPLAINs the package-level query constants that GetSessions /
+// GetOverviewSessions / GetSessionsPaged actually run, not just the subquery
+// fragment: asserting on unreadCountSubquery alone passes even when a caller
+// reverts to the grouped-join form (verified by mutation).
+//
+// It also drives the REAL schema via InitDB instead of the hand-written test
+// schema in chat_test.go — a plan test against a copied DDL would keep passing
+// after production lost the index, which is the exact failure it exists to
+// catch. Dropping idx_history_sess_unread from the DDL fails this test.
+func TestUnreadCountSubquery_UsesSessionLeadingIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir, model.DataDir = tmpDir, filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	origDB, origDBRead := UnsafeDBForTest(), dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	// The session-leading index must exist in the real schema.
+	var idxCount int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_history_sess_unread'",
+	).Scan(&idxCount))
+	require.Equal(t, 1, idxCount, "idx_history_sess_unread must be created by InitDB")
+
+	// Each entry is the query production runs, up to the ORDER BY / LIMIT tail
+	// (those are appended by string concatenation at call time). Bind values are
+	// derived from the placeholder count below rather than listed per case: a
+	// regression that switches back to the grouped-join form adds a placeholder,
+	// and a hardcoded arg list would then fail on "missing argument" instead of
+	// on the plan assertion — the test would still fail, but for a misleading
+	// reason. LIMIT uses a literal for the same reason (its value cannot change
+	// the plan).
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "GetSessions",
+			query: sessionsQueryBase + " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC",
+		},
+		{
+			name:  "GetOverviewSessions",
+			query: overviewSessionsQuery,
+		},
+		{
+			name:  "GetSessionsPaged",
+			query: pagedSessionsQueryBase + " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC LIMIT 11",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := make([]any, strings.Count(tc.query, "?"))
+			for i := range args {
+				args[i] = "/project"
+			}
+
+			rows, err := db.Query("EXPLAIN QUERY PLAN "+tc.query, args...)
+			require.NoError(t, err)
+			defer func() { _ = rows.Close() }()
+
+			var detail strings.Builder
+			for rows.Next() {
+				var id, parent, notUsed int
+				var d string
+				require.NoError(t, rows.Scan(&id, &parent, &notUsed, &d))
+				detail.WriteString(d)
+				detail.WriteString("\n")
+			}
+			require.NoError(t, rows.Err())
+			got := detail.String()
+			t.Logf("query plan:\n%s", got)
+
+			// The unread count must be a per-session equality seek into the
+			// dedicated index. "session_id=" is what distinguishes a seek from a
+			// project-wide scan: without that index the planner falls back to
+			// idx_history_unread and the plan reads
+			// "SEARCH h USING INDEX idx_history_unread (project_path=? AND
+			// role=? AND streaming=?)" — no session_id equality, ~186ms per call.
+			//
+			// The assertion deliberately does NOT pin the column ORDER inside
+			// the index. A leading project_path measures the same 0.02ms as a
+			// leading session_id (both are full equality seeks here), so
+			// requiring one order would fail a change that costs nothing.
+			assert.Contains(t, got, "idx_history_sess_unread",
+				"the unread subquery must be served by the dedicated session index")
+			assert.Contains(t, got, "session_id=",
+				"the unread subquery must seek by session_id, not scan the project")
+			assert.NotContains(t, got, "idx_history_unread",
+				"falling back to idx_history_unread means a project-wide scan per session")
+			assert.NotContains(t, got, "MATERIALIZE",
+				"a materialized subquery means the grouped-join form came back")
+			assert.NotContains(t, got, "TEMP B-TREE FOR GROUP BY",
+				"a grouping temp B-tree means the grouped-join form came back")
+		})
+	}
+}
+
+// TestUnreadIndex_NoDroppableColumn pins the column list of
+// idx_history_sess_unread against the one thing that must not happen: listing a
+// column that a migration later drops.
+//
+// SQLite refuses "ALTER TABLE ... DROP COLUMN x" while any index references x.
+// completed_at is exactly such a column — it was added by an additive migration
+// and TestSchema_CompletedAtMigration simulates the pre-column database by
+// dropping it. Putting completed_at (or created_at, same class) into this index
+// made that migration fail with
+// "error in index idx_history_sess_unread after drop column: no such column".
+//
+// The extra columns also bought nothing: the seek already narrows to a handful
+// of rows, so a fully covering index measured the same 0.01ms. Keep this list
+// minimal — adding a droppable column is a migration regression, not an
+// optimisation.
+func TestUnreadIndex_NoDroppableColumn(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir, model.DataDir = tmpDir, filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	origDB, origDBRead := UnsafeDBForTest(), dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	var ddl string
+	require.NoError(t, db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_history_sess_unread'",
+	).Scan(&ddl))
+	require.NotEmpty(t, ddl)
+
+	// completed_at is the concrete hazard: it is dropped by a migration test.
+	assert.NotContains(t, ddl, "completed_at",
+		"idx_history_sess_unread must not reference completed_at — "+
+			"ALTER TABLE ... DROP COLUMN completed_at fails while an index uses it")
+
+	// Prove the hazard is real rather than theoretical: dropping completed_at
+	// must actually succeed against this schema.
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	defer func() { _ = raw.Close() }()
+	_, err = raw.Exec("ALTER TABLE chat_history DROP COLUMN completed_at")
+	assert.NoError(t, err,
+		"the completed_at migration must remain possible on the current schema")
+}
+
 func TestSchema_SessionTypeColumnExists(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir

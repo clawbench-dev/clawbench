@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestMain(m *testing.M) {
@@ -80,9 +82,7 @@ func TestClusterMessages_SimilarGrouping(t *testing.T) {
 		}
 	}
 
-	if chineseCluster == nil {
-		t.Fatal("expected cluster with representative '你好'")
-	}
+	require.NotNil(t, chineseCluster, "expected cluster with representative '你好'")
 
 	if len(chineseCluster.Variants) != 2 {
 		t.Errorf("expected 2 variants, got %d", len(chineseCluster.Variants))

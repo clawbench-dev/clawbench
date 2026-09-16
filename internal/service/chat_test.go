@@ -3441,6 +3441,43 @@ func TestGetSessions_UnreadCountScopedToProject(t *testing.T) {
 	assert.Equal(t, 1, sessionsB[0].UnreadCount, "unread count should only count messages in project-b")
 }
 
+// TestGetSessions_UnreadCount_IgnoresHistoryFromOtherProject pins the
+// h.project_path = s.project_path predicate in unreadCountSubquery.
+//
+// It is redundant for rows written by current code, so a reader is tempted to
+// delete it — but historic rows can carry a project_path that differs from
+// their session's (messages were once persisted under the cookie's project
+// instead of the session's owner, ISS-420). Without the predicate such a row is
+// counted here while UpdateLastRead anchors on a different set, and the badge
+// never clears. Verified by mutation: removing the predicate makes this fail.
+func TestGetSessions_UnreadCount_IgnoresHistoryFromOtherProject(t *testing.T) {
+	db := setupDB(t)
+
+	insertSessionWithTime(t, "/projectA", "sess-a", "A", "2025-01-01 10:00:00", false)
+
+	// One legitimate unread reply for sess-a, in sess-a's own project.
+	_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'real reply', '2025-01-01 10:00:05')", "/projectA", "sess-a")
+	require.NoError(t, err)
+
+	// A stray reply for the SAME session id but tagged with another project.
+	// This is the ISS-420 shape: it must not be attributed to sess-a.
+	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'stray reply', '2025-01-01 10:00:06')", "/projectB", "sess-a")
+	require.NoError(t, err)
+
+	sessions, err := service.GetSessions("/projectA", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 1, sessions[0].UnreadCount,
+		"a reply whose project_path disagrees with its session must not count as unread")
+
+	// The overview path shares the same subquery and must agree.
+	overview, err := service.GetOverviewSessions()
+	require.NoError(t, err)
+	require.Len(t, overview, 1)
+	assert.Equal(t, 1, overview[0].UnreadCount,
+		"overview must agree with the per-project list about unread")
+}
+
 // ---------- GetOverviewSessions ----------
 
 func TestGetOverviewSessions_crossProjectUnread(t *testing.T) {
