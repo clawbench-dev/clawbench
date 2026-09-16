@@ -838,7 +838,7 @@ describe('CompletionPopover', () => {
         expect(document.querySelector('.completion-popover-send')!.classList.contains('disabled')).toBe(false)
     })
 
-    it('aligns the input box with the chat input bar (radius 20px, 16px textarea, 28px send button)', async () => {
+    it('aligns the input box with the chat input bar (radius 20px, chat-body type scale, 26px send button)', async () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
@@ -849,14 +849,14 @@ describe('CompletionPopover', () => {
         await nextTick()
 
         expect(document.querySelector('.completion-popover-input')).toBeTruthy()
-        // textarea 与聊天输入框对齐：16px 字号（--font-size-2xl）、行高 20px、上下 padding 4px
-        // jsdom 不解析 var()：字号断言 token 名，padding 改断言 CSS 规则文本
+        // textarea 与聊天输入框对齐：字号/行高与聊天正文同 token（--font-size-md /
+        // --line-height-snug），上下 padding 4px
+        // jsdom 不解析 var()：字号/行高断言 token 名，padding 改断言 CSS 规则文本
         // （简写含两个 var()，computed 值一律解成 0）。4px/8px 由 --space-2/--space-4 保证
         const ta = document.querySelector('.completion-popover-textarea')!
         const taStyles = window.getComputedStyle(ta)
-        expect(taStyles.fontSize).toBe('var(--font-size-2xl)')
-        expect(taStyles.lineHeight).toBe('20px')
-        expect(taStyles.minHeight).toBe('28px')
+        expect(taStyles.fontSize).toBe('var(--font-size-md)')
+        expect(taStyles.lineHeight).toBe('var(--line-height-snug)')
         const taRule = Array.from(document.styleSheets)
             .map((s) => {
                 try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
@@ -867,11 +867,13 @@ describe('CompletionPopover', () => {
             .filter((line) => line.includes('.completion-popover-textarea'))
             .join('\n')
         expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
-        // 发送按钮与聊天输入框对齐：28px 圆形
+        // 高度上限由同一行盒推导（3 行 + 上下 padding），不再写死 px
+        expect(taRule).toContain('max-height: calc(1em * var(--line-height-snug) * 3')
+        // 发送按钮与聊天输入框对齐：26px 圆形
         const btn = document.querySelector('.completion-popover-send')!
         const btnStyles = window.getComputedStyle(btn)
-        expect(btnStyles.width).toBe('28px')
-        expect(btnStyles.height).toBe('28px')
+        expect(btnStyles.width).toBe('26px')
+        expect(btnStyles.height).toBe('26px')
         // jsdom 不解析 border-radius 简写计算值，改为断言 CSS 规则
         const cssText = Array.from(document.styleSheets)
             .map((s) => {

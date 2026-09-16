@@ -164,25 +164,25 @@ describe('QuoteQuestionBar component', () => {
     expect(wrapper.find('.quote-bar-row').exists()).toBe(true)
   })
 
-  it('aligns the input container with the chat input bar (radius 20px, 16px textarea, 28px buttons)', async () => {
+  it('aligns the input container with the chat input bar (radius 20px, chat-body type scale, 26px buttons)', async () => {
     const wrapper = mountBar()
     // 输入容器只在 expanded 状态渲染，点击折叠行展开
     await wrapper.find('.quote-bar-row').trigger('click')
     const container = wrapper.find('.qq-input-container')
     expect(container.exists()).toBe(true)
-    // textarea 与聊天输入框对齐：16px 字号（--font-size-2xl）、行高 20px、上下 padding 4px
-    // jsdom 不解析 var()：字号断言 token 名；padding 简写含两个 var()，computed 值
+    // textarea 与聊天输入框对齐：字号/行高与聊天正文同 token（--font-size-md /
+    // --line-height-snug），上下 padding 4px
+    // jsdom 不解析 var()：字号/行高断言 token 名；padding 简写含两个 var()，computed 值
     // 一律解成 0，改在下方按 CSS 规则文本断言
     const ta = wrapper.find('.qq-textarea')
     const taStyles = window.getComputedStyle(ta.element)
-    expect(taStyles.fontSize).toBe('var(--font-size-2xl)')
-    expect(taStyles.lineHeight).toBe('20px')
-    expect(taStyles.minHeight).toBe('28px')
-    // 发送/添加按钮与聊天输入框对齐：28px 圆形
+    expect(taStyles.fontSize).toBe('var(--font-size-md)')
+    expect(taStyles.lineHeight).toBe('var(--line-height-snug)')
+    // 发送/添加按钮与聊天输入框对齐：26px 圆形
     const sendBtn = wrapper.find('.qq-send-btn')
     const sendStyles = window.getComputedStyle(sendBtn.element)
-    expect(sendStyles.width).toBe('28px')
-    expect(sendStyles.height).toBe('28px')
+    expect(sendStyles.width).toBe('26px')
+    expect(sendStyles.height).toBe('26px')
     // jsdom 不解析 border-radius 简写计算值，改为断言 CSS 规则
     const cssText = Array.from(document.styleSheets)
       .map((s) => {
@@ -199,6 +199,8 @@ describe('QuoteQuestionBar component', () => {
     // textarea 上下 4px / 左右 8px 走间距 token（与聊天输入框对齐）
     const taRule = cssText.split('\n').filter((line) => line.includes('.qq-textarea')).join('\n')
     expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
+    // 高度上限由同一行盒推导（3 行 + 上下 padding），不再写死 px
+    expect(taRule).toContain('max-height: calc(1em * var(--line-height-snug) * 3')
   })
 
   it('does not render when visible is false', () => {

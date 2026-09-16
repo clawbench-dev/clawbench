@@ -48,7 +48,7 @@
               @input="autoResizeTextarea"
             />
             <button class="completion-popover-send" :class="{ disabled: !canSend }" @click="handleSend" :title="gt('chat.popover.send')" :aria-label="gt('chat.popover.send')">
-              <Send :size="14" />
+              <Send :size="13" />
             </button>
           </div>
           <div class="completion-popover-actions">
@@ -194,7 +194,10 @@ function autoResizeTextarea(): void {
     if (!el) return
     el.style.height = 'auto'
     const computedStyle = getComputedStyle(el)
-    const lineHeight = parseFloat(computedStyle.lineHeight) || 20
+    // Unitless line-height resolves to px here; fall back to the ratio off the
+    // font size so the cap tracks the CSS rather than a hard-coded box.
+    const lineHeight = parseFloat(computedStyle.lineHeight)
+        || (parseFloat(computedStyle.fontSize) || 13) * 1.4
     const paddingTop = parseFloat(computedStyle.paddingTop) || 0
     const paddingBottom = parseFloat(computedStyle.paddingBottom) || 0
     const maxContentHeight = lineHeight * 3
@@ -680,13 +683,15 @@ function handleSummaryClick(event: MouseEvent): void {
     border: none;
     background: transparent;
     color: var(--text-primary);
-    font-size: var(--font-size-2xl);
-    line-height: 20px;
+    /* Mirrors .chat-textarea: same type scale as the chat message body, and the
+       height caps are derived from that same line box. */
+    font-size: var(--font-size-md);
+    line-height: var(--line-height-snug);
     outline: none;
     resize: none;
     overflow-y: auto;
-    min-height: 28px;
-    max-height: calc(20px * 3 + 4px + 4px); /* 3 行 + 上下 padding */
+    min-height: calc(1em * var(--line-height-snug) + var(--space-2) * 2);
+    max-height: calc(1em * var(--line-height-snug) * 3 + var(--space-2) * 2); /* 3 行 + 上下 padding */
     font-family: inherit;
 }
 
@@ -699,8 +704,8 @@ function handleSummaryClick(event: MouseEvent): void {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     padding: 0;
     background: var(--accent-color);
     color: #fff;
