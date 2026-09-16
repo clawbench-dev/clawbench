@@ -268,13 +268,13 @@ const segments = computed<Segment[]>(() => {
   min-width: 0;
 }
 
-/* Deleted lines */
+/* Deleted lines.
+   The row tint and its leading rail are declared once in css/diff-rows.css and
+   shared with every other diff surface; only the text colour is local. The
+   inline char-level spans below are brighter than the row tint so a changed
+   run still reads as a distinct mark inside the row. */
 .diff-line-del .diff-content {
   color: #dc2626;
-}
-
-.diff-line-del {
-  background: rgba(239, 68, 68, 0.35);
 }
 
 /* Added lines */
@@ -282,18 +282,12 @@ const segments = computed<Segment[]>(() => {
   color: #16a34a;
 }
 
-.diff-line-add {
-  border-left: 2px solid #16a34a;
-  background: rgba(34, 197, 94, 0.35);
-}
-
-/* Context lines */
+/* Context lines.
+   No border-left: changed rows carry their rail as a background gradient, so
+   there is no box to align against and a transparent border here would inset
+   context rows by 2px relative to them. */
 .diff-line-ctx .diff-content {
   color: var(--text-secondary);
-}
-
-.diff-line-ctx {
-  border-left: 2px solid transparent;
 }
 
 /* Ellipsis separator */
@@ -304,15 +298,19 @@ const segments = computed<Segment[]>(() => {
   letter-spacing: 2px;
 }
 
-/* ─── Char-level highlighting within diff lines ─── */
+/* ─── Char-level highlighting within diff lines ───
+   Deliberately deeper than the row tint (--diff-*-bg, 20%): a changed run has
+   to read as a mark *inside* an already-tinted row, not as a second row colour.
+   Derived from the theme's status colours rather than the row tokens so the two
+   depths stay independent — retuning the row tint must not flatten these. */
 
 .diff-char-del {
-  background: rgba(239, 68, 68, 0.35);
+  background: color-mix(in srgb, var(--color-red) 42%, transparent);
   border-radius: var(--radius-xs);
 }
 
 .diff-char-add {
-  background: rgba(34, 197, 94, 0.35);
+  background: color-mix(in srgb, var(--color-green) 42%, transparent);
   border-radius: var(--radius-xs);
 }
 
@@ -344,25 +342,20 @@ const segments = computed<Segment[]>(() => {
 </style>
 
 <style>
-/* Dark theme adjustments */
+/* Dark theme adjustments.
+   Only the text colours are per-surface: the row tints themselves are handled
+   centrally by the --diff-*-bg dark override in css/variables.css. */
 [data-theme-base="dark"] .diff-line-del .diff-content {
   color: #f87171;
-}
-[data-theme-base="dark"] .diff-line-del {
-  background: rgba(239, 68, 68, 0.40);
 }
 [data-theme-base="dark"] .diff-line-add .diff-content {
   color: #4ade80;
 }
-[data-theme-base="dark"] .diff-line-add {
-  border-left-color: #4ade80;
-  background: rgba(34, 197, 94, 0.40);
-}
 [data-theme-base="dark"] .diff-char-del {
-  background: rgba(239, 68, 68, 0.40);
+  background: color-mix(in srgb, var(--color-red) 48%, transparent);
 }
 [data-theme-base="dark"] .diff-char-add {
-  background: rgba(34, 197, 94, 0.40);
+  background: color-mix(in srgb, var(--color-green) 48%, transparent);
 }
 [data-theme-base="dark"] .diff-seg-del {
   background: rgba(255, 80, 80, 0.25);

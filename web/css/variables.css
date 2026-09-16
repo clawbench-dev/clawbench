@@ -86,6 +86,30 @@
     --opacity-soft: 0.7;      /* lightly dimmed: inactive tabs, badges */
     --opacity-hover: 0.9;     /* transient feedback on hover / press */
 
+    /* ── Diff row tints. Every diff surface in the app (git history, the
+       markdown/code diff drawer, chat tool-call edits, the CodeMirror
+       changed-line overlay) draws its added/deleted/modified rows from these
+       six tokens, so a row looks the same wherever it appears.
+
+       The tint alone is NOT the signal. Red and green tints over the same
+       surface sit within ~1.1:1 of each other even at full depth, so a
+       reader who cannot separate the two hues gets nothing from the
+       background. Each row therefore also carries a solid 3px rail in the
+       matching `--diff-*-accent` colour — a shape channel that survives any
+       colour-vision deficiency. Do not drop the rail when editing a surface.
+
+       The tint is mixed from the theme's own status colours so all 36 themes
+       stay in tune, and it is deliberately much deeper than a hairline wash:
+       the previous 8% left added and deleted rows indistinguishable at
+       ~1.04:1. Dark surfaces swallow a tint faster than light ones, hence the
+       override at the end of this file. ── */
+    --diff-add-bg: color-mix(in srgb, var(--color-green) 20%, transparent);
+    --diff-del-bg: color-mix(in srgb, var(--color-red) 20%, transparent);
+    --diff-mod-bg: color-mix(in srgb, var(--color-yellow) 20%, transparent);
+    --diff-add-accent: var(--color-green);
+    --diff-del-accent: var(--color-red);
+    --diff-mod-accent: var(--color-yellow);
+
     /* ── Custom wallpaper (applied at runtime when a wallpaper is set) ──
        --wallpaper-url: url(...) of the active wallpaper, or `none`.
        --wallpaper-scrim: translucent overlay color on top of the wallpaper
@@ -2259,4 +2283,23 @@
     --code-syntax-meta: #eeffff;
     --code-syntax-heading: #82aaff;
     --code-syntax-link: #82aaff;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Diff row tints — dark-surface override
+
+   The six `--diff-*` tokens live in `:root` (top of this file). A translucent
+   tint reads as a much smaller lightness step on a dark surface than on a
+   light one, so at the shared 20% the added/deleted rows of every dark theme
+   drifted back toward each other. Raising the mix here restores the same
+   separation the light themes get from the base value.
+
+   Declared once against `data-theme-base="dark"` (set on <html> alongside
+   `data-theme`) rather than per dark theme: the tints are already derived from
+   each theme's own status colours, so only the depth needs to change.
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme-base="dark"] {
+    --diff-add-bg: color-mix(in srgb, var(--color-green) 26%, transparent);
+    --diff-del-bg: color-mix(in srgb, var(--color-red) 26%, transparent);
+    --diff-mod-bg: color-mix(in srgb, var(--color-yellow) 26%, transparent);
 }

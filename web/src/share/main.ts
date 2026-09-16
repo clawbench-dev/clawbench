@@ -16,6 +16,10 @@ import '../../css/code-block-header.css'
 import '../../css/content.css'
 import '../../css/media-block.css'
 import '../../css/components.css'
+// Shared diff-row tint + leading rail (git history, diff drawer, chat tool-call
+// edits, CodeMirror changed-line overlay). The share SPA renders markdown/code
+// through the same components, so it needs the same rules.
+import '../../css/diff-rows.css'
 // Share chrome (topbar/body/TOC rail) — single shared source also used by the
 // markdown HTML export (exportMarkdownHtml.ts embeds the same file).
 import '../../css/share-chrome.css'

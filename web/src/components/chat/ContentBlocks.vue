@@ -2430,24 +2430,20 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .edit-diff-del {
-  background: rgba(239, 68, 68, 0.08);
   color: #dc2626;
   white-space: pre;
 }
 
 .content-blocks .tool-detail .edit-diff-add {
-  background: rgba(34, 197, 94, 0.08);
   color: #16a34a;
   white-space: pre;
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .edit-diff-del {
-  background: rgba(248, 113, 113, 0.1);
   color: #fca5a5;
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .edit-diff-add {
-  background: rgba(74, 222, 128, 0.1);
   color: #86efac;
 }
 

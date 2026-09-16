@@ -677,25 +677,25 @@ onUpdated(restoreAskStates)
   line-height: var(--line-height-relaxed);
 }
 
+/* Edit diffs.
+   Row tint + leading rail come from the shared diff-row stylesheet
+   (css/diff-rows.css); only the text colour is local. Kept as one rule per
+   surface because the wrap/no-wrap geometry above must not be overridden. */
 .tool-detail-body .edit-diff-del {
-  background: rgba(239, 68, 68, 0.08);
   color: #dc2626;
   white-space: pre;
 }
 
 .tool-detail-body .edit-diff-add {
-  background: rgba(34, 197, 94, 0.08);
   color: #16a34a;
   white-space: pre;
 }
 
 :root[data-theme-base="dark"] .tool-detail-body .edit-diff-del {
-  background: rgba(248, 113, 113, 0.1);
   color: #fca5a5;
 }
 
 :root[data-theme-base="dark"] .tool-detail-body .edit-diff-add {
-  background: rgba(74, 222, 128, 0.1);
   color: #86efac;
 }
 
