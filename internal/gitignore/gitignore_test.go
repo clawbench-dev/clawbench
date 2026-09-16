@@ -62,6 +62,20 @@ func pinGitHome(t *testing.T, home string) {
 	t.Setenv(pinnedGitHomeEnv, "1")
 }
 
+// writeGlobalGitConfig writes a git config file at cfgPath setting
+// core.excludesFile to excludesFile.
+//
+// The path is written in git's slash form: in a config value a backslash starts
+// an escape sequence, so a raw Windows path (C:\Users\...) makes the file
+// unparseable and git exits 128. Forward slashes are accepted on Windows too
+// and git normalizes them.
+func writeGlobalGitConfig(t *testing.T, cfgPath, excludesFile string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0o755))
+	require.NoError(t, os.WriteFile(cfgPath,
+		[]byte("[core]\n\texcludesFile = "+filepath.ToSlash(excludesFile)+"\n"), 0o644))
+}
+
 // gitIgnored returns the subset of repo-relative paths that `git check-ignore`
 // reports as ignored. It queries from rootDir so relative paths resolve against
 // the repository, and passes -z to survive spaces and newlines in names.
@@ -359,8 +373,7 @@ func TestMatchesGit_GlobalExcludesFile(t *testing.T) {
 
 	excludes := filepath.Join(home, "global-ignore")
 	require.NoError(t, os.WriteFile(excludes, []byte("global-excluded.txt\nglobal-dir/\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
-		[]byte("[core]\n\texcludesFile = "+excludes+"\n"), 0o644))
+	writeGlobalGitConfig(t, filepath.Join(home, ".gitconfig"), excludes)
 
 	writeFixture(t, repo, map[string]string{
 		"global-excluded.txt": "g\n",
@@ -928,8 +941,7 @@ func TestLoadGlobalExcludePatterns_MissingFileIsIgnored(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
-		[]byte("[core]\n\texcludesFile = "+filepath.Join(home, "does-not-exist")+"\n"), 0o644))
+	writeGlobalGitConfig(t, filepath.Join(home, ".gitconfig"), filepath.Join(home, "does-not-exist"))
 
 	assert.Empty(t, loadGlobalExcludePatterns(), "a missing excludes file yields no patterns")
 }
@@ -959,8 +971,7 @@ func TestLoadGlobalExcludePatterns_MalformedConfigIsSkipped(t *testing.T) {
 
 	excludes := filepath.Join(home, "ok-ignore")
 	require.NoError(t, os.WriteFile(excludes, []byte("from-valid-config.txt\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
-		[]byte("[core]\n\texcludesFile = "+excludes+"\n"), 0o644))
+	writeGlobalGitConfig(t, filepath.Join(home, ".gitconfig"), excludes)
 
 	ps := loadGlobalExcludePatterns()
 	require.Len(t, ps, 1, "the valid config must still be read")
@@ -976,12 +987,10 @@ func TestLoadGlobalExcludePatterns_LaterConfigWins(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
 	require.NoError(t, os.MkdirAll(filepath.Join(xdg, "git"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(xdg, "git", "config"),
-		[]byte("[core]\n\texcludesFile = "+filepath.Join(home, "from-xdg")+"\n"), 0o644))
+	writeGlobalGitConfig(t, filepath.Join(xdg, "git", "config"), filepath.Join(home, "from-xdg"))
 	require.NoError(t, os.WriteFile(filepath.Join(home, "from-xdg"), []byte("xdg-only.txt\n"), 0o644))
 
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
-		[]byte("[core]\n\texcludesFile = "+filepath.Join(home, "from-home")+"\n"), 0o644))
+	writeGlobalGitConfig(t, filepath.Join(home, ".gitconfig"), filepath.Join(home, "from-home"))
 	require.NoError(t, os.WriteFile(filepath.Join(home, "from-home"), []byte("home-only.txt\n"), 0o644))
 
 	ps := loadGlobalExcludePatterns()
@@ -1013,9 +1022,7 @@ func TestLoadGlobalExcludePatterns_DefaultXDGIsRead(t *testing.T) {
 
 	excludes := filepath.Join(home, "xdg-ignore")
 	require.NoError(t, os.WriteFile(excludes, []byte("default-xdg.txt\n"), 0o644))
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".config", "git"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".config", "git", "config"),
-		[]byte("[core]\n\texcludesFile = "+excludes+"\n"), 0o644))
+	writeGlobalGitConfig(t, filepath.Join(home, ".config", "git", "config"), excludes)
 
 	ps := loadGlobalExcludePatterns()
 	require.Len(t, ps, 1, "the ~/.config fallback must be read")
