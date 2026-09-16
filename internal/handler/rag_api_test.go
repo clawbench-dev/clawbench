@@ -1495,7 +1495,9 @@ func TestServeRAGRebuildFTS_Success(t *testing.T) {
 
 	chunks := []rag.Chunk{{
 		SessionID: "sess-1", MessageID: msgID, ChunkText: "hello world",
-		ChunkTextSegmented: "hello world", ChunkIndex: 0, TokenCount: 2,
+		// Use the real segmenter output so this chunk counts as already current;
+		// hardcoding "hello world" would make the rebuild report a change.
+		ChunkTextSegmented: rag.SegmentText("hello world"), ChunkIndex: 0, TokenCount: 2,
 		Embedding: make([]float64, 1024), HasEmbedding: true,
 		ProjectPath: env.ProjectDir, Backend: "claude", Role: "user",
 	}}
@@ -1510,6 +1512,10 @@ func TestServeRAGRebuildFTS_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok", result["status"])
 	assert.Equal(t, float64(1), result["chunks_rebuilt"])
+	assert.Contains(t, result, "chunks_resegmented",
+		"response must report how many chunks were re-segmented")
+	assert.Equal(t, float64(0), result["chunks_resegmented"],
+		"chunk text already matches the current segmenter")
 
 	// Independent rebuild must not reset message indexed flags (FTS layer only)
 	var indexed int
@@ -1540,9 +1546,43 @@ func TestServeRAGRebuildFTS_ConcurrencyConflict(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
+// TestServeRAGRebuildFTS_SegmenterUnavailable asserts the guard: a rebuild with
+// no segmenter must be refused rather than allowed to overwrite correctly
+// segmented text with raw CJK (SegmentText degrades to an identity function).
+func TestServeRAGRebuildFTS_SegmenterUnavailable(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		ragResetting.Store(false)
+		rag.RestoreSegmenterForTest(nil)
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	rag.RestoreSegmenterForTest(nil)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "RAGSegmenterUnavailable", result["msgKey"])
+}
+
 // setupRAGStore creates a temporary SQLite store for handler tests.
+//
+// The gse segmenter is a package-level global in the rag package and is normally
+// installed at startup (rag.go), so handler tests must install it explicitly.
+// FTS rebuild re-segments chunk text and refuses to run without it.
 func setupRAGStore(t *testing.T) *rag.Store {
 	t.Helper()
+	if err := rag.InitSegmenter(); err != nil {
+		t.Logf("Warning: gse segmenter not available: %v", err)
+	}
 	store, err := rag.NewSQLiteStore(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })

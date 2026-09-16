@@ -3417,11 +3417,41 @@ paths:
   /api/rag/rebuild-fts:
     post:
       tags: [RAG]
-      summary: 仅重建全文索引
+      summary: 重新分词并重建全文索引
+      description: |
+        从 `chunk_text` 重新执行分词（gse），写回 `chunk_text_segmented`，再重建
+        FTS5 全文索引。不重新分块、不重新嵌入、不重置消息索引标记，向量索引与
+        chunk 行保持不变。
+
+        之所以要重新分词：FTS5 自身的 `rebuild` 命令只会按表固定的
+        `tokenize='unicode61'` 重新读取**已存储**的分词列，无法重跑 gse 分词
+        （分词发生在 Go 侧入库之前）。因此仅重建索引会产生与原来逐字节相同的索引
+        内容，在分词器变更（词典更新）或历史数据入库时分词器不可用的情况下毫无作用。
+
+        分词器不可用时返回 503（`RAGSegmenterUnavailable`）并**不做任何修改**：
+        此时 `SegmentText` 会退化为原样返回，重建会把已正确分词的中文替换为
+        无法切分的原文。
       operationId: ragRebuildFTS
       responses:
         "200":
           description: 结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  chunks_rebuilt:
+                    type: integer
+                    description: 重建后索引中的 chunk 总数。
+                  chunks_resegmented:
+                    type: integer
+                    description: 分词结果发生变化、被重写的 chunk 数（0 表示数据已是最新分词）。
+        "409":
+          description: 已有重建任务在执行（`RAGResetInProgress`）
+        "503":
+          description: RAG 不可用（`RAGNotAvailable`），或分词器未初始化（`RAGSegmenterUnavailable`）
 
   /api/rag/session-search:
     post:

@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -352,10 +353,15 @@ func ServeRAGSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeRAGRebuildFTS handles POST /api/rag/rebuild-fts — full-text index rebuild
-// that is independent of the vector layer: it regenerates rag_chunks_fts from the
-// existing chunk text without re-chunking, re-embedding, or resetting message
-// indexed flags. Vector embeddings and chunk rows are left untouched.
+// ServeRAGRebuildFTS handles POST /api/rag/rebuild-fts — re-segments every chunk
+// from its source text and rebuilds the full-text index, independent of the
+// vector layer: no re-chunking, no re-embedding, no message indexed flags reset.
+// Vector embeddings and chunk rows are left untouched.
+//
+// Re-segmentation is the point of this endpoint: FTS5's own 'rebuild' command
+// only re-reads the stored segmented column, so it cannot pick up a change to
+// the gse segmenter. Callers use this after changing segmentation behavior (or
+// to repair chunks indexed while the segmenter was unavailable).
 //
 // No project-scoping: the RAG store is shared across all projects, so the FTS
 // index is rebuilt globally (same rationale as the removed full-reset endpoint).
@@ -376,18 +382,28 @@ func ServeRAGRebuildFTS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ragResetting.Store(false)
 
-	chunksRebuilt, err := rag.GlobalStore.RebuildFTS()
+	chunksRebuilt, chunksResegmented, err := rag.GlobalStore.RebuildFTS()
 	if err != nil {
+		// Without a segmenter the rebuild would overwrite correctly segmented
+		// text with raw input, so it is refused rather than run degraded.
+		if errors.Is(err, rag.ErrSegmenterUnavailable) {
+			slog.Error("rag: fts rebuild refused, segmenter unavailable")
+			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSegmenterUnavailable")
+			return
+		}
 		slog.Error("rag: fts rebuild failed", slog.String("err", err.Error()))
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
 		return
 	}
 
-	slog.Info("rag: fts rebuild triggered", slog.Int64("chunks_rebuilt", chunksRebuilt))
+	slog.Info("rag: fts rebuild triggered",
+		slog.Int64("chunks_rebuilt", chunksRebuilt),
+		slog.Int64("chunks_resegmented", chunksResegmented))
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":         "ok",
-		"chunks_rebuilt": chunksRebuilt,
+		"status":             "ok",
+		"chunks_rebuilt":     chunksRebuilt,
+		"chunks_resegmented": chunksResegmented,
 	})
 }
 

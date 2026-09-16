@@ -564,7 +564,10 @@ async function handleRagRefresh() {
 
 /**
  * Rebuild one RAG index independently.
- * - fts: regenerates the full-text index from existing chunks (vectors untouched)
+ * - fts: re-segments every chunk from its source text and rebuilds the
+ *   full-text index (vectors untouched). Re-segmentation is what makes this
+ *   useful after a segmenter change; a bare index rebuild would reproduce the
+ *   same content.
  * - vector: re-embeds all chunks with the current model (FTS/chunks untouched)
  */
 async function handleRagRebuild(kind: 'fts' | 'vector') {
@@ -584,11 +587,30 @@ async function handleRagRebuild(kind: 'fts' | 'vector') {
   rebuildingRef.value = true
   try {
     const endpoint = isVector ? '/api/rag/reset-vector' : '/api/rag/rebuild-fts'
-    await apiPost(endpoint, {})
-    toast.show(t(successKey), { icon: '✅', type: 'success', duration: 3000 })
+    const result = await apiPost<{ chunks_resegmented?: number }>(endpoint, {})
+    // Report how much actually changed: 0 means the stored segmentation was
+    // already current, which is worth surfacing so the operation does not look
+    // like it silently did nothing.
+    const resegmented = result?.chunks_resegmented
+    if (!isVector && typeof resegmented === 'number') {
+      toast.show(
+        t('settings.items.ragFtsRebuildSuccessCount', { count: resegmented }),
+        { icon: '✅', type: 'success', duration: 3000 },
+      )
+    } else {
+      toast.show(t(successKey), { icon: '✅', type: 'success', duration: 3000 })
+    }
     refreshRagStatus()
-  } catch {
-    toast.show(t('settings.items.ragRebuildFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  } catch (err) {
+    // The server refuses the rebuild when the segmenter is unavailable and
+    // returns a localized explanation — prefer it over the generic message.
+    const serverMsg = (err as Error & { msgKey?: string })?.msgKey
+      ? (err as Error).message
+      : ''
+    toast.show(
+      serverMsg || t('settings.items.ragRebuildFailed'),
+      { icon: '⚠️', type: 'error', duration: 5000 },
+    )
   } finally {
     rebuildingRef.value = false
   }

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
@@ -208,7 +209,8 @@ const i18n = createI18n({
           ragRebuildFailed: '重建向量索引失败',
           ragFtsRebuild: '重建全文索引',
           ragFtsRebuildConfirm: '重建全文索引将基于现有文本块重新生成，不影响向量嵌入',
-          ragFtsRebuildSuccess: '全文索引已重建',
+          ragFtsRebuildSuccess: '全文索引已重新分词并重建',
+          ragFtsRebuildSuccessCount: '全文索引已重建，{count} 个文本块的分词已更新',
           ragVectorRebuild: '重建向量索引',
           ragVectorRebuildConfirm: '重建向量将清空所有向量嵌入数据',
           ragVectorRebuildSuccess: '向量索引已清空，正在重新嵌入',
@@ -1444,6 +1446,7 @@ describe('SettingsGroupPanel', () => {
       localValues['rag.vector_enabled'] = true
       vi.mocked(apiPost).mockClear()
       vi.mocked(apiPost).mockResolvedValue(undefined)
+      mockToastShow.mockClear()
     })
 
     it('renders two rebuild buttons in the footer for the RAG panel', () => {
@@ -1480,6 +1483,51 @@ describe('SettingsGroupPanel', () => {
       const wrapper = mountPanel(makeRagConfig())
       const vecBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[1]
       expect(vecBtn.attributes('disabled')).toBeDefined()
+    })
+
+    it('reports the re-segmented chunk count when the server returns it', async () => {
+      // 0 is the interesting value: it means the stored segmentation was already
+      // current, and the user should see that rather than assume nothing ran.
+      vi.mocked(apiPost).mockResolvedValue({ chunks_resegmented: 0 } as never)
+      const wrapper = mountPanel(makeRagConfig())
+      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
+      await ftsBtn.trigger('click')
+      await nextTick()
+      await flushPromises()
+
+      expect(apiPost).toHaveBeenCalledWith('/api/rag/rebuild-fts', {})
+      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
+      expect(messages.some(m => m.includes('0 个文本块'))).toBe(true)
+    })
+
+    it('reports a non-zero re-segmented count', async () => {
+      vi.mocked(apiPost).mockResolvedValue({ chunks_resegmented: 42 } as never)
+      const wrapper = mountPanel(makeRagConfig())
+      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
+      await ftsBtn.trigger('click')
+      await nextTick()
+      await flushPromises()
+
+      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
+      expect(messages.some(m => m.includes('42 个文本块'))).toBe(true)
+    })
+
+    it('surfaces the server explanation when the rebuild is refused', async () => {
+      // The segmenter-unavailable refusal carries a localized reason that is far
+      // more actionable than the generic "rebuild failed".
+      const refusal = new Error('已拒绝重建：分词器不可用') as Error & { msgKey?: string }
+      refusal.msgKey = 'RAGSegmenterUnavailable'
+      vi.mocked(apiPost).mockRejectedValue(refusal)
+
+      const wrapper = mountPanel(makeRagConfig())
+      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
+      await ftsBtn.trigger('click')
+      await nextTick()
+      await flushPromises()
+
+      const messages = mockToastShow.mock.calls.map(c => String(c[0]))
+      expect(messages.some(m => m.includes('分词器不可用'))).toBe(true)
+      expect(messages.some(m => m.includes('重建索引失败'))).toBe(false)
     })
   })
 })

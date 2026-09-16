@@ -727,9 +727,12 @@ func TestSQLiteStore_RebuildFTS_KeepsChunksAndVectors(t *testing.T) {
 	require.True(t, store.HasFTSData())
 	require.True(t, store.HasVecData())
 
-	rebuilt, err := store.RebuildFTS()
+	rebuilt, resegmented, err := store.RebuildFTS()
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), rebuilt, "should report all chunks re-indexed")
+	assert.Equal(t, int64(0), resegmented,
+		"chunks inserted through the store are already segmented with the current "+
+			"segmenter, so a rebuild must not report spurious changes")
 
 	// Chunks untouched
 	count, err = store.ChunkCount()
@@ -753,14 +756,120 @@ func TestSQLiteStore_RebuildFTS_KeepsChunksAndVectors(t *testing.T) {
 func TestSQLiteStore_RebuildFTS_EmptyStore(t *testing.T) {
 	store := setupSQLiteStore(t)
 
-	rebuilt, err := store.RebuildFTS()
+	rebuilt, resegmented, err := store.RebuildFTS()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), rebuilt)
+	assert.Equal(t, int64(0), resegmented)
 	assert.False(t, store.HasFTSData())
 }
 
-// ---------- IndexDiskUsage ----------
+// TestSQLiteStore_RebuildFTS_ResegmentsFromSourceText is the regression test for
+// the reason this method re-segments at all.
+//
+// The chunk is inserted with a DELIBERATELY WRONG segmented value (simulating a
+// chunk written while the segmenter was unavailable, or by an older segmenter).
+// Before the fix, RebuildFTS only re-ran FTS5's own 'rebuild', which re-reads the
+// stored column verbatim — so the bad text stayed indexed forever and this test
+// failed. Assertions go through SearchFTS (the real user-facing path) so they
+// cannot pass vacuously on a raw MATCH against a phantom row.
+func TestSQLiteStore_RebuildFTS_ResegmentsFromSourceText(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
 
+	const sentence = "这是一个中文分词测试"
+
+	// Insert with the source text but un-segmented (whole sentence as one token),
+	// exactly what SegmentText returns when the segmenter is missing.
+	require.NoError(t, store.InsertChunks([]Chunk{{
+		SessionID:          testSession1,
+		MessageID:          1,
+		ChunkText:          sentence,
+		ChunkTextSegmented: sentence, // NOT segmented
+		ChunkIndex:         0,
+		TokenCount:         3,
+		ProjectPath:        testProjectPath,
+		Backend:            testBackendClaude,
+		Role:               testRoleAssistant,
+		CreatedAt:          time.Now().Truncate(time.Millisecond),
+	}}))
+
+	search := func(q string) int {
+		hits, err := store.SearchFTS(q, 5, "", "", "", "", "", "", "")
+		require.NoError(t, err, "SearchFTS(%q)", q)
+		return len(hits)
+	}
+
+	// Precondition: a partial Chinese query cannot match un-segmented text.
+	require.Zero(t, search("中文"),
+		"precondition: un-segmented CJK is indexed as one token, so partial queries miss")
+
+	rebuilt, resegmented, err := store.RebuildFTS()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rebuilt)
+	assert.Equal(t, int64(1), resegmented, "the mis-segmented chunk must be rewritten")
+
+	// The stored column must now hold a freshly segmented value.
+	var stored string
+	require.NoError(t, store.db.QueryRow(
+		"SELECT chunk_text_segmented FROM rag_chunks WHERE message_id = 1").Scan(&stored))
+	assert.Equal(t, SegmentText(sentence), stored,
+		"rebuild must recompute chunk_text_segmented from chunk_text")
+	assert.Contains(t, stored, " ",
+		"re-segmented CJK must contain token separators")
+
+	// The user-visible payoff: partial Chinese queries now match.
+	assert.NotZero(t, search("中文"), "partial Chinese query must match after re-segmentation")
+	assert.NotZero(t, search("分词"), "partial Chinese query must match after re-segmentation")
+
+	// Source text is never modified.
+	var text string
+	require.NoError(t, store.db.QueryRow(
+		"SELECT chunk_text FROM rag_chunks WHERE message_id = 1").Scan(&text))
+	assert.Equal(t, sentence, text, "chunk_text is the source of truth and must be untouched")
+}
+
+// TestSQLiteStore_RebuildFTS_RefusesWithoutSegmenter asserts the safety guard:
+// with no segmenter, SegmentText returns its input, so re-segmenting would
+// overwrite correctly segmented data with raw text. The rebuild must refuse and
+// leave the store byte-identical instead.
+func TestSQLiteStore_RebuildFTS_RefusesWithoutSegmenter(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+
+	const sentence = "这是一个中文分词测试"
+	require.NoError(t, store.InsertChunks([]Chunk{{
+		SessionID:          testSession1,
+		MessageID:          1,
+		ChunkText:          sentence,
+		ChunkTextSegmented: SegmentText(sentence),
+		ChunkIndex:         0,
+		TokenCount:         3,
+		ProjectPath:        testProjectPath,
+		Backend:            testBackendClaude,
+		Role:               testRoleAssistant,
+		CreatedAt:          time.Now().Truncate(time.Millisecond),
+	}}))
+
+	var before string
+	require.NoError(t, store.db.QueryRow(
+		"SELECT chunk_text_segmented FROM rag_chunks WHERE message_id = 1").Scan(&before))
+
+	prev := SetSegmenterForTest(nil)
+	t.Cleanup(func() { RestoreSegmenterForTest(prev) })
+
+	_, _, err := store.RebuildFTS()
+	require.ErrorIs(t, err, ErrSegmenterUnavailable)
+
+	// Nothing may have been rewritten.
+	var after string
+	require.NoError(t, store.db.QueryRow(
+		"SELECT chunk_text_segmented FROM rag_chunks WHERE message_id = 1").Scan(&after))
+	assert.Equal(t, before, after, "a refused rebuild must not modify stored segmentation")
+
+	hits, err := store.SearchFTS("中文", 5, "", "", "", "", "", "", "")
+	require.NoError(t, err)
+	assert.NotEmpty(t, hits, "the previously good index must remain searchable")
+}
+
+// ---------- IndexDiskUsage ----------
 func TestStore_IndexDiskUsage(t *testing.T) {
 	store := setupSQLiteStoreWithDim(t)
 
