@@ -4,7 +4,7 @@
  *
  * Used by three independent refresh triggers:
  * 1. Manual refresh (refresh button in FileHeader / FileManager)
- * 2. fsnotify auto-refresh (useFileWatch SSE file_change event)
+ * 2. fsnotify auto-refresh (useFileWatch WebSocket file_change event)
  * 3. Chat-driven refresh (ChatPanel onFileModified callback)
  *
  * Two highlight mechanisms within a unified flow:

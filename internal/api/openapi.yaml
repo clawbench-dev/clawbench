@@ -2219,16 +2219,21 @@ paths:
         "200":
           description: base64 结果与跳过原因
 
-  /api/file/watch:
+  /api/file/watch/ws:
     get:
       tags: [Files]
-      summary: 文件变更监听（SSE）
-      description: fsnotify 驱动的 Server-Sent Events 流，用于自动刷新。OpenAPI 不建模事件流。
-      operationId: fileWatch
+      summary: 文件变更监听（WebSocket）
+      description: |
+        fsnotify 驱动的 WebSocket 流，用于自动刷新。OpenAPI 不建模事件流。
+        查询参数 `dir`/`file` 设置初始监听目标，在协议升级前校验（路径穿越返回 403）。
+        升级后客户端可发送 `{"type":"watch","dir":"...","file":"..."}` 重新指定目标，
+        并以 `{"type":"pong"}` 回应服务端的 `{"type":"ping"}`。
+        服务端推送 `connected` / `dir_change` / `file_change` / `ping` / `error` 帧。
+      operationId: fileWatchWS
       parameters:
         - name: dir
           in: query
-          description: 监听目录。
+          description: 监听目录（空表示项目根）。
           schema:
             type: string
         - name: file
@@ -2237,21 +2242,8 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: SSE 流
-          content:
-            text/event-stream:
-              schema:
-                type: string
-
-  /api/file/watch/update:
-    put:
-      tags: [Files]
-      summary: 更新监听目标
-      operationId: fileWatchUpdate
-      responses:
-        "200":
-          description: 结果
+        "101":
+          description: 协议升级为 WebSocket
 
   # ── Share ─────────────────────────────────────────────────────────────────
   /api/share:

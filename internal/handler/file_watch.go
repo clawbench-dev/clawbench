@@ -1,26 +1,73 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/service"
+
+	"github.com/coder/websocket"
 )
 
-const watchHeartbeatSec = 30
+const (
+	// watchWriteTimeout bounds a single WebSocket write (matches ttsWSWriteTimeout).
+	watchWriteTimeout = 5 * time.Second
 
-// fileWatchUpdateRequest is the body for PUT /api/file/watch/update
-type fileWatchUpdateRequest struct {
-	ClientID string `json:"clientId"`
-	DirPath  string `json:"dir"`
-	FilePath string `json:"file"`
+	// watchReadIdleTimeout closes a connection that sends nothing for this long.
+	// The client answers the server ping every watchPingInterval, so in practice
+	// this only fires for a half-open socket the client has not noticed yet.
+	watchReadIdleTimeout = 10 * time.Minute
+
+	// maxWatchClients caps concurrent file-watch connections. The service layer
+	// has no cap of its own, and each connection holds up to two inotify
+	// watches, so the ceiling is enforced here (mirrors ws.maxSubscriptions).
+	maxWatchClients = 20
+
+	// watchMsgWatch re-targets the connection's watched dir/file.
+	watchMsgWatch = "watch"
+	// watchMsgPong answers a server ping (liveness only).
+	watchMsgPong = "pong"
+	// watchMsgConnected is sent once after upgrade with the connection's ID.
+	watchMsgConnected = "connected"
+	// watchMsgPing is the server liveness probe.
+	watchMsgPing = "ping"
+	// watchMsgError reports a rejected control message without closing the socket.
+	watchMsgError = "error"
+)
+
+// watchPingInterval is how often the server probes liveness. A var rather than
+// a const so tests can shrink it. 30s matches the chat handler's cadence.
+var watchPingInterval = 30 * time.Second
+
+// watchClientCount tracks live connections for the maxWatchClients ceiling.
+var watchClientCount atomic.Int64
+
+// fileWatchMessage is a client → server control message.
+type fileWatchMessage struct {
+	Type string `json:"type"`
+	Dir  string `json:"dir"`
+	File string `json:"file"`
 }
 
-// newWatchClientID generates a random client ID for file watch SSE connections.
+// fileWatchServerMsg is a server → client control message. Event frames are
+// marshaled straight from service.WatchEvent instead (it already carries
+// {"type","path"}), so the frontend sees the same shape it did over SSE.
+type fileWatchServerMsg struct {
+	Type     string `json:"type"`
+	ClientID string `json:"clientId,omitempty"`
+	Code     string `json:"code,omitempty"`
+	Message  string `json:"message,omitempty"`
+}
+
+// newWatchClientID generates a random client ID for file watch connections.
 func newWatchClientID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -30,9 +77,51 @@ func newWatchClientID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// FileWatchSSE handles GET /api/file/watch — SSE stream for file change notifications.
-// Query params: dir (required, relative path), file (optional, relative path).
-func FileWatchSSE(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // SSE with filesystem watcher lifecycle
+// resolveWatchPaths resolves and validates the watch targets against the
+// project root. It is a pure twin of validateAndResolvePath: that helper writes
+// an HTTP error, which is illegal once the connection has been upgraded, so the
+// post-upgrade path needs a variant that only reports failure.
+//
+// An empty dirRel means the project root itself.
+func resolveWatchPaths(projectPath, dirRel, fileRel string) (dirAbs, fileAbs string, ok bool) {
+	if dirRel == "" {
+		dirAbs = projectPath
+	} else {
+		abs, valid := model.ValidatePath(projectPath, dirRel)
+		if !valid {
+			return "", "", false
+		}
+		dirAbs = abs
+	}
+	if fileRel != "" {
+		abs, valid := model.ValidatePath(projectPath, fileRel)
+		if !valid {
+			return "", "", false
+		}
+		fileAbs = abs
+	}
+	return dirAbs, fileAbs, true
+}
+
+// FileWatchWS handles GET /api/file/watch/ws — WebSocket stream of file system
+// change notifications. Auth is handled by middleware.Auth before this function
+// is called.
+//
+// This replaced an SSE endpoint: a resident EventSource permanently consumes one
+// of the browser's 6 HTTP/1.1 connections per origin, starving parallel REST
+// requests on plain-HTTP deployments. A WebSocket is removed from that pool once
+// upgraded to 101, so it does not compete.
+//
+// Protocol:
+//   - Query params dir/file set the initial watch target. They are resolved and
+//     validated BEFORE the upgrade so path-traversal still yields HTTP 403.
+//   - Client sends: {"type":"watch","dir":"<rel>","file":"<rel>"} to re-target,
+//     and {"type":"pong"} in reply to a server ping.
+//   - Server sends: {"type":"connected","clientId":"..."} once, then
+//     {"type":"dir_change"|"file_change","path":"..."} events,
+//     {"type":"ping"} every watchPingInterval, and {"type":"error",...} for a
+//     rejected control message (which never closes the socket).
+func FileWatchWS(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -48,144 +137,168 @@ func FileWatchSSE(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // 
 		return
 	}
 
-	dirRel := r.URL.Query().Get("dir")
-	fileRel := r.URL.Query().Get("file")
-
-	// Resolve and validate paths
-	// Empty dirRel means the project root — watch the project path itself
-	var dirAbs, fileAbs string
-	if dirRel == "" {
-		dirAbs = projectPath
-	} else {
-		abs, ok := validateAndResolvePath(w, r, projectPath, dirRel)
-		if !ok {
-			return
-		}
-		dirAbs = abs
-	}
-	if fileRel != "" {
-		abs, ok := validateAndResolvePath(w, r, projectPath, fileRel)
-		if !ok {
-			return
-		}
-		fileAbs = abs
+	// Validate the initial watch target before upgrading so traversal keeps
+	// returning HTTP 403 rather than becoming a socket-level error frame.
+	dirAbs, fileAbs, ok := resolveWatchPaths(projectPath, r.URL.Query().Get("dir"), r.URL.Query().Get("file"))
+	if !ok {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
 	}
 
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	if watchClientCount.Load() >= maxWatchClients {
+		slog.Warn("file watch ws: connection limit reached", slog.Int64("limit", maxWatchClients))
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "FileWatcherNotAvailable")
+		return
+	}
 
-	flusher, canFlush := w.(http.Flusher)
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		OriginPatterns: []string{
+			"http://" + r.Host,
+			"https://" + r.Host,
+			"http://localhost:*",
+			"https://localhost:*",
+			"http://127.0.0.1:*",
+			"https://127.0.0.1:*",
+		},
+	})
+	if err != nil {
+		slog.Error("file watch ws: accept failed", slog.String("error", err.Error()))
+		return
+	}
+	defer func() { _ = conn.CloseNow() }()
 
-	// Register client
+	watchClientCount.Add(1)
+	defer watchClientCount.Add(-1)
+
 	clientID := newWatchClientID()
 	pushCh := fw.RegisterClient(clientID)
 	defer fw.UnregisterClient(clientID)
-
-	// Set initial watch paths
 	fw.UpdateWatch(clientID, dirAbs, fileAbs)
 
-	// Send connected event with clientID
-	data, _ := json.Marshal(map[string]string{"clientId": clientID})
-	_, _ = fmt.Fprintf(w, "event: connected\ndata: %s\n\n", data)
-	if canFlush {
-		flusher.Flush()
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// Two goroutines write (the read loop sends error frames, the main loop
+	// sends events and pings), so writes are serialized. coder/websocket permits
+	// one concurrent reader plus one concurrent writer.
+	var writeMu sync.Mutex
+
+	if err := writeWatchWSJSON(conn, &writeMu, fileWatchServerMsg{Type: watchMsgConnected, ClientID: clientID}); err != nil {
+		slog.Warn("file watch ws: failed to send connected frame", slog.String("clientId", clientID), slog.String("error", err.Error()))
+		return
 	}
 
-	// Heartbeat ticker
-	heartbeat := time.NewTicker(watchHeartbeatSec * time.Second)
-	defer heartbeat.Stop()
+	go readWatchWSMessages(ctx, conn, &writeMu, fw, clientID, projectPath, cancel)
+
+	ping := time.NewTicker(watchPingInterval)
+	defer ping.Stop()
 
 	slog.Debug(
-		"file watch SSE connected",
+		"file watch ws connected",
 		slog.String("clientId", clientID),
-		slog.String("dir", dirRel),
-		slog.String("file", fileRel),
+		slog.String("dir", dirAbs),
+		slog.String("file", fileAbs),
 	)
 
 	for {
 		select {
 		case event, ok := <-pushCh:
 			if !ok {
-				// Channel closed — watcher shutting down
+				// Channel closed — watcher shutting down.
 				return
 			}
-			data, _ := json.Marshal(event)
-			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, data)
-			if canFlush {
-				flusher.Flush()
+			if err := writeWatchWSJSON(conn, &writeMu, event); err != nil {
+				// A failed event write means the peer is gone; stop rather than
+				// waiting for the next ping to notice.
+				slog.Debug("file watch ws: event write failed", slog.String("clientId", clientID), slog.String("error", err.Error()))
+				return
 			}
 
-		case <-heartbeat.C:
-			_, _ = fmt.Fprintf(w, "event: heartbeat\ndata: {}\n\n")
-			if canFlush {
-				flusher.Flush()
+		case <-ping.C:
+			if err := writeWatchWSJSON(conn, &writeMu, fileWatchServerMsg{Type: watchMsgPing}); err != nil {
+				// The connection is dead. Close it so the client's onclose fires
+				// and it reconnects; returning silently would leave a connection
+				// that looks alive but never pings again.
+				slog.Warn("file watch ws: ping write failed, closing connection", slog.String("clientId", clientID))
+				_ = conn.CloseNow()
+				return
 			}
 
-		case <-r.Context().Done():
-			slog.Debug(
-				"file watch SSE disconnected",
-				slog.String("clientId", clientID),
-			)
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-// FileWatchUpdate handles PUT /api/file/watch/update — update watched paths.
-func FileWatchUpdate(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPut) {
-		return
-	}
-
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-
-	slog.Debug(
-		"file watch update received",
-		slog.String("projectPath", projectPath),
-	)
-
-	fw := service.GlobalFileWatcher
-	if fw == nil {
-		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "FileWatcherNotAvailable")
-		return
-	}
-
-	var req fileWatchUpdateRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-
-	if req.ClientID == "" {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ClientIdRequired")
-		return
-	}
-
-	// Resolve and validate paths
-	// Empty dirPath means the project root — watch the project path itself
-	var dirAbs, fileAbs string
-	if req.DirPath == "" {
-		dirAbs = projectPath
-	} else {
-		abs, ok := validateAndResolvePath(w, r, projectPath, req.DirPath)
-		if !ok {
+// readWatchWSMessages reads client control messages until the connection dies
+// or ctx is cancelled. It runs until error rather than returning a value.
+//
+// It calls cancel on exit so the main loop's select unblocks and the handler
+// returns — otherwise a client that vanishes without a final frame would leave
+// the handler (and its deferred UnregisterClient) parked on the push channel
+// until the next fsnotify event.
+func readWatchWSMessages(
+	ctx context.Context,
+	conn *websocket.Conn,
+	writeMu *sync.Mutex,
+	fw *service.FileWatcher,
+	clientID, projectPath string,
+	cancel context.CancelFunc,
+) {
+	defer cancel()
+	for {
+		// Derive from ctx so the deferred cancel() unblocks a pending read when
+		// the handler returns. The timeout guards a half-open socket.
+		readCtx, readCancel := context.WithTimeout(ctx, watchReadIdleTimeout)
+		_, data, err := conn.Read(readCtx)
+		readCancel()
+		if err != nil {
+			slog.Debug("file watch ws: client disconnected", slog.String("clientId", clientID), slog.String("error", err.Error()))
 			return
 		}
-		dirAbs = abs
-	}
-	if req.FilePath != "" {
-		abs, ok := validateAndResolvePath(w, r, projectPath, req.FilePath)
-		if !ok {
-			return
+
+		var msg fileWatchMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			// Malformed frames are ignored, not fatal — a bad message must not
+			// tear down a healthy channel.
+			slog.Warn("file watch ws: invalid client message", slog.String("clientId", clientID), slog.String("error", err.Error()))
+			continue
 		}
-		fileAbs = abs
+
+		switch msg.Type {
+		case watchMsgPong:
+			// Liveness only.
+		case watchMsgWatch:
+			dirAbs, fileAbs, ok := resolveWatchPaths(projectPath, msg.Dir, msg.File)
+			if !ok {
+				if err := writeWatchWSJSON(conn, writeMu, fileWatchServerMsg{
+					Type:    watchMsgError,
+					Code:    "AccessDenied",
+					Message: "watch path escapes the project root",
+				}); err != nil {
+					slog.Debug("file watch ws: error-frame write failed", slog.String("clientId", clientID), slog.String("error", err.Error()))
+					return
+				}
+				continue
+			}
+			fw.UpdateWatch(clientID, dirAbs, fileAbs)
+		default:
+			slog.Warn("file watch ws: unknown client message type", slog.String("clientId", clientID), slog.String("type", msg.Type))
+		}
 	}
+}
 
-	fw.UpdateWatch(req.ClientID, dirAbs, fileAbs)
-
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+// writeWatchWSJSON marshals v and writes it as one text frame. Callers decide
+// what a write failure means for them: the ping and event paths treat it as a
+// dead peer, the error path just gives up on the frame.
+func writeWatchWSJSON(conn *websocket.Conn, mu *sync.Mutex, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), watchWriteTimeout)
+	defer writeCancel()
+	return conn.Write(writeCtx, websocket.MessageText, data)
 }

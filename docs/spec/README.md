@@ -88,6 +88,6 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | 后端 | Go 1.25+、SQLite（WAL + vec0 向量索引）、robfig/cron、gotreesitter（符号提取）、gopsutil（系统资源）、fatedier/frp（进程内 FRP 客户端）、go-i18n/v2（国际化） |
 | 前端 | Vue 3 + TypeScript、Vite、CodeMirror（代码浏览+编辑）、xterm.js、marked + hljs（选择性语言注册）、KaTeX（字符串级渲染）、vue-draggable-plus |
 | AI 集成 | Shell-out 到 CLI 工具、ACP JSON-RPC over stdio、stream-json 解析 |
-| 实时通信 | WebSocket `/api/ai/events/ws`（统一推送：聊天 + 系统事件 + 摘要 + 推荐待审 + 权限待审 + replay_done + cluster_progress，`StreamHub` 会话级扇出）、旁注小通道（`/api/file/watch`、`/api/dir/search` SSE；`/api/tts/audio/ws`、`/api/stt/transcribe/ws` WS）、SSH（端口映射） |
+| 实时通信 | WebSocket `/api/ai/events/ws`（统一推送：聊天 + 系统事件 + 摘要 + 推荐待审 + 权限待审 + replay_done + cluster_progress，`StreamHub` 会话级扇出）、旁注小通道（`/api/file/watch/ws`、`/api/tts/audio/ws`、`/api/stt/transcribe/ws` WS；`/api/dir/search` SSE）、SSH（端口映射） |
 | 安全 | SHA-256 密码存储、AES-256-GCM API 密钥加密（`agent_api_keys` 已移除）、HKDF-SHA256 密钥派生 |
 | 移动端 | Android WebView、原生后台服务 |

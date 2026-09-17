@@ -23,8 +23,8 @@
 
 | 类型 | 端点 |
 |------|------|
-| WebSocket | `/api/ai/events/ws`、`/api/tts/audio/ws`、`/api/stt/transcribe/ws`、`/api/terminal/ws` |
-| SSE | `/api/file/watch`、`/api/dir/search`、`/api/tts/stream/{jobId}` |
+| WebSocket | `/api/ai/events/ws`、`/api/tts/audio/ws`、`/api/stt/transcribe/ws`、`/api/terminal/ws`、`/api/file/watch/ws` |
+| SSE | `/api/dir/search`、`/api/tts/stream/{jobId}` |
 
 聊天流式内容统一经 `/api/ai/events/ws` 推送，不在本文件建模。
 
