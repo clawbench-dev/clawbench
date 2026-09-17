@@ -30,3 +30,24 @@ export function resolvePlatformPackage(platform, arch) {
 export function resolveBinName(platform) {
   return platform === "win32" ? "clawbench.exe" : "clawbench";
 }
+
+// Returns the spawn options used to launch the server binary.
+//
+// `detached: true` puts the server in its own session/process group. Without
+// it the server inherits the launcher's group, so a terminal hangup (SSH
+// disconnect, closing the shell) delivers SIGHUP to the whole group and the
+// server dies. `nohup` cannot prevent this: it only sets SIG_IGN on the
+// launcher, and Node resets that disposition to SIG_DFL for itself, so the
+// signal reaches the binary regardless. The directly-installed binary has no
+// launcher layer and survives a hangup, which is why only the npm install
+// showed the problem.
+//
+// Signals are still forwarded explicitly by the launcher, so Ctrl+C and
+// `kill <launcher-pid>` keep stopping the server.
+export function resolveSpawnOptions(env) {
+  return {
+    stdio: "inherit",
+    env,
+    detached: true,
+  };
+}

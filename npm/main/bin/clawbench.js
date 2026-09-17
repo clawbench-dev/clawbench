@@ -4,7 +4,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import os from "os";
-import { resolvePlatformPackage, resolveBinName } from "./platform.js";
+import { resolvePlatformPackage, resolveBinName, resolveSpawnOptions } from "./platform.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -35,10 +35,10 @@ if (process.env.CLAWBENCH_BINARY_PATH) {
   }
 }
 
-const child = spawn(binPath, process.argv.slice(2), {
-  stdio: "inherit",
-  env: { ...process.env },
-});
+// detached: true makes the server a session leader in its own process group,
+// so a terminal hangup cannot reach it. See resolveSpawnOptions for the full
+// rationale. Signals are forwarded explicitly below, so Ctrl+C still stops it.
+const child = spawn(binPath, process.argv.slice(2), resolveSpawnOptions({ ...process.env }));
 
 // 转发信号到子进程
 process.on("SIGINT", () => child.kill("SIGINT"));

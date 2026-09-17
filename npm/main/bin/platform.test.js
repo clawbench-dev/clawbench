@@ -3,6 +3,7 @@ import {
   PLATFORM_MAP,
   resolvePlatformPackage,
   resolveBinName,
+  resolveSpawnOptions,
 } from './platform.js'
 
 describe('resolvePlatformPackage', () => {
@@ -51,5 +52,32 @@ describe('resolveBinName', () => {
 describe('PLATFORM_MAP', () => {
   it('contains an android-arm64 entry so Termux selects the PIE binary', () => {
     expect(PLATFORM_MAP['android-arm64']).toBe('@xulongzhe/clawbench-android-arm64')
+  })
+})
+
+describe('resolveSpawnOptions', () => {
+  // Regression guard: without detached the server joins the launcher's process
+  // group and dies on terminal hangup (SSH disconnect), because `nohup` only
+  // shields the launcher — Node resets SIG_IGN to SIG_DFL for itself, so the
+  // SIGHUP still reaches the Go binary. The directly-installed binary has no
+  // launcher layer, which is why only the npm install was affected.
+  it('detaches the server so a terminal hangup cannot kill it', () => {
+    expect(resolveSpawnOptions({}).detached).toBe(true)
+  })
+
+  it('passes the environment through to the server', () => {
+    const env = { PATH: '/usr/bin', CLAWBENCH_CHILD: '1' }
+    expect(resolveSpawnOptions(env).env).toEqual(env)
+  })
+
+  it('keeps stdio inherited so the server logs stay visible', () => {
+    expect(resolveSpawnOptions({}).stdio).toBe('inherit')
+  })
+
+  it('returns a fresh object so callers cannot mutate shared state', () => {
+    const first = resolveSpawnOptions({ A: '1' })
+    const second = resolveSpawnOptions({ A: '2' })
+    expect(first).not.toBe(second)
+    expect(first.env).not.toBe(second.env)
   })
 })
