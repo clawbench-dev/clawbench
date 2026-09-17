@@ -41,13 +41,15 @@ func TestRenderEventContext_OmitsInapplicableVariables(t *testing.T) {
 
 func TestRenderEventContext_PipelineEvent(t *testing.T) {
 	ec := EventContext{
-		EventType:      string(forge.EventPipeline),
-		Repo:           "acme/widgets",
-		ItemType:       string(forge.ItemTypePipeline),
-		ItemNumber:     0,
-		Title:          "CI",
-		PipelineStatus: "success",
-		PipelineURL:    "https://ci.example/run/7",
+		EventType:  string(forge.EventPipeline),
+		Repo:       "acme/widgets",
+		ItemType:   string(forge.ItemTypePipeline),
+		ItemNumber: 0,
+		Title:      "CI",
+		Pipeline: &forge.PipelineRun{
+			Status: forge.PipelineSuccess,
+			URL:    "https://ci.example/run/7",
+		},
 	}
 	out := RenderEventContext(ec)
 

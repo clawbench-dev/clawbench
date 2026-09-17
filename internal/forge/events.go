@@ -68,13 +68,23 @@ type Change struct {
 	// It is empty when the provider gives no actor (e.g. closed/merged, where
 	// ListItems does not report who performed the transition).
 	Actor string
-	// PipelineStatus / PipelineURL describe a finished CI run (pipeline_done).
-	PipelineStatus string
-	PipelineURL    string
+	// Pipeline describes the finished CI run (pipeline_done). It carries the
+	// run's own detail — ref, commit, duration, linked change requests — which
+	// a consumer rendering the event needs and which a synthetic Item cannot
+	// express. Nil for every non-pipeline event.
+	//
+	// It is a pointer to the whole run rather than a handful of scalars so a
+	// future field needs no change here: the payload is already fetched by the
+	// poller, so copying more of it into the prompt is free.
+	Pipeline *PipelineRun
 	// PipelineRunID is the platform's run identity for a pipeline event. It is
 	// the revision discriminator in DedupeKey: without it two successful runs on
 	// the same repository would collide on "state:success" and the second would
 	// be dropped as a duplicate.
+	//
+	// It is kept SEPARATE from Pipeline because identity must survive where the
+	// detail does not: a Change reconstructed from a persisted row (or built by
+	// a test) has no Pipeline, but its dedupe and item keys still need the id.
 	PipelineRunID int64
 }
 

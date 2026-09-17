@@ -105,6 +105,20 @@ export function parseEventKey(key: string): { kind: string; transition: string }
     return { kind: key.slice(0, dot), transition: key.slice(dot + 1) }
 }
 
+/**
+ * Reduce a stored subscription key to its bare transition, dropping any kind
+ * prefix ("pr.commented" → "commented"). A bare key passes through unchanged.
+ *
+ * The event-context variable registry scopes its variables by BARE transition
+ * (the backend's eventScoped names one), while a subscription is stored
+ * kind-scoped. Comparing the two without this normalization silently matches
+ * nothing, which is how the comment and pipeline variables went missing from
+ * the form for every kind-scoped subscription.
+ */
+export function transitionOfEventKey(key: string): string {
+    return parseEventKey(key).transition
+}
+
 /** Localized label for one transition ("新建" / "Opened"). */
 export function eventTransitionLabel(transition: string): string {
     const key = TRANSITION_LABEL_KEYS[transition]

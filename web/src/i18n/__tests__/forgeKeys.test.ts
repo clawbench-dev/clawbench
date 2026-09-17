@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
+import { EVENT_CONTEXT_VARS } from '@/utils/forgeEventContextVars'
 
 /**
  * Guards for the forge (GitHub/GitLab) locale entries.
@@ -114,5 +115,27 @@ describe('forge locale values', () => {
     }
     walk(en.forge, 'en.forge')
     walk(zh.forge, 'zh.forge')
+  })
+
+  // The event-context variable registry names its labels by i18n key, so a
+  // missing entry would render the raw key path ("task.form.varBody") in the
+  // form's preview block rather than a label — and nothing else would fail.
+  it('defines a label for every event-context variable in both locales', () => {
+    for (const v of EVENT_CONTEXT_VARS) {
+      // "task.form.varBody" → the varBody entry under task.form
+      const leaf = v.labelKey.split('.').pop() as string
+      for (const [name, loc] of [['en', en], ['zh', zh]] as const) {
+        const value = (loc.task.form as unknown as Record<string, unknown>)[leaf]
+        expect(value, `${name} is missing ${v.labelKey}`).toBeTruthy()
+        expect(value, `${name}.${leaf} must not echo its key`).not.toBe(v.labelKey)
+      }
+    }
+  })
+
+  it('keeps the event-context placeholder tokens unique', () => {
+    // Two variables sharing a token would make one of them unaddressable by the
+    // preview's override map and the backend's template.
+    const tokens = EVENT_CONTEXT_VARS.map(v => v.placeholder)
+    expect(new Set(tokens).size).toBe(tokens.length)
   })
 })

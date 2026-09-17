@@ -245,12 +245,14 @@ func pipelineEvent(remote forge.Remote, run forge.PipelineRun) (forge.Item, forg
 		UpdatedAt: run.UpdatedAt,
 	}
 	change := forge.Change{
-		Type:           forge.EventPipeline,
-		NewState:       string(run.Status),
-		Actor:          run.Actor,
-		PipelineStatus: string(run.Status),
-		PipelineURL:    run.URL,
-		PipelineRunID:  run.ID,
+		Type: forge.EventPipeline,
+		// The run's own detail travels on the change: the synthetic item above
+		// only carries a name/state/URL, and a prompt that has to act on a
+		// failed run needs the ref and commit it ran against.
+		Pipeline:      &run,
+		NewState:      string(run.Status),
+		Actor:         run.Actor,
+		PipelineRunID: run.ID,
 	}
 	return item, change
 }
