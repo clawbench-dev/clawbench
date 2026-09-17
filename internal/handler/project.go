@@ -18,16 +18,23 @@ import (
 )
 
 // ServeRecentProjects handles GET (list) and POST (add) for recent projects.
+//
+// GET returns the projects grouped by git repository: paths sharing one git
+// common dir (main worktree, linked worktrees, subdirectories opened as their
+// own project) arrive in one group, so the client can show which entries belong
+// to the same project. A path outside any repository forms a single-item group.
+// Ordering — groups by their most recent member, items by access time — is
+// resolved here; the client only renders.
 func ServeRecentProjects(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		paths, err := service.GetRecentProjects()
+		groups, err := service.GetRecentProjectGroups()
 		if err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to load recent projects")))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(paths)
+		_ = json.NewEncoder(w).Encode(groups)
 
 	case http.MethodPost:
 		var req struct {

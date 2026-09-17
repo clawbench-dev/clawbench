@@ -310,8 +310,8 @@ describe('AppHeader', () => {
     const wrapper = mountAndTrack()
     wrapper.vm.dropdownOpen = true
     wrapper.vm.recentItems = [
-      { name: 'proj-a', path: '/home/user/proj-a', displayPath: 'proj-a' },
-      { name: 'proj-b', path: '/home/user/proj-b', displayPath: 'proj-b' },
+      { name: 'proj-a', path: '/home/user/proj-a', displayPath: 'proj-a', kind: 'plain', groupKey: '', groupName: '' },
+      { name: 'proj-b', path: '/home/user/proj-b', displayPath: 'proj-b', kind: 'plain', groupKey: '', groupName: '' },
     ]
     try { await wrapper.vm.$nextTick() } catch {}
 
@@ -334,7 +334,10 @@ describe('AppHeader', () => {
 
   it('loadRecentProjects shows relative path when homeDir matches (Unix)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
-      json: () => Promise.resolve(['/home/user/proj-a', '/home/user/proj-b']),
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-a', kind: 'plain' }] },
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-b', kind: 'plain' }] },
+      ]),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -352,7 +355,10 @@ describe('AppHeader', () => {
 
   it('loadRecentProjects shows relative path when homeDir matches (Windows backslashes)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
-      json: () => Promise.resolve(['C:\\Users\\x\\proj', 'C:\\Users\\x\\other']),
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: 'C:\\Users\\x\\proj', kind: 'plain' }] },
+        { repoRoot: '', groupName: '', items: [{ path: 'C:\\Users\\x\\other', kind: 'plain' }] },
+      ]),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -369,7 +375,9 @@ describe('AppHeader', () => {
 
   it('loadRecentProjects shows full path when homeDir does not match', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
-      json: () => Promise.resolve(['/other/path/proj']),
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/other/path/proj', kind: 'plain' }] },
+      ]),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -385,7 +393,9 @@ describe('AppHeader', () => {
 
   it('loadRecentProjects shows full path when homeDir is empty', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
-      json: () => Promise.resolve(['/home/user/proj']),
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj', kind: 'plain' }] },
+      ]),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -401,7 +411,9 @@ describe('AppHeader', () => {
 
   it('loadRecentProjects shows full path when homeDir is not provided', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
-      json: () => Promise.resolve(['/home/user/proj']),
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj', kind: 'plain' }] },
+      ]),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -411,6 +423,127 @@ describe('AppHeader', () => {
 
     const items = wrapper.vm.recentItems
     expect(items[0].displayPath).toBe('/home/user/proj')
+
+    vi.unstubAllGlobals()
+  })
+
+  // ── loadRecentProjects: git repository grouping ──
+
+  it('loadRecentProjects carries the repository grouping key onto each item', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        {
+          repoRoot: '/home/user/clawbench',
+          groupName: 'clawbench',
+          items: [
+            { path: '/home/user/clawbench', kind: 'main' },
+            { path: '/home/user/clawbench/android', kind: 'subdir' },
+          ],
+        },
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/other', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    await (wrapper.vm as any).loadRecentProjects()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const items = wrapper.vm.recentItems
+    expect(items).toHaveLength(3)
+    // Items of one repository share a key so the renderer can nest them.
+    expect(items[0].groupKey).toBe('/home/user/clawbench')
+    expect(items[1].groupKey).toBe('/home/user/clawbench')
+    expect(items[0].groupName).toBe('clawbench')
+    expect(items[0].kind).toBe('main')
+    expect(items[1].kind).toBe('subdir')
+    // A path outside any repository must not join a group.
+    expect(items[2].groupKey).toBe('')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('loadRecentProjects renders a header only for groups of two or more', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        {
+          repoRoot: '/home/user/clawbench',
+          groupName: 'clawbench',
+          items: [
+            { path: '/home/user/clawbench', kind: 'main' },
+            { path: '/home/user/clawbench/android', kind: 'subdir' },
+          ],
+        },
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/solo', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    await (wrapper.vm as any).loadRecentProjects()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const blocks = (wrapper.vm as any).recentBlocks
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].showHeader).toBe(true)
+    expect(blocks[0].groupName).toBe('clawbench')
+    expect(blocks[0].count).toBe(2)
+    expect(blocks[1].showHeader).toBe(false)
+    expect(blocks[1].count).toBe(1)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('loadRecentProjects flattens a repository group of one member', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        {
+          repoRoot: '/home/user/solo-repo',
+          groupName: 'solo-repo',
+          items: [{ path: '/home/user/solo-repo', kind: 'main' }],
+        },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    await (wrapper.vm as any).loadRecentProjects()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const blocks = (wrapper.vm as any).recentBlocks
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].showHeader).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('group header disappears when a group shrinks to one member', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        {
+          repoRoot: '/home/user/clawbench',
+          groupName: 'clawbench',
+          items: [
+            { path: '/home/user/clawbench', kind: 'main' },
+            { path: '/home/user/clawbench/android', kind: 'subdir' },
+          ],
+        },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    await (wrapper.vm as any).loadRecentProjects()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect((wrapper.vm as any).recentBlocks[0].showHeader).toBe(true)
+
+    // Removing one member leaves a lone project: the header must go away
+    // rather than label a single row.
+    wrapper.vm.recentItems = wrapper.vm.recentItems.slice(0, 1)
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect((wrapper.vm as any).recentBlocks[0].showHeader).toBe(false)
 
     vi.unstubAllGlobals()
   })
@@ -434,7 +567,9 @@ describe('AppHeader', () => {
 
   it('toggleDropdown opens dropdown and loads recent projects', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
-      json: () => Promise.resolve(['/home/user/proj-a']),
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-a', kind: 'plain' }] },
+      ]),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -479,7 +614,7 @@ describe('AppHeader', () => {
     const wrapper = mountAndTrack({ projectRoot: '/home/user/my-project' })
     wrapper.vm.dropdownOpen = true
 
-    await (wrapper.vm as any).selectRecent({ path: '/home/user/my-project', name: 'my-project', displayPath: 'my-project' })
+    await (wrapper.vm as any).selectRecent({ path: '/home/user/my-project', name: 'my-project', displayPath: 'my-project', kind: 'plain', groupKey: '', groupName: '' })
     try { await wrapper.vm.$nextTick() } catch {}
 
     expect(wrapper.vm.dropdownOpen).toBe(false)
@@ -507,7 +642,7 @@ describe('AppHeader', () => {
     activeWrapper = wrapper
     activeContainer = container
 
-    await (wrapper.vm as any).selectRecent({ path: '/home/user/other-project', name: 'other-project', displayPath: 'other-project' })
+    await (wrapper.vm as any).selectRecent({ path: '/home/user/other-project', name: 'other-project', displayPath: 'other-project', kind: 'plain', groupKey: '', groupName: '' })
     try { await wrapper.vm.$nextTick() } catch {}
 
     expect(wrapper.vm.dropdownOpen).toBe(false)
@@ -521,8 +656,8 @@ describe('AppHeader', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountAndTrack()
     wrapper.vm.recentItems = [
-      { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a' },
-      { path: '/home/user/project-b', name: 'project-b', displayPath: 'project-b' },
+      { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain', groupKey: '', groupName: '' },
+      { path: '/home/user/project-b', name: 'project-b', displayPath: 'project-b', kind: 'plain', groupKey: '', groupName: '' },
     ]
     await (wrapper.vm as any).removeRecent(wrapper.vm.recentItems[0])
 
@@ -536,7 +671,7 @@ describe('AppHeader', () => {
       body: JSON.stringify({ path: '/home/user/project-a' }),
     })
     expect(wrapper.vm.recentItems).toEqual([
-      { path: '/home/user/project-b', name: 'project-b', displayPath: 'project-b' },
+      { path: '/home/user/project-b', name: 'project-b', displayPath: 'project-b', kind: 'plain', groupKey: '', groupName: '' },
     ])
 
     vi.unstubAllGlobals()
@@ -547,7 +682,7 @@ describe('AppHeader', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountAndTrack()
-    const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a' }
+    const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain' as const, groupKey: '', groupName: '' }
     wrapper.vm.recentItems = [item]
 
     await (wrapper.vm as any).removeRecent(item)
@@ -563,7 +698,7 @@ describe('AppHeader', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 })
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountAndTrack()
-    const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a' }
+    const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain' as const, groupKey: '', groupName: '' }
     wrapper.vm.recentItems = [item]
 
     await (wrapper.vm as any).removeRecent(item)

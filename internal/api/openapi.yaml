@@ -663,15 +663,56 @@ paths:
   /api/recent-projects:
     get:
       tags: [Projects]
-      summary: 最近项目
+      summary: 最近项目（按 git 仓库分组）
+      description: |
+        返回最近项目，按 git 仓库分组。同一仓库的多个路径（主仓库、链接工作树、
+        作为独立项目打开的仓库内子目录）归入同一组，便于客户端展示从属关系；
+        不属于任何仓库的路径各自成组（`items` 长度为 1）。
+        排序由服务端决定：组按组内最近访问时间倒序，组内按各自访问时间倒序。
       operationId: recentProjectsList
       responses:
         "200":
-          description: 最近项目列表
+          description: 最近项目分组列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    repoRoot:
+                      type: string
+                      description: 仓库主工作树根目录；非仓库分组为空字符串
+                    groupName:
+                      type: string
+                      description: 分组显示名（repoRoot 的目录名）；非仓库分组为空字符串
+                    items:
+                      type: array
+                      description: 组内路径，按访问时间倒序
+                      items:
+                        type: object
+                        properties:
+                          path:
+                            type: string
+                          kind:
+                            type: string
+                            enum: [main, worktree, subdir, plain]
+                            description: |
+                              main=仓库主工作树；worktree=链接工作树；
+                              subdir=仓库内子目录（非仓库根）；plain=不属于任何仓库
     post:
       tags: [Projects]
       summary: 记录最近项目
       operationId: recentProjectsAdd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
       responses:
         "200":
           description: 结果

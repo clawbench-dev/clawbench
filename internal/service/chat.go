@@ -2,6 +2,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -1038,53 +1039,32 @@ func titleFromFileEntries(files []model.FileEntry) string {
 	return strings.Join(names, ", ")
 }
 
-// GetRecentProjects returns the most recent project paths.
-// It filters out paths whose directories no longer exist on disk
-// and removes those stale entries from the database.
+// GetRecentProjects returns the most recent project paths as a flat list.
+//
+// It filters out paths whose directories no longer exist on disk (removing
+// those rows from the database) and caps the result at the configured limit.
+// Callers that need to know which paths belong to the same git repository use
+// GetRecentProjectGroups instead; this flat form exists for callers that only
+// need the most recent path, such as the default-project fallback.
 func GetRecentProjects() ([]string, error) {
 	limit := model.RecentProjectsMaxCount
 	if limit <= 0 {
 		limit = 10
 	}
-	var paths []string
-	rows, err := dbRead.Query("SELECT project_path FROM recent_projects ORDER BY accessed_at DESC LIMIT ?", limit)
+
+	valid, err := loadRecentProjectRows(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
-		}
-		paths = append(paths, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 
-	// Filter out projects whose directories no longer exist
-	var valid []string
-	var stale []string
-	for _, p := range paths {
-		info, statErr := os.Stat(p)
-		if statErr == nil && info.IsDir() {
-			valid = append(valid, p)
-		} else {
-			stale = append(stale, p)
+	paths := make([]string, 0, limit)
+	for _, r := range valid {
+		if len(paths) >= limit {
+			break
 		}
+		paths = append(paths, r.path)
 	}
-
-	// Clean up stale entries from database
-	for _, p := range stale {
-		if delErr := RemoveRecentProject(p); delErr != nil {
-			slog.Warn("failed to remove stale recent project", slog.String("path", p), slog.String("err", delErr.Error()))
-		} else {
-			slog.Info("removed stale recent project", slog.String("path", p))
-		}
-	}
-
-	return valid, nil
+	return paths, nil
 }
 
 // AddRecentProject upserts a project path and prunes old entries beyond configured limit.

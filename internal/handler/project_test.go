@@ -13,6 +13,7 @@ import (
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestServeProjectSet(t *testing.T) {
@@ -257,12 +258,12 @@ func TestServeRecentProjects(t *testing.T) {
 		w := callHandler(ServeRecentProjects, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var result []string
+		var result []service.RecentProjectGroup
 		decodeRespJSON(t, w.Body, &result)
 		assert.Empty(t, result)
 	})
 
-	t.Run("GET_WithExistingProjects_ReturnsList", func(t *testing.T) {
+	t.Run("GET_WithExistingProjects_ReturnsGroup", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
@@ -277,9 +278,49 @@ func TestServeRecentProjects(t *testing.T) {
 		w := callHandler(ServeRecentProjects, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var result []string
+		var result []service.RecentProjectGroup
 		decodeRespJSON(t, w.Body, &result)
-		assert.Contains(t, result, projectPath)
+
+		require.Len(t, result, 1, "a non-repo path is its own single-item group")
+		assert.Empty(t, result[0].RepoRoot)
+		require.Len(t, result[0].Items, 1)
+		assert.Equal(t, projectPath, result[0].Items[0].Path)
+		assert.Equal(t, service.RepoKindPlain, result[0].Items[0].Kind)
+	})
+
+	t.Run("GET_GroupsWorktreesOfOneRepo", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// A repository root plus a subdirectory opened as its own project: both
+		// must arrive in one group so the client can nest them.
+		repo := filepath.Join(env.WatchDir, "repo")
+		sub := filepath.Join(repo, "android")
+		require.NoError(t, os.MkdirAll(sub, 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+
+		_, err := service.UnsafeDBForTest().Exec(
+			"INSERT INTO recent_projects (project_path) VALUES (?), (?)", repo, sub,
+		)
+		require.NoError(t, err)
+
+		req := newRequest(t, http.MethodGet, "/api/recent-projects", nil)
+		w := callHandler(ServeRecentProjects, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result []service.RecentProjectGroup
+		decodeRespJSON(t, w.Body, &result)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, repo, result[0].RepoRoot)
+		assert.Equal(t, "repo", result[0].GroupName)
+		require.Len(t, result[0].Items, 2)
+		kinds := map[string]service.RepoKind{}
+		for _, it := range result[0].Items {
+			kinds[it.Path] = it.Kind
+		}
+		assert.Equal(t, service.RepoKindMain, kinds[repo])
+		assert.Equal(t, service.RepoKindSubdir, kinds[sub])
 	})
 
 	t.Run("POST_AddProject_ReturnsOK", func(t *testing.T) {
