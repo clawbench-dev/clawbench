@@ -1903,6 +1903,17 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   afterEach(() => {
     while (mounted.length) mounted.pop()!.unmount()
   })
+  /**
+   * showPreview calls issued by THIS wrapper. Other describe blocks in this file
+   * also mount the component, and it keeps its `document` keydown listener for
+   * its whole lifetime — so a leaked wrapper reacts to the same keypress and
+   * inflates the shared mock's raw call count. The anchor element identifies the
+   * caller: it always comes from the calling wrapper's own DOM.
+   */
+  const previewCallsFrom = (wrapper: ReturnType<typeof mountContent>) =>
+    mockShowPreview.mock.calls.filter(
+      ([target]) => target?.anchorEl && wrapper.element.contains(target.anchorEl),
+    )
 
   it('Ctrl+C copies current file to clipboard', async () => {
     const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
@@ -2251,8 +2262,9 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     await nextTick()
 
     expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
-    expect(mockShowPreview).toHaveBeenCalledTimes(1)
-    const [target, mode] = mockShowPreview.mock.calls[0]
+    const calls = previewCallsFrom(wrapper)
+    expect(calls).toHaveLength(1)
+    const [target, mode] = calls[0]
     expect(target.filePath).toBe('readme.md')
     // Docked, like a click — the keyboard path reuses the same open call.
     expect(mode).toBe('docked')
@@ -2276,8 +2288,9 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     await nextTick()
 
     expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
-    expect(mockShowPreview).toHaveBeenCalledTimes(1)
-    expect(mockShowPreview.mock.calls[0][0].filePath).toBe('test.ts')
+    const calls = previewCallsFrom(wrapper)
+    expect(calls).toHaveLength(1)
+    expect(calls[0][0].filePath).toBe('test.ts')
   })
 
   it('ArrowUp onto a directory swaps the pane to its listing', async () => {
@@ -2296,7 +2309,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     expect(wrapper.vm._getSelectedPath()).toBe('src')
     // A directory has no file content: the listing body takes the pane and the
     // file-preview composable is left alone.
-    expect(mockShowPreview).not.toHaveBeenCalled()
+    expect(previewCallsFrom(wrapper)).toHaveLength(0)
     expect(wrapper.find('.dir-preview-stub').exists()).toBe(true)
     expect(wrapper.find('.dir-preview-stub').attributes('data-dir-path')).toBe('src')
   })
@@ -2321,8 +2334,9 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     // Moving the highlight is a new preview request, so the pane comes back —
     // exactly as the next single click would.
     expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
-    expect(mockShowPreview).toHaveBeenCalledTimes(2)
-    expect(mockShowPreview.mock.calls[1][0].filePath).toBe('readme.md')
+    const calls = previewCallsFrom(wrapper)
+    expect(calls).toHaveLength(2)
+    expect(calls[1][0].filePath).toBe('readme.md')
   })
 
   it('does not retarget the preview when the highlight does not move', async () => {
@@ -2344,7 +2358,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
     expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
     // Re-showing would discard the pane's scroll position and expanded context.
-    expect(mockShowPreview).not.toHaveBeenCalled()
+    expect(previewCallsFrom(wrapper)).toHaveLength(0)
   })
 
   it('keyboard navigation does not open a preview when preview mode is off', async () => {
@@ -2358,7 +2372,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     await nextTick()
 
     expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
-    expect(mockShowPreview).not.toHaveBeenCalled()
+    expect(previewCallsFrom(wrapper)).toHaveLength(0)
     expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
   })
 
@@ -2377,7 +2391,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     await nextTick()
 
     expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
-    expect(mockShowPreview).not.toHaveBeenCalled()
+    expect(previewCallsFrom(wrapper)).toHaveLength(0)
   })
 
   it('Backspace emits navigateBack (parent directory)', async () => {
