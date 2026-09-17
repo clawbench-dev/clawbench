@@ -312,7 +312,7 @@ func TestServeRecentProjects(t *testing.T) {
 		decodeRespJSON(t, w.Body, &result)
 
 		require.Len(t, result, 1)
-		assert.Equal(t, repo, result[0].RepoRoot)
+		assert.Equal(t, canonPath(repo), result[0].RepoRoot)
 		assert.Equal(t, "repo", result[0].GroupName)
 		require.Len(t, result[0].Items, 2)
 		kinds := map[string]service.RepoKind{}

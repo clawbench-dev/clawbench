@@ -93,7 +93,7 @@ func TestGetRecentProjectGroups_GroupsWorktreesOfOneRepo(t *testing.T) {
 	require.Len(t, groups, 2, "one group for the repo, one for the unrelated project")
 
 	repoGroup := groups[0]
-	assert.Equal(t, repo, repoGroup.RepoRoot)
+	assert.Equal(t, canon(t, repo), repoGroup.RepoRoot)
 	assert.Equal(t, "clawbench", repoGroup.GroupName)
 	assert.Equal(t, []string{repo, sub, wt}, pathsOf([]service.RecentProjectGroup{repoGroup}),
 		"members ordered by access time, main worktree not pinned first")
@@ -126,8 +126,8 @@ func TestGetRecentProjectGroups_SeparateReposStaySeparate(t *testing.T) {
 
 	assert.Equal(t, []int{1, 1}, groupSizes(groups),
 		"two independent clones are two groups even when their names look alike")
-	assert.Equal(t, repoB, groups[0].RepoRoot)
-	assert.Equal(t, repoA, groups[1].RepoRoot)
+	assert.Equal(t, canon(t, repoB), groups[0].RepoRoot)
+	assert.Equal(t, canon(t, repoA), groups[1].RepoRoot)
 }
 
 func TestGetRecentProjectGroups_BackfillsSiblingBeyondWindow(t *testing.T) {
@@ -250,7 +250,7 @@ func TestGetRecentProjectGroups_GroupOrderFollowsMostRecentMember(t *testing.T) 
 	require.NoError(t, err)
 
 	require.Len(t, groups, 2)
-	assert.Equal(t, repoNew, groups[0].RepoRoot)
-	assert.Equal(t, repoOld, groups[1].RepoRoot)
+	assert.Equal(t, canon(t, repoNew), groups[0].RepoRoot)
+	assert.Equal(t, canon(t, repoOld), groups[1].RepoRoot)
 	assert.Equal(t, []string{newSub, repoNew}, pathsOf(groups[:1]))
 }

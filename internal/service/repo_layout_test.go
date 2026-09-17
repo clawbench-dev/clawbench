@@ -11,6 +11,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// canon resolves a test path the way production does (DetectRepoLayout applies
+// filepath.Abs + Clean, then canonicalize = EvalSymlinks falling back to Clean).
+// Assertions must compare through the same pipeline: on macOS every t.TempDir()
+// lives under /var, a symlink to /private/var, so the raw test path and the
+// production value never match verbatim. Linux hides this because /tmp has no
+// symlinked ancestor.
+func canon(t *testing.T, p string) string {
+	t.Helper()
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	abs = filepath.Clean(abs)
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		// A path that does not exist (e.g. a dangling gitdir target) is
+		// returned cleaned by production; mirror that.
+		return abs
+	}
+	return resolved
+}
+
 // makeRepo creates a normal clone layout: <dir>/.git as a directory.
 func makeRepo(t *testing.T, dir string) {
 	t.Helper()
@@ -44,8 +66,8 @@ func TestDetectRepoLayout_MainWorktree(t *testing.T) {
 	layout := service.DetectRepoLayout(repo)
 
 	assert.True(t, layout.IsRepo())
-	assert.Equal(t, repo, layout.Root)
-	assert.Equal(t, filepath.Join(repo, ".git"), layout.CommonDir)
+	assert.Equal(t, canon(t, repo), layout.Root)
+	assert.Equal(t, canon(t, filepath.Join(repo, ".git")), layout.CommonDir)
 	assert.Equal(t, service.RepoKindMain, layout.Kind)
 }
 
@@ -58,8 +80,8 @@ func TestDetectRepoLayout_LinkedWorktree(t *testing.T) {
 	layout := service.DetectRepoLayout(wt)
 
 	assert.True(t, layout.IsRepo())
-	assert.Equal(t, wt, layout.Root, "a linked worktree is its own repository root")
-	assert.Equal(t, filepath.Join(repo, ".git"), layout.CommonDir,
+	assert.Equal(t, canon(t, wt), layout.Root, "a linked worktree is its own repository root")
+	assert.Equal(t, canon(t, filepath.Join(repo, ".git")), layout.CommonDir,
 		"commondir must resolve to the shared git dir, which is the grouping key")
 	assert.Equal(t, service.RepoKindWorktree, layout.Kind)
 }
@@ -73,8 +95,8 @@ func TestDetectRepoLayout_Subdir(t *testing.T) {
 	layout := service.DetectRepoLayout(sub)
 
 	assert.True(t, layout.IsRepo())
-	assert.Equal(t, repo, layout.Root, "the root is the ancestor holding .git")
-	assert.Equal(t, filepath.Join(repo, ".git"), layout.CommonDir)
+	assert.Equal(t, canon(t, repo), layout.Root, "the root is the ancestor holding .git")
+	assert.Equal(t, canon(t, filepath.Join(repo, ".git")), layout.CommonDir)
 	assert.Equal(t, service.RepoKindSubdir, layout.Kind)
 }
 
@@ -132,16 +154,22 @@ func TestDetectRepoLayout_BrokenGitFile(t *testing.T) {
 		// linked-ness comes from .git being a file, not from the target being
 		// readable. Misreporting it as the main worktree would put the wrong
 		// label on the group header.
+		//
+		// The dangling target is built from t.TempDir() rather than a POSIX
+		// literal: "/nonexistent" is not absolute on Windows, so production
+		// would resolve it against the worktree root and the expected value
+		// below would never match.
 		dir := t.TempDir()
+		dangling := filepath.Join(t.TempDir(), "deleted-git-dir")
 		require.NoError(t, os.WriteFile(
 			filepath.Join(dir, ".git"),
-			[]byte("gitdir: /nonexistent/definitely/not/here\n"), 0o644,
+			[]byte("gitdir: "+dangling+"\n"), 0o644,
 		))
 
 		layout := service.DetectRepoLayout(dir)
 
 		assert.Equal(t, service.RepoKindWorktree, layout.Kind)
-		assert.Equal(t, "/nonexistent/definitely/not/here", layout.CommonDir)
+		assert.Equal(t, canon(t, dangling), layout.CommonDir)
 	})
 }
 
@@ -177,7 +205,7 @@ func TestDetectRepoLayout_RelativeGitDirPointer(t *testing.T) {
 
 	layout := service.DetectRepoLayout(dir)
 
-	assert.Equal(t, filepath.Join(dir, "real-git"), layout.CommonDir)
+	assert.Equal(t, canon(t, filepath.Join(dir, "real-git")), layout.CommonDir)
 	assert.Equal(t, service.RepoKindWorktree, layout.Kind)
 }
 
@@ -197,5 +225,5 @@ func TestDetectRepoLayout_AbsoluteCommondir(t *testing.T) {
 		filepath.Join(wtGit, "commondir"), []byte(shared+"\n"), 0o644,
 	))
 
-	assert.Equal(t, shared, service.DetectRepoLayout(repo).CommonDir)
+	assert.Equal(t, canon(t, shared), service.DetectRepoLayout(repo).CommonDir)
 }
