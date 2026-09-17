@@ -239,6 +239,41 @@ describe('FileHeader', () => {
     expect(btns.length).toBeGreaterThan(0)
   })
 
+  describe('refresh button placement', () => {
+    it('is the first inline toolbar button', () => {
+      const wrapper = mountHeader()
+      const inline = wrapper.findAll('.header-actions > .file-header-btn')
+      expect(inline[0].attributes('title')).toBe('Refresh')
+    })
+
+    it('is the highest-priority demotable item, so it collapses last', () => {
+      // useToolbarOverflow keeps a prefix of the demotable list inline, so
+      // position 0 in the overflow array = leftmost = last to collapse. This
+      // guards the template order staying in sync with the overflow array.
+      const wrapper = mountHeader()
+      const ids = (wrapper.vm as any).$.setupState.toolbarInlineIds
+      expect(ids[0]).toBe('refresh')
+    })
+
+    it('precedes TOC and search for a markdown file', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered' })
+      const inline = wrapper.findAll('.header-actions > .file-header-btn')
+      const titles = inline.map(b => b.attributes('title') ?? '')
+      expect(titles[0]).toBe('Refresh')
+      expect(titles.indexOf('Refresh')).toBeLessThan(titles.indexOf('TOC'))
+      expect(titles.indexOf('Refresh')).toBeLessThan(titles.indexOf('Search'))
+    })
+
+    it('is absent for media files, which have no text content to reload', () => {
+      // Guards the counterpart: the reorder must not have made refresh
+      // unconditional. An image has nothing to re-fetch into a text view.
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
+      const titles = wrapper.findAll('.header-actions > .file-header-btn').map(b => b.attributes('title') ?? '')
+      expect(titles).not.toContain('Refresh')
+      expect((wrapper.vm as any).$.setupState.toolbarInlineIds).not.toContain('refresh')
+    })
+  })
+
   describe('permanent More-menu actions', () => {
     // The 11 low-frequency / destructive actions must never occupy toolbar
     // space, regardless of how wide the header is. useToolbarOverflow is mocked

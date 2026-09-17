@@ -33,6 +33,9 @@
 
     <!-- Region 2: Toolbar (ResizeObserver target) -->
     <div ref="headerActionsRef" class="header-actions">
+      <!-- Refresh button — first in the toolbar, and the last to collapse. -->
+      <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
+
       <!-- TOC button (only for file types that support TOC) -->
       <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
         <List :size="14" />
@@ -62,9 +65,6 @@
       <button v-if="isImageFile && toolbarInlineIds.includes('viewImage')" class="file-header-btn" @click.stop="handleViewImage" :title="t('imageBlock.view')">
         <Maximize2 :size="14" />
       </button>
-
-      <!-- Refresh button -->
-      <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
 
       <!-- Toggle view button (source/rendered). Always an eye icon: highlighted
            when the rendered preview is shown, dimmed for the source view. It is
@@ -282,16 +282,18 @@ function triggerRefresh() {
 // Responsive toolbar overflow — only the "More" dropdown is always-inline (1).
 // Permanent menu actions are excluded from the demotable list entirely, so they
 // never render inline and never appear in collapsedIds.
+// The array order must mirror the template order: index 0 renders leftmost and
+// is the last to collapse.
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => headerActionsRef.value,
   () => {
     const ids = []
+    if (hasTextContent.value) ids.push('refresh')
     if (hasToc.value) ids.push('toc')
     if (hasSearch.value) ids.push('search')
     if (hasFitWidth.value) ids.push('fitWidth')
     ids.push('attach')
     if (isImageFile.value) ids.push('viewImage')
-    if (hasTextContent.value) ids.push('refresh')
     if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value)) ids.push('toggleView')
     // Edit always sits right next to the preview toggle: the two form a single
     // view-mode control pair with no other buttons in between.
