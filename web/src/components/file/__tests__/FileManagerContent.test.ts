@@ -2394,6 +2394,74 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     expect(previewCallsFrom(wrapper)).toHaveLength(0)
   })
 
+  it('keyboard navigation onto the already-listed directory keeps the pane as-is', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountKeyboardContent()
+    await nextTick()
+
+    // Land on the directory (first entry) and let the pane show its listing.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('src')
+    expect(wrapper.find('.dir-preview-stub').attributes('data-dir-path')).toBe('src')
+
+    // showDirPreview always starts by closing any file preview. Re-running it for
+    // the directory already on screen is exactly what must NOT happen — that
+    // would discard the pane's own scroll position and expanded state.
+    mockClosePreview.mockClear()
+
+    // ArrowUp clamps at the first entry, so the highlight does not move; the
+    // sync still runs and must recognise the pane already lists this directory.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('src')
+    expect(previewCallsFrom(wrapper)).toHaveLength(0)
+    expect(mockClosePreview).not.toHaveBeenCalled()
+    expect(wrapper.find('.dir-preview-stub').attributes('data-dir-path')).toBe('src')
+  })
+
+  it('keyboard navigation ignores an entry that is not in the current listing', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountKeyboardContent()
+    await nextTick()
+
+    // A stale highlight (entry vanished from the listing) must not open a pane:
+    // entryByPath returns nothing, so the sync bails out early.
+    wrapper.vm._setSelectedPath('no-such-entry.ts')
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+
+    expect(previewCallsFrom(wrapper)).toHaveLength(0)
+  })
+
+  it('keyboard navigation previews a file that comes from search results', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountKeyboardContent()
+    await nextTick()
+
+    // Search results are display entries too, and their `path` is the search
+    // result path rather than a name under currentDir. They must go through the
+    // same shouldPreviewOnClick guard and preview exactly like a browse row —
+    // otherwise search results would be silently un-previewable by keyboard.
+    searchState.query = 'readme'
+    searchState.results = [{ path: 'readme.md', name: 'readme.md', type: 'file' }]
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
+    const calls = previewCallsFrom(wrapper)
+    expect(calls).toHaveLength(1)
+    expect(calls[0][0].filePath).toBe('readme.md')
+  })
+
   it('Backspace emits navigateBack (parent directory)', async () => {
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -4200,6 +4268,22 @@ describe('FileManagerContent — search API', () => {
   it('focusSearchInput does not throw', async () => {
     const wrapper = mountContent()
     expect(() => wrapper.vm.focusSearchInput()).not.toThrow()
+  })
+
+  it('the search box up/down events move the highlight', async () => {
+    const wrapper = mountContent()
+    wrapper.vm._setSelectedPath('src')
+    await nextTick()
+
+    // The resident search box wires its own arrow keys to moveSelection, so
+    // ↑/↓ typed into the box walk the listing without leaving the field.
+    wrapper.findComponent({ name: 'SearchInput' }).vm.$emit('down')
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
+
+    wrapper.findComponent({ name: 'SearchInput' }).vm.$emit('up')
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('src')
   })
 
   it('exposes searchActive as an already-unwrapped boolean', async () => {

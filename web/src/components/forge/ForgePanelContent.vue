@@ -929,7 +929,7 @@ function formatTime(iso: string): string {
 /* Keyboard focus parity with the sibling buttons, which get the browser's
    default focus ring. The <a> would otherwise be indistinguishable. */
 .forge-repo-menu-item:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--accent-color);
   outline-offset: -2px;
 }
 .forge-repo-menu-item.danger {
