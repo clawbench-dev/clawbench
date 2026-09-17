@@ -25,6 +25,13 @@ type ChatRequest struct {
 	HasConversationHistory bool                    // True if the session has any messages in DB (user + assistant, finalized + streaming). Drives shouldNewSessionFallback: true blocks silent fallback to NewSession on recovery failure (amnesia prevention). Differs from AssistantMessageCount: a session with only an in-flight user prompt has AssistantMessageCount=0 but HasConversationHistory=true.
 	ForkContext            string                  // Formatted history from parent session, injected on fork's first message so the AI has context
 	Images                 []model.ImageAttachment // Inline images for multimodal ACP prompts. Only ACP backends that advertise the image prompt capability consume these.
+	// Compacted marks the turn that follows a context compaction (auto or a
+	// user-issued /compact). Compaction rewrites the conversation into a summary,
+	// so the injected system prompt may no longer be in context; this forces a
+	// re-injection regardless of the periodic interval setting. The flag is
+	// consumed by the turn that reads it (see service.BuildChatRequest), so it
+	// triggers exactly one extra injection.
+	Compacted bool
 }
 
 // ImageAttachment carries an inline image for a multimodal ACP prompt.
@@ -35,12 +42,19 @@ type ImageAttachment = model.ImageAttachment
 // ShouldInjectSystemPrompt determines whether the system prompt should be injected
 // into the user prompt for CLI backends that lack a --system-prompt flag.
 // On the first message (!Resume): always inject.
-// On resume: inject every N assistant turns (configured via chat.system_prompt_interval).
+// On resume: inject every N assistant turns (configured via chat.system_prompt_interval),
+// and always on the turn right after a context compaction — see ChatRequest.Compacted.
 func (r ChatRequest) ShouldInjectSystemPrompt() bool {
 	if r.SystemPrompt == "" {
 		return false
 	}
 	if !r.Resume {
+		return true
+	}
+	// A compaction rewrote the conversation, so whatever the system prompt
+	// contributed may be gone from context. This overrides the interval (whose
+	// default is "never") for exactly one turn.
+	if r.Compacted {
 		return true
 	}
 	interval := model.ChatSystemPromptInterval

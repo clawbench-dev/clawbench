@@ -1101,6 +1101,21 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add compacted column — set when the agent compacts the session's
+	// context (auto or user-triggered /compact). Compaction rewrites the
+	// conversation into a summary, so the injected system prompt (tool rules,
+	// user-interaction contract) may no longer be present in context; the next
+	// turn re-injects it once regardless of the periodic interval setting.
+	// The flag is consumed (cleared) by BuildChatRequest, so it never becomes a
+	// permanent per-turn injection.
+	var hasCompacted int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='compacted'").Scan(&hasCompacted)
+	if hasCompacted == 0 {
+		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add compacted column: %w", err)
+		}
+	}
+
 	// Migrate: add title_renamed column. Set to 1 when the user manually renames
 	// a session, so the first-message auto-title does not overwrite their choice.
 	// DEPRECATED: superseded by title_source below; retained for old readers only.

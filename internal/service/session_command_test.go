@@ -42,6 +42,7 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			context_state TEXT DEFAULT '',
 			title_renamed INTEGER NOT NULL DEFAULT 0,
 			title_source TEXT NOT NULL DEFAULT '',
+			compacted INTEGER NOT NULL DEFAULT 0,
 			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -121,6 +122,60 @@ func TestBuildChatRequest_NewSession(t *testing.T) {
 	if req.HasAttachments {
 		t.Error("expected HasAttachments=false")
 	}
+}
+
+// TestBuildChatRequest_CompactedFlagConsumedOnce pins the end-to-end contract of
+// the compaction re-injection: the flag reaches the request exactly once, so the
+// system prompt is re-injected on the turn after a compaction and not again.
+func TestBuildChatRequest_CompactedFlagConsumedOnce(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'T', '', 'default', '', 'chat')",
+		"sess-compact",
+	)
+	require.NoError(t, err)
+
+	// Before any compaction the flag is not set.
+	req := BuildChatRequest("hello", "sess-compact", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	assert.False(t, req.Compacted, "a session that never compacted must not carry the flag")
+
+	MarkSessionCompacted("sess-compact")
+
+	req = BuildChatRequest("continue", "sess-compact", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	assert.True(t, req.Compacted, "the turn after a compaction must re-inject the system prompt")
+
+	req = BuildChatRequest("and again", "sess-compact", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	assert.False(t, req.Compacted, "the flag must not survive into a second turn")
+}
+
+// TestBuildChatRequest_CompactCommandDoesNotConsumeFlag pins the ordering rule:
+// the /compact command turn is not a model call, and the compaction it triggers
+// happens AFTER it — so consuming the flag there would leave the following real
+// turn without the re-injection.
+func TestBuildChatRequest_CompactCommandDoesNotConsumeFlag(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'T', '', 'default', '', 'chat')",
+		"sess-cmd",
+	)
+	require.NoError(t, err)
+
+	// The handler marks the session when the user sends /compact; by the time the
+	// request is built the flag is already set (both happen in the same request).
+	MarkSessionCompacted("sess-cmd")
+
+	cmdReq := BuildChatRequest("/compact", "sess-cmd", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	assert.False(t, cmdReq.Compacted, "the /compact turn itself must not consume the flag")
+
+	nextReq := BuildChatRequest("continue", "sess-cmd", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	assert.True(t, nextReq.Compacted, "the flag must survive the /compact turn for the next real turn")
+
+	finalReq := BuildChatRequest("more", "sess-cmd", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	assert.False(t, finalReq.Compacted, "the flag is consumed by the first real turn after /compact")
 }
 
 func TestFindSessionsByPrefix_ArchivedExcluded(t *testing.T) {

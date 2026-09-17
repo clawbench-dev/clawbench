@@ -79,7 +79,19 @@ type ClaudeStreamMessage struct {
 			InputTokens  int `json:"inputTokens"`
 			OutputTokens int `json:"outputTokens"`
 		} `json:"usage,omitempty"`
+		// Compaction flags: CodeBuddy stamps these on the providerData of every
+		// item emitted while it compacts the session context.
+		IsCompactInternal bool   `json:"isCompactInternal,omitempty"`
+		CompactType       string `json:"compactType,omitempty"`
 	} `json:"providerData,omitempty"`
+
+	// Meta carries the stream-json _meta block. CodeBuddy puts the compaction
+	// flag here as well (codebuddy.ai/isCompactInternal), mirroring ACP.
+	Meta map[string]any `json:"_meta,omitempty"`
+
+	// Status is the payload of `system`/`status` messages; CodeBuddy emits
+	// status="compacting" while it compacts the session context.
+	Status string `json:"status,omitempty"`
 
 	// stream_event fields (codebuddy --include-partial-messages)
 	Event *StreamEventData `json:"event,omitempty"`
@@ -210,6 +222,12 @@ type StreamParser struct {
 	// message arrives with the full Input, we re-emit a tool_use event so that
 	// AccumulateBlock can update the block with the correct input data.
 	emittedToolInputEmpty map[string]bool
+	// compactReported is set once a compaction signal has been emitted for this
+	// parser's stream. The CLI repeats the flag on every item emitted while
+	// compacting, so this keeps the service layer from being told the same
+	// compaction happened many times. The parser is per-turn, so it resets
+	// naturally when the next turn builds a new parser.
+	compactReported bool
 }
 
 // GetCapturedSessionID returns empty string for Claude/Codebuddy/Kimi backends
@@ -250,6 +268,18 @@ func (p *StreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
 		slog.Debug("stream: skipping unparseable line", "line", line, "error", err)
 		return
+	}
+
+	// Compaction detection — checked before the type switch because the signal
+	// rides on several message shapes (CodeBuddy: providerData/_meta flag on any
+	// item, or system/status="compacting"; Claude: system/compact_boundary).
+	// Reported at most once per compaction; the parser is per-turn, so the flag
+	// resets naturally on the next turn. The latch is set only on delivery so a
+	// drop on a full channel is retried by the next matching line.
+	if !p.compactReported && isCLICompactionMessage(&msg) {
+		if tryEmitStreamEvent(ch, "cli", compactDetectedEvent("cli_meta")) {
+			p.compactReported = true
+		}
 	}
 
 	switch msg.Type {

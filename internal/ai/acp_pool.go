@@ -1052,6 +1052,14 @@ type ACPConn struct {
 	// during spawn for CodeBuddy backend. Empty if no skills found.
 	skillsPrompt string
 
+	// compactReported is set once this connection has emitted its
+	// compact_detected signal for the current compaction. CodeBuddy stamps the
+	// compaction flag onto EVERY session update emitted while it compacts, so
+	// without this latch the service layer would be told the same compaction
+	// happened many times. Reset when the agent reports a cancelled/limit-reached
+	// compaction (the history was restored, so nothing was compacted after all).
+	compactReported atomic.Bool
+
 	// pendingSteerIDs holds the clientUserMessageIds of mid-turn injections this
 	// host issued that have not yet been observed on the wire. CodeBuddy echoes
 	// the id back in the _meta of a `user_message_chunk` session update at the

@@ -2769,6 +2769,50 @@ func ClearExternalSessionID(sessionID string) {
 	_, _ = WriteExec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID)
 }
 
+// MarkSessionCompacted flags a session whose context was just compacted by the
+// agent (auto compaction or a user-issued /compact). The next turn re-injects
+// the system prompt once, then clears the flag — see ConsumeSessionCompacted.
+//
+// Best-effort: losing the flag degrades to the pre-existing behavior (no extra
+// injection) rather than failing the turn, so errors are logged only.
+func MarkSessionCompacted(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	if _, err := WriteExec("UPDATE chat_sessions SET compacted = 1 WHERE id = ?", sessionID); err != nil {
+		slog.Warn("markSessionCompacted: write failed", "err", err, "sid", sessionID)
+		return
+	}
+	slog.Info("session compacted: system prompt will be re-injected on the next turn",
+		slog.String("session", sessionID))
+}
+
+// ConsumeSessionCompacted reports whether the session was compacted since the
+// last turn and clears the flag in the same statement.
+//
+// Read-and-clear is deliberate: the requirement is "inject on the NEXT message
+// only". A plain read would keep re-injecting for every later turn until some
+// other path cleared it, and a clear-then-read pair would drop the flag when two
+// sends race. One conditional UPDATE makes the check and the clear atomic:
+// RowsAffected == 1 means this caller is the one that observed the flag, so
+// exactly one turn re-injects.
+func ConsumeSessionCompacted(sessionID string) bool {
+	if sessionID == "" || db == nil {
+		return false
+	}
+	res, err := WriteExec("UPDATE chat_sessions SET compacted = 0 WHERE id = ? AND compacted = 1", sessionID)
+	if err != nil {
+		slog.Warn("consumeSessionCompacted: write failed", "err", err, "sid", sessionID)
+		return false
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		slog.Warn("consumeSessionCompacted: rows affected failed", "err", err, "sid", sessionID)
+		return false
+	}
+	return affected == 1
+}
+
 // GetExternalSessionID returns the external session ID for a ClawBench session.
 func GetExternalSessionID(sessionID string) string {
 	if dbRead == nil {

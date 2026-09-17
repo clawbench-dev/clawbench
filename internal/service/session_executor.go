@@ -510,6 +510,14 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		return
 	}
 
+	// compact_detected: the agent just compacted this session's context. Persist
+	// the flag so the NEXT turn re-injects the system prompt, then swallow the
+	// event — it is an internal signal, not client-visible content.
+	if event.Type == "compact_detected" {
+		MarkSessionCompacted(e.cfg.SessionID)
+		return
+	}
+
 	// Inject per-tool duration into completion events before forwarding,
 	// so WS clients and AccumulateBlock both see it.
 	if event.Type == eventTypeToolUse || event.Type == eventTypeToolResult {

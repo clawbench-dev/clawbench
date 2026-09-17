@@ -45,12 +45,30 @@ type grokUsage struct {
 // GrokStreamParser parses JSON Lines output from Grok headless streaming-json.
 type GrokStreamParser struct {
 	sessionID string
+	// compactReported is set once a compaction completion has been signaled for
+	// this parser's stream (the parser is per-turn, so it resets naturally).
+	compactReported bool
 }
 
 // GetCapturedSessionID returns the session ID captured from an end event.
 // CLIBackend.ExecuteStream emits session_capture after each ParseLine call.
 func (p *GrokStreamParser) GetCapturedSessionID() string {
 	return p.sessionID
+}
+
+// reportCompaction emits the compact_detected signal when a grok event type
+// announces a finished compaction.
+//
+// Reported once per parser (per turn) so the repeated event family cannot flag
+// the same compaction several times; the latch is set only on delivery, so a
+// drop on a full channel is retried by the next matching event.
+func (p *GrokStreamParser) reportCompaction(eventType string, ch chan<- StreamEvent) {
+	if p.compactReported || !isGrokCompactionCompleted(eventType) {
+		return
+	}
+	if tryEmitStreamEvent(ch, "grok", compactDetectedEvent("grok_event")) {
+		p.compactReported = true
+	}
 }
 
 // ParseLine parses one streaming-json event and emits StreamEvent(s).
@@ -60,6 +78,8 @@ func (p *GrokStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		slog.Debug("grok stream: skipping unparseable line", "line", line, "error", err)
 		return
 	}
+
+	p.reportCompaction(msg.Type, ch)
 
 	switch msg.Type {
 	case "text":
