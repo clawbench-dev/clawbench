@@ -26,6 +26,7 @@
       :selected-s-h-a="selectedSHA"
       :refresh-hint="refreshHint"
       :mode="mode"
+      :wt-file-count="workingTreeFileCount"
       @select="onCommitSelect"
       @search="onSearch"
       @load-more="loadMoreCommits"
@@ -235,7 +236,7 @@ const {
   selectedFilePath, diffState, hasLoadedMore, refreshHint,
   commitListRef,
   selectedCommit, isWorkingTree, mode, stagedFiles, unstagedFiles,
-  hasStaged, hasUnstaged, totalFileCount,
+  hasStaged, hasUnstaged, totalFileCount, workingTreeFileCount,
   fileTypeLabel, fileSplit, badgeClass, resetListState,
   loadProjectHistory, loadFileHistory, loadMoreCommits, onSearch, onRefresh,
   loadDiff, onFilesRefresh,
