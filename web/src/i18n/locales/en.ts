@@ -1411,6 +1411,7 @@ export default {
       backToFile: 'Back to {name}',
       backToForge: 'Back to Issues & PRs',
       back: 'Back',
+      parentDir: 'Up one level',
     },
     recent: {
       title: 'Recent Files',

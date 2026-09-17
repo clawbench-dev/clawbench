@@ -1414,6 +1414,7 @@ export default {
       backToFile: '返回 {name}',
       backToForge: '返回议题与合并请求',
       back: '返回',
+      parentDir: '返回上一级',
     },
     recent: {
       title: '最近文件',

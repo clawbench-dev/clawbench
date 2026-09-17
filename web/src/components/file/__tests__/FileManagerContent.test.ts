@@ -356,6 +356,7 @@ const i18n = createI18n({
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
         search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
+        nav: { parentDir: '返回上一级' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -3951,6 +3952,99 @@ describe('FileManagerContent — empty state text', () => {
   it('shows noFiles message when no currentDir and no entries', () => {
     const wrapper = mountContent({ entries: [], currentDir: '' })
     expect(wrapper.find('.empty-state').exists()).toBe(true)
+  })
+})
+
+describe('FileManagerContent — up one level', () => {
+  const parentEntries = [
+    { name: 'utils', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 },
+    { name: 'other.ts', type: 'file', modified: '2025-01-01T00:00:00Z', size: 10 },
+  ]
+
+  it('renders the up button only when a currentDir is set', async () => {
+    const atRoot = mountContent({ currentDir: '' })
+    expect(atRoot.find('.dir-up-btn').exists()).toBe(false)
+
+    const nested = mountContent({ currentDir: 'src' })
+    expect(nested.find('.dir-up-btn').exists()).toBe(true)
+  })
+
+  it('clicking the up button emits navigateDir with the parent directory', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils' })
+    await wrapper.find('.dir-up-btn').trigger('click')
+    const emitted = wrapper.emitted('navigateDir')
+    expect(emitted).toBeTruthy()
+    expect(emitted![emitted!.length - 1][0]).toBe('src')
+  })
+
+  it('walks a single-level directory up to the project root', async () => {
+    const wrapper = mountContent({ currentDir: 'src', entries: parentEntries })
+    await wrapper.find('.dir-up-btn').trigger('click')
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('')
+
+    // Root listing: the nav row is hidden (v-if="currentDir") but the entry we
+    // left must still be selected there.
+    await wrapper.setProps({ currentDir: '', entries: [{ name: 'src', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 }] })
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('src')
+  })
+
+  it('selects the directory it just left once the parent listing arrives', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils' })
+    await wrapper.find('.dir-up-btn').trigger('click')
+
+    // The parent listing lands; the child we came from is now a row in it.
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    try {
+      await wrapper.setProps({ currentDir: 'src', entries: parentEntries })
+      await nextTick()
+
+      // Survives the currentDir watcher that clears the selection, and is applied
+      // to the entry of the *new* listing (not the one being left).
+      expect(wrapper.vm._getSelectedPath()).toBe('src/utils')
+      expect(wrapper.find('.dir-item[data-path="src/utils"]').classes()).toContain('active')
+      // The row may be off-screen in a long parent listing, so the selection
+      // must also be revealed — selecting alone would leave it invisible.
+      expect(scrollSpy.mock.instances).toContain(
+        wrapper.find('.dir-item[data-path="src/utils"]').element,
+      )
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+
+  it('does not select anything when the user lands elsewhere instead', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils' })
+    await wrapper.find('.dir-up-btn').trigger('click')
+
+    // A different navigation won the race — the pending child is meaningless in
+    // whatever listing actually rendered.
+    await wrapper.setProps({ currentDir: 'docs', entries: parentEntries })
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('')
+  })
+
+  it('does not arm a selection while a directory load is in flight', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils', dirLoading: true })
+    await wrapper.find('.dir-up-btn').trigger('click')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+  })
+
+  it('drops the restored selection on the next directory change', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils' })
+    await wrapper.find('.dir-up-btn').trigger('click')
+    await wrapper.setProps({ currentDir: 'src', entries: parentEntries })
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('src/utils')
+
+    // The restored highlight belongs to that one transition — a later move must
+    // not keep a selection for an entry that is not in the new listing.
+    await wrapper.setProps({ currentDir: 'docs', entries: parentEntries })
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('')
   })
 })
 
