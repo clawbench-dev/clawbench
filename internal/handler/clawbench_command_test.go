@@ -326,10 +326,31 @@ func TestProcessClawbenchCommand_UsageRendersEnums(t *testing.T) {
 	result, err := processClawbenchCommand("/cb-usage usage", "/project", "sess-1")
 	require.NoError(t, err)
 
-	assert.Contains(t, result, "dims:model|backend|agent")
+	assert.Contains(t, result, "dims:model|backend|agent|project")
 	assert.Contains(t, result, "metrics:input|output|total|cacheHit|credit|cost")
-	assert.NotContains(t, result, "dims:project",
-		"the unsupported project dimension must not be advertised")
+	assert.Contains(t, result, "scope:project|all")
+}
+
+// TestProcessClawbenchCommand_UsageDocumentsBothScopes guards the cross-project
+// capability: the AI can only use scope=all if the prompt tells it both that
+// the mode exists and that the project cookie must be omitted. The cookie
+// instruction and the scope=all instruction are mutually exclusive per request,
+// so the prompt has to make the choice explicit — a bare "send the cookie on
+// every request" (the pre-cross-project wording) actively contradicts scope=all
+// and the AI would keep sending it, earning a 400.
+func TestProcessClawbenchCommand_UsageDocumentsBothScopes(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-usage 所有项目这个月花了多少", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "scope=all", "the cross-project mode must be advertised")
+	assert.Contains(t, result, "do NOT send the project cookie",
+		"the prompt must say the cookie is omitted for scope=all, not sent")
+	assert.Contains(t, result, "clawbench_project=/project",
+		"the single-project path must still carry the concrete cookie value")
+	assert.NotContains(t, result, "Send the cookie \"clawbench_project=/project\" on every request",
+		"an unconditional cookie instruction contradicts scope=all")
 }
 
 // TestProcessClawbenchCommand_UsageExcludesUnrelatedSystemOps asserts the

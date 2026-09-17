@@ -322,32 +322,38 @@ func TestUsageStatsValidation(t *testing.T) {
 
 	cases := []struct {
 		name string
+		want string // expected stable error code
 		mut  func(*service.UsageParams)
 	}{
-		{"missing dims", func(p *service.UsageParams) { p.Dims = nil }},
-		{"invalid dim", func(p *service.UsageParams) { p.Dims = []service.UsageDim{"nope"} }},
-		{"duplicate dims", func(p *service.UsageParams) { p.Dims = []service.UsageDim{service.DimModel, service.DimModel} }},
-		{"missing metrics", func(p *service.UsageParams) {
+		{"missing dims", "missing_dims", func(p *service.UsageParams) { p.Dims = nil }},
+		{"invalid dim", "invalid_dim", func(p *service.UsageParams) { p.Dims = []service.UsageDim{"nope"} }},
+		{"duplicate dims", "duplicate_dim", func(p *service.UsageParams) { p.Dims = []service.UsageDim{service.DimModel, service.DimModel} }},
+		{"missing metrics", "missing_metrics", func(p *service.UsageParams) {
 			p.Dims = []service.UsageDim{service.DimModel}
 			p.Metrics = nil
 		}},
-		{"invalid sort", func(p *service.UsageParams) {
+		{"invalid sort", "invalid_sort", func(p *service.UsageParams) {
 			p.Dims = []service.UsageDim{service.DimModel}
 			p.Metrics = []service.UsageMetric{service.MetricTotal}
 			p.SortBy = "bogus"
 		}},
-		{"end before start", func(p *service.UsageParams) {
+		{"end before start", "invalid_range", func(p *service.UsageParams) {
 			p.Dims = []service.UsageDim{service.DimModel}
 			p.Metrics = []service.UsageMetric{service.MetricTotal}
 			p.End = p.Start
 		}},
-		{"span over 370 days", func(p *service.UsageParams) {
+		{"span over 370 days", "range_too_long", func(p *service.UsageParams) {
 			p.Dims = []service.UsageDim{service.DimModel}
 			p.Metrics = []service.UsageMetric{service.MetricTotal}
 			p.End = p.Start.AddDate(1, 1, 0) // ~396 days
 		}},
-		{"more than three dims", func(p *service.UsageParams) {
-			p.Dims = []service.UsageDim{service.DimModel, service.DimBackend, service.DimAgent, service.DimModel}
+		{"more than four dims", "too_many_dims", func(p *service.UsageParams) {
+			// Five entries including a duplicate: the cap must trip on count
+			// before the duplicate check, so this pins maxUsageDims (4) itself
+			// rather than accidentally passing via duplicate_dim.
+			p.Dims = []service.UsageDim{
+				service.DimProject, service.DimModel, service.DimBackend, service.DimAgent, service.DimModel,
+			}
 			p.Metrics = []service.UsageMetric{service.MetricTotal}
 		}},
 	}
@@ -359,6 +365,8 @@ func TestUsageStatsValidation(t *testing.T) {
 			require.Error(t, err)
 			var vErr *service.UsageStatsError
 			require.ErrorAs(t, err, &vErr, "expected validation error, got %T", err)
+			assert.Equal(t, tc.want, vErr.Code,
+				"the rejection reason must be the specific rule, not a coincidental one")
 		})
 	}
 }
@@ -618,4 +626,249 @@ func TestSaveMetadataAttributionPopulated(t *testing.T) {
 	assert.Equal(t, "codebuddy", backend)
 	assert.Equal(t, "codebuddy", agentID)
 	assert.Equal(t, sid, clawSID)
+}
+
+// --- cross-project scope ---
+
+// seedTwoProjects inserts one row in /a and one in /b, both inside the default
+// window, so a scope=all query must see 2 rows while scope=project sees 1.
+func seedTwoProjects(t *testing.T, db *sql.DB) {
+	t.Helper()
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-a1", agentID: "codebuddy", agentName: "CodeBuddy",
+		backend: "codebuddy", model: "glm", createdAt: "2026-01-10 10:00:00",
+		input: 100, output: 50, total: 150,
+	})
+	insertUsageSeed(t, db, usageSeed{
+		project: "/b", sessionID: "s-b1", agentID: "other", agentName: "Other",
+		backend: "claude", model: "opus", createdAt: "2026-01-11 10:00:00",
+		input: 200, output: 100, total: 300,
+	})
+}
+
+// TestUsageStatsScopeAllSpansProjects is the core cross-project test: the same
+// window and dims must return only /a in the default scope and both projects in
+// ScopeAll. Asserting both directions in one test is what makes it meaningful —
+// a ScopeAll that silently degraded to single-project would still "work" if
+// only the per-project case were checked.
+func TestUsageStatsScopeAllSpansProjects(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+	seedTwoProjects(t, db)
+
+	single, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		ProjectPath: "/a",
+		Dims:        []service.UsageDim{service.DimModel},
+		Metrics:     []service.UsageMetric{service.MetricTotal},
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, int64(150), single.Totals.Total, "default scope stays single-project")
+	require.Len(t, single.Rows, 1)
+
+	all, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		Scope:   service.ScopeAll,
+		Dims:    []service.UsageDim{service.DimModel},
+		Metrics: []service.UsageMetric{service.MetricTotal},
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, int64(450), all.Totals.Total, "scope=all must span every project")
+	assert.Equal(t, int64(2), all.Totals.MessageCnt)
+	require.Len(t, all.Rows, 2)
+}
+
+// TestUsageStatsScopeAllIncludesEmptyProjectPath guards the reason the project
+// predicate is dropped rather than passed as an empty string: legacy ledger
+// rows can carry project_path=”. A naive implementation that filters on the
+// empty string instead of removing the predicate would return only those legacy
+// rows and silently drop every real project — so the fixture deliberately
+// contains one of each and the assertion requires both.
+func TestUsageStatsScopeAllIncludesEmptyProjectPath(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "", sessionID: "s-legacy", agentID: "codebuddy", agentName: "CodeBuddy",
+		backend: "codebuddy", model: "glm", createdAt: "2026-01-10 10:00:00",
+		input: 70, output: 30, total: 100,
+	})
+	insertUsageSeed(t, db, usageSeed{
+		project: "/real", sessionID: "s-real", agentID: "codebuddy", agentName: "CodeBuddy",
+		backend: "codebuddy", model: "glm", createdAt: "2026-01-11 10:00:00",
+		input: 20, output: 5, total: 25,
+	})
+
+	all, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		Scope:   service.ScopeAll,
+		Dims:    []service.UsageDim{service.DimModel},
+		Metrics: []service.UsageMetric{service.MetricTotal},
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, int64(125), all.Totals.Total,
+		"scope=all must include both the legacy empty-project row and real projects")
+	assert.Equal(t, int64(2), all.Totals.MessageCnt)
+}
+
+// TestUsageStatsProjectDimGroupsByProject asserts the new dim splits the
+// instance-wide total per project, which is the whole point of cross-project
+// reporting ("which project consumes the most").
+func TestUsageStatsProjectDimGroupsByProject(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+	seedTwoProjects(t, db)
+
+	res, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		Scope:    service.ScopeAll,
+		Dims:     []service.UsageDim{service.DimProject},
+		Metrics:  []service.UsageMetric{service.MetricTotal},
+		SortDesc: true,
+	}))
+	require.NoError(t, err)
+
+	require.Len(t, res.Rows, 2)
+	byProject := map[string]*service.UsageRow{}
+	for _, r := range res.Rows {
+		byProject[r.Key["project"]] = r
+	}
+	require.Contains(t, byProject, "/a")
+	require.Contains(t, byProject, "/b")
+	assert.Equal(t, int64(150), byProject["/a"].Total)
+	assert.Equal(t, int64(300), byProject["/b"].Total)
+	// Sorted by total desc, so the heavier project leads.
+	assert.Equal(t, "/b", res.Rows[0].Key["project"])
+}
+
+// TestUsageStatsProjectDimEmptyBucket covers the "(empty)" bucket: a project
+// group must be labeled, never rendered as an empty string, or the client
+// would show a nameless row.
+func TestUsageStatsProjectDimEmptyBucket(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "", sessionID: "s-legacy", agentID: "codebuddy", agentName: "CodeBuddy",
+		backend: "codebuddy", model: "glm", createdAt: "2026-01-10 10:00:00",
+		input: 10, output: 10, total: 20,
+	})
+
+	res, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		Scope:   service.ScopeAll,
+		Dims:    []service.UsageDim{service.DimProject},
+		Metrics: []service.UsageMetric{service.MetricTotal},
+	}))
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	assert.Equal(t, "(empty)", res.Rows[0].Key["project"])
+}
+
+// TestUsageStatsScopeAllTrendKeepsProjectDim covers the trend path's separate
+// ranking step. trimTrendToTopN groups day rows into dim combos via
+// serializeDimKey and keeps only the top N; if that key function omits the
+// project dim, every project collapses into one combo and topN stops trimming
+// anything. Three projects with topN=1 is the smallest case that can tell the
+// two behaviors apart — with two rows and the default topN=10 both survive
+// either way.
+func TestUsageStatsScopeAllTrendKeepsProjectDim(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+	seedTwoProjects(t, db)
+	insertUsageSeed(t, db, usageSeed{
+		project: "/c", sessionID: "s-c1", agentID: "codebuddy", agentName: "CodeBuddy",
+		backend: "codebuddy", model: "glm", createdAt: "2026-01-12 10:00:00",
+		input: 10, output: 10, total: 20,
+	})
+
+	res, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		Scope:   service.ScopeAll,
+		Dims:    []service.UsageDim{service.DimProject},
+		Metrics: []service.UsageMetric{service.MetricTotal},
+		Trend:   true,
+		TopN:    1,
+	}))
+	require.NoError(t, err)
+
+	require.Len(t, res.Trend, 1, "topN=1 must keep exactly the heaviest project")
+	assert.Equal(t, "/b", res.Trend[0].Key["project"])
+	assert.Equal(t, int64(300), res.Trend[0].Total)
+	assert.NotEmpty(t, res.Trend[0].Day)
+}
+
+// TestUsageStatsAllFourDimsAccepted pins the dim cap to the number of real dims
+// now that project joined the list. The old cap of 3 would reject the natural
+// "project × model × backend × agent" breakdown.
+func TestUsageStatsAllFourDimsAccepted(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+	seedTwoProjects(t, db)
+
+	res, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		Scope:    service.ScopeAll,
+		Dims:     []service.UsageDim{service.DimProject, service.DimModel, service.DimBackend, service.DimAgent},
+		Metrics:  []service.UsageMetric{service.MetricTotal},
+		SortDesc: true,
+	}))
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 2)
+	assert.Equal(t, "/b", res.Rows[0].Key["project"])
+	assert.Equal(t, "opus", res.Rows[0].Key["model"])
+	assert.Equal(t, "claude", res.Rows[0].Key["backend"])
+	assert.Equal(t, "Other", res.Rows[0].Key["agent"])
+}
+
+// TestUsageStatsScopeValidation covers the new scope rules. Each case asserts
+// the stable error code so a caller can distinguish "you forgot the project"
+// from "you sent both project and scope=all".
+func TestUsageStatsScopeValidation(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	base := func() service.UsageParams {
+		return usageParams(service.UsageParams{
+			ProjectPath: "/p",
+			Dims:        []service.UsageDim{service.DimModel},
+			Metrics:     []service.UsageMetric{service.MetricTotal},
+		})
+	}
+
+	t.Run("unknown scope rejected", func(t *testing.T) {
+		p := base()
+		p.Scope = "everything"
+		_, err := service.UsageStats(context.Background(), p)
+		var vErr *service.UsageStatsError
+		require.ErrorAs(t, err, &vErr)
+		assert.Equal(t, "invalid_scope", vErr.Code)
+	})
+
+	t.Run("scope=all with a project path is contradictory", func(t *testing.T) {
+		p := base()
+		p.Scope = service.ScopeAll
+		p.ProjectPath = "/p"
+		_, err := service.UsageStats(context.Background(), p)
+		var vErr *service.UsageStatsError
+		require.ErrorAs(t, err, &vErr)
+		assert.Equal(t, "conflicting_scope", vErr.Code)
+	})
+
+	t.Run("empty project still rejected without scope=all", func(t *testing.T) {
+		p := base()
+		p.ProjectPath = ""
+		_, err := service.UsageStats(context.Background(), p)
+		var vErr *service.UsageStatsError
+		require.ErrorAs(t, err, &vErr)
+		assert.Equal(t, "missing_project", vErr.Code)
+	})
+
+	t.Run("scope=all with no project path is accepted", func(t *testing.T) {
+		p := base()
+		p.ProjectPath = ""
+		p.Scope = service.ScopeAll
+		_, err := service.UsageStats(context.Background(), p)
+		require.NoError(t, err)
+	})
+
+	t.Run("explicit scope=project behaves like the default", func(t *testing.T) {
+		p := base()
+		p.Scope = service.ScopeProject
+		_, err := service.UsageStats(context.Background(), p)
+		require.NoError(t, err)
+	})
 }

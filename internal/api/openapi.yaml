@@ -228,7 +228,15 @@ paths:
       description: |
         按维度聚合 `chat_metadata` 的 token / 成本统计。
 
-        项目范围通过项目 Cookie 传递，不是查询参数——`dims` 里**没有** `project`。
+        **项目范围**由 `scope` 决定：
+        - `scope=project`（默认）：限制在项目 Cookie 指定的单个项目内，Cookie
+          必填。浏览器面板走这条路径。
+        - `scope=all`：聚合实例内**全部项目**，仅授予携带本机 AI 令牌的调用方
+          （`/cb-usage` 斜杠命令）；浏览器会话请求会被拒绝。该模式要求**不**发送
+          项目 Cookie，同时发送两者返回 400。跨项目统计通常配合 `dims=project`。
+
+        `dims` 合法值含 `project`，但只在 `scope=all` 下有区分度——单项目范围内
+        所有行项目相同。
 
         **响应结构**：
         - `totals`：所有行的合计，字段 `input` / `output` / `total` / `cacheHit` /
@@ -243,6 +251,14 @@ paths:
         （约等于助手回复完成），不是用户提问时刻。
       operationId: usageStats
       parameters:
+        - name: scope
+          in: query
+          description: |
+            统计范围。默认 `project`（限制在项目 Cookie 指定的项目内）。
+            `all` 聚合实例内全部项目，仅本机 AI 令牌可用，且必须不带项目 Cookie。
+          schema:
+            type: string
+            enum: [project, all]
         - name: start
           in: query
           required: true
@@ -261,14 +277,15 @@ paths:
           in: query
           required: true
           description: |
-            聚合维度。**重复该参数**以多维分组（1..3 个，不可重复）——
+            聚合维度。**重复该参数**以多维分组（1..4 个，不可重复）——
             例如 `dims=model&dims=backend`。逗号分隔会被拒绝。
-            合法值仅 `model` / `backend` / `agent`。
+            合法值为 `model` / `backend` / `agent` / `project`；`project`
+            只在 `scope=all` 下有区分度。
           schema:
             type: array
             items:
               type: string
-              enum: [model, backend, agent]
+              enum: [model, backend, agent, project]
         - name: metrics
           in: query
           required: true

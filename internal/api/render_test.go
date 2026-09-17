@@ -147,19 +147,23 @@ func TestRenderCommand_FieldsMatchSpec(t *testing.T) {
 // TestRenderCommand_RendersEnumsInline asserts that permitted values reach the
 // prompt. Without this the AI sees only "dims:array" and has to guess — the
 // exact failure mode that had it sending dims=project, which the backend
-// rejects with invalid_dim.
+// rejected with invalid_dim before project became a supported dimension.
 func TestRenderCommand_RendersEnumsInline(t *testing.T) {
 	out, err := RenderCommand(CommandUsage)
 	require.NoError(t, err)
 
-	assert.Contains(t, out, "dims:model|backend|agent",
-		"dims must list its permitted values")
+	// The full enum must be listed, project included: a prefix match would let
+	// a dropped project dimension slip through.
+	assert.Contains(t, out, "dims:model|backend|agent|project",
+		"dims must list every permitted value, project included")
 	assert.Contains(t, out, "metrics:input|output|total|cacheHit|credit|cost",
 		"metrics must list its permitted values")
 	assert.Contains(t, out, "order:asc|desc",
 		"order must list its permitted values")
-	// The removed dimension must not resurface.
-	assert.NotContains(t, out, "dims:project")
+	// scope is how the AI asks for cross-project aggregation, so its permitted
+	// values have to be visible too.
+	assert.Contains(t, out, "scope:project|all",
+		"scope must list its permitted values")
 }
 
 // TestRenderCommand_BodyFieldsCarryEnumsAndDescriptions guards the request-body

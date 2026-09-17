@@ -16,6 +16,24 @@ const (
 	DimModel   UsageDim = "model"
 	DimBackend UsageDim = "backend"
 	DimAgent   UsageDim = "agent"
+	// DimProject groups by the ledger's denormalized project_path. It is only
+	// meaningful in cross-project scope: in single-project scope every row
+	// carries the same project, so grouping by it adds nothing.
+	DimProject UsageDim = "project"
+)
+
+// UsageScope selects which projects a query covers.
+type UsageScope string
+
+const (
+	// ScopeProject restricts the aggregate to one project (the default). The
+	// caller supplies the project path — normally from the project cookie.
+	ScopeProject UsageScope = "project"
+	// ScopeAll aggregates every project on the instance. It exists for the
+	// /cb-usage slash command, whose whole point is an instance-wide total;
+	// the handler only grants it to a local AI token, never to a browser
+	// session, so the per-project isolation of the stats panel is unchanged.
+	ScopeAll UsageScope = "all"
 )
 
 // UsageMetric is a numeric metric summed over the selected time range.
@@ -32,7 +50,13 @@ const (
 
 // UsageParams configures a single usage statistics query.
 type UsageParams struct {
+	// ProjectPath scopes the aggregate to one project. Required when Scope is
+	// ScopeProject (or empty, which defaults to it); ignored when Scope is
+	// ScopeAll.
 	ProjectPath string
+	// Scope selects single-project vs instance-wide aggregation. Empty means
+	// ScopeProject, so existing callers keep their behavior.
+	Scope UsageScope
 	// Start/End bound the usage window on chat_metadata.created_at.
 	// NOTE: chat_metadata.created_at is NOT the user message time — SaveMetadata
 	// (service/chat.go) upserts via INSERT OR REPLACE without writing created_at,
@@ -116,6 +140,11 @@ func dimExpr(d UsageDim) (string, bool) {
 		// name is resolved live via LEFT JOIN agents; the ledger itself stores
 		// only agent_id so it survives session deletion.
 		return "COALESCE(NULLIF(a.name,''), NULLIF(m.agent_id,''), '" + emptyGroupLabel + "')", true
+	case DimProject:
+		// Denormalized at write time (SaveMetadata), so the ledger keeps the
+		// project even after the session is deleted. Rows written before the
+		// column existed were backfilled by migrateChatMetadataLedger.
+		return "COALESCE(NULLIF(m.project_path,''),'" + emptyGroupLabel + "')", true
 	}
 	return "", false
 }
@@ -146,12 +175,44 @@ const (
 	maxRangeDays      = 370
 )
 
+// maxUsageDims is the number of distinct dimensions available. The cap exists
+// to keep the GROUP BY from exploding; it equals the dim count so "use all of
+// them" stays legal.
+const maxUsageDims = 4
+
+// validateUsageScope resolves the scope and checks it against the supplied
+// project path, normalizing an empty scope to ScopeProject (the historical
+// single-project behavior).
+//
+// Extracted from validateUsageParams so each rule stays independently
+// readable and the params validator stays within the complexity budget.
+func validateUsageScope(p *UsageParams) error {
+	switch p.Scope {
+	case "", ScopeProject:
+		p.Scope = ScopeProject
+		if p.ProjectPath == "" {
+			return usageErr("missing_project", "project path required")
+		}
+	case ScopeAll:
+		// A project path alongside scope=all is contradictory: the caller is
+		// asking for everything and for one project at once. Rejecting is
+		// safer than silently picking one meaning, since a caller that sends
+		// both believes it is getting the narrower answer.
+		if p.ProjectPath != "" {
+			return usageErr("conflicting_scope", "project path must be empty when scope=all")
+		}
+	default:
+		return usageErr("invalid_scope", "invalid scope %q", p.Scope)
+	}
+	return nil
+}
+
 func validateUsageParams(p *UsageParams) error {
 	if p == nil {
 		return usageErr("missing_params", "usage params required")
 	}
-	if p.ProjectPath == "" {
-		return usageErr("missing_project", "project path required")
+	if err := validateUsageScope(p); err != nil {
+		return err
 	}
 	if !p.End.After(p.Start) {
 		return usageErr("invalid_range", "end must be after start")
@@ -162,8 +223,8 @@ func validateUsageParams(p *UsageParams) error {
 	if len(p.Dims) == 0 {
 		return usageErr("missing_dims", "at least one dimension required")
 	}
-	if len(p.Dims) > 3 {
-		return usageErr("too_many_dims", "at most three dimensions")
+	if len(p.Dims) > maxUsageDims {
+		return usageErr("too_many_dims", "at most %d dimensions", maxUsageDims)
 	}
 	seen := map[UsageDim]bool{}
 	for _, d := range p.Dims {
@@ -198,6 +259,9 @@ func validateUsageParams(p *UsageParams) error {
 // its messages have been deleted. agents is LEFT JOINed only for the display
 // name. The query never touches real user strings: dims/metrics map onto fixed
 // whitelisted column expressions.
+//
+// ScopeAll drops the project predicate so the aggregate spans every project.
+// That is a privileged view — the handler only grants it to a local AI token.
 func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	if err := validateUsageParams(&p); err != nil {
 		return nil, err
@@ -236,11 +300,19 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	// Where clause. project_path filters the ledger's denormalized project;
 	// created_at bounds the usage window. UTC-formatted params match SQLite
 	// stored text.
+	//
+	// The project predicate is omitted entirely in ScopeAll rather than passed
+	// as an empty string: legacy rows can carry project_path='', so
+	// `project_path = ''` would silently hide them from the very query whose
+	// purpose is an instance-wide total.
 	startStr := p.Start.UTC().Format("2006-01-02 15:04:05")
 	endStr := p.End.UTC().Format("2006-01-02 15:04:05")
-	where := "WHERE m.project_path = ? AND m.created_at >= ? AND m.created_at < ?"
-	args := []any{p.ProjectPath, startStr, endStr}
-
+	where := "WHERE m.created_at >= ? AND m.created_at < ?"
+	args := []any{startStr, endStr}
+	if p.Scope != ScopeAll {
+		where = "WHERE m.project_path = ? AND m.created_at >= ? AND m.created_at < ?"
+		args = []any{p.ProjectPath, startStr, endStr}
+	}
 	res := &UsageStatsResult{}
 
 	// Totals: same filter, no grouping — one aggregate row over the range.
@@ -362,7 +434,7 @@ func trimTrendToTopN(trend []*UsageRow, topN int) []*UsageRow {
 func serializeDimKey(key map[string]string) string {
 	// map key iteration order is random — serialize deterministically.
 	parts := make([]string, 0, len(key))
-	for _, d := range []UsageDim{DimModel, DimBackend, DimAgent} {
+	for _, d := range []UsageDim{DimProject, DimModel, DimBackend, DimAgent} {
 		if v, ok := key[string(d)]; ok {
 			parts = append(parts, string(d)+":"+v)
 		}

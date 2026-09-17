@@ -85,8 +85,10 @@ Current time (UTC): {{NOW}}
 Endpoints:
 {{ENDPOINTS}}
 
-Project scope:
-- Send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" on every request.
+Choosing the scope — pick exactly one per request:
+- Single project: send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" and omit scope (it defaults to project). This is the default; use it when the user asks about "this project".
+- All projects: send "scope=all" and do NOT send the project cookie. This aggregates every project on this instance and is what the user means by "across projects", "all projects" or "everything". Sending the cookie together with scope=all is rejected as contradictory.
+  When the user wants to know which project consumes the most, also pass "dims=project" so rows are grouped per project instead of merged into one total.
 
 Working with time:
 - start / end are RFC3339 UTC timestamps. Compute the range from the current time above.
@@ -94,6 +96,7 @@ Working with time:
 - The date range is capped by the server; keep it to a few months at most.
 
 Present the numbers in a readable form: a short summary plus a table when several rows come back. Scale large token counts (e.g. 1.2M) and state the currency for cost.
+State which scope you used, and in scope=all list the projects by consumption.
 If no data is returned, say so plainly — do NOT invent figures.
 `
 
