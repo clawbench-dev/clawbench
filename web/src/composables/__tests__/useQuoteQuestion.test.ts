@@ -349,7 +349,7 @@ describe('useQuoteQuestion', () => {
   })
 
   describe('composer mode (opened from an entry point, no quote)', () => {
-    it('opens with no quote and only the URL attachment', () => {
+    it('opens with no quote and does NOT touch the chat attachments', () => {
       const qq = useQuoteQuestion()
       qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
@@ -357,13 +357,23 @@ describe('useQuoteQuestion', () => {
       expect(qq.visible.value).toBe(true)
       // Crucially NOT the full body: nothing is quoted until the user selects.
       expect(ctx.quoteData.value).toBeNull()
-      expect(ctx.attachedFiles.value).toHaveLength(1)
-      expect(ctx.attachedFiles.value[0]).toMatchObject({
-        kind: 'url', url: 'https://github.com/acme/widgets/issues/7', path: 'acme/widgets#7',
+      // And crucially not in the chat input either: the attachment is only
+      // previewed in the bar until the user commits. Attaching on open put the
+      // chip in the main chat input the moment the button was clicked, and
+      // dismissing the bar left it behind.
+      expect(ctx.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('previews the issue/PR URL as a chip in the bar', () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+      expect(qq.composerAttachment.value).toEqual({
+        kind: 'url', label: 'acme/widgets#7', url: 'https://github.com/acme/widgets/issues/7',
       })
     })
 
-    it('attaches a local file when the composer is opened with filePath', () => {
+    it('previews a local file when the composer is opened with filePath', () => {
       // The file browser header opens the same composer, but its attachment is a
       // local file rather than an external URL.
       const qq = useQuoteQuestion()
@@ -371,19 +381,22 @@ describe('useQuoteQuestion', () => {
 
       expect(qq.composerMode.value).toBe(true)
       expect(qq.visible.value).toBe(true)
-      expect(ctx.quoteData.value).toBeNull()
-      expect(ctx.attachedFiles.value).toHaveLength(1)
-      expect(ctx.attachedFiles.value[0]).toMatchObject({ path: '/proj/src/main.ts' })
-      // Must not be mistaken for a URL entry.
-      expect(ctx.attachedFiles.value[0].kind).toBeUndefined()
+      expect(qq.composerAttachment.value).toEqual({
+        kind: 'file', label: 'main.ts', path: '/proj/src/main.ts',
+      })
+      expect(ctx.attachedFiles.value).toHaveLength(0)
     })
 
-    it('does not attach twice when the same file composer is opened twice', () => {
+    it('drops the previewed attachment when the composer is dismissed', () => {
+      // Closing the bar must not leave anything in the chat input — that is the
+      // regression this whole pending-attachment indirection exists to prevent.
       const qq = useQuoteQuestion()
-      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
-      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
-      expect(ctx.attachedFiles.value).toHaveLength(1)
+      qq.hideComposer()
+
+      expect(qq.composerAttachment.value).toBeNull()
+      expect(ctx.attachedFiles.value).toHaveLength(0)
     })
 
     it('ignores an open request with neither url nor filePath', () => {
@@ -392,24 +405,58 @@ describe('useQuoteQuestion', () => {
 
       expect(qq.composerMode.value).toBe(false)
       expect(qq.visible.value).toBe(false)
+      expect(qq.composerAttachment.value).toBeNull()
     })
 
-    it('sends the typed message with the file attached and no quote', async () => {
+    it('commits the URL attachment to the chat before sending', async () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+      // The attachment must already be in the chat context when the send runs —
+      // ChatPanelContent reads attachedFiles synchronously before its first
+      // await, so committing any later would drop it. Afterwards the batch is
+      // cleared by the send itself, so it is only observable here.
+      let atSendTime: unknown[] = []
+      mockSendMessage.mockImplementation(async () => {
+        atSendTime = [...ctx.attachedFiles.value]
+      })
+
+      await qq.sendMessage('why is this broken?')
+
+      expect(mockSendMessage).toHaveBeenCalledWith('why is this broken?')
+      expect(atSendTime).toHaveLength(1)
+      expect(atSendTime[0]).toMatchObject({
+        kind: 'url', url: 'https://github.com/acme/widgets/issues/7', path: 'acme/widgets#7',
+      })
+      // Consumed by the message, not left behind for the next one.
+      expect(ctx.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('commits the local file attachment to the chat before sending', async () => {
       const qq = useQuoteQuestion()
       qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
 
+      let atSendTime: unknown[] = []
+      mockSendMessage.mockImplementation(async () => {
+        atSendTime = [...ctx.attachedFiles.value]
+      })
+
       await qq.sendMessage('explain this')
 
-      expect(mockSendMessage).toHaveBeenCalledWith('explain this')
+      expect(atSendTime).toHaveLength(1)
+      expect(atSendTime[0]).toMatchObject({ path: '/proj/src/main.ts' })
+      // Must not be mistaken for a URL entry.
+      expect((atSendTime[0] as { kind?: string }).kind).toBeUndefined()
     })
 
-    it('does not add a second chip when opened twice for the same URL', () => {
+    it('does not attach anything just by opening twice', () => {
       const qq = useQuoteQuestion()
       const ctxArg = { url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' }
       qq.openComposer(ctxArg)
       qq.openComposer(ctxArg)
 
-      expect(ctx.attachedFiles.value).toHaveLength(1)
+      expect(ctx.attachedFiles.value).toHaveLength(0)
+      expect(qq.composerAttachment.value?.label).toBe('acme/widgets#7')
     })
 
     it('sends the user input with no quote at all', async () => {
@@ -500,13 +547,27 @@ describe('useQuoteQuestion', () => {
         expect(onAdd).toHaveBeenCalledTimes(1)
       })
 
-      it('keeps the URL attachment staged for the chat input', () => {
+      it('commits the URL attachment to the chat input on add', () => {
         const qq = useQuoteQuestion()
         qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
         qq.addToConversation('')
 
         expect(ctx.attachedFiles.value).toHaveLength(1)
+        expect(ctx.attachedFiles.value[0]).toMatchObject({
+          kind: 'url', url: 'https://github.com/acme/widgets/issues/7', path: 'acme/widgets#7',
+        })
+        expect(qq.composerAttachment.value).toBeNull()
+      })
+
+      it('commits the local file attachment to the chat input on add', () => {
+        const qq = useQuoteQuestion()
+        qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+
+        qq.addToConversation('')
+
+        expect(ctx.attachedFiles.value).toHaveLength(1)
+        expect(ctx.attachedFiles.value[0]).toMatchObject({ path: '/proj/src/main.ts' })
       })
     })
 

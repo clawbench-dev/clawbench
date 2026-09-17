@@ -316,6 +316,7 @@
         :visible="quoteQuestion.visible.value"
         :quoteData="quoteQuestion.quoteData.value"
         :composerMode="quoteQuestion.composerMode.value"
+        :composerAttachment="quoteQuestion.composerAttachment.value"
         @add="quoteQuestion.addToConversation($event)"
         @send="quoteQuestion.sendMessage($event)"
         @close="quoteQuestion.closeSheet()"
@@ -2081,8 +2082,10 @@ const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
 // "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
-// composer mode: the issue/PR URL is attached, and NO body text is quoted by
-// default — the user selects the part they care about, then types their message.
+// composer mode: the issue/PR URL is previewed as a chip in the bar and NO body
+// text is quoted by default — the user selects the part they care about, then
+// types their message. The attachment only reaches the chat input when the user
+// commits (send / add), so dismissing the bar leaves the input untouched.
 // The bar is global (position: fixed), so no tab switch is needed on open; the
 // add path switches to chat via onAdd.
 function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
@@ -2099,7 +2102,8 @@ function handleForgeQuote(payload: { item?: { url?: string; slug?: string; numbe
 
 // "Quote in chat" from the file browser header. Same composer as the forge
 // header, but the attachment is the local file instead of an external URL, and
-// no quote text is pre-filled — the user types the instruction themselves.
+// no quote text is pre-filled — the user types the instruction themselves. The
+// file likewise stays a preview chip until the user commits.
 function handleFileQuoteInChat(path: string) {
   if (!path) return
   quoteQuestion.openComposer({

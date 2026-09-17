@@ -27,6 +27,17 @@ export interface QuoteComposerContext {
   onAdd?: () => void
 }
 
+/**
+ * The attachment the composer is *about* to add, shown as a chip inside the
+ * bar. It is deliberately not part of the chat context yet — see openComposer.
+ */
+export interface ComposerAttachment {
+  kind: 'url' | 'file'
+  label: string
+  url?: string
+  path?: string
+}
+
 // Module-level singleton: bar visibility state shared across all consumers.
 // The active selection stays separate from staged quotes so dismissing a
 // selection never discards snippets the user already added to the chat draft.
@@ -47,6 +58,24 @@ const sheetOpen = ref(false)
 // selection. In this mode the bar is useful even with no quote.
 const composerContext = ref<QuoteComposerContext | null>(null)
 const composerMode = computed(() => composerContext.value !== null)
+
+/**
+ * The attachment the composer would add, derived from its context.
+ *
+ * This is only a *preview*: the real entry lives in useChatContext.attachedFiles
+ * and is written on commit (see commitComposerAttachment). Keeping it out of the
+ * chat context until then is the whole point — the chat input renders its chips
+ * straight from attachedFiles, so attaching on open put the issue/PR/file in the
+ * main chat input the moment the button was clicked, and dismissing the bar left
+ * it behind.
+ */
+const composerAttachment = computed<ComposerAttachment | null>(() => {
+  const ctx = composerContext.value
+  if (!ctx) return null
+  if (ctx.url) return { kind: 'url', label: ctx.label, url: ctx.url }
+  if (ctx.filePath) return { kind: 'file', label: ctx.label, path: ctx.filePath }
+  return null
+})
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let pointerReleaseTimer: ReturnType<typeof setTimeout> | null = null
@@ -222,18 +251,13 @@ export function useQuoteQuestion() {
 
   /**
    * Open the bar from an entry point with NO quote (e.g. the issue/PR detail
-   * header). Only the URL attachment is added; the user can type straight away
-   * and optionally select text to quote.
+   * header). The bar previews the attachment as a chip; nothing reaches the chat
+   * context until the user commits (send or the add button), so dismissing the
+   * bar leaves the chat input untouched.
    */
   function openComposer(ctx: QuoteComposerContext) {
     if (!ctx?.url && !ctx?.filePath) return
     composerContext.value = ctx
-    // Both add* helpers dedupe, so opening twice adds one chip.
-    if (ctx.url) {
-      addUrlAttachment(ctx.url, ctx.label)
-    } else if (ctx.filePath) {
-      addAttachedFile(ctx.filePath)
-    }
     // A live selection carries over (select-then-click); otherwise start empty
     // so the full body is never quoted by default.
     const sel = window.getSelection()
@@ -242,6 +266,19 @@ export function useQuoteQuestion() {
     }
     barVisible.value = true
     barPinned.value = true
+  }
+
+  /**
+   * Move the composer's pending attachment into the chat context. Called on
+   * commit only — both add* helpers dedupe, so committing twice adds one chip.
+   */
+  function commitComposerAttachment(ctx: QuoteComposerContext | null) {
+    if (!ctx) return
+    if (ctx.url) {
+      addUrlAttachment(ctx.url, ctx.label)
+    } else if (ctx.filePath) {
+      addAttachedFile(ctx.filePath)
+    }
   }
 
   /** Close the composer without touching unrelated staged quotes. */
@@ -300,10 +337,14 @@ export function useQuoteQuestion() {
     if (composerContext.value) {
       const draft = buildComposerDraft(note)
       const onAdd = composerContext.value.onAdd
+      const ctx = composerContext.value
       composerContext.value = null
       setQuoteData(null)
       barVisible.value = false
       barPinned.value = false
+      // The user committed, so the previewed attachment becomes real now. It is
+      // still just a chip in the chat input — the text is only injected below.
+      commitComposerAttachment(ctx)
       // An empty draft (no selection, no input) still keeps the URL attachment
       // and still navigates, so the user can type in the chat input directly.
       if (draft.trim()) injectChatInput(draft)
@@ -340,10 +381,14 @@ export function useQuoteQuestion() {
     const animFrom = sendBtn?.getBoundingClientRect() ?? null
     const animTo = dockChatBtn?.getBoundingClientRect() ?? null
 
+    const ctx = composerContext.value
     composerContext.value = null
     clearQuotes()
     barVisible.value = false
     barPinned.value = false
+    // Commit the previewed attachment before the send so it rides along; the
+    // registered ChatPanel handler captures attachedFiles synchronously.
+    commitComposerAttachment(ctx)
 
     try {
       const sendPromise = sessionIdentity.sendMessage(message)
@@ -426,6 +471,7 @@ export function useQuoteQuestion() {
     quoteData,
     sheetOpen,
     composerMode,
+    composerAttachment,
     openSheet: () => { sheetOpen.value = true },
     closeSheet,
     openComposer,
