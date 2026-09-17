@@ -42,6 +42,11 @@ web/sw-template.js
 .smartworkbench/
 *.db
 
+# Auto-generated password file. Written into the data dir (~/.clawbench), but a
+# stale copy under internal/model/ was committed once and leaked a credential —
+# ignore the name everywhere so a stray one can never be tracked again.
+auto-password
+
 # DeepSeek TUI runtime config
 .deepseek/
 
