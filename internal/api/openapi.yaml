@@ -3541,7 +3541,9 @@ paths:
       description: |
         跨会话聚合搜索并返回命中位置，供会话搜索抽屉高亮。
         `q` 为空时进入「浏览全部」模式：列出该项目下的会话，此时
-        `archived`/`sort`/`cursor` 仍然生效。
+        `archived`/`session_type`/`sort`/`cursor` 仍然生效。
+        浏览态不会混排两类会话：`all`/`chat` 均列出对话会话，只有显式
+        `task` 才切换到任务执行会话。
       requestBody:
         required: true
         content:
@@ -3571,6 +3573,15 @@ paths:
                   type: string
                   enum: [all, active, archived]
                   description: 归档筛选（字符串，非布尔）。默认 `all`。
+                session_type:
+                  type: string
+                  enum: [all, chat, task]
+                  description: |
+                    会话类型筛选。`task` 对应库中的 `scheduled` 会话（计划任务的
+                    单次执行会话），`chat` 为交互式对话。默认 `all`，即不做类型
+                    限制（搜索态下两类都会返回）。
+                    浏览态（`q` 为空）一次只列出一类：`all`/`chat` 列出对话，
+                    `task` 列出任务执行。
                 sort:
                   type: string
                   enum: [newest, oldest, relevance]

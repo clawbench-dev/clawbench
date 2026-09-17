@@ -56,6 +56,17 @@
           <span class="filter-dropdown-label">{{ sortLabel }}</span>
           <ChevronDown :size="12" class="filter-dropdown-caret" />
         </button>
+        <button
+          ref="typeTriggerRef"
+          type="button"
+          class="filter-dropdown-btn"
+          :class="{ 'filter-active': searchState.typeFilter !== 'all' }"
+          :title="t('sessionSearch.filterType')"
+          @click.stop="toggleMenu('type')"
+        >
+          <span class="filter-dropdown-label">{{ typeLabel }}</span>
+          <ChevronDown :size="12" class="filter-dropdown-caret" />
+        </button>
       </div>
 
       <PopupMenu
@@ -124,6 +135,28 @@
         </button>
       </PopupMenu>
 
+      <PopupMenu
+        :show="openMenu === 'type'"
+        :target-element="typeTriggerRef"
+        :max-width="150"
+        :menu-items-count="3"
+        anchor="right"
+        @update:show="(v: boolean) => { if (!v) openMenu = null }"
+      >
+        <button
+          v-for="opt in typeOptions"
+          :key="opt.value"
+          type="button"
+          class="filter-menu-item"
+          :class="{ selected: searchState.typeFilter === opt.value }"
+          @click="chooseType(opt.value)"
+        >
+          <Check v-if="searchState.typeFilter === opt.value" :size="13" class="filter-menu-check" />
+          <span v-else class="filter-menu-check" />
+          {{ opt.label }}
+        </button>
+      </PopupMenu>
+
       <!-- Time-range presets. Horizontally scrollable so all chips stay
            reachable on narrow phones; "custom" reveals two date inputs. -->
       <div class="time-range-row">
@@ -161,6 +194,7 @@
             </div>
             <div v-if="session.chunks.length > 0" class="session-search-item-preview" v-html="getPreviewHtml(session)" />
             <div class="session-search-item-footer">
+              <span v-if="session.session_type" class="session-search-item-type" :class="'session-search-item-type-' + session.session_type">{{ sessionTypeLabel(session.session_type) }}</span>
               <span v-if="session.archived" class="session-search-item-archived">{{ t('sessionSearch.archived') }}</span>
               <span v-if="session.backend" class="session-search-item-backend">{{ session.backend }}</span>
               <span v-if="!isBrowseMode && session.chunks.length > 0" class="session-search-item-chunks">{{ t('sessionSearch.chunks', { count: session.match_count }) }}</span>
@@ -178,6 +212,7 @@
     <div v-else class="detail-page">
       <!-- Session meta bar -->
       <div class="detail-meta-bar">
+        <span v-if="selectedSession.session_type" class="detail-meta-badge" :class="'detail-meta-type-' + selectedSession.session_type">{{ sessionTypeLabel(selectedSession.session_type) }}</span>
         <span v-if="selectedSession.backend" class="detail-meta-badge detail-meta-backend">{{ selectedSession.backend }}</span>
         <span v-if="!isBrowseMode && detailChunks.length > 0" class="detail-meta-badge detail-meta-count">{{ t('sessionSearch.chunks', { count: selectedSession.match_count }) }}</span>
         <span class="detail-meta-time">{{ formatRelativeTime(selectedSession.created_at) }}</span>
@@ -228,7 +263,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import { useSessionSearch, fetchSessionFirstMessage, type SessionSearchResult, type ChunkHit, type SessionArchiveFilter, type SessionSortOrder, type SessionTimeRange } from '@/composables/useSessionSearch'
+import { useSessionSearch, fetchSessionFirstMessage, type SessionSearchResult, type ChunkHit, type SessionArchiveFilter, type SessionSortOrder, type SessionTimeRange, type SessionTypeFilter } from '@/composables/useSessionSearch'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
@@ -289,14 +324,15 @@ watch(
 )
 
 // ── Search mode / filter / sort dropdowns ──
-// All three collapse into compact triggers on the search row, keeping the
+// All four collapse into compact triggers on the search row, keeping the
 // header to a single line. Their options live in PopupMenu popovers.
-const openMenu = ref<'mode' | 'archive' | 'sort' | null>(null)
+const openMenu = ref<'mode' | 'archive' | 'sort' | 'type' | null>(null)
 const modeTriggerRef = ref<HTMLElement | null>(null)
 const archiveTriggerRef = ref<HTMLElement | null>(null)
 const sortTriggerRef = ref<HTMLElement | null>(null)
+const typeTriggerRef = ref<HTMLElement | null>(null)
 
-function toggleMenu(menu: 'mode' | 'archive' | 'sort') {
+function toggleMenu(menu: 'mode' | 'archive' | 'sort' | 'type') {
   openMenu.value = openMenu.value === menu ? null : menu
 }
 
@@ -326,6 +362,12 @@ const sortOptions = computed(() => [
   { value: 'oldest' as SessionSortOrder, label: t('sessionSearch.sortOldest') },
 ])
 
+const typeOptions = computed(() => [
+  { value: 'all' as SessionTypeFilter, label: t('sessionSearch.typeAll') },
+  { value: 'chat' as SessionTypeFilter, label: t('sessionSearch.typeChat') },
+  { value: 'task' as SessionTypeFilter, label: t('sessionSearch.typeTask') },
+])
+
 const timeOptions = computed(() => [
   { value: 'all' as SessionTimeRange, label: t('sessionSearch.timeAll') },
   { value: 'today' as SessionTimeRange, label: t('sessionSearch.timeToday') },
@@ -342,6 +384,10 @@ const sortLabel = computed(() =>
   sortOptions.value.find(o => o.value === searchState.sortOrder)?.label ?? ''
 )
 
+const typeLabel = computed(() =>
+  typeOptions.value.find(o => o.value === searchState.typeFilter)?.label ?? ''
+)
+
 function chooseArchive(filter: SessionArchiveFilter) {
   openMenu.value = null
   setArchiveFilter(filter)
@@ -350,6 +396,17 @@ function chooseArchive(filter: SessionArchiveFilter) {
 function chooseSort(sort: SessionSortOrder) {
   openMenu.value = null
   setSortOrder(sort)
+}
+
+function chooseType(type: SessionTypeFilter) {
+  openMenu.value = null
+  setTypeFilter(type)
+}
+
+// sessionTypeLabel renders the badge text for a stored session_type. 'scheduled'
+// is the DB value for a task execution; anything else is a conversation.
+function sessionTypeLabel(sessionType: string): string {
+  return sessionType === 'scheduled' ? t('sessionSearch.typeTask') : t('sessionSearch.typeChat')
 }
 
 // ── Lazy first-message preview (browse mode only) ──
@@ -398,7 +455,12 @@ function setMode(mode: 'hybrid' | 'fts') {
   }
 }
 
-// ── Archive filter / sort order ──
+// ── Type / archive filter / sort order ──
+function setTypeFilter(type: SessionTypeFilter) {
+  if (searchState.typeFilter === type) return
+  search.setFilters({ type })
+}
+
 function setArchiveFilter(filter: SessionArchiveFilter) {
   if (searchState.archivedFilter === filter) return
   search.setFilters({ archived: filter })
@@ -944,6 +1006,26 @@ defineExpose({ focusSearchInput })
   color: var(--text-secondary, #666);
 }
 
+/* Session-type badge: distinguishes task executions (session_type='scheduled')
+   from interactive conversations. Both types are badged, so the footer reads
+   symmetrically instead of relying on the ⏰ title prefix — which continued
+   sessions also carry. */
+.session-search-item-type {
+  font-size: var(--font-size-2xs);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+}
+
+.session-search-item-type-scheduled {
+  background: rgba(230, 162, 60, 0.12);
+  color: var(--color-orange);
+}
+
+.session-search-item-type-chat {
+  background: var(--bg-tertiary, #eee);
+  color: var(--text-secondary, #666);
+}
+
 .session-search-item-chunks {
   font-size: var(--font-size-2xs);
 }
@@ -1051,6 +1133,18 @@ defineExpose({ focusSearchInput })
 .detail-meta-count {
   background: rgba(124, 58, 237, 0.08);
   color: var(--color-purple, #7c3aed);
+}
+
+/* Session-type badges. 'scheduled' is a task execution; anything else is a
+   conversation. Colours mirror .session-search-item-type-* below. */
+.detail-meta-type-scheduled {
+  background: rgba(230, 162, 60, 0.12);
+  color: var(--color-orange);
+}
+
+.detail-meta-type-chat {
+  background: var(--bg-tertiary, #eee);
+  color: var(--text-secondary, #666);
 }
 
 .detail-meta-time {

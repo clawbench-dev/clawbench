@@ -494,6 +494,107 @@ func TestRAGSessionSearch_ArchiveFilterActiveKeepsAllWhenNoSessionDB(t *testing.
 	assert.Empty(t, result.Sessions)
 }
 
+// ---------- session type filter ----------
+
+// TestRAGSessionSearch_TypeFilter locks the post-aggregation type filter. The
+// session_type lives on chat_sessions, not on rag_chunks, so the filter can only
+// run once each session's DB metadata is loaded — the same shape as the archive
+// filter.
+func TestRAGSessionSearch_TypeFilter(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	// One conversation and one task execution, both matching the query text.
+	_, err := serviceDB.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, session_type) VALUES ('sess-conv', ?, 'claude', 'Conversation', 'chat')",
+		testProjectPath,
+	)
+	require.NoError(t, err)
+	_, err = serviceDB.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, session_type) VALUES ('sess-job', ?, 'claude', 'Task run', 'scheduled')",
+		testProjectPath,
+	)
+	require.NoError(t, err)
+
+	for i, sid := range []string{"sess-conv", "sess-job"} {
+		require.NoError(t, store.InsertChunks([]Chunk{
+			makeTestChunk(sid, int64(i+1), 0, testDBQueryOptimization),
+		}))
+	}
+
+	// "all" (and empty) → no type restriction, both sessions returned.
+	all, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SessionType: "all",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, all.Sessions, 2)
+
+	// "task" → only the scheduled session, and its type is reported back.
+	task, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SessionType: "task",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, task.Sessions, 1)
+	assert.Equal(t, "sess-job", task.Sessions[0].SessionID)
+	assert.Equal(t, "scheduled", task.Sessions[0].SessionType)
+
+	// "chat" → only the conversation.
+	chat, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SessionType: "chat",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, chat.Sessions, 1)
+	assert.Equal(t, "sess-conv", chat.Sessions[0].SessionID)
+	assert.Equal(t, "chat", chat.Sessions[0].SessionType)
+
+	// An unknown value falls back to "all" rather than dropping everything.
+	bogus, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SessionType: "bogus",
+	}, 10, 20)
+	require.NoError(t, err)
+	assert.Len(t, bogus.Sessions, 2)
+}
+
+// TestRAGSessionSearch_TypeFilterUnknownTypeTreatedAsChat mirrors the archive
+// filter's "unknown defaults to the benign value" contract: with no service DB
+// the session type is unknown, so "chat" keeps every result while "task"
+// matches nothing.
+func TestRAGSessionSearch_TypeFilterUnknownTypeTreatedAsChat(t *testing.T) {
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	for i, sid := range []string{"sess-a", "sess-b"} {
+		require.NoError(t, store.InsertChunks([]Chunk{
+			makeTestChunk(sid, int64(i+1), 0, testDBQueryOptimization),
+		}))
+	}
+
+	chat, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SessionType: "chat",
+	}, 10, 20)
+	require.NoError(t, err)
+	assert.Len(t, chat.Sessions, 2)
+
+	task, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SessionType: "task",
+	}, 10, 20)
+	require.NoError(t, err)
+	assert.Empty(t, task.Sessions)
+}
+
 // ---------- aggregateSessionHits / sessionIDSet / sortSessionResults ----------
 // Regression coverage for the helpers extracted out of RAGSessionSearch. They
 // encode the aggregation contract (first-seen order, per-session chunk cap,
