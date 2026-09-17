@@ -386,7 +386,13 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
 
   html += '<div class="ask-question-supplementary">'
   html += `<label class="ask-supplementary-label">${escapeHtml(gt('tool.askUser.supplementary'))}</label>`
-  html += `<input class="ask-supplementary-input" type="text" placeholder="${escapeHtml(gt('tool.askUser.supplementaryPlaceholder'))}" />`
+  // A textarea (not an input) so the note can run to several lines — a long
+  // answer is unreadable in a single-line field. `rows="1"` + the auto-grow in
+  // fitAskSupplementaryInput give the one-line look until the text wraps;
+  // Enter inserts a newline (submission stays on the button), which is the
+  // expectation a multiline box sets up. The class name is kept because every
+  // read/write site (value, disabled) treats both elements identically.
+  html += `<textarea class="ask-supplementary-input" rows="1" placeholder="${escapeHtml(gt('tool.askUser.supplementaryPlaceholder'))}"></textarea>`
   html += '</div>'
 
   html += '<div class="ask-question-actions">'
@@ -1766,6 +1772,46 @@ function askKeyOf(view: Element): string {
 }
 
 /**
+ * The card's supplementary-note field. Rendered as a <textarea> so the note can
+ * wrap onto several lines; typed as HTMLTextAreaElement for the height control
+ * in fitAskSupplementaryInput. Every call site only touches `value`/`disabled`,
+ * which the two elements share.
+ */
+function askSupplementaryField(view: Element): HTMLTextAreaElement | null {
+  return view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement | null
+}
+
+/**
+ * Grow the supplementary field to fit its content, capped at 6 lines.
+ *
+ * A textarea does not auto-grow on its own, and `rows="1"` would clip everything
+ * past the first line. The height is driven by the element's own computed
+ * line-height/padding so it stays correct when the type scale changes, and the
+ * cap comes from CSS max-height — setting `height` to the measured scrollHeight
+ * lets the browser clamp it and turn on the internal scrollbar past 6 lines.
+ *
+ * `scrollHeight === 0` means the element has no layout box (jsdom, or a card
+ * inside a display:none panel). Bailing out leaves the CSS one-line height
+ * intact; writing 0 would collapse the field.
+ */
+const ASK_SUPPLEMENTARY_MAX_LINES = 6
+
+function fitAskSupplementaryInput(el: HTMLTextAreaElement | null): void {
+  if (!el) return
+  const scrollHeight = el.scrollHeight
+  if (!scrollHeight) return
+  const computed = getComputedStyle(el)
+  const lineHeight = parseFloat(computed.lineHeight) || 18
+  const paddingTop = parseFloat(computed.paddingTop) || 0
+  const paddingBottom = parseFloat(computed.paddingBottom) || 0
+  const maxHeight = lineHeight * ASK_SUPPLEMENTARY_MAX_LINES + paddingTop + paddingBottom
+  // Reset first: with `height` still at the previous value, scrollHeight can
+  // only ever grow — deleting a line would leave the box too tall.
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px'
+}
+
+/**
  * Read the current selection out of the DOM, keyed by question index.
  * Question index comes from `data-qi` (assigned by renderAskUserQuestion for
  * every option, in both single and merged cards), so the mapping is stable
@@ -1792,10 +1838,9 @@ function readSelectedFromDom(view: Element): Record<string, string[]> {
 function persistAskState(view: Element): void {
   const key = askKeyOf(view)
   if (!key) return
-  const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
   patchAskState(key, {
     selected: readSelectedFromDom(view),
-    supplementary: input?.value ?? '',
+    supplementary: askSupplementaryField(view)?.value ?? '',
   })
 }
 
@@ -1833,11 +1878,13 @@ export function restoreAskStateFromStore(view: Element): void {
     }
   }
 
-  // 2. Supplementary text.
-  const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+  // 2. Supplementary text. The field is a textarea, so a restored multi-line
+  //    note needs its height re-fitted — the freshly-rendered one is rows="1".
+  const input = askSupplementaryField(view)
   if (input && input.value !== state.supplementary) {
     input.value = state.supplementary
   }
+  fitAskSupplementaryInput(input)
 
   // 3. Submitted — mirror the terminal look the handler applies on submit:
   //    badge class, non-interactive options, disabled input, disabled submit.
@@ -1922,7 +1969,7 @@ function makeAskViewAnswerable(view: Element): void {
     el.style.opacity = ''
   }
 
-  const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+  const input = askSupplementaryField(view)
   if (input) {
     input.disabled = false
     input.style.opacity = ''
@@ -1989,7 +2036,10 @@ export function updateAskSubmitState(view: Element) {
       break
     }
   }
-  const supplementaryInput = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+  const supplementaryInput = askSupplementaryField(view)
+  // Re-fit here too: this runs on every note input and on every restore, which
+  // are the two moments the textarea's content can change behind a fixed height.
+  fitAskSupplementaryInput(supplementaryInput)
   const hasSupplementary = !!supplementaryInput?.value?.trim()
   const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
   if (submitBtn) {
@@ -2057,7 +2107,7 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
         submitBtn.disabled = true
         submitBtn.style.display = 'none'
       }
-      const supplementaryInput = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+      const supplementaryInput = askSupplementaryField(view)
       if (supplementaryInput) {
         supplementaryInput.disabled = true
         supplementaryInput.style.opacity = 'var(--opacity-muted)'
@@ -2097,7 +2147,7 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
         }
       }
       // Append supplementary text if provided
-      const supplementaryInput = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+      const supplementaryInput = askSupplementaryField(view)
       const supplementaryText = supplementaryInput?.value?.trim()
       if (supplementaryText) {
         answers.push(supplementaryText)
