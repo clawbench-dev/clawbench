@@ -352,3 +352,96 @@ func TestServeIndex_NonHashedAsset_NoImmutableCache(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Empty(t, w.Header().Get("Cache-Control"))
 }
+
+// --- PWA files: served with types the client's registration gate requires ---
+
+// The frontend only registers the service worker when a HEAD request for
+// /sw.js comes back as JavaScript (web/src/utils/pwaServiceWorker.ts). That
+// gate exists because the dev-server SPA fallback answers unknown paths with
+// index.html, and registering an HTML body as a worker script throws at install
+// time. The gate is only correct if the real server labels the file as
+// JavaScript — if ServeIndex ever regressed to serving it as octet-stream, the
+// worker would silently stop registering and installability would break with no
+// error anywhere.
+func TestServeIndex_ServiceWorker_ServedAsJavaScript(t *testing.T) {
+	tmpDir := t.TempDir()
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
+		t.Fatalf("failed to create disk dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(diskDir, "sw.js"), []byte("self.addEventListener('fetch', () => {});"), 0o644); err != nil {
+		t.Fatalf("failed to write sw.js: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	req := httptest.NewRequest(http.MethodHead, "/sw.js", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeIndex(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	ct := w.Header().Get("Content-Type")
+	assert.Contains(t, ct, "javascript",
+		"sw.js must be served as JavaScript or the client registration gate rejects it")
+}
+
+// A worker script must not be strongly cached: the browser byte-compares it to
+// detect updates, and updateViaCache:'none' on the client only bypasses the HTTP
+// cache — a long max-age would still pin clients to a stale worker with no way
+// to ship a fix. Asserted here because isHashedAsset() would otherwise classify
+// nothing about "sw.js", and a future cache rule keyed on extension could
+// silently start caching it.
+func TestServeIndex_ServiceWorker_NotStronglyCached(t *testing.T) {
+	tmpDir := t.TempDir()
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
+		t.Fatalf("failed to create disk dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(diskDir, "sw.js"), []byte("self.addEventListener('fetch', () => {});"), 0o644); err != nil {
+		t.Fatalf("failed to write sw.js: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	req := httptest.NewRequest(http.MethodGet, "/sw.js", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeIndex(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotContains(t, w.Header().Get("Cache-Control"), "immutable")
+}
+
+// manifest.json must be reachable at the root path the HTML links to, and be
+// served as JSON. The manifest URL is the installed app's identity, so a
+// hash-renamed or 404 manifest breaks installation outright.
+func TestServeIndex_Manifest_ServedAsJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
+		t.Fatalf("failed to create disk dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(diskDir, "manifest.json"), []byte(`{"name":"ClawBench"}`), 0o644); err != nil {
+		t.Fatalf("failed to write manifest.json: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	req := httptest.NewRequest(http.MethodGet, "/manifest.json", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeIndex(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Header().Get("Content-Type"), "json")
+}

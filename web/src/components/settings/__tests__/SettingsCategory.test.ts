@@ -258,6 +258,7 @@ const i18n = createI18n({
           ragRetentionDays: '保留天数',
           aboutServerVersion: '服务器版本',
           aboutServerVersionDesc: '服务器版本',
+          aboutBrandSlogan: '从掌心到桌面',
           aboutAppVersion: 'APP版本',
           aboutAppVersionDesc: 'APP版本',
           serverRestart: '重启服务器',
@@ -579,6 +580,21 @@ describe('SettingsCategory', () => {
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const appVersionItem = allItems.find(i => i.props().label === 'APP版本')
       expect(appVersionItem).toBeFalsy()
+    })
+
+    it('renders the brand header above the version card', () => {
+      const wrapper = mountCategory('about')
+      expect(wrapper.findComponent({ name: 'SettingsAboutBrand' }).exists()).toBe(true)
+      // The brand block must come first — it is the page's entry point, not a
+      // footer after the settings rows.
+      expect(wrapper.find('.settings-category').element.firstElementChild?.className)
+        .toContain('about-brand')
+    })
+
+    it('does not render the brand header on other categories', () => {
+      // SettingsAboutBrand is keyed off the category id; a missing guard would
+      // put the logo on every settings page.
+      expect(mountCategory('chat').findComponent({ name: 'SettingsAboutBrand' }).exists()).toBe(false)
     })
   })
 

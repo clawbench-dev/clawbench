@@ -89,6 +89,13 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="ClawBench">
 
+    <!-- Web app manifest — drives installability. Lives in publicDir
+         (assets/manifest.json), so Vite copies it verbatim and leaves this href
+         alone; a manifest URL must be stable, since it is the app's identity.
+         Its icon URLs are absolute (/assets/...), so the served location does
+         not matter — only this link target does. -->
+    <link rel="manifest" href="/manifest.json">
+
     <!-- Icons -->
     <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="apple-touch-icon" href="/logo-180.png">
@@ -113,25 +120,5 @@
 <body>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
-
-    <!-- Unregister any leftover Service Worker from previous builds.
-         A stale SW caches old assets and can intercept API requests, breaking
-         authentication (cookies) and causing 403 errors on all /api/* calls. -->
-    <script>
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(regs) {
-          for (var i = 0; i < regs.length; i++) {
-            regs[i].unregister();
-          }
-        });
-        if (window.caches && window.caches.keys) {
-          window.caches.keys().then(function(keys) {
-            for (var i = 0; i < keys.length; i++) {
-              window.caches.delete(keys[i]);
-            }
-          });
-        }
-      }
-    </script>
 </body>
 </html>

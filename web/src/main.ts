@@ -14,6 +14,7 @@ import { LongPressDirective } from './directives/longPress.ts'
 import { configureMarkedRenderer } from './utils/markedConfig.ts'
 import { appLog } from './utils/appLog.ts'
 import { installAuthRedirectInterceptor } from './utils/authExpiry.ts'
+import { registerPwaServiceWorker } from './utils/pwaServiceWorker.ts'
 
 configureMarkedRenderer()
 
@@ -71,18 +72,8 @@ window.addEventListener('unhandledrejection', (e) => {
 
 app.mount('#app')
 
-// Unregister any leftover Service Worker from previous builds.
-// A stale SW caches old assets and can intercept API requests, breaking
-// authentication (cookies) and causing 403 errors on all /api/* calls.
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then((regs) => {
-    for (const reg of regs) {
-      reg.unregister().then(() => appLog.i('SW', 'Unregistered stale Service Worker:', reg.scope))
-    }
-  }).catch(() => {})
-  if (window.caches && window.caches.keys) {
-    window.caches.keys().then((keys) => {
-      Promise.all(keys.map((k) => window.caches.delete(k)))
-    }).catch(() => {})
-  }
-}
+// Register the PWA service worker, subject to the gates in the helper (secure
+// context, top-level frame, not the native app, and /sw.js actually served as
+// JS). The worker exists only to keep the app installable — it never writes to
+// Cache Storage, so it cannot serve a stale app shell or intercept /api/*.
+void registerPwaServiceWorker()

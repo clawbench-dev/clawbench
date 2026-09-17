@@ -2412,6 +2412,7 @@ export default {
       logCaptureDesc: '捕获客户端调试日志用于问题排查',
       reconfigureServer: '重配服务器',
       reconfigureServerDesc: '重新配置 Android 连接的服务器地址',
+      aboutBrandSlogan: '从掌心到桌面',
       aboutServerVersion: '服务端版本',
       aboutServerVersionDesc: '当前运行的服务端版本号',
       aboutAppVersion: 'App版本',

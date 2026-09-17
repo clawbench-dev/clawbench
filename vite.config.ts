@@ -28,6 +28,25 @@ if (existsSync(srcAssets)) {
   }
 }
 
+// Copy the service worker to the build root.
+//
+// It must NOT live in publicDir (`assets/`): a worker's default scope is its own
+// directory, so /assets/sw.js could only ever control /assets/* and would not
+// satisfy the install criteria for a start_url of "/". It is also not imported
+// from JS — the browser fetches and byte-compares it directly to detect updates,
+// so it has to stay a plain script at a stable URL.
+//
+// manifest.json, by contrast, IS in publicDir (assets/manifest.json) and is
+// copied by the loop above. Putting it in the Vite project root instead caused
+// Vite to rewrite the <link rel="manifest"> href to a content-hashed filename,
+// which breaks the install flow: the manifest URL is the app's identity, and it
+// must be stable for the browser to associate an installed app with its scope.
+const PWA_ROOT_FILES = ['sw.js']
+for (const f of PWA_ROOT_FILES) {
+  const src = resolve(__dirname, 'web', f)
+  if (existsSync(src)) cpSync(src, resolve(outDir, f), { force: true })
+}
+
 // Vite plugin: copy material-icon-theme SVGs to .clawbench-web/material-icons/
 // so they are served as static assets at /material-icons/<name>.svg.
 //
