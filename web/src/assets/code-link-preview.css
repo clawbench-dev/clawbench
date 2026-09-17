@@ -323,7 +323,9 @@ body.code-preview-dragging * {
   text-indent: -2ch;
 }
 
-/* Directional expand bars (GitHub-style in-code expand) */
+/* Directional load bars: they mark that lines exist beyond the current slice
+   and report how many. Scrolling to the bar loads them automatically, so there
+   is no button — only the hint plus, while a fetch is in flight, a spinner. */
 .code-preview-expand-bar {
   position: sticky;
   left: 0;
@@ -353,53 +355,32 @@ body.code-preview-dragging * {
   border-bottom: none;
 }
 
-.code-preview-expand-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding:3px var(--space-4);
-  font-size: var(--font-size-xs);
-  font-family: var(--font-ui);
-  color: var(--accent-color);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  transition: background-color var(--duration-base) ease, border-color var(--duration-base) ease;
-}
-
-.code-preview-expand-btn:hover {
-  background: rgba(26, 115, 232, 0.08);
-  border-color: rgba(26, 115, 232, 0.25);
-}
-
-.code-preview-expand-btn:active {
-  background: rgba(26, 115, 232, 0.16);
-}
-
 .code-preview-expand-hint {
   font-size: var(--font-size-2xs);
   color: var(--text-muted, #8c8c8c);
   font-weight: normal;
 }
 
-/* Expand buttons group sits opposite the remaining-lines hint inside the bar
-   (the bar is space-between). When the buttons are hidden at the render cap,
-   the hint alone fills the bar and stays readable. */
-.code-preview-expand-actions {
+/* Scroll-driven loading: the bar reports progress instead of offering a button,
+   so it is a plain status line with a small spinner on the trailing edge (the
+   bar is space-between, which keeps the hint and the spinner apart). */
+.code-preview-expand-loading {
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
   flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted, #8c8c8c);
 }
 
-.code-preview-expand-btn.expand-all {
-  color: var(--text-secondary, #5f6368);
-}
-
-.code-preview-expand-btn.expand-all:hover {
-  color: var(--accent-color);
-  background: rgba(0, 0, 0, 0.05);
+.code-preview-expand-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(0, 0, 0, 0.12);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: code-preview-spin 0.8s linear infinite;
+  flex-shrink: 0;
 }
 
 .code-preview-title.is-clickable {
@@ -701,11 +682,12 @@ body.code-preview-dragging * {
 @media (prefers-reduced-motion: reduce) {
   .code-link-preview-floating,
   .code-preview-btn,
-  .code-preview-expand-btn,
   .code-preview-tooltip {
     transition: none !important;
     animation: none !important;
   }
+  /* The scroll-load spinner is a progress cue, not decoration: keep it turning
+     so a slow chunk still reads as "working" rather than "stuck". */
 }
 
 /* Custom Fast Tooltip */

@@ -22,11 +22,8 @@ const i18n = createI18n({
           title: 'Code Preview',
           loading: 'Loading...',
           retry: 'Retry',
-          expandAbove: 'Expand {n} above',
-          expandBelow: 'Expand {n} below',
-          expandToTop: 'Expand to top',
-          expandToBottom: 'Expand to bottom',
           linesRemaining: '{n} remaining',
+          loadingMoreLines: 'Loading more...',
         },
       },
     },
@@ -34,8 +31,8 @@ const i18n = createI18n({
 })
 
 function mountBody(overrides: Record<string, unknown> = {}) {
-  const expandAboveLines = vi.fn()
-  const expandBelowLines = vi.fn()
+  const loadMoreAbove = vi.fn()
+  const loadMoreBelow = vi.fn()
   const wrapper = mount(MarkdownPreviewBody, {
     global: { plugins: [i18n] },
     props: {
@@ -46,14 +43,23 @@ function mountBody(overrides: Record<string, unknown> = {}) {
       filePath: 'docs/guide.md',
       remainingAbove: 0,
       remainingBelow: 0,
-      stepAbove: 0,
-      stepBelow: 0,
-      expandAboveLines,
-      expandBelowLines,
+      loadingDirection: null,
+      loadMoreAbove,
+      loadMoreBelow,
       ...overrides,
     },
   })
-  return { wrapper, expandAboveLines, expandBelowLines }
+  return { wrapper, loadMoreAbove, loadMoreBelow }
+}
+
+/** Give the scroll container real geometry so the threshold math is testable. */
+function setGeometry(
+  el: Element,
+  geo: { scrollTop: number; scrollHeight: number; clientHeight: number }
+) {
+  for (const [key, value] of Object.entries(geo)) {
+    Object.defineProperty(el, key, { configurable: true, writable: true, value })
+  }
 }
 
 describe('MarkdownPreviewBody.vue', () => {
@@ -95,36 +101,10 @@ describe('MarkdownPreviewBody.vue', () => {
     expect(noRetry.wrapper.find('button').exists()).toBe(false)
   })
 
-  it('shows expand bars only when lines remain and triggers the expand handlers', async () => {
-    const { wrapper, expandAboveLines, expandBelowLines } = mountBody({
-      remainingAbove: 9,
-      remainingBelow: 20,
-      stepAbove: 9,
-      stepBelow: 10,
-    })
-    expect(wrapper.find('.expand-above').exists()).toBe(true)
-    expect(wrapper.find('.expand-below').exists()).toBe(true)
+  it('shows a remaining-lines hint and no expand buttons', () => {
+    const { wrapper } = mountBody({ remainingAbove: 9, remainingBelow: 20 })
 
-    await wrapper.find('.expand-above button').trigger('click')
-    expect(expandAboveLines).toHaveBeenCalledWith(9)
-
-    await wrapper.find('.expand-below button').trigger('click')
-    expect(expandBelowLines).toHaveBeenCalledWith(10)
-
-    const none = mountBody()
-    expect(none.wrapper.find('.expand-above').exists()).toBe(false)
-    expect(none.wrapper.find('.expand-below').exists()).toBe(false)
-  })
-
-  it('keeps the remaining-lines hint but hides buttons when hideExpandButtons is set', () => {
-    const { wrapper } = mountBody({
-      remainingAbove: 9,
-      remainingBelow: 20,
-      stepAbove: 9,
-      stepBelow: 10,
-      hideExpandButtons: true,
-    })
-
+    // The bars exist purely as status lines: loading is driven by scrolling.
     const above = wrapper.find('.expand-above')
     const below = wrapper.find('.expand-below')
     expect(above.exists()).toBe(true)
@@ -132,16 +112,59 @@ describe('MarkdownPreviewBody.vue', () => {
     expect(above.get('.code-preview-expand-hint').text()).toContain('9')
     expect(below.get('.code-preview-expand-hint').text()).toContain('20')
 
-    expect(above.find('button').exists()).toBe(false)
-    expect(below.find('button').exists()).toBe(false)
+    // Nothing to click any more — the buttons were removed with the line cap.
+    expect(wrapper.find('.code-preview-expand-btn').exists()).toBe(false)
+
+    const none = mountBody()
+    expect(none.wrapper.find('.expand-above').exists()).toBe(false)
+    expect(none.wrapper.find('.expand-below').exists()).toBe(false)
   })
 
-  it('renders "expand all" buttons only when more than one step remains', () => {
-    const more = mountBody({ remainingAbove: 30, remainingBelow: 25, stepAbove: 10, stepBelow: 10 })
-    expect(more.wrapper.findAll('.expand-all')).toHaveLength(2)
+  it('shows a spinner on the side currently loading', () => {
+    const below = mountBody({ remainingBelow: 20, loadingDirection: 'below' })
+    expect(below.wrapper.find('.expand-below .code-preview-expand-spinner').exists()).toBe(true)
 
-    const exact = mountBody({ remainingAbove: 10, remainingBelow: 5, stepAbove: 10, stepBelow: 5 })
-    expect(exact.wrapper.findAll('.expand-all')).toHaveLength(0)
+    const above = mountBody({ remainingAbove: 20, loadingDirection: 'above' })
+    expect(above.wrapper.find('.expand-above .code-preview-expand-spinner').exists()).toBe(true)
+  })
+
+  it('loads more when scrolled to the bottom', async () => {
+    const { wrapper, loadMoreBelow } = mountBody({ remainingBelow: 100 })
+    const el = wrapper.find('.md-preview-scroll').element
+    setGeometry(el, { scrollTop: 800, scrollHeight: 1200, clientHeight: 400 })
+
+    await wrapper.find('.md-preview-scroll').trigger('scroll')
+    expect(loadMoreBelow).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads above when scrolled to the top', async () => {
+    const { wrapper, loadMoreAbove, loadMoreBelow } = mountBody({ remainingAbove: 50, remainingBelow: 50 })
+    const el = wrapper.find('.md-preview-scroll').element
+    setGeometry(el, { scrollTop: 0, scrollHeight: 4000, clientHeight: 400 })
+
+    await wrapper.find('.md-preview-scroll').trigger('scroll')
+    expect(loadMoreAbove).toHaveBeenCalledTimes(1)
+    expect(loadMoreBelow).not.toHaveBeenCalled()
+  })
+
+  it('stops loading when loadMoreBlocked is set', async () => {
+    const { wrapper, loadMoreBelow } = mountBody({ remainingBelow: 100, loadMoreBlocked: true })
+    const el = wrapper.find('.md-preview-scroll').element
+    setGeometry(el, { scrollTop: 800, scrollHeight: 1200, clientHeight: 400 })
+
+    await wrapper.find('.md-preview-scroll').trigger('scroll')
+    expect(loadMoreBelow).not.toHaveBeenCalled()
+    expect(wrapper.find('.expand-below .code-preview-expand-hint').text()).toContain('100')
+  })
+
+  it('auto-fills the viewport when the document is too short to scroll', async () => {
+    const { wrapper, loadMoreBelow } = mountBody({ remainingBelow: 100 })
+    const el = wrapper.find('.md-preview-scroll').element
+    setGeometry(el, { scrollTop: 0, scrollHeight: 80, clientHeight: 400 })
+
+    await vi.waitFor(() => {
+      expect(loadMoreBelow).toHaveBeenCalled()
+    })
   })
 
   it('exposes a scroll container and no-op navigation helpers', () => {

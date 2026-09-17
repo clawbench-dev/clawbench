@@ -16,9 +16,15 @@ import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 
 export const DEFAULT_CONTEXT = 30
 export const DEFAULT_NO_RANGE_LINES = 30
-export const MAX_RENDER_LINES = 200
 export const MAX_RENDER_BYTES = 512 * 1024 // 512 KiB
 export const MAX_LINE_BYTES = 128 * 1024 // 128 KiB
+
+/**
+ * Lines added per scroll-driven load. A few screens of code, so one scroll
+ * gesture rarely has to wait on a fetch, while each re-highlight batch stays
+ * small enough to render smoothly.
+ */
+export const SCROLL_LOAD_STEP = 200
 
 export const PREVIEW_LRU_MAX_ITEMS = 20
 export const PREVIEW_LRU_MAX_BYTES = 8 * 1024 * 1024 // 8 MiB
@@ -30,7 +36,12 @@ export const DEFAULT_ANCHOR_GAP = 8
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type TruncateReason = 'lines' | 'bytes' | 'line'
+/**
+ * Why a slice stopped short. There is deliberately no 'lines' reason: line
+ * count is unbounded (the pane loads more as you scroll), so only the byte
+ * ceilings can cut a slice short.
+ */
+export type TruncateReason = 'bytes' | 'line'
 
 export interface NormalizedRange {
   start?: number
@@ -60,7 +71,10 @@ export interface CodeSliceResult {
   highlightRanges?: LineRange[]
   /** Whether the requested line was beyond total lines in file */
   lineOutOfRange: boolean
-  /** Whether rendering was truncated due to limits */
+  /**
+   * Whether rendering stopped short of `endLine`. Only the byte ceilings set
+   * this — line count is unbounded, so a slice never truncates for length.
+   */
   renderTruncated: boolean
   /** Reason for truncation if renderTruncated is true */
   truncateReason?: TruncateReason
@@ -173,8 +187,6 @@ export interface RenderWindow {
   highlightStart?: number
   highlightEnd?: number
   lineOutOfRange: boolean
-  renderTruncated: boolean
-  truncateReason?: TruncateReason
 }
 
 /**
@@ -185,9 +197,12 @@ export interface RenderWindow {
  *
  * Slicing constraints:
  * - When target line is given: show [start - 30, end + 30], clamped to file.
- * - When no target line: show first 30 lines.
- * - When lineStart > totalLines: show last up to 30 lines and mark lineOutOfRange.
- * - Hard limit MAX_RENDER_LINES (200 lines).
+ * - When no target line: show the first 30 lines.
+ * - When lineStart > totalLines: show the last up to 30 lines and mark lineOutOfRange.
+ *
+ * There is NO line-count ceiling: the pane grows its slice as the user scrolls
+ * (see SCROLL_LOAD_STEP), so a long file is walked rather than clipped. Only
+ * the byte ceilings in sliceCodeForPreview can cut a slice short.
  */
 export function computeRenderWindow(
   lineStart: number | undefined,
@@ -217,8 +232,6 @@ export function computeRenderWindow(
   let highlightStart: number | undefined
   let highlightEnd: number | undefined
   let lineOutOfRange = false
-  let renderTruncated = false
-  let truncateReason: TruncateReason | undefined
 
   if (hasExplicitRange && reqStart !== undefined && reqEnd !== undefined) {
     if (reqStart > totalLines) {
@@ -236,49 +249,30 @@ export function computeRenderWindow(
       const contextBelow = contextLines + extraBelow
       const targetSpan = highlightEnd - highlightStart + 1
 
-      // If target range itself exceeds MAX_RENDER_LINES, start at highlightStart
-      if (targetSpan > MAX_RENDER_LINES) {
-        startLine = highlightStart
-        endLine = Math.min(totalLines, highlightStart + MAX_RENDER_LINES - 1)
-        renderTruncated = true
-        truncateReason = 'lines'
-      } else {
-        let start = Math.max(1, highlightStart - contextAbove)
-        let end = Math.min(totalLines, highlightEnd + contextBelow)
+      let start = Math.max(1, highlightStart - contextAbove)
+      let end = Math.min(totalLines, highlightEnd + contextBelow)
 
-        // Only do initial symmetrical redistribution if user hasn't explicitly used directional expansion
-        if (extraAbove === 0 && extraBelow === 0) {
-          const windowSize = Math.min(MAX_RENDER_LINES, targetSpan + contextLines * 2)
-          // If top clamped to 1, expand bottom as much as possible up to windowSize
-          if (start === 1) {
-            end = Math.min(totalLines, start + windowSize - 1)
-          }
-          // If bottom clamped to totalLines, expand top as much as possible up to windowSize
-          if (end === totalLines) {
-            start = Math.max(1, end - windowSize + 1)
-          }
+      // Only do initial symmetrical redistribution if user hasn't explicitly used directional expansion
+      if (extraAbove === 0 && extraBelow === 0) {
+        const windowSize = targetSpan + contextLines * 2
+        // If top clamped to 1, expand bottom as much as possible up to windowSize
+        if (start === 1) {
+          end = Math.min(totalLines, start + windowSize - 1)
         }
-
-        if (end - start + 1 > MAX_RENDER_LINES) {
-          end = start + MAX_RENDER_LINES - 1
-          renderTruncated = true
-          truncateReason = 'lines'
+        // If bottom clamped to totalLines, expand top as much as possible up to windowSize
+        if (end === totalLines) {
+          start = Math.max(1, end - windowSize + 1)
         }
-
-        startLine = start
-        endLine = end
       }
+
+      startLine = start
+      endLine = end
     }
   } else {
     // No explicit range: show from line 1
     const count = Math.min(totalLines, DEFAULT_NO_RANGE_LINES + expansion * 10 + extraBelow)
     startLine = 1
     endLine = count
-    if (endLine - startLine + 1 > MAX_RENDER_LINES) {
-      endLine = startLine + MAX_RENDER_LINES - 1
-      renderTruncated = true
-      truncateReason = 'lines'
-    }
   }
 
   return {
@@ -287,8 +281,6 @@ export function computeRenderWindow(
     highlightStart,
     highlightEnd,
     lineOutOfRange,
-    renderTruncated,
-    truncateReason,
   }
 }
 
@@ -303,6 +295,9 @@ export function computeRenderWindow(
  * Additional limits applied here (on top of computeRenderWindow):
  * - Hard limit MAX_RENDER_BYTES (512 KiB).
  * - Hard limit MAX_LINE_BYTES (128 KiB) per line.
+ *
+ * Line count is unbounded by design: the caller grows the window as the user
+ * scrolls, so a slice is only ever cut short by the byte ceilings.
  */
 export function sliceCodeForPreview(
   content: string,
@@ -332,7 +327,8 @@ export function sliceCodeForPreview(
 
   const win = computeRenderWindow(lineStart, lineEnd, totalLines, options)
   const { lineOutOfRange } = win
-  let { renderTruncated, truncateReason } = win
+  let renderTruncated = false
+  let truncateReason: TruncateReason | undefined
 
   // Clamp the wanted window onto the content actually held. For a whole file
   // these bounds are the file itself, so nothing changes; for a line window they
@@ -361,12 +357,6 @@ export function sliceCodeForPreview(
   let totalBytes = 0
 
   for (let lineNo = effStart; lineNo <= effEnd; lineNo++) {
-    if (renderedLines.length >= MAX_RENDER_LINES) {
-      renderTruncated = true
-      truncateReason = 'lines'
-      break
-    }
-
     const lineText = lines[lineNo - baseLineOffset]
     const lineByteLength = getUtf8ByteLength(lineText)
 
@@ -391,8 +381,9 @@ export function sliceCodeForPreview(
   // back, or the byte/line caps tripped immediately).
   const actualEndLine = renderedLines.length > 0 ? effStart + renderedLines.length - 1 : effStart - 1
 
-  // Ranges are clamped to the rendered window (the 200-line cap means far-apart
-  // ranges can fall outside); only ranges that intersect are highlighted.
+  // Ranges are clamped to the rendered window (a byte-truncated slice means
+  // far-apart ranges can fall outside); only ranges that intersect are
+  // highlighted.
   const requestedRanges = options.lineRanges && options.lineRanges.length > 0 ? options.lineRanges : undefined
   const highlightRanges = requestedRanges && !lineOutOfRange
     ? clampRanges(requestedRanges, effStart, actualEndLine)
@@ -416,12 +407,15 @@ export function sliceCodeForPreview(
 
 /**
  * Extra lines fetched on each side of the render window, so expanding context
- * stays a local re-slice instead of a round-trip. Comfortably above the 200-line
- * render cap, keeping the request well under the server's own window limit.
+ * stays a local re-slice instead of a round-trip. Keeps the opening request
+ * comfortably inside the server's own window limit.
  */
 export const FETCH_WINDOW_MARGIN = 200
 
-/** Hard cap on a single requested window, mirroring the server's limit. */
+/**
+ * Hard cap on a single requested window, mirroring the server's limit. Also
+ * the scroll-load step: a lazy load asks for at most this many lines.
+ */
 export const MAX_FETCH_WINDOW_LINES = 800
 
 /** The absolute line range to request from GET /api/file. */
@@ -432,9 +426,9 @@ export interface FetchWindow {
 
 /**
  * Plan the line window to request for `target`. Derived from the render window
- * (so a far-apart multi-range annotation does not balloon the request past the
- * 200-line render cap), widened by `margin` on each side so expanding context
- * stays a local re-slice instead of a round-trip.
+ * and widened by `margin` on each side so expanding context stays a local
+ * re-slice instead of a round-trip. `computeFetchWindow` is what the *opening*
+ * request uses; later growth is planned incrementally by `nextLoadWindow`.
  *
  * `totalLines` is null before the first response (the client cannot know the
  * file's length yet); planning then assumes a long file and relies on the server
@@ -476,6 +470,89 @@ export function windowCovers(
 ): boolean {
   if (!fetched) return false
   return startLine >= fetched.start && endLine <= fetched.end
+}
+
+// ── Incremental window merging ──────────────────────────────────────────────
+//
+// The pane walks a long file as the user scrolls, so several windowed responses
+// have to be stitched into one contiguous run that sliceCodeForPreview can take
+// as (content, baseLineOffset). These helpers are pure so the stitching is
+// testable without a DOM.
+
+/** A contiguous run of file lines held client-side, in absolute coordinates. */
+export interface LoadedLineWindow {
+  content: string
+  /** 1-based first line of `content`. */
+  startLine: number
+  /** 1-based last line of `content`. `endLine < startLine` means "no lines". */
+  endLine: number
+}
+
+/** The physical lines of a window. An empty window (end < start) has none. */
+export function windowLines(content: string, startLine: number, endLine: number): string[] {
+  if (endLine < startLine) return []
+  return content.split(/\r\n|\r|\n/)
+}
+
+/**
+ * Merge a freshly fetched window into the lines already held, returning one
+ * contiguous window covering both. Overlapping lines are taken once — both
+ * copies came from the same file, so either is correct.
+ */
+export function mergeLineWindows(
+  held: LoadedLineWindow | null,
+  chunk: LoadedLineWindow
+): LoadedLineWindow {
+  if (!held || held.endLine < held.startLine) return chunk
+  if (chunk.endLine < chunk.startLine) return held
+
+  const startLine = Math.min(held.startLine, chunk.startLine)
+  const endLine = Math.max(held.endLine, chunk.endLine)
+  const lines: string[] = new Array(endLine - startLine + 1)
+
+  const heldLines = windowLines(held.content, held.startLine, held.endLine)
+  for (let i = 0; i < heldLines.length; i++) {
+    lines[held.startLine - startLine + i] = heldLines[i]
+  }
+  const chunkLines = windowLines(chunk.content, chunk.startLine, chunk.endLine)
+  for (let i = 0; i < chunkLines.length; i++) {
+    lines[chunk.startLine - startLine + i] = chunkLines[i]
+  }
+
+  return { content: lines.join('\n'), startLine, endLine }
+}
+
+/**
+ * The next window worth fetching so that `held` moves toward covering
+ * `[wantedStart, wantedEnd]`, clamped to one request's worth of lines. Returns
+ * null when the wanted range is already covered.
+ *
+ * Only the uncovered side is requested, so walking down a long file never
+ * re-fetches what is already on screen.
+ */
+export function nextLoadWindow(
+  held: LoadedLineWindow | null,
+  wantedStart: number,
+  wantedEnd: number,
+  maxLines = MAX_FETCH_WINDOW_LINES
+): FetchWindow | null {
+  const step = Math.max(1, maxLines)
+  const hasHeld = !!held && held.endLine >= held.startLine
+
+  if (!hasHeld) {
+    if (wantedEnd < wantedStart) return null
+    return { start: wantedStart, end: Math.min(wantedEnd, wantedStart + step - 1) }
+  }
+  if (held!.startLine > wantedStart) {
+    // Prepend: take the lines immediately above what is held.
+    const start = Math.max(wantedStart, held!.startLine - step)
+    return { start, end: held!.startLine - 1 }
+  }
+  if (held!.endLine < wantedEnd) {
+    // Append: take the lines immediately below what is held.
+    return { start: held!.endLine + 1, end: Math.min(wantedEnd, held!.endLine + step) }
+  }
+  return null
 }
 
 // ── URL Construction ────────────────────────────────────────────────────────

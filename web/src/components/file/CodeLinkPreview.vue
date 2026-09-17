@@ -107,7 +107,7 @@
         {{ t('file.codePreview.lineOutOfRange') }}
       </div>
       <div v-if="preview.slicedCode.value?.renderTruncated" class="code-preview-notice notice-info">
-        {{ t('file.codePreview.truncatedNotice', { n: 200, size: '512KB' }) }}
+        {{ t('file.codePreview.truncatedNotice', { size: '512KB' }) }}
       </div>
       <div v-if="preview.windowTruncated.value" class="code-preview-notice notice-warning">
         {{ t('file.codePreview.windowTruncatedNotice') }}
@@ -171,11 +171,10 @@
         :file-path="targetFilePath"
         :remaining-above="remainingAbove"
         :remaining-below="remainingBelow"
-        :step-above="stepAbove"
-        :step-below="stepBelow"
-        :hide-expand-buttons="atLineRenderCap"
-        :expand-above-lines="expandAbove"
-        :expand-below-lines="expandBelow"
+        :loading-direction="loadingDirection"
+        :load-more-blocked="loadMoreBlocked"
+        :load-more-above="loadMoreAbove"
+        :load-more-below="loadMoreBelow"
         @refresh="preview.refresh()"
       />
       <CodePreviewBody
@@ -191,11 +190,10 @@
         :active-match-index="activeMatchIndex"
         :remaining-above="remainingAbove"
         :remaining-below="remainingBelow"
-        :step-above="stepAbove"
-        :step-below="stepBelow"
-        :hide-expand-buttons="atLineRenderCap"
-        :expand-above-lines="expandAbove"
-        :expand-below-lines="expandBelow"
+        :loading-direction="loadingDirection"
+        :load-more-blocked="loadMoreBlocked"
+        :load-more-above="loadMoreAbove"
+        :load-more-below="loadMoreBelow"
         @refresh="preview.refresh()"
       />
     </div>
@@ -568,7 +566,7 @@
           {{ t('file.codePreview.lineOutOfRange') }}
         </div>
         <div v-if="preview.slicedCode.value?.renderTruncated" class="code-preview-notice notice-info">
-          {{ t('file.codePreview.truncatedNotice', { n: 200, size: '512KB' }) }}
+          {{ t('file.codePreview.truncatedNotice', { size: '512KB' }) }}
         </div>
         <div v-if="preview.windowTruncated.value" class="code-preview-notice notice-warning">
           {{ t('file.codePreview.windowTruncatedNotice') }}
@@ -609,11 +607,10 @@
         :file-path="targetFilePath"
         :remaining-above="remainingAbove"
         :remaining-below="remainingBelow"
-        :step-above="stepAbove"
-        :step-below="stepBelow"
-        :hide-expand-buttons="atLineRenderCap"
-        :expand-above-lines="expandAbove"
-        :expand-below-lines="expandBelow"
+        :loading-direction="loadingDirection"
+        :load-more-blocked="loadMoreBlocked"
+        :load-more-above="loadMoreAbove"
+        :load-more-below="loadMoreBelow"
         @refresh="preview.refresh()"
       />
       <CodePreviewBody
@@ -629,11 +626,10 @@
         :active-match-index="activeMatchIndex"
         :remaining-above="remainingAbove"
         :remaining-below="remainingBelow"
-        :step-above="stepAbove"
-        :step-below="stepBelow"
-        :hide-expand-buttons="atLineRenderCap"
-        :expand-above-lines="expandAbove"
-        :expand-below-lines="expandBelow"
+        :loading-direction="loadingDirection"
+        :load-more-blocked="loadMoreBlocked"
+        :load-more-above="loadMoreAbove"
+        :load-more-below="loadMoreBelow"
         @refresh="preview.refresh()"
       />
     </div>
@@ -653,7 +649,7 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
 import { getFileType } from '@/utils/fileType'
-import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom } from '@/utils/codeLinkPreview'
+import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useChatContext } from '@/composables/useChatContext'
@@ -1306,17 +1302,6 @@ const codeLines = computed<FormattedCodeLine[]>(() => {
   return result
 })
 
-// When the slice has hit the hard line-count render cap (MAX_RENDER_LINES in
-// sliceCodeForPreview, truncateReason='lines'), the window width is pinned at
-// 200 lines — pressing expand below/above no longer grows the rendered slice
-// (direction-only shifts the window against the same cap). We keep the
-// "N lines remaining" hint visible but suppress the expand buttons, which
-// would otherwise appear clickable while doing nothing.
-const atLineRenderCap = computed(() => {
-  const sliced = props.preview.slicedCode.value
-  return !!sliced && sliced.renderTruncated === true && sliced.truncateReason === 'lines'
-})
-
 const remainingAbove = computed(() => {
   const sliced = props.preview.slicedCode.value
   if (!sliced) return 0
@@ -1329,35 +1314,53 @@ const remainingBelow = computed(() => {
   return Math.max(0, sliced.totalLines - sliced.endLine)
 })
 
-const stepAbove = computed(() => Math.min(10, remainingAbove.value))
-const stepBelow = computed(() => Math.min(10, remainingBelow.value))
+/**
+ * Whether asking for more lines can still help. A byte ceiling (an oversized
+ * line, or the 512 KiB budget) caps the slice at a fixed point, so the bodies
+ * must stop auto-loading — otherwise every scroll event would fire a fetch
+ * that cannot change anything. The "N lines remaining" hints stay visible.
+ */
+const loadMoreBlocked = computed(() => props.preview.loadMoreBlocked.value)
+
+/** Which side is loading, so only the matching bar shows a spinner. */
+const loadingDirection = ref<'above' | 'below' | null>(null)
 
 let isDirectionalExpanding = false
 
-// Handlers passed down to CodePreviewBody as `expand-above-lines` /
-// `expand-below-lines`. They only mutate the slice via the preview composable;
-// CodePreviewBody anchors the scroll position around its own scroll container.
-// The isDirectionalExpanding flag suppresses the codeLines watcher below so an
-// expansion does not trigger a target-line recenter that would fight the
-// scroll anchoring performed by the body.
-const expandAbove = async (lines: number) => {
+/**
+ * Pull in the next chunk below the slice. Passed to the body as
+ * `load-more-below`; the body anchors its own scroll position around the
+ * insertion. The isDirectionalExpanding flag suppresses the codeLines watcher
+ * below so a load does not trigger a target-line recenter that would fight the
+ * body's scroll anchoring.
+ */
+const loadMoreBelow = async () => {
   isDirectionalExpanding = true
+  loadingDirection.value = 'below'
   try {
-    await props.preview.expandAbove(lines)
+    await props.preview.expandBelow(SCROLL_LOAD_STEP)
     await nextTick()
   } finally {
+    loadingDirection.value = null
     nextTick(() => {
       isDirectionalExpanding = false
     })
   }
 }
 
-const expandBelow = async (lines: number) => {
+/**
+ * Pull in the next chunk above the slice. Only reached by scrolling to the very
+ * top of a slice that has content above it — i.e. a line-annotated open, where
+ * the window starts at the annotation rather than at line 1.
+ */
+const loadMoreAbove = async () => {
   isDirectionalExpanding = true
+  loadingDirection.value = 'above'
   try {
-    await props.preview.expandBelow(lines)
+    await props.preview.expandAbove(SCROLL_LOAD_STEP)
     await nextTick()
   } finally {
+    loadingDirection.value = null
     nextTick(() => {
       isDirectionalExpanding = false
     })

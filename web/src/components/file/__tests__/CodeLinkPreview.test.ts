@@ -87,17 +87,14 @@ const i18n = createI18n({
           close: 'Close preview',
           expand: 'Expand context (+5)',
           shrink: 'Shrink context (-5)',
-          expandAbove: 'Expand {n} lines above',
-          expandBelow: 'Expand {n} lines below',
-          expandToTop: 'Expand to top',
-          expandToBottom: 'Expand to bottom',
           linesRemaining: '{n} lines remaining',
+          loadingMoreLines: 'Loading more...',
           wrap: 'Wrap lines',
           unwrap: 'Unwrap lines',
           loading: 'Loading code...',
           retry: 'Retry',
           largeFileNotice: 'Large file: preview shows partial content and may load slower',
-          truncatedNotice: 'Preview truncated (up to {n} lines / {size})',
+          truncatedNotice: 'Preview truncated at the {size} size limit',
           windowTruncatedNotice: 'File has an oversized line; only part of it can be shown',
           lineOutOfRange: 'Requested line is out of file range',
           binaryNotSupported: 'Binary file cannot be previewed',
@@ -146,7 +143,7 @@ const i18n = createI18n({
 function createMockPreviewController(overrides: Partial<ReturnType<typeof useCodeLinkPreview>> = {}) {
   const visible = ref(true)
   const status = ref<'idle' | 'loading' | 'ready' | 'error'>('ready')
-  const mode = ref<'transient' | 'pinned' | 'sheet'>('transient')
+  const mode = ref<'transient' | 'pinned' | 'sheet' | 'docked'>('transient')
   const isPinned = ref(false)
   const target = ref<any>({
     filePath: 'src/main.ts',
@@ -236,6 +233,9 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     errorMessage,
     isLargeFile,
     windowTruncated,
+    loadingMore: ref(false),
+    loadMore: vi.fn(),
+    loadMoreBlocked: ref(false),
     isDirTarget,
     dirEntries,
     dirLoading,
@@ -758,7 +758,7 @@ describe('CodeLinkPreview.vue', () => {
     expect(closeSpy).not.toHaveBeenCalled()
   })
 
-  it('renders top and bottom expand bars and triggers directional expansion', async () => {
+  it('renders remaining-lines hints with no expand buttons', async () => {
     const preview = createMockPreviewController({
       status: ref('ready'),
       slicedCode: ref({
@@ -779,50 +779,18 @@ describe('CodeLinkPreview.vue', () => {
     })
 
     const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
-    const expandAboveBtn = floating.querySelector('.code-preview-expand-bar.expand-above .code-preview-expand-btn') as HTMLButtonElement
-    const expandBelowBtn = floating.querySelector('.code-preview-expand-bar.expand-below .code-preview-expand-btn') as HTMLButtonElement
+    const aboveBar = floating.querySelector('.code-preview-expand-bar.expand-above')
+    const belowBar = floating.querySelector('.code-preview-expand-bar.expand-below')
 
-    expect(expandAboveBtn).not.toBeNull()
-    expect(expandBelowBtn).not.toBeNull()
+    // Both bars report what is left above/below the slice…
+    expect(aboveBar?.querySelector('.code-preview-expand-hint')?.textContent).toContain('19')
+    expect(belowBar?.querySelector('.code-preview-expand-hint')?.textContent).toContain('79')
 
-    expandAboveBtn.click()
-    expect(preview.expandAbove).toHaveBeenCalledWith(10)
-
-    expandBelowBtn.click()
-    expect(preview.expandBelow).toHaveBeenCalledWith(10)
+    // …but nothing is clickable: scrolling loads the next chunk.
+    expect(floating.querySelector('.code-preview-expand-btn')).toBeNull()
   })
 
-  it('hides expand buttons but keeps the remaining-lines hint at the line-count render cap', async () => {
-    const preview = createMockPreviewController({
-      status: ref('ready'),
-      slicedCode: ref({
-        code: '...',
-        startLine: 1,
-        endLine: 200,
-        totalLines: 500,
-        lineOutOfRange: false,
-        renderTruncated: true,
-        truncateReason: 'lines',
-      }),
-    })
-
-    mount(CodeLinkPreview, {
-      props: { preview },
-      global: { plugins: [i18n] },
-    })
-
-    const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
-    // At the 200-line cap further expansion cannot grow the slice, so the
-    // expand buttons must be gone…
-    const bottomBar = floating.querySelector('.code-preview-expand-bar.expand-below')
-    expect(bottomBar).not.toBeNull()
-    expect(bottomBar?.querySelector('.code-preview-expand-btn')).toBeNull()
-    expect(floating.querySelector('.code-preview-expand-bar.expand-above .code-preview-expand-btn')).toBeNull()
-    // …but the "(N lines remaining)" hint stays visible (500 − 200 = 300).
-    expect(bottomBar?.querySelector('.code-preview-expand-hint')?.textContent).toContain('300')
-  })
-
-  it('keeps expand buttons when truncation is byte-based, not line-cap based', async () => {
+  it('keeps the remaining-lines hints when loading is blocked by a byte ceiling', async () => {
     const preview = createMockPreviewController({
       status: ref('ready'),
       slicedCode: ref({
@@ -834,6 +802,7 @@ describe('CodeLinkPreview.vue', () => {
         renderTruncated: true,
         truncateReason: 'bytes',
       }),
+      loadMoreBlocked: ref(true),
     })
 
     mount(CodeLinkPreview, {
@@ -842,9 +811,34 @@ describe('CodeLinkPreview.vue', () => {
     })
 
     const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
-    // Byte-based truncation is not pinned to a window boundary — further
-    // expansion may still make progress, so the buttons stay available.
-    expect(floating.querySelector('.code-preview-expand-bar.expand-below .code-preview-expand-btn')).not.toBeNull()
+    const bottomBar = floating.querySelector('.code-preview-expand-bar.expand-below')
+    // The hint stays visible (500 − 40 = 460) even though loading has stopped.
+    expect(bottomBar?.querySelector('.code-preview-expand-hint')?.textContent).toContain('460')
+  })
+
+  it('does not mark loading blocked for an unbounded long slice', async () => {
+    const preview = createMockPreviewController({
+      status: ref('ready'),
+      slicedCode: ref({
+        code: '...',
+        startLine: 1,
+        endLine: 400,
+        totalLines: 500,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
+    // 400 rendered lines is far past the old 200-line ceiling and still loads.
+    expect(floating.querySelector('.code-preview-expand-bar.expand-below .code-preview-expand-hint')?.textContent)
+      .toContain('100')
+    expect(preview.loadMoreBlocked.value).toBe(false)
   })
 
   it('supports header dragging with pointer events', () => {

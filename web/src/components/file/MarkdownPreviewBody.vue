@@ -19,39 +19,17 @@
       v-else-if="status === 'ready'"
       ref="scrollEl"
       class="md-preview-scroll"
+      @scroll.passive="onScroll"
     >
-      <!-- Top Expand Bar: buttons hide once the slice is pinned at the render
-           cap, but the "N lines remaining" hint stays visible -->
-      <div
-        v-if="canExpandAbove"
-        class="code-preview-expand-bar expand-above"
-        role="region"
-        :aria-label="t('file.codePreview.expandAbove', { n: stepAbove })"
-      >
-        <span
-          v-if="remainingAbove > 0"
-          class="code-preview-expand-hint"
-        >{{ t('file.codePreview.linesRemaining', { n: remainingAbove }) }}</span>
-        <span v-if="!hideExpandButtons" class="code-preview-expand-actions">
-          <button
-            type="button"
-            class="code-preview-expand-btn"
-            :title="t('file.codePreview.expandAbove', { n: stepAbove })"
-            @click="expandAbove(stepAbove)"
-          >
-            <ChevronUp :size="13" />
-            <span>{{ t('file.codePreview.expandAbove', { n: stepAbove }) }}</span>
-          </button>
-          <button
-            v-if="remainingAbove > stepAbove"
-            type="button"
-            class="code-preview-expand-btn expand-all"
-            :title="t('file.codePreview.expandToTop')"
-            @click="expandAbove(remainingAbove)"
-          >
-            <ChevronsUp :size="13" />
-            <span>{{ t('file.codePreview.expandToTop') }}</span>
-          </button>
+      <!-- Top hint: lines exist above the slice. Reaching the top loads them
+           automatically, so this bar only reports how many are left. No live
+           region: the count changes on every load and would be re-announced
+           repeatedly while scrolling. -->
+      <div v-if="canExpandAbove" class="code-preview-expand-bar expand-above">
+        <span class="code-preview-expand-hint">{{ t('file.codePreview.linesRemaining', { n: remainingAbove }) }}</span>
+        <span v-if="loadingAbove" class="code-preview-expand-loading">
+          <span class="code-preview-expand-spinner" aria-hidden="true" />
+          {{ t('file.codePreview.loadingMoreLines') }}
         </span>
       </div>
 
@@ -65,38 +43,13 @@
         <div class="markdown-content" v-html="renderedHtml" />
       </div>
 
-      <!-- Bottom Expand Bar: buttons hide once the slice is pinned at the render
-           cap, but the "N lines remaining" hint stays visible -->
-      <div
-        v-if="canExpandBelow"
-        class="code-preview-expand-bar expand-below"
-        role="region"
-        :aria-label="t('file.codePreview.expandBelow', { n: stepBelow })"
-      >
-        <span
-          v-if="remainingBelow > 0"
-          class="code-preview-expand-hint"
-        >{{ t('file.codePreview.linesRemaining', { n: remainingBelow }) }}</span>
-        <span v-if="!hideExpandButtons" class="code-preview-expand-actions">
-          <button
-            type="button"
-            class="code-preview-expand-btn"
-            :title="t('file.codePreview.expandBelow', { n: stepBelow })"
-            @click="expandBelow(stepBelow)"
-          >
-            <ChevronDown :size="13" />
-            <span>{{ t('file.codePreview.expandBelow', { n: stepBelow }) }}</span>
-          </button>
-          <button
-            v-if="remainingBelow > stepBelow"
-            type="button"
-            class="code-preview-expand-btn expand-all"
-            :title="t('file.codePreview.expandToBottom')"
-            @click="expandBelow(remainingBelow)"
-          >
-            <ChevronsDown :size="13" />
-            <span>{{ t('file.codePreview.expandToBottom') }}</span>
-          </button>
+      <!-- Bottom hint: reaching the end loads the next lines automatically, so
+           this bar only reports how many are left. -->
+      <div v-if="canExpandBelow" class="code-preview-expand-bar expand-below">
+        <span class="code-preview-expand-hint">{{ t('file.codePreview.linesRemaining', { n: remainingBelow }) }}</span>
+        <span v-if="loadingBelow" class="code-preview-expand-loading">
+          <span class="code-preview-expand-spinner" aria-hidden="true" />
+          {{ t('file.codePreview.loadingMoreLines') }}
         </span>
       </div>
     </div>
@@ -104,9 +57,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, ChevronsDown, ChevronUp, ChevronsUp } from 'lucide-vue-next'
 import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
 import { onMermaidDragStart, onMermaidDragEnd } from '@/utils/mdMermaidDrag'
 import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
@@ -126,13 +78,13 @@ import { gt } from '@/composables/useLocale'
  * rendered through the shared markdown pipeline and displayed read-only in a
  * `.markdown-body` container — the same styling as the full MarkdownPreview.
  *
- * The expand bars are kept purely as an affordance on very large documents: a
- * "whole file" render is still split by the slicing limits (MAX_RENDER_LINES /
- * MAX_RENDER_BYTES) so we never inject megabytes of HTML at once, and clicking
- * an expand bar asks the parent to grow the source slice before re-rendering.
- * Everything else (search / scroll-to-line / target highlighting) lives in the
- * code view; this component mirrors CodePreviewBody's exposed surface so the
- * parent can swap the two transparently.
+ * The expand bars are kept purely as an affordance on very large documents: the
+ * document is still split by the slicing limits (MAX_RENDER_BYTES) so we never
+ * inject megabytes of HTML at once, and scrolling to a bar pulls in the next
+ * chunk of source lines before re-rendering. Everything else (search /
+ * scroll-to-line / target highlighting) lives in the code view; this component
+ * mirrors CodePreviewBody's exposed surface so the parent can swap the two
+ * transparently.
  */
 
 export type MarkdownBodyStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -147,14 +99,17 @@ const props = defineProps<{
   filePath: string
   remainingAbove: number
   remainingBelow: number
-  stepAbove: number
-  stepBelow: number
-  /** Hide the expand N lines / expand-all buttons but keep the remaining-lines
-      hint. Set when the slice is pinned at the line-count render cap. */
-  hideExpandButtons?: boolean
-  /** Invoked to actually expand the slice; implemented by the parent. */
-  expandAboveLines: (n: number) => Promise<void> | void
-  expandBelowLines: (n: number) => Promise<void> | void
+  /** Which side a load is currently extending, for the spinner. */
+  loadingDirection: 'above' | 'below' | null
+  /**
+   * Loading more cannot grow the slice (a byte ceiling cut it short), so the
+   * scroll handlers must stop asking. The "N lines remaining" hints stay up.
+   */
+  loadMoreBlocked?: boolean
+  /** Pull in the next chunk of source lines above the current slice. */
+  loadMoreAbove: () => Promise<void> | void
+  /** Pull in the next chunk of source lines below the current slice. */
+  loadMoreBelow: () => Promise<void> | void
 }>()
 
 const emit = defineEmits<{
@@ -167,6 +122,18 @@ const scrollEl = ref<HTMLElement | null>(null)
 
 const canExpandAbove = computed(() => props.remainingAbove > 0)
 const canExpandBelow = computed(() => props.remainingBelow > 0)
+
+const loadingAbove = computed(() => props.loadingDirection === 'above')
+const loadingBelow = computed(() => props.loadingDirection === 'below')
+
+/**
+ * Distance from an edge that counts as "reached it". Roughly a screenful, so
+ * the next chunk is usually in place before the user scrolls into blank space.
+ */
+const LOAD_THRESHOLD_PX = 240
+
+/** Re-entrancy latch: a scroll burst must not stack fetches. */
+let loadPending = false
 
 // Image attach-to-chat badge (touch devices). This component is a read-only
 // rendered view; the only interactive bit it owns is the badge toggle.
@@ -290,21 +257,94 @@ function scrollLineIntoView(_lineIdx: number) {
   // rendered view: no row-level scrolling
 }
 
-async function expandAbove(n: number) {
-  anchorScrollBeforeRerender()
-  await props.expandAboveLines(n)
-  await nextTick()
+/**
+ * Loading above prepends content, and the v-html re-render resets the
+ * container's scroll. Capture the anchor first and let the renderedHtml watcher
+ * (restoreScrollAfterRerender) put the read position back once the new HTML has
+ * been written.
+ */
+async function loadAbove() {
+  if (loadPending || props.loadMoreBlocked) return
+  loadPending = true
+  try {
+    anchorScrollBeforeRerender()
+    await props.loadMoreAbove()
+    await nextTick()
+  } finally {
+    loadPending = false
+  }
 }
 
-async function expandBelow(n: number) {
-  anchorScrollBeforeRerender()
-  await props.expandBelowLines(n)
-  await nextTick()
+/**
+ * Loading below appends content, so the browser's own scrollTop preservation is
+ * already correct — no anchoring needed.
+ */
+async function loadBelow() {
+  if (loadPending || props.loadMoreBlocked) return
+  loadPending = true
+  try {
+    await props.loadMoreBelow()
+    await nextTick()
+  } finally {
+    loadPending = false
+  }
 }
+
+function onScroll() {
+  const el = scrollEl.value
+  if (!el) return
+  if (canExpandAbove.value && el.scrollTop <= LOAD_THRESHOLD_PX) {
+    void loadAbove()
+    return
+  }
+  if (
+    canExpandBelow.value &&
+    el.scrollHeight - el.scrollTop - el.clientHeight <= LOAD_THRESHOLD_PX
+  ) {
+    void loadBelow()
+  }
+}
+
+/**
+ * Keep pulling downward while the content is too short to scroll. Without this
+ * a chunk that does not overflow the pane would strand the user: no scrollbar
+ * means no scroll event, so the "N lines remaining" hint would never resolve.
+ * Only downward — auto-loading upward would fight the scroll anchor.
+ *
+ * Progress is measured on the rendered HTML, since this view has no line rows:
+ * a chunk that renders to nothing new must not loop forever.
+ */
+async function fillViewport() {
+  await nextTick()
+  for (let guard = 0; guard < 64; guard++) {
+    const el = scrollEl.value
+    if (!el) return
+    if (!canExpandBelow.value || props.loadMoreBlocked) return
+    if (el.scrollHeight > el.clientHeight + 1) return
+    const before = props.renderedHtml
+    await loadBelow()
+    await nextTick()
+    if (props.renderedHtml === before) return
+  }
+}
+
+watch(
+  () => props.status,
+  (st) => {
+    if (st === 'ready') void fillViewport()
+  },
+  { immediate: true }
+)
+
+onMounted(() => {
+  if (props.status === 'ready') void fillViewport()
+})
 
 defineExpose({
   scrollToTargetLine,
   scrollLineIntoView,
+  loadAbove,
+  loadBelow,
   get scrollContainer(): HTMLElement | null {
     return scrollEl.value
   },

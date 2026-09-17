@@ -1020,7 +1020,7 @@ describe('useCodeLinkPreview', () => {
   })
 
   it('supports directional expandAbove, expandBelow, expandToTop, and expandToBottom', async () => {
-    mockApiGet.mockResolvedValueOnce({
+    mockApiGet.mockResolvedValue({
       content: Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\n'),
       name: 'code.ts',
       path: 'code.ts',
@@ -1038,22 +1038,130 @@ describe('useCodeLinkPreview', () => {
     expect(preview.slicedCode.value?.endLine).toBe(130)
 
     // Expand above by 10 lines -> startLine 60
-    preview.expandAbove(10)
+    await preview.expandAbove(10)
     expect(preview.slicedCode.value?.startLine).toBe(60)
     expect(preview.slicedCode.value?.endLine).toBe(130)
 
     // Expand below by 15 lines -> endLine 145
-    preview.expandBelow(15)
+    await preview.expandBelow(15)
     expect(preview.slicedCode.value?.startLine).toBe(60)
     expect(preview.slicedCode.value?.endLine).toBe(145)
 
     // Expand to top -> startLine 1
-    preview.expandToTop()
+    await preview.expandToTop()
     expect(preview.slicedCode.value?.startLine).toBe(1)
 
-    // Expand to bottom -> endLine 200 (clamped by MAX_RENDER_LINES=200 from startLine 1)
-    preview.expandToBottom()
+    // Expand to bottom -> the file's last line (line count is no longer capped)
+    await preview.expandToBottom()
     expect(preview.slicedCode.value?.endLine).toBe(200)
+  })
+
+  it('walks a long file in chunks instead of capping the slice', async () => {
+    // A 5000-line file: the opening window is bounded, and each scroll-driven
+    // load pulls the next chunk. The slice must keep growing past the old
+    // 200-line ceiling — that ceiling is what this feature removes.
+    const line = (n: number) => `line ${n}`
+    const window = (start: number, end: number) => ({
+      content: Array.from({ length: end - start + 1 }, (_, i) => line(start + i)).join('\n'),
+      name: 'big.ts',
+      path: 'big.ts',
+      supported: true,
+      size: 200 * 1024,
+      totalLines: 5000,
+      windowStart: start,
+      windowEnd: end,
+    })
+    mockApiGet.mockImplementation((url: string) => {
+      const m = /lineStart=(\d+)&lineEnd=(\d+)/.exec(url)
+      if (!m) return Promise.resolve(window(1, 30))
+      return Promise.resolve(window(Number(m[1]), Number(m[2])))
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'big.ts' })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    // Opens on the file head, well under the whole file.
+    expect(preview.slicedCode.value?.startLine).toBe(1)
+    const opened = preview.slicedCode.value!.endLine
+    expect(opened).toBeLessThan(5000)
+
+    // Each load extends the slice; nothing is clamped to 200 lines.
+    await preview.expandBelow(800)
+    expect(preview.slicedCode.value!.endLine).toBeGreaterThan(opened)
+    const afterOne = preview.slicedCode.value!.endLine
+    expect(afterOne).toBeGreaterThan(200)
+
+    await preview.expandBelow(800)
+    expect(preview.slicedCode.value!.endLine).toBeGreaterThan(afterOne)
+
+    // The lines really are there, in file order — not a re-sliced window.
+    expect(preview.slicedCode.value!.code).toContain('line 1')
+    expect(preview.slicedCode.value!.code.split('\n')[0]).toBe('line 1')
+  })
+
+  it('blocks further loading once a byte ceiling cuts the slice short', async () => {
+    // A line range spanning 60 lines of ~10 KiB: the 512 KiB render budget trips
+    // partway through, so no amount of extra loading can extend the slice.
+    const bigLine = 'a'.repeat(10 * 1024)
+    const content = Array.from({ length: 60 }, () => bigLine).join('\n')
+    mockApiGet.mockImplementation((url: string) => {
+      const m = /lineStart=(\d+)&lineEnd=(\d+)/.exec(url)
+      const start = m ? Number(m[1]) : 1
+      const end = m ? Number(m[2]) : 260
+      return Promise.resolve({
+        content: start === 1 && end >= 60 ? content : bigLine,
+        name: 'fat.ts',
+        path: 'fat.ts',
+        supported: true,
+        size: 600 * 1024,
+        totalLines: 5000,
+        windowStart: start,
+        windowEnd: Math.min(end, start === 1 && end >= 60 ? 60 : end),
+      })
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'fat.ts', lineStart: 1, lineEnd: 60 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    expect(preview.slicedCode.value?.renderTruncated).toBe(true)
+    expect(preview.slicedCode.value?.truncateReason).toBe('bytes')
+    expect(preview.loadMoreBlocked.value).toBe(true)
+
+    // The file has thousands more lines and the wanted range grows well past the
+    // held window — so without the gate this would fetch. Blocked means blocked:
+    // a byte-capped slice cannot grow, so no request may go out.
+    const callsBefore = mockApiGet.mock.calls.length
+    await preview.expandBelow(800)
+    await preview.loadMore()
+    expect(mockApiGet.mock.calls.length).toBe(callsBefore)
+  })
+
+  it('opens a long file on a small head and is not blocked', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join('\n'),
+      name: 'long.ts',
+      path: 'long.ts',
+      supported: true,
+      size: 4000,
+      totalLines: 400,
+      windowStart: 1,
+      windowEnd: 400,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'long.ts' })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    // No annotation: the slice opens on the file head (30 lines) and grows as
+    // the user scrolls — it is not the whole file, and it is not blocked.
+    expect(preview.slicedCode.value?.startLine).toBe(1)
+    expect(preview.slicedCode.value?.endLine).toBe(30)
+    expect(preview.loadMoreBlocked.value).toBe(false)
   })
 
   it('keeps preview open across card hover / focus events (no auto-close)', async () => {
