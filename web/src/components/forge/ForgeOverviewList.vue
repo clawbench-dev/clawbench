@@ -196,7 +196,14 @@ function clearLocal() {
   for (const row of unread.items.value) row.locallyRead = true
 }
 
-defineExpose({ reload, clearLocal })
+/**
+ * Exposed so the host's header refresh button can spin for this tab too.
+ *
+ * Each tab's list owns its own loading flag (this one, `items`, `pipelines`),
+ * so the host derives the button's spin state from whichever list is on screen;
+ * without exposing it, the header button would sit still on this tab.
+ */
+defineExpose({ reload, clearLocal, loading: unread.loading })
 </script>
 
 <style scoped>

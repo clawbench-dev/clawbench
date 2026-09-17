@@ -93,7 +93,7 @@
           </button>
           <RefreshButton
             class="forge-header-btn"
-            :loading="items.loading.value"
+            :loading="refreshing"
             :title="t('nav.refresh')"
             @click="onRefreshClick"
           />
@@ -603,7 +603,26 @@ function closeDetail() {
 }
 
 /** The unread list, so the header's "mark all read" can clear its rows too. */
-const overviewListRef = ref<{ reload: () => void; clearLocal: () => void } | null>(null)
+const overviewListRef = ref<{
+  reload: () => void
+  clearLocal: () => void
+  loading: boolean
+} | null>(null)
+
+/**
+ * Whether the header refresh button should spin.
+ *
+ * Every tab owns its own loader — the issue/PR list, the pipeline list and the
+ * unread list each have a separate `loading` flag — so the button must read
+ * whichever one is on screen. Binding it to `items.loading` alone made the
+ * button look dead on the Pipelines and Activity tabs, where a refresh really
+ * was running but nothing on screen reflected it.
+ */
+const refreshing = computed(() => {
+  if (activeTab.value === 'pipeline') return pipelines.loading.value
+  if (activeTab.value === 'overview') return overviewListRef.value?.loading ?? false
+  return items.loading.value
+})
 
 /**
  * Open the item an unread row points at.

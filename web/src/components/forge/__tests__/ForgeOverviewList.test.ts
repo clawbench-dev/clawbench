@@ -298,4 +298,26 @@ describe('ForgeOverviewList', () => {
     expect(w.find('.forge-error-card').exists()).toBe(true)
     expect(w.text()).not.toContain('forge.overview.empty')
   })
+
+  it('exposes its own loading flag so the host header can spin for it', async () => {
+    // The host's header refresh button drives its spin from the loading flag of
+    // whichever list is on screen. This tab's list owns its flag, so it has to
+    // be reachable through the template ref — otherwise the button sits still
+    // here while a refresh is actually running.
+    let resolve!: (v: { count: number; items: unknown[] }) => void
+    mockFetchForgeUnreadItems.mockImplementation(
+      () => new Promise(r => { resolve = r }),
+    )
+
+    const w = mountPanel()
+    await nextTick()
+
+    expect(w.vm.loading, 'in-flight request must read as loading').toBe(true)
+
+    resolve({ count: 0, items: [] })
+    await nextTick()
+    await nextTick()
+
+    expect(w.vm.loading, 'settled request must clear the flag').toBe(false)
+  })
 })

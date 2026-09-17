@@ -1230,6 +1230,118 @@ describe('ForgePanelContent unread tab', () => {
 })
 
 /**
+ * The header refresh button must spin for whichever tab is on screen.
+ *
+ * Each tab's list owns its own `loading` flag (issues/PR, pipelines, activity),
+ * so a button bound to only one of them looks dead on the other two — the user
+ * clicks refresh, a request really runs, and nothing moves.
+ */
+describe('ForgePanelContent header refresh spin', () => {
+  /** The activity list stub's loading flag, controllable from the test. */
+  const overviewChild = { loading: false }
+
+  const opts = {
+    plugins: [makeI18n()],
+    stubs: {
+      LoadingIndicator: true,
+      ModalDialog: true,
+      ForgeDetail: true,
+      ForgePipelineDetail: true,
+      PopupMenu: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
+      ForgeOverviewList: {
+        name: 'ForgeOverviewList',
+        props: ['active', 'projectPath'],
+        emits: ['open-item'],
+        template: '<div class="overview-stub" />',
+        computed: { loading: () => overviewChild.loading },
+        methods: { reload() {}, clearLocal() {} },
+        expose: ['reload', 'clearLocal', 'loading'],
+      },
+      // Named stub so the loading prop the host computes is observable; an
+      // anonymous `true` stub would render nothing to assert against.
+      RefreshButton: {
+        name: 'RefreshButton',
+        props: ['loading'],
+        emits: ['click'],
+        template: '<button class="refresh-stub" :data-loading="String(!!loading)" />',
+      },
+    },
+  }
+
+  /** The header refresh button's rendered loading state. */
+  function spinning(wrapper: ReturnType<typeof mount>): boolean {
+    return wrapper.find('.refresh-stub').attributes('data-loading') === 'true'
+  }
+
+  beforeEach(() => {
+    _resetHandlers()
+    vi.clearAllMocks()
+    state.items.value = []
+    state.binding.value = { slug: 'acme/widgets' }
+    state.loading.value = false
+    state.error.value = null
+    state.isBound.value = true
+    pipelineState.loading.value = false
+    pipelineState.error.value = null
+    overviewChild.loading = false
+  })
+
+  it('spins for the issue/PR list while it is loading', async () => {
+    state.loading.value = true
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
+    await flushPromises()
+
+    expect(spinning(wrapper)).toBe(true)
+  })
+
+  it('spins for the pipeline list while it is loading', async () => {
+    // The regression: this tab's loader was invisible to the header button, so
+    // clicking refresh on Pipelines spun nothing.
+    pipelineState.loading.value = true
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+    await wrapper.findAll('.forge-tab')[3].trigger('click')
+    await flushPromises()
+
+    expect(spinning(wrapper)).toBe(true)
+  })
+
+  it('spins for the activity list while it is loading', async () => {
+    overviewChild.loading = true
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    expect(spinning(wrapper)).toBe(true)
+  })
+
+  it('does not spin for a list that is not on screen', async () => {
+    // The complement: the pipeline list loading in the background must not spin
+    // the button while the Issues tab is showing.
+    pipelineState.loading.value = true
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
+    await flushPromises()
+
+    expect(spinning(wrapper)).toBe(false)
+  })
+})
+
+/**
  * The bind dialog's pre-submit warning for non-official hosts.
  *
  * The server accepts any host, so an internal GitLab binds fine — which is the
