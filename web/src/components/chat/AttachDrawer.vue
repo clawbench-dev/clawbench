@@ -419,22 +419,21 @@ defineExpose({ activeTab, handleFileDrop })
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding:0 var(--space-4);
+  padding: 0 var(--space-2);
   height: 28px;
-  border-radius: var(--radius-sm);
   border: none;
-  background: var(--bg-hover);
-  color: var(--text-secondary);
+  background: none;
+  color: var(--accent-color);
   cursor: pointer;
   font-size: var(--font-size-sm);
   white-space: nowrap;
+  transition: opacity var(--duration-fast);
 }
 .ad-upload-label {
   line-height: 1;
 }
 .ad-upload-btn:active {
-  background: var(--accent-color);
-  color: #fff;
+  opacity: var(--opacity-muted);
 }
 
 /* Tab bar */
