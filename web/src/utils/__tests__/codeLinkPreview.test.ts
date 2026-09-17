@@ -7,6 +7,7 @@ import {
   windowCovers,
   nextLoadWindow,
   mergeLineWindows,
+  resolveResponseWindow,
   buildPreviewUrl,
   getAppHeaderBottom,
   placeNearAnchor,
@@ -329,6 +330,72 @@ describe('codeLinkPreview utils', () => {
       const viaFile = sliceCodeForPreview(whole, 150, 150)
       const viaWindow = sliceCodeForPreview(whole, 150, 150, { baseLineOffset: 1, totalLines: 300 })
       expect(viaWindow).toEqual(viaFile)
+    })
+  })
+
+  describe('resolveResponseWindow', () => {
+    const base = { name: 'LICENSE', path: 'LICENSE', supported: false, size: 3 }
+
+    it('treats a response with no window metadata as the whole file', () => {
+      // The server ignores the line window on its whole-file paths (non-text
+      // files, forceText / sanitization), answering with the full content and
+      // no windowStart. `windowEnd` stays a bare 0 there, which must NOT be
+      // read as the empty-window encoding — that showed "line out of range"
+      // over a blank pane for every extensionless file (LICENSE, *.bak, .env).
+      const res = resolveResponseWindow({ ...base, content: 'MIT', windowEnd: 0 })
+      expect(res.wholeFile).toBe(true)
+      expect(res.startLine).toBe(1)
+      expect(res.endLine).toBe(1)
+      expect(res.totalLines).toBe(1)
+    })
+
+    it('derives the line count from multi-line whole-file content', () => {
+      const body = Array.from({ length: 21 }, (_, i) => `line ${i + 1}`).join('\n')
+      const res = resolveResponseWindow({ ...base, content: body, windowEnd: 0 })
+      expect(res.wholeFile).toBe(true)
+      expect(res.startLine).toBe(1)
+      expect(res.endLine).toBe(21)
+      expect(res.totalLines).toBe(21)
+    })
+
+    it('reports an empty whole-file response as zero lines, not out of range', () => {
+      const res = resolveResponseWindow({ ...base, content: '', windowEnd: 0 })
+      expect(res.wholeFile).toBe(true)
+      expect(res.totalLines).toBe(0)
+      expect(res.endLine).toBe(0)
+      // endLine < startLine encodes "no lines", which the pane must not read as
+      // a bad annotation when the file is simply empty.
+      expect(res.endLine).toBeLessThan(res.startLine)
+    })
+
+    it('keeps the real window when the response carries windowStart', () => {
+      const res = resolveResponseWindow({
+        ...base,
+        content: 'line 101\nline 102',
+        windowStart: 101,
+        windowEnd: 102,
+        totalLines: 1000,
+      })
+      expect(res.wholeFile).toBe(false)
+      expect(res.startLine).toBe(101)
+      expect(res.endLine).toBe(102)
+      expect(res.totalLines).toBe(1000)
+    })
+
+    it('preserves the empty-window encoding for a real windowed response', () => {
+      // A windowed request past EOF: windowStart is present and windowEnd is
+      // Start-1, so the pane still knows the annotation was out of range.
+      const res = resolveResponseWindow({
+        ...base,
+        content: '',
+        windowStart: 500,
+        windowEnd: 499,
+        totalLines: 100,
+      })
+      expect(res.wholeFile).toBe(false)
+      expect(res.startLine).toBe(500)
+      expect(res.endLine).toBe(499)
+      expect(res.totalLines).toBe(100)
     })
   })
 

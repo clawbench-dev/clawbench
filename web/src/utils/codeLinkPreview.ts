@@ -494,6 +494,54 @@ export function windowLines(content: string, startLine: number, endLine: number)
   return content.split(/\r\n|\r|\n/)
 }
 
+/** Line count of whole-file content, matching sliceCodeForPreview's split rules. */
+function countContentLines(content: string): number {
+  return content === '' ? 0 : content.split(/\r\n|\r|\n/).length
+}
+
+/** The absolute line window a response covers, in file coordinates. */
+export interface ResolvedResponseWindow {
+  /**
+   * The response carries no window metadata at all, so `content` is the entire
+   * file. The server ignores the line window on the whole-file paths (non-text
+   * files, forceText / binary sanitization), where it answers with the full
+   * sanitized content instead.
+   */
+  wholeFile: boolean
+  /** 1-based first line of `content`. */
+  startLine: number
+  /** 1-based last line of `content`. `endLine < startLine` means "no lines". */
+  endLine: number
+  /** The file's total line count, or null when it must be derived from content. */
+  totalLines: number | null
+}
+
+/**
+ * Resolve the absolute line window a response actually covers.
+ *
+ * A response carries window metadata only when the server honoured the request:
+ * `windowStart` is omitted on the whole-file path, while `windowEnd` stays a
+ * bare 0. Reading that pair as the empty-window encoding (`windowEnd <
+ * windowStart`) blanked the pane and showed a bogus "line out of range" notice
+ * for every non-text file — LICENSE, *.bak, .env, an extensionless script — no
+ * matter how many lines it held. Keying off `windowStart` presence separates
+ * the two cases.
+ */
+export function resolveResponseWindow(resp: FileContentResponse): ResolvedResponseWindow {
+  if (resp.windowStart === undefined) {
+    // Whole file: derive the line count the same way sliceCodeForPreview does,
+    // so an empty file reports 0 lines rather than a phantom one.
+    const count = countContentLines(resp.content)
+    return { wholeFile: true, startLine: 1, endLine: count, totalLines: count }
+  }
+  return {
+    wholeFile: false,
+    startLine: resp.windowStart,
+    endLine: resp.windowEnd ?? resp.windowStart,
+    totalLines: resp.totalLines ?? null,
+  }
+}
+
 /**
  * Merge a freshly fetched window into the lines already held, returning one
  * contiguous window covering both. Overlapping lines are taken once — both
