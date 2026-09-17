@@ -145,18 +145,24 @@ const mockClosePreview = vi.hoisted(() => vi.fn())
 const mockPreviewRefs = vi.hoisted(() => ({
   visible: null as { value: boolean } | null,
   mode: null as { value: string } | null,
+  // The component reads `target.value.filePath` to skip re-showing the file the
+  // pane already displays (keyboard highlight clamped at either end).
+  target: null as { value: { filePath: string } | null } | null,
 }))
 vi.mock('@/composables/useCodeLinkPreview', () => {
   const visible = ref(false)
   const mode = ref('transient')
+  const target = ref<{ filePath: string } | null>(null)
   mockPreviewRefs.visible = visible
   mockPreviewRefs.mode = mode
+  mockPreviewRefs.target = target
   return {
     useCodeLinkPreview: (opts: { enabled?: { value: boolean } } = {}) => ({
       enabled: opts.enabled ?? { value: true },
       outsideClickIgnoreSelector: '.file-item, .grid-item',
       visible,
       mode,
+      target,
       showPreview: mockShowPreview,
       close: mockClosePreview,
     }),
@@ -473,6 +479,7 @@ beforeEach(() => {
   // Shared preview refs: reset so a previous test's open pane doesn't leak in.
   mockPreviewRefs.visible!.value = false
   mockPreviewRefs.mode!.value = 'transient'
+  mockPreviewRefs.target!.value = null
   mockDirPreviewState.entries = []
   mockDirPreviewState.loading = false
   mockDirPreviewState.error = false
@@ -1882,8 +1889,23 @@ describe('FileManagerContent — cut item visual', () => {
 // ── Keyboard shortcuts ──
 
 describe('FileManagerContent — keyboard shortcuts', () => {
+  // These tests drive the component through `document`-level keydown, and the
+  // component registers that listener for its whole lifetime. Without tearing
+  // the wrapper down, every earlier mount keeps reacting to every later
+  // dispatch — which inflates shared mock call counts (e.g. the preview
+  // composable's showPreview) with calls from unrelated fixtures.
+  const mounted: Array<{ unmount: () => void }> = []
+  const mountKeyboardContent = (props = {}) => {
+    const w = mountKeyboardContent(props)
+    mounted.push(w)
+    return w
+  }
+  afterEach(() => {
+    while (mounted.length) mounted.pop()!.unmount()
+  })
+
   it('Ctrl+C copies current file to clipboard', async () => {
-    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
     await nextTick()
 
     // Dispatch Ctrl+C
@@ -1896,7 +1918,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Ctrl+C copies selectedPath entry to clipboard (browse-list selection)', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
     // Simulate browse-list click: no currentFile, only selectedPath
     wrapper.vm._setSelectedPath('test.ts')
@@ -1912,7 +1934,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Ctrl+X cuts current file to clipboard', async () => {
-    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
     await nextTick()
 
     const event = new KeyboardEvent('keydown', { key: 'x', ctrlKey: true, bubbles: true })
@@ -1923,7 +1945,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Ctrl+X cuts selectedPath entry to clipboard (browse-list selection)', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
     wrapper.vm._setSelectedPath('test.ts')
     await nextTick()
@@ -1938,7 +1960,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Delete emits delete for current file', async () => {
-    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
     await nextTick()
 
     const event = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true })
@@ -1950,7 +1972,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Delete emits delete for the highlighted selection before falling back to the current file', async () => {
-    const wrapper = mountContent({ currentFile: { path: 'other.ts', name: 'other.ts' } })
+    const wrapper = mountKeyboardContent({ currentFile: { path: 'other.ts', name: 'other.ts' } })
     await nextTick()
     wrapper.vm._setSelectedPath('test.ts')
     await nextTick()
@@ -1966,7 +1988,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   it('Delete after Ctrl+click accumulation emits batchDelete for the multi-selection', async () => {
     mockIsPC.value = true
     mockDialogConfirm.mockResolvedValue(true)
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     // Ctrl+click two entries to accumulate a multi-selection
@@ -1988,7 +2010,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Ctrl+A enters multi-select and selects all', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     const event = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true })
@@ -2000,7 +2022,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Alt+ArrowUp emits navigateBack (parent directory)', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true }))
@@ -2011,7 +2033,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
   it('F2 opens the rename dialog and emits rename with the new name', async () => {
     mockDialogPrompt.mockResolvedValue('renamed.ts')
-    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))
@@ -2025,7 +2047,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
   it('F2 does not emit rename when the dialog is cancelled', async () => {
     mockDialogPrompt.mockResolvedValue('')
-    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))
@@ -2038,7 +2060,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
   it('F2 does not emit rename when the name is unchanged', async () => {
     mockDialogPrompt.mockResolvedValue('test.ts')
-    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))
@@ -2049,7 +2071,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Ctrl+R emits refresh', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', ctrlKey: true, bubbles: true }))
@@ -2059,7 +2081,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Ctrl+Shift+H emits toggleHidden', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', ctrlKey: true, shiftKey: true, bubbles: true }))
@@ -2069,7 +2091,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Ctrl+Shift+M toggles multi-select mode', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }))
@@ -2079,7 +2101,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Escape exits multi-select mode', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }))
@@ -2093,7 +2115,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
   it('Enter opens the selected entry (file → selectFile)', async () => {
     mockIsPC.value = true
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     // Select test.ts by clicking it. On desktop a single click only selects,
@@ -2111,7 +2133,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Enter on a focused button is not hijacked', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     // Click the item to select it, then simulate Enter while a button is the target
@@ -2131,7 +2153,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Space toggles the selected item in multi-select mode', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     // Enter multi-select via Ctrl+Shift+M, then click test.ts to select it
@@ -2148,7 +2170,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
   it('PC: Space toggle is preserved by a following Shift+click', async () => {
     mockIsPC.value = true
-    const wrapper = mountContent() // order: src, test.ts, readme.md
+    const wrapper = mountKeyboardContent() // order: src, test.ts, readme.md
     await nextTick()
 
     // Anchor on src, then Space-toggle readme.md on (highlight it first).
@@ -2172,7 +2194,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Escape in the empty resident search box exits multi-select', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     wrapper.vm.multiSelectState.active = true
     await nextTick()
 
@@ -2184,7 +2206,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('ArrowDown moves the highlighted selection to the next entry', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     // Select the first entry (src) via exposed helper
@@ -2199,7 +2221,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('End moves the highlighted selection to the last entry', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     wrapper.vm._setSelectedPath('src')
@@ -2211,9 +2233,154 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     // Verify selectedPath moved to the last entry
     expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
   })
+  it('ArrowDown retargets the docked preview to the next file', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountKeyboardContent()
+    await nextTick()
+
+    // Highlight the entry before the target, and have the pane already showing
+    // it (as the click that highlighted it would have left it).
+    wrapper.vm._setSelectedPath('test.ts')
+    mockPreviewRefs.visible!.value = true
+    mockPreviewRefs.target!.value = { filePath: 'test.ts' }
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
+    expect(mockShowPreview).toHaveBeenCalledTimes(1)
+    const [target, mode] = mockShowPreview.mock.calls[0]
+    expect(target.filePath).toBe('readme.md')
+    // Docked, like a click — the keyboard path reuses the same open call.
+    expect(mode).toBe('docked')
+    expect(target.anchorEl).toBeTruthy()
+  })
+
+  it('ArrowUp retargets the docked preview backwards', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountKeyboardContent()
+    await nextTick()
+
+    // Start on the last file so ArrowUp lands on the other file (the entry
+    // before it is the directory, covered by its own test below).
+    wrapper.vm._setSelectedPath('readme.md')
+    mockPreviewRefs.visible!.value = true
+    mockPreviewRefs.target!.value = { filePath: 'readme.md' }
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
+    expect(mockShowPreview).toHaveBeenCalledTimes(1)
+    expect(mockShowPreview.mock.calls[0][0].filePath).toBe('test.ts')
+  })
+
+  it('ArrowUp onto a directory swaps the pane to its listing', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    // Start on the file after the directory so ArrowUp lands on `src`.
+    const wrapper = mountKeyboardContent()
+    wrapper.vm._setSelectedPath('test.ts')
+    mockPreviewRefs.visible!.value = true
+    mockPreviewRefs.target!.value = { filePath: 'test.ts' }
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('src')
+    // A directory has no file content: the listing body takes the pane and the
+    // file-preview composable is left alone.
+    expect(mockShowPreview).not.toHaveBeenCalled()
+    expect(wrapper.find('.dir-preview-stub').exists()).toBe(true)
+    expect(wrapper.find('.dir-preview-stub').attributes('data-dir-path')).toBe('src')
+  })
+
+  it('ArrowDown re-opens the pane when it was collapsed by the close button', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountKeyboardContent()
+    await nextTick()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    mockPreviewRefs.target!.value = { filePath: 'test.ts' }
+    await nextTick()
+    await wrapper.findComponent(CodeLinkPreviewStub).vm.$emit('closed')
+    await nextTick()
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+
+    // Moving the highlight is a new preview request, so the pane comes back —
+    // exactly as the next single click would.
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
+    expect(mockShowPreview).toHaveBeenCalledTimes(2)
+    expect(mockShowPreview.mock.calls[1][0].filePath).toBe('readme.md')
+  })
+
+  it('does not retarget the preview when the highlight does not move', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountKeyboardContent()
+    await nextTick()
+
+    // Already on the last entry, pane open and showing it: ArrowDown clamps.
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click')
+    wrapper.vm._setSelectedPath('readme.md')
+    mockPreviewRefs.visible!.value = true
+    mockPreviewRefs.target!.value = { filePath: 'readme.md' }
+    await nextTick()
+    mockShowPreview.mockClear()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
+    // Re-showing would discard the pane's scroll position and expanded context.
+    expect(mockShowPreview).not.toHaveBeenCalled()
+  })
+
+  it('keyboard navigation does not open a preview when preview mode is off', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = false
+    const wrapper = mountKeyboardContent()
+    wrapper.vm._setSelectedPath('src')
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
+    expect(mockShowPreview).not.toHaveBeenCalled()
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+  })
+
+  it('keyboard navigation does not retarget the preview in multi-select mode', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountKeyboardContent()
+    await nextTick()
+
+    // Ctrl+Shift+M enters multi-select; there the highlight is a batch cursor.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }))
+    wrapper.vm._setSelectedPath('src')
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
+    expect(mockShowPreview).not.toHaveBeenCalled()
+  })
 
   it('Backspace emits navigateBack (parent directory)', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }))
@@ -2223,7 +2390,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Ctrl+1 / Ctrl+2 switch list/grid view', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '2', ctrlKey: true, bubbles: true }))
@@ -2247,7 +2414,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Shift+ArrowDown extends multi-select to the next entry', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }))
@@ -2262,7 +2429,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Shift+Delete force-deletes the multi-selection without confirm', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountKeyboardContent()
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }))
@@ -2277,7 +2444,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('ignores shortcuts while a text field holds focus (e.g. the chat input)', async () => {
-    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
     await nextTick()
 
     // Focus is in a textarea (chat input on the right) — Ctrl+C must NOT copy a file
@@ -2304,7 +2471,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
     it('calls ClawBenchNative.shareFile with correct mimeType for image', async () => {
       ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
-      const wrapper = mountContent()
+      const wrapper = mountKeyboardContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
       wrapper.vm.ctxMenu.entry = { path: '/photos/test.png', name: 'test.png', type: 'file' }
@@ -2316,7 +2483,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
     it('calls ClawBenchNative.shareFile with video mimeType for mp4', async () => {
       ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
-      const wrapper = mountContent()
+      const wrapper = mountKeyboardContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
       wrapper.vm.ctxMenu.entry = { path: '/video/clip.mp4', name: 'clip.mp4', type: 'file' }
@@ -2328,7 +2495,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
     it('calls ClawBenchNative.shareFile with audio mimeType for mp3', async () => {
       ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
-      const wrapper = mountContent()
+      const wrapper = mountKeyboardContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
       wrapper.vm.ctxMenu.entry = { path: '/audio/song.mp3', name: 'song.mp3', type: 'file' }
@@ -2340,7 +2507,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
     it('calls ClawBenchNative.shareFile with pdf mimeType', async () => {
       ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
-      const wrapper = mountContent()
+      const wrapper = mountKeyboardContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
       wrapper.vm.ctxMenu.entry = { path: '/doc/file.pdf', name: 'file.pdf', type: 'file' }
@@ -2352,7 +2519,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
     it('calls ClawBenchNative.shareFile with wildcard mimeType for unknown', async () => {
       ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
-      const wrapper = mountContent()
+      const wrapper = mountKeyboardContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
       wrapper.vm.ctxMenu.entry = { path: '/doc/file.xyz', name: 'file.xyz', type: 'file' }
@@ -2364,7 +2531,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
     it('does nothing when ClawBenchNative is missing', async () => {
       ;(window as any).ClawBenchNative = undefined
-      const wrapper = mountContent()
+      const wrapper = mountKeyboardContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
       wrapper.vm.ctxMenu.entry = { path: '/test.png', name: 'test.png', type: 'file' }

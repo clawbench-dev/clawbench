@@ -2519,22 +2519,55 @@ function moveSelection(delta, toStart = false, toEnd = false) {
     const path = pathOf(entries[idx])
     selectedPath.value = path
     scrollSelectedIntoView(path)
+    syncPreviewToSelection()
+}
+
+/**
+ * Keep the docked pane in step with the keyboard-highlighted entry. Reuses the
+ * click paths so a keypress opens/retargets the pane exactly as a click would —
+ * a file shows its contents, a directory its listing.
+ *
+ * Skipped while multi-select is active, matching clicks: there the highlight is
+ * a batch cursor, not a preview target.
+ */
+function syncPreviewToSelection() {
+    if (!filePreviewMode.value || multiSelect.active) return
+    const path = selectedPath.value
+    const entry = entryByPath(path)
+    if (!entry) return
+    const action = entry.type === 'dir' ? 'dir' : 'file'
+    if (!shouldPreviewOnClick(action, path)) return
+    if (action === 'dir') {
+        // Already listing this directory in an open pane — re-running the fetch
+        // would only discard the pane's own scroll position.
+        if (previewPaneOpen.value && dirPreviewPath.value === path) return
+        showDirPreview(path)
+        return
+    }
+    // Same file, pane still open: keep its scroll position and expanded context
+    // (an arrow press clamped at either end lands here). A collapsed pane has to
+    // fall through, or it could never be re-opened from the keyboard.
+    if (previewPaneOpen.value && codeLinkPreview.target?.value?.filePath === path) return
+    showFilePreview(path, itemElForPath(path))
+}
+
+/** The mounted row/grid element for a path, if it is currently rendered. */
+function itemElForPath(path) {
+    const container = viewMode.value === 'grid' ? fileGridRef.value : fileListRef.value
+    if (!container) return null
+    for (const it of container.querySelectorAll('[data-path]')) {
+        if (it.getAttribute('data-path') === path) return it
+    }
+    return null
 }
 
 /** Scroll the given entry into view within the active list/grid container. */
 function scrollSelectedIntoView(path) {
     nextTick(() => {
-        const container = viewMode.value === 'grid' ? fileGridRef.value : fileListRef.value
-        if (!container) return
-        const items = container.querySelectorAll('[data-path]')
-        for (const it of items) {
-            if (it.getAttribute('data-path') === path) {
-                // jsdom (tests) may not implement scrollIntoView — guard it
-                if (typeof it.scrollIntoView === 'function') {
-                    it.scrollIntoView({ block: 'nearest' })
-                }
-                break
-            }
+        const it = itemElForPath(path)
+        // jsdom (tests) may not implement scrollIntoView — guard it
+        if (it && typeof it.scrollIntoView === 'function') {
+            it.scrollIntoView({ block: 'nearest' })
         }
     })
 }
