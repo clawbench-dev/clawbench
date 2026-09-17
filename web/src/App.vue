@@ -1162,6 +1162,11 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
     // 重放阶段（页面刷新/断线重连补发的历史完成）不弹窗：
     // isReplayingEvents 在 fetchPendingEvents 与 WS replay 窗口期间为 true。
     if (skipReplay && isReplayingEvents.value) return
+    // 应用内通知开关（本地设置，默认开）：关闭后不再弹完成卡片。
+    // 只拦新的完成事件——已经在屏幕上的卡片保留，等它自己关掉（用户预期：
+    // 关开关不该把正在看的内容突然抽走）。提示音与系统/IM 推送各有自己的
+    // 开关，不受这里影响。
+    if (localConfig.inAppNotification === false) return
     const sessionId = data.session_id
     if (!sessionId) return
     // 聊天界面在前台激活且正是当前会话时，用户正看着结果，不弹；

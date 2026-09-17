@@ -36,6 +36,8 @@ sequenceDiagram
 
 - **WebSocket 实时事件**：在线时通过 WebSocket 接收实时事件（session_update、task_update 等），延迟更低、信息更丰富
 - **通知音效开关**：`notificationSound` 本地设置（默认开启）控制 `playNotificationSound()` 是否播放——关闭后 Web Audio API 不再初始化，防止打断蓝牙耳机的音乐播放
+- **应用内通知开关**：`inAppNotification` 本地设置（默认开启）控制应用内完成卡片（CompletionPopover）是否弹出。关闭后 `App.vue` 的 `handleCompletionEvent` 在入队前早返回，只拦新的完成事件——已在屏幕上的卡片保留至用户关闭。该开关只管卡片，提示音与系统/IM 推送各有独立开关，互不影响
+- **设置页小节划分**：推送通知页按使用场景分三节——「应用内通知」（完成卡片 + 提示音，均本地即时生效）、「桌面与系统」（悬浮状态窗 + 灵动岛，app-only，浏览器模式下整卡隐藏）、「移动端通知」（推送模式面板，服务端设置，改完点保存）
 - **事件缓冲与回放**：WebSocket 断线期间的事件缓冲在服务端，重连后自动回放。确保不丢失关键通知
 - **任务完成推送预览**：WebSocket 通知包含任务完成的响应摘要预览文本和 `Done:` 前缀，用户不用打开 App 就能判断任务是否成功
 - **权限审批推送**：ACP 后端请求工具调用审批时，WebSocket 通知包含工具名称（如 `execute_command`、`write_file`），用户可以及时审批，避免因未审批而阻塞 AI 执行

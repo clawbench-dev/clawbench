@@ -184,6 +184,29 @@ describe('useSettingsConfig', () => {
     localStorage.removeItem('clawbench-settings-notificationSound')
   })
 
+  // The in-app completion card defaults ON so upgrading users keep seeing it;
+  // only an explicit opt-out hides it.
+  it('localConfig has inAppNotification defaulting to true', () => {
+    const { localConfig } = useSettingsConfig()
+    localStorage.removeItem('clawbench-settings-inAppNotification')
+    expect('inAppNotification' in localConfig).toBe(true)
+    expect(localConfig.inAppNotification).toBe(true)
+  })
+
+  it('setLocalConfig persists inAppNotification to localStorage', () => {
+    const { localConfig, setLocalConfig } = useSettingsConfig()
+
+    setLocalConfig('inAppNotification', false)
+    expect(localConfig.inAppNotification).toBe(false)
+    expect(localStorage.getItem('clawbench-settings-inAppNotification')).toBe('false')
+
+    setLocalConfig('inAppNotification', true)
+    expect(localConfig.inAppNotification).toBe(true)
+    expect(localStorage.getItem('clawbench-settings-inAppNotification')).toBe('true')
+
+    localStorage.removeItem('clawbench-settings-inAppNotification')
+  })
+
   it('localConfig has messageDisplayMode defaulting to mixed', () => {
     const { localConfig } = useSettingsConfig()
     localStorage.removeItem('clawbench-settings-messageDisplayMode')
