@@ -849,14 +849,15 @@ describe('CompletionPopover', () => {
         await nextTick()
 
         expect(document.querySelector('.completion-popover-input')).toBeTruthy()
-        // textarea 与聊天输入框对齐：字号/行高与聊天正文同 token（--font-size-md /
-        // --line-height-snug），上下 padding 4px
+        // textarea 与聊天输入框对齐：字号与聊天正文同 token（--font-size-md）；
+        // 行盒用整数 --input-line-height（无单位 1.4 在 WebView 下会让单行文字
+        // 偏上，见该 token 注释），上下 padding 4px
         // jsdom 不解析 var()：字号/行高断言 token 名，padding 改断言 CSS 规则文本
         // （简写含两个 var()，computed 值一律解成 0）。4px/8px 由 --space-2/--space-4 保证
         const ta = document.querySelector('.completion-popover-textarea')!
         const taStyles = window.getComputedStyle(ta)
         expect(taStyles.fontSize).toBe('var(--font-size-md)')
-        expect(taStyles.lineHeight).toBe('var(--line-height-snug)')
+        expect(taStyles.lineHeight).toBe('var(--input-line-height)')
         const taRule = Array.from(document.styleSheets)
             .map((s) => {
                 try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
@@ -868,7 +869,7 @@ describe('CompletionPopover', () => {
             .join('\n')
         expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
         // 高度上限由同一行盒推导（3 行 + 上下 padding），不再写死 px
-        expect(taRule).toContain('max-height: calc(1em * var(--line-height-snug) * 3')
+        expect(taRule).toContain('max-height: calc(var(--input-line-height) * 3')
         // 发送按钮与聊天输入框对齐：26px 圆形
         const btn = document.querySelector('.completion-popover-send')!
         const btnStyles = window.getComputedStyle(btn)

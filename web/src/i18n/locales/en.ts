@@ -303,6 +303,7 @@ export default {
     themePicker: 'Switch theme',
     moreAppearanceOptions: 'More appearance options',
     settings: 'Settings',
+    aboutClawBench: 'About ClawBench',
     reconfigureServer: 'Reconfigure Server',
     debugLog: 'Debug Log',
     shortcutTip: {
@@ -812,7 +813,6 @@ export default {
       statusPaused: 'Disabled',
       statusCompleted: 'Completed',
       statusExecutions: '{count} executions',
-      viewDetail: 'View details',
       justNow: 'just now',
       fromNow: 'from now',
       ago: 'ago',

@@ -306,6 +306,7 @@ export default {
     themePicker: '切换主题',
     moreAppearanceOptions: '更多外观选项',
     settings: '设置',
+    aboutClawBench: '关于 ClawBench',
     reconfigureServer: '重新配置服务器',
     debugLog: '调试日志',
     shortcutTip: {
@@ -815,7 +816,6 @@ export default {
       statusPaused: '已禁用',
       statusCompleted: '已完成',
       statusExecutions: '{count} 次执行',
-      viewDetail: '查看详情',
       justNow: '刚刚',
       fromNow: '后',
       ago: '前',

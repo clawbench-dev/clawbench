@@ -74,6 +74,16 @@ describe('typography tokens (variables.css)', () => {
     expect(token('--line-height-normal')).toBe('1.5')
     expect(token('--line-height-relaxed')).toBe('1.6')
   })
+
+  it('keeps --input-line-height an integer px value', () => {
+    // Deliberately NOT unitless like the steps above: a form control's line box
+    // must be a whole number of px or Android WebView rounds the line box and
+    // the content box independently, leaving a single line of text sitting high.
+    // See the token's comment in variables.css.
+    const value = token('--input-line-height')
+    expect(value).toMatch(/^\d+px$/)
+    expect(Number.parseInt(value, 10)).toBe(18)
+  })
 })
 
 describe('spacing tokens (variables.css)', () => {

@@ -87,7 +87,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。
 
-`web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `public/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。
+`web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `.clawbench-web/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。
 
 `web/src/share/` 是文件分享链接的独立只读 SPA（类型分派渲染 + TOC + 下载），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
 
@@ -105,10 +105,18 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
   npm run build        # 仓库根目录（web/package.json 的 build 会 cd .. 转调同一脚本）
   ```
 
-  vite 的 `outDir` 就是仓库根 `public/`，而服务端在 CWD 存在 `public/` 时走 disk 模式（`frontend.GetFS()`）直接读该目录，因此构建后**立即生效，无需同步 embed 目录**。`internal/frontend/dist` 仅在 CWD 无 `public/` 时被读取（单二进制分发场景）。
-- **embed 只在两种情况下需要处理**：
-  - **APK**：`ServeAPK` 恒定读 `EmbeddedFS()`（`internal/handler/apk.go`），**不查 CWD**——`/api/apk` 下发的是**构建 Go 二进制时**嵌入的 APK，与磁盘 `public/` 无关，换了 APK 必须重编二进制才生效。且 APK 必须放进 `public/assets/`：`build.sh` 会 `rm -rf internal/frontend/dist && cp -r public internal/frontend/dist`，只存在于 `dist/` 的 APK 会被冲掉（实测发生过，`/api/apk` 静默退回 404），放 `public/assets/` 才随 `cp -r` 带回。
-  - **可分发二进制**：`go build` / 交叉编译前必须同步 embed（`cp -r public internal/frontend/dist`），否则二进制内没有前端。
+  vite 的 `outDir` 是仓库根 `.clawbench-web/`（**不叫 `public`**，见下），服务端在 CWD 存在该目录时走 disk 模式（`frontend.GetFS()`）直接读它，因此构建后**立即生效，无需重启**。`internal/frontend/dist` 仅在 CWD 无该目录时被读取（单二进制分发场景）。
+- **前端产物目录必须叫 `.clawbench-web/`**：这个路径是**相对进程 CWD** 解析的，所以名字必须唯一到不可能与无关目录撞车。`public` 这种通用名踩过真实的坑（issue #461）：macOS 自带 `~/Public`，而 APFS 默认大小写不敏感，于是从家目录启动时 `os.Stat("public")` 命中了系统目录，服务端放弃内嵌前端去读那个空目录，所有页面 404、App 卡在启动页。改名同时让老安装遗留的旧 `public/` 自动失效（不再被任何代码读取），无需用户清理。改名前请勿换回通用名；`TestDiskDirName_DoesNotCollideWithUnrelatedDirs` 会拒绝一批常见目录名。
+- **前端编译完后必须嵌入到程序中**：`go:embed` 只在**编译期**读盘（`internal/frontend/embed.go` 的 `//go:embed all:dist`），所以磁盘上换了前端文件，**运行中的进程不会看到**——必须重新编译并重启。完整链路：
+
+  ```bash
+  ./build.sh --restart     # 构建前端 → 同步 embed → 重编 Go → 重启（一条命令全覆盖）
+  ```
+
+  只做纯前端迭代时，`npm run build` 后 disk 模式会立即生效（无需重启）；但要**分发**二进制、或要让 embed 内容跟上，必须走 `build.sh`。
+- **embed 只在两种情况下需要手动处理**：
+  - **APK**：`ServeAPK` 恒定读 `EmbeddedFS()`（`internal/handler/apk.go`），**不查 CWD**——`/api/apk` 下发的是**构建 Go 二进制时**嵌入的 APK，与磁盘 `.clawbench-web/` 无关，换了 APK 必须重编二进制才生效。且 APK 必须放进 `.clawbench-web/assets/`（源在 `public` 时代的同一相对位置）：`build.sh` 会 `rm -rf internal/frontend/dist && cp -r .clawbench-web internal/frontend/dist`，只存在于 `dist/` 的 APK 会被冲掉（实测发生过，`/api/apk` 静默退回 404），放在构建输出目录的 `assets/` 才随 `cp -r` 带回。
+  - **可分发二进制**：`go build` / 交叉编译前必须同步 embed（`cp -r .clawbench-web internal/frontend/dist`），否则二进制内没有前端。
 - **覆盖率门槛**：每 PR / 推送到 main 强制执行——包级覆盖率不低于基线、变更行覆盖率 ≥ 80%。
 - **推送前必须运行本地检查**：`./scripts/pre-push-checks.sh`
 - **跑全量测试前先评估成本，且不得与并发 agent 争抢**：主工作区可能同时有多个 agent 在改同一棵树，全量测试是**共享的稀缺资源**——实测全量 vitest 约 14 分钟、`go test ./internal/service` 约 128 秒、前端构建 1.5–4 分钟；并发时彼此争抢 CPU/内存，会把对方拖到超时（同一命令并发下撞 600s 超时，单独跑仅 128s）并产生假失败。

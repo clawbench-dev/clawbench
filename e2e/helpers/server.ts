@@ -125,13 +125,13 @@ system_prompt: |
     console.warn('[E2E] Warning: acp-mock binary not found, ACP agent tests will fail')
   }
 
-  // 5b. Copy frontend build artifacts (public/ directory) to temp dir
-  // The Go server serves static files from <BinDir>/public/
-  const publicDir = join(projectRoot, 'public')
+  // 5b. Copy frontend build artifacts (.clawbench-web/ directory) to temp dir
+  // The Go server serves static files from <CWD>/.clawbench-web/
+  const buildDir = join(projectRoot, '.clawbench-web')
   try {
-    cpSync(publicDir, join(tempDir, 'public'), { recursive: true })
+    cpSync(buildDir, join(tempDir, '.clawbench-web'), { recursive: true })
   } catch {
-    console.warn('[E2E] Warning: public/ directory not found, frontend may not be served')
+    console.warn('[E2E] Warning: .clawbench-web/ directory not found, frontend may not be served')
   }
 
   // 6. Start server from temp dir so it picks up our config.

@@ -81,28 +81,14 @@
       </template>
       <!-- Task cards from summaryCards.taskIDs (task data fetched in real time) -->
       <template v-for="tid in summaryTaskIDs" :key="'sum-task-' + tid">
-        <div class="scheduled-task-card" :class="{ deleted: summaryTaskData[tid]?.deleted }" @click="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task && $emit('task-card-click', tid)">
-          <div class="stask-header">
-            <Archive v-if="summaryTaskData[tid]?.deleted" :size="14" class="stask-icon" />
-            <Clock v-else :size="14" class="stask-icon" />
-            <template v-if="summaryTaskData[tid]?.deleted">{{ t('chat.contentBlocks.taskDeleted') }}</template>
-            <template v-else-if="summaryTaskData[tid]?.loading">{{ t('chat.contentBlocks.loading') }}</template>
-            <template v-else>{{ summaryTaskData[tid]?.task?.name || t('chat.contentBlocks.scheduledTaskCreated') }}</template>
-            <span v-if="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task" class="stask-status-badge" :class="summaryTaskData[tid].task.status">{{ statusLabelSimple(summaryTaskData[tid].task) }}</span>
-          </div>
-          <div v-if="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task" class="stask-body">
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.frequency') }}</strong>{{ humanizeCron(summaryTaskData[tid].task.cronExpr) }}</div>
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(summaryTaskData[tid].task.agentId)" :name="getAgentName(summaryTaskData[tid].task.agentId)" :size="14" class="stask-agent-icon" /> {{ getAgentName(summaryTaskData[tid].task.agentId) }}</div>
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.repeat') }}</strong>{{ repeatLabel(summaryTaskData[tid].task.repeatMode, summaryTaskData[tid].task.maxRuns) }}</div>
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.status') }}</strong><span class="stask-status-dot" :class="statusClass(summaryTaskData[tid].task)"></span>{{ statusLabel(summaryTaskData[tid].task) }}</div>
-            <div v-if="summaryTaskData[tid].task.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatTime(summaryTaskData[tid].task.lastRunAt) }}</div>
-            <div v-if="summaryTaskData[tid].task.nextRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.nextRun') }}</strong>{{ formatTime(summaryTaskData[tid].task.nextRunAt) }}</div>
-          </div>
-          <div class="stask-view-btn" v-if="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task">
-            {{ t('chat.contentBlocks.viewDetail') }}
-            <ChevronRight :size="12" />
-          </div>
-        </div>
+        <TaskChatCard
+          :task="summaryTaskData[tid]?.task"
+          :loading="!!summaryTaskData[tid]?.loading"
+          :deleted="!!summaryTaskData[tid]?.deleted"
+          :get-agent-backend="getAgentBackend"
+          :get-agent-name="getAgentName"
+          @select="$emit('task-card-click', tid)"
+        />
       </template>
       <!-- Ask-question card. Sources: summaryCards.askQuestions (<ask-question> XML
            cards, already aggregated into one array) and AskUserQuestion tool cards
@@ -257,8 +243,6 @@
                 :render-text-block="props.renderTextBlock"
                 :format-tool-input="props.formatToolInput"
                 :tool-call-summary="props.toolCallSummary"
-                :humanize-cron="props.humanizeCron"
-                :repeat-label="props.repeatLabel"
                 :truncate="props.truncate"
                 :get-agent-backend="props.getAgentBackend"
                 :get-agent-name="props.getAgentName"
@@ -321,28 +305,16 @@
       <!-- Task card(s) — simplified: click navigates to Tasks tab -->
       <template v-else-if="block.type === 'text' && hasScheduledTasks(bi)">
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
-        <div v-for="(sKey, sIdx) in scheduledTaskKeys(bi)" :key="sIdx" class="scheduled-task-card" :class="{ deleted: blockTasks[sKey].deleted }" @click="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task && $emit('task-card-click', blockTasks[sKey].taskId)">
-          <div class="stask-header">
-            <Archive v-if="blockTasks[sKey].deleted" :size="14" class="stask-icon" />
-            <Clock v-else :size="14" class="stask-icon" />
-            <template v-if="blockTasks[sKey].deleted">{{ t('chat.contentBlocks.taskDeleted') }}</template>
-            <template v-else-if="blockTasks[sKey].loading">{{ t('chat.contentBlocks.loading') }}</template>
-            <template v-else>{{ blockTasks[sKey].task?.name || t('chat.contentBlocks.scheduledTaskCreated') }}</template>
-            <span v-if="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task" class="stask-status-badge" :class="blockTasks[sKey].task.status">{{ statusLabelSimple(blockTasks[sKey].task) }}</span>
-          </div>
-          <div v-if="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task" class="stask-body">
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.frequency') }}</strong>{{ humanizeCron(blockTasks[sKey].task.cronExpr) }}</div>
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(blockTasks[sKey].task.agentId)" :name="getAgentName(blockTasks[sKey].task.agentId)" :size="14" class="stask-agent-icon" /> {{ getAgentName(blockTasks[sKey].task.agentId) }}</div>
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.repeat') }}</strong>{{ repeatLabel(blockTasks[sKey].task.repeatMode, blockTasks[sKey].task.maxRuns) }}</div>
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.status') }}</strong><span class="stask-status-dot" :class="statusClass(blockTasks[sKey].task)"></span>{{ statusLabel(blockTasks[sKey].task) }}</div>
-            <div v-if="blockTasks[sKey].task.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatTime(blockTasks[sKey].task.lastRunAt) }}</div>
-            <div v-if="blockTasks[sKey].task.nextRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.nextRun') }}</strong>{{ formatTime(blockTasks[sKey].task.nextRunAt) }}</div>
-          </div>
-          <div class="stask-view-btn" v-if="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task">
-            {{ t('chat.contentBlocks.viewDetail') }}
-            <ChevronRight :size="12" />
-          </div>
-        </div>
+        <TaskChatCard
+          v-for="(sKey, sIdx) in scheduledTaskKeys(bi)"
+          :key="sIdx"
+          :task="blockTasks[sKey].task"
+          :loading="!!blockTasks[sKey].loading"
+          :deleted="!!blockTasks[sKey].deleted"
+          :get-agent-backend="getAgentBackend"
+          :get-agent-name="getAgentName"
+          @select="$emit('task-card-click', blockTasks[sKey].taskId)"
+        />
       </template>
       <!-- Ask question card (from <ask-question> XML tag in text) — must come before generic text block.
            detectAskQuestionInText triggers renderTextBlock which fills blockAskQuestions;
@@ -392,8 +364,8 @@ import { useI18n } from 'vue-i18n'
 import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
 import { askCardKey } from '@/utils/askQuestionState.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
-import { Brain, ChevronRight, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Clock, Archive } from 'lucide-vue-next'
-import AgentIcon from '@/components/common/AgentIcon.vue'
+import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2 } from 'lucide-vue-next'
+import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
@@ -409,10 +381,6 @@ import {
   isSevereWarning,
   getWarningText as getWarningTextUtil,
   getErrorSourceLabel,
-  statusClass as statusClassUtil,
-  statusLabel as statusLabelUtil,
-  statusLabelSimple as statusLabelSimpleUtil,
-  formatTime as formatTimeUtil,
   askQuestionSummary as askQuestionSummaryUtil,
   extractAskQuestions,
   blockKey,
@@ -425,7 +393,7 @@ import {
 
 const TAG = 'ContentBlocks'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const thinkingContent = useThinkingContent()
 
 // Auto-expand tools (AskUserQuestion, PermissionApproval) need input to render inline.
@@ -475,10 +443,6 @@ const RESETABLE_REASONS = new Set(['empty', 'agent_no_run', 'request_failed', 'r
 function isResetableReason(reason: string | undefined): boolean {
   return !!reason && RESETABLE_REASONS.has(reason)
 }
-function statusClass(task: any) { return statusClassUtil(task) }
-function statusLabel(task: any) { return statusLabelUtil(task, t) }
-function statusLabelSimple(task: any) { return statusLabelSimpleUtil(task, t) }
-function formatTime(iso: string) { return formatTimeUtil(iso, locale.value, t) }
 function askQuestionSummary(input: any) { return askQuestionSummaryUtil(input) }
 
 function shouldAutoExpand(block: any) {
@@ -566,8 +530,6 @@ const props = defineProps({
   renderTextBlock: { type: Function as any, required: true },
   formatToolInput: { type: Function as any, required: true },
   toolCallSummary: { type: Function as any, required: true },
-  humanizeCron: { type: Function as any, default: () => '' },
-  repeatLabel: { type: Function as any, default: () => '' },
   truncate: { type: Function as any, default: (s: string) => s },
   getAgentBackend: { type: Function as any, default: () => '' },
   getAgentName: { type: Function as any, default: () => '' },
@@ -2125,118 +2087,7 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
-.scheduled-task-card {
-  margin: var(--space-4) 0;
-  border: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 30%, var(--border-color, #dee2e6));
-  border-radius: 0;
-  background: color-mix(in srgb, var(--accent-color, #4a90d9) 6%, var(--bg-primary, #fff));
-  cursor: pointer;
-  transition: box-shadow var(--duration-base), border-color var(--duration-base);
-}
-
-@media (hover: hover) {
-  .scheduled-task-card:hover {
-    border-color: color-mix(in srgb, var(--accent-color, #4a90d9) 50%, var(--border-color, #dee2e6));
-    box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-color, #4a90d9) 15%, transparent);
-  }
-}
-
-.scheduled-task-card.deleted {
-  opacity: var(--opacity-muted);
-  border-color: var(--border-color, #dee2e6);
-  background: var(--bg-secondary);
-  cursor: default;
-  box-shadow: none;
-}
-
-.scheduled-task-card.deleted .stask-header {
-  background: var(--bg-tertiary);
-  color: var(--text-muted, #999);
-  border-bottom-color: var(--border-color, #dee2e6);
-}
-
-.stask-header {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: var(--space-2) var(--space-5);
-  background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
-  color: var(--accent-color, #4a90d9);
-  font-weight: var(--font-weight-semibold);
-  font-size: var(--font-size-sm);
-  border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--border-color, #dee2e6));
-  cursor: pointer;
-}
-
-.stask-icon {
-  flex-shrink: 0;
-  margin-right: var(--space-1);
-}
-
-.stask-body {
-  padding: var(--space-5) var(--space-6);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-relaxed);
-}
-
-.stask-row {
-  display: flex;
-  gap: var(--space-4);
-  margin-bottom: var(--space-2);
-}
-
-.stask-row strong {
-  min-width: 70px;
-  color: var(--text-secondary, #495057);
-}
-
-.stask-agent-icon {
-  vertical-align: middle;
-}
-
-.stask-view-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-3) 0;
-  font-size: var(--font-size-sm);
-  color: var(--accent-color, #0066cc);
-  font-weight: var(--font-weight-medium);
-}
-
-.stask-status-badge {
-  font-size: var(--font-size-2xs);
-  padding: 1px 5px;
-  border-radius: var(--radius-xs);
-  font-weight: var(--font-weight-medium);
-  margin-left: auto;
-}
-
-.stask-status-badge.active { background: rgba(34, 197, 94, 0.12); color: #22c55e; }
-.stask-status-badge.paused { background: rgba(234, 179, 8, 0.12); color: #eab308; }
-.stask-status-badge.completed { background: var(--bg-tertiary, #e9ecef); color: var(--text-muted, #999); }
-
-.stask-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  align-self: center;
-  margin-right: var(--space-2);
-}
-
-.stask-status-dot.status-active {
-  background: #4caf50;
-}
-
-.stask-status-dot.status-paused {
-  background: #ff9800;
-}
-
-.stask-status-dot.status-completed {
-  background: #9e9e9e;
-}
+/* The task preview card lives in TaskChatCard.vue, which owns its own styles. */
 
 /* Slash command badge in user messages (agent commands from ACP) */
 .slash-command-badge {

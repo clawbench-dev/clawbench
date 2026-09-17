@@ -194,10 +194,9 @@ function autoResizeTextarea(): void {
     if (!el) return
     el.style.height = 'auto'
     const computedStyle = getComputedStyle(el)
-    // Unitless line-height resolves to px here; fall back to the ratio off the
-    // font size so the cap tracks the CSS rather than a hard-coded box.
-    const lineHeight = parseFloat(computedStyle.lineHeight)
-        || (parseFloat(computedStyle.fontSize) || 13) * 1.4
+    // Line-height resolves to px (--input-line-height is a px value); fall back
+    // to that token's own 18px so the cap stays a whole number.
+    const lineHeight = parseFloat(computedStyle.lineHeight) || 18
     const paddingTop = parseFloat(computedStyle.paddingTop) || 0
     const paddingBottom = parseFloat(computedStyle.paddingBottom) || 0
     const maxContentHeight = lineHeight * 3
@@ -655,7 +654,10 @@ function handleSummaryClick(event: MouseEvent): void {
 }
 
 /* 快捷输入框 — 与聊天界面 ChatInputBar 输入框样式对齐（圆角 20px、固定不随高度变化）。
-   背景用 --bg-primary（白/更亮）与卡片的 --bg-tertiary 底色区分，避免融合 */
+   背景用 --bg-primary（白/更亮）与卡片的 --bg-tertiary 底色区分，避免融合。
+   纵向 padding 必须上下对称：行是 align-items: flex-end，任何上下差都会直接
+   表现为按钮相对 textarea 偏心（原先 4px 上 / 6px 下，按钮偏下 1px）。5px 是
+   字面值，因为间距刻度从 4px 直接跳到 6px，中间没有 token。 */
 .completion-popover-input {
     flex: 1;
     min-width: 0;
@@ -663,7 +665,7 @@ function handleSummaryClick(event: MouseEvent): void {
     align-items: flex-end;
     gap: var(--space-1);
     margin-top: var(--space-3);
-    padding: var(--space-2) var(--space-3) var(--space-3);
+    padding: 5px var(--space-3);
     background: var(--bg-primary, #fff);
     border: none;
     border-radius: 20px;
@@ -684,14 +686,15 @@ function handleSummaryClick(event: MouseEvent): void {
     background: transparent;
     color: var(--text-primary);
     /* Mirrors .chat-textarea: same type scale as the chat message body, and the
-       height caps are derived from that same line box. */
+       line box is the integer --input-line-height so a single line stays
+       vertically centred in WebView (see the token's comment). */
     font-size: var(--font-size-md);
-    line-height: var(--line-height-snug);
+    line-height: var(--input-line-height);
     outline: none;
     resize: none;
     overflow-y: auto;
-    min-height: calc(1em * var(--line-height-snug) + var(--space-2) * 2);
-    max-height: calc(1em * var(--line-height-snug) * 3 + var(--space-2) * 2); /* 3 行 + 上下 padding */
+    min-height: calc(var(--input-line-height) + var(--space-2) * 2);
+    max-height: calc(var(--input-line-height) * 3 + var(--space-2) * 2); /* 3 行 + 上下 padding */
     font-family: inherit;
 }
 

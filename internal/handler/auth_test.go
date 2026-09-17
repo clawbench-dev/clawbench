@@ -163,7 +163,7 @@ func TestServeLogin(t *testing.T) {
 		req := newRequest(t, http.MethodGet, "/login", nil)
 		w := callHandler(ServeLogin, req)
 
-		// May be 200 (if public/index.html exists) or 404 — just verify no panic
+		// May be 200 (if the disk build dir has index.html) or 404 — just verify no panic
 		assert.Contains(t, []int{http.StatusOK, http.StatusNotFound}, w.Code)
 	})
 

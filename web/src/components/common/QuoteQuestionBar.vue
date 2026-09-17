@@ -2,12 +2,12 @@
   <Transition name="quote-bar">
     <div v-if="visible && (quoteData || composerMode)" ref="barRef" class="quote-question-bar">
 
-      <!-- Collapsed row (mobile): quoted snippet (single-line) + add action.
+      <!-- Collapsed row: quoted snippet (single-line) + add action.
            Clicking the quote area expands the input box and the quote together.
            Copy button floats absolutely at the snippet's top-right.
-           Only shown when there IS a quote: with none (composer mode) there is
-           nothing to preview, so we go straight to the input below. -->
-      <div v-if="!expanded && quoteData" class="quote-bar-row" @click="expand()" @pointerdown="onRowPointerDown">
+           Gated on showCollapsed, which requires a quote: the row exists to
+           preview one, so with no quote the bar is always expanded. -->
+      <div v-if="showCollapsed" class="quote-bar-row" @click="expand()" @pointerdown="onRowPointerDown">
         <div class="qq-quoted-snippet qq-quoted-snippet--inline">
           <span class="qq-quoted-text">{{ displayQuoteText }}</span>
           <button class="qq-copy-btn" :class="{ 'is-copied': copied }" @click.stop="handleCopyQuote" :title="copied ? t('common.copied') : t('common.copy')" :aria-label="copied ? t('common.copied') : t('common.copy')">
@@ -93,6 +93,21 @@ const displayQuoteText = computed(() => {
 })
 
 const canSend = computed(() => canSendInput(inputText.value))
+
+/**
+ * The bar has exactly two render states, and this is the one that decides
+ * between them:
+ *
+ *   collapsed → the quote preview row (only meaningful WITH a quote)
+ *   expanded  → quoted block (if any) + the input
+ *
+ * The collapsed row is deliberately unreachable without a quote. There is
+ * nothing to preview, and the outer `v-if` already refuses to render the bar at
+ * all unless there is a quote or composer mode; composer mode additionally
+ * forces expanded. Naming the rule keeps a future `quoteData = null` from
+ * falling through both branches and leaving an empty, bordered shell.
+ */
+const showCollapsed = computed(() => !expanded.value && !!props.quoteData)
 
 // Both PC and mobile show the collapsed bar on selection: it has no input, so it
 // never grabs focus and doesn't disturb the active selection. Clicking the row
@@ -198,10 +213,9 @@ function autoResizeTextarea() {
   if (!el) return
   el.style.height = 'auto'
   const computed = getComputedStyle(el)
-  // Unitless line-height resolves to px here; fall back to the ratio off the
-  // font size so the cap tracks the CSS rather than a hard-coded box.
-  const lineHeight = parseFloat(computed.lineHeight)
-    || (parseFloat(computed.fontSize) || 13) * 1.4
+  // Line-height resolves to px (--input-line-height is a px value); fall back to
+  // that token's own 18px so the cap stays a whole number.
+  const lineHeight = parseFloat(computed.lineHeight) || 18
   const paddingTop = parseFloat(computed.paddingTop) || 0
   const paddingBottom = parseFloat(computed.paddingBottom) || 0
   const maxContentHeight = lineHeight * 3
@@ -237,10 +251,17 @@ function handleCopyQuote() {
   })
 }
 
-defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, inputText, copied, handleCopyQuote })
+defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChange, inputRef, inputText, copied, handleCopyQuote })
 </script>
 
 <style scoped>
+/* ── Geometry: one sharp-corner language ──
+   This floating bar is deliberately hard-edged: --radius-xs (3px) on the
+   container and 0 on the blocks inside it. The point is internal consistency —
+   before this it mixed six radii (14px container, 6px button, 0 on the
+   snippet, a 20px pill input, 50% circles), so no two surfaces agreed and the
+   rounded input looked pasted onto a rounded card. Keep any new element in this
+   file on the same scale rather than reaching for --radius-md/lg/full. */
 .quote-question-bar {
   position: fixed;
   top: calc(var(--header-height) + 8px + var(--header-safe-area-top));
@@ -248,7 +269,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   right: 8px;
   background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xs);
   box-shadow: var(--shadow-lg);
   z-index: var(--z-quote-bar);
   max-width: 600px;
@@ -261,8 +282,8 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
   cursor: pointer;
   transition: background var(--duration-base);
 }
@@ -271,12 +292,15 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   background: var(--bg-tertiary);
 }
 
+/* Collapsed-state add action. Square 26px to match .qq-add-btn/.qq-send-btn in
+   the expanded state and the icon buttons elsewhere in the app — the same
+   action must not change size or shape between states. */
 .quote-bar-add {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   cursor: pointer;
   transition: opacity var(--duration-base), background var(--duration-base);
@@ -284,7 +308,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   background: transparent;
   color: var(--accent-color);
   border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
 }
 
 @media (hover: hover) {
@@ -296,7 +320,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 /* Copy button — floats at the snippet's top-right, overlaying the text.
    position:absolute keeps it out of the text flow (see .qq-quoted-snippet).
    Width is auto so the "已复制" feedback text fits; min-width keeps the
-   icon-only idle state square. */
+   icon-only idle state square. Square corners like every other control here. */
 .qq-copy-btn {
   position: absolute;
   top: 2px;
@@ -304,10 +328,11 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  height: 24px;
-  padding:0 var(--space-2);
+  min-width: 22px;
+  height: 22px;
+  padding: 0 var(--space-2);
   border: none;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -337,21 +362,23 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 .quote-bar-expanded {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
 }
 
-/* Quoted snippet block — relative so the floating copy button anchors here */
+/* Quoted snippet block — relative so the floating copy button anchors here.
+   Square (radius 0) with a 2px accent rule on the left: the hard edge is what
+   reads as a quote in this sharp-corner language, so do not round it. */
 .qq-quoted-snippet {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 5px;
-  padding: var(--space-3) var(--space-4);
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
   border-left: 2px solid var(--accent-color);
   border-radius: 0;
-  margin:0 var(--space-1);
+  margin: 0;
   flex: 1;
   min-width: 0;
 }
@@ -369,10 +396,11 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   max-width: calc(100% - 40px);
 }
 
-/* Collapsed inline variant — single row, no flex-start */
+/* Collapsed inline variant — single row, no flex-start. Matches the expanded
+   snippet's padding so the quote block does not resize when the bar expands. */
 .qq-quoted-snippet--inline {
   align-items: center;
-  padding:5px var(--space-4);
+  padding: var(--space-2) var(--space-3);
   margin: 0;
   border-radius: 0;
   background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
@@ -387,7 +415,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: 26px;
+  padding-right: 24px;
 }
 
 .qq-quoted-text--expanded {
@@ -398,28 +426,33 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   max-height: 120px;
 }
 
-/* Input container — 与聊天界面 ChatInputBar 输入框样式对齐（圆角 20px、固定不随高度变化）。
-   背景用 --bg-primary（白/更亮）与栏的 --bg-tertiary 底色区分，避免融合 */
+/* Input container — square, matching the bar's sharp geometry. Background stays
+   --bg-primary (brighter than the bar's --bg-tertiary) so the editable area
+   still reads as a distinct field without needing a radius. */
 .qq-input-container {
   display: flex;
   flex-direction: column;
   background: var(--bg-primary, #fff);
   border: none;
-  border-radius: 20px;
+  border-radius: 0;
   overflow: hidden;
   transition: background var(--duration-slow), box-shadow var(--duration-slow);
 }
 
 .qq-input-container:focus-within {
   background: var(--bg-primary);
-  box-shadow: 0 0 0 1px var(--accent-color);
+  box-shadow: inset 0 0 0 1px var(--accent-color);
 }
 
+/* Vertical padding is symmetric on purpose: the row is `align-items:
+   flex-end`, so any top/bottom difference reads directly as the buttons sitting
+   off-centre against the textarea (it was 2px top / 4px bottom). 3px keeps the
+   row's total height while making the two equal. */
 .qq-input-row {
   display: flex;
   align-items: flex-end;
   gap: var(--space-1);
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  padding: 3px var(--space-2);
 }
 
 .qq-textarea {
@@ -429,14 +462,15 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   background: transparent;
   color: var(--text-primary);
   /* Mirrors .chat-textarea: same type scale as the chat message body, and the
-     height caps are derived from that same line box. */
+     line box is the integer --input-line-height so a single line stays
+     vertically centred in WebView (see the token's comment). */
   font-size: var(--font-size-md);
-  line-height: var(--line-height-snug);
+  line-height: var(--input-line-height);
   outline: none;
   resize: none;
   overflow-y: auto;
-  min-height: calc(1em * var(--line-height-snug) + var(--space-2) * 2);
-  max-height: calc(1em * var(--line-height-snug) * 3 + var(--space-2) * 2); /* 3 lines + padding-top + padding-bottom */
+  min-height: calc(var(--input-line-height) + var(--space-2) * 2);
+  max-height: calc(var(--input-line-height) * 3 + var(--space-2) * 2); /* 3 lines + padding-top + padding-bottom */
   font-family: inherit;
 }
 
@@ -444,6 +478,9 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   color: var(--text-muted);
 }
 
+/* Add + send: square 26px, matching .quote-bar-add in the collapsed state and
+   the icon buttons elsewhere in the app. A circle here would be the only
+   rounded control in an otherwise hard-edged bar. */
 .qq-add-btn,
 .qq-send-btn {
   display: flex;
@@ -455,7 +492,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   background: var(--accent-color);
   color: #fff;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   transition: background var(--duration-base), opacity var(--duration-base);
   flex-shrink: 0;

@@ -83,6 +83,6 @@ describe('stylelint configuration', () => {
     const ignored = ([] as string[]).concat(config.ignoreFiles as string | string[])
     // Only build output / vendored bundles may be ignored — never source.
     expect(ignored.some((p) => p.startsWith('src') || p.startsWith('css'))).toBe(false)
-    expect(ignored).toContain('public/vendor/**')
+    expect(ignored).toContain('.clawbench-web/vendor/**')
   })
 })

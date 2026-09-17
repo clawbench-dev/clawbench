@@ -34,7 +34,7 @@ jobs:
           npm ci
           npm run build
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
         shell: bash
 
       - name: golangci-lint
@@ -67,7 +67,7 @@ jobs:
           npm ci
           npm run build
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
         shell: bash
 
       - name: Go test
@@ -108,7 +108,7 @@ jobs:
           npm ci
           npm run build
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
         shell: bash
 
       - name: Run coverage gate check

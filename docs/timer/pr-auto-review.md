@@ -203,7 +203,7 @@ rm -f /tmp/pr-$NUMBER.diff
 | `gh` 未登录 / token 失效 | 停止远端读取，说明原因；仅基于事件上下文块给出有限结论 |
 | 条目不存在或已删除 | 说明并结束，不重试 |
 | PR 来自 fork 且 `git fetch` 失败 | 退化为只读 diff 审查（`gh pr diff` 仍可用） |
-| diff 超过 3000 行 | 按文件分组，优先审查 `internal/` 与 `web/src/` 下的业务代码，跳过 `public/`、`vendor/`、`*_test.go`、`__tests__/`、`.worktrees/` |
+| diff 超过 3000 行 | 按文件分组，优先审查 `internal/` 与 `web/src/` 下的业务代码，跳过 `.clawbench-web/`、`vendor/`、`*_test.go`、`__tests__/`、`.worktrees/` |
 | 事件块缺失 | 直接结束并说明上下文缺失 |
 
 ## 排除项
@@ -214,5 +214,5 @@ rm -f /tmp/pr-$NUMBER.diff
 - `vendor/`
 - `*_test.go`
 - `__tests__/`
-- `public/`
+- `.clawbench-web/`
 - `internal/frontend/dist/`

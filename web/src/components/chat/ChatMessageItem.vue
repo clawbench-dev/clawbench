@@ -27,8 +27,6 @@
         :renderTextBlock="renderTextBlock"
         :formatToolInput="formatToolInput"
         :toolCallSummary="toolCallSummary"
-        :humanizeCron="humanizeCron"
-        :repeatLabel="repeatLabel"
         :truncate="truncate"
         :getAgentBackend="getAgentBackend"
         :getAgentName="getAgentName"
@@ -355,7 +353,7 @@ function handleSpeak() {
 const chatRender = inject('chatRender', {})
 const chatSession = inject('chatSession', {})
 
-const { renderTextBlock, toolCallSummary, formatToolInput, humanizeCron, repeatLabel, truncate, hasImagesInContent } = chatRender
+const { renderTextBlock, toolCallSummary, formatToolInput, truncate, hasImagesInContent } = chatRender
 const { getAgentBackend, getAgentName } = chatSession
 const sessionId = computed(() => chatSession.sessionId?.() || '')
 

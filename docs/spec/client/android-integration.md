@@ -75,7 +75,7 @@ flowchart LR
 
 | 端点 | 方法 | 用途 |
 |------|------|------|
-| `/api/apk` | GET | APK 下载（恒定从 `go:embed` 读取，路径 `assets/clawbench-android.apk`；不读磁盘 `public/`；无需鉴权） |
+| `/api/apk` | GET | APK 下载（恒定从 `go:embed` 读取，路径 `assets/clawbench-android.apk`；不读磁盘 `.clawbench-web/`；无需鉴权） |
 | `/api/health` | GET | 服务端健康检查，返回 `{app, version}`（无需鉴权）；原生层据此做 APK 版本不匹配检测 |
 | `/api/client-log` | POST | 客户端统一日志（**需鉴权**，`AppLog` 随请求带会话 Cookie；200 条/请求上限；`js` 与 `android` 条目汇入同一 `client.log`，行内 `[js]`/`[android]` 标记区分） |
 | `/api/ssh/info` | GET | SSH 端口发现（无需鉴权，仅返回 `{enabled, port}`）；完整隧道信息在需鉴权的 `/api/ssh/info/full` |
@@ -155,7 +155,7 @@ flowchart LR
 - **Live Updates 是独立开关但共享数据**：Live Updates 不依赖悬浮窗开关——任一消费者存活就拉取 overview，各自的开关控制各自的通知生命周期。设置里独立开关（默认开），Bridge 提供权限检测与跳转，系统不支持实时更新时自动回退为普通常驻通知
 - **WS 优先 + Worker 回退**：常驻 WS 链路是主路径（实时通知），PendingEventsWorker 是 WS 不可达时的兜底（轮询拉取）。两条路径相互独立，BackgroundService 监控 WS 健康度触发 Worker
 - **AppLog 双写 + Anti-Recursion**：`AppLog` 写入 logcat，同时 POST 到 `/api/client-log` 实现集中持久化。`AppLog.java` 自身是允许调用裸 `android.util.Log` 的唯一生产代码位置，以避免日志封装递归；通过 `OemUtils` 和 `SharedCacheUtils` 共享多进程状态
-- **单二进制包含 APK**：`//go:embed all:dist` 把 APK 嵌入 Go 二进制，无需外部 APK 文件即可部署。`internal/frontend/embed.go::GetFS()` 优先读磁盘 `public/`（热替换），否则从 embed 读取。**APK 例外**：`ServeAPK` 恒定读取 `EmbeddedFS()`（纯 embed，不查 CWD），以免 CWD 下的 `public/` 遮蔽内嵌 APK 导致 `/api/apk` 404，同时保证下载的 APK 与运行中二进制版本一致
+- **单二进制包含 APK**：`//go:embed all:dist` 把 APK 嵌入 Go 二进制，无需外部 APK 文件即可部署。`internal/frontend/embed.go::GetFS()` 优先读磁盘 `.clawbench-web/`（热替换），否则从 embed 读取。**APK 例外**：`ServeAPK` 恒定读取 `EmbeddedFS()`（纯 embed，不查 CWD），以免 CWD 下的该目录遮蔽内嵌 APK 导致 `/api/apk` 404，同时保证下载的 APK 与运行中二进制版本一致
 - **登录前原生版本不匹配拦截**：健康检查通过后、加载 WebView 之前，原生层用 `VersionCompare.shouldShowMismatch` 对比 `PackageManager` 的 APK 版本与 `/api/health` 返回的服务器版本；APK 落后时弹出阻塞式原生提示（「下载 APK」/「强制跳过」，不记忆跳过）。提示用 `WebStyleDialog` 渲染的 web 风格卡片——与 `web/src/components/common/DialogOverlay.vue` 同一套样式（14dp 圆角卡片、accent 图标 chip、右对齐按钮组），颜色取自持久化的主题调色板（`FloatingThemeColors`），因此跟随用户主题。文案提示的是**不兼容风险**（旧版 APK 部分功能可能异常或无法使用），而非体验问题。下载走 DownloadManager 并退回原生登录页，完成后自动拉起安装器。版本不可解析（`dev`/短哈希/缺字段）一律 fail-open，不阻塞登录
 - **APK 安装必须用 content URI**：下载完成后经 `DownloadManager.getUriForDownloadedFile` 取 URI 交给安装器，并带 `FLAG_GRANT_READ_URI_PERMISSION`。**不可用 File API 定位 APK**：`targetSdk 34` 下受 scoped storage 限制，`COLUMN_LOCAL_URI` 返回的是合成路径（`content://downloads/...`），且 app 对公共 Downloads 目录没有文件系统读权限，两条路 `File.exists()` 都为 false——旧实现因此在 Android 10+ 上静默失败（下载成功但安装器永不弹出）。下载失败、轮询超时、无可用 URI、安装器启动失败都会 toast 提示，不再静默只写日志
 - **日志处理器统一、单一端点**：Web 的 `appLog.ts` 与 Android 的 `AppLog.java` 都 POST `/api/client-log`，由服务端 `ServeClientLog` 处理，汇入单一 `client.log`，行内 `[js]`/`[android]` 源标记区分来源

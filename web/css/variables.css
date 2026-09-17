@@ -159,6 +159,22 @@
     --line-height-snug: 1.4;     /* compact UI text */
     --line-height-normal: 1.5;   /* body text */
     --line-height-relaxed: 1.6;  /* long-form reading (markdown) */
+
+    /* ── Single-line form controls (<textarea>/<input>).
+       MUST stay an INTEGER px value, unlike the unitless steps above.
+
+       A textarea aligns its text to the TOP of the content box, so a single
+       line only *looks* vertically centred while the content box height is
+       exactly one line box + padding (zero slack). Android WebView rounds the
+       form control's line box and its content-box height independently, and
+       CJK fonts carry a larger ascent/descent than the Latin fallback; at a
+       fractional line box the two roundings stop cancelling and the caret sits
+       visibly high. Desktop Chrome happens to round them the same way, which is
+       why the drift is WebView-only.
+
+       Pairs with --font-size-md: 13px × 1.4 = 18.2px → 18px keeps the line box
+       whole, and 18 + (--space-2 × 2) = 26px, matching the row's 26px buttons. */
+    --input-line-height: 18px;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════

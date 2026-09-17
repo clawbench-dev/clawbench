@@ -540,7 +540,7 @@ func TestServeTaskByID_NoTaskID(t *testing.T) {
 // ---------- ServeIndex ----------
 
 func TestServeIndex_NotFound(t *testing.T) {
-	// In a test environment, public/ and web/ don't exist, so we get 404
+	// In a test environment, the disk build dir and web/ don't exist, so we get 404
 	req := newRequest(t, http.MethodGet, "/nonexistent-path.js", nil)
 	w := callHandler(ServeIndex, req)
 	assertStatus(t, w, http.StatusNotFound)

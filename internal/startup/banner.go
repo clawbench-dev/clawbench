@@ -33,7 +33,7 @@ type BannerConfig struct {
 	TerminalOn      bool
 	TaskCount       int
 	StartupDuration time.Duration
-	FrontendMode    string // "disk (public/)" or "embedded"
+	FrontendMode    string // "disk (.clawbench-web/)" or "embedded"
 
 	// FRP tunnel info
 	FRPEnabled    bool

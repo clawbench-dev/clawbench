@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"testing"
 
+	"clawbench/internal/frontend"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -58,11 +60,11 @@ func TestServeIndex_NonExistentAsset_Returns404(t *testing.T) {
 
 func TestServeIndex_TraversalBlockedOutsidePublic(t *testing.T) {
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatalf("failed to create public dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(publicDir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
 		t.Fatalf("failed to write index.html: %v", err)
 	}
 	// Create a secret file outside public
@@ -90,11 +92,11 @@ func TestServeIndex_DotPath_ServesIndex(t *testing.T) {
 		t.Skip("filepath.Clean behavior differs on Windows")
 	}
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatalf("failed to create public dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(publicDir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
 		t.Fatalf("failed to write index.html: %v", err)
 	}
 
@@ -142,8 +144,8 @@ func TestServeIndex_CSSFallback_DevMode(t *testing.T) {
 
 func TestMaterialIconsRoute_ServesSvgFromPublic(t *testing.T) {
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	iconsDir := filepath.Join(publicDir, "material-icons")
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	iconsDir := filepath.Join(diskDir, "material-icons")
 	if err := os.MkdirAll(iconsDir, 0o755); err != nil {
 		t.Fatalf("failed to create material-icons dir: %v", err)
 	}
@@ -171,8 +173,8 @@ func TestMaterialIconsRoute_ServesSvgFromPublic(t *testing.T) {
 
 func TestMaterialIconsRoute_HEAD_ReturnsOK(t *testing.T) {
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	iconsDir := filepath.Join(publicDir, "material-icons")
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	iconsDir := filepath.Join(diskDir, "material-icons")
 	if err := os.MkdirAll(iconsDir, 0o755); err != nil {
 		t.Fatalf("failed to create material-icons dir: %v", err)
 	}
@@ -199,8 +201,8 @@ func TestMaterialIconsRoute_HEAD_ReturnsOK(t *testing.T) {
 
 func TestMaterialIconsRoute_MissingIcon_Returns404(t *testing.T) {
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatalf("failed to create public dir: %v", err)
 	}
 
@@ -222,13 +224,13 @@ func TestMaterialIconsRoute_MissingIcon_Returns404(t *testing.T) {
 
 func TestMaterialIconsRoute_TraversalBlocked(t *testing.T) {
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	iconsDir := filepath.Join(publicDir, "material-icons")
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	iconsDir := filepath.Join(diskDir, "material-icons")
 	if err := os.MkdirAll(iconsDir, 0o755); err != nil {
 		t.Fatalf("failed to create material-icons dir: %v", err)
 	}
 	// Secret outside the icons directory
-	if err := os.WriteFile(filepath.Join(publicDir, "secret.txt"), []byte("SECRET"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "secret.txt"), []byte("SECRET"), 0o644); err != nil {
 		t.Fatalf("failed to write secret: %v", err)
 	}
 
@@ -285,11 +287,11 @@ func TestIsHashedAsset(t *testing.T) {
 
 func TestServeIndex_RootPath_NoCacheHeader(t *testing.T) {
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatalf("failed to create public dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(publicDir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
 		t.Fatalf("failed to write index.html: %v", err)
 	}
 
@@ -307,11 +309,11 @@ func TestServeIndex_RootPath_NoCacheHeader(t *testing.T) {
 
 func TestServeIndex_HashedAsset_ImmutableCacheHeader(t *testing.T) {
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatalf("failed to create public dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(publicDir, "pdf-D-oSvAqu.js"), []byte("var x=1;"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "pdf-D-oSvAqu.js"), []byte("var x=1;"), 0o644); err != nil {
 		t.Fatalf("failed to write hashed asset: %v", err)
 	}
 
@@ -330,11 +332,11 @@ func TestServeIndex_HashedAsset_ImmutableCacheHeader(t *testing.T) {
 
 func TestServeIndex_NonHashedAsset_NoImmutableCache(t *testing.T) {
 	tmpDir := t.TempDir()
-	publicDir := filepath.Join(tmpDir, "public")
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	diskDir := filepath.Join(tmpDir, frontend.DiskDirName)
+	if err := os.MkdirAll(diskDir, 0o755); err != nil {
 		t.Fatalf("failed to create public dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(publicDir, "robots.txt"), []byte("User-agent: *"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(diskDir, "robots.txt"), []byte("User-agent: *"), 0o644); err != nil {
 		t.Fatalf("failed to write non-hashed asset: %v", err)
 	}
 

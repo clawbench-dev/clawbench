@@ -18,7 +18,7 @@ import { readFileSync, readdirSync, statSync } from 'fs'
 import { resolve, join } from 'path'
 
 const PROJECT_ROOT = resolve(__dirname, '..')
-const PUBLIC_DIR = join(PROJECT_ROOT, 'public')
+const BUILD_DIR = join(PROJECT_ROOT, '.clawbench-web')
 
 // ─── Thresholds ────────────────────────────────────────────────────────────────
 
@@ -69,19 +69,19 @@ function formatBytes(bytes: number): string {
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('Build output verification (Issue #328)', () => {
-    const indexHtmlPath = join(PUBLIC_DIR, 'index.html')
+    const indexHtmlPath = join(BUILD_DIR, 'index.html')
 
     // Skip entire suite if build output doesn't exist (e.g., CI test-only runs)
     let buildExists = false
     try {
-        buildExists = statSync(PUBLIC_DIR).isDirectory() && statSync(indexHtmlPath).isFile()
+        buildExists = statSync(BUILD_DIR).isDirectory() && statSync(indexHtmlPath).isFile()
     } catch {
         buildExists = false
     }
 
     beforeAll(() => {
         if (!buildExists) {
-            console.log('  Skipping: public/ build output not found. Run ./build.sh first.')
+            console.log('  Skipping: .clawbench-web/ build output not found. Run ./build.sh first.')
         }
     })
 
@@ -94,8 +94,8 @@ describe('Build output verification (Issue #328)', () => {
     describe('Index chunk size', () => {
         it('index chunk should be under size threshold', () => {
             if (!buildExists) return
-            const indexPath = findFile(PUBLIC_DIR, 'main-', '.js')
-            expect(indexPath, 'main-*.js not found in public/').not.toBeNull()
+            const indexPath = findFile(BUILD_DIR, 'main-', '.js')
+            expect(indexPath, 'main-*.js not found in .clawbench-web/').not.toBeNull()
 
             const size = getFileSize(indexPath!)
             console.log(`  Index chunk size: ${formatBytes(size)} (threshold: ${formatBytes(INDEX_CHUNK_MAX_BYTES)})`)
@@ -130,7 +130,7 @@ describe('Build output verification (Issue #328)', () => {
     describe('Chunk splitting verification', () => {
         it('expected chunks should exist as separate files', () => {
             if (!buildExists) return
-            const files = readdirSync(PUBLIC_DIR)
+            const files = readdirSync(BUILD_DIR)
 
             for (const chunkName of EXPECTED_SPLIT_CHUNKS) {
                 const found = files.some(f => f.startsWith(chunkName + '-') && f.endsWith('.js'))
@@ -158,7 +158,7 @@ describe('Build output verification (Issue #328)', () => {
             const details: string[] = []
 
             // Main entry chunk
-            const entryFile = findFile(PUBLIC_DIR, 'main-', '.js')
+            const entryFile = findFile(BUILD_DIR, 'main-', '.js')
             if (entryFile) {
                 const size = getFileSize(entryFile)
                 totalBytes += size
@@ -168,7 +168,7 @@ describe('Build output verification (Issue #328)', () => {
             // Modulepreload chunks
             for (const link of modulepreloadLinks) {
                 const fileName = link.replace(/^\//, '')
-                const filePath = join(PUBLIC_DIR, fileName)
+                const filePath = join(BUILD_DIR, fileName)
                 try {
                     const size = getFileSize(filePath)
                     totalBytes += size

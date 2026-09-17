@@ -47,7 +47,7 @@
 - `vendor/`
 - `*_test.go`
 - `__tests__/`
-- `public/`
+- `.clawbench-web/`
 
 ## Step 1 — 确定模式
 
@@ -81,7 +81,7 @@ if [ "$DAYS_SINCE_FULL" -ge 7 ] || [ -z "$BASELINE_COMMIT" ]; then
   touch .clawbench/reviews/$(date +%Y-%m-%d)/full-scan.marker
 else
   echo "MODE: incremental"
-  CHANGED_FILES=$(git diff --name-only $BASELINE_COMMIT..HEAD -- '*.go' '*.vue' '*.ts' | grep -v '_test.go' | grep -v '__tests__' | grep -v 'public/' | grep -v '.worktrees/' | grep -v 'vendor/')
+  CHANGED_FILES=$(git diff --name-only $BASELINE_COMMIT..HEAD -- '*.go' '*.vue' '*.ts' | grep -v '_test.go' | grep -v '__tests__' | grep -v '.clawbench-web/' | grep -v '.worktrees/' | grep -v 'vendor/')
   echo "变更文件:"
   echo "$CHANGED_FILES"
 fi

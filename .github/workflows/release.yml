@@ -28,7 +28,7 @@ jobs:
           npm ci
           npm run build
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
         shell: bash
 
       - name: golangci-lint
@@ -58,7 +58,7 @@ jobs:
           npm ci
           npm run build
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
         shell: bash
 
       - name: Go coverage gate
@@ -93,8 +93,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: public
-          path: public/
+          name: web-dist
+          path: .clawbench-web/
+          # upload-artifact v4 skips dotfiles/dot-directories by default. The path
+          # itself is a hidden dir, so without this the artifact uploads nothing
+          # and every downstream build embeds an empty frontend.
+          include-hidden-files: true
 
   build-linux:
     name: Build Linux amd64
@@ -107,8 +111,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: public
-          path: public/
+          name: web-dist
+          path: .clawbench-web/
 
       - name: Download APK
         uses: actions/download-artifact@v4
@@ -119,7 +123,7 @@ jobs:
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
           mkdir -p internal/frontend/dist/assets
           cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -169,8 +173,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: public
-          path: public/
+          name: web-dist
+          path: .clawbench-web/
 
       - name: Download APK
         uses: actions/download-artifact@v4
@@ -181,7 +185,7 @@ jobs:
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
           mkdir -p internal/frontend/dist/assets
           cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -231,8 +235,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: public
-          path: public/
+          name: web-dist
+          path: .clawbench-web/
 
       - name: Download APK
         uses: actions/download-artifact@v4
@@ -243,7 +247,7 @@ jobs:
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
           mkdir -p internal/frontend/dist/assets
           cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -294,8 +298,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: public
-          path: public/
+          name: web-dist
+          path: .clawbench-web/
 
       - name: Download APK
         uses: actions/download-artifact@v4
@@ -307,7 +311,7 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path internal/frontend/dist) { Remove-Item -Recurse -Force internal/frontend/dist }
-          Copy-Item -Recurse public internal/frontend/dist
+          Copy-Item -Recurse .clawbench-web internal/frontend/dist
           New-Item -ItemType Directory -Force -Path internal/frontend/dist/assets | Out-Null
           Copy-Item android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -350,8 +354,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: public
-          path: public/
+          name: web-dist
+          path: .clawbench-web/
 
       - name: Download APK
         uses: actions/download-artifact@v4
@@ -362,7 +366,7 @@ jobs:
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
           mkdir -p internal/frontend/dist/assets
           cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -405,8 +409,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: public
-          path: public/
+          name: web-dist
+          path: .clawbench-web/
 
       - name: Download APK
         uses: actions/download-artifact@v4
@@ -417,7 +421,7 @@ jobs:
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
-          cp -r public internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
           mkdir -p internal/frontend/dist/assets
           cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -604,8 +608,8 @@ jobs:
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
         with:
-          name: public
-          path: public/
+          name: web-dist
+          path: .clawbench-web/
 
       - name: Download Linux amd64 binary
         uses: actions/download-artifact@v4

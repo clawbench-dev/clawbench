@@ -12,7 +12,7 @@ import { generateManifest } from 'material-icon-theme'
 import { appLog } from '@/utils/appLog'
 
 // Static asset base URL (absolute so it resolves regardless of the current
-// page path). Icons live in public/material-icons/ (build output) and are
+// page path). Icons live in .clawbench-web/material-icons/ (build output) and are
 // copied there by vite.config.ts material-icons-copy plugin.
 // import.meta.glob is intentionally NOT used: globbing 1250 SVGs into the JS
 // module graph inflated rollup's peak build memory to ~3.4GB.
