@@ -69,6 +69,7 @@ const i18n = createI18n({
         invalidUrl: 'Invalid link format',
         notFound: 'Not found',
         noPreview: 'No preview',
+        tooLarge: 'Too large to preview',
         renderedView: 'Rendered preview',
         sourceView: 'View source',
       },
@@ -387,5 +388,75 @@ describe('ShareView — image blocks + narrow TOC drawer', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+// The backend answers 200 + tooLarge (empty content) for files past its inline
+// cap instead of rejecting the link — every file is shareable at any size.
+// The SPA must degrade to the download card, not report a broken link.
+describe('ShareView — over-cap files fall back to download', () => {
+  it('shows the download card with the too-large notice, not an invalid-link error', async () => {
+    const wrapper = await mountShare({
+      name: 'huge.md',
+      path: '/repo/huge.md',
+      content: '',
+      size: 200 * 1024 * 1024,
+      tooLarge: true,
+    })
+
+    // Not the error state: the link is valid and the file is downloadable.
+    expect(wrapper.find('.share-error-state').exists()).toBe(false)
+    expect(wrapper.find('.share-error-title').exists()).toBe(false)
+
+    // Download card, with the size-specific notice.
+    const unsupported = wrapper.find('.share-unsupported')
+    expect(unsupported.exists()).toBe(true)
+    expect(unsupported.text()).toContain('Too large to preview')
+    const link = unsupported.find('a.share-download-btn')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toContain('/api/share/tokShareTest/download')
+  })
+
+  it('does not render an empty markdown preview for an over-cap markdown file', async () => {
+    // A .md over the cap still reports its extension, so the rendered branch
+    // would match — it must be gated on the content actually being present.
+    const wrapper = await mountShare({
+      name: 'huge.md',
+      path: '/repo/huge.md',
+      content: '',
+      tooLarge: true,
+    })
+    expect(wrapper.find('.markdown-preview-stub').exists()).toBe(false)
+    expect(wrapper.find('.cm-viewer-stub').exists()).toBe(false)
+    // No source/rendered toggle either — there is no source to show.
+    expect(wrapper.find('.share-view-toggle').exists()).toBe(false)
+    // TOC would be built from absent content.
+    expect(wrapper.find('.share-body .share-toc').exists()).toBe(false)
+  })
+
+  it('still renders media previews for over-cap files (they stream, not inline)', async () => {
+    // Images/audio/video/PDF resolve through the token-scoped /local endpoint
+    // with Range support, so a 500MB video previews without being inlined.
+    const wrapper = await mountShare({
+      name: 'huge.mp4',
+      path: '/repo/huge.mp4',
+      content: '',
+      size: 500 * 1024 * 1024,
+      tooLarge: true,
+    })
+    expect(wrapper.find('.videopreview-stub').exists()).toBe(true)
+    expect(wrapper.find('.share-unsupported').exists()).toBe(false)
+  })
+
+  it('still renders the PDF preview for an over-cap PDF', async () => {
+    const wrapper = await mountShare({
+      name: 'huge.pdf',
+      path: '/repo/huge.pdf',
+      content: '',
+      size: 200 * 1024 * 1024,
+      tooLarge: true,
+    })
+    expect(wrapper.find('.pdfpreview-stub').exists()).toBe(true)
+    expect(wrapper.find('.share-unsupported').exists()).toBe(false)
   })
 })

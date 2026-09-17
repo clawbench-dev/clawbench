@@ -361,8 +361,22 @@ func serveShareFileContent(w http.ResponseWriter, r *http.Request, absPath strin
 		return
 	}
 
-	if info.Size() > 10*1024*1024 {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLarge")
+	// Over the inline cap the file is NOT rejected — every file is shareable and
+	// downloadable regardless of size (the download/local endpoints stream and
+	// have no cap). Only the inlined-content response degrades: the whole file
+	// would otherwise be read into memory and JSON-escaped for an anonymous
+	// caller. Respond 200 with no content so the share SPA falls back to its
+	// download card instead of reporting a broken link. maxGetFileBytes is the
+	// same "max bytes worth inlining into a FileContent response" bound the
+	// authenticated GetFile endpoint uses.
+	if info.Size() > maxGetFileBytes {
+		writeJSON(w, http.StatusOK, FileContent{
+			Name:      info.Name(),
+			Path:      absPath,
+			Supported: model.IsSupportedFile(info.Name()),
+			Size:      info.Size(),
+			TooLarge:  true,
+		})
 		return
 	}
 

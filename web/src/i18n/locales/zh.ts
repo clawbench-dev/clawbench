@@ -2788,6 +2788,7 @@ export default {
     invalidUrl: '链接格式无效',
     notFound: '链接不存在或已被撤销',
     noPreview: '此文件类型不支持在线预览，可下载后查看',
+    tooLarge: '文件较大，无法在线预览，可下载后查看',
     renderedView: '渲染预览',
     sourceView: '查看源码',
   },

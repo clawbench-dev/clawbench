@@ -192,11 +192,16 @@ func TestSharePublic_RequireGetMethod(t *testing.T) {
 
 // ─── Public file content edge cases ──────────────────────────────────────────
 
-func TestSharePublic_FileTooLarge_400(t *testing.T) {
+// TestSharePublic_FileOverInlineCap_MetadataOnly pins the "no size limit on
+// sharing" contract: a file larger than the inline cap is still shared and
+// still downloadable — the content endpoint must NOT reject it. It answers 200
+// with metadata only (tooLarge, empty content) so the share SPA can fall back
+// to its download card.
+func TestSharePublic_FileOverInlineCap_MetadataOnly(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// 10MB cap in serveShareFileContent. Write an 11MB sparse file.
+	// 11MB sparse file, past the 10MB inline cap in serveShareFileContent.
 	big := filepath.Join(env.ProjectDir, "docs", "big.md")
 	require.NoError(t, os.MkdirAll(filepath.Dir(big), 0o755))
 	f, err := os.Create(big)
@@ -209,7 +214,38 @@ func TestSharePublic_FileTooLarge_400(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/file", nil)
 	w := callHandler(ServeSharePublic, req)
-	assertStatus(t, w, http.StatusBadRequest)
+	assertStatus(t, w, http.StatusOK)
+
+	var body FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.True(t, body.TooLarge, "over-cap file must be flagged tooLarge")
+	assert.Empty(t, body.Content, "content must not be inlined for an over-cap file")
+	assert.Equal(t, "big.md", body.Name)
+	assert.Equal(t, int64(11*1024*1024), body.Size)
+}
+
+// The over-cap file must remain downloadable — that is the whole point of
+// degrading instead of rejecting. Guards against a regression that keeps the
+// 400 while the UI silently hides the download entry.
+func TestSharePublic_FileOverInlineCap_DownloadStillWorks(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	big := filepath.Join(env.ProjectDir, "docs", "big.bin")
+	require.NoError(t, os.MkdirAll(filepath.Dir(big), 0o755))
+	f, err := os.Create(big)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(11*1024*1024))
+	require.NoError(t, f.Close())
+	defer func() { _ = os.Remove(big) }()
+
+	token := createShareViaAPI(t, env, big)
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/download", nil)
+	w := callHandler(ServeSharePublic, req)
+	assertStatus(t, w, http.StatusOK)
+	assert.Equal(t, int64(11*1024*1024), int64(w.Body.Len()),
+		"download must stream the full file regardless of size")
 }
 
 func TestSharePublic_BinaryContentSniffedAndSanitized(t *testing.T) {

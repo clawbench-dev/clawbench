@@ -946,6 +946,13 @@ type FileContent struct {
 	LinkTarget string `json:"linkTarget,omitempty"`
 	IsSymlink  bool   `json:"isSymlink,omitempty"`
 
+	// TooLarge marks a metadata-only response: the file exceeds the inline cap
+	// so Content is empty and the caller must fall back to a raw/download
+	// endpoint. Currently emitted only by the public share file endpoint, which
+	// has no line-window path to fall back on. (GetFile instead rejects with
+	// FileTooLarge, because it has the line-window preview as an alternative.)
+	TooLarge bool `json:"tooLarge,omitempty"`
+
 	// Line-window metadata, present only on ?lineStart/?lineEnd responses.
 	// TotalLines is the file's full line count (so the preview can compute how
 	// much context remains above/below), while WindowStart/WindowEnd bound the
