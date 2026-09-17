@@ -35,6 +35,10 @@ type SearchParams struct {
 	PreferMode       string `json:"prefer_mode,omitempty"` // "hybrid" (default) or "fts"
 	Archived         string `json:"archived,omitempty"`    // "all" (default) | "active" | "archived"
 	SortOrder        string `json:"sort,omitempty"`        // "relevance" (default) | "newest" | "oldest"
+	// SessionType filters by session kind: "all" (default) | "chat" | "task".
+	// "task" matches sessions whose stored session_type is 'scheduled'. Applied
+	// post-aggregation, because rag_chunks carries no session_type column.
+	SessionType string `json:"session_type,omitempty"`
 }
 
 // SearchResult represents the response from a RAG search.
@@ -202,6 +206,9 @@ type SessionSearchResult struct {
 	CreatedAt    time.Time  `json:"created_at"`
 	MatchCount   int        `json:"match_count"`
 	Chunks       []ChunkHit `json:"chunks"`
+	// SessionType is the raw stored value ("chat" | "scheduled") so the client
+	// can badge task executions apart from interactive conversations.
+	SessionType string `json:"session_type"`
 }
 
 // ChunkHit represents a single matching chunk within a session search result.
@@ -226,15 +233,17 @@ type SessionSearchResponse struct {
 
 // RecentSessions lists a page of the project's sessions for the "browse all"
 // state of session search (no query entered). archiveFilter narrows to
-// active/archived sessions (or all), fromTime/toTime bound the session
-// creation time, and sortOrder selects newest/oldest time ordering. It returns
-// up to limit sessions with title, backend, project, archived flag and creation
-// time, plus whether a further page exists. Pass the last row's created_at
-// (RFC3339) and id as cursor to fetch the next page. No message content is
-// attached: the browse list stays cheap, and the detail view lazily fetches the
-// first message on demand.
-func RecentSessions(ctx context.Context, projectPath string, limit int, archiveFilter, sortOrder, fromTime, toTime, cursor, cursorID string) (*SessionSearchResponse, error) {
-	sessions, hasMore, err := service.GetRecentSessions(projectPath, limit, archiveFilter, sortOrder, fromTime, toTime, cursor, cursorID)
+// active/archived sessions (or all), typeFilter selects conversations or task
+// executions (browse mode never mixes the two — see GetRecentSessions),
+// fromTime/toTime bound the session creation time, and sortOrder selects
+// newest/oldest time ordering. It returns up to limit sessions with title,
+// backend, project, archived flag, session type and creation time, plus whether
+// a further page exists. Pass the last row's created_at (RFC3339) and id as
+// cursor to fetch the next page. No message content is attached: the browse
+// list stays cheap, and the detail view lazily fetches the first message on
+// demand.
+func RecentSessions(ctx context.Context, projectPath string, limit int, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID string) (*SessionSearchResponse, error) {
+	sessions, hasMore, err := service.GetRecentSessions(projectPath, limit, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +257,7 @@ func RecentSessions(ctx context.Context, projectPath string, limit int, archiveF
 			ProjectPath:  s.ProjectPath,
 			Archived:     s.Archived,
 			CreatedAt:    s.CreatedAt,
+			SessionType:  s.SessionType,
 			// No search happened in browse mode — no match count.
 			MatchCount: 0,
 			Chunks:     []ChunkHit{},
@@ -299,6 +309,25 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 		filtered := sessions[:0]
 		for _, s := range sessions {
 			if s.Archived == wantArchived {
+				filtered = append(filtered, s)
+			}
+		}
+		sessions = filtered
+	}
+
+	// Filter by session type. Like the archive filter this runs post-aggregation:
+	// rag_chunks has no session_type column, so the predicate can only be applied
+	// once each session's DB metadata has been loaded. A session whose row is
+	// missing (or whose stored type is empty) counts as 'chat' — the schema
+	// default — mirroring how a missing row is treated as active above.
+	if dbType := service.SessionTypeDBValue(params.SessionType); dbType != "" {
+		filtered := sessions[:0]
+		for _, s := range sessions {
+			st := s.SessionType
+			if st == "" {
+				st = "chat"
+			}
+			if st == dbType {
 				filtered = append(filtered, s)
 			}
 		}
@@ -389,10 +418,10 @@ func aggregateSessionHits(hits []SearchHit) []*SessionSearchResult {
 	return sessions
 }
 
-// enrichSessionMeta overwrites each session's archived flag and creation time
-// with the authoritative DB values. In search mode CreatedAt initially comes
-// from the matched chunk; the session-level timestamp is authoritative for
-// display and for time sorting.
+// enrichSessionMeta overwrites each session's archived flag, creation time and
+// session type with the authoritative DB values. In search mode CreatedAt
+// initially comes from the matched chunk; the session-level timestamp is
+// authoritative for display and for time sorting.
 func enrichSessionMeta(sessions []*SessionSearchResult) {
 	metaMap := getSessionMetaBatch(sessionIDSet(sessions))
 	for _, s := range sessions {
@@ -401,6 +430,7 @@ func enrichSessionMeta(sessions []*SessionSearchResult) {
 			if !m.CreatedAt.IsZero() {
 				s.CreatedAt = m.CreatedAt
 			}
+			s.SessionType = m.SessionType
 		}
 	}
 }
@@ -443,12 +473,14 @@ func sortSessionResults(sessions []*SessionSearchResult, sortOrder string) {
 // sessionMeta holds the DB-sourced session attributes needed to enrich and
 // filter session search results.
 type sessionMeta struct {
-	Archived  bool
-	CreatedAt time.Time
+	Archived    bool
+	CreatedAt   time.Time
+	SessionType string
 }
 
-// getSessionMetaBatch fetches archived status and creation time for a set of
-// session IDs in a single query. Missing entries fall back to the zero value.
+// getSessionMetaBatch fetches archived status, creation time and session type
+// for a set of session IDs in a single query. Missing entries fall back to the
+// zero value.
 func getSessionMetaBatch(sessionIDs map[string]bool) map[string]sessionMeta {
 	meta := make(map[string]sessionMeta, len(sessionIDs))
 	if !service.DBReady() || len(sessionIDs) == 0 {
@@ -464,7 +496,7 @@ func getSessionMetaBatch(sessionIDs map[string]bool) map[string]sessionMeta {
 		args[i] = id
 	}
 	rows, err := service.ReadDB().Query(
-		"SELECT id, archived, created_at FROM chat_sessions WHERE id IN ("+placeholders+")", args...,
+		"SELECT id, archived, created_at, session_type FROM chat_sessions WHERE id IN ("+placeholders+")", args...,
 	)
 	if err != nil {
 		return meta
@@ -474,8 +506,9 @@ func getSessionMetaBatch(sessionIDs map[string]bool) map[string]sessionMeta {
 		var id string
 		var archived int
 		var createdAt time.Time
-		if err := rows.Scan(&id, &archived, &createdAt); err == nil {
-			meta[id] = sessionMeta{Archived: archived == 1, CreatedAt: createdAt}
+		var sessionType string
+		if err := rows.Scan(&id, &archived, &createdAt, &sessionType); err == nil {
+			meta[id] = sessionMeta{Archived: archived == 1, CreatedAt: createdAt, SessionType: sessionType}
 		}
 	}
 	return meta

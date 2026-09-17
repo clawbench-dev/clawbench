@@ -57,8 +57,10 @@
 
   <!-- Read-only rendering of the block the backend prepends to the prompt.
        Values are illustrative — the real ones come from the triggering event —
-       so they are tinted and marked as samples rather than presented as data. -->
-  <div class="overview-card">
+       so they are tinted and marked as samples rather than presented as data.
+       Hidden when the task subscribes to no event: there is no trigger, so no
+       context is ever injected and the samples would document nothing. -->
+  <div v-if="contextRows.length > 0" class="overview-card">
     <h3 class="card-title">
       <Braces class="card-icon" :size="14" />
       <span class="prompt-title-text">{{ t('task.overview.eventContext') }}</span>

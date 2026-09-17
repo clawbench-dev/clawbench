@@ -26,6 +26,8 @@ export interface SessionSearchResult {
   created_at: string
   match_count: number
   chunks: ChunkHit[]
+  /** Raw stored value: 'chat' | 'scheduled'. Drives the type badge. */
+  session_type: string
 }
 
 interface SessionSearchResponse {
@@ -40,6 +42,9 @@ const DEBOUNCE_MS = 300
 export type SessionArchiveFilter = 'all' | 'active' | 'archived'
 export type SessionSortOrder = 'relevance' | 'newest' | 'oldest'
 export type SessionTimeRange = 'all' | 'today' | '7d' | '30d' | 'custom'
+// 'task' is the user-facing name for sessions stored as session_type='scheduled'
+// (one per task execution).
+export type SessionTypeFilter = 'all' | 'chat' | 'task'
 
 // formatLocalDate renders a Date as "YYYY-MM-DD" in local time. Using
 // toISOString() here would shift the day for users east/west of UTC, so the
@@ -118,6 +123,7 @@ export function useSessionSearch() {
     searchMode: '',
     preferMode: 'hybrid' as 'hybrid' | 'fts',
     archivedFilter: 'all' as SessionArchiveFilter,
+    typeFilter: 'all' as SessionTypeFilter,
     sortOrder: 'relevance' as SessionSortOrder,
     timeRange: 'all' as SessionTimeRange,
     customFrom: '',
@@ -160,6 +166,7 @@ export function useSessionSearch() {
       q,
       prefer_mode: state.preferMode,
       archived: state.archivedFilter,
+      session_type: state.typeFilter,
       sort: state.sortOrder,
     }
     const { from, to } = resolveTimeRange(state.timeRange, state.customFrom, state.customTo)
@@ -269,17 +276,19 @@ export function useSessionSearch() {
     }, DEBOUNCE_MS)
   }
 
-  // Apply an archive filter, sort order and/or time range, then re-run the
+  // Apply a type/archive filter, sort order and/or time range, then re-run the
   // current query (or browse) so the visible list reflects the new selection
   // immediately. Time-range changes always re-fetch, even when the selection is
   // unchanged, because the custom bounds may have moved.
   function setFilters(filters: {
+    type?: SessionTypeFilter
     archived?: SessionArchiveFilter
     sort?: SessionSortOrder
     timeRange?: SessionTimeRange
     customFrom?: string
     customTo?: string
   }) {
+    if (filters.type !== undefined) state.typeFilter = filters.type
     if (filters.archived !== undefined) state.archivedFilter = filters.archived
     if (filters.sort !== undefined) state.sortOrder = filters.sort
     if (filters.timeRange !== undefined) state.timeRange = filters.timeRange

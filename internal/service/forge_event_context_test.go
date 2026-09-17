@@ -164,10 +164,11 @@ func TestEventPromptTemplate_ScopedToSubscribedTypes(t *testing.T) {
 		t.Fatalf("pipeline-only subscription must not list comment var, got:\n%s", out)
 	}
 
-	// No subscription (empty) lists everything.
-	out = EventPromptTemplate(nil)
-	if !strings.Contains(out, "{{COMMENT_BODY}}") || !strings.Contains(out, "{{PIPELINE_STATUS}}") {
-		t.Fatalf("empty subscription should list all vars, got:\n%s", out)
+	// An empty subscription yields nothing: with no event selected the task has
+	// no trigger, so RenderEventContext injects no block. Listing every variable
+	// would document a payload that can never arrive.
+	if out = EventPromptTemplate(nil); out != "" {
+		t.Fatalf("empty subscription must yield an empty template, got:\n%s", out)
 	}
 }
 

@@ -570,6 +570,7 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		PreferMode       string `json:"prefer_mode"`
 		Archived         string `json:"archived"`
 		SortOrder        string `json:"sort"`
+		SessionType      string `json:"session_type"`
 		Cursor           string `json:"cursor"`
 		CursorID         string `json:"cursor_id"`
 	}
@@ -589,12 +590,13 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Empty query → "browse all" mode: list the project's sessions instead of
-	// rejecting the request. Archive filter, time range, time sort and cursor
-	// pagination apply here too. The frontend requests pages of searchLimit rows
-	// and scrolls to load more, so there is no hard cap on the number shown.
+	// rejecting the request. Archive filter, type filter, time range, time sort
+	// and cursor pagination apply here too. The frontend requests pages of
+	// searchLimit rows and scrolls to load more, so there is no hard cap on the
+	// number shown.
 	if req.Query == "" {
 		cursor := normalizeCursorTime(req.Cursor)
-		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit, req.Archived, req.SortOrder, fromTime, toTime, cursor, req.CursorID)
+		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit, req.Archived, req.SessionType, req.SortOrder, fromTime, toTime, cursor, req.CursorID)
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSearchFailed")
 			return
@@ -620,6 +622,7 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		PreferMode:       req.PreferMode,
 		Archived:         req.Archived,
 		SortOrder:        req.SortOrder,
+		SessionType:      req.SessionType,
 	}
 
 	result, err := rag.RAGSessionSearch(r.Context(), rag.GlobalStore, rag.GlobalEmbedder, params, searchLimit, searchPoolSize)

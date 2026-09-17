@@ -761,9 +761,9 @@ func TestServeRAGSessionSearch_EmptyQueryBrowsesRecentSessions(t *testing.T) {
 	defer teardown()
 
 	// Insert sessions in non-chronological order to verify newest-first output.
-	insertSession(t, env.ProjectDir, "sess-old", "Old session", "2024-01-01 10:00:00", false)
-	insertSession(t, env.ProjectDir, "sess-new", "New session", "2024-03-01 10:00:00", false)
-	insertSession(t, env.ProjectDir, "sess-arch", "Archived session", "2024-02-01 10:00:00", true)
+	insertSession(t, env.ProjectDir, "sess-old", "Old session", "2024-01-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "sess-new", "New session", "2024-03-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "sess-arch", "Archived session", "2024-02-01 10:00:00", true, "")
 
 	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
 	req = withProjectCookie(req, env.ProjectDir)
@@ -806,9 +806,9 @@ func TestServeRAGSessionSearch_BrowseCursorPagination(t *testing.T) {
 	// passing an explicit small limit via config is not possible here. Instead
 	// verify has_more is false when the whole set fits, and that a cursor
 	// narrows the result set correctly.
-	insertSession(t, env.ProjectDir, "s1", "S1", "2024-01-01 10:00:00", false)
-	insertSession(t, env.ProjectDir, "s2", "S2", "2024-02-01 10:00:00", false)
-	insertSession(t, env.ProjectDir, "s3", "S3", "2024-03-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "s1", "S1", "2024-01-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "s2", "S2", "2024-02-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "s3", "S3", "2024-03-01 10:00:00", false, "")
 
 	type resp struct {
 		Sessions []struct {
@@ -856,8 +856,8 @@ func TestServeRAGSessionSearch_BrowseArchiveFilter(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	insertSession(t, env.ProjectDir, "active-1", "Active", "2024-01-01 10:00:00", false)
-	insertSession(t, env.ProjectDir, "arch-1", "Archived", "2024-02-01 10:00:00", true)
+	insertSession(t, env.ProjectDir, "active-1", "Active", "2024-01-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "arch-1", "Archived", "2024-02-01 10:00:00", true, "")
 
 	type resp struct {
 		Sessions []struct {
@@ -899,13 +899,54 @@ func TestServeRAGSessionSearch_BrowseArchiveFilter(t *testing.T) {
 	assert.Equal(t, 2, all.Total)
 }
 
+// TestServeRAGSessionSearch_TypeFilter covers the type filter in browse mode.
+// Browse never mixes kinds: "all"/"chat" list conversations, only "task" lists
+// task executions.
+func TestServeRAGSessionSearch_BrowseTypeFilter(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "conv", "Conversation", "2024-01-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "job", "Task run", "2024-02-01 10:00:00", false, "scheduled")
+
+	type resp struct {
+		Sessions []struct {
+			SessionID   string `json:"session_id"`
+			SessionType string `json:"session_type"`
+		} `json:"sessions"`
+		Total int `json:"total"`
+	}
+
+	// Default → conversations only, and the type is reported for the badge.
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var all resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &all))
+	require.Len(t, all.Sessions, 1)
+	assert.Equal(t, "conv", all.Sessions[0].SessionID)
+	assert.Equal(t, "chat", all.Sessions[0].SessionType)
+
+	// Explicit "task" switches to task executions instead.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"session_type": "task"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var task resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &task))
+	require.Len(t, task.Sessions, 1)
+	assert.Equal(t, "job", task.Sessions[0].SessionID)
+	assert.Equal(t, "scheduled", task.Sessions[0].SessionType)
+}
+
 func TestServeRAGSessionSearch_BrowseSortOldest(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	insertSession(t, env.ProjectDir, "new", "New", "2024-03-01 10:00:00", false)
-	insertSession(t, env.ProjectDir, "old", "Old", "2024-01-01 10:00:00", false)
-	insertSession(t, env.ProjectDir, "mid", "Mid", "2024-02-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "new", "New", "2024-03-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "old", "Old", "2024-01-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "mid", "Mid", "2024-02-01 10:00:00", false, "")
 
 	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"sort": "oldest"})
 	req = withProjectCookie(req, env.ProjectDir)
@@ -928,7 +969,7 @@ func TestServeRAGSessionSearch_BrowseOmitsMessageContent(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	insertSession(t, env.ProjectDir, "sess-c", "Session", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "sess-c", "Session", "2024-01-01 10:00:00", false, "")
 	_, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, 'user', 'First message here', ?, 'claude')",
 		env.ProjectDir, "sess-c",
@@ -984,7 +1025,7 @@ func TestServeRAGSessionFirstMessage_ReturnsEarliestMessage(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	insertSession(t, env.ProjectDir, "sess-fm", "Session", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "sess-fm", "Session", "2024-01-01 10:00:00", false, "")
 	_, err := service.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_history (project_path, role, content, session_id, backend, created_at) VALUES
 		 (?, 'assistant', 'second', 'sess-fm', 'claude', '2024-01-02 10:00:00'),
@@ -1011,7 +1052,7 @@ func TestServeRAGSessionFirstMessage_ArchivedSessionAllowed(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	insertSession(t, env.ProjectDir, "sess-arch", "Archived", "2024-01-01 10:00:00", true)
+	insertSession(t, env.ProjectDir, "sess-arch", "Archived", "2024-01-01 10:00:00", true, "")
 	_, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, 'user', 'hello', 'sess-arch', 'claude')",
 		env.ProjectDir,
@@ -1034,7 +1075,7 @@ func TestServeRAGSessionFirstMessage_EmptySessionReturnsEmpty(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	insertSession(t, env.ProjectDir, "sess-empty", "Empty", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "sess-empty", "Empty", "2024-01-01 10:00:00", false, "")
 
 	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=sess-empty", nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -1054,7 +1095,7 @@ func TestServeRAGSessionFirstMessage_WrongProjectDenied(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	insertSession(t, env.ProjectDir, "sess-p", "Session", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "sess-p", "Session", "2024-01-01 10:00:00", false, "")
 
 	otherProject := filepath.Join(filepath.Dir(env.ProjectDir), "other-first-msg")
 	_ = os.MkdirAll(otherProject, 0o755)
@@ -1300,9 +1341,9 @@ func TestServeRAGSessionSearch_BrowseTimeRangeFilter(t *testing.T) {
 func browseTimeRangeFilter(t *testing.T, projectDir string) {
 	t.Helper()
 
-	insertSession(t, projectDir, "jan", "Jan", "2024-01-15 10:00:00", false)
-	insertSession(t, projectDir, "feb", "Feb", "2024-02-15 10:00:00", false)
-	insertSession(t, projectDir, "mar", "Mar", "2024-03-15 10:00:00", false)
+	insertSession(t, projectDir, "jan", "Jan", "2024-01-15 10:00:00", false, "")
+	insertSession(t, projectDir, "feb", "Feb", "2024-02-15 10:00:00", false, "")
+	insertSession(t, projectDir, "mar", "Mar", "2024-03-15 10:00:00", false, "")
 
 	type resp struct {
 		Sessions []struct {
@@ -1640,15 +1681,19 @@ func setupRAGStore(t *testing.T) *rag.Store {
 }
 
 // insertSession inserts a chat session row for session-search browse tests.
-func insertSession(t *testing.T, projectPath, id, title, createdAt string, archived bool) {
+// An empty sessionType defaults to 'chat'; pass "scheduled" for a task execution.
+func insertSession(t *testing.T, projectPath, id, title, createdAt string, archived bool, sessionType string) {
 	t.Helper()
 	archivedInt := 0
 	if archived {
 		archivedInt = 1
 	}
+	if sessionType == "" {
+		sessionType = "chat"
+	}
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?)",
-		id, projectPath, title, archivedInt, createdAt, createdAt,
+		"INSERT INTO chat_sessions (id, project_path, backend, title, session_type, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)",
+		id, projectPath, title, sessionType, archivedInt, createdAt, createdAt,
 	)
 	require.NoError(t, err)
 }

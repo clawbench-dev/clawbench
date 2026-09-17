@@ -39,6 +39,7 @@ describe('useSessionSearch', () => {
       expect(state.searchMode).toBe('')
       expect(state.preferMode).toBe('hybrid')
       expect(state.archivedFilter).toBe('all')
+      expect(state.typeFilter).toBe('all')
       expect(state.sortOrder).toBe('relevance')
       expect(state.hasMore).toBe(false)
       expect(state.loadingMore).toBe(false)
@@ -124,7 +125,7 @@ describe('useSessionSearch', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: 'test query', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
+        body: JSON.stringify({ q: 'test query', prefer_mode: 'hybrid', archived: 'all', session_type: 'all', sort: 'relevance' }),
       }))
       expect(state.results).toHaveLength(1)
       expect(state.results[0]).toEqual(mockResult)
@@ -144,7 +145,7 @@ describe('useSessionSearch', () => {
       await search('  test  ')
 
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: 'test', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
+        body: JSON.stringify({ q: 'test', prefer_mode: 'hybrid', archived: 'all', session_type: 'all', sort: 'relevance' }),
       }))
     })
 
@@ -169,7 +170,7 @@ describe('useSessionSearch', () => {
       // Empty query fetches the recent-session list instead of a stale result.
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', session_type: 'all', sort: 'relevance' }),
       }))
     })
 
@@ -274,7 +275,7 @@ describe('useSessionSearch', () => {
       await search('test')
 
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: 'test', prefer_mode: 'fts', archived: 'all', sort: 'relevance' }),
+        body: JSON.stringify({ q: 'test', prefer_mode: 'fts', archived: 'all', session_type: 'all', sort: 'relevance' }),
       }))
     })
   })
@@ -303,7 +304,7 @@ describe('useSessionSearch', () => {
       // Only one search should fire, with the latest query
       expect(mockFetch).toHaveBeenCalledTimes(1)
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: 'abc', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
+        body: JSON.stringify({ q: 'abc', prefer_mode: 'hybrid', archived: 'all', session_type: 'all', sort: 'relevance' }),
       }))
     })
 
@@ -323,7 +324,7 @@ describe('useSessionSearch', () => {
       // Browse fires immediately (no debounce) since the list is preloaded.
       expect(mockFetch).toHaveBeenCalledTimes(1)
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', session_type: 'all', sort: 'relevance' }),
       }))
     })
 
@@ -338,7 +339,7 @@ describe('useSessionSearch', () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1)
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', session_type: 'all', sort: 'relevance' }),
       }))
     })
   })
@@ -357,7 +358,7 @@ describe('useSessionSearch', () => {
       expect(state.archivedFilter).toBe('archived')
       expect(state.sortOrder).toBe('oldest')
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: 'test', prefer_mode: 'hybrid', archived: 'archived', sort: 'oldest' }),
+        body: JSON.stringify({ q: 'test', prefer_mode: 'hybrid', archived: 'archived', session_type: 'all', sort: 'oldest' }),
       }))
     })
 
@@ -372,7 +373,7 @@ describe('useSessionSearch', () => {
 
       expect(state.sortOrder).toBe('newest')
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'newest' }),
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', session_type: 'all', sort: 'newest' }),
       }))
     })
 
@@ -387,6 +388,39 @@ describe('useSessionSearch', () => {
 
       expect(state.archivedFilter).toBe('active')
       expect(state.sortOrder).toBe('relevance')
+    })
+
+    it('sends the type filter and re-runs the query', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'fts' }),
+      })
+
+      const { state, setFilters } = useSessionSearch()
+      state.query = 'deploy'
+      await setFilters({ type: 'task' })
+
+      expect(state.typeFilter).toBe('task')
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
+        body: JSON.stringify({ q: 'deploy', prefer_mode: 'hybrid', archived: 'all', session_type: 'task', sort: 'relevance' }),
+      }))
+    })
+
+    it('keeps the type filter independent of the archive filter', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
+
+      const { state, setFilters } = useSessionSearch()
+      await setFilters({ type: 'chat' })
+      await setFilters({ archived: 'archived' })
+
+      expect(state.typeFilter).toBe('chat')
+      expect(state.archivedFilter).toBe('archived')
+      const body = JSON.parse(mockFetch.mock.calls[1][1].body)
+      expect(body.session_type).toBe('chat')
+      expect(body.archived).toBe('archived')
     })
 
     it('sends from/to when a time preset is selected', async () => {
@@ -424,6 +458,7 @@ describe('useSessionSearch', () => {
           q: 'hello',
           prefer_mode: 'hybrid',
           archived: 'all',
+          session_type: 'all',
           sort: 'relevance',
           from: '2024-01-01',
           to: '2024-02-01',
@@ -484,7 +519,7 @@ describe('useSessionSearch', () => {
       expect(state.hasMore).toBe(false)
       // Second request carries the last row's created_at + id as cursor.
       expect(mockFetch).toHaveBeenLastCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance', cursor: '2024-03-01 10:00:00', cursor_id: 's1' }),
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', session_type: 'all', sort: 'relevance', cursor: '2024-03-01 10:00:00', cursor_id: 's1' }),
       }))
     })
 

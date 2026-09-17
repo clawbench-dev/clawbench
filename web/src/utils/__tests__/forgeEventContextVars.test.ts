@@ -33,9 +33,10 @@ const placeholders = (transitions: string[]) =>
 
 describe('forgeEventContextVars', () => {
   it('lists every variable the backend renders', () => {
-    // The full set an empty (unconfigured) subscription shows. A variable
-    // missing here is one the form would silently stop advertising.
-    const all = placeholders([])
+    // A subscription that can yield everything: every kind plus the comment and
+    // pipeline transitions. A variable missing here is one the UI would
+    // silently stop advertising.
+    const all = placeholders(['opened', 'closed', 'merged', 'reopened', 'commented', 'pipeline_done'])
     for (const p of [
       'EVENT_TYPE', 'REPO', 'ITEM_TYPE #ITEM_NUMBER', 'TITLE', 'URL', 'AUTHOR', 'STATE',
       'PREV_STATE', 'BODY', 'LABELS', 'ASSIGNEES', 'DRAFT', 'SOURCE_BRANCH', 'MERGED_AT',
@@ -45,6 +46,15 @@ describe('forgeEventContextVars', () => {
     ]) {
       expect(all, `missing ${p}`).toContain(p)
     }
+  })
+
+  // With no event selected the task has no trigger, so the backend injects no
+  // context block. Listing variables then would document a payload that can
+  // never arrive.
+  it('yields nothing for an empty subscription', () => {
+    expect(visibleEventContextVars(ctx([]))).toEqual([])
+    expect(eventContextTemplateText(ctx([]))).toBe('')
+    expect(eventContextSampleRows(ctx([]))).toEqual([])
   })
 
   it('has no duplicate placeholders', () => {
@@ -155,7 +165,11 @@ describe('forgeEventContextVars', () => {
   describe('eventContextSampleRows', () => {
     it('fills every visible row with a value', () => {
       // A blank sample would render an empty row and read as a broken preview.
-      for (const row of eventContextSampleRows(ctx([]))) {
+      const rows = eventContextSampleRows(
+        ctx(['opened', 'commented', 'pipeline_done']),
+      )
+      expect(rows.length).toBeGreaterThan(0)
+      for (const row of rows) {
         expect(row.value, `${row.placeholder} needs a sample`).not.toBe('')
       }
     })

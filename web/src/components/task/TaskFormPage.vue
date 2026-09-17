@@ -99,8 +99,11 @@
           </div>
 
           <!-- Read-only event context block: shows exactly what will be injected.
-               Not editable — the variables are filled from the triggering event. -->
-          <div class="form-group">
+               Not editable — the variables are filled from the triggering event.
+               Hidden until at least one event is selected: with no trigger there
+               is no context, and listing every possible variable would document
+               a payload that can never arrive. -->
+          <div v-if="eventContextTemplate" class="form-group">
             <label class="form-label">{{ t('task.form.eventContext') }}</label>
             <pre class="event-context-block">{{ eventContextTemplate }}</pre>
             <div class="form-hint">{{ t('task.form.eventContextHint') }}</div>

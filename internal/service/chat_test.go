@@ -244,12 +244,20 @@ func helperCreateSession(t *testing.T, projectPath, backend, title string) strin
 // time and archived flag, used by recent-session listing tests.
 func insertSessionWithTime(t *testing.T, projectPath, id, title, createdAt string, archived bool) {
 	t.Helper()
+	insertSessionWithTypeAndTime(t, projectPath, id, title, "chat", createdAt, archived)
+}
+
+// insertSessionWithTypeAndTime inserts a session row with an explicit
+// session_type so type-filter tests can create both conversations and task
+// executions ('scheduled').
+func insertSessionWithTypeAndTime(t *testing.T, projectPath, id, title, sessionType, createdAt string, archived bool) {
+	t.Helper()
 	archivedInt := 0
 	if archived {
 		archivedInt = 1
 	}
-	_, err := service.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_path, backend, title, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?)",
-		id, projectPath, title, archivedInt, createdAt, createdAt)
+	_, err := service.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_path, backend, title, session_type, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)",
+		id, projectPath, title, sessionType, archivedInt, createdAt, createdAt)
 	require.NoError(t, err)
 }
 
@@ -2401,7 +2409,7 @@ func TestGetRecentSessions_NewestFirstIncludesArchived(t *testing.T) {
 	insertSessionWithTime(t, "/project", "new", "New", "2024-03-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "arch", "Archived", "2024-02-01 10:00:00", true)
 
-	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "")
+	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 3)
 	// Reverse chronological order (newest first).
@@ -2421,12 +2429,12 @@ func TestGetRecentSessions_ProjectScopedAndLimited(t *testing.T) {
 	insertSessionWithTime(t, "/other", "c", "C", "2024-01-03 10:00:00", false)
 
 	// Other project must be excluded.
-	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "")
+	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 2)
 
 	// Limit truncates the newest-first list.
-	sessions, _, err = service.GetRecentSessions("/project", 1, "", "", "", "", "", "")
+	sessions, _, err = service.GetRecentSessions("/project", 1, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "b", sessions[0].ID)
@@ -2439,7 +2447,7 @@ func TestGetRecentSessions_EmptyProjectBrowsesAll(t *testing.T) {
 	insertSessionWithTime(t, "/other", "b", "B", "2024-01-02 10:00:00", false)
 
 	// Empty project path → across all projects (CLI global browse).
-	sessions, _, err := service.GetRecentSessions("", 0, "", "", "", "", "", "")
+	sessions, _, err := service.GetRecentSessions("", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 2)
 	assert.Equal(t, "b", sessions[0].ID)
@@ -2448,7 +2456,7 @@ func TestGetRecentSessions_EmptyProjectBrowsesAll(t *testing.T) {
 func TestGetRecentSessions_NoSessions(t *testing.T) {
 	setupDB(t)
 
-	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "")
+	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 0)
 }
@@ -2462,7 +2470,7 @@ func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
 	insertSessionWithTime(t, "/project", "arch-2", "R2", "2024-04-01 10:00:00", true)
 
 	// Active only.
-	active, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "", "", "", "", "")
+	active, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, active, 2)
 	for _, s := range active {
@@ -2471,7 +2479,7 @@ func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
 	assert.Equal(t, "active-2", active[0].ID)
 
 	// Archived only.
-	archived, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterArchived, "", "", "", "", "")
+	archived, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterArchived, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, archived, 2)
 	for _, s := range archived {
@@ -2480,7 +2488,7 @@ func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
 	assert.Equal(t, "arch-2", archived[0].ID)
 
 	// All (default) includes both.
-	all, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterAll, "", "", "", "", "")
+	all, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterAll, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, all, 4)
 }
@@ -2492,7 +2500,7 @@ func TestGetRecentSessions_SortOrderOldest(t *testing.T) {
 	insertSessionWithTime(t, "/project", "old", "Old", "2024-01-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "mid", "Mid", "2024-02-01 10:00:00", false)
 
-	oldest, _, err := service.GetRecentSessions("/project", 0, "", service.SessionSortOldest, "", "", "", "")
+	oldest, _, err := service.GetRecentSessions("/project", 0, "", "", service.SessionSortOldest, "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, oldest, 3)
 	assert.Equal(t, "old", oldest[0].ID)
@@ -2512,6 +2520,58 @@ func TestNormalizeSessionArchiveFilterAndSortOrder(t *testing.T) {
 	assert.Equal(t, "oldest", service.NormalizeSessionSortOrder(" OLDEST "))
 }
 
+func TestNormalizeSessionTypeFilter(t *testing.T) {
+	assert.Equal(t, "all", service.NormalizeSessionTypeFilter(""))
+	assert.Equal(t, "all", service.NormalizeSessionTypeFilter("bogus"))
+	assert.Equal(t, "chat", service.NormalizeSessionTypeFilter(" CHAT "))
+	assert.Equal(t, "task", service.NormalizeSessionTypeFilter("Task"))
+}
+
+func TestSessionTypeDBValue(t *testing.T) {
+	// "all" must yield the empty string so callers can use it as "no predicate".
+	assert.Equal(t, "", service.SessionTypeDBValue(""))
+	assert.Equal(t, "", service.SessionTypeDBValue("all"))
+	assert.Equal(t, "", service.SessionTypeDBValue("bogus"))
+	assert.Equal(t, "chat", service.SessionTypeDBValue("chat"))
+	// The user-facing "task" maps onto the DB's 'scheduled'.
+	assert.Equal(t, "scheduled", service.SessionTypeDBValue("task"))
+}
+
+// TestGetRecentSessions_TypeFilterSeparation locks down the browse-mode rule:
+// the type filter never mixes session kinds. "all" and "chat" both list
+// conversations; only an explicit "task" lists task executions.
+func TestGetRecentSessions_TypeFilterSeparation(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "conv", "Conversation", "2024-01-01 10:00:00", false)
+	insertSessionWithTypeAndTime(t, "/project", "job", "Task run", "scheduled", "2024-02-01 10:00:00", false)
+
+	// Default / "all" → conversations only, never tasks.
+	all, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, "conv", all[0].ID)
+	assert.Equal(t, "chat", all[0].SessionType)
+
+	// Explicit "chat" behaves like "all".
+	chat, _, err := service.GetRecentSessions("/project", 0, "", service.SessionTypeFilterChat, "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, chat, 1)
+	assert.Equal(t, "conv", chat[0].ID)
+
+	// Explicit "task" lists the task execution instead.
+	task, _, err := service.GetRecentSessions("/project", 0, "", service.SessionTypeFilterTask, "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, task, 1)
+	assert.Equal(t, "job", task[0].ID)
+	assert.Equal(t, "scheduled", task[0].SessionType)
+
+	// The type filter combines with the archive filter rather than replacing it.
+	archivedTask, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterArchived, service.SessionTypeFilterTask, "", "", "", "", "")
+	assert.NoError(t, err)
+	assert.Len(t, archivedTask, 0)
+}
+
 func TestGetRecentSessions_CursorPaginationNewest(t *testing.T) {
 	setupDB(t)
 
@@ -2521,7 +2581,7 @@ func TestGetRecentSessions_CursorPaginationNewest(t *testing.T) {
 	insertSessionWithTime(t, "/project", "s4", "S4", "2024-04-01 10:00:00", false)
 
 	// Page 1: newest first, 2 rows + hasMore.
-	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", "", "", "", "", "")
+	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, page1, 2)
 	assert.True(t, hasMore)
@@ -2530,7 +2590,7 @@ func TestGetRecentSessions_CursorPaginationNewest(t *testing.T) {
 
 	// Page 2: cursor from the last row of page 1.
 	cursor := page1[len(page1)-1].CreatedAt.Format("2006-01-02 15:04:05")
-	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", "", "", "", cursor, page1[1].ID)
+	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", "", "", "", "", cursor, page1[1].ID)
 	assert.NoError(t, err)
 	require.Len(t, page2, 2)
 	assert.False(t, hasMore2)
@@ -2553,7 +2613,7 @@ func TestGetRecentSessions_CursorPaginationOldest(t *testing.T) {
 	insertSessionWithTime(t, "/project", "s2", "S2", "2024-02-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "s3", "S3", "2024-03-01 10:00:00", false)
 
-	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", service.SessionSortOldest, "", "", "", "")
+	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", "", service.SessionSortOldest, "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, page1, 2)
 	assert.True(t, hasMore)
@@ -2561,7 +2621,7 @@ func TestGetRecentSessions_CursorPaginationOldest(t *testing.T) {
 	assert.Equal(t, "s2", page1[1].ID)
 
 	cursor := page1[len(page1)-1].CreatedAt.Format("2006-01-02 15:04:05")
-	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", service.SessionSortOldest, "", "", cursor, page1[1].ID)
+	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", "", service.SessionSortOldest, "", "", cursor, page1[1].ID)
 	assert.NoError(t, err)
 	require.Len(t, page2, 1)
 	assert.False(t, hasMore2)
@@ -2580,7 +2640,7 @@ func TestGetRecentSessions_CursorWithSameTimestamp(t *testing.T) {
 	seen := map[string]bool{}
 	cursor, cursorID := "", ""
 	for range 5 {
-		page, hasMore, err := service.GetRecentSessions("/project", 1, "", "", "", "", cursor, cursorID)
+		page, hasMore, err := service.GetRecentSessions("/project", 1, "", "", "", "", "", cursor, cursorID)
 		assert.NoError(t, err)
 		if len(page) == 0 {
 			break
@@ -2604,29 +2664,29 @@ func TestGetRecentSessions_TimeRangeFilter(t *testing.T) {
 	insertSessionWithTime(t, "/project", "mar", "Mar", "2024-03-15 10:00:00", false)
 
 	// Inclusive window covering February only.
-	feb, _, err := service.GetRecentSessions("/project", 0, "", "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
+	feb, _, err := service.GetRecentSessions("/project", 0, "", "", "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
 	assert.NoError(t, err)
 	require.Len(t, feb, 1)
 	assert.Equal(t, "feb", feb[0].ID)
 
 	// Lower bound only.
-	fromFeb, _, err := service.GetRecentSessions("/project", 0, "", "", "2024-02-01 00:00:00", "", "", "")
+	fromFeb, _, err := service.GetRecentSessions("/project", 0, "", "", "", "2024-02-01 00:00:00", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, fromFeb, 2)
 
 	// Upper bound only.
-	toFeb, _, err := service.GetRecentSessions("/project", 0, "", "", "", "2024-02-29 23:59:59", "", "")
+	toFeb, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "2024-02-29 23:59:59", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, toFeb, 2)
 
 	// Window outside the data set → no rows.
-	none, _, err := service.GetRecentSessions("/project", 0, "", "", "2025-01-01 00:00:00", "2025-12-31 23:59:59", "", "")
+	none, _, err := service.GetRecentSessions("/project", 0, "", "", "", "2025-01-01 00:00:00", "2025-12-31 23:59:59", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, none, 0)
 
 	// Time range combines with the archive filter rather than replacing it.
 	insertSessionWithTime(t, "/project", "feb-arch", "FebArch", "2024-02-20 10:00:00", true)
-	febActive, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
+	febActive, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "", "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
 	assert.NoError(t, err)
 	require.Len(t, febActive, 1)
 	assert.Equal(t, "feb", febActive[0].ID)
