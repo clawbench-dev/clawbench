@@ -557,7 +557,7 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
-import { setAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
+import { setAttachDragData, setMultiAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
@@ -712,12 +712,30 @@ function onItemDragStart(entry, e) {
     if (!isWideScreen.value) return
     if (searchHasQuery.value) return // moving search results around the dir tree is ambiguous
     const path = pathOf(entry)
-    dragSourcePaths.value = collectDraggedPaths(entry, path)
-    setAttachDragData(e.dataTransfer, path, entry.type === 'dir')
+    const paths = collectDraggedPaths(entry, path)
+    dragSourcePaths.value = paths
+    const isDir = entry.type === 'dir'
+    if (paths.length > 1) {
+        // Multi-selection: carry the whole set so dropping on the chat column
+        // attaches all of it. isDir resolves through metaForPath (not
+        // entryByPath) because the selection may outlive the current listing —
+        // a stale path must not be silently downgraded to a file.
+        setMultiAttachDragData(
+            e.dataTransfer,
+            path,
+            isDir,
+            paths.map(p => ({ path: p, isDir: metaForPath(p).type === 'dir' })),
+        )
+    } else {
+        setAttachDragData(e.dataTransfer, path, isDir)
+    }
     e.dataTransfer.effectAllowed = 'move'
     // Build a DOM ghost element off-screen for reliable snapshot in Chrome.
     // The ghost must stay in the DOM until dragend — cleanupDragGhost() handles that.
-    const ghost = buildAttachDragImage(entry.name, entry.type === 'dir')
+    const ghost = buildAttachDragImage(
+        paths.length > 1 ? t('file.multiSelect.selectedCount', { n: paths.length }) : entry.name,
+        isDir,
+    )
     e.dataTransfer.setDragImage(ghost, 14, 16)
 }
 

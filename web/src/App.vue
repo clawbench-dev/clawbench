@@ -558,7 +558,7 @@ import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
-import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
+import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -2155,17 +2155,25 @@ function onChatColDragLeave() {
 function onChatColDrop(e: DragEvent) {
   chatDropCounter = 0
   chatDropActive.value = false
-  // Internal attach drag (from the file manager) → attach the referenced path.
+  // Internal attach drag (from the file manager) → attach the referenced path(s).
   const internal = hasAttachDragData(e.dataTransfer)
   if (internal) {
     if (!isWideScreen.value) return
     const data = readAttachDragData(e.dataTransfer)
     if (!data) return
     e.preventDefault()
+    // A multi-selection drag carries the whole set; a plain drag is one item.
     // A ranged drag (e.g. a mermaid diagram's md code fence) attaches the file
     // as a line-range reference; plain file drags stay whole-file.
-    addAttachedFile(data.path, data.isDir, data.startLine, data.endLine)
-    toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    const targets = attachDragTargets(data)
+    const added = targets.filter(t => addAttachedFile(t.path, t.isDir, t.startLine, t.endLine)).length
+    if (added === 0) {
+      toast.show(t('chat.attach.alreadyAttached'), { icon: '📎', type: 'info', duration: 1500 })
+    } else if (targets.length > 1) {
+      toast.show(t('chat.attach.addedToChatN', { n: added }), { icon: '📎', type: 'success', duration: 1500 })
+    } else {
+      toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    }
     return
   }
   // OS file drop → upload & auto-attach each file.

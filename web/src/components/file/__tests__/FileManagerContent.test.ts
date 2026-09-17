@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
+import { cleanupDragGhost } from '@/utils/attachDrag'
 import SplitView from '@/components/common/SplitView.vue'
 // jsdom does not implement CSS.escape (used by scrollToEntryAndSelect). Polyfill it.
 const cssGlobal = globalThis as unknown as { CSS?: { escape?: (v: string) => string } }
@@ -3763,6 +3764,105 @@ describe('FileManagerContent — internal move helpers', () => {
     } finally {
       Element.prototype.scrollIntoView = orig
     }
+  })
+})
+
+// ── Drag payload written on dragstart (file manager → chat attachments) ──
+
+describe('FileManagerContent — dragstart attach payload', () => {
+  // Each dragstart installs a 5s ghost safety timer; clear it so the test file
+  // does not report leaked timers.
+  afterEach(() => { cleanupDragGhost() })
+
+  /** dataTransfer stand-in that records what the dragstart handler writes. */
+  function makeDT() {
+    const store: Record<string, string> = {}
+    return {
+      setData: vi.fn((type: string, value: string) => { store[type] = value }),
+      setDragImage: vi.fn(),
+      effectAllowed: '',
+      getData: (type: string) => store[type] ?? '',
+      _store: store,
+    }
+  }
+
+  it('writes only the single item when nothing is multi-selected', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+    const dt = makeDT()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+
+    const payload = JSON.parse(dt.getData('application/x-clawbench-attach'))
+    expect(payload).toEqual({ path: 'test.ts', isDir: false })
+    // No `entries` key at all — the single-item shape must stay unchanged.
+    expect('entries' in payload).toBe(false)
+  })
+
+  it('writes the whole selection, tagging directories via metaForPath', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await nextTick()
+    // Ctrl+click builds a multi-selection that includes the "src" directory.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.dir-item').trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    const dt = makeDT()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+
+    const payload = JSON.parse(dt.getData('application/x-clawbench-attach'))
+    expect(payload.path).toBe('test.ts')
+    expect(payload.entries).toHaveLength(3)
+    expect(payload.entries).toEqual(expect.arrayContaining([
+      { path: 'test.ts', isDir: false },
+      { path: 'readme.md', isDir: false },
+      { path: 'src', isDir: true },
+    ]))
+  })
+
+  it('keeps the multi-selection active after dragging to chat', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await nextTick()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    const dt = makeDT()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+    await nextTick()
+
+    // The user can still run batch delete/archive right after the drop.
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(2)
+  })
+
+  it('labels the drag ghost with the selection count', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await nextTick()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    const dt = makeDT()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+
+    const ghost = document.querySelector('[data-attach-ghost]')
+    expect(ghost?.textContent).toContain('已选 2 项')
+  })
+
+  it('labels the drag ghost with the file name for a single item', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+    const dt = makeDT()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+
+    const ghost = document.querySelector('[data-attach-ghost]')
+    expect(ghost?.textContent).toContain('test.ts')
   })
 })
 

@@ -612,6 +612,7 @@ export default {
       switchWorktree: 'Switch worktree',
       openDirectory: 'Open directory',
       addedToChat: 'Added to chat',
+      addedToChatN: 'Added {n} files to chat',
       alreadyAttached: 'Already in chat attachments',
       removedFromChat: 'Removed from chat attachments',
       removeFromChat: 'Remove attachment',

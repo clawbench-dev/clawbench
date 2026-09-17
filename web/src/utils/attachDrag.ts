@@ -10,6 +10,12 @@
 
 export const ATTACH_DRAG_MIME = 'application/x-clawbench-attach'
 
+/** One whole-file reference inside a multi-selection drag. */
+export interface AttachDragEntry {
+  path: string
+  isDir: boolean
+}
+
 export interface AttachDragData {
   path: string
   isDir: boolean
@@ -18,6 +24,12 @@ export interface AttachDragData {
    *  whole-file reference. */
   startLine?: number
   endLine?: number
+  /** Multi-selection payload: the FULL set of items being dragged, so dropping
+   *  on the chat column attaches all of them. Only present for multi-selection
+   *  drags — a single-item drag carries just `path`/`isDir`, keeping the payload
+   *  (and every existing drag source) unchanged. Line ranges never combine with
+   *  entries: ranged sources are always single-item. */
+  entries?: AttachDragEntry[]
 }
 
 /** Write the internal attach payload into a drag event's dataTransfer. */
@@ -35,6 +47,53 @@ export function setAttachDragData(dt: DataTransfer, path: string, isDir: boolean
   }
 }
 
+/**
+ * Write a MULTI-selection attach payload: `entries` is the whole dragged set,
+ * while `path`/`isDir` still describe the item under the cursor (kept so any
+ * consumer that only understands the single-item shape still works).
+ *
+ * Kept as a separate function rather than an extra positional parameter on
+ * setAttachDragData, so the single-item signature stays unambiguous.
+ */
+export function setMultiAttachDragData(
+  dt: DataTransfer,
+  cursorPath: string,
+  isDir: boolean,
+  entries: AttachDragEntry[],
+) {
+  if (entries.length <= 1) {
+    setAttachDragData(dt, cursorPath, isDir)
+    return
+  }
+  try {
+    const payload: AttachDragData = { path: cursorPath, isDir, entries }
+    dt.setData(ATTACH_DRAG_MIME, JSON.stringify(payload))
+    dt.setData('text/plain', cursorPath)
+  } catch {
+    // dataTransfer may be unavailable in some synthetic events — ignore
+  }
+}
+
+/**
+ * Sanitize the optional multi-selection `entries` array.
+ *
+ * Returns undefined when the field is absent or holds no usable item, so a
+ * single-item payload round-trips to exactly `{path, isDir}` — callers and
+ * tests compare with toEqual, and an explicit `entries: undefined` would
+ * break them.
+ */
+function readEntries(raw: unknown): AttachDragEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const entries: AttachDragEntry[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const entry = item as AttachDragEntry
+    if (typeof entry.path !== 'string' || !entry.path) continue
+    entries.push({ path: entry.path, isDir: entry.isDir === true })
+  }
+  return entries.length ? entries : undefined
+}
+
 /** Read the internal attach payload, or null if this is not an internal drag. */
 export function readAttachDragData(dt: DataTransfer | null | undefined): AttachDragData | null {
   if (!dt) return null
@@ -49,12 +108,32 @@ export function readAttachDragData(dt: DataTransfer | null | undefined): AttachD
         result.startLine = data.startLine
         result.endLine = data.endLine
       }
+      const entries = readEntries(data.entries)
+      if (entries) result.entries = entries
       return result
     }
   } catch {
     // malformed payload — treat as non-internal
   }
   return null
+}
+
+/**
+ * Expand an attach payload into the concrete list of items to attach.
+ *
+ * A multi-selection drag attaches every entry as a whole file; a single-item
+ * drag attaches just that item, preserving its line range (a mermaid code
+ * fence attaches as a RANGE reference). This is the single place the
+ * multi-vs-single decision lives, so the drop handler stays trivial.
+ */
+export function attachDragTargets(
+  data: AttachDragData,
+): { path: string; isDir: boolean; startLine?: number; endLine?: number }[] {
+  if (data.entries?.length) {
+    // Ranges never coexist with entries; a multi-selection is whole-file only.
+    return data.entries.map(e => ({ path: e.path, isDir: e.isDir }))
+  }
+  return [{ path: data.path, isDir: data.isDir, startLine: data.startLine, endLine: data.endLine }]
 }
 
 /** Whether a drag event carries our internal attach payload (used to gate dragover/drop). */

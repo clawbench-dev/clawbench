@@ -81,6 +81,22 @@ describe('useChatContext', () => {
       expect(ctx.attachedFiles.value).toHaveLength(0)
     })
 
+    it('addAttachedFile reports whether the entry was actually added', () => {
+      expect(ctx.addAttachedFile('/some/path.txt')).toBe(true)
+      // Already attached — the drop handler uses this to say "already there"
+      // instead of claiming it added something.
+      expect(ctx.addAttachedFile('/some/path.txt')).toBe(false)
+      expect(ctx.addAttachedFile('')).toBe(false)
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+    })
+
+    it('addAttachedFile reports true for a distinct range of an already-attached path', () => {
+      expect(ctx.addAttachedFile('/src/foo.ts')).toBe(true)
+      expect(ctx.addAttachedFile('/src/foo.ts', false, 10, 20)).toBe(true)
+      expect(ctx.addAttachedFile('/src/foo.ts', false, 10, 20)).toBe(false)
+      expect(ctx.attachedFiles.value).toHaveLength(2)
+    })
+
     it('removeAttachedFile removes by index', () => {
       ctx.addAttachedFile('/a.txt')
       ctx.addAttachedFile('/b.txt')

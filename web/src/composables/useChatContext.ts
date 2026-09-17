@@ -54,11 +54,18 @@ function sameEntry(a: FileEntry, b: FileEntry): boolean {
     && (a.endLine ?? 0) === (b.endLine ?? 0)
 }
 
-function addAttachedFile(path: string, isDir: boolean = false, startLine?: number, endLine?: number) {
-  if (!path) return
+/**
+ * Attach a file entry. Returns whether it was actually added — false when the
+ * path is empty or the exact same entry is already attached. Callers that
+ * report the outcome to the user (a multi-item drop) need this to distinguish
+ * "added" from "already there".
+ */
+function addAttachedFile(path: string, isDir: boolean = false, startLine?: number, endLine?: number): boolean {
+  if (!path) return false
   const candidate: FileEntry = { path, isDir, startLine, endLine }
-  if (attachedFiles.value.some(f => sameEntry(f, candidate))) return
+  if (attachedFiles.value.some(f => sameEntry(f, candidate))) return false
   attachedFiles.value.push(candidate)
+  return true
 }
 
 /**
