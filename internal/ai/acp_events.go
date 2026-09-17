@@ -991,11 +991,19 @@ func MapACPSessionUpdateForTest(update acp.SessionUpdate, ch chan<- StreamEvent)
 // turn's requestId. Anything derived from that _meta would otherwise be
 // attributed to the current turn.
 //
-// Deliberately scoped to CodeBuddy and compared against the last COMPLETED
-// turn's requestId (not a rolling per-chunk value): genuine notifications of
-// one turn share a single requestId, so a rolling comparison would mute the
-// live stream. Safe to call from the ACP notification goroutine — it only
-// reads immutable fields and takes metaMu.
+// The comparison is against the SET of requestIds the previous turn was seen to
+// use, not against one scalar. A CodeBuddy turn is not guaranteed a single
+// requestId — every model generation / message group inside the turn gets its
+// own — and the replay carries the turn's LAST id while the accumulator keeps
+// the FIRST (first-wins merge). Comparing against a single value therefore
+// missed the replay entirely and let the stale text through; production
+// incident fffc1395 showed the new reply prefixed by the previous message's
+// full conclusion. See ACPConn.lastCompletedRequestIDs.
+//
+// Deliberately scoped to CodeBuddy: other backends' requestIds are not
+// comparable across turns, and their genuine chunks could share an id with the
+// baseline. Safe to call from the ACP notification goroutine — it only reads
+// immutable fields and takes metaMu.
 func isReplayedTurnMeta(conn *ACPConn, backendID string, meta map[string]any) bool {
 	if conn == nil || backendID != "codebuddy" || len(meta) == 0 {
 		return false
@@ -1004,6 +1012,5 @@ func isReplayedTurnMeta(conn *ACPConn, backendID string, meta map[string]any) bo
 	if rid == "" {
 		return false
 	}
-	last := conn.getLastCompletedRequestID()
-	return last != "" && rid == last
+	return conn.isCompletedTurnRequestID(rid)
 }

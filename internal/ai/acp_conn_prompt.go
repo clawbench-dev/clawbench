@@ -45,6 +45,10 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	// Reset the per-turn _meta extension accumulator so stale metadata from a
 	// previous turn cannot leak into this one's message-level metadata.
 	c.getAndClearMetaAccum()
+	// Reset the per-turn requestId set for the same reason: it must describe
+	// THIS turn only, since it becomes the replay baseline when the turn
+	// completes (see ACPConn.turnRequestIDs).
+	c.resetTurnRequestIDs()
 
 	c.mu.Lock()
 	client := c.client

@@ -1009,7 +1009,43 @@ type ACPConn struct {
 	// metadata. It must NOT be updated per-chunk (rolling): genuine chunks of
 	// one turn share a single requestId, so a rolling update would drop the
 	// whole stream. It is set only at the end of a successful turn.
+	//
+	// This is the turn's CANONICAL (first-seen) requestId — the value reported
+	// in logs and persisted as the message's trace identity. It is NOT
+	// sufficient on its own for the replay filter: see
+	// lastCompletedRequestIDs below.
 	lastCompletedRequestID string
+
+	// lastCompletedRequestIDs is the full set of requestIds observed during the
+	// last successfully completed turn, and is what the replay filter actually
+	// consults (guarded by metaMu; same lifecycle as lastCompletedRequestID).
+	//
+	// WHY A SET, NOT A SINGLE ID (production incident, session fffc1395,
+	// 2026-09-16): a CodeBuddy turn is NOT guaranteed to carry one requestId.
+	// Every model generation / message group inside a turn gets its own
+	// `codebuddy.ai/conversationRequestId`, so a long tool-using turn emits
+	// several distinct requestIds — measured across 400 session transcripts:
+	// 677 of 4891 turns (13.8%) carry two or more.
+	//
+	// Because the turn accumulator merges trace fields first-wins
+	// (metaMergeTrace), the single scalar above ends up holding the turn's
+	// FIRST requestId. The replayed chunk that CodeBuddy emits at the start of
+	// the next turn carries the previous turn's LAST requestId — so the
+	// equality check never matched, the stale chunk was forwarded, and its text
+	// was concatenated in front of the new turn's reply. Observed in the DB as
+	// the new message's first text block starting with the previous message's
+	// entire conclusion (1231 chars in that incident), while CodeBuddy's own
+	// transcript showed the two turns cleanly separated.
+	//
+	// Membership in the whole observed set closes that hole: any requestId the
+	// previous turn ever used is recognized as belonging to it.
+	lastCompletedRequestIDs map[string]struct{}
+
+	// turnRequestIDs accumulates every requestId observed so far during the
+	// CURRENT turn (guarded by metaMu). At the end of a successful turn it is
+	// snapshotted into lastCompletedRequestIDs and reset, so the baseline
+	// always describes exactly one turn and never becomes a rolling value.
+	turnRequestIDs map[string]struct{}
 
 	// skillsPrompt is the pre-built system prompt section for CodeBuddy skills,
 	// injected into each prompt so CodeBuddy can auto-load skills. Populated
@@ -1546,12 +1582,27 @@ func (c *ACPConn) GetCachedUsageState() *UsageState {
 // mergeMetaExtraction accumulates per-agent _meta extensions observed during
 // the turn. Safe to call from the ACP notification goroutine (dedicated
 // metaMu, never c.mu).
+//
+// Also records the notification's requestId into the current turn's observed-id
+// set, which becomes the replay baseline when the turn completes. Callers must
+// only reach here for GENUINE notifications: a notification already classified
+// as a replay (isReplayedTurnMeta) must not contribute its id, or the baseline
+// would grow to include the previous turn's ids and start filtering the live
+// stream.
 func (c *ACPConn) mergeMetaExtraction(ext *metaExtraction) {
 	if ext == nil {
 		return
 	}
 	c.metaMu.Lock()
 	defer c.metaMu.Unlock()
+	if ext.Trace != nil {
+		if c.turnRequestIDs == nil {
+			c.turnRequestIDs = make(map[string]struct{})
+		}
+		if rid := ext.Trace.RequestID; rid != "" {
+			c.turnRequestIDs[rid] = struct{}{}
+		}
+	}
 	if c.metaAccum == nil {
 		c.metaAccum = &metaExtraction{}
 	}
@@ -1581,26 +1632,84 @@ func (c *ACPConn) peekMetaAccumUsage() (input, output, total int) {
 	return u.InputTokens, u.OutputTokens, u.TotalTokens
 }
 
-// getLastCompletedRequestID returns the requestId of the most recently
-// completed successful turn, or "" when no turn has completed yet on this
-// connection (first prompt, or a freshly respawned connection). Safe to call
-// from the ACP notification goroutine (metaMu, never c.mu).
+// getLastCompletedRequestID returns the canonical (first-seen) requestId of the
+// most recently completed successful turn, or "" when no turn has completed yet
+// on this connection (first prompt, or a freshly respawned connection). Safe to
+// call from the ACP notification goroutine (metaMu, never c.mu).
+//
+// This is the value persisted as the message's trace identity / shown in logs.
+// For the replay decision use isCompletedTurnRequestID, which consults the
+// turn's full requestId set — a turn may carry more than one (see
+// lastCompletedRequestIDs).
 func (c *ACPConn) getLastCompletedRequestID() string {
 	c.metaMu.Lock()
 	defer c.metaMu.Unlock()
 	return c.lastCompletedRequestID
 }
 
-// setLastCompletedRequestID records the requestId of a successfully completed
-// turn. Empty rids are ignored. See lastCompletedRequestID for why this is
-// turn-granular (not per-chunk) and only written on success.
-func (c *ACPConn) setLastCompletedRequestID(rid string) {
+// isCompletedTurnRequestID reports whether rid was observed during the most
+// recently completed successful turn.
+//
+// The replay filter must ask this, not "rid == the canonical id": a CodeBuddy
+// turn can emit several requestIds (one per model generation / message group),
+// so comparing against a single value misses replays carrying any of the
+// turn's other ids. Measured on production transcripts: 13.8% of turns carry
+// two or more ids. See lastCompletedRequestIDs for the incident.
+//
+// An empty rid is never a match (a chunk without trace identity cannot be
+// attributed to a turn).
+func (c *ACPConn) isCompletedTurnRequestID(rid string) bool {
 	if rid == "" {
-		return
+		return false
 	}
 	c.metaMu.Lock()
 	defer c.metaMu.Unlock()
-	c.lastCompletedRequestID = rid
+	_, ok := c.lastCompletedRequestIDs[rid]
+	return ok
+}
+
+// resetTurnRequestIDs drops the current turn's observed-id set. Called at the
+// start of every prompt so the set describes one turn only — otherwise ids from
+// earlier turns would accumulate and the baseline would eventually match
+// unrelated turns' chunks. Safe to call from the prompt goroutine (metaMu,
+// never c.mu).
+func (c *ACPConn) resetTurnRequestIDs() {
+	c.metaMu.Lock()
+	defer c.metaMu.Unlock()
+	c.turnRequestIDs = nil
+}
+
+// setLastCompletedRequestID promotes the current turn's observed requestIds to
+// the completed-turn baseline consulted by isCompletedTurnRequestID, and resets
+// the per-turn set for the next turn.
+//
+// rid is the turn's canonical requestId (persisted / logged). It is unioned
+// with the ids accumulated during the turn so the baseline covers every id the
+// turn used, not just the one the accumulator happened to keep first.
+//
+// A turn that produced no requestId at all (rid == "" and nothing recorded)
+// leaves the previous baseline untouched: an id-less turn must not wipe the
+// filter's knowledge of the last identified turn.
+func (c *ACPConn) setLastCompletedRequestID(rid string) {
+	c.metaMu.Lock()
+	defer c.metaMu.Unlock()
+	ids := c.turnRequestIDs
+	c.turnRequestIDs = nil
+	if rid != "" {
+		if ids == nil {
+			ids = make(map[string]struct{}, 1)
+		}
+		ids[rid] = struct{}{}
+	}
+	if len(ids) == 0 {
+		// Nothing observed this turn — keep the previous baseline so a turn
+		// without trace identity cannot disable the filter.
+		return
+	}
+	c.lastCompletedRequestIDs = ids
+	if rid != "" {
+		c.lastCompletedRequestID = rid
+	}
 }
 
 // addPendingSteerID records a mid-turn injection id this host just issued, so
