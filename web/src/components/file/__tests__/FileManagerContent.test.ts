@@ -1896,7 +1896,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   // composable's showPreview) with calls from unrelated fixtures.
   const mounted: Array<{ unmount: () => void }> = []
   const mountKeyboardContent = (props = {}) => {
-    const w = mountKeyboardContent(props)
+    const w = mountContent(props)
     mounted.push(w)
     return w
   }
@@ -2233,6 +2233,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     // Verify selectedPath moved to the last entry
     expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
   })
+
   it('ArrowDown retargets the docked preview to the next file', async () => {
     mockIsPC.value = true
     mockLocalConfig.filePreviewMode = true
