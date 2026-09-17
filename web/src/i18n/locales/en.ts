@@ -156,6 +156,7 @@ export default {
       submit: 'Bind',
       nonOfficialHost: 'Non-official host: binding will send your access token to it. Confirm this is your own GitLab / GitHub instance.',
       change: 'Change repository',
+      openRepo: 'Open repository',
       unbind: 'Unbind',
     },
     detail: {

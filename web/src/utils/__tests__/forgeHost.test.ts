@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractRemoteHost, isOfficialForgeHost, isNonOfficialRemote } from '@/utils/forgeHost'
+import { extractRemoteHost, isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
 
 /**
  * These helpers decide whether the bind dialog warns before sending a
@@ -101,5 +101,51 @@ describe('isNonOfficialRemote', () => {
     // "non-official host" would be the wrong explanation for that failure.
     expect(isNonOfficialRemote('/srv/git/widgets.git')).toBe(false)
     expect(isNonOfficialRemote('')).toBe(false)
+  })
+})
+
+describe('forgeRepoWebUrl', () => {
+  it('builds the repository home page for both platforms', () => {
+    expect(forgeRepoWebUrl({ host: 'github.com', owner: 'acme', repo: 'widgets', scheme: 'https' }))
+      .toBe('https://github.com/acme/widgets')
+    expect(forgeRepoWebUrl({ host: 'gitlab.com', owner: 'group/sub', repo: 'widgets', scheme: 'https' }))
+      .toBe('https://gitlab.com/group/sub/widgets')
+  })
+
+  it('honours an http scheme so a self-hosted instance stays reachable', () => {
+    // The API scheme is the resolved one the server actually uses. Assuming
+    // https here would send the user to a URL that instance does not serve.
+    expect(forgeRepoWebUrl({ host: 'git.internal.corp:8080', owner: 'acme', repo: 'widgets', scheme: 'http' }))
+      .toBe('http://git.internal.corp:8080/acme/widgets')
+  })
+
+  it('defaults to https when the scheme is absent or unknown', () => {
+    // An ssh/scp remote states no scheme, and the binding column can be empty;
+    // the browser URL still has to be https for github.com / gitlab.com.
+    expect(forgeRepoWebUrl({ host: 'github.com', owner: 'acme', repo: 'widgets' }))
+      .toBe('https://github.com/acme/widgets')
+    expect(forgeRepoWebUrl({ host: 'github.com', owner: 'acme', repo: 'widgets', scheme: '' }))
+      .toBe('https://github.com/acme/widgets')
+    expect(forgeRepoWebUrl({ host: 'github.com', owner: 'acme', repo: 'widgets', scheme: 'HTTPS' }))
+      .toBe('https://github.com/acme/widgets')
+  })
+
+  it('escapes each path segment instead of emitting a broken URL', () => {
+    expect(forgeRepoWebUrl({ host: 'github.com', owner: 'a b', repo: 'c d', scheme: 'https' }))
+      .toBe('https://github.com/a%20b/c%20d')
+    // A GitLab subgroup is a real path separator, so it must survive as "/".
+    expect(forgeRepoWebUrl({ host: 'gitlab.com', owner: 'a b/sub', repo: 'c d', scheme: 'https' }))
+      .toBe('https://gitlab.com/a%20b/sub/c%20d')
+  })
+
+  it('returns empty when any addressing part is missing', () => {
+    // The caller hides the menu entry on '', so a partial binding must not
+    // produce a link that 404s.
+    expect(forgeRepoWebUrl(null)).toBe('')
+    expect(forgeRepoWebUrl(undefined)).toBe('')
+    expect(forgeRepoWebUrl({ host: '', owner: 'acme', repo: 'widgets' })).toBe('')
+    expect(forgeRepoWebUrl({ host: 'github.com', owner: '', repo: 'widgets' })).toBe('')
+    expect(forgeRepoWebUrl({ host: 'github.com', owner: 'acme', repo: '' })).toBe('')
+    expect(forgeRepoWebUrl({ host: 'github.com', owner: '  ', repo: 'widgets' })).toBe('')
   })
 })

@@ -210,6 +210,7 @@ function makeI18n() {
             submit: 'Bind',
             nonOfficialHost: 'non-official host',
             change: 'Change repository',
+            openRepo: 'Open repository',
             unbind: 'Unbind',
           },
           detail: { back: 'Back', openBrowser: 'Open', analyze: 'Analyze', loadOlder: 'Load older' },
@@ -519,7 +520,7 @@ describe('ForgePanelContent', () => {
     await wrapper.find('.forge-repo-badge').trigger('click')
     await new Promise(r => setTimeout(r, 100))
     const items = Array.from(document.body.querySelectorAll('.forge-repo-menu-item'))
-    expect(items.length, 'the switcher menu should list change + unbind').toBe(2)
+    expect(items.length, 'the switcher menu should list change + open + unbind').toBe(3)
     ;(items[0] as HTMLElement).click()
     await new Promise(r => setTimeout(r, 150))
 
@@ -528,6 +529,72 @@ describe('ForgePanelContent', () => {
 
     wrapper.unmount()
     document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
+    document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
+  })
+
+  it('opens the repository in a new tab from the header dropdown', async () => {
+    // The entry has to be a real anchor: the browser then handles the new tab
+    // (and middle-click / "copy link") natively, which window.open cannot.
+    state.binding.value = {
+      platform: 'gitlab',
+      host: 'git.internal.corp:8080',
+      scheme: 'http',
+      owner: 'acme',
+      repo: 'widgets',
+      slug: 'acme/widgets',
+    }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: {
+        plugins: [makeI18n()],
+        stubs: { LoadingIndicator: true, RefreshButton: true, ForgeDetail: true },
+      },
+      attachTo: document.body,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    await wrapper.find('.forge-repo-badge').trigger('click')
+    await new Promise(r => setTimeout(r, 100))
+
+    const link = document.body.querySelector('.forge-repo-menu-item[href]') as HTMLAnchorElement | null
+    expect(link, 'the dropdown must expose an anchor entry').not.toBeNull()
+    // The resolved API scheme is reused, not assumed https: this instance is
+    // reached over plain http, so an https URL would not load.
+    expect(link!.getAttribute('href')).toBe('http://git.internal.corp:8080/acme/widgets')
+    expect(link!.getAttribute('target')).toBe('_blank')
+    // reverse tabnabbing guard — the opened page must not get window.opener.
+    expect(link!.getAttribute('rel')).toContain('noopener')
+
+    wrapper.unmount()
+    document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
+  })
+
+  it('omits the open-repository entry when the binding is incomplete', async () => {
+    // A partial binding would yield a URL that 404s; hiding the entry is
+    // better than rendering a dead link.
+    state.binding.value = { platform: 'github', host: '', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: {
+        plugins: [makeI18n()],
+        stubs: { LoadingIndicator: true, RefreshButton: true, ForgeDetail: true },
+      },
+      attachTo: document.body,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    await wrapper.find('.forge-repo-badge').trigger('click')
+    await new Promise(r => setTimeout(r, 100))
+
+    const items = Array.from(document.body.querySelectorAll('.forge-repo-menu-item'))
+    expect(items.length, 'only change + unbind remain').toBe(2)
+    expect(document.body.querySelector('.forge-repo-menu-item[href]')).toBeNull()
+
+    wrapper.unmount()
     document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
   })
 
@@ -666,9 +733,10 @@ describe('ForgePanelContent', () => {
 
     await wrapper.find('.forge-repo-badge').trigger('click')
     const items = wrapper.findAll('.forge-repo-menu-item')
-    expect(items).toHaveLength(2)
+    expect(items).toHaveLength(3)
     expect(items[0].text()).toContain('Change repository')
-    expect(items[1].text()).toContain('Unbind')
+    expect(items[1].text()).toContain('Open repository')
+    expect(items[2].text()).toContain('Unbind')
   })
 
   it('unbind calls the delete endpoint and refreshes', async () => {
@@ -682,7 +750,8 @@ describe('ForgePanelContent', () => {
     })
     await new Promise(r => setTimeout(r, 0))
     await wrapper.find('.forge-repo-badge').trigger('click')
-    await wrapper.findAll('.forge-repo-menu-item')[1].trigger('click')
+    // Unbind is the last entry; the open-repository anchor sits before it.
+    await wrapper.findAll('.forge-repo-menu-item')[2].trigger('click')
     await new Promise(r => setTimeout(r, 0))
     expect(mockDeleteBinding).toHaveBeenCalledTimes(1)
     // refresh() re-reads the binding so the unbound card takes over.

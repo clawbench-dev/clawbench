@@ -84,3 +84,33 @@ export function isNonOfficialRemote(raw: string): boolean {
     if (!host) return false
     return !isOfficialForgeHost(host)
 }
+
+/**
+ * forgeRepoWebUrl builds the browser URL of a bound repository's home page.
+ *
+ * The binding carries everything needed to address it: host (identity, may
+ * include a port), owner, repo and the resolved API scheme. Reusing the API
+ * scheme keeps a self-hosted instance on plain HTTP reachable — assuming
+ * https there would send the user to a URL the server does not serve.
+ *
+ * Returns '' when the binding is incomplete, so callers can hide the link
+ * rather than render a URL that would 404.
+ */
+export function forgeRepoWebUrl(
+    binding: { host?: string; owner?: string; repo?: string; scheme?: string } | null | undefined,
+): string {
+    if (!binding) return ''
+    const host = (binding.host ?? '').trim()
+    const owner = (binding.owner ?? '').trim()
+    const repo = (binding.repo ?? '').trim()
+    if (!host || !owner || !repo) return ''
+
+    const scheme = (binding.scheme ?? '').trim().toLowerCase() === 'http' ? 'http' : 'https'
+    // Per-segment escaping, not encodeURIComponent on the whole owner: GitLab
+    // nests repositories in subgroups, and escaping the "/" would produce a
+    // path the instance does not serve.
+    const path = [owner, repo]
+        .map(part => part.split('/').map(encodeURIComponent).join('/'))
+        .join('/')
+    return `${scheme}://${host}/${path}`
+}

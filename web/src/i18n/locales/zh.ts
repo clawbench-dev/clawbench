@@ -159,6 +159,7 @@ export default {
       submit: '绑定',
       nonOfficialHost: '非官方主机：绑定后会向该主机发送访问令牌。确认这是你自己的 GitLab / GitHub 实例。',
       change: '更换仓库',
+      openRepo: '打开仓库',
       unbind: '解绑',
     },
     detail: {
