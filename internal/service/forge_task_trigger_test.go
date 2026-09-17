@@ -132,7 +132,7 @@ func TestForgeTaskTrigger_PipelineEventFiresTask(t *testing.T) {
 	})
 
 	tr.HandleChange(context.Background(), triggerRepo(), pipelineTriggerItem(),
-		forge.Change{Type: forge.EventPipeline, PipelineRunID: 42, PipelineStatus: "failure"})
+		forge.Change{Type: forge.EventPipeline, PipelineRunID: 42, Pipeline: &forge.PipelineRun{ID: 42, Status: forge.PipelineFailure}})
 
 	require.Eventually(t, func() bool {
 		mu.Lock()
@@ -237,7 +237,7 @@ func TestForgeTaskTrigger_PipelineDebounceIsPerRun(t *testing.T) {
 
 	for _, runID := range []int64{100, 101} {
 		tr.HandleChange(context.Background(), triggerRepo(), pipelineTriggerItem(),
-			forge.Change{Type: forge.EventPipeline, PipelineRunID: runID, PipelineStatus: "success"})
+			forge.Change{Type: forge.EventPipeline, PipelineRunID: runID, Pipeline: &forge.PipelineRun{ID: runID, Status: forge.PipelineSuccess}})
 	}
 
 	require.Eventually(t, func() bool {
@@ -270,7 +270,7 @@ func TestForgeTaskTrigger_PipelineDebounceStillCollapsesSameRun(t *testing.T) {
 
 	for range 3 {
 		tr.HandleChange(context.Background(), triggerRepo(), pipelineTriggerItem(),
-			forge.Change{Type: forge.EventPipeline, PipelineRunID: 42, PipelineStatus: "success"})
+			forge.Change{Type: forge.EventPipeline, PipelineRunID: 42, Pipeline: &forge.PipelineRun{ID: 42, Status: forge.PipelineSuccess}})
 	}
 
 	time.Sleep(150 * time.Millisecond)
