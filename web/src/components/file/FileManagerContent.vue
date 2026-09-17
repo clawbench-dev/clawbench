@@ -381,6 +381,33 @@
       {{ t('file.search.truncated') }}
     </div>
     </div>
+
+    <!-- Resident search dock. It belongs to the listing, not to the panel: it
+         sits directly under the list/grid and therefore above the docked
+         preview pane, so opening a preview never pushes it around. -->
+    <div class="fs-nav-bottom" @keydown.esc.stop="onSearchDockEscape">
+      <div class="fs-input-row">
+        <SearchInput
+          ref="searchInputRef"
+          v-model="search.state.query"
+          :placeholder="searchPlaceholder"
+          @enter="confirmSelected"
+          @down="moveSelection(1)"
+          @up="moveSelection(-1)"
+        />
+        <button class="fs-toggle-btn" :class="{ active: search.state.exact }" :title="t('file.search.exact')" @click="toggleExact">
+          <WholeWord :size="15" />
+        </button>
+        <!-- Recursive + global are paired: global implies recursive, so they sit
+             together (recursive to the left of global). -->
+        <button class="fs-toggle-btn" :class="{ active: isRecursiveEffective }" :disabled="isGlobalScope" :title="t('file.search.recursive')" @click="toggleRecursive">
+          <FolderTree :size="15" />
+        </button>
+        <button class="fs-toggle-btn" :class="{ active: search.state.scope === 'global' }" :title="t('file.search.scopeGlobal')" @click="toggleScope">
+          <Globe :size="15" />
+        </button>
+      </div>
+    </div>
       </template>
 
       <template #bottom>
@@ -408,31 +435,6 @@
         </div>
       </template>
     </SplitView>
-
-    <!-- Bottom dock: resident search bar -->
-    <div class="fs-nav-bottom" @keydown.esc.stop="onSearchDockEscape">
-      <div class="fs-input-row">
-        <SearchInput
-          ref="searchInputRef"
-          v-model="search.state.query"
-          :placeholder="searchPlaceholder"
-          @enter="confirmSelected"
-          @down="moveSelection(1)"
-          @up="moveSelection(-1)"
-        />
-        <button class="fs-toggle-btn" :class="{ active: search.state.exact }" :title="t('file.search.exact')" @click="toggleExact">
-          <WholeWord :size="15" />
-        </button>
-        <!-- Recursive + global are paired: global implies recursive, so they sit
-             together (recursive to the left of global). -->
-        <button class="fs-toggle-btn" :class="{ active: isRecursiveEffective }" :disabled="isGlobalScope" :title="t('file.search.recursive')" @click="toggleRecursive">
-          <FolderTree :size="15" />
-        </button>
-        <button class="fs-toggle-btn" :class="{ active: search.state.scope === 'global' }" :title="t('file.search.scopeGlobal')" @click="toggleScope">
-          <Globe :size="15" />
-        </button>
-      </div>
-    </div>
 
     <!-- Context menu -->
     <Teleport to="body">
@@ -2592,9 +2594,8 @@ function scrollSelectedIntoView(path) {
    `display: flex` is set here UNCONDITIONALLY, not left to SplitView's active
    state: when the split is disabled (preview closed) SplitView's pane wrappers
    become `display: contents`, so the slot content's layout parent is this root.
-   Without flex here the list's `flex: 1; min-height: 0` is inert, its height
-   grows to the content height, and it overflows the panel — painting over the
-   resident search bar below. */
+   Without flex here the list's `flex: 1; min-height: 0` is inert and its height
+   grows to the content height, overflowing the panel. */
 .fm-split {
   display: flex;
   flex-direction: column;
@@ -3402,9 +3403,11 @@ function scrollSelectedIntoView(path) {
     opacity: 0;
 }
 
-/* ── Bottom dock: resident search bar ── */
+/* ── Resident search bar (listing footer) ── */
 /* Same material as the top toolbar (.dir-toolbar, --bg-tertiary) so the two
-   bars read as a matched pair framing the listing. */
+   bars read as a matched pair framing the listing. Lives inside the top pane,
+   directly under the list/grid — so the docked preview pane opens below it
+   rather than pushing it to the bottom of the panel. */
 .fs-nav-bottom {
     display: flex;
     flex-direction: column;

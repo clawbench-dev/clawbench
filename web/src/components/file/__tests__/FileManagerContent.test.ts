@@ -4533,13 +4533,12 @@ describe('FileManagerContent — docked preview pane', () => {
   })
 })
 
-describe('FileManagerContent — panel layout (search bar is its own region)', () => {
+describe('FileManagerContent — panel layout (search bar belongs to the listing)', () => {
   it('keeps the split a bounded flex column when preview mode is off', () => {
     // Regression: with the split disabled, SplitView's pane wrappers become
     // `display: contents`, so the slot content's layout parent is the split
     // root. Without `display:flex` on that root the list's `flex:1;
-    // min-height:0` is inert, its height grows to the content height, and it
-    // overflows the panel — painting over the resident search bar below.
+    // min-height:0` is inert and its height grows to the content height.
     // jsdom does not load SFC <style>, so assert against the source.
     const src = readSource()
     const m = src.match(/\.fm-split\s*\{([^}]*)\}/)
@@ -4550,29 +4549,39 @@ describe('FileManagerContent — panel layout (search bar is its own region)', (
     expect(body).toMatch(/min-height:\s*0/)
   })
 
-  it('renders the search dock as a sibling after the split, not inside it', () => {
+  it('renders the search dock inside the top pane, above the preview pane', () => {
     const wrapper = mountContent()
     const split = wrapper.find('.fm-split')
+    const top = wrapper.find('.fm-split > .split-view__left')
+    const bottom = wrapper.find('.fm-split > .split-view__right')
     const searchDock = wrapper.find('.fs-nav-bottom')
 
     expect(split.exists()).toBe(true)
     expect(searchDock.exists()).toBe(true)
-    // The search bar must NOT live inside the split: it owns a dedicated band
-    // of the panel, so the split can never cover it.
-    expect(split.element.contains(searchDock.element)).toBe(false)
-    // And the split must come before the dock in document order.
-    const order = split.element.compareDocumentPosition(searchDock.element)
-    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The dock belongs to the listing: it must sit inside the split, and
+    // specifically inside the top pane, so it stays directly under the list
+    // and above the preview pane.
+    expect(split.element.contains(searchDock.element)).toBe(true)
+    if (top.exists()) expect(top.element.contains(searchDock.element)).toBe(true)
+    if (bottom.exists()) expect(bottom.element.contains(searchDock.element)).toBe(false)
   })
 
-  it('mounts the search dock outside the top/bottom panes', () => {
+  it('keeps the search dock above the docked preview pane when it is open', async () => {
     mockIsPC.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
-    const top = wrapper.find('.fm-split > .split-view__left')
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
     const dock = wrapper.find('.fs-nav-bottom')
-    // Even with the docked pane open, the dock stays out of the panes.
-    if (top.exists()) expect(top.element.contains(dock.element)).toBe(false)
+    const pane = wrapper.find('.fm-preview-pane')
+    expect(pane.exists()).toBe(true)
+    // Document order decides the visual order in the top/bottom split: the
+    // dock must come first, so it renders above the preview pane.
+    const order = dock.element.compareDocumentPosition(pane.element)
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(pane.element.contains(dock.element)).toBe(false)
   })
 })
 
