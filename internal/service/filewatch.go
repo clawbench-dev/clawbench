@@ -73,10 +73,21 @@ func StopFileWatcher() {
 	fw := GlobalFileWatcher
 	GlobalFileWatcher = nil
 
+	// Stop the event loop first so no further debounce work is scheduled.
 	close(fw.done)
-	_ = fw.watcher.Close()
+
+	// Tear down client state under fw.mu, but close the fsnotify watcher only
+	// AFTER releasing it.
+	//
+	// Every fsnotify Remove/Add runs under fw.mu, so acquiring the lock here
+	// waits for any in-flight call to finish. Closing the watcher first races
+	// with them: fsnotify's Windows backend checks isClosed(), then queues the
+	// request and blocks on a reply that the (by then exiting) reader goroutine
+	// never sends — so that caller never returns, and this function, waiting on
+	// the same mutex, hangs with it. Draining the clients map under the lock
+	// additionally means a later UnregisterClient finds no entry and skips its
+	// Remove altogether.
 	fw.mu.Lock()
-	defer fw.mu.Unlock()
 	for id, c := range fw.clients {
 		close(c.pushCh)
 		delete(fw.clients, id)
@@ -85,6 +96,9 @@ func StopFileWatcher() {
 		timer.Stop()
 		delete(fw.debounceTimers, key)
 	}
+	fw.mu.Unlock()
+
+	_ = fw.watcher.Close()
 	slog.Info("file watcher stopped")
 }
 
