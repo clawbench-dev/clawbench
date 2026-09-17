@@ -1,47 +1,31 @@
 import { describe, expect, it } from 'vitest'
-import {
-  initialThinkingScrollState,
-  shouldFollowThinking,
-  updateThinkingUserLeftBottom,
-  RESUME_FOLLOW_PX,
-} from '../thinkingScroll'
+import { isThinkingUserAwayFromBottom, RESUME_FOLLOW_PX } from '../thinkingScroll'
 
-describe('updateThinkingUserLeftBottom', () => {
-  it('any upward drag latches follow off, regardless of distance from the bottom', () => {
-    expect(updateThinkingUserLeftBottom(false, { scrollingUp: true, distFromBottom: 0 })).toBe(true)
-    expect(updateThinkingUserLeftBottom(false, { scrollingUp: true, distFromBottom: 120 })).toBe(true)
-    expect(updateThinkingUserLeftBottom(false, { scrollingUp: true, distFromBottom: 900 })).toBe(true)
+describe('isThinkingUserAwayFromBottom', () => {
+  it('is false at or inside the resume band', () => {
+    expect(isThinkingUserAwayFromBottom(0)).toBe(false)
+    expect(isThinkingUserAwayFromBottom(RESUME_FOLLOW_PX)).toBe(false)
   })
 
-  it('an upward drag keeps the latch locked when already locked', () => {
-    expect(updateThinkingUserLeftBottom(true, { scrollingUp: true, distFromBottom: 700 })).toBe(true)
-    expect(updateThinkingUserLeftBottom(true, { scrollingUp: true, distFromBottom: 10 })).toBe(true)
+  it('is true only beyond the band', () => {
+    expect(isThinkingUserAwayFromBottom(RESUME_FOLLOW_PX + 1)).toBe(true)
+    expect(isThinkingUserAwayFromBottom(900)).toBe(true)
   })
 
-  it('scrolling back within the resume band unlocks follow', () => {
-    expect(updateThinkingUserLeftBottom(true, { scrollingUp: false, distFromBottom: 0 })).toBe(false)
-    expect(updateThinkingUserLeftBottom(true, { scrollingUp: false, distFromBottom: RESUME_FOLLOW_PX })).toBe(false)
+  it('does not latch on a 1px layout nudge while resting at the bottom', () => {
+    // Same regression as the outer chat list: the box is rewritten on every
+    // streaming batch, the browser keeps the old scrollTop, and a small
+    // downward-then-upward correction must not read as "user scrolled up".
+    expect(isThinkingUserAwayFromBottom(1)).toBe(false)
+    expect(isThinkingUserAwayFromBottom(-0)).toBe(false)
   })
 
-  it('resting above the resume band but not scrolled up stays locked when already locked', () => {
-    // Mirrors the chat-list guard: a non-upward scroll that is NOT back at the
-    // bottom must not silently resume following (would yank a reading user).
-    expect(updateThinkingUserLeftBottom(true, { scrollingUp: false, distFromBottom: 150 })).toBe(true)
+  it('has no direction input at all', () => {
+    expect(isThinkingUserAwayFromBottom.length).toBeLessThanOrEqual(2)
   })
 
-  it('downward scrolls elsewhere leave the latch unchanged', () => {
-    expect(updateThinkingUserLeftBottom(false, { scrollingUp: false, distFromBottom: 500 })).toBe(false)
-    expect(updateThinkingUserLeftBottom(true, { scrollingUp: false, distFromBottom: 500 })).toBe(true)
-  })
-})
-
-describe('shouldFollowThinking', () => {
-  it('follows while the user has not scrolled up', () => {
-    expect(shouldFollowThinking(initialThinkingScrollState())).toBe(true)
-    expect(shouldFollowThinking({ userLeftBottom: false })).toBe(true)
-  })
-
-  it('never follows once the user scrolled up to read earlier reasoning', () => {
-    expect(shouldFollowThinking({ userLeftBottom: true })).toBe(false)
+  it('a custom resumePx overrides the default band', () => {
+    expect(isThinkingUserAwayFromBottom(10, 50)).toBe(false)
+    expect(isThinkingUserAwayFromBottom(700, 50)).toBe(true)
   })
 })

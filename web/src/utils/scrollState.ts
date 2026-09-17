@@ -1,127 +1,117 @@
 /**
- * Scroll ownership state machine + pure decision functions for the chat message list.
+ * Scroll decision functions for the chat message list.
  *
  * Contract (what the user expects):
- * - The user has NOT deliberately scrolled away → always pin to the bottom,
- *   no matter how often or when content grows (streaming tokens, throttled
- *   render flush, lazy-loaded original text).
- * - Any upward drag latches "left the bottom" immediately (direction-driven,
- *   distance-independent). While latched, streamed pins never yank the user
- *   back — no matter how much content arrives — until they scroll back to
- *   within RESUME_FOLLOW_PX of the bottom (an explicit return).
- * - Force pins (send message, session switch) override the "left the bottom"
- *   latch — those are explicit user actions expecting to see the bottom — but
- *   never override an actively-scrolling hand.
+ * - While the user has NOT deliberately scrolled away, content growth at ANY
+ *   time (streaming tokens, throttled render flush, lazy-loaded original text)
+ *   pins the view to the bottom.
+ * - The user counts as "away" when, at the moment they last touched the
+ *   scroll surface, the viewport sat farther than RESUME_FOLLOW_PX from the
+ *   bottom. Scrolling back within that band restores follow.
+ *
+ * ## Why the latch is sampled ONLY on real user input
+ *
+ * The viewport moves for two reasons that look identical from the scroll
+ * offset alone:
+ *   1. the user dragged/wheeled it, or
+ *   2. the content grew, so the browser moved the offset (scroll anchoring,
+ *      `scrollTop` clamping) — possibly by 1px, in either direction.
+ *
+ * Case 2 must NOT change the latch. Sampling it there is what produced the
+ * "stuck mid-conversation" bug: a 1px upward drift during streaming was read
+ * as a deliberate scroll away, the latch flipped on while the user was sitting
+ * at the very bottom, and every subsequent follow pin was rejected while the
+ * content kept growing below the viewport.
+ *
+ * So the latch is recomputed from the geometry ONLY inside a user-input window
+ * (touch drag / wheel / mouse drag). Content-driven scroll events never touch
+ * it. This is also why there is no direction test: within a real gesture,
+ * distance from the bottom is the whole question — a 1px jitter while the
+ * finger rests must not flip the latch, and a genuine 300px drag must.
  *
  * All decision logic is pure (no Vue/DOM) so it is unit-testable.
  */
 
-export type ScrollOwner = 'user' | 'programmatic' | 'idle'
-
 export interface ScrollStateInput {
-  /** Who owns the scroll viewport right now. */
-  owner: ScrollOwner
   /** True while a touch drag is active (touchstart … touchend). */
   userTouching: boolean
-  /** Date.now() of the most recent scroll event. */
-  lastScrollAt: number
-  /** The current time (Date.now()) to compare against lastScrollAt. */
-  now: number
+  /** True while a wheel gesture is active (decays SCROLL_STOP_MS after the last wheel event). */
+  wheelActive: boolean
+  /** True while a mouse button is held on the list (mousedown … mouseup). */
+  mouseDownActive: boolean
   /**
-   * True when the user has deliberately scrolled away from the bottom during a
-   * stream. While set, non-force pins are suppressed — a user reading older
-   * content must never be yanked back to the bottom. Cleared when the user
-   * scrolls back to within RESUME_FOLLOW_PX of the bottom, switches session,
-   * or taps the bottom FAB.
+   * True when the user last left the viewport farther than RESUME_FOLLOW_PX
+   * from the bottom. While set, non-force pins are suppressed — a user reading
+   * older content must never be yanked back to the bottom.
    */
   userLeftBottom?: boolean
 }
 
-/** Silent window after the last scroll event before we consider scrolling "stopped". */
-export const SCROLL_STOP_MS = 250
 /**
- * Distance from the bottom (px) the user must scroll past before they count as
- * having "left the bottom" (deliberately scrolled away). Generous on purpose:
- * a finger twitch or half-fling must NOT flip the app out of follow mode.
- * Shared as the single source of truth by ChatMessageList (handleScroll latch,
- * scroll anchoring, array-replacement restore) and ChatPanelContent (load-more
- * anchoring).
+ * How long a wheel gesture keeps counting as "the user is scrolling" after its
+ * last event. Wheel has no end event, so the flag decays on this window. It is
+ * refreshed ONLY by wheel events — never by scroll events, which the content
+ * also produces; refreshing it there would keep it alive forever during a
+ * stream and starve every force pin (the "sent message but the reply is never
+ * followed" bug).
+ */
+export const SCROLL_STOP_MS = 250
+
+/**
+ * Distance from the bottom (px) below which the user counts as "at the bottom".
+ * Used by load-more anchoring; the follow latch uses the tighter
+ * RESUME_FOLLOW_PX.
  */
 export const NEAR_BOTTOM_PX = 200
 
 /**
- * Distance from the bottom (px) the user must scroll BACK to before stream
- * follow resumes after they deliberately scrolled away. Deliberately small:
- * while "leaving the bottom" is a one-way latch (any upward drag locks follow
- * off immediately — see updateUserLeftBottom), "returning to the bottom" is an
- * explicit gesture, so the unlock band is only as wide as a natural
- * swipe-back-to-bottom lands in (≈2–3 text lines). A wide band here would
- * re-introduce the snap-back jitter: the user resting anywhere inside it during
- * a stream would get yanked to the bottom again.
+ * The single follow threshold. Sampled on user input: within this distance of
+ * the bottom, follow is ON; beyond it, follow is OFF.
+ *
+ * Deliberately small (≈2–3 text lines): it is the only band, so a wide value
+ * would mean a user resting mid-list keeps getting yanked to the bottom. The
+ * trade-off is that letting go inside the band resumes follow.
  */
 export const RESUME_FOLLOW_PX = 50
 
 /**
- * User intent latched from a scroll event: decides whether the user has
- * "left the bottom" of the chat.
- *
- * Two ways to flip the latch:
- * - Any upward drag (scrollingUp) IMMEDIATELY sets it — the user is trying to
- *   read older content, and a streamed pin must never fight them. Unlike the
- *   old behavior (latch only past NEAR_BOTTOM_PX), distance is irrelevant here:
- *   a user who stops mid-drag inside the near-bottom band stays locked, so the
- *   streamed pin can't yank them (the "很难拖上去、抽搐" snap-back bug).
- * - Scrolling back to within RESUME_FOLLOW_PX of the bottom clears it — the
- *   user has explicitly returned and expects follow to resume.
- *
- * Anything else (downward drag mid-list, content-growth scroll, programmatic
- * jumps) leaves the latch unchanged.
+ * Whether the viewport at the given distance from the bottom counts as
+ * "the user has left the bottom". Sampled on user input only — see the module
+ * docblock for why content-driven scroll events must not call this.
  */
-export function updateUserLeftBottom(
-  current: boolean,
-  args: {
-    /** True when the scroll event moved toward the top (scrollTop decreased). */
-    scrollingUp: boolean
-    /** Distance from the bottom at the moment of the scroll event. */
-    distFromBottom: number
-    /** Unlock band width; defaults to RESUME_FOLLOW_PX. */
-    resumePx?: number
-  },
+export function isUserAwayFromBottom(
+  distFromBottom: number,
+  resumePx: number = RESUME_FOLLOW_PX,
 ): boolean {
-  if (args.scrollingUp) return true
-  if (args.distFromBottom <= (args.resumePx ?? RESUME_FOLLOW_PX)) return false
-  return current
+  return distFromBottom > resumePx
 }
 
 /**
- * Whether the user is currently scrolling or in a fling. True while the touch
- * is held, or while scroll events keep arriving (owner === 'user' and the last
- * event was within SCROLL_STOP_MS). A fling keeps firing scroll events, so the
- * window auto-extends for the whole fling duration.
+ * Whether the user is currently driving the scroll surface with their hand.
+ * True while a touch is held, a wheel gesture is live, or a mouse button is
+ * down. Every flag is event-bounded: touch by touchend/touchcancel, mouse by
+ * mouseup, wheel by the decay window above. None of them is refreshed by
+ * content-growth scroll events, so this can never latch on permanently.
  */
 export function isUserScrolling(s: ScrollStateInput): boolean {
-  if (s.userTouching) return true
-  return s.owner === 'user' && s.now - s.lastScrollAt < SCROLL_STOP_MS
+  return s.userTouching || s.wheelActive || s.mouseDownActive
 }
 
 /**
  * Whether a "pin to bottom" request may execute right now.
  *
- * Two things stop a pin:
- * - The user is actively scrolling/flinging — never fight their hand. This
- *   applies to BOTH force and non-force pins; a force pin is deferred until the
- *   scroll stops rather than applied over the user's finger.
- * - The user has deliberately scrolled away from the bottom (userLeftBottom).
- *   They are reading older content and must never be yanked back — unless this
- *   is a force pin (send message / session switch), which is an explicit user
- *   action that expects to see the bottom.
- *
- * Everything else — streaming, lazy render growth, distance from the bottom —
- * pins unconditionally. If the user never scrolled away, content growing at any
- * time must keep the view glued to the bottom.
+ * - A finger on the screen always wins: never move the viewport out from under
+ *   a held touch, not even for a force pin. (Wheel and mouse-drag are NOT
+ *   gates — a force pin is an explicit user action and the alternative is
+ *   deferring it to a signal that may never arrive.)
+ * - A non-force pin is suppressed while the user is away from the bottom; a
+ *   force pin (send message / session switch / answer card) overrides that —
+ *   the user took an action and expects to see the bottom.
+ * - Everything else pins unconditionally: if the user never left, content
+ *   growing at any time keeps the view glued to the bottom.
  */
 export function shouldPin(s: ScrollStateInput, force: boolean): boolean {
-  if (isUserScrolling(s)) return false
+  if (s.userTouching) return false
   if (s.userLeftBottom && !force) return false
   return true
 }
