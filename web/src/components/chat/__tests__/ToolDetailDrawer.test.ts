@@ -24,6 +24,7 @@ vi.mock('@/stores/app.ts', () => ({ store: { state: {} } }))
 
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import { restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 const i18n = createI18n({
   legacy: false,
@@ -177,5 +178,33 @@ describe('ToolDetailDrawer — restore with no rendered body', () => {
     await wrapper.setProps({ toolSummary: 'changed' })
     await nextTick()
     expect(restoreAskStatesInContainer).not.toHaveBeenCalled()
+  })
+})
+
+// On desktop the drawer renders as a centered card (BottomSheet's wide-screen
+// mode) and the tool body is exactly what needs the room: diffs, terminal
+// output and markdown all wrap badly in the default 624px card. The width comes
+// from `--modal-max-width`, which modal-card.css reads on .bs-panel.bs-wide-auto
+// — so it must be set by a non-scoped block (BottomSheet renders inside
+// <Teleport to="body">, where this component's scope attribute never lands) on
+// the panelClass passed to BottomSheet.
+describe('ToolDetailDrawer — wide desktop card', () => {
+  const src = readWebFile('src/components/chat/ToolDetailDrawer.vue')
+
+  it('passes a panelClass to BottomSheet so the width rule can reach the panel', () => {
+    const m = src.match(/<BottomSheet\b[^>]*>/)
+    expect(m, 'the BottomSheet element must exist').not.toBeNull()
+    expect(m![0]).toContain('tool-detail-sheet')
+  })
+
+  it('widens the card via --modal-max-width in a non-scoped style block', () => {
+    const unscoped = src.slice(src.indexOf('<style>'))
+    expect(unscoped, 'the width rule must be non-scoped to reach the teleported panel')
+      .toMatch(/\.tool-detail-sheet\s*\{[^}]*--modal-max-width:\s*960px/)
+  })
+
+  it('keeps the panelClass out of the scoped block, where it would never match', () => {
+    const scoped = src.slice(src.indexOf('<style scoped>'), src.indexOf('<style>'))
+    expect(scoped).not.toContain('--modal-max-width')
   })
 })

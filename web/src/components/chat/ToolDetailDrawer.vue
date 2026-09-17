@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="show" auto @close="$emit('close')">
+  <BottomSheet :open="show" auto panel-class="tool-detail-sheet" @close="$emit('close')">
     <template #header>
       <div class="tool-detail-header" :data-category="category">
         <component :is="headerIcon" :size="16" class="tool-detail-header-icon" />
@@ -240,6 +240,15 @@ onUpdated(restoreAskStates)
 </style>
 
 <style>
+/* Wide-screen: the tool detail dialog benefits from extra width — inputs and
+   outputs carry diffs, terminal bodies and markdown that wrap badly in a narrow
+   card. Mirrors .session-search-sheet. Only takes effect in BottomSheet's
+   wide-screen card mode (the narrow-mode bottom sheet ignores --modal-max-width).
+   Non-scoped because the class is bound inside BottomSheet's own template. */
+.tool-detail-sheet {
+  --modal-max-width: 960px;
+}
+
 /* Non-scoped styles for v-html penetration — tool detail rendering in bottom sheet.
    Content blocks (output code, terminal bodies, prompt cards, message bodies) are
    deliberately square; only tags, badges and icon buttons keep a small radius. */
