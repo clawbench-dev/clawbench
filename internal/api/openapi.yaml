@@ -2270,6 +2270,11 @@ paths:
         （强制下载）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
         token 不存在一律 404，零信息暴露。
 
+        **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
+        `{token}/file` 需要把内容内联进 JSON，故对超过内联上限（10MB）的文件
+        返回 200 但 `content` 为空、`tooLarge: true`（仅元数据），由分享页降级为
+        下载入口；`{token}/download` 与 `{token}/local/...` 流式返回，无大小上限。
+
         `?path=` 仅接受落在**该分享自身范围**内的绝对路径，范围在创建分享时确定并
         随分享记录持久化（文件在所选项目内 → 项目根；否则 → 该文件所在目录）。
         范围之外的路径返回 404，与 `RootPaths` 无关。
@@ -2277,7 +2282,9 @@ paths:
       security: []
       responses:
         "200":
-          description: 分享内容
+          description: |
+            分享内容。`content` 为空且 `tooLarge: true` 表示文件超过内联上限，
+            仅返回元数据（`name`/`path`/`size`/`supported`），需改用 `download` 子路径。
         "404":
           $ref: "#/components/responses/Error"
 

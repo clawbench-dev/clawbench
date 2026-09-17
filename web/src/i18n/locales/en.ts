@@ -2784,6 +2784,7 @@ export default {
     invalidUrl: 'Invalid link format',
     notFound: 'This link does not exist or has been revoked',
     noPreview: 'This file type cannot be previewed online. Download it to view.',
+    tooLarge: 'This file is too large to preview online. Download it to view.',
     renderedView: 'Rendered preview',
     sourceView: 'View source',
   },

@@ -56,7 +56,7 @@
         <template v-else-if="file">
           <!-- Markdown rendered preview (default) -->
           <MarkdownPreview
-            v-if="isMarkdown && viewMode === 'rendered'"
+            v-if="isMarkdown && canRenderInline && viewMode === 'rendered'"
             :file="file"
             view-mode="rendered"
             :word-wrap="wordWrap"
@@ -116,13 +116,13 @@
           />
 
           <!-- OpenAPI / Swagger spec (rendered docs) -->
-          <div v-else-if="isOpenapi && viewMode === 'rendered'" class="share-fill-viewer">
+          <div v-else-if="isOpenapi && canRenderInline && viewMode === 'rendered'" class="share-fill-viewer">
             <OpenApiPreview :file="file" />
           </div>
 
           <!-- HTML rendered -->
           <iframe
-            v-else-if="isHtml && viewMode === 'rendered'"
+            v-else-if="isHtml && canRenderInline && viewMode === 'rendered'"
             class="share-html-iframe"
             :srcdoc="file.content"
             sandbox="allow-scripts"
@@ -145,7 +145,7 @@
           <!-- Binary / too-large / unsupported fallback: download -->
           <div v-else class="share-center-hint share-unsupported">
             <FileIcon :path="file.name" :size="48" />
-            <div class="share-error-desc">{{ t('share.noPreview') }}</div>
+            <div class="share-error-desc">{{ file.tooLarge ? t('share.tooLarge') : t('share.noPreview') }}</div>
             <a class="share-download-btn" :href="downloadUrl" :download="file.name">
               <Download :size="14" />
               {{ t('common.download') }}
@@ -301,10 +301,16 @@ const isTextContent = computed(() => {
   return typeof file.value.content === 'string' && file.value.content.length > 0
 })
 
+/** Whether the file's content is present in this response and therefore
+ *  renderable in place. False for metadata-only responses (binary sniffed, or
+ *  over the backend's inline cap → tooLarge), which fall back to download. */
+const canRenderInline = computed(() => !file.value?.tooLarge)
+
 /** Whether the file has a rendered preview AND a readable source (markdown
  *  rendered preview, HTML rendered iframe, OpenAPI/Swagger docs) — i.e. the
  *  source/rendered toggle button is shown. */
-const showToggleView = computed(() => isTextContent.value && (isMarkdown.value || isHtml.value || isOpenapi.value))
+const showToggleView = computed(() =>
+  isTextContent.value && canRenderInline.value && (isMarkdown.value || isHtml.value || isOpenapi.value))
 
 /** Whether the current file body is rendered through CodeMirrorViewer (the raw
  *  source view). True for code/plain text files and for markdown/html/openapi
