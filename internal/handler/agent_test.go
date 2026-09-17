@@ -696,9 +696,70 @@ func TestAgentRefreshModels_Success(t *testing.T) {
 	require.True(t, ok, "response should contain models array")
 	assert.Len(t, models, 2)
 
+	// The pure CLI list travels alongside so the client can rebase its CLI
+	// baseline for a later transport switch.
+	cliModels, ok := resp["cliModels"].([]any)
+	require.True(t, ok, "response should contain cliModels array")
+	assert.Len(t, cliModels, 2)
+
 	// Verify in-memory agent models were updated
 	assert.Equal(t, "glm-6", model.Agents["codebuddy"].Models[0].ID)
 	assert.Equal(t, "glm-5.1", model.Agents["codebuddy"].Models[1].ID)
+}
+
+// TestAgentRefreshModels_ResolvesAgainstCachedACPModels verifies that a manual
+// refresh reports the ACP-resolved list as `models`, not the raw CLI list.
+//
+// The discovered list is only the CLI skeleton: when the agent's runtime has
+// already reported its own model list, ACP membership is authoritative. Before
+// this, refresh-models answered with the raw CLI list, so refreshing in ACP
+// transport silently replaced the list of models the agent can actually run.
+func TestAgentRefreshModels_ResolvesAgainstCachedACPModels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// codebuddy must advertise ACP so its cached ACP state is consulted.
+	codebuddyAgent := model.Agents["codebuddy"]
+	codebuddyAgent.AcpCommand = "codebuddy --acp"
+	t.Cleanup(func() { codebuddyAgent.AcpCommand = "" })
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels("codebuddy", []model.AgentModel{
+		{ID: "glm-6", Name: "GLM 6"},
+	})
+	t.Cleanup(func() { reg.UpdateModels("codebuddy", nil) })
+
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(backend string) ([]model.AgentModel, string) {
+		if backend == "codebuddy" {
+			// The CLI knows a model the runtime does not report.
+			return []model.AgentModel{
+				{ID: "glm-6", Name: "GLM 6", Default: true},
+				{ID: "glm-5.1", Name: "GLM 5.1"},
+			}, ""
+		}
+		return nil, ""
+	}
+	defer func() { model.DiscoverWithDetail = origDiscover }()
+
+	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentRefreshModels, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Models    []model.AgentModel `json:"models"`
+		CLIModels []model.AgentModel `json:"cliModels"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	require.Len(t, resp.Models, 1, "ACP membership drops the CLI-only model")
+	assert.Equal(t, "glm-6", resp.Models[0].ID)
+
+	require.Len(t, resp.CLIModels, 2, "the pure CLI list keeps every discovered model")
+	assert.Equal(t, "glm-5.1", resp.CLIModels[1].ID)
+
+	// The persisted list stays the discovered CLI list — resolution is a view.
+	require.Len(t, model.Agents["codebuddy"].Models, 2)
 }
 
 func TestAgentRefreshModels_AgentNotFound(t *testing.T) {

@@ -2719,15 +2719,30 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-supplementary-input {
+  /* Local copy of the vertical padding so the min/max height caps below stay in
+     sync with it; the caps are 6 line boxes + padding (the auto-grow cap in
+     renderToolDetail.ts uses the same 6, and the browser clamps `height` at
+     max-height, which is what turns on the internal scrollbar past 6 lines). */
+  --ask-supp-pad-y: 5px;
   width: 100%;
-  padding:5px var(--space-4);
+  padding: var(--ask-supp-pad-y) var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
-  line-height: var(--line-height-snug);
+  /* Integer line box, matching the other single-line controls (see
+     --input-line-height) — a unitless ratio rounds differently per line in
+     WebView, which would make the auto-grown height drift. */
+  line-height: var(--input-line-height);
+  font-family: inherit;
   outline: none;
+  /* Multi-line note: Enter inserts a newline, so the box must wrap and scroll
+     internally rather than being resized by the user. */
+  resize: none;
+  overflow-y: auto;
+  min-height: calc(var(--input-line-height) + var(--ask-supp-pad-y) * 2);
+  max-height: calc(var(--input-line-height) * 6 + var(--ask-supp-pad-y) * 2);
   transition: border-color var(--duration-base);
   box-sizing: border-box;
 }

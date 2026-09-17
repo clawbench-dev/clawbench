@@ -30,6 +30,7 @@ import {
   windowCovers,
   nextLoadWindow,
   mergeLineWindows,
+  resolveResponseWindow,
   buildPreviewUrl,
   placeNearAnchor,
   previewCache,
@@ -401,11 +402,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     const cacheKey = previewCache.buildKey(projectRoot, filePath, next)
     const cached = previewCache.get(cacheKey)
     if (cached) {
-      applyChunk({
-        content: cached.content,
-        startLine: cached.windowStart ?? next.start,
-        endLine: cached.windowEnd ?? next.end,
-      })
+      applyChunk(toLoadedWindow(cached))
       return true
     }
 
@@ -421,11 +418,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       if (resp.isBinary) return false
 
       previewCache.set(cacheKey, resp)
-      applyChunk({
-        content: resp.content,
-        startLine: resp.windowStart ?? next.start,
-        endLine: resp.windowEnd ?? next.end,
-      })
+      applyChunk(toLoadedWindow(resp))
       return true
     } catch (err: unknown) {
       const errObj = err as { name?: string }
@@ -437,6 +430,17 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       })
       return false
     }
+  }
+
+  /**
+   * The absolute line run a chunk response covers, using the response's own
+   * window metadata when present. A whole-file response (no window metadata) is
+   * held from line 1 — the same rule seedHeldContent applies to the opening
+   * fetch — rather than being read as an empty window at the requested start.
+   */
+  const toLoadedWindow = (resp: FileContentResponse): LoadedLineWindow => {
+    const resolved = resolveResponseWindow(resp)
+    return { content: resp.content, startLine: resolved.startLine, endLine: resolved.endLine }
   }
 
   /** Merge a fetched chunk in and re-slice. */
@@ -486,17 +490,23 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   }
 
   /**
-   * Adopt a freshly fetched (or cached) window as the run of lines held.
+   * Adopt a freshly fetched (or cached) response as the run of lines held.
    *
-   * `win` is the range that was *requested*; the response's own windowStart /
-   * windowEnd are authoritative when present, because the server may clamp the
-   * range or capture no lines at all (the empty-window encoding).
+   * The response's own windowStart / windowEnd are authoritative, because the
+   * server may clamp the requested range or capture no lines at all (the
+   * empty-window encoding). A response with NO window metadata is the whole
+   * file — the server ignores the line window on non-text / sanitized paths —
+   * so it is held in file coordinates and its length becomes the known total
+   * (see resolveResponseWindow).
    */
-  const seedHeldContent = (resp: FileContentResponse, win: FetchWindow) => {
-    const start = resp.windowStart ?? win.start
-    const end = resp.windowEnd ?? win.end
-    heldLines.value = { content: resp.content, startLine: start, endLine: end }
-    fileTotalLines.value = resp.totalLines ?? null
+  const seedHeldContent = (resp: FileContentResponse) => {
+    const resolved = resolveResponseWindow(resp)
+    heldLines.value = {
+      content: resp.content,
+      startLine: resolved.startLine,
+      endLine: resolved.endLine,
+    }
+    fileTotalLines.value = resolved.totalLines
     windowTruncated.value = resp.windowTruncated === true
   }
 
@@ -580,7 +590,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         if (reqId !== currentRequestId) return
         fileContent.value = cached
         isLargeFile.value = (cached.size ?? 0) > LARGE_FILE_THRESHOLD_BYTES
-        seedHeldContent(cached, win)
+        seedHeldContent(cached)
         updateSlice()
         status.value = 'ready'
         return
@@ -600,7 +610,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
       fileContent.value = resp
       isLargeFile.value = (resp.size ?? 0) > LARGE_FILE_THRESHOLD_BYTES
-      seedHeldContent(resp, win)
+      seedHeldContent(resp)
       // Large files ARE cached now: only the window is held, not the whole file,
       // so the 2 MiB guard (which existed to keep whole-file content out of the
       // LRU) no longer applies.

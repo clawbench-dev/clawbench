@@ -5,80 +5,142 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"clawbench/internal/middleware"
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// parseSSEEvents splits an SSE response body into individual events.
-func parseSSEEvents(body string) []map[string]string {
-	var events []map[string]string
-	parts := strings.Split(body, "\n\n")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		entry := map[string]string{}
-		lines := strings.Split(part, "\n")
-		for _, line := range lines {
-			if strings.HasPrefix(line, "event: ") {
-				entry["event"] = strings.TrimPrefix(line, "event: ")
-			} else if strings.HasPrefix(line, "data: ") {
-				entry["data"] = strings.TrimPrefix(line, "data: ")
-			}
-		}
-		if _, ok := entry["event"]; ok {
-			events = append(events, entry)
+// ---------- WS test harness ----------
+
+// setupFileWatchWSTest starts an httptest server exposing the real route with
+// the real auth middleware, so tests exercise the same path production serves.
+func setupFileWatchWSTest(t *testing.T) (*testEnv, *httptest.Server, func()) {
+	t.Helper()
+	env, teardown := setupTestEnv(t)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/file/watch/ws", middleware.Auth(FileWatchWS))
+	server := httptest.NewServer(mux)
+
+	cleanup := func() {
+		server.Close()
+		teardown()
+	}
+	return env, server, cleanup
+}
+
+// dialFileWatchWS connects to the file-watch WS. query is appended verbatim
+// (e.g. "?dir=.&file=test.txt"). websocket.Dial sends no Origin header by
+// default, so the OriginPatterns check passes.
+func dialFileWatchWS(t *testing.T, serverURL, projectPath, query string) *websocket.Conn {
+	t.Helper()
+	conn, _, err := dialFileWatchWSRaw(t, serverURL, projectPath, query)
+	require.NoError(t, err)
+	return conn
+}
+
+// dialFileWatchWSRaw returns the handshake response too, for status assertions
+// on rejected upgrades.
+func dialFileWatchWSRaw(t *testing.T, serverURL, projectPath, query string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+	wsURL := "ws" + serverURL[len("http"):] + "/api/file/watch/ws" + query
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := &websocket.DialOptions{}
+	if projectPath != "" {
+		opts.HTTPHeader = http.Header{
+			"Cookie": []string{model.ScopedCookieName("clawbench_project") + "=" + url.QueryEscape(projectPath)},
 		}
 	}
-	return events
+	return websocket.Dial(ctx, wsURL, opts)
 }
 
-// threadSafeRecorder wraps httptest.ResponseRecorder with a mutex
-// to allow safe concurrent reads from the body while the handler is writing.
-// This prevents DATA RACE when SSE goroutines write to the recorder
-// while the test goroutine reads Body.String().
-type threadSafeRecorder struct {
-	*httptest.ResponseRecorder
-	mu sync.Mutex
+// readWatchFrame reads one text frame and returns its decoded type.
+func readWatchFrame(t *testing.T, conn *websocket.Conn) (string, []byte) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, data, err := conn.Read(ctx)
+	require.NoError(t, err, "failed to read WS frame")
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	require.NoError(t, json.Unmarshal(data, &envelope), "frame is not valid JSON: %s", data)
+	return envelope.Type, data
 }
 
-func (r *threadSafeRecorder) Write(data []byte) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.ResponseRecorder.Write(data)
+// waitForWatchEventType reads frames until one of wantType arrives, skipping
+// pings and unrelated events. Fails the test on timeout.
+func waitForWatchEventType(t *testing.T, conn *websocket.Conn, wantType string) []byte {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Until(deadline))
+		_, data, err := conn.Read(ctx)
+		cancel()
+		if err != nil {
+			t.Fatalf("timed out waiting for %q frame: %v", wantType, err)
+		}
+		var envelope struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(data, &envelope) != nil {
+			continue
+		}
+		if envelope.Type == wantType {
+			return data
+		}
+	}
+	t.Fatalf("never received %q frame", wantType)
+	return nil
 }
 
-func (r *threadSafeRecorder) BodyString() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.Body.String()
+// sendWatchMessage writes a JSON control frame.
+func sendWatchMessage(t *testing.T, conn *websocket.Conn, v any) {
+	t.Helper()
+	data, err := json.Marshal(v)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, data))
 }
 
-// ---------- FileWatchSSE ----------
+// ---------- FileWatchWS: pre-upgrade rejection paths ----------
 
-func TestFileWatchSSE_MethodNotAllowed(t *testing.T) {
-	req := newRequest(t, http.MethodPost, "/api/file/watch", nil)
-	w := callHandler(FileWatchSSE, req)
+func TestFileWatchWS_MethodNotAllowed(t *testing.T) {
+	req := newRequest(t, http.MethodPost, "/api/file/watch/ws", nil)
+	w := callHandler(FileWatchWS, req)
 	assertStatus(t, w, http.StatusMethodNotAllowed)
 }
 
-func TestFileWatchSSE_MissingProjectCookie(t *testing.T) {
-	req := newRequest(t, http.MethodGet, "/api/file/watch", nil)
-	w := callHandler(FileWatchSSE, req)
+func TestFileWatchWS_MissingProjectCookie(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	err := service.InitFileWatcher()
+	require.NoError(t, err)
+	defer service.StopFileWatcher()
+
+	// A missing project cookie must be rejected before the upgrade.
+	req := newRequest(t, http.MethodGet, "/api/file/watch/ws?dir=", nil)
+	w := callHandler(FileWatchWS, req)
 	assertStatus(t, w, http.StatusForbidden)
+	_ = env
 }
 
-func TestFileWatchSSE_WatcherNotAvailable(t *testing.T) {
+func TestFileWatchWS_WatcherNotAvailable(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -86,577 +148,416 @@ func TestFileWatchSSE_WatcherNotAvailable(t *testing.T) {
 	service.GlobalFileWatcher = nil
 	defer func() { service.GlobalFileWatcher = orig }()
 
-	req := newRequest(t, http.MethodGet, "/api/file/watch?dir=.", nil)
+	req := newRequest(t, http.MethodGet, "/api/file/watch/ws?dir=.", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(FileWatchSSE, req)
+	w := callHandler(FileWatchWS, req)
 
 	assertStatus(t, w, http.StatusServiceUnavailable)
 }
 
-func TestFileWatchSSE_ConnectedEvent(t *testing.T) {
+func TestFileWatchWS_PathTraversal(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	err := service.InitFileWatcher()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer service.StopFileWatcher()
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	req := newRequest(t, http.MethodGet, "/api/file/watch?dir=", nil)
-	req = req.WithContext(ctx)
+	// Traversal is validated before the upgrade, so it stays an HTTP 403.
+	req := newRequest(t, http.MethodGet, "/api/file/watch/ws?dir=../../../etc", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-
-	w := httptest.NewRecorder()
-
-	done := make(chan struct{})
-	go func() {
-		FileWatchSSE(w, req)
-		close(done)
-	}()
-
-	time.Sleep(200 * time.Millisecond)
-	cancel()
-	<-done
-
-	body := w.Body.String()
-	assert.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
-	assert.Contains(t, body, "event: connected")
-
-	events := parseSSEEvents(body)
-	assert.Len(t, events, 1)
-	assert.Equal(t, "connected", events[0]["event"])
-
-	var data map[string]string
-	_ = json.Unmarshal([]byte(events[0]["data"]), &data)
-	assert.NotEmpty(t, data["clientId"])
-}
-
-func TestFileWatchSSE_EmptyDirResolvesToProjectRoot(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
-	defer service.StopFileWatcher()
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	req := newRequest(t, http.MethodGet, "/api/file/watch?dir=&file=", nil)
-	req = req.WithContext(ctx)
-	req = withProjectCookie(req, env.ProjectDir)
-
-	w := httptest.NewRecorder()
-
-	done := make(chan struct{})
-	go func() {
-		FileWatchSSE(w, req)
-		close(done)
-	}()
-
-	time.Sleep(200 * time.Millisecond)
-
-	// Verify: create a file in project root — should trigger dir_change
-	testFile := filepath.Join(env.ProjectDir, "newfile.txt")
-	_ = os.WriteFile(testFile, []byte("test"), 0o644)
-
-	time.Sleep(500 * time.Millisecond)
-
-	cancel()
-	<-done
-
-	body := w.Body.String()
-	events := parseSSEEvents(body)
-
-	// Should have connected + dir_change
-	foundDirChange := false
-	for _, e := range events {
-		if e["event"] == "dir_change" {
-			foundDirChange = true
-		}
-	}
-	assert.True(t, foundDirChange, "should receive dir_change when file is created in project root")
-}
-
-func TestFileWatchSSE_DirAndFileParams(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
-	defer service.StopFileWatcher()
-
-	// Create a test file
-	testFile := filepath.Join(env.ProjectDir, "test.txt")
-	_ = os.WriteFile(testFile, []byte("hello"), 0o644)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	req := newRequest(t, http.MethodGet, "/api/file/watch?dir=.&file=test.txt", nil)
-	req = req.WithContext(ctx)
-	req = withProjectCookie(req, env.ProjectDir)
-
-	w := httptest.NewRecorder()
-
-	done := make(chan struct{})
-	go func() {
-		FileWatchSSE(w, req)
-		close(done)
-	}()
-
-	time.Sleep(200 * time.Millisecond)
-
-	// Modify the file to verify file watch is working
-	_ = os.WriteFile(testFile, []byte("modified"), 0o644)
-
-	time.Sleep(500 * time.Millisecond)
-
-	cancel()
-	<-done
-
-	body := w.Body.String()
-	events := parseSSEEvents(body)
-
-	foundFileChange := false
-	for _, e := range events {
-		if e["event"] == "file_change" {
-			foundFileChange = true
-		}
-	}
-	assert.True(t, foundFileChange, "should receive file_change when watched file is modified")
-}
-
-func TestFileWatchSSE_PathTraversal(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
-	defer service.StopFileWatcher()
-
-	req := newRequest(t, http.MethodGet, "/api/file/watch?dir=../../../etc", nil)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(FileWatchSSE, req)
+	w := callHandler(FileWatchWS, req)
 
 	assertStatus(t, w, http.StatusForbidden)
 }
 
-func TestFileWatchSSE_ClientDisconnect(t *testing.T) {
+func TestFileWatchWS_AcceptErrorOnPlainRecorder(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	err := service.InitFileWatcher()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer service.StopFileWatcher()
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	req := newRequest(t, http.MethodGet, "/api/file/watch?dir=", nil)
-	req = req.WithContext(ctx)
+	// httptest.NewRecorder cannot be hijacked, so Accept fails and the handler
+	// must return without panicking.
+	req := newRequest(t, http.MethodGet, "/api/file/watch/ws?dir=", nil)
 	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(FileWatchWS, req)
 
-	w := httptest.NewRecorder()
-
-	done := make(chan struct{})
-	go func() {
-		FileWatchSSE(w, req)
-		close(done)
-	}()
-
-	time.Sleep(100 * time.Millisecond)
-
-	// Disconnect client
-	cancel()
-	<-done
-
-	// After disconnect, the SSE handler should have called UnregisterClient.
-	// We verify this by checking that a new SSE connection gets a fresh client.
-	// (No direct way to check internal state from handler package, but no panic = success)
+	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
-func TestFileWatchSSE_FileChangeEvent(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
+// ---------- FileWatchWS: event delivery ----------
 
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
+func TestFileWatchWS_ConnectedFrame(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	require.NoError(t, service.InitFileWatcher())
+	defer service.StopFileWatcher()
+
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=")
+	defer conn.CloseNow()
+
+	typ, data := readWatchFrame(t, conn)
+	assert.Equal(t, watchMsgConnected, typ)
+
+	var payload struct {
+		ClientID string `json:"clientId"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.NotEmpty(t, payload.ClientID)
+}
+
+func TestFileWatchWS_EmptyDirResolvesToProjectRoot(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	require.NoError(t, service.InitFileWatcher())
+	defer service.StopFileWatcher()
+
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
+
+	// Creating a file in the project root must produce dir_change.
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "newfile.txt"), []byte("x"), 0o644))
+
+	waitForWatchEventType(t, conn, "dir_change")
+}
+
+func TestFileWatchWS_DirChangeEvent(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	require.NoError(t, service.InitFileWatcher())
+	defer service.StopFileWatcher()
+
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=.")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
+
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "new_in_dir.txt"), []byte("new"), 0o644))
+
+	data := waitForWatchEventType(t, conn, "dir_change")
+	var payload struct {
+		Type string `json:"type"`
+		Path string `json:"path"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, "dir_change", payload.Type)
+	assert.Contains(t, payload.Path, "new_in_dir.txt")
+}
+
+func TestFileWatchWS_FileChangeEvent(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	require.NoError(t, service.InitFileWatcher())
 	defer service.StopFileWatcher()
 
 	testFile := filepath.Join(env.ProjectDir, "watchme.txt")
-	_ = os.WriteFile(testFile, []byte("initial"), 0o644)
+	require.NoError(t, os.WriteFile(testFile, []byte("initial"), 0o644))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=.&file=watchme.txt")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
 
-	req := newRequest(t, http.MethodGet, "/api/file/watch?dir=.&file=watchme.txt", nil)
-	req = req.WithContext(ctx)
-	req = withProjectCookie(req, env.ProjectDir)
+	require.NoError(t, os.WriteFile(testFile, []byte("modified"), 0o644))
 
-	w := httptest.NewRecorder()
-
-	done := make(chan struct{})
-	go func() {
-		FileWatchSSE(w, req)
-		close(done)
-	}()
-
-	time.Sleep(300 * time.Millisecond)
-
-	_ = os.WriteFile(testFile, []byte("modified"), 0o644)
-
-	time.Sleep(500 * time.Millisecond)
-
-	cancel()
-	<-done
-
-	body := w.Body.String()
-	events := parseSSEEvents(body)
-
-	foundFileChange := false
-	for _, e := range events {
-		if e["event"] == "file_change" {
-			foundFileChange = true
-			var data map[string]string
-			_ = json.Unmarshal([]byte(e["data"]), &data)
-			assert.Equal(t, "file_change", data["type"])
-			assert.Contains(t, data["path"], "watchme.txt")
-		}
+	data := waitForWatchEventType(t, conn, "file_change")
+	var payload struct {
+		Type string `json:"type"`
+		Path string `json:"path"`
 	}
-	assert.True(t, foundFileChange, "should receive file_change event")
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, "file_change", payload.Type)
+	assert.Contains(t, payload.Path, "watchme.txt")
 }
 
-func TestFileWatchSSE_DirChangeEvent(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
+func TestFileWatchWS_FileRemoveEvent(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
 
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
-	defer service.StopFileWatcher()
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	req := newRequest(t, http.MethodGet, "/api/file/watch?dir=.", nil)
-	req = req.WithContext(ctx)
-	req = withProjectCookie(req, env.ProjectDir)
-
-	w := httptest.NewRecorder()
-
-	done := make(chan struct{})
-	go func() {
-		FileWatchSSE(w, req)
-		close(done)
-	}()
-
-	time.Sleep(300 * time.Millisecond)
-
-	// Create a new file in the directory
-	newFile := filepath.Join(env.ProjectDir, "new_in_dir.txt")
-	_ = os.WriteFile(newFile, []byte("new"), 0o644)
-
-	time.Sleep(500 * time.Millisecond)
-
-	cancel()
-	<-done
-
-	body := w.Body.String()
-	events := parseSSEEvents(body)
-
-	foundDirChange := false
-	for _, e := range events {
-		if e["event"] == "dir_change" {
-			foundDirChange = true
-		}
-	}
-	assert.True(t, foundDirChange, "should receive dir_change when file is created in watched directory")
-}
-
-func TestFileWatchSSE_FileRemoveEvent(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
+	require.NoError(t, service.InitFileWatcher())
 	defer service.StopFileWatcher()
 
 	testFile := filepath.Join(env.ProjectDir, "deleteme.txt")
-	_ = os.WriteFile(testFile, []byte("will be deleted"), 0o644)
+	require.NoError(t, os.WriteFile(testFile, []byte("bye"), 0o644))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=.&file=deleteme.txt")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
 
-	req := newRequest(t, http.MethodGet, "/api/file/watch?dir=.&file=deleteme.txt", nil)
-	req = req.WithContext(ctx)
-	req = withProjectCookie(req, env.ProjectDir)
+	require.NoError(t, os.Remove(testFile))
 
-	w := httptest.NewRecorder()
-
-	done := make(chan struct{})
-	go func() {
-		FileWatchSSE(w, req)
-		close(done)
-	}()
-
-	time.Sleep(300 * time.Millisecond)
-
-	// Delete the watched file
-	_ = os.Remove(testFile)
-
-	time.Sleep(500 * time.Millisecond)
-
-	cancel()
-	<-done
-
-	body := w.Body.String()
-	events := parseSSEEvents(body)
-
-	foundFileChange := false
-	for _, e := range events {
-		if e["event"] == "file_change" {
-			foundFileChange = true
-			var data map[string]string
-			_ = json.Unmarshal([]byte(e["data"]), &data)
-			assert.Equal(t, "file_change", data["type"])
-			assert.Contains(t, data["path"], "deleteme.txt")
-		}
+	data := waitForWatchEventType(t, conn, "file_change")
+	var payload struct {
+		Path string `json:"path"`
 	}
-	assert.True(t, foundFileChange, "should receive file_change when watched file is deleted")
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Contains(t, payload.Path, "deleteme.txt")
 }
 
-// ---------- FileWatchUpdate ----------
+// ---------- FileWatchWS: control messages ----------
 
-func TestFileWatchUpdate_MethodNotAllowed(t *testing.T) {
-	req := newRequest(t, http.MethodGet, "/api/file/watch/update", nil)
-	w := callHandler(FileWatchUpdate, req)
-	assertStatus(t, w, http.StatusMethodNotAllowed)
-}
+func TestFileWatchWS_WatchMessageUpdatesPaths(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
 
-func TestFileWatchUpdate_MissingProjectCookie(t *testing.T) {
-	req := newRequest(t, http.MethodPut, "/api/file/watch/update", nil)
-	w := callHandler(FileWatchUpdate, req)
-	assertStatus(t, w, http.StatusForbidden)
-}
-
-func TestFileWatchUpdate_WatcherNotAvailable(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	orig := service.GlobalFileWatcher
-	service.GlobalFileWatcher = nil
-	defer func() { service.GlobalFileWatcher = orig }()
-
-	body := fileWatchUpdateRequest{
-		ClientID: "test-id",
-		DirPath:  ".",
-		FilePath: "test.txt",
-	}
-	req := newRequest(t, http.MethodPut, "/api/file/watch/update", body)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(FileWatchUpdate, req)
-
-	assertStatus(t, w, http.StatusServiceUnavailable)
-}
-
-func TestFileWatchUpdate_MissingClientID(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
+	require.NoError(t, service.InitFileWatcher())
 	defer service.StopFileWatcher()
 
-	body := fileWatchUpdateRequest{
-		ClientID: "",
-		DirPath:  ".",
-		FilePath: "test.txt",
-	}
-	req := newRequest(t, http.MethodPut, "/api/file/watch/update", body)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(FileWatchUpdate, req)
+	testFile := filepath.Join(env.ProjectDir, "retarget.txt")
+	require.NoError(t, os.WriteFile(testFile, []byte("v1"), 0o644))
 
-	assertStatus(t, w, http.StatusBadRequest)
-}
+	// Start watching only the directory, then re-target onto the file.
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
 
-func TestFileWatchUpdate_InvalidJSON(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
+	sendWatchMessage(t, conn, fileWatchMessage{Type: watchMsgWatch, Dir: ".", File: "retarget.txt"})
 
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
-	defer service.StopFileWatcher()
-
-	req := httptest.NewRequest(http.MethodPut, "/api/file/watch/update", strings.NewReader("not json"))
-	req.Header.Set("Content-Type", "application/json")
-	req = withProjectCookie(req, env.ProjectDir)
-	w := httptest.NewRecorder()
-	FileWatchUpdate(w, req)
-
-	assertStatus(t, w, http.StatusBadRequest)
-}
-
-func TestFileWatchUpdate_PathTraversal(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
-	defer service.StopFileWatcher()
-
-	body := fileWatchUpdateRequest{
-		ClientID: "test-traversal",
-		DirPath:  "../../../etc",
-		FilePath: "",
-	}
-	req := newRequest(t, http.MethodPut, "/api/file/watch/update", body)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(FileWatchUpdate, req)
-
-	assertStatus(t, w, http.StatusForbidden)
-}
-
-func TestFileWatchUpdate_Success(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
-	defer service.StopFileWatcher()
-
-	// Register a client via SSE connection first
-	ctx, cancel := context.WithCancel(context.Background())
-	sseReq := newRequest(t, http.MethodGet, "/api/file/watch?dir=", nil)
-	sseReq = sseReq.WithContext(ctx)
-	sseReq = withProjectCookie(sseReq, env.ProjectDir)
-	sseW := &threadSafeRecorder{ResponseRecorder: httptest.NewRecorder()}
-
-	sseDone := make(chan struct{})
-	go func() {
-		FileWatchSSE(sseW, sseReq)
-		close(sseDone)
-	}()
-
+	// Give the server a moment to apply the update before touching the file.
 	time.Sleep(200 * time.Millisecond)
+	require.NoError(t, os.WriteFile(testFile, []byte("v2"), 0o644))
 
-	// Safely read the connected event to get the clientId
-	sseEvents := parseSSEEvents(sseW.BodyString())
-	assert.Len(t, sseEvents, 1)
-	var connectedData map[string]string
-	require.NoError(t, json.Unmarshal([]byte(sseEvents[0]["data"]), &connectedData))
-	clientID := connectedData["clientId"]
-	assert.NotEmpty(t, clientID)
-
-	// Create test file
-	testFile := filepath.Join(env.ProjectDir, "update.txt")
-	_ = os.WriteFile(testFile, []byte("hello"), 0o644)
-
-	// Update the watch paths
-	body := fileWatchUpdateRequest{
-		ClientID: clientID,
-		DirPath:  ".",
-		FilePath: "update.txt",
+	data := waitForWatchEventType(t, conn, "file_change")
+	var payload struct {
+		Path string `json:"path"`
 	}
-	req := newRequest(t, http.MethodPut, "/api/file/watch/update", body)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(FileWatchUpdate, req)
-
-	assertOK(t, w)
-	assertJSONField(t, w, "ok", true)
-
-	// Modify the file and verify file_change comes through
-	_ = os.WriteFile(testFile, []byte("modified"), 0o644)
-
-	time.Sleep(500 * time.Millisecond)
-
-	cancel()
-	<-sseDone
-
-	// Check SSE events
-	sseEvents2 := parseSSEEvents(sseW.BodyString())
-
-	foundFileChange := false
-	for _, e := range sseEvents2 {
-		if e["event"] == "file_change" {
-			foundFileChange = true
-		}
-	}
-	assert.True(t, foundFileChange, "should receive file_change after UpdateWatch set file path")
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Contains(t, payload.Path, "retarget.txt")
 }
 
-func TestFileWatchUpdate_EmptyDirResolvesToProjectRoot(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
+func TestFileWatchWS_WatchMessageTraversalRejected(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
 
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
+	require.NoError(t, service.InitFileWatcher())
 	defer service.StopFileWatcher()
 
-	// Register a client via SSE connection
-	ctx, cancel := context.WithCancel(context.Background())
-	sseReq := newRequest(t, http.MethodGet, "/api/file/watch?dir=", nil)
-	sseReq = sseReq.WithContext(ctx)
-	sseReq = withProjectCookie(sseReq, env.ProjectDir)
-	sseW := &threadSafeRecorder{ResponseRecorder: httptest.NewRecorder()}
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=.")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
 
-	sseDone := make(chan struct{})
-	go func() {
-		FileWatchSSE(sseW, sseReq)
-		close(sseDone)
-	}()
+	sendWatchMessage(t, conn, fileWatchMessage{Type: watchMsgWatch, Dir: "../../../etc"})
 
+	typ, data := readWatchFrame(t, conn)
+	require.Equal(t, watchMsgError, typ)
+	var payload struct {
+		Code string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, "AccessDenied", payload.Code)
+
+	// The socket must survive a rejected update: a later valid watch still works.
+	// Send the valid watch and let it apply BEFORE touching the filesystem —
+	// UpdateWatch cancels this client's pending debounce timers, so creating the
+	// file first would race the 200ms debounce and drop the event.
+	sendWatchMessage(t, conn, fileWatchMessage{Type: watchMsgWatch, Dir: "."})
 	time.Sleep(200 * time.Millisecond)
-
-	sseEvents := parseSSEEvents(sseW.BodyString())
-	var connectedData map[string]string
-	require.NoError(t, json.Unmarshal([]byte(sseEvents[0]["data"]), &connectedData))
-	clientID := connectedData["clientId"]
-
-	// Update with empty dir — should resolve to project root
-	body := fileWatchUpdateRequest{
-		ClientID: clientID,
-		DirPath:  "",
-		FilePath: "",
-	}
-	req := newRequest(t, http.MethodPut, "/api/file/watch/update", body)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(FileWatchUpdate, req)
-
-	assertOK(t, w)
-
-	// Verify: create a file in project root — should trigger dir_change
-	testFile := filepath.Join(env.ProjectDir, "root_file.txt")
-	_ = os.WriteFile(testFile, []byte("root"), 0o644)
-
-	time.Sleep(500 * time.Millisecond)
-
-	cancel()
-	<-sseDone
-
-	sseEvents2 := parseSSEEvents(sseW.BodyString())
-	foundDirChange := false
-	for _, e := range sseEvents2 {
-		if e["event"] == "dir_change" {
-			foundDirChange = true
-		}
-	}
-	assert.True(t, foundDirChange, "empty dir should watch project root, so dir_change should fire")
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "after_reject.txt"), []byte("x"), 0o644))
+	waitForWatchEventType(t, conn, "dir_change")
 }
 
-func TestFileWatchUpdate_UnknownClientId(t *testing.T) {
+func TestFileWatchWS_InvalidJSONIgnored(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	require.NoError(t, service.InitFileWatcher())
+	defer service.StopFileWatcher()
+
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=.")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
+
+	// A malformed frame must not tear down a healthy channel.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte("not json")))
+	cancel()
+
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "still_alive.txt"), []byte("x"), 0o644))
+	waitForWatchEventType(t, conn, "dir_change")
+}
+
+func TestFileWatchWS_PingAndPongKeepsConnectionUsable(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	origInterval := watchPingInterval
+	watchPingInterval = 50 * time.Millisecond
+	defer func() { watchPingInterval = origInterval }()
+
+	require.NoError(t, service.InitFileWatcher())
+	defer service.StopFileWatcher()
+
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=.")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
+
+	waitForWatchEventType(t, conn, watchMsgPing)
+
+	// Answering the ping must keep the connection usable.
+	sendWatchMessage(t, conn, fileWatchMessage{Type: watchMsgPong})
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "after_pong.txt"), []byte("x"), 0o644))
+	waitForWatchEventType(t, conn, "dir_change")
+}
+
+func TestFileWatchWS_ConcurrentWritesNoRace(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	origInterval := watchPingInterval
+	watchPingInterval = 20 * time.Millisecond
+	defer func() { watchPingInterval = origInterval }()
+
+	require.NoError(t, service.InitFileWatcher())
+	defer service.StopFileWatcher()
+
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=.")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
+
+	// Burst-create files so the event fan-out and the ping ticker write
+	// concurrently; every frame must remain valid JSON.
+	for i := range 30 {
+		name := filepath.Join(env.ProjectDir, "burst_"+string(rune('a'+i%26))+".txt")
+		require.NoError(t, os.WriteFile(name, []byte("x"), 0o644))
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Until(deadline))
+		_, data, err := conn.Read(ctx)
+		cancel()
+		if err != nil {
+			break // drained
+		}
+		assert.True(t, json.Valid(data), "frame is not valid JSON: %s", data)
+	}
+}
+
+// ---------- FileWatchWS: lifecycle ----------
+
+func TestFileWatchWS_ClientDisconnectRunsTeardown(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	err := service.InitFileWatcher()
-	assert.NoError(t, err)
+	require.NoError(t, service.InitFileWatcher())
 	defer service.StopFileWatcher()
 
-	body := fileWatchUpdateRequest{
-		ClientID: "nonexistent-client",
-		DirPath:  ".",
-		FilePath: "",
-	}
-	req := newRequest(t, http.MethodPut, "/api/file/watch/update", body)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(FileWatchUpdate, req)
+	handlerReturned := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/file/watch/ws", middleware.Auth(func(w http.ResponseWriter, r *http.Request) {
+		FileWatchWS(w, r)
+		close(handlerReturned)
+	}))
+	server := httptest.NewServer(mux)
+	defer server.Close()
 
-	// Should return OK (UpdateWatch silently ignores unknown clientID)
-	assertOK(t, w)
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=")
+	readWatchFrame(t, conn) // connected
+
+	// Closing the client must make the handler return (and thus run its
+	// deferred UnregisterClient) rather than leak the goroutine.
+	_ = conn.CloseNow()
+
+	select {
+	case <-handlerReturned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not return after client disconnect")
+	}
+}
+
+func TestFileWatchWS_StopWatcherClosesChannel(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	require.NoError(t, service.InitFileWatcher())
+
+	handlerReturned := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/file/watch/ws", middleware.Auth(func(w http.ResponseWriter, r *http.Request) {
+		FileWatchWS(w, r)
+		close(handlerReturned)
+	}))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
+
+	// Shutting the watcher down closes the push channel; the handler must exit
+	// cleanly (and its deferred UnregisterClient must not double-close).
+	service.StopFileWatcher()
+
+	select {
+	case <-handlerReturned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not return after StopFileWatcher closed the push channel")
+	}
+}
+
+func TestFileWatchWS_ConnectionLimit(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	require.NoError(t, service.InitFileWatcher())
+	defer service.StopFileWatcher()
+
+	// Occupy the full allowance.
+	conns := make([]*websocket.Conn, 0, maxWatchClients)
+	defer func() {
+		for _, c := range conns {
+			_ = c.CloseNow()
+		}
+	}()
+	for range maxWatchClients {
+		conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=")
+		readWatchFrame(t, conn) // connected
+		conns = append(conns, conn)
+	}
+
+	// The next connection must be rejected before the upgrade.
+	_, resp, err := dialFileWatchWSRaw(t, server.URL, env.ProjectDir, "?dir=")
+	require.Error(t, err, "expected the over-limit connection to be rejected")
+	if resp != nil {
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	}
+}
+
+// ---------- resolveWatchPaths ----------
+
+func TestResolveWatchPaths(t *testing.T) {
+	project := t.TempDir()
+
+	t.Run("empty dir resolves to project root", func(t *testing.T) {
+		dirAbs, fileAbs, ok := resolveWatchPaths(project, "", "")
+		assert.True(t, ok)
+		assert.Equal(t, project, dirAbs)
+		assert.Empty(t, fileAbs)
+	})
+
+	t.Run("relative dir and file resolve under project", func(t *testing.T) {
+		dirAbs, fileAbs, ok := resolveWatchPaths(project, "sub", "sub/f.txt")
+		assert.True(t, ok)
+		assert.Equal(t, filepath.Join(project, "sub"), dirAbs)
+		assert.Equal(t, filepath.Join(project, "sub", "f.txt"), fileAbs)
+	})
+
+	t.Run("traversal is rejected", func(t *testing.T) {
+		_, _, ok := resolveWatchPaths(project, "../../../etc", "")
+		assert.False(t, ok)
+	})
+
+	t.Run("file traversal is rejected", func(t *testing.T) {
+		_, _, ok := resolveWatchPaths(project, "", "../../../etc/passwd")
+		assert.False(t, ok)
+	})
 }
 
 // ---------- newWatchClientID ----------

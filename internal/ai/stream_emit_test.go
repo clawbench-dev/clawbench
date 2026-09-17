@@ -250,3 +250,49 @@ func TestCriticalSendTimeout_FitsNotificationQueueBudget(t *testing.T) {
 	assert.Less(t, worstCaseEvents, notificationQueueSafetyBudget,
 		"criticalSendTimeout is long enough that a burst could overflow the SDK notification queue and kill the connection")
 }
+
+// tryEmitStreamEvent exists so one-shot signals can be retried when the channel
+// is momentarily full: the caller latches only after a confirmed delivery.
+// These tests pin the delivery report in both directions.
+
+func TestTryEmitStreamEvent_ReportsDelivery(t *testing.T) {
+	ch := make(chan StreamEvent, 1)
+	assert.True(t, tryEmitStreamEvent(ch, "test-src", StreamEvent{Type: "compact_detected"}),
+		"a send that fits must report delivery")
+
+	select {
+	case ev := <-ch:
+		assert.Equal(t, "compact_detected", ev.Type)
+	default:
+		t.Fatal("the event must actually be in the channel")
+	}
+}
+
+func TestTryEmitStreamEvent_ReportsDropOnFullChannel(t *testing.T) {
+	ch := make(chan StreamEvent, 1)
+	ch <- StreamEvent{Type: "content"}
+
+	done := make(chan struct{})
+	var delivered bool
+	go func() {
+		defer close(done)
+		delivered = tryEmitStreamEvent(ch, "test-src", StreamEvent{Type: "compact_detected"})
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("a full channel must not block — the caller needs the report to retry")
+	}
+	assert.False(t, delivered, "a dropped event must report failure so the caller can retry")
+}
+
+func TestTryEmitStreamEvent_ReportsDropOnClosedChannel(t *testing.T) {
+	ch := make(chan StreamEvent, 1)
+	close(ch)
+
+	assert.NotPanics(t, func() {
+		assert.False(t, tryEmitStreamEvent(ch, "test-src", StreamEvent{Type: "compact_detected"}),
+			"a closed channel must report failure rather than latch the signal")
+	})
+}

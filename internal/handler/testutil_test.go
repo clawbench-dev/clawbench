@@ -105,6 +105,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			title_renamed INTEGER NOT NULL DEFAULT 0,
 			title_source TEXT NOT NULL DEFAULT '',
+			compacted INTEGER NOT NULL DEFAULT 0,
 			archived INTEGER NOT NULL DEFAULT 0,
 			pinned INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

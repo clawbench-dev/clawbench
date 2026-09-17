@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="show" auto @close="$emit('close')">
+  <BottomSheet :open="show" auto panel-class="tool-detail-sheet" @close="$emit('close')">
     <template #header>
       <div class="tool-detail-header" :data-category="category">
         <component :is="headerIcon" :size="16" class="tool-detail-header-icon" />
@@ -240,6 +240,15 @@ onUpdated(restoreAskStates)
 </style>
 
 <style>
+/* Wide-screen: the tool detail dialog benefits from extra width — inputs and
+   outputs carry diffs, terminal bodies and markdown that wrap badly in a narrow
+   card. Mirrors .session-search-sheet. Only takes effect in BottomSheet's
+   wide-screen card mode (the narrow-mode bottom sheet ignores --modal-max-width).
+   Non-scoped because the class is bound inside BottomSheet's own template. */
+.tool-detail-sheet {
+  --modal-max-width: 960px;
+}
+
 /* Non-scoped styles for v-html penetration — tool detail rendering in bottom sheet.
    Content blocks (output code, terminal bodies, prompt cards, message bodies) are
    deliberately square; only tags, badges and icon buttons keep a small radius. */
@@ -1698,15 +1707,30 @@ onUpdated(restoreAskStates)
   letter-spacing: 0.5px;
 }
 .tool-detail-body .ask-supplementary-input {
+  /* Local copy of the vertical padding so the min/max height caps below stay in
+     sync with it; the caps are 6 line boxes + padding (the auto-grow cap in
+     renderToolDetail.ts uses the same 6, and the browser clamps `height` at
+     max-height, which is what turns on the internal scrollbar past 6 lines). */
+  --ask-supp-pad-y: var(--space-3);
   width: 100%;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--ask-supp-pad-y) var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-xs);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
+  /* Integer line box, matching the other single-line controls (see
+     --input-line-height) — a unitless ratio rounds differently per line in
+     WebView, which would make the auto-grown height drift. */
+  line-height: var(--input-line-height);
   font-family: inherit;
   outline: none;
+  /* Multi-line note: Enter inserts a newline, so the box must wrap and scroll
+     internally rather than being resized by the user. */
+  resize: none;
+  overflow-y: auto;
+  min-height: calc(var(--input-line-height) + var(--ask-supp-pad-y) * 2);
+  max-height: calc(var(--input-line-height) * 6 + var(--ask-supp-pad-y) * 2);
   transition: border-color var(--duration-base);
   box-sizing: border-box;
 }

@@ -17,6 +17,13 @@ import (
 // dropping one delta is imperceptible, and blocking on them would let a slow
 // consumer stall the agent's output entirely — trading a cosmetic loss for a
 // real one.
+//
+// `compact_detected` is deliberately NOT here either, even though it is a
+// one-shot signal whose loss matters. It is produced on the ACP notification
+// goroutine, where blocking is forbidden (the shared SDK queue kills the
+// connection on overflow — see criticalEventBlockingSafe), so it cannot use the
+// blocking path anyway. The producers instead retry: they latch only after
+// tryForwardACPEvent confirms delivery.
 var criticalStreamEvents = map[string]struct{}{
 	"stream_start":  {},
 	"done":          {},
@@ -118,6 +125,30 @@ func emitStreamEvent(ch chan<- StreamEvent, source string, event StreamEvent) {
 		slog.Warn(source+": stream channel full, dropping event",
 			"type", event.Type,
 			"source", source)
+	}
+}
+
+// tryEmitStreamEvent is emitStreamEvent with a delivery report. Callers that
+// latch a one-shot signal use this so a drop on a full channel can be retried by
+// a later event instead of losing the signal permanently.
+//
+// Unlike forwardACPEvent, the CLI parsers run on a dedicated per-run goroutine,
+// so a full channel here means the consumer is momentarily behind rather than
+// the agent being at risk — the event is still dropped (never blocked on) and
+// the caller simply leaves its latch open.
+func tryEmitStreamEvent(ch chan<- StreamEvent, source string, event StreamEvent) (delivered bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			delivered = false
+		}
+	}()
+	select {
+	case ch <- event:
+		return true
+	default:
+		slog.Warn(source+": stream channel full, dropping event (will retry)",
+			"type", event.Type, "source", source)
+		return false
 	}
 }
 

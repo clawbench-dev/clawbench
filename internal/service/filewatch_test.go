@@ -10,6 +10,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupFileWatcher creates a FileWatcher for testing without setting the global.
@@ -960,6 +961,68 @@ func TestFileWatcher_ConcurrentRegisterUnregister(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 	assert.Equal(t, int32(20), done.Load())
+}
+
+// TestStopFileWatcher_DoesNotCloseWatcherBeforeTakingLock pins the ordering
+// inside StopFileWatcher: the fsnotify watcher is closed only AFTER fw.mu has
+// been acquired and the client map drained.
+//
+// The reverse order deadlocks on Windows. fsnotify's Windows backend implements
+// Remove by queueing a request and blocking on a reply channel that its reader
+// goroutine fills; once the watcher is closed that goroutine is gone, so Remove
+// blocks forever. UnregisterClient calls Remove while holding fw.mu, so a
+// StopFileWatcher that closed the watcher first and then waited for fw.mu hung
+// behind it. Because StopFileWatcher only runs at process shutdown, the visible
+// symptom was the whole server never exiting — the Windows CI run reported it as
+// "test timed out after 10m0s" with one goroutine parked in
+// StopFileWatcher -> sync.Mutex.Lock and a peer parked in
+// UnregisterClient -> fsnotify Remove.
+//
+// The deadlock needs the Windows backend, but the ordering that causes it is
+// observable everywhere: hold fw.mu (standing in for an UnregisterClient inside
+// Remove), start StopFileWatcher, and check whether the watcher is already
+// closed. With the correct order it is not — the teardown is still waiting for
+// the mutex — whereas the old order closed it before ever taking the lock.
+func TestStopFileWatcher_DoesNotCloseWatcherBeforeTakingLock(t *testing.T) {
+	orig := GlobalFileWatcher
+	defer func() { GlobalFileWatcher = orig }()
+
+	require.NoError(t, InitFileWatcher())
+	fw := GlobalFileWatcher
+	require.NotNil(t, fw)
+
+	dir := t.TempDir()
+	fw.RegisterClient("holder")
+	fw.UpdateWatch("holder", dir, "")
+
+	// Stand in for an UnregisterClient that is inside watcher.Remove.
+	fw.mu.Lock()
+
+	finished := make(chan struct{})
+	go func() {
+		StopFileWatcher()
+		close(finished)
+	}()
+
+	// Let the teardown goroutine run up to its lock acquisition.
+	time.Sleep(100 * time.Millisecond)
+
+	// While the lock is held the watcher must still be open. Add reports
+	// ErrClosed once Close has run, so this distinguishes "Close happens after
+	// the drain" (correct) from "Close happens first" (deadlocks on Windows).
+	probe := t.TempDir()
+	err := fw.watcher.Add(probe)
+	assert.NotErrorIs(t, err, fsnotify.ErrClosed,
+		"watcher was closed before fw.mu was acquired; on Windows that deadlocks "+
+			"against UnregisterClient -> fsnotify Remove, which also runs under fw.mu")
+
+	fw.mu.Unlock()
+
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("StopFileWatcher did not finish after the lock was released")
+	}
 }
 
 // ---------- WatchEvent struct ----------

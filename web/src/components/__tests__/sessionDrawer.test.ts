@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, ref, defineComponent, h } from 'vue'
 import SessionDrawer from '@/components/chat/SessionDrawer.vue'
-import { useAgents, setCLIModels } from '@/composables/useAgents'
+import { useAgents, applyRefreshedModelList } from '@/composables/useAgents'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { apiPost } from '@/utils/api'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
@@ -46,7 +46,7 @@ vi.mock('@/components/common/PopupMenu.vue', () => ({
 vi.mock('@/composables/useAgents', () => ({
   useAgents: vi.fn(),
   restoreOriginalModels: vi.fn(),
-  setCLIModels: vi.fn(),
+  applyRefreshedModelList: vi.fn(),
   populateACPStateCache: vi.fn().mockResolvedValue(undefined),
   invalidateACPStateCache: vi.fn(),
 }))
@@ -275,11 +275,15 @@ describe('SessionDrawer', () => {
     expect(wrapper.find('.refresh-btn').exists()).toBe(false)
   })
 
-  it('calls refresh API and updates agent models on success', async () => {
+  it('calls refresh API and applies the resolved + CLI lists on success', async () => {
     const newModels = [
       { id: 'claude-new', name: 'Claude New', default: true },
     ]
-    vi.mocked(apiPost).mockResolvedValue({ models: newModels })
+    const cliModels = [
+      { id: 'claude-new', name: 'Claude New', default: true },
+      { id: 'claude-cli-only', name: 'Claude CLI Only' },
+    ]
+    vi.mocked(apiPost).mockResolvedValue({ models: newModels, cliModels })
 
     const wrapper = mountDrawer()
     await wrapper.find('.refresh-btn').trigger('click')
@@ -288,7 +292,7 @@ describe('SessionDrawer', () => {
     await nextTick()
 
     expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {})
-    expect(setCLIModels).toHaveBeenCalledWith('claude', newModels)
+    expect(applyRefreshedModelList).toHaveBeenCalledWith('claude', newModels, cliModels)
     expect(mockToastShow).toHaveBeenCalledWith('chat.sessionSetting.refreshSuccess', expect.any(Object))
   })
 

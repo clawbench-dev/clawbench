@@ -24,9 +24,18 @@ cd "$ROOT_DIR"
 # Timeout: 10 minutes by default (override with VITEST_TIMEOUT_S env)
 TIMEOUT_S="${VITEST_TIMEOUT_S:-1200}"
 
-# After vitest's test output stops, if workers remain for this many seconds,
-# kill them. This handles "tests done but pool.close() hangs" without waiting
-# for the full VITEST_TIMEOUT_S.
+# How long workers must make NO CPU progress before we call them stuck. This
+# handles "tests done but pool.close() hangs" without waiting for the full
+# VITEST_TIMEOUT_S.
+#
+# It is deliberately measured as *CPU-idle* time, not wall-clock age. An earlier
+# version killed any worker that had merely existed for this long, which on a
+# long suite kills workers that are still actively running tests: the full
+# suite takes ~7 min, so the 45s timer fired repeatedly mid-run, discarding the
+# coverage of every file those workers had not yet reported (measured: 11537 of
+# 11953 tests reported, and FileManagerContent.vue coverage fell from 85.3% to
+# 36.7%, failing the diff gate). A worker blocked in pool.close() burns no CPU,
+# so sampling CPU time distinguishes the two cases.
 WORKER_STUCK_THRESHOLD_S="${WORKER_STUCK_THRESHOLD_S:-45}"
 
 # collect_descendants: recursively collect all descendant PIDs of a process.
@@ -72,6 +81,42 @@ is_fork_worker() {
     cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
   fi
   [[ "$cmdline" == *"/vitest/dist/workers/forks"* ]]
+}
+
+# worker_cpu_total: total CPU time (user+system, in clock ticks) consumed by the
+# given worker PIDs. Used to tell a worker that is still running tests (CPU time
+# climbing) from one blocked in pool.close() (CPU time frozen). Prints 0 when
+# nothing can be sampled, which reads as "no progress" — callers must therefore
+# only act on a frozen total, never on a zero one.
+worker_cpu_total() {
+  local pids=$1
+  local total=0
+  local pid utime stime
+  for pid in $pids; do
+    if [ -r "/proc/$pid/stat" ]; then
+      # Fields 14/15 (utime/stime) come after the comm field, which is wrapped
+      # in parens and may itself contain spaces and ')'. Greedily strip through
+      # the LAST ')' so the split is anchored on the real field boundary; the
+      # remaining fields then start at state, making utime/stime $12/$13.
+      read -r utime stime < <(
+        sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null |
+          awk '{print $12, $13}' 2>/dev/null
+      ) || continue
+      [[ "$utime" =~ ^[0-9]+$ ]] || continue
+      [[ "$stime" =~ ^[0-9]+$ ]] || continue
+      total=$((total + utime + stime))
+    else
+      # macOS: ps reports cumulative CPU time as [[dd-]hh:]mm:ss.
+      local t
+      t=$(ps -o time= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+      [ -z "$t" ] && continue
+      local secs
+      secs=$(awk -F'[:.-]' '{n=NF; s=0; m=1; for(i=n;i>=1;i--){s+=$i*m; m*=60} print s}' <<< "$t" 2>/dev/null || echo 0)
+      [[ "$secs" =~ ^[0-9]+$ ]] || secs=0
+      total=$((total + secs))
+    fi
+  done
+  echo "$total"
 }
 
 # find_our_workers: find fork workers that belong to THIS vitest run.
@@ -176,8 +221,12 @@ trap 'rm -f "$WORKER_MARKER_FILE"' EXIT
 npx vitest run "$@" &
 VITEST_PID=$!
 
-# Track when we last saw fork workers — used for stuck detection
-WORKER_FIRST_SEEN_S=0
+# Stuck-worker detection state: the last observed total worker CPU time, and
+# how many seconds have passed with that total unchanged. CPU time only moves
+# while a worker is actually executing; a worker parked in pool.close() leaves
+# it frozen. See WORKER_STUCK_THRESHOLD_S for why wall-clock age is wrong here.
+WORKER_LAST_CPU=""
+WORKER_CPU_IDLE_S=0
 
 # Watchdog: wait for vitest, kill process tree on timeout
 WAITED=0
@@ -224,31 +273,40 @@ while kill -0 "$VITEST_PID" 2>/dev/null; do
     save_worker_pids
   fi
 
-  # Proactive stuck-worker detection: if fork workers exist for longer
-  # than WORKER_STUCK_THRESHOLD_S while the vitest process is still running,
-  # they likely have open handles and are blocking pool.close().
-  # The globalSetup teardown() should have killed them already, but if it
-  # didn't work (e.g., pgrep -f matched wrong PIDs), we do it here.
+  # Proactive stuck-worker detection: a worker whose CPU time has not advanced
+  # for WORKER_STUCK_THRESHOLD_S is blocked (pool.close() with open handles),
+  # not working. Killing it unblocks the pool. The globalSetup teardown() should
+  # have handled this already, but if it didn't (e.g., pgrep -f matched wrong
+  # PIDs), we do it here.
+  #
+  # Progress is measured by CPU time, NOT wall-clock age: the suite runs for
+  # minutes, so "worker has existed for 45s" is normal and killing on it
+  # discards the coverage of every file that worker still had to report.
   # Don't start checking until at least 60s in (tests need time to run).
   if [ "$WAITED" -gt 60 ]; then
     local_workers=$(find_our_workers)
     if [ -n "$local_workers" ]; then
-      if [ "$WORKER_FIRST_SEEN_S" -eq 0 ]; then
-        WORKER_FIRST_SEEN_S=$WAITED
+      current_cpu=$(worker_cpu_total "$local_workers")
+      if [ "$current_cpu" = "$WORKER_LAST_CPU" ]; then
+        WORKER_CPU_IDLE_S=$((WORKER_CPU_IDLE_S + 1))
+      else
+        WORKER_LAST_CPU="$current_cpu"
+        WORKER_CPU_IDLE_S=0
       fi
-      worker_duration=$((WAITED - WORKER_FIRST_SEEN_S))
-      if [ "$worker_duration" -ge "$WORKER_STUCK_THRESHOLD_S" ]; then
+      if [ "$WORKER_CPU_IDLE_S" -ge "$WORKER_STUCK_THRESHOLD_S" ]; then
         wcount=$(echo "$local_workers" | wc -l)
-        echo "[vitest-run] $wcount worker(s) stuck for ${worker_duration}s (threshold=${WORKER_STUCK_THRESHOLD_S}s) — killing to unblock pool.close()" >&2
+        echo "[vitest-run] $wcount worker(s) made no CPU progress for ${WORKER_CPU_IDLE_S}s (threshold=${WORKER_STUCK_THRESHOLD_S}s) — killing to unblock pool.close()" >&2
         kill_our_workers
         # Re-snapshot after killing (workers may have changed)
         save_worker_pids
-        # Reset timer so we don't keep trying every second
-        WORKER_FIRST_SEEN_S=0
+        # Reset so we don't keep trying every second
+        WORKER_LAST_CPU=""
+        WORKER_CPU_IDLE_S=0
       fi
     else
-      # No workers — reset timer
-      WORKER_FIRST_SEEN_S=0
+      # No workers — reset
+      WORKER_LAST_CPU=""
+      WORKER_CPU_IDLE_S=0
     fi
   fi
 done

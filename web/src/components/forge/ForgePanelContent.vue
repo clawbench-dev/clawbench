@@ -93,17 +93,28 @@
           </button>
           <RefreshButton
             class="forge-header-btn"
-            :loading="items.loading.value"
+            :loading="refreshing"
             :title="t('nav.refresh')"
             @click="onRefreshClick"
           />
         </div>
 
-        <PopupMenu v-model:show="repoMenuOpen" :target-element="repoBadgeRef" :menu-items-count="2">
+        <PopupMenu v-model:show="repoMenuOpen" :target-element="repoBadgeRef" :menu-items-count="3">
           <button class="forge-repo-menu-item" @click="openRebindDialog">
             <Github :size="14" />
             <span>{{ t('forge.bind.change') }}</span>
           </button>
+          <a
+            v-if="repoWebUrl"
+            class="forge-repo-menu-item"
+            :href="repoWebUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            :title="repoWebUrl"
+          >
+            <ExternalLink :size="14" />
+            <span>{{ t('forge.bind.openRepo') }}</span>
+          </a>
           <button class="forge-repo-menu-item danger" @click="unbindRepo">
             <Unlink :size="14" />
             <span>{{ t('forge.bind.unbind') }}</span>
@@ -391,6 +402,7 @@ import { useI18n } from 'vue-i18n'
 import {
   Github, Rss, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
   ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Unlink, CheckCheck,
+  ExternalLink,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -403,7 +415,7 @@ import ForgeOverviewList from '@/components/forge/ForgeOverviewList.vue'
 import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
-import { isOfficialForgeHost, isNonOfficialRemote } from '@/utils/forgeHost'
+import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
 import { useForgeUnread } from '@/composables/useForgeUnread'
 import { appLog } from '@/utils/appLog'
 
@@ -487,6 +499,13 @@ const bindError = ref('')
 const manualUrlNonOfficial = computed(() => isNonOfficialRemote(manualUrl.value))
 const repoMenuOpen = ref(false)
 const repoBadgeRef = ref<HTMLElement | null>(null)
+
+/**
+ * Browser URL of the bound repository's home page, or '' when the binding is
+ * incomplete. The dropdown renders "open repository" only when this resolves,
+ * so the entry can never lead to a 404.
+ */
+const repoWebUrl = computed(() => forgeRepoWebUrl(items.binding.value))
 
 /** Switch tabs, loading the target view's data on first use. */
 function setActiveTab(key: ForgeTabKey) {
@@ -584,7 +603,26 @@ function closeDetail() {
 }
 
 /** The unread list, so the header's "mark all read" can clear its rows too. */
-const overviewListRef = ref<{ reload: () => void; clearLocal: () => void } | null>(null)
+const overviewListRef = ref<{
+  reload: () => void
+  clearLocal: () => void
+  loading: boolean
+} | null>(null)
+
+/**
+ * Whether the header refresh button should spin.
+ *
+ * Every tab owns its own loader — the issue/PR list, the pipeline list and the
+ * unread list each have a separate `loading` flag — so the button must read
+ * whichever one is on screen. Binding it to `items.loading` alone made the
+ * button look dead on the Pipelines and Activity tabs, where a refresh really
+ * was running but nothing on screen reflected it.
+ */
+const refreshing = computed(() => {
+  if (activeTab.value === 'pipeline') return pipelines.loading.value
+  if (activeTab.value === 'overview') return overviewListRef.value?.loading ?? false
+  return items.loading.value
+})
 
 /**
  * Open the item an unread row points at.
@@ -878,11 +916,21 @@ function formatTime(iso: string): string {
   font-size: var(--font-size-md);
   text-align: left;
   cursor: pointer;
+  /* The "open repository" entry is an <a> so the browser handles the new tab
+     natively; without this the UA underline would make it look unlike its
+     sibling buttons. */
+  text-decoration: none;
 }
 @media (hover: hover) {
   .forge-repo-menu-item:hover {
     background: var(--bg-secondary);
   }
+}
+/* Keyboard focus parity with the sibling buttons, which get the browser's
+   default focus ring. The <a> would otherwise be indistinguishable. */
+.forge-repo-menu-item:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
 }
 .forge-repo-menu-item.danger {
   color: var(--color-red);

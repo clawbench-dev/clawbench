@@ -129,6 +129,21 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		systemPrompt = appendMediaPrompt(systemPrompt)
 	}
 
+	// Compaction re-injection: a session whose context was just compacted (by the
+	// agent, or by the user sending /compact) must get the system prompt back on
+	// its next turn — the summary may have dropped it, and the periodic interval
+	// defaults to "never".
+	//
+	// The flag is CONSUMED (read-and-clear) so it affects exactly one turn, and
+	// it is deliberately NOT consumed by the /compact command turn itself: that
+	// turn is the command, not a model call, and the compaction it triggers
+	// happens after it. Consuming it there would leave the following real turn
+	// without the re-injection.
+	compacted := false
+	if !ai.IsCompactCommand(prompt) {
+		compacted = ConsumeSessionCompacted(sessionID)
+	}
+
 	// HasConversationHistory: conservative on error (true = has history) so a
 	// DB hiccup can never silently reset the session via amnesia prevention.
 	hasConversationHistory := true
@@ -153,6 +168,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		AssistantMessageCount:  GetAssistantMessageCount(sessionID),
 		HasConversationHistory: hasConversationHistory,
 		ForkContext:            forkContext,
+		Compacted:              compacted,
 	}
 }
 

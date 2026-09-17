@@ -210,6 +210,7 @@ function makeI18n() {
             submit: 'Bind',
             nonOfficialHost: 'non-official host',
             change: 'Change repository',
+            openRepo: 'Open repository',
             unbind: 'Unbind',
           },
           detail: { back: 'Back', openBrowser: 'Open', analyze: 'Analyze', loadOlder: 'Load older' },
@@ -519,7 +520,7 @@ describe('ForgePanelContent', () => {
     await wrapper.find('.forge-repo-badge').trigger('click')
     await new Promise(r => setTimeout(r, 100))
     const items = Array.from(document.body.querySelectorAll('.forge-repo-menu-item'))
-    expect(items.length, 'the switcher menu should list change + unbind').toBe(2)
+    expect(items.length, 'the switcher menu should list change + open + unbind').toBe(3)
     ;(items[0] as HTMLElement).click()
     await new Promise(r => setTimeout(r, 150))
 
@@ -528,6 +529,72 @@ describe('ForgePanelContent', () => {
 
     wrapper.unmount()
     document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
+    document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
+  })
+
+  it('opens the repository in a new tab from the header dropdown', async () => {
+    // The entry has to be a real anchor: the browser then handles the new tab
+    // (and middle-click / "copy link") natively, which window.open cannot.
+    state.binding.value = {
+      platform: 'gitlab',
+      host: 'git.internal.corp:8080',
+      scheme: 'http',
+      owner: 'acme',
+      repo: 'widgets',
+      slug: 'acme/widgets',
+    }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: {
+        plugins: [makeI18n()],
+        stubs: { LoadingIndicator: true, RefreshButton: true, ForgeDetail: true },
+      },
+      attachTo: document.body,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    await wrapper.find('.forge-repo-badge').trigger('click')
+    await new Promise(r => setTimeout(r, 100))
+
+    const link = document.body.querySelector('.forge-repo-menu-item[href]') as HTMLAnchorElement | null
+    expect(link, 'the dropdown must expose an anchor entry').not.toBeNull()
+    // The resolved API scheme is reused, not assumed https: this instance is
+    // reached over plain http, so an https URL would not load.
+    expect(link!.getAttribute('href')).toBe('http://git.internal.corp:8080/acme/widgets')
+    expect(link!.getAttribute('target')).toBe('_blank')
+    // reverse tabnabbing guard — the opened page must not get window.opener.
+    expect(link!.getAttribute('rel')).toContain('noopener')
+
+    wrapper.unmount()
+    document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
+  })
+
+  it('omits the open-repository entry when the binding is incomplete', async () => {
+    // A partial binding would yield a URL that 404s; hiding the entry is
+    // better than rendering a dead link.
+    state.binding.value = { platform: 'github', host: '', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: {
+        plugins: [makeI18n()],
+        stubs: { LoadingIndicator: true, RefreshButton: true, ForgeDetail: true },
+      },
+      attachTo: document.body,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    await wrapper.find('.forge-repo-badge').trigger('click')
+    await new Promise(r => setTimeout(r, 100))
+
+    const items = Array.from(document.body.querySelectorAll('.forge-repo-menu-item'))
+    expect(items.length, 'only change + unbind remain').toBe(2)
+    expect(document.body.querySelector('.forge-repo-menu-item[href]')).toBeNull()
+
+    wrapper.unmount()
     document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
   })
 
@@ -666,9 +733,10 @@ describe('ForgePanelContent', () => {
 
     await wrapper.find('.forge-repo-badge').trigger('click')
     const items = wrapper.findAll('.forge-repo-menu-item')
-    expect(items).toHaveLength(2)
+    expect(items).toHaveLength(3)
     expect(items[0].text()).toContain('Change repository')
-    expect(items[1].text()).toContain('Unbind')
+    expect(items[1].text()).toContain('Open repository')
+    expect(items[2].text()).toContain('Unbind')
   })
 
   it('unbind calls the delete endpoint and refreshes', async () => {
@@ -682,7 +750,8 @@ describe('ForgePanelContent', () => {
     })
     await new Promise(r => setTimeout(r, 0))
     await wrapper.find('.forge-repo-badge').trigger('click')
-    await wrapper.findAll('.forge-repo-menu-item')[1].trigger('click')
+    // Unbind is the last entry; the open-repository anchor sits before it.
+    await wrapper.findAll('.forge-repo-menu-item')[2].trigger('click')
     await new Promise(r => setTimeout(r, 0))
     expect(mockDeleteBinding).toHaveBeenCalledTimes(1)
     // refresh() re-reads the binding so the unbound card takes over.
@@ -1157,6 +1226,118 @@ describe('ForgePanelContent unread tab', () => {
     // the VISIBLE list was reloaded and the invisible one was not.
     expect(reloaded.length).toBeGreaterThan(0)
     expect(mockLoad).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The header refresh button must spin for whichever tab is on screen.
+ *
+ * Each tab's list owns its own `loading` flag (issues/PR, pipelines, activity),
+ * so a button bound to only one of them looks dead on the other two — the user
+ * clicks refresh, a request really runs, and nothing moves.
+ */
+describe('ForgePanelContent header refresh spin', () => {
+  /** The activity list stub's loading flag, controllable from the test. */
+  const overviewChild = { loading: false }
+
+  const opts = {
+    plugins: [makeI18n()],
+    stubs: {
+      LoadingIndicator: true,
+      ModalDialog: true,
+      ForgeDetail: true,
+      ForgePipelineDetail: true,
+      PopupMenu: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
+      ForgeOverviewList: {
+        name: 'ForgeOverviewList',
+        props: ['active', 'projectPath'],
+        emits: ['open-item'],
+        template: '<div class="overview-stub" />',
+        computed: { loading: () => overviewChild.loading },
+        methods: { reload() {}, clearLocal() {} },
+        expose: ['reload', 'clearLocal', 'loading'],
+      },
+      // Named stub so the loading prop the host computes is observable; an
+      // anonymous `true` stub would render nothing to assert against.
+      RefreshButton: {
+        name: 'RefreshButton',
+        props: ['loading'],
+        emits: ['click'],
+        template: '<button class="refresh-stub" :data-loading="String(!!loading)" />',
+      },
+    },
+  }
+
+  /** The header refresh button's rendered loading state. */
+  function spinning(wrapper: ReturnType<typeof mount>): boolean {
+    return wrapper.find('.refresh-stub').attributes('data-loading') === 'true'
+  }
+
+  beforeEach(() => {
+    _resetHandlers()
+    vi.clearAllMocks()
+    state.items.value = []
+    state.binding.value = { slug: 'acme/widgets' }
+    state.loading.value = false
+    state.error.value = null
+    state.isBound.value = true
+    pipelineState.loading.value = false
+    pipelineState.error.value = null
+    overviewChild.loading = false
+  })
+
+  it('spins for the issue/PR list while it is loading', async () => {
+    state.loading.value = true
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
+    await flushPromises()
+
+    expect(spinning(wrapper)).toBe(true)
+  })
+
+  it('spins for the pipeline list while it is loading', async () => {
+    // The regression: this tab's loader was invisible to the header button, so
+    // clicking refresh on Pipelines spun nothing.
+    pipelineState.loading.value = true
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+    await wrapper.findAll('.forge-tab')[3].trigger('click')
+    await flushPromises()
+
+    expect(spinning(wrapper)).toBe(true)
+  })
+
+  it('spins for the activity list while it is loading', async () => {
+    overviewChild.loading = true
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    expect(spinning(wrapper)).toBe(true)
+  })
+
+  it('does not spin for a list that is not on screen', async () => {
+    // The complement: the pipeline list loading in the background must not spin
+    // the button while the Issues tab is showing.
+    pipelineState.loading.value = true
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
+    await flushPromises()
+
+    expect(spinning(wrapper)).toBe(false)
   })
 })
 

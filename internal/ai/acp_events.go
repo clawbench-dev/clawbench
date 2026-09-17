@@ -34,6 +34,30 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		backendID = conn.BackendID()
 	}
 
+	// Compaction detection — runs before the event-type switch because the
+	// compaction flag rides on the _meta of whatever update the agent happened
+	// to be sending (CodeBuddy flags every update emitted while compacting).
+	//
+	// The latch is only set when the signal actually reaches the channel. This
+	// path runs on the ACP SDK's shared notification goroutine, where blocking
+	// is forbidden (see criticalEventBlockingSafe), so a send can be dropped on
+	// a full channel. Because the agent repeats the flag across many updates,
+	// leaving the latch open lets the NEXT update retry — otherwise a single
+	// dropped send would lose the re-injection for good.
+	if conn != nil && !conn.compactReported.Load() {
+		if meta := acpUpdateMeta(update); IsCodeBuddyCompactionMeta(meta) {
+			if tryForwardACPEvent(ch, compactDetectedEvent("acp_meta")) {
+				conn.compactReported.Store(true)
+			}
+		}
+	}
+	if conn != nil && update.SessionInfoUpdate != nil &&
+		IsCodeBuddyCompactionCancelledMeta(update.SessionInfoUpdate.Meta) {
+		// Cancelled/limit-reached compaction restores the original history, so it
+		// must clear any pending report from the same attempt.
+		conn.compactReported.Store(false)
+	}
+
 	switch {
 	case update.UserMessageChunk != nil:
 		// Mid-turn injection boundary (CodeBuddy `session/steer`).
@@ -92,6 +116,18 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 				slog.String("request_id", metaString(update.AgentMessageChunk.Meta[metaKeyCodeBuddyRequestID])),
 				slog.String("clawbench_sid", conn.clawbenchSID))
 			replayed = true
+		}
+		// Claude's ACP adapter announces a finished compaction with a plain text
+		// chunk ("Compacting completed.") rather than a _meta flag. Detected here
+		// because the signal rides on this variant; the text itself is still
+		// forwarded below (unchanged UI behavior). As with the _meta path, the
+		// latch is set only on delivery — the adapter sends this notice exactly
+		// once, so a drop would otherwise lose the signal for good.
+		if conn != nil && !conn.compactReported.Load() && content.Text != nil &&
+			IsClaudeCompactionText(content.Text.Text) {
+			if tryForwardACPEvent(ch, compactDetectedEvent("acp_text")) {
+				conn.compactReported.Store(true)
+			}
 		}
 		if !replayed {
 			parentID := extractParentToolCallID(backendID, update.AgentMessageChunk.Meta)
@@ -920,6 +956,26 @@ func mapACPError(code int, message string) StreamEvent {
 // so a panic from sending to a closed channel is safe to ignore.
 func forwardACPEvent(ch chan<- StreamEvent, event StreamEvent) {
 	emitStreamEvent(ch, "acp", event)
+}
+
+// tryForwardACPEvent is forwardACPEvent with a delivery report: it returns true
+// only when the event reached the channel. Callers that latch a one-shot signal
+// use this so a drop on a full channel can be retried by a later event instead
+// of losing the signal permanently.
+func tryForwardACPEvent(ch chan<- StreamEvent, event StreamEvent) (delivered bool) {
+	defer func() {
+		// A send on a closed channel panics; treat that as "not delivered" so the
+		// caller does not latch a signal that never arrived.
+		if r := recover(); r != nil {
+			delivered = false
+		}
+	}()
+	select {
+	case ch <- event:
+		return true
+	default:
+		return false
+	}
 }
 
 // enrichModelList attaches the CLI-discovered list and the resolved list to a

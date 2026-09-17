@@ -633,8 +633,13 @@ func containsPromptOverride(prompt string) bool {
 }
 
 // ServeAgentRefreshModels handles POST /api/agents/{id}/refresh-models — triggers model re-discovery
-// for the specified agent and returns the updated model list. The discovered models completely replace
-// the agent's current model list (both in memory and in the cache file).
+// for the specified agent and returns the updated model list. The discovered CLI list replaces the
+// agent's stored model list (both in memory and in the database).
+//
+// The response carries the same pair GET /api/agents reports: `models` is the list resolved against
+// the cached ACP models (ACP membership wins) and `cliModels` is the pure CLI list. Returning the raw
+// CLI list as `models` made a refresh silently replace an ACP-authoritative list with models the
+// running agent cannot actually execute.
 //
 // Refresh strategy: CLI model discovery via BackendSpec (e.g., pi --list-models)
 func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
@@ -705,9 +710,35 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("failed to persist model refresh to DB", "agent", agentID, "error", err)
 	}
 
+	// Resolve against the cached ACP models, if any, exactly like GET /api/agents
+	// does. The freshly discovered list is the CLI skeleton; a concrete ACP list
+	// stays authoritative for membership. Agents without ACP have no runtime to
+	// contradict the CLI list, so they are reported as discovered.
+	resolved := models
+	if agent.SupportsACP() {
+		if ml := modelListStateForAgent(agentID); ml != nil {
+			if r := model.ResolveModels(models, ml.Models, ml.CurrentModelID); len(r) > 0 {
+				resolved = r
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"models": models,
+		"models":    resolved,
+		"cliModels": models,
 	})
+}
+
+// modelListStateForAgent returns the cached ACP model state for an agent, or nil
+// when the agent has no ACP-reported models yet. Mirrors the state lookup in
+// serveAgentsGet so both endpoints resolve over the same inputs.
+func modelListStateForAgent(agentID string) *ai.ModelListState {
+	reg := ai.GetAgentCapabilityRegistry()
+	if capability := reg.Get(agentID); capability == nil || !capability.HasData() {
+		return nil
+	}
+	currentModelID := ai.GetACPConnManager().GetCurrentModelIDByAgentID(agentID)
+	return reg.GetModelListState(agentID, currentModelID)
 }
 
 // ServeACPSessions handles GET /api/agents/{id}/acp-sessions — lists ACP sessions

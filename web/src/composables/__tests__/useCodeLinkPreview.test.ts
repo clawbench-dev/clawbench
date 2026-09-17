@@ -1140,6 +1140,80 @@ describe('useCodeLinkPreview', () => {
     expect(mockApiGet.mock.calls.length).toBe(callsBefore)
   })
 
+  it('renders a whole-file response that ignores the requested line window', async () => {
+    // Non-text files (LICENSE, *.bak, .env, extensionless scripts) take the
+    // server's whole-file branch, which ignores ?lineStart/?lineEnd: the body
+    // is the FULL content and windowStart is absent while windowEnd stays 0.
+    // Reading that as the empty-window encoding blanked the pane and showed
+    // "requested line is out of file range" for every such file.
+    mockApiGet.mockResolvedValue({
+      content: 'MIT License\n\nPermission is hereby granted',
+      name: 'LICENSE',
+      path: 'LICENSE',
+      supported: false,
+      size: 41,
+      windowEnd: 0,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'LICENSE' })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    expect(preview.status.value).toBe('ready')
+    expect(preview.slicedCode.value?.code).toContain('MIT License')
+    expect(preview.slicedCode.value?.lineOutOfRange).toBe(false)
+    expect(preview.slicedCode.value?.totalLines).toBe(3)
+    // The whole file is held, so no widening fetch is needed or attempted.
+    expect(mockApiGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders a one-line whole-file response without the out-of-range notice', async () => {
+    // The reported case: a file whose entire content is a single line with no
+    // trailing newline. totalLines is 1 and the line is perfectly in range.
+    mockApiGet.mockResolvedValue({
+      content: '{"sessionId":"01a0866a-eb91-7c"}',
+      name: 'scheduled_tasks.lock',
+      path: 'scheduled_tasks.lock',
+      supported: false,
+      size: 31,
+      windowEnd: 0,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'scheduled_tasks.lock' })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    expect(preview.status.value).toBe('ready')
+    expect(preview.slicedCode.value?.code).toBe('{"sessionId":"01a0866a-eb91-7c"}')
+    expect(preview.slicedCode.value?.startLine).toBe(1)
+    expect(preview.slicedCode.value?.endLine).toBe(1)
+    expect(preview.slicedCode.value?.lineOutOfRange).toBe(false)
+  })
+
+  it('still reports an out-of-range annotation on a windowed response', async () => {
+    // The empty-window encoding (windowStart present, windowEnd = Start-1) is
+    // unchanged: an annotation past EOF must still surface the notice.
+    mockApiGet.mockResolvedValue({
+      content: '',
+      name: 'short.ts',
+      path: 'short.ts',
+      supported: true,
+      size: 100,
+      totalLines: 100,
+      windowStart: 5000,
+      windowEnd: 4999,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'short.ts', lineStart: 5000, lineEnd: 5000 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    expect(preview.slicedCode.value?.lineOutOfRange).toBe(true)
+  })
+
   it('opens a long file on a small head and is not blocked', async () => {
     mockApiGet.mockResolvedValueOnce({
       content: Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join('\n'),

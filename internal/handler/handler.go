@@ -436,9 +436,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// APK is a public resource; users need to download it before they can even log in.
 	registerPublic("/api/apk", ServeAPK)
 
-	// File watch SSE (auto-refresh on file changes)
-	register("/api/file/watch", FileWatchSSE)
-	register("/api/file/watch/update", FileWatchUpdate)
+	// File watch WebSocket (auto-refresh on file changes). Replaced an SSE
+	// endpoint: a resident EventSource permanently consumes one of the
+	// browser's 6 HTTP/1.1 connections per origin, which starves parallel REST
+	// requests on plain-HTTP deployments. Watch-target changes travel over the
+	// socket, so there is no separate update endpoint.
+	register("/api/file/watch/ws", FileWatchWS)
 
 	// Directory search SSE (recursive fuzzy file search)
 	register("/api/dir/search", DirSearch)

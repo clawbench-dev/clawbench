@@ -15,6 +15,7 @@ func TestShouldInjectSystemPrompt(t *testing.T) {
 		name              string
 		systemPrompt      string
 		resume            bool
+		compacted         bool
 		assistantMsgCount int
 		promptInterval    int
 		expected          bool
@@ -63,6 +64,33 @@ func TestShouldInjectSystemPrompt(t *testing.T) {
 			promptInterval:    10,
 			expected:          false,
 		},
+		{
+			// The whole point of the feature: the default interval is 0 (never
+			// re-inject), but a compacted session must still get the prompt back.
+			name:              "compacted overrides the disabled interval",
+			systemPrompt:      "you are helpful",
+			resume:            true,
+			compacted:         true,
+			assistantMsgCount: 7,
+			promptInterval:    0,
+			expected:          true,
+		},
+		{
+			name:              "compacted overrides a non-boundary turn",
+			systemPrompt:      "you are helpful",
+			resume:            true,
+			compacted:         true,
+			assistantMsgCount: 5,
+			promptInterval:    10,
+			expected:          true,
+		},
+		{
+			name:         "compacted without a system prompt injects nothing",
+			systemPrompt: "",
+			resume:       true,
+			compacted:    true,
+			expected:     false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -76,6 +104,7 @@ func TestShouldInjectSystemPrompt(t *testing.T) {
 			req := ChatRequest{
 				SystemPrompt:          tt.systemPrompt,
 				Resume:                tt.resume,
+				Compacted:             tt.compacted,
 				AssistantMessageCount: tt.assistantMsgCount,
 			}
 			assert.Equal(t, tt.expected, req.ShouldInjectSystemPrompt())

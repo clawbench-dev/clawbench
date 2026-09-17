@@ -864,6 +864,18 @@ describe('AskUserQuestion renderer (deep)', () => {
     expect(html).toContain('ask-supplementary-input')
   })
 
+  // The note field is a textarea, not a single-line input: a long answer is
+  // unreadable in one line. It starts at one row and is grown by the handler.
+  it('renders the supplementary field as a one-row textarea', () => {
+    const html = formatToolInput({
+      questions: [{ question: 'Pick one', options: ['A'] }],
+    }, 'AskUserQuestion')
+    expect(html).toContain('<textarea class="ask-supplementary-input" rows="1"')
+    // A leftover type="text" would render a single-line input that silently
+    // clips everything past the first line.
+    expect(html).not.toContain('<input class="ask-supplementary-input"')
+  })
+
   it('submit button is disabled by default', () => {
     const html = formatToolInput({
       questions: [{ question: 'Pick one', options: ['A'] }],
@@ -920,7 +932,7 @@ describe('AskUserQuestion action handler', () => {
       </div>
       <div class="ask-question-supplementary">
         <label class="ask-supplementary-label">Additional info</label>
-        <input class="ask-supplementary-input" type="text" placeholder="Optional" />
+        <textarea class="ask-supplementary-input" rows="1" placeholder="Optional"></textarea>
       </div>
       <button class="ask-question-submit" disabled>Submit</button>
     `
@@ -1105,7 +1117,7 @@ describe('AskUserQuestion action handler', () => {
       const { container, emit } = createAskDOM(false)
       const option = container.querySelector('.ask-question-option') as HTMLElement
       const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
-      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
 
       suppInput.value = 'extra context'
 
@@ -1165,7 +1177,7 @@ describe('AskUserQuestion action handler', () => {
       const { container, emit } = createAskDOM(false)
       const option = container.querySelector('.ask-question-option') as HTMLElement
       const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
-      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
 
       // Select option
       const clickOpt = new MouseEvent('click', { bubbles: true, cancelable: true })
@@ -1248,7 +1260,7 @@ describe('AskUserQuestion action handler', () => {
 
     it('emits supplementary text only when no option selected', () => {
       const { container, emit } = createAskDOM(false)
-      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
       const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
 
       // Type supplementary text without selecting any option
@@ -1267,7 +1279,7 @@ describe('AskUserQuestion action handler', () => {
 
     it('enables submit when supplementary text is entered without selecting options', () => {
       const { container, emit } = createAskDOM(false)
-      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
       const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
 
       expect(submitBtn.disabled).toBe(true)
@@ -1282,7 +1294,7 @@ describe('AskUserQuestion action handler', () => {
 
     it('disables submit when supplementary text is cleared and no options selected', () => {
       const { container, emit } = createAskDOM(false)
-      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
       const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
 
       // Enter and then clear supplementary text
@@ -3264,7 +3276,7 @@ describe('AskUserQuestion action handler (uncovered branches)', () => {
       </div>
       <div class="ask-question-supplementary">
         <label class="ask-supplementary-label">Additional info</label>
-        <input class="ask-supplementary-input" type="text" placeholder="Optional" />
+        <textarea class="ask-supplementary-input" rows="1" placeholder="Optional"></textarea>
       </div>
       <button class="ask-question-submit" disabled>Submit</button>
     `
@@ -3280,7 +3292,7 @@ describe('AskUserQuestion action handler (uncovered branches)', () => {
     const { container, emit } = createAskDOM(false)
     const option = container.querySelector('.ask-question-option') as HTMLElement
     const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
-    const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+    const suppInput = container.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
 
     // Select option
     const clickOpt = new MouseEvent('click', { bubbles: true, cancelable: true })
@@ -3368,7 +3380,7 @@ describe('AskUserQuestion answer state persistence', () => {
           </div>
         </div>
         <div class="ask-question-supplementary">
-          <input class="ask-supplementary-input" type="text" />
+          <textarea class="ask-supplementary-input" rows="1"></textarea>
         </div>
         <div class="ask-question-actions">
           <button class="ask-question-recommend">Recommend</button>
@@ -3387,7 +3399,7 @@ describe('AskUserQuestion answer state persistence', () => {
     return handleToolAction('AskUserQuestion', ev, emit)
   }
 
-  function typeInto(input: HTMLInputElement, text: string) {
+  function typeInto(input: HTMLTextAreaElement, text: string) {
     input.value = text
     const ev = new Event('input', { bubbles: true })
     input.dispatchEvent(ev)
@@ -3450,7 +3462,7 @@ describe('AskUserQuestion answer state persistence', () => {
 
     it('records supplementary text on input', () => {
       const { container, view } = createCard('tool:tu-1')
-      typeInto(view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'my notes')
+      typeInto(view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement, 'my notes')
 
       expect(getAskState('tool:tu-1')?.supplementary).toBe('my notes')
       container.remove()
@@ -3458,7 +3470,7 @@ describe('AskUserQuestion answer state persistence', () => {
 
     it('clears the recorded note when the input is emptied', () => {
       const { container, view } = createCard('tool:tu-1')
-      const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const input = view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
       typeInto(input, 'my notes')
       typeInto(input, '')
 
@@ -3508,8 +3520,8 @@ describe('AskUserQuestion answer state persistence', () => {
     it('keeps separate state for separate cards', () => {
       const a = createCard('tool:tu-a')
       const b = createCard('tool:tu-b')
-      typeInto(a.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note A')
-      typeInto(b.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note B')
+      typeInto(a.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement, 'note A')
+      typeInto(b.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement, 'note B')
 
       expect(getAskState('tool:tu-a')?.supplementary).toBe('note A')
       expect(getAskState('tool:tu-b')?.supplementary).toBe('note B')
@@ -3551,13 +3563,13 @@ describe('AskUserQuestion answer state persistence', () => {
 
     it('restores the supplementary text into the input', () => {
       const first = createCard('tool:tu-1')
-      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'my notes')
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement, 'my notes')
       first.container.remove()
 
       const rebuilt = createCard('tool:tu-1')
       restoreAskStateFromStore(rebuilt.view)
 
-      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('my notes')
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement).value).toBe('my notes')
       rebuilt.container.remove()
     })
 
@@ -3571,7 +3583,7 @@ describe('AskUserQuestion answer state persistence', () => {
       restoreAskStateFromStore(rebuilt.view)
 
       expect(rebuilt.view.classList.contains('ask-submitted')).toBe(true)
-      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).disabled).toBe(true)
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement).disabled).toBe(true)
       const submit = rebuilt.view.querySelector('.ask-question-submit') as HTMLButtonElement
       expect(submit.disabled).toBe(true)
       rebuilt.container.remove()
@@ -3613,7 +3625,7 @@ describe('AskUserQuestion answer state persistence', () => {
 
     it('re-enables the submit button when a restored note makes the card answerable', () => {
       const first = createCard('tool:tu-1')
-      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note only')
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement, 'note only')
       first.container.remove()
 
       const rebuilt = createCard('tool:tu-1')
@@ -3633,26 +3645,26 @@ describe('AskUserQuestion answer state persistence', () => {
 
       expect(view.classList.contains('ask-submitted')).toBe(false)
       expect(view.querySelectorAll('.ask-question-option.selected').length).toBe(0)
-      expect((view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('')
+      expect((view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement).value).toBe('')
       container.remove()
     })
 
     it('does not carry one card\'s state into another', () => {
       const first = createCard('tool:tu-a')
-      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note A')
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement, 'note A')
       first.container.remove()
 
       const other = createCard('tool:tu-b')
       restoreAskStateFromStore(other.view)
 
-      expect((other.view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('')
+      expect((other.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement).value).toBe('')
       other.container.remove()
     })
 
     it('is idempotent — restoring twice yields the same DOM', () => {
       const first = createCard('tool:tu-1')
       clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
-      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note')
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement, 'note')
       first.container.remove()
 
       const rebuilt = createCard('tool:tu-1')
@@ -3660,16 +3672,146 @@ describe('AskUserQuestion answer state persistence', () => {
       restoreAskStateFromStore(rebuilt.view)
 
       expect(rebuilt.view.querySelectorAll('.ask-question-option.selected').length).toBe(1)
-      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('note')
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement).value).toBe('note')
       rebuilt.container.remove()
     })
 
     it('is a no-op for a card with no data-ask-key', () => {
       const container = document.createElement('div')
-      container.innerHTML = '<div class="ask-question-view"><input class="ask-supplementary-input" /></div>'
+      container.innerHTML = '<div class="ask-question-view"><textarea class="ask-supplementary-input" rows="1"></textarea></div>'
       document.body.appendChild(container)
       expect(() => restoreAskStateFromStore(container.querySelector('.ask-question-view')!)).not.toThrow()
       container.remove()
+    })
+  })
+
+  // The note field is a textarea with a one-row starting height, so its height
+  // has to be re-fitted whenever content lands in it without a keystroke (a
+  // restore after a re-render) — otherwise a stored multi-line note comes back
+  // clipped to a single row.
+  describe('fitting the supplementary textarea height', () => {
+    // jsdom has no layout engine: scrollHeight is always 0, which the fitter
+    // deliberately treats as "no layout box, leave the CSS height alone". These
+    // tests therefore have to supply both the measurement and the computed
+    // line-height/padding the fitter derives its cap from.
+    let layout = { contentHeight: 0, lineHeight: 18, padY: 5 }
+    let styleSpy: ReturnType<typeof vi.spyOn>
+    let scrollHeightDescriptor: PropertyDescriptor | undefined
+
+    beforeEach(() => {
+      layout = { contentHeight: 0, lineHeight: 18, padY: 5 }
+      styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation(() => ({
+        lineHeight: `${layout.lineHeight}px`,
+        paddingTop: `${layout.padY}px`,
+        paddingBottom: `${layout.padY}px`,
+      } as unknown as CSSStyleDeclaration))
+      scrollHeightDescriptor = installScrollHeightModel()
+    })
+
+    afterEach(() => {
+      styleSpy.mockRestore()
+      // Restore the real (always 0) jsdom value, or the model leaks into every
+      // later test file in this worker.
+      if (scrollHeightDescriptor) {
+        Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', scrollHeightDescriptor)
+      } else {
+        delete (HTMLTextAreaElement.prototype as unknown as Record<string, unknown>).scrollHeight
+      }
+    })
+
+    /** Give the element a layout box whose content is `contentHeight` px tall. */
+    function withLayout(input: HTMLTextAreaElement, contentHeight: number) {
+      layout.contentHeight = contentHeight
+    }
+
+    // jsdom has no layout engine, so `scrollHeight` has to be modelled — and it
+    // is not simply the content height. A textarea's scrollHeight is
+    // max(content, current box height): that is exactly why the fitter resets
+    // `height` to auto before measuring. A fixed fake would let a missing reset
+    // pass, so the getter mirrors the real relationship against the element's
+    // own inline height.
+    function installScrollHeightModel() {
+      const prototype = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'scrollHeight')
+      Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+        configurable: true,
+        get(this: HTMLTextAreaElement) {
+          const current = this.style.height === 'auto' ? 0 : parseFloat(this.style.height) || 0
+          return Math.max(layout.contentHeight, current)
+        },
+      })
+      return prototype
+    }
+
+    it('grows the box to the content height', () => {
+      const { container, view } = createCard('tool:tu-fit')
+      const input = view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
+      withLayout(input, 54) // 3 lines
+
+      updateAskSubmitState(view)
+
+      expect(input.style.height).toBe('54px')
+      container.remove()
+    })
+
+    it('clamps the growth at six lines plus padding', () => {
+      const { container, view } = createCard('tool:tu-fit')
+      const input = view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
+      withLayout(input, 400) // far past the cap
+
+      updateAskSubmitState(view)
+
+      // 18 × 6 + 5 + 5 = 118. Past this the CSS max-height clamps the box and
+      // the textarea scrolls internally instead.
+      expect(input.style.height).toBe('118px')
+      container.remove()
+    })
+
+    it('shrinks back when the note gets shorter', () => {
+      const { container, view } = createCard('tool:tu-fit')
+      const input = view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
+      withLayout(input, 400)
+      updateAskSubmitState(view)
+      expect(input.style.height).toBe('118px')
+
+      // Deleting lines must not leave the box at its previous height. The
+      // scrollHeight model above reports max(content, current height), so a
+      // missing `height = 'auto'` reset would keep this at 118px.
+      withLayout(input, 18)
+      updateAskSubmitState(view)
+      expect(input.style.height).toBe('18px')
+      container.remove()
+    })
+
+    it('leaves the height alone when the element has no layout box', () => {
+      const { container, view } = createCard('tool:tu-fit')
+      const input = view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
+      // No content and no inline height, so the model reports 0 — jsdom's real
+      // answer. Writing it through would collapse the field and hide it.
+      updateAskSubmitState(view)
+
+      expect(input.style.height).toBe('')
+      container.remove()
+    })
+
+    it('re-fits a restored multi-line note on a rebuilt card', () => {
+      const first = createCard('tool:tu-1')
+      const firstInput = first.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
+      typeInto(firstInput, 'line one\nline two\nline three')
+      // Submit it, so the restore takes the SUBMITTED branch. That branch
+      // returns before makeAskViewAnswerable — the only other place the height
+      // is fitted — so this pins the explicit fit at the top of the restore.
+      clickOn(first.view.querySelector('.ask-question-submit')!, first.emit)
+      expect(getAskState('tool:tu-1')?.submitted).toBe(true)
+      first.container.remove()
+
+      const rebuilt = createCard('tool:tu-1')
+      const rebuiltInput = rebuilt.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
+      withLayout(rebuiltInput, 54)
+      restoreAskStateFromStore(rebuilt.view)
+
+      expect(rebuiltInput.value).toBe('line one\nline two\nline three')
+      expect(rebuiltInput.style.height).toBe('54px')
+      rebuilt.container.remove()
     })
   })
 
@@ -3681,7 +3823,7 @@ describe('AskUserQuestion answer state persistence', () => {
     it('clears the submitted flag but keeps the selection and the note', () => {
       const { container, view, emit } = createCard('tool:tu-1')
       clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
-      typeInto(view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'my notes')
+      typeInto(view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement, 'my notes')
       clickOn(view.querySelector('.ask-question-submit')!, emit)
       expect(getAskState('tool:tu-1')?.submitted).toBe(true)
 
@@ -3706,7 +3848,7 @@ describe('AskUserQuestion answer state persistence', () => {
       restoreAskStateFromStore(rebuilt.view)
 
       expect(rebuilt.view.classList.contains('ask-submitted')).toBe(false)
-      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).disabled).toBe(false)
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement).disabled).toBe(false)
       // The user's selection survived, so retrying is one tap away.
       expect(rebuilt.view.querySelectorAll('.ask-question-option.selected').length).toBe(1)
       rebuilt.container.remove()
@@ -3786,7 +3928,7 @@ describe('AskUserQuestion answer state persistence', () => {
     it('restoreAskStatesInContainer restores every keyed card it finds', () => {
       const first = createCard('tool:tu-1')
       clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
-      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLInputElement, 'note')
+      typeInto(first.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement, 'note')
       first.container.remove()
 
       // A container holding the rebuilt card, as v-html would produce it.
@@ -3797,7 +3939,7 @@ describe('AskUserQuestion answer state persistence', () => {
       restoreAskStatesInContainer(wrapper)
 
       expect(rebuilt.view.querySelectorAll('.ask-question-option.selected').length).toBe(1)
-      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLInputElement).value).toBe('note')
+      expect((rebuilt.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement).value).toBe('note')
       wrapper.remove()
       rebuilt.container.remove()
     })
@@ -3823,7 +3965,7 @@ describe('AskUserQuestion answer state persistence', () => {
 
     it('handleAskSupplementaryInput reports true and persists for an ask card', () => {
       const card = createCard('tool:tu-1')
-      const input = card.view.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const input = card.view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
       input.value = 'typed'
       const ev = new Event('input', { bubbles: true })
       input.dispatchEvent(ev)
@@ -3853,7 +3995,7 @@ describe('AskUserQuestion submit carries the card key', () => {
             </div>
           </div>
         </div>
-        <div class="ask-question-supplementary"><input class="ask-supplementary-input" type="text" /></div>
+        <div class="ask-question-supplementary"><textarea class="ask-supplementary-input" rows="1"></textarea></div>
         <button class="ask-question-submit" disabled>Submit</button>
       </div>
     `
@@ -3930,7 +4072,7 @@ describe('AskUserQuestion revert clears the DOM as well as the store', () => {
             </div>
           </div>
         </div>
-        <div class="ask-question-supplementary"><input class="ask-supplementary-input" type="text" /></div>
+        <div class="ask-question-supplementary"><textarea class="ask-supplementary-input" rows="1"></textarea></div>
         <button class="ask-question-recommend">Recommend</button>
         <button class="ask-question-submit" disabled>Submit</button>
       </div>
@@ -3966,7 +4108,7 @@ describe('AskUserQuestion revert clears the DOM as well as the store', () => {
 
   it('re-enables the supplementary input and the submit button', () => {
     const { container, view, emit } = createKeyedCard('tool:tu-1')
-    const input = view.querySelector('.ask-supplementary-input') as HTMLInputElement
+    const input = view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
     input.value = 'retry me'
     clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
     clickOn(view.querySelector('.ask-question-submit')!, emit)

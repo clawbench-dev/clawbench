@@ -111,10 +111,12 @@ sequenceDiagram
 
 | 端点 | 通道 | 用途 | 代码位置 |
 |------|------|------|----------|
-| `GET /api/file/watch` | SSE | 文件系统 fsnotify 变更流 | `internal/handler/file_watch.go` |
+| `GET /api/file/watch/ws` | WebSocket | 文件系统 fsnotify 变更流 | `internal/handler/file_watch.go` |
 | `GET /api/dir/search` | SSE | 目录 fuzzy 搜索进度 | `internal/handler/dir_search.go` |
 | `GET /api/tts/audio/ws` | WebSocket | TTS 流式音频分片 | `internal/handler/tts_audio_ws.go` |
 | `GET /api/stt/transcribe/ws` | WebSocket | STT 流式语音识别 | `internal/handler/stt.go` |
+
+> 文件监听走 WebSocket 而非 SSE 是刻意的：明文 HTTP 部署下浏览器对每个源限制 6 条 HTTP/1.1 连接，常驻 `EventSource` 会永久占用其中一条并拖慢并发 REST；WebSocket 升级成 101 后即移出连接池。查询参数 `dir`/`file` 设置初始监听目标（升级前校验，穿越返回 403），此后客户端用 `{"type":"watch"}` 消息重新指定目标——不再有独立的 update 端点。服务端每 30s 发 `{"type":"ping"}`，客户端回 `pong`。
 
 ### 设计要点
 

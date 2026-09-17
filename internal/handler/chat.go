@@ -416,6 +416,15 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		prompt = injected + "\n\n" + prompt
 	}
 
+	// The user asking for /compact is itself a compaction signal: the agent
+	// rewrites the context, so the system prompt must be re-injected on the turn
+	// AFTER this one (this turn is the command, not a model call). Flagging here
+	// rather than waiting for the agent's own report also covers agents that do
+	// not announce the compaction on the wire.
+	if ai.IsCompactCommand(req.Message) {
+		service.MarkSessionCompacted(sessionID)
+	}
+
 	// allFiles uses validated entries (with resolved absolute paths and isDir from os.Stat)
 	allFiles := validatedFileEntries
 
