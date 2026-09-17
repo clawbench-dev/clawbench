@@ -191,13 +191,15 @@ export interface EventVarContext {
 /**
  * Whether a variable is in scope for the given subscription.
  *
- * An empty subscription means "not yet configured", which shows everything so
- * the user can see the full payload before choosing.
+ * An EMPTY subscription yields nothing: with no event selected the task has no
+ * trigger, so the backend injects no context block at all. Showing the full
+ * variable list then would document a payload that can never arrive — which is
+ * exactly what the empty-subscription case used to do.
  */
 export function eventVarVisible(v: EventContextVar, ctx: EventVarContext): boolean {
-    const showAll = ctx.transitions.size === 0
+    if (ctx.transitions.size === 0) return false
     if (ctx.repoTargetedOnly && v.requiresItem) return false
-    if (showAll || v.scope === 'all') return true
+    if (v.scope === 'all') return true
     if (v.scope === 'stateChanges') {
         return STATE_CHANGE_TRANSITIONS.some(tr => ctx.transitions.has(tr))
     }
@@ -211,15 +213,19 @@ export function visibleEventContextVars(ctx: EventVarContext): EventContextVar[]
 }
 
 /**
- * The read-only placeholder block for the task form.
+ * The read-only placeholder block for the task form, or '' when no event is
+ * selected.
  *
  * Mirrors the backend's EventPromptTemplate: only variables the subscription can
  * actually yield are listed, so the user sees exactly what will be injected.
+ *
+ * Returns '' rather than an empty block so the caller can hide the whole
+ * section — a heading with nothing under it would look broken.
  */
 export function eventContextTemplateText(ctx: EventVarContext): string {
-    const lines = visibleEventContextVars(ctx).map(
-        v => `- ${i18n.global.t(v.labelKey)}：{{${v.placeholder}}}`,
-    )
+    const visible = visibleEventContextVars(ctx)
+    if (visible.length === 0) return ''
+    const lines = visible.map(v => `- ${i18n.global.t(v.labelKey)}：{{${v.placeholder}}}`)
     return `## ${i18n.global.t('task.form.eventContextHeader')}\n${lines.join('\n')}`
 }
 

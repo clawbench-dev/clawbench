@@ -136,6 +136,16 @@ describe('TaskEventCard event-context sample rows', () => {
     mockFetchBinding.mockResolvedValue({ binding: null })
   })
 
+  // A subscription with no events has no trigger, so no context is ever
+  // injected and the sample card must not appear at all.
+  it('hides the context card when no event is subscribed', () => {
+    const wrapper = mountCard({ eventTypes: '' })
+    expect(wrapper.find('.event-context-preview').exists()).toBe(false)
+    // The trigger card itself (the outer wrapper) stays — it still shows the
+    // "no events" state and the repository binding.
+    expect(wrapper.find('.event-chips').exists()).toBe(true)
+  })
+
   // A pipeline subscription carries the "repo" pseudo-kind, which is neither
   // "issue" nor "pr". sampleKind used to fall through to 'pr', so every pipeline
   // task advertised a "pr #123" sample — a payload it can never receive.

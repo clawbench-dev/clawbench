@@ -275,6 +275,22 @@ describe('TaskFormPage watched repository', () => {
 
     beforeEach(() => { wrapper = mountForm() })
 
+    // With no event selected the task has no trigger, so nothing is injected.
+    // Showing the block (or a heading with no rows) would document a payload
+    // that can never arrive.
+    it('hides the block entirely until an event is selected', async () => {
+      await blockText('')
+      expect(wrapper.find('.event-context-block').exists()).toBe(false)
+      // Not merely empty — the label and hint go too.
+      expect(wrapper.text()).not.toContain('Context')
+    })
+
+    it('shows the block once an event is selected', async () => {
+      await blockText('pr.opened')
+      expect(wrapper.find('.event-context-block').exists()).toBe(true)
+      expect(wrapper.text()).toContain('{{EVENT_TYPE}}')
+    })
+
     it('lists the item-scoped variables for a PR subscription', async () => {
       const text = await blockText('pr.opened')
       for (const placeholder of [

@@ -489,19 +489,24 @@ func transitionOf(key string) string {
 
 // EventPromptTemplate returns the read-only placeholder block shown in the task
 // form. Only variables relevant to the subscribed event types are listed, so
-// the user sees exactly what will be injected. An empty subscription lists all
-// variables.
+// the user sees exactly what will be injected.
+//
+// An EMPTY subscription yields an empty string: with no event selected the task
+// has no trigger, so RenderEventContext injects no block at all. Listing every
+// variable then would document a payload that can never arrive.
 func EventPromptTemplate(eventTypes []string) string {
 	subscribed := make(map[string]bool, len(eventTypes))
 	for _, t := range eventTypes {
 		subscribed[transitionOf(t)] = true
 	}
-	showAll := len(subscribed) == 0
+	if len(subscribed) == 0 {
+		return ""
+	}
 
 	// A subscription made up ONLY of repository-targeted events (a pipeline)
 	// never carries an item, so the item variable is not shown — listing a
 	// {{ITEM_TYPE}} the task can never receive would be misleading.
-	repoTargetedOnly := len(subscribed) > 0
+	repoTargetedOnly := true
 	for t := range subscribed {
 		if !isRepoTargetedTransition(t) {
 			repoTargetedOnly = false
@@ -512,7 +517,7 @@ func EventPromptTemplate(eventTypes []string) string {
 	var b strings.Builder
 	b.WriteString("## Forge 事件\n")
 	for _, v := range eventContextVars {
-		if !showAll && !appliesToSubscription(v, subscribed) {
+		if !appliesToSubscription(v, subscribed) {
 			continue
 		}
 		if repoTargetedOnly && v.requiresItem {
