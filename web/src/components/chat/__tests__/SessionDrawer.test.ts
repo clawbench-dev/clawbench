@@ -7,10 +7,10 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { apiPost } from '@/utils/api'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
 
-// Shared mock for the named setCLIModels export — used by both the vi.mock
-// factory and the assertions below (the component imports it directly).
-const { mockSetCLIModels } = vi.hoisted(() => ({
-  mockSetCLIModels: vi.fn(),
+// Shared mock for the named applyRefreshedModelList export — used by both the
+// vi.mock factory and the assertions below (the component imports it directly).
+const { mockApplyRefreshedModelList } = vi.hoisted(() => ({
+  mockApplyRefreshedModelList: vi.fn(),
 }))
 
 // Mock BottomSheet to render slot content inline (skip Teleport).
@@ -46,7 +46,7 @@ vi.mock('@/composables/useAgents', () => ({
   populateACPStateCache: vi.fn().mockResolvedValue(undefined),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   invalidateACPStateCache: vi.fn(),
-  setCLIModels: mockSetCLIModels,
+  applyRefreshedModelList: mockApplyRefreshedModelList,
 }))
 vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: vi.fn(),
@@ -206,6 +206,24 @@ describe('SessionDrawer', () => {
     const wrapper = mountDrawer()
     const items = wrapper.findAll('.model-item')
     expect(items.length).toBe(2)
+  })
+
+  it('shows the raw model id next to the display name', () => {
+    const wrapper = mountDrawer()
+    const ids = wrapper.findAll('.model-item-id').map(n => n.text())
+    expect(ids).toEqual(['claude-sonnet-4-6', 'claude-opus-4-5'])
+  })
+
+  it('hides the raw id when it is already the display name', () => {
+    // Backends that report no display name fall back to the id; showing it
+    // twice would be noise.
+    mockAgents.agents.value[0].models = [{ id: 'gpt-5.1-codex', name: 'gpt-5.1-codex', default: true }]
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.model-item-id').exists()).toBe(false)
+    mockAgents.agents.value[0].models = [
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
+      { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', default: false },
+    ]
   })
 
   it('marks default model with is-default class', () => {
@@ -368,15 +386,19 @@ describe('SessionDrawer', () => {
 
   // ── Refresh models ──
 
-  it('handleRefresh calls API and updates models on success', async () => {
+  it('handleRefresh calls API and applies the resolved + CLI lists', async () => {
     const newModels = [{ id: 'new-model', name: 'New Model', default: true }]
-    vi.mocked(apiPost).mockResolvedValue({ models: newModels })
+    const cliModels = [
+      { id: 'new-model', name: 'New Model', default: true },
+      { id: 'cli-only', name: 'CLI Only' },
+    ]
+    vi.mocked(apiPost).mockResolvedValue({ models: newModels, cliModels })
 
     const wrapper = mountDrawer()
     await wrapper.vm.handleRefresh()
 
     expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {})
-    expect(mockSetCLIModels).toHaveBeenCalledWith('claude', newModels)
+    expect(mockApplyRefreshedModelList).toHaveBeenCalledWith('claude', newModels, cliModels)
   })
 
   it('handleRefresh shows error toast on CLINotFound', async () => {

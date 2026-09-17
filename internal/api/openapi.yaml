@@ -2947,6 +2947,11 @@ paths:
     post:
       tags: [Agents]
       summary: agent 子操作
+      description: |
+        `/api/agents/{id}/refresh-models`：重新执行该 agent 的 CLI 模型发现并落库，
+        返回 `{ models, cliModels }`——与 GET /api/agents 同一形状。`models` 是发现结果
+        与已缓存的 ACP 模型列表合并后的列表（ACP 对成员资格有权威性），`cliModels` 是
+        未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染。
       operationId: agentSubPost
       parameters:
         - $ref: "#/components/parameters/Id"

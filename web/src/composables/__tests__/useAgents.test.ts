@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { useAgents, resetAgents, updateACPModelList, applyResolvedModelList, restoreOriginalModels, setCLIModels, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache } from '@/composables/useAgents'
+import { useAgents, resetAgents, updateACPModelList, applyResolvedModelList, restoreOriginalModels, applyRefreshedModelList, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache } from '@/composables/useAgents'
 
 // Mock apiGet/apiPatch/apiPost/apiDelete to control agent data
 const mockApiGet = vi.fn()
@@ -48,7 +48,7 @@ describe('useAgents', () => {
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
     agentCanResume, supportsACP, supportsCLI, supportsDualTransport, getAgentTransport,
-    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, hasPreferredMode, setCLIModels } = useAgents()
+    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, hasPreferredMode, applyRefreshedModelList } = useAgents()
 
   // Register mock identity updaters — normally done by useSessionIdentity at
   // module evaluation time, but that module is mocked so we wire manually.
@@ -655,9 +655,9 @@ describe('useAgents', () => {
     })
   })
 
-  // --- setCLIModels ---
+  // --- applyRefreshedModelList ---
 
-  describe('setCLIModels', () => {
+  describe('applyRefreshedModelList', () => {
     beforeEach(async () => {
       resetAgents()
       registerMocks()
@@ -668,8 +668,9 @@ describe('useAgents', () => {
       await loadAgents()
     })
 
-    it('replaces the list and the CLI baseline', () => {
-      setCLIModels('claude', [
+    it('replaces the CLI baseline and shows it in CLI transport', () => {
+      // testAgents has no transport, so getAgentTransport reports 'cli'.
+      applyRefreshedModelList('claude', [
         { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
         { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
       ])
@@ -685,8 +686,39 @@ describe('useAgents', () => {
       expect(getAgentModels('claude').map(m => m.id)).toEqual(['claude-sonnet-4-6', 'claude-opus-4-5'])
     })
 
+    it('keeps the resolved list displayed in ACP transport while rebasing the CLI baseline', () => {
+      const gpt = agents.value.find(a => a.id === 'gpt')
+      gpt!.transport = 'acp-stdio'
+      gpt!.acpCommand = 'gpt --acp'
+
+      // ACP membership is authoritative: the CLI-only model must not appear.
+      applyRefreshedModelList(
+        'gpt',
+        [{ id: 'gpt-4o', name: 'GPT-4o', default: true }],
+        [
+          { id: 'gpt-4o', name: 'GPT-4o', default: true },
+          { id: 'gpt-5-preview', name: 'GPT-5 Preview' },
+        ],
+      )
+
+      expect(getAgentModels('gpt').map(m => m.id)).toEqual(['gpt-4o'])
+
+      // Switching to CLI still lands on the freshly discovered list.
+      restoreOriginalModels('gpt')
+      expect(getAgentModels('gpt').map(m => m.id)).toEqual(['gpt-4o', 'gpt-5-preview'])
+    })
+
+    it('falls back to the resolved list when no CLI list is supplied', () => {
+      // An older backend answers refresh-models with only `models`.
+      applyRefreshedModelList('claude', [{ id: 'claude-new', name: 'Claude New', default: true }])
+
+      expect(getAgentModels('claude').map(m => m.id)).toEqual(['claude-new'])
+      restoreOriginalModels('claude')
+      expect(getAgentModels('claude').map(m => m.id)).toEqual(['claude-new'])
+    })
+
     it('does nothing for an unknown agent', () => {
-      setCLIModels('nonexistent', [{ id: 'x', name: 'X' }])
+      applyRefreshedModelList('nonexistent', [{ id: 'x', name: 'X' }])
     })
   })
 

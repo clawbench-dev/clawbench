@@ -174,7 +174,10 @@
         @click="selectOption(opt.value)"
       >
         <ProviderIcon v-if="opt.modelName" :model-name="opt.modelName" :size="14" />
-        <span class="settings-item__option-label" :style="opt.previewFont ? { fontFamily: opt.previewFont } : undefined">{{ opt.label }}</span>
+        <span class="settings-item__option-labels">
+          <span class="settings-item__option-label" :style="opt.previewFont ? { fontFamily: opt.previewFont } : undefined">{{ opt.label }}</span>
+          <span v-if="opt.sublabel" class="settings-item__option-sublabel">{{ opt.sublabel }}</span>
+        </span>
         <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
       </div>
     </template>
@@ -341,6 +344,9 @@ export interface SelectOption {
   modelName?: string
   groupKey?: string
   badgeKey?: string
+  /** Subdued text shown after the label, e.g. a raw model id when several
+   *  models share the same display name. */
+  sublabel?: string
   /** CSS font-family used to render this option's label in its own font. */
   previewFont?: string
 }
@@ -967,11 +973,32 @@ function confirmEdit() {
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, var(--bg-primary, #fff));
 }
 
+/* Label + optional sublabel share the flexible middle slot. */
+.settings-item__option-labels {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
 .settings-item__option-label {
   font-size: var(--font-size-xl);
   color: var(--text-primary);
-  flex: 1;
   min-width: 0;
+}
+
+/* Raw id shown next to a label that is not unique on its own. */
+.settings-item__option-sublabel {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  opacity: var(--opacity-soft);
 }
 
 .settings-item__option-check {

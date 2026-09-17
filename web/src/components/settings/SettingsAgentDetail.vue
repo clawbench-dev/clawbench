@@ -140,7 +140,15 @@ const items = computed<AgentItem[]>(() => {
       key: 'preferred_model',
       label: t('settings.items.agentPreferredModel'),
       type: 'select',
-      options: a.models.map((m: { name: string; id: string }) => ({ label: m.name || m.id, value: m.id, modelName: m.name || m.id })),
+      options: a.models.map((m: { name: string; id: string }) => ({
+        label: m.name || m.id,
+        value: m.id,
+        modelName: m.name || m.id,
+        // CodeBuddy ships models that share a display name (deepseek-v4-pro and
+        // deepseek-v4-pro-exclusive are both "Deepseek-V4-Pro"), so the id is
+        // the only way to tell them apart in the picker.
+        sublabel: m.name && m.name !== m.id ? m.id : undefined,
+      })),
       patchField: 'preferred_model',
     })
   }

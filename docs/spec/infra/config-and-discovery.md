@@ -66,12 +66,13 @@ flowchart TD
 
   前端不再做任何合并，只渲染后端给出的 `resolvedModels`。未经合并的纯 CLI 列表通过 `cliModels` 一并下发，供切换到 CLI 传输时直接渲染。
 
-  **两条下发通道同构**（`internal/ai/acp_events.go` 的 `EnrichModelList` 是唯一实现）：
+  **三条下发通道同构**（`internal/ai/acp_events.go` 的 `EnrichModelList` 是唯一实现）：
   - `GET /api/agents` → `agents[].models` / `agents[].cliModels`，以及 `acpStates[].modelListState.{resolvedModels,cliModels}`
   - `GET /api/ai/chat` → `modelListState.{models,resolvedModels,cliModels}`（新建会话从不与 ACP 通信，其模型列表只能来自这里，由 agent 级能力注册表解析；CLI 会话不返回该字段）
   - WS `model_list_update` → 同一组字段
+  - `POST /api/agents/{id}/refresh-models` → `{ models, cliModels }`（`models` 为与已缓存 ACP 列表合并后的结果；无 ACP 的 agent 直接返回发现结果）
 
-  三者形状必须一致：此前 `/api/ai/chat` 只返回原始 ACP 列表，任何只消费 `models` 的客户端都会丢掉全部 CLI 模型。当 agent 没有 CLI 列表可合并时，`resolvedModels` 为空但 `models` 仍返回——整条列表丢失比未合并且更糟。
+  四者形状必须一致：此前 `/api/ai/chat` 只返回原始 ACP 列表，任何只消费 `models` 的客户端都会丢掉全部 CLI 模型。当 agent 没有 CLI 列表可合并时，`resolvedModels` 为空但 `models` 仍返回——整条列表丢失比未合并且更糟。`refresh-models` 曾只返回原始 CLI 发现结果，于是在 ACP 传输下点一次刷新就会把「agent 实际能跑的模型」替换成 CLI 骨架（含运行时不支持的条目）。
 - **ACP 模型持久化**：ACP 上报的模型列表写入 `agents.acp_available_models`，因此重启后仍然可见。此前它只存在于内存，导致同一 agent 的模型列表在重启前后跳变（首个 ACP 会话前是 CLI 列表，之后是 ACP 列表）
 - **后台模型刷新**：`AsyncRefreshModelCache` 已移除；模型列表随启动时的 `RefreshAgents` 一次性发现并落库，之后由 `POST /api/agents/rescan` 或单个 agent 的 `refresh-models` 显式刷新
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖（`models_auto_detected = 0` 且列表非空即受保护）；自动管理的 agent 保持其自动管理状态，该标记不是单向闩锁

@@ -367,16 +367,35 @@ export function restoreOriginalModels(agentId: string): void {
 }
 
 /**
- * Replace the agent's model list with a freshly CLI-discovered list, e.g. after
- * a manual "refresh models". The backend persists the new list, so this only
- * updates the in-memory copy for immediate feedback.
+ * Apply the result of a manual "refresh models".
+ *
+ * The backend persists the newly discovered CLI list and answers with the same
+ * pair GET /api/agents reports: the resolved list (`models`) plus the pure CLI
+ * list (`cliModels`). The CLI baseline is always replaced — a later transport
+ * switch reads it — while the displayed list depends on the active transport,
+ * because in ACP mode the ACP-resolved list is authoritative for membership.
+ *
+ * `cliModels` is optional for backwards compatibility: an older backend answers
+ * with only `models`, which is then used for both lists (the previous behavior).
  */
-export function setCLIModels(agentId: string, models: Array<{ id: string; name: string; default?: boolean }>): void {
+export function applyRefreshedModelList(
+    agentId: string,
+    resolved: Array<{ id: string; name: string; default?: boolean }>,
+    cliModels?: Array<{ id: string; name: string; default?: boolean }>,
+): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
-    const mapped = models.map(m => ({ id: m.id, name: m.name, default: !!m.default }))
-    agent.models = mapped
-    agent.cliModels = mapped.map(m => ({ ...m }))
+    const cli = (cliModels && cliModels.length > 0 ? cliModels : resolved).map(m => ({
+        id: m.id,
+        name: m.name,
+        default: !!m.default,
+    }))
+    agent.cliModels = cli
+    if (getAgentTransport(agentId) === 'acp-stdio') {
+        agent.models = resolved.map(m => ({ id: m.id, name: m.name, default: !!m.default }))
+    } else {
+        agent.models = cli.map(m => ({ ...m }))
+    }
 }
 
 /** Check if an agent supports model refresh (has canRefreshModels from backend). */
@@ -546,7 +565,7 @@ export function useAgents() {
         invalidateACPStateCache,
         updateACPModelList,
         restoreOriginalModels,
-        setCLIModels,
+        applyRefreshedModelList,
         populateACPStateFromCache,
         duplicateAgent,
         deleteAgent,

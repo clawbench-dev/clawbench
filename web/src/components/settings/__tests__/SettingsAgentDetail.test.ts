@@ -283,6 +283,38 @@ describe('SettingsAgentDetail', () => {
     })
   })
 
+  // ─── Preferred model select ──────────────────────────────
+  describe('preferred model select', () => {
+    it('adds the raw id as a sublabel when two models share a display name', () => {
+      // CodeBuddy ships deepseek-v4-pro and deepseek-v4-pro-exclusive, both
+      // named "Deepseek-V4-Pro"; the id is the only distinguishing label.
+      const wrapper = mountDetail({
+        models: [
+          { id: 'deepseek-v4-pro', name: 'Deepseek-V4-Pro', default: true },
+          { id: 'deepseek-v4-pro-exclusive', name: 'Deepseek-V4-Pro' },
+        ],
+      })
+      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = items.find((it: any) => it.props('label') === 'Preferred Model')
+      expect(item).toBeTruthy()
+
+      const options = item!.props('options') as Array<{ label: string; value: string; sublabel?: string }>
+      expect(options.map(o => o.value)).toEqual(['deepseek-v4-pro', 'deepseek-v4-pro-exclusive'])
+      expect(options.map(o => o.sublabel)).toEqual(['deepseek-v4-pro', 'deepseek-v4-pro-exclusive'])
+    })
+
+    it('omits the sublabel when the display name already is the id', () => {
+      const wrapper = mountDetail({
+        models: [{ id: 'gpt-5.1-codex', name: 'gpt-5.1-codex', default: true }],
+      })
+      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = items.find((it: any) => it.props('label') === 'Preferred Model')
+
+      const options = item!.props('options') as Array<{ sublabel?: string }>
+      expect(options[0].sublabel).toBeUndefined()
+    })
+  })
+
   // ─── Auto-approve default toggle ──────────────────────────
   describe('auto-approve default toggle', () => {
     it('renders an auto_approve switch item with the agent value', () => {
