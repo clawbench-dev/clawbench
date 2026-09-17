@@ -240,3 +240,163 @@ func TestSetLastCompletedRequestID_IgnoresEmpty(t *testing.T) {
 	conn.setLastCompletedRequestID("") // no-op
 	assert.Equal(t, "rid-a", conn.getLastCompletedRequestID())
 }
+
+// ---------------------------------------------------------------------------
+// Multi-requestId turns (production incident fffc1395, 2026-09-16)
+//
+// A CodeBuddy turn is not guaranteed a single requestId: every model generation
+// / message group inside the turn gets its own. Measured across 400 session
+// transcripts, 677 of 4891 turns (13.8%) carry two or more. The replay filter
+// used to compare against ONE scalar, which — because the accumulator merges
+// trace fields first-wins — held the turn's FIRST id, while the replayed chunk
+// carries the turn's LAST id. The replay therefore went undetected and its text
+// was concatenated in front of the next reply.
+//
+// These tests pin the baseline to the turn's full id set.
+// ---------------------------------------------------------------------------
+
+// A turn that used two requestIds must recognize a replay carrying EITHER of
+// them — in particular the LAST one, which the scalar baseline never held.
+func TestReplayFilter_MultiRequestIDTurn_DropsReplayOfLastID(t *testing.T) {
+	ch := make(chan StreamEvent, 16)
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+
+	// --- Turn A: two generations, each with its own requestId. ---
+	conn.resetTurnRequestIDs()
+	mapACPSessionUpdate(codebuddyChunk("rid-A1", "第一代输出"),
+		ch, context.Background(), conn, nil)
+	mapACPSessionUpdate(codebuddyChunk("rid-A2", "第二代结论"),
+		ch, context.Background(), conn, nil)
+	drainCh(t, ch)
+	conn.emitPromptTailMetadata(acp.PromptResponse{StopReason: acp.StopReason("end_turn")}, ch)
+	drainCh(t, ch)
+
+	// The canonical scalar keeps the FIRST id (first-wins merge) — that is the
+	// pre-existing, documented behavior for the persisted trace identity.
+	assert.Equal(t, "rid-A1", conn.getLastCompletedRequestID())
+
+	// But BOTH ids must be recognized as belonging to the completed turn.
+	assert.True(t, conn.isCompletedTurnRequestID("rid-A1"), "turn A's first id must be in the baseline")
+	assert.True(t, conn.isCompletedTurnRequestID("rid-A2"),
+		"turn A's LAST id must be in the baseline — this is the id the replay carries")
+
+	// --- Turn B: CodeBuddy replays turn A's tail, carrying the LAST id. ---
+	conn.resetTurnRequestIDs()
+	mapACPSessionUpdate(codebuddyChunk("rid-A2", "上一轮的结论文本"),
+		ch, context.Background(), conn, nil)
+
+	types, content := drainCh(t, ch)
+	assert.NotContains(t, types, "content",
+		"a replay carrying the previous turn's LAST id must not forward content")
+	assert.Empty(t, content, "stale text must never reach the stream")
+
+	// --- The live turn's own chunks still pass. ---
+	mapACPSessionUpdate(codebuddyChunk("rid-B1", "本轮真实内容"),
+		ch, context.Background(), conn, nil)
+	types, content = drainCh(t, ch)
+	assert.Contains(t, types, "content", "genuine chunks of the new turn must survive")
+	assert.Equal(t, "本轮真实内容", content)
+}
+
+// The replay filter must not become a rolling per-chunk mute: all genuine
+// chunks of the live turn share its own ids and must pass untouched.
+func TestReplayFilter_MultiRequestIDTurn_LiveTurnUnaffected(t *testing.T) {
+	ch := make(chan StreamEvent, 16)
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+
+	// Turn A observed two ids (via the production accumulation path), then
+	// completed with the first one as its canonical id.
+	conn.resetTurnRequestIDs()
+	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A1"}})
+	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A2"}})
+	conn.setLastCompletedRequestID("rid-A1")
+
+	conn.resetTurnRequestIDs()
+	for _, chunk := range []struct{ rid, text string }{
+		{"rid-B1", "甲"},
+		{"rid-B1", "乙"},
+		{"rid-B2", "丙"}, // a second generation within the live turn
+		{"rid-B2", "丁"},
+	} {
+		mapACPSessionUpdate(codebuddyChunk(chunk.rid, chunk.text),
+			ch, context.Background(), conn, nil)
+	}
+
+	_, content := drainCh(t, ch)
+	assert.Equal(t, "甲乙丙丁", content,
+		"a live turn spanning multiple requestIds must stream in full")
+}
+
+// The per-turn id set must not leak across turns: ids observed in an earlier
+// turn must stop being treated as replays once a new turn completes.
+func TestReplayFilter_TurnRequestIDsDoNotAccumulateAcrossTurns(t *testing.T) {
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+
+	// Turn A.
+	conn.resetTurnRequestIDs()
+	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A"}})
+	conn.setLastCompletedRequestID("rid-A")
+	assert.True(t, conn.isCompletedTurnRequestID("rid-A"))
+
+	// Turn B completes with only its own id.
+	conn.resetTurnRequestIDs()
+	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-B"}})
+	conn.setLastCompletedRequestID("rid-B")
+
+	assert.True(t, conn.isCompletedTurnRequestID("rid-B"), "turn B's id is the current baseline")
+	assert.False(t, conn.isCompletedTurnRequestID("rid-A"),
+		"turn A's id must not remain in the baseline — otherwise the filter would "+
+			"eventually drop unrelated turns' chunks")
+}
+
+// A CANCELLED turn never reaches the tail-metadata path, so its ids are never
+// promoted — but they must not survive into a later turn's baseline either.
+//
+// This is what the per-Prompt reset guards: without it, a cancelled turn's ids
+// stay in turnRequestIDs, get unioned into the next completed turn's baseline,
+// and can then match (and silently mute) a live chunk of a later turn that
+// reuses an id — e.g. a retry of the same prompt after the cancellation.
+func TestReplayFilter_CancelledTurnIDsDoNotPolluteNextBaseline(t *testing.T) {
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+
+	// Turn A is cancelled mid-stream: ids are observed, then Prompt returns on
+	// the cancel path without ever calling setLastCompletedRequestID.
+	conn.resetTurnRequestIDs()
+	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A1"}})
+	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A2"}})
+
+	// Turn B starts — the per-Prompt reset runs here — and completes normally.
+	conn.resetTurnRequestIDs()
+	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-B1"}})
+	conn.setLastCompletedRequestID("rid-B1")
+
+	assert.True(t, conn.isCompletedTurnRequestID("rid-B1"))
+	assert.False(t, conn.isCompletedTurnRequestID("rid-A1"),
+		"a cancelled turn's first id must not reach the next turn's baseline")
+	assert.False(t, conn.isCompletedTurnRequestID("rid-A2"),
+		"a cancelled turn's last id must not reach the next turn's baseline")
+}
+
+// A turn with no requestId at all must leave the previous baseline intact, so a
+// trace-less turn cannot silently disable the filter.
+func TestReplayFilter_RidlessTurnKeepsBaselineSet(t *testing.T) {
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+	conn.resetTurnRequestIDs()
+	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A1"}})
+	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A2"}})
+	conn.setLastCompletedRequestID("rid-A1")
+
+	conn.resetTurnRequestIDs()
+	conn.setLastCompletedRequestID("") // no ids observed this turn
+
+	assert.True(t, conn.isCompletedTurnRequestID("rid-A1"))
+	assert.True(t, conn.isCompletedTurnRequestID("rid-A2"))
+}
+
+// An empty requestId is never a replay match — a chunk without trace identity
+// cannot be attributed to a turn.
+func TestReplayFilter_EmptyRIDNeverMatches(t *testing.T) {
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+	conn.setLastCompletedRequestID("rid-A")
+	assert.False(t, conn.isCompletedTurnRequestID(""))
+}

@@ -5,17 +5,19 @@ import {
   computeRenderWindow,
   computeFetchWindow,
   windowCovers,
+  nextLoadWindow,
+  mergeLineWindows,
   buildPreviewUrl,
   getAppHeaderBottom,
   placeNearAnchor,
   clampCardPosition,
   CodeLinkPreviewCache,
   previewCache,
-  MAX_RENDER_LINES,
   MAX_RENDER_BYTES,
   MAX_LINE_BYTES,
   FETCH_WINDOW_MARGIN,
   MAX_FETCH_WINDOW_LINES,
+  SCROLL_LOAD_STEP,
   splitHighlightedHtml,
 } from '@/utils/codeLinkPreview'
 
@@ -119,12 +121,25 @@ describe('codeLinkPreview utils', () => {
       expect(res.highlightStart).toBeUndefined()
     })
 
-    it('truncates when line count exceeds MAX_RENDER_LINES (200)', () => {
-      const manyLines = Array.from({ length: 300 }, (_, i) => `line ${i + 1}`).join('\n')
-      const res = sliceCodeForPreview(manyLines, 1, 280)
-      expect(res.renderTruncated).toBe(true)
-      expect(res.truncateReason).toBe('lines')
-      expect(res.endLine - res.startLine + 1).toBe(MAX_RENDER_LINES)
+    it('does NOT truncate a long slice by line count (line count is unbounded)', () => {
+      // The pane walks long files by loading more as the user scrolls, so a
+      // 1000-line request must come back whole — the previous 200-line ceiling
+      // was exactly what forced the "expand" buttons.
+      const manyLines = Array.from({ length: 1000 }, (_, i) => `line ${i + 1}`).join('\n')
+      const res = sliceCodeForPreview(manyLines, 1, 1000)
+      expect(res.renderTruncated).toBe(false)
+      expect(res.truncateReason).toBeUndefined()
+      expect(res.endLine - res.startLine + 1).toBe(1000)
+    })
+
+    it('does not cap a target range that spans more than the old 200-line window', () => {
+      const lines = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`).join('\n')
+      const res = sliceCodeForPreview(lines, 100, 800)
+      expect(res.startLine).toBe(70)
+      expect(res.endLine).toBe(830)
+      expect(res.renderTruncated).toBe(false)
+      expect(res.highlightStart).toBe(100)
+      expect(res.highlightEnd).toBe(800)
     })
 
     describe('multi-range annotations', () => {
@@ -149,18 +164,21 @@ describe('codeLinkPreview utils', () => {
         expect(res.highlightEnd).toBe(110)
       })
 
-      it('clamps out-of-window ranges away when they exceed the 200-line cap', () => {
-        // Window = [90-30, 300+30] capped to 200 lines → [60, 259]; the 300
-        // range falls outside and must not be highlighted in the slice.
+      it('keeps every in-window range now that line count is unbounded', () => {
+        // This used to be clamped away by the 200-line cap ([60, 259]). With the
+        // cap gone the window runs to the file's end, so the far range is
+        // highlighted too — that is the point of removing the ceiling.
         const res = sliceCodeForPreview(lines300, 90, 91, {
           lineRanges: [
             { start: 90, end: 91 },
             { start: 300, end: 300 },
           ],
         })
-        expect(res.endLine - res.startLine + 1).toBeLessThanOrEqual(MAX_RENDER_LINES)
-        expect(res.highlightRanges).toEqual([{ start: 90, end: 91 }])
-        expect(res.highlightEnd).toBe(300)
+        expect(res.highlightRanges).toEqual([
+          { start: 90, end: 91 },
+          { start: 300, end: 300 },
+        ])
+        expect(res.endLine).toBe(300)
       })
 
       it('keeps a single-range list equivalent to the legacy pair', () => {
@@ -240,14 +258,25 @@ describe('codeLinkPreview utils', () => {
       expect(win.highlightStart).toBeUndefined()
     })
 
-    it('caps the window at MAX_RENDER_LINES', () => {
+    it('does not cap the window by line count any more', () => {
+      // A 400-line target range now renders in full: the pane grows its slice by
+      // loading chunks as the user scrolls, so the window itself is unbounded.
+      // The start clamps at line 1, so the tail extends to 1 + (400 + 2*30).
       const win = computeRenderWindow(1, 400, 1000)
-      expect(win.endLine - win.startLine + 1).toBe(MAX_RENDER_LINES)
-      expect(win.renderTruncated).toBe(true)
-      expect(win.truncateReason).toBe('lines')
+      expect(win.startLine).toBe(1)
+      expect(win.endLine).toBe(460)
+      expect(win.highlightStart).toBe(1)
+      expect(win.highlightEnd).toBe(400)
+      // Well past the old 200-line ceiling.
+      expect(win.endLine - win.startLine + 1).toBeGreaterThan(200)
+    })
+
+    it('returns the whole file when the annotation covers it', () => {
+      const win = computeRenderWindow(1, 1000, 1000)
+      expect(win.startLine).toBe(1)
+      expect(win.endLine).toBe(1000)
     })
   })
-
   describe('sliceCodeForPreview with a line window', () => {
     // Server returns only lines 101..160 of a 1000-line file.
     const windowContent = Array.from({ length: 60 }, (_, i) => `line ${101 + i}`).join('\n')
@@ -325,19 +354,108 @@ describe('codeLinkPreview utils', () => {
     it('spans a multi-range annotation without exceeding the render cap', () => {
       const win = computeFetchWindow({ filePath: 'a.ts', lineRanges: '90-91,309,938-943' }, 2000)
       expect(win.start).toBe(1)
-      // The render window is capped at 200 lines from the first range, so the
-      // request stays bounded rather than spanning to line 943.
+      // The render window now spans to the last range (line 943), so the request
+      // is bounded by the per-request line cap rather than by a render cap.
       expect(win.end - win.start + 1).toBeLessThanOrEqual(MAX_FETCH_WINDOW_LINES)
-      expect(win.end).toBeLessThan(943 + FETCH_WINDOW_MARGIN)
     })
 
     it('stays bounded for a huge annotation span', () => {
       const win = computeFetchWindow({ filePath: 'a.ts', lineStart: 100, lineEnd: 5000 }, null)
-      // The render window is capped at 200 lines from the annotation start, plus
-      // margin — so a 4901-line span never becomes a 4901-line request.
+      // A 4901-line span never becomes a 4901-line request: the per-request cap
+      // still applies, and the rest is pulled in by later chunk loads.
       expect(win.start).toBe(1)
-      expect(win.end).toBe(299 + FETCH_WINDOW_MARGIN)
       expect(win.end - win.start + 1).toBeLessThanOrEqual(MAX_FETCH_WINDOW_LINES)
+    })
+  })
+
+  describe('mergeLineWindows', () => {
+    const win = (content: string, startLine: number, endLine: number) => ({ content, startLine, endLine })
+
+    it('returns the chunk when nothing is held', () => {
+      const chunk = win('a\nb', 5, 6)
+      expect(mergeLineWindows(null, chunk)).toEqual(chunk)
+    })
+
+    it('keeps the held run when the chunk is empty', () => {
+      const held = win('a\nb', 5, 6)
+      expect(mergeLineWindows(held, win('', 9, 8))).toEqual(held)
+    })
+
+    it('appends a chunk that follows the held run', () => {
+      const merged = mergeLineWindows(win('a\nb', 1, 2), win('c\nd', 3, 4))
+      expect(merged).toEqual({ content: 'a\nb\nc\nd', startLine: 1, endLine: 4 })
+    })
+
+    it('prepends a chunk that precedes the held run', () => {
+      const merged = mergeLineWindows(win('c\nd', 3, 4), win('a\nb', 1, 2))
+      expect(merged).toEqual({ content: 'a\nb\nc\nd', startLine: 1, endLine: 4 })
+    })
+
+    it('takes overlapping lines once, in file order', () => {
+      // Held 1..3, chunk 3..5: line 3 appears in both, and must land once.
+      const merged = mergeLineWindows(win('a\nb\nc', 1, 3), win('c\nd\ne', 3, 5))
+      expect(merged).toEqual({ content: 'a\nb\nc\nd\ne', startLine: 1, endLine: 5 })
+    })
+
+    it('preserves a gap-free run when merging a gap-filling chunk', () => {
+      const merged = mergeLineWindows(win('a\nb', 1, 2), win('c', 3, 3))
+      expect(merged.endLine - merged.startLine + 1).toBe(merged.content.split('\n').length)
+    })
+  })
+
+  describe('nextLoadWindow', () => {
+    it('asks for the head when nothing is held', () => {
+      expect(nextLoadWindow(null, 1, 5000)).toEqual({ start: 1, end: MAX_FETCH_WINDOW_LINES })
+    })
+
+    it('returns null when the wanted range is already covered', () => {
+      expect(nextLoadWindow({ content: 'x', startLine: 1, endLine: 500 }, 1, 500)).toBeNull()
+    })
+
+    it('appends immediately below the held run, one request at a time', () => {
+      const next = nextLoadWindow({ content: 'x', startLine: 1, endLine: 200 }, 1, 5000)
+      expect(next).toEqual({ start: 201, end: 200 + MAX_FETCH_WINDOW_LINES })
+    })
+
+    it('prepends immediately above the held run', () => {
+      const next = nextLoadWindow({ content: 'x', startLine: 500, endLine: 700 }, 1, 700)
+      // Clamped at line 1: the whole run above the held window is requested.
+      expect(next).toEqual({ start: 1, end: 499 })
+    })
+
+    it('never asks for lines before line 1 when prepending', () => {
+      const next = nextLoadWindow({ content: 'x', startLine: 100, endLine: 200 }, 1, 200)
+      expect(next?.start).toBe(1)
+      expect(next?.end).toBe(99)
+    })
+
+    it('clamps the append to the wanted end', () => {
+      const next = nextLoadWindow({ content: 'x', startLine: 1, endLine: 200 }, 1, 250)
+      expect(next).toEqual({ start: 201, end: 250 })
+    })
+
+    it('walks a long file in bounded, non-overlapping chunks', () => {
+      // Simulate the scroll loop: each pass extends the held run by one request.
+      let held = { content: 'x', startLine: 1, endLine: 30 }
+      const requested: Array<{ start: number; end: number }> = []
+      for (let i = 0; i < 5; i++) {
+        const next = nextLoadWindow(held, 1, 5000)
+        if (!next) break
+        requested.push(next)
+        held = { content: 'x', startLine: held.startLine, endLine: next.end }
+      }
+      expect(requested[0]).toEqual({ start: 31, end: 30 + MAX_FETCH_WINDOW_LINES })
+      expect(requested[1]!.start).toBe(requested[0]!.end + 1)
+      for (const r of requested) {
+        expect(r.end - r.start + 1).toBeLessThanOrEqual(MAX_FETCH_WINDOW_LINES)
+      }
+    })
+
+    it('has a scroll step small enough to stay responsive', () => {
+      // A step much larger than a screenful would stall each gesture on a big
+      // fetch; one much smaller would spam requests. Keep it in a sane band.
+      expect(SCROLL_LOAD_STEP).toBeGreaterThanOrEqual(50)
+      expect(SCROLL_LOAD_STEP).toBeLessThanOrEqual(MAX_FETCH_WINDOW_LINES)
     })
   })
 

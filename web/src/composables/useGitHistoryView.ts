@@ -92,6 +92,8 @@ export interface UseGitHistoryViewReturn {
   hasStaged: ComputedRef<boolean>
   hasUnstaged: ComputedRef<boolean>
   totalFileCount: ComputedRef<number>
+  /** Changed-file count shown as a badge on the working-tree commit row. */
+  workingTreeFileCount: ComputedRef<number>
 
   // ── helpers ──
   fileTypeLabel: (type: string, staged?: boolean) => string
@@ -214,6 +216,19 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
       return mergeGroups.value.reduce((sum, g) => sum + g.files.length, 0)
     }
     return files.value.length
+  })
+
+  /**
+   * Badge count on the working-tree commit row.
+   *
+   * In project mode it is the working-tree change list itself (`wtFiles`), so
+   * the number always matches the files the user sees after drilling in. In
+   * file mode the working tree holds exactly one entry — the file whose
+   * history is being viewed.
+   */
+  const workingTreeFileCount = computed(() => {
+    if (readMode() === 'file') return 1
+    return wtFiles.value.length
   })
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -703,7 +718,7 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
     currentView, selectedSHA, filesLoading, filesRefreshing, files, mergeGroups, selectedFilePath,
     diffState, wtFiles, commitSearch, hasLoadedMore, refreshHint, commitListRef,
     selectedCommit, isWorkingTree, mode, sortedFiles, stagedFiles, unstagedFiles,
-    hasStaged, hasUnstaged, totalFileCount,
+    hasStaged, hasUnstaged, totalFileCount, workingTreeFileCount,
     fileTypeLabel, fileSplit, badgeClass, resetListState,
     loadProjectHistory, loadFileHistory, loadMoreCommits, onSearch, onRefresh,
     loadCommitFiles, loadDiff, loadWorkingTreeFiles, onFilesRefresh, reloadPreservingDrillDown,

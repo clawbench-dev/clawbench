@@ -172,7 +172,7 @@ import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
-import { isUserScrolling, shouldPin, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX, updateUserLeftBottom } from '@/utils/scrollState'
+import { isUserScrolling, shouldPin, isUserAwayFromBottom, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX } from '@/utils/scrollState'
 import { appLog } from '@/utils/appLog'
 import { isLastAssistantMessage } from '@/utils/chatSessionUtils'
 import { flashElement } from '@/utils/domFlash'
@@ -433,19 +433,21 @@ watch(() => props.hasMore, (hasMore) => {
 // geometry live instead of this cached flag.
 const isAtBottom = ref(true)
 
-// ── Scroll ownership state machine ──
-// Unified replacement for the scattered programmaticScrolling/userTouching
-// flags: who owns the scroll viewport, when the last scroll event arrived, and
-// whether a force pin was deferred while the user was scrolling.
-const scrollOwner = ref('idle')
-let lastScrollAt = 0
 let scrollStopTimer = null
-let pendingFollow = false
 
-// Whether the user has deliberately scrolled away from the bottom during a
-// stream. While set, ALL stream follow is suppressed — a user reading older
-// content must never be yanked back to the bottom. Cleared only when the user
-// scrolls back to the bottom, or on session switch.
+// ── Follow latch ──
+// Whether the user has deliberately scrolled away from the bottom. While set,
+// non-force pins are suppressed — a user reading older content must never be
+// yanked back. Recomputed ONLY from user input (see handleScroll): it is a
+// snapshot of "how far from the bottom was the viewport when the user last
+// drove it", NOT a reaction to every scroll event.
+//
+// Sampling it on content-driven scroll events is what produced the "stuck
+// mid-conversation" bug: while streaming, the browser nudges scrollTop by a
+// pixel (scroll anchoring / clamping) and the old direction test read that as
+// "the user scrolled up", latching follow off while the user sat at the very
+// bottom — after which every follow pin was rejected and the content kept
+// growing below the viewport.
 let userLeftBottom = false
 
 // Hide the floating scroll buttons while the user is selecting text.
@@ -478,11 +480,17 @@ const SCROLL_DELTA_THRESHOLD = 10
 // Flag to suppress handleScroll button logic during programmatic smooth scroll
 let programmaticScrolling = false
 
-// Track active touch drag on the scroll container to prevent auto-scroll
-// from fighting the user's manual scroll gesture ("sticky抖动" fix).
-// NOTE: this flag alone is NOT sufficient — a fling keeps scrolling after
-// touchend, so isUserScrolling() also checks the scroll-stop window.
+// ── User-input flags ──
+// Each is bounded by its own end signal — touch by touchend/touchcancel, mouse
+// by mouseup, wheel by a decay window — so none can latch on permanently.
+// Critically, NONE is refreshed by scroll events: a streaming turn emits scroll
+// events continuously, so a flag kept alive by them would stay true for the
+// whole turn and starve every force pin (the "sent a message but the reply is
+// never followed" bug).
 let userTouching = false
+let wheelActive = false
+let mouseDownActive = false
+let wheelDecayTimer = null
 
 // Throttle scrollTick for nearestUserMsgId recomputation
 const scrollFrameScheduler = new StreamFrameScheduler()
@@ -499,77 +507,44 @@ function handleScroll() {
   const el = messagesRef.value
 
   const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-  // `<=` so the boundary (exactly NEAR_BOTTOM_PX) is "at the bottom", matching
-  // the userLeftBottom latch below (`> NEAR_BOTTOM_PX` = left) with no gap.
+  // Generous band: drives the cached isAtBottom flag consumed by external
+  // callers (load-more anchoring, summary updates). The follow latch below uses
+  // the tighter RESUME_FOLLOW_PX instead.
   const nearBottom = distFromBottom <= NEAR_BOTTOM_PX
   const nearTop = el.scrollTop < NEAR_TOP_THRESHOLD
   isAtBottom.value = nearBottom
 
-  // Scroll-stop detection: any scroll event restarts the window. After
-  // SCROLL_STOP_MS with no new events the scroll is considered stopped —
-  // onScrollStopped then resets ownership and flushes a deferred force pin.
-  // A fling keeps firing scroll events, so the window auto-extends for its
-  // whole duration (replacing the old fixed 150ms touchend window).
+  // Scroll-stop detection: restarts on every scroll event (a fling keeps them
+  // coming, so the window auto-extends for its whole duration). Used ONLY for
+  // the jump-highlight flush and for releasing programmatic ownership — the
+  // follow latch deliberately does not depend on it.
   clearTimeout(scrollStopTimer)
   scrollStopTimer = setTimeout(onScrollStopped, SCROLL_STOP_MS)
-  // ONLY a deliberate user scroll claims ownership: a touch drag
-  // (touchstart…touchend), a mouse-wheel scroll, or a scrollbar drag on PC.
-  // Content-growth scroll events (async render pushing the viewport,
-  // programmatic pins) fire with none of these flags set and must NOT be
-  // misread as the user scrolling — otherwise `isUserScrolling` stays true
-  // forever (lastScrollAt keeps refreshing on every growth scroll) and every
-  // force pin is deferred into a pendingFollow that onScrollStopped never
-  // flushes (the growth scroll stream never stops). That is the "fixed session
-  // never scrolls to bottom" bug.
-  // A fling continues via lastScrollAt: ownership was claimed during the touch
-  // and stays 'user' until the scroll-stop window elapses.
-  // NOTE: the latch block does NOT gate on `!programmaticScrolling`. During a
-  // stream, followToBottom re-arms setProgrammatic(true) on every frame, so
-  // programmaticScrolling stays true for the whole stream — gating on it would
-  // block user-scroll detection entirely and the user could never escape the
-  // stream's pin (the "scrolled far away but still dragged back" bug). User
-  // drags are distinguished by the input flags (userTouching / wheelActive /
-  // mouseDownActive) which programmatic pins never set.
-  // Direction detection needs the previous scroll position from EVERY event —
-  // including programmatic stream pins (which return early below and would
-  // otherwise skip updating lastScrollTop). If lastScrollTop froze at a stale
-  // pre-stream value (typically 0), every subsequent upward drag reads
-  // `el.scrollTop < lastScrollTop` as false, so the userLeftBottom latch never
-  // fires and streamed pins keep yanking the user back to the bottom — the
-  // "无论如何向上拖拽都会被拽回到底部" bug. Capture before any branch.
+
+  // Re-sample the follow latch, but ONLY while the user is actually driving the
+  // scroll surface. Content-growth scroll events arrive here with no input flag
+  // set and must leave the latch untouched — that is the whole point: only a
+  // real gesture may decide the user "left the bottom".
+  //
+  // No direction test on purpose. Within a real gesture, distance is the only
+  // question: a 1px tremor while the finger rests must not flip the latch, and
+  // a genuine 300px drag must. A direction test cannot tell those apart, and
+  // its unconditional "any upward pixel = left" branch is exactly what let a
+  // layout nudge masquerade as a deliberate scroll.
+  if (isUserScrolling(buildScrollState())) {
+    userLeftBottom = isUserAwayFromBottom(distFromBottom)
+    // A real user gesture always takes the viewport back from an in-flight
+    // programmatic scroll, so the FAB logic below runs normally instead of
+    // returning early (which would leave scrolledUp/scrolledDown stale and the
+    // jump buttons unable to appear while a session streams).
+    if (programmaticScrolling) setProgrammatic(false)
+  }
+
+  // Direction tracking for the FAB needs the previous offset from EVERY event,
+  // including programmatic pins (which return early below). Captured before any
+  // branch so it can never freeze at a stale pre-stream value.
   const prevScrollTop = lastScrollTop
   lastScrollTop = el.scrollTop
-
-  if (userTouching || wheelActive || mouseDownActive) {
-    // A deliberate user scroll always owns the viewport — cancel any in-flight
-    // programmatic ownership FIRST. During a stream followToBottom re-arms
-    // programmaticScrolling=true on every frame, and the programmatic branch
-    // below returns early — so scrolledUp/scrolledDown never flip and the
-    // scroll-jump FAB cannot appear no matter how far the user scrolls while
-    // the session is running ("跳转按钮要滚动很大范围才显示" bug). Releasing the
-    // flag lets THIS event evaluate the FAB logic normally; streamed pins are
-    // already rejected by the userLeftBottom latch below.
-    if (programmaticScrolling) setProgrammatic(false)
-    scrollOwner.value = 'user'
-    lastScrollAt = Date.now()
-    // Track whether the user deliberately left the bottom. The latch is
-    // direction-driven, NOT distance-driven: any upward drag immediately marks
-    // a deliberate leave — the user is trying to read older content and a
-    // streamed pin must never fight them. The old distance-only check let a
-    // user resting inside the near-bottom band (distFromBottom <= NEAR_BOTTOM_PX)
-    // stay "at the bottom", so the next streamed pin yanked them back — the
-    // "很难拖上去、抽搐" (snap-back jitter) bug. Clearing happens only when
-    // they scroll back to within RESUME_FOLLOW_PX of the bottom (an explicit
-    // return), via updateUserLeftBottom.
-    const prevUserLeftBottom = userLeftBottom
-    userLeftBottom = updateUserLeftBottom(userLeftBottom, {
-      scrollingUp: el.scrollTop < prevScrollTop,
-      distFromBottom,
-    })
-    if (userLeftBottom && !prevUserLeftBottom) {
-      appLog.d('ChatScroll', `userLeftBottom latched: dist=${distFromBottom.toFixed(0)} top=${el.scrollTop.toFixed(0)} h=${el.scrollHeight} prog=${programmaticScrolling}`)
-    }
-  }
 
   // When near edges during programmatic scroll, hide buttons immediately
   if (programmaticScrolling) {
@@ -646,49 +621,44 @@ function handleScroll() {
 // doesn't fight the user's scroll gesture (causing "sticky抖动").
 function onScrollAndTableTouchStart(e) {
   userTouching = true
-  scrollOwner.value = 'user'
   onTableTouchStart(e)  // preserve table-row-expand handling
 }
 
 // PC: a mouse-wheel scroll is a deliberate user scroll just like a touch drag.
-// Wheel has no explicit "end" event, so we mark it active and let the scroll-
-// stop window (onScrollStopped, SCROLL_STOP_MS) clear it — the wheel's scroll
-// events keep refreshing lastScrollAt until the wheel stops.
-let wheelActive = false
-
+// Wheel has no explicit "end" event, so the flag decays on its own window —
+// refreshed ONLY by wheel events, never by scroll events (see the flag docs).
 function onWheelScroll() {
   wheelActive = true
-  scrollOwner.value = 'user'
-  lastScrollAt = Date.now()
+  clearTimeout(wheelDecayTimer)
+  wheelDecayTimer = setTimeout(() => {
+    wheelActive = false
+    wheelDecayTimer = null
+  }, SCROLL_STOP_MS)
 }
 
 // PC: mouse press inside the list may start a scrollbar drag — another
-// deliberate user scroll with no touch/wheel event. Mark the input active;
-// cleared by the scroll-stop window like wheel.
-let mouseDownActive = false
-
+// deliberate user scroll with no touch/wheel event. Released by mouseup, which
+// is listened on the document because the button is often released outside the
+// container. (Without that listener the flag latched on forever and every
+// later content-growth scroll was misread as a user gesture.)
 function onContainerMouseDown(e) {
   mouseDownActive = true
-  scrollOwner.value = 'user'
-  lastScrollAt = Date.now()
   onTableMouseDown(e)  // preserve table-row-expand handling
 }
 
+function onDocumentMouseUp() {
+  mouseDownActive = false
+}
+
 function onScrollTouchEnd() {
-  // The old fixed 150ms delay is replaced by scroll-stop detection: the touch
-  // flag alone gates auto-scroll, while the fling's continued scroll events
-  // keep refreshing lastScrollAt (so isUserScrolling() stays true) until the
-  // fling actually stops, at which point onScrollStopped restores follow.
   userTouching = false
 }
 
 /**
- * Called SCROLL_STOP_MS after the last scroll event. Resets scroll ownership
- * and flushes a deferred force pin — but only if the user is still near the
- * bottom (they scrolled away while a force pin was pending → don't pull them).
- * pendingFollow is ALWAYS cleared here, whether or not the pin is flushed —
- * otherwise a stale flag would fire a pin the next time the user scrolls back
- * to the bottom.
+ * Called SCROLL_STOP_MS after the last scroll event. Flushes a queued jump
+ * highlight and releases programmatic ownership. The follow latch is NOT
+ * touched here beyond a distance-gated safety clear: a user who scrolled back
+ * to within RESUME_FOLLOW_PX is at the bottom and follow may resume.
  */
 function onScrollStopped() {
   // The scroll stream has settled — flash any message queued by a jump now
@@ -696,37 +666,16 @@ function onScrollStopped() {
   flushMessageHighlight()
   // Any scroll stream stopped (user drag/wheel OR programmatic smooth scroll):
   // release programmatic ownership first so the next scroll events are read as
-  // user scrolls again. The input flags and ownership are reset below.
+  // user scrolls again.
   if (programmaticScrolling) setProgrammatic(false)
-  // The scroll has stopped: clear the wheel/mouse-drag active flags (no
-  // explicit "end" event exists for them) so later content-growth scrolls are
-  // not misread as user input.
-  wheelActive = false
-  mouseDownActive = false
-  scrollOwner.value = 'idle'
   const el = messagesRef.value
   if (!el) return
   const dist = el.scrollHeight - el.scrollTop - el.clientHeight
-  // Returning to the bottom is an explicit gesture — clear the latch only when
-  // the user actually came back (within RESUME_FOLLOW_PX), not merely inside
-  // the generous NEAR_BOTTOM_PX band (which would re-enable snap-back while
-  // they rest inside it mid-stream).
+  // Distance-gated safety clear: only when the viewport genuinely rests at the
+  // bottom. Cannot misfire on a user reading history (they are far away).
   if (dist <= RESUME_FOLLOW_PX) {
     isAtBottom.value = true
     userLeftBottom = false
-  }
-  if (pendingFollow) {
-    pendingFollow = false
-    // A deferred force pin is always flushed here. pendingFollow is ONLY set
-    // by explicit user-intent pins (sending a message, answering a question
-    // card, switching sessions) — the user took an action and expects to see
-    // the bottom of the conversation. Delaying it must not drop it: the user
-    // may have answered a card while sitting far above the bottom (reading
-    // earlier context), and after their scroll stops the pin must still pull
-    // them down so they can see their answer land and the AI continue. This is
-    // NOT the stream-follow path — stream pins are non-force and never set
-    // pendingFollow, so a user reading history is still never yanked.
-    scrollToBottom(true)
   }
 }
 
@@ -815,17 +764,24 @@ function observeContentGrowth() {
 onMounted(() => {
   document.addEventListener('click', onDocumentClick, true)
   document.addEventListener('keydown', handleCtrlArrowMsgJump)
+  // mouseup on the document, not the container: a scrollbar drag routinely
+  // ends outside the list, and a missed release would leave mouseDownActive
+  // set — permanently suppressing force pins.
+  document.addEventListener('mouseup', onDocumentMouseUp)
   observeContentGrowth()
 })
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick, true)
   document.removeEventListener('keydown', handleCtrlArrowMsgJump)
+  document.removeEventListener('mouseup', onDocumentMouseUp)
   contentResizeObserver?.disconnect()
   contentResizeObserver = null
   cancelAnimationFrame(contentGrownRaf)
   scrollFrameScheduler.cancelAll()
   clearTimeout(scrollStopTimer)
   scrollStopTimer = null
+  clearTimeout(wheelDecayTimer)
+  wheelDecayTimer = null
   clearTimeout(programmaticFallbackTimer)
   programmaticFallbackTimer = null
 })
@@ -833,44 +789,37 @@ onBeforeUnmount(() => {
 function scrollToBottom(force = false) {
   nextTick(() => {
     if (!messagesRef.value) return
-    // User is actively scrolling/flinging → never yank the view. A force pin
-    // is deferred and flushed once by onScrollStopped (if still near bottom).
-    if (isUserScrolling(buildScrollState())) {
-      if (force) pendingFollow = true
-      appLog.d('ChatScroll', `scrollToBottom deferred (user scrolling) force=${force}`)
-      return
-    }
-    // Mark the write as programmatic so the scroll event it emits is not
-    // misread as a user scroll (which would make the rAF correction below
-    // suppress itself via isUserScrolling). Ownership is released by
-    // onScrollStopped ~SCROLL_STOP_MS after the emitted scroll event.
+    // One decision point (shouldPin). It blocks only on a held touch, or on the
+    // "user is away" latch for non-force pins. Wheel/mouse flags deliberately do
+    // NOT block a pin: the latch already reflects those gestures (it is sampled
+    // while they run), so gating on them again would drop the pin — and a
+    // dropped force pin is precisely the "sent a message but the reply is never
+    // followed" bug.
     if (shouldPin(buildScrollState(), force)) {
       followToBottom(force)
     } else {
-      appLog.d('ChatScroll', `scrollToBottom REJECTED force=${force} userLeftBottom=${userLeftBottom}`)
+      appLog.d('ChatScroll', `scrollToBottom REJECTED force=${force} userLeftBottom=${userLeftBottom} touching=${userTouching}`)
     }
   })
 }
 
-/** Current scroll-ownership snapshot fed into the follow decision. */
+/** Current scroll-state snapshot fed into the follow decision. */
 function buildScrollState() {
   return {
-    owner: scrollOwner.value,
     userTouching,
-    lastScrollAt,
-    now: Date.now(),
+    wheelActive,
+    mouseDownActive,
     userLeftBottom,
   }
 }
 
 function followToBottom(force) {
   setProgrammatic(true)
-  // A force pin (send message / answer card / deferred force flush after the
-  // user's scroll stops) is an explicit intent to be at the bottom. Clear the
-  // "left the bottom" latch so the AI reply streaming BELOW the just-sent
-  // message keeps following — otherwise every subsequent non-force pin is
-  // rejected and the view stays stuck at the user bubble (the "sends but the
-  // streamed reply is never followed" bug).
+  // A force pin (send message / answer card / session switch) is an explicit
+  // intent to be at the bottom. Clear the "left the bottom" latch so the AI
+  // reply streaming BELOW the just-sent message keeps following — otherwise
+  // every subsequent non-force pin is rejected and the view stays stuck at the
+  // user bubble (the "sends but the streamed reply is never followed" bug).
   if (force) userLeftBottom = false
   const el = messagesRef.value
   el.scrollTop = el.scrollHeight
@@ -878,10 +827,7 @@ function followToBottom(force) {
   // between the scrollToBottom call and this nextTick callback, or may grow
   // after this callback completes (streaming text, throttled render flush).
   // Re-check after the browser has laid out the DOM changes, and re-scroll if
-  // still not at the bottom. Same guards as the initial scroll: never override
-  // an active user scroll, never follow once the user has scrolled away
-  // (unless force — async lazy content must still be corrected even if the
-  // user is stationary but not at the bottom).
+  // still not at the bottom.
   requestAnimationFrame(() => {
     if (!messagesRef.value) return
     const el2 = messagesRef.value
@@ -890,22 +836,18 @@ function followToBottom(force) {
     // emits no scroll event, so handleScroll never runs.
     isAtBottom.value = gap <= NEAR_BOTTOM_PX
     // Already glued to the bottom → nothing to correct. Skipping the write
-    // avoids the unconditional scroll event that re-triggers handleScroll's
-    // 250ms user-scroll window on every streamed frame (the "sticky jitter"
-    // felt when dragging up against a stream).
+    // avoids the unconditional scroll event that would otherwise be emitted on
+    // every streamed frame.
     if (gap <= 0) return
-    if (isUserScrolling(buildScrollState())) return
     if (shouldPin(buildScrollState(), force)) {
       el2.scrollTop = el2.scrollHeight
       isAtBottom.value = true
     }
   })
-  // NOTE: the old unconditional force pin timer (300ms) is gone. Async
-  // content growth (Mermaid, KaTeX, lazy original fetch, thinking collapse)
-  // is handled by the rAF correction above AND the content-growth observer
-  // (onContentGrown) — the observer catches growth that arrives after the
-  // correction frame; if the user started scrolling in between, pendingFollow
-  // + onScrollStopped take over instead of fighting.
+  // Async content growth that lands after this correction frame (Mermaid,
+  // KaTeX, lazy original fetch, thinking collapse) is caught by the
+  // content-growth observer (onContentGrown), which re-pins whenever the user
+  // has not scrolled away.
 }
 
 function scrollToTop() {
@@ -964,24 +906,24 @@ let programmaticFallbackTimer = null
 const PROGRAMMATIC_MAX_MS = 1500
 
 /**
- * Unified programmatic-scroll flag setter. Keeps scrollOwner in sync so a
- * programmatic smooth scroll (FAB, message index jump) is never mistaken for
- * a user scroll, and so shouldPin treats programmatic jumps correctly.
+ * Programmatic-scroll flag setter. While set, handleScroll suppresses the FAB
+ * logic and still runs load-more (a FAB scroll-to-top reaches scrollTop=0 just
+ * like a manual scroll). It does NOT gate the follow latch: a real user gesture
+ * always clears it first (see handleScroll), so the user can never be trapped
+ * by a programmatic pin.
  *
- * Ownership is normally released by onScrollStopped (SCROLL_STOP_MS after the
- * last scroll event of the smooth scroll), replacing the old fixed 600ms
- * timeout — a long scrollIntoView no longer gets misread as a user scroll.
+ * Released by onScrollStopped (SCROLL_STOP_MS after the last scroll event of
+ * the smooth scroll), with a fallback timer in case the scroll emits no events
+ * (target already in view).
  */
 function setProgrammatic(val) {
   programmaticScrolling = val
-  scrollOwner.value = val ? 'programmatic' : 'idle'
   clearTimeout(programmaticFallbackTimer)
   programmaticFallbackTimer = null
   if (val) {
     // Safety net in case the smooth scroll never emits a scroll event.
     programmaticFallbackTimer = setTimeout(() => {
       programmaticScrolling = false
-      scrollOwner.value = 'idle'
       programmaticFallbackTimer = null
     }, PROGRAMMATIC_MAX_MS)
   }
@@ -1147,16 +1089,16 @@ watch(() => props.currentSessionId, () => {
   scrolledDown.value = false
   lastScrollTop = 0
   setProgrammatic(false)
-  lastScrollAt = 0
-  pendingFollow = false
   userLeftBottom = false
   clearTimeout(scrollStopTimer)
   scrollStopTimer = null
+  // Clear every user-input marker (touch / wheel / mouse-drag) so the freshly
+  // rebuilt list starts from a clean state.
   userTouching = false
-  // Clear all user-input scroll markers (touch / wheel / mouse-drag) so the
-  // freshly rebuilt list starts from a clean ownership state.
   wheelActive = false
   mouseDownActive = false
+  clearTimeout(wheelDecayTimer)
+  wheelDecayTimer = null
   clearTimeout(scrollUpTimer)
   clearTimeout(scrollDownTimer)
   scrollFrameScheduler.cancelAll()

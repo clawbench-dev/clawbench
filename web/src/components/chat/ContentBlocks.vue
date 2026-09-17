@@ -373,7 +373,7 @@ import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
-import { updateThinkingUserLeftBottom } from '@/utils/thinkingScroll'
+import { isThinkingUserAwayFromBottom } from '@/utils/thinkingScroll'
 // Footer pill buttons (.fbtn) — the PermissionApproval card buttons share this
 // language, so the styles must be present wherever the chat surfaces render.
 import '@/assets/modal-footer-btn.css'
@@ -1144,12 +1144,11 @@ function setThinkingRef(key: string, el: any) {
 // The streaming thinking box is a fixed-height (`max-height` + `overflow-y`)
 // scroll container. Each streaming render batch rewrites its innerHTML and the
 // browser keeps the old scrollTop, so new reasoning lines accumulate below the
-// viewport unless we re-pin the box to the bottom. Follow is per-block, latched
-// off the instant the user scrolls up to read earlier reasoning, and resumed
-// when they return to the bottom (same contract as the outer chat scroll).
+// viewport unless we re-pin the box to the bottom. Follow is per-block: the box
+// follows the live stream while the user is at its bottom, and stops as soon as
+// they scroll away to read earlier reasoning.
 const thinkingInlineEls = new Map<string, HTMLElement>()
 let thinkingScrollLeft: Record<string, boolean> = {}
-const thinkingScrollTop = new Map<string, number>()
 
 function setThinkingInlineRef(key: string, el: any) {
   if (el) {
@@ -1157,20 +1156,17 @@ function setThinkingInlineRef(key: string, el: any) {
   } else {
     thinkingInlineEls.delete(key)
     delete thinkingScrollLeft[key]
-    thinkingScrollTop.delete(key)
   }
 }
 
-/** User scrolled inside a thinking box: update the per-block "left the bottom" latch. */
+/** User scrolled inside a thinking box: re-sample the per-block follow latch
+ *  from the distance to the bottom. Distance-only (no direction test) for the
+ *  same reason as the outer chat list — a 1px layout nudge during streaming
+ *  must not be mistaken for a deliberate scroll up. */
 function handleThinkingInlineScroll(key: string, event: Event) {
   const el = event.currentTarget as HTMLElement
   const dist = el.scrollHeight - el.scrollTop - el.clientHeight
-  const prevTop = thinkingScrollTop.get(key) ?? el.scrollTop
-  thinkingScrollLeft[key] = updateThinkingUserLeftBottom(
-    thinkingScrollLeft[key] ?? false,
-    { scrollingUp: el.scrollTop < prevTop, distFromBottom: dist },
-  )
-  thinkingScrollTop.set(key, el.scrollTop)
+  thinkingScrollLeft[key] = isThinkingUserAwayFromBottom(dist)
 }
 
 /** After a streaming content update, pin each live thinking box to its bottom
@@ -1188,7 +1184,6 @@ function followThinkingScrollToBottom() {
       // with no scrollbar must not be forced — scrollTop is 0 either way).
       if (el.scrollHeight <= el.clientHeight) continue
       el.scrollTop = el.scrollHeight
-      thinkingScrollTop.set(key, el.scrollTop)
     }
   })
 }
@@ -1376,7 +1371,6 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     // Streaming ended: release the inner-scroll follow latches so the next
     // streamed deep-think starts pinned to the bottom again.
     thinkingScrollLeft = {}
-    thinkingScrollTop.clear()
     // Clear throttle cache and force a full re-render of thinking HTML
     blockHtmlCache.value = {}
   }

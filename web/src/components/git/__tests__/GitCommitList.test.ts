@@ -331,6 +331,33 @@ describe('GitCommitList', () => {
       const wrapper = mountList()
       expect(wrapper.find('.drilldown-item').text()).toContain('Test')
     })
+
+    it('shows the changed-file count badge on the working-tree row', () => {
+      const wrapper = mountList({
+        commits: [{ sha: 'HEAD', msg: 'wt', date: '', author: '', isWT: true }],
+        wtFileCount: 3,
+      })
+      const badge = wrapper.find('.git-commit-file-count')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe('3')
+      // Shape comes from the shared pill class; the call-site class only colours it.
+      expect(badge.classes()).toContain('count-badge')
+      // Hovering explains the bare number.
+      expect(badge.attributes('title')).toBe('git.history.fileCount')
+    })
+
+    it('hides the badge when the workspace has no changes', () => {
+      const wrapper = mountList({
+        commits: [{ sha: 'HEAD', msg: 'wt', date: '', author: '', isWT: true }],
+        wtFileCount: 0,
+      })
+      expect(wrapper.find('.git-commit-file-count').exists()).toBe(false)
+    })
+
+    it('never badges a regular commit row', () => {
+      const wrapper = mountList({ wtFileCount: 5 })
+      expect(wrapper.findAll('.git-commit-file-count')).toHaveLength(0)
+    })
   })
 
   describe('search', () => {

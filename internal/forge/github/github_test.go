@@ -86,6 +86,48 @@ func TestListItems_PullsCarryHeadBranch(t *testing.T) {
 	assert.Equal(t, "feat/login-fix", res.Items[0].SourceBranch)
 }
 
+// TestListItems_PullsCarryLabels guards a real asymmetry: convertIssue set
+// Labels but convertPull did not, so a PR's labels were silently dropped while
+// an issue's were kept. The event context renders labels, so a PR event task
+// would have received an empty label list for no reason.
+func TestListItems_PullsCarryLabels(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "/repos/acme/widgets/pulls")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"number":5,"title":"pr","state":"open","user":{"login":"carol"},
+			 "labels":[{"name":"bug","color":"d73a4a"},{"name":"urgent"}],
+			 "html_url":"https://github.com/acme/widgets/pull/5",
+			 "updated_at":"2026-09-09T12:00:00Z"}
+		]`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{Type: forge.ItemTypeChangeRequest})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	require.Len(t, res.Items[0].Labels, 2)
+	assert.Equal(t, "bug", res.Items[0].Labels[0].Name)
+	assert.Equal(t, "d73a4a", res.Items[0].Labels[0].Color)
+	assert.Equal(t, "urgent", res.Items[0].Labels[1].Name)
+}
+
+// TestGetItem_PullCarriesLabels covers the same gap on the detail path, which
+// is a separate conversion call site.
+func TestGetItem_PullCarriesLabels(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"number":5,"title":"pr","state":"open",
+			 "user":{"login":"carol"},"labels":[{"name":"bug"}],
+			 "html_url":"https://github.com/acme/widgets/pull/5",
+			 "updated_at":"2026-09-09T12:00:00Z"}`))
+	}))
+
+	item, err := p.GetItem(context.Background(), forge.ItemTypeChangeRequest, 5)
+	require.NoError(t, err)
+	require.Len(t, item.Labels, 1)
+	assert.Equal(t, "bug", item.Labels[0].Name)
+}
+
 // TestListItems_IssuesHaveNoHeadBranch: an issue has no branch, and inventing one
 // would make the CI lookup query a branch that does not exist.
 func TestListItems_IssuesHaveNoHeadBranch(t *testing.T) {

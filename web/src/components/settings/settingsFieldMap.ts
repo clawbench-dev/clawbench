@@ -281,11 +281,17 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.forgePauseEventTasks', descriptionKey: 'settings.items.forgePauseEventTasksDesc', key: 'forge.pause_event_tasks', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeAutomationSection' } },
   ],
   notification: [
-    { type: 'item', spec: { labelKey: 'settings.items.notificationSound', descriptionKey: 'settings.items.notificationSoundDesc', key: 'notificationSound', type: 'switch', source: 'local', sectionHeader: 'settings.items.notificationSoundSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.notificationSoundSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.liveUpdate', descriptionKey: 'settings.items.liveUpdateDesc', key: 'liveUpdate', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.notificationSoundSection' } },
+    // In-app surfaces: the completion card and its alert sound. Both are local
+    // settings and take effect immediately (no save button).
+    { type: 'item', spec: { labelKey: 'settings.items.inAppNotification', descriptionKey: 'settings.items.inAppNotificationDesc', key: 'inAppNotification', type: 'switch', source: 'local', sectionHeader: 'settings.items.inAppNotifySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.notificationSound', descriptionKey: 'settings.items.notificationSoundDesc', key: 'notificationSound', type: 'switch', source: 'local', sectionHeader: 'settings.items.inAppNotifySection' } },
+    // Out-of-app desktop/system surfaces (app-only, so the whole card disappears
+    // in browser mode — the render list is filtered before cards are grouped).
+    { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveUpdate', descriptionKey: 'settings.items.liveUpdateDesc', key: 'liveUpdate', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
     { type: 'panel', config: {
       panelId: 'push',
+      titleKey: 'settings.items.mobileNotifySection',
       entrySelector: {
         labelKey: 'settings.items.pushMode',
         descriptionKey: 'settings.items.pushModeDesc',

@@ -1592,10 +1592,16 @@ func TestServeRecentProjects_AddAndList(t *testing.T) {
 	w = callHandler(ServeRecentProjects, listReq)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// GetRecentProjects returns []string
-	var projects []string
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &projects))
-	assert.Contains(t, projects, env.ProjectDir)
+	// GET returns projects grouped by git repository.
+	var groups []service.RecentProjectGroup
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &groups))
+	var paths []string
+	for _, g := range groups {
+		for _, it := range g.Items {
+			paths = append(paths, it.Path)
+		}
+	}
+	assert.Contains(t, paths, env.ProjectDir)
 }
 
 func TestServeRecentProjects_Delete(t *testing.T) {

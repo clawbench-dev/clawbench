@@ -344,6 +344,7 @@ func convertPull(pr *gogithub.PullRequest) forge.Item {
 		Draft:        pr.GetDraft(),
 		Author:       authorFromUser(pr.User),
 		Assignees:    authorsFromUsers(pr.Assignees),
+		Labels:       labelsFromGitHub(pr.Labels),
 		CommentCount: pr.GetComments(),
 		URL:          pr.GetHTMLURL(),
 		CreatedAt:    pr.GetCreatedAt().Time,

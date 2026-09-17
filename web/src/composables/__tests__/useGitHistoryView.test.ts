@@ -178,6 +178,31 @@ describe('useGitHistoryView — computed', () => {
     expect(v.hasUnstaged.value).toBe(true)
   })
 
+  it('workingTreeFileCount mirrors the working-tree list in project mode', () => {
+    const v = setup()
+    // Clean workspace → 0, so the row badge stays hidden.
+    expect(v.workingTreeFileCount.value).toBe(0)
+
+    v.wtFiles.value = [
+      { path: 'a.ts', type: 'M' },
+      { path: 'b.ts', type: 'A' },
+      { path: 'c.ts', type: '?' },
+    ]
+    expect(v.workingTreeFileCount.value).toBe(3)
+
+    // It tracks wtFiles, not the drilled-into `files` list.
+    v.files.value = [{ path: 'other.ts', type: 'M' }]
+    expect(v.workingTreeFileCount.value).toBe(3)
+  })
+
+  it('workingTreeFileCount is 1 in file mode (the viewed file itself)', () => {
+    const v = setup({ mode: 'file', filePath: 'src/x.ts' })
+    // File mode never populates wtFiles (it only asks hasUncommitted), yet the
+    // working-tree entry represents exactly one changed file.
+    v.wtFiles.value = []
+    expect(v.workingTreeFileCount.value).toBe(1)
+  })
+
   it('sortedFiles orders by type (M, A, D, R, ?)', () => {
     const v = setup()
     v.files.value = [

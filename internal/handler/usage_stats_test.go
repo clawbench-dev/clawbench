@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -247,4 +248,198 @@ func TestServeUsageStats_InvalidLimitIgnored(t *testing.T) {
 
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// --- scope=all (cross-project) ---
+
+// TestServeUsageStats_ScopeAllWithAIToken is the positive cross-project case: a
+// local AI token with no project cookie may aggregate every project.
+func TestServeUsageStats_ScopeAllWithAIToken(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.CookieToken = "instance-key"
+	seedUsageStatsData(t, env.ProjectDir, "sess-1", "glm-5.1", "2026-01-10 10:00:00", 150)
+
+	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+		"dims": "project", "metrics": "total", "scope": "all",
+	}), nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	withAIToken(req)
+
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Totals struct {
+			Total int64 `json:"total"`
+		} `json:"totals"`
+		Rows []map[string]any `json:"rows"`
+	}
+	decodeRespJSON(t, w.Body, &body)
+	assert.Equal(t, int64(150), body.Totals.Total)
+	require.Len(t, body.Rows, 1)
+	key, ok := body.Rows[0]["key"].(map[string]any)
+	require.True(t, ok, "row must carry a key object")
+	assert.Equal(t, env.ProjectDir, key["project"])
+}
+
+// TestServeUsageStats_ScopeAllLoopbackWithoutTokenDenied isolates the handler's
+// own gate by calling it directly (no auth middleware in front). The exemption
+// must come from the token, not the loopback address — otherwise any local
+// process could read every project's usage. The paired positive case is
+// TestServeUsageStats_ScopeAllWithAIToken.
+func TestServeUsageStats_ScopeAllLoopbackWithoutTokenDenied(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.CookieToken = "instance-key"
+
+	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+		"dims": "project", "metrics": "total", "scope": "all",
+	}), nil)
+	req.RemoteAddr = "127.0.0.1:12345" // loopback, but no token
+
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusForbidden, w.Code,
+		"loopback without an AI token must not get the cross-project exemption")
+
+	var body struct {
+		MsgKey string `json:"msgKey"`
+	}
+	decodeRespJSON(t, w.Body, &body)
+	assert.Equal(t, "AccessDenied", body.MsgKey)
+}
+
+// TestServeUsageStats_ScopeAllRemoteDenied covers a remote caller that somehow
+// holds a valid token signature: the loopback half of IsAITokenRequest must
+// still refuse it.
+func TestServeUsageStats_ScopeAllRemoteDenied(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.CookieToken = "instance-key"
+
+	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+		"dims": "project", "metrics": "total", "scope": "all",
+	}), nil)
+	// Default RemoteAddr is non-loopback; still send a valid token.
+	withAIToken(req)
+
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusForbidden, w.Code,
+		"a token replayed from off-machine must not get cross-project reads")
+}
+
+// TestServeUsageStats_ScopeAllWithProjectCookieRejected pins the contradiction
+// rule: scope=all plus a project cookie is refused rather than resolved to one
+// of the two meanings. A caller sending both believes it is getting the
+// narrower answer, so silently aggregating everything would leak more than it
+// asked for.
+func TestServeUsageStats_ScopeAllWithProjectCookieRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.CookieToken = "instance-key"
+
+	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+		"dims": "project", "metrics": "total", "scope": "all",
+	}), nil), env.ProjectDir)
+	req.RemoteAddr = "127.0.0.1:12345"
+	withAIToken(req)
+
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var body struct {
+		Detail map[string]any `json:"detail"`
+	}
+	decodeRespJSON(t, w.Body, &body)
+	assert.Equal(t, "conflicting_scope", body.Detail["reason"])
+}
+
+// TestServeUsageStats_InvalidScopeRejected keeps an unknown scope from silently
+// falling back to the single-project path, which would make a typo look like a
+// successful narrower query.
+func TestServeUsageStats_InvalidScopeRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+		"dims": "model", "metrics": "total", "scope": "everything",
+	}), nil), env.ProjectDir)
+
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var body struct {
+		Detail map[string]any `json:"detail"`
+	}
+	decodeRespJSON(t, w.Body, &body)
+	assert.Equal(t, "scope", body.Detail["reason"])
+}
+
+// TestServeUsageStats_ScopeProjectStillRequiresCookie guards the default path
+// against the scope refactor: an explicit scope=project must behave exactly
+// like no scope at all, including rejecting a missing cookie. This is the
+// browser-panel contract, and it must not be reachable without a cookie just
+// because the handler grew an exemption branch.
+func TestServeUsageStats_ScopeProjectStillRequiresCookie(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.CookieToken = "instance-key"
+
+	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+		"dims": "model", "metrics": "total", "scope": "project",
+	}), nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	withAIToken(req) // even a valid token must not bypass the cookie here
+
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestServeUsageStats_ScopeAllEndToEndThroughAuth exercises the production
+// layering (middleware.Auth in front of the handler) rather than the handler
+// alone. The two gates must compose: the token gets the request past Auth, and
+// the handler's own check then decides the scope. A regression that moved the
+// exemption to the loopback address would pass the handler-only test above but
+// fail here, because Auth would reject the token-less request first.
+func TestServeUsageStats_ScopeAllEndToEndThroughAuth(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.CookieToken = "instance-key"
+	seedUsageStatsData(t, env.ProjectDir, "sess-1", "glm-5.1", "2026-01-10 10:00:00", 150)
+
+	t.Run("token gets through and aggregates all projects", func(t *testing.T) {
+		req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+			"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+			"dims": "project", "metrics": "total", "scope": "all",
+		}), nil)
+		req.RemoteAddr = "127.0.0.1:12345"
+		withAIToken(req)
+
+		w := callHandlerWithAuth(ServeUsageStats, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("loopback without a token is rejected by Auth before the handler", func(t *testing.T) {
+		req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+			"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+			"dims": "project", "metrics": "total", "scope": "all",
+		}), nil)
+		req.RemoteAddr = "127.0.0.1:12345"
+
+		w := callHandlerWithAuth(ServeUsageStats, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code,
+			"Auth is the outer gate; no token means 401, not 403")
+	})
 }

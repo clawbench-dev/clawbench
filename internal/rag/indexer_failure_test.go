@@ -31,6 +31,7 @@ func setupIndexerServiceDB(t *testing.T) *sql.DB {
 			project_path TEXT NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
+			session_type TEXT NOT NULL DEFAULT 'chat',
 			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

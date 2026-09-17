@@ -823,9 +823,9 @@ describe('CompletionPopover', () => {
             .join('\n')
         const actionsRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-actions')).join('\n')
         expect(actionsRule).toContain('justify-content: flex-end')
-        // 胶囊样式：圆角 999px（非圆形按钮），内边距容纳文字（jsdom 序列化为 0px 12px）
+        // 方形按钮：圆角走 --radius-xs，不再是胶囊
         const btnRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-action-btn')).join('\n')
-        expect(btnRule).toContain('border-radius: var(--radius-full)')
+        expect(btnRule).toContain('border-radius: var(--radius-xs)')
         expect(btnRule).toContain('padding: 0 var(--space-6)')
 
         // 输入内容后 mark-read 依然存在（不随输入联动）
@@ -838,7 +838,7 @@ describe('CompletionPopover', () => {
         expect(document.querySelector('.completion-popover-send')!.classList.contains('disabled')).toBe(false)
     })
 
-    it('aligns the input box with the chat input bar (radius 20px, chat-body type scale, 26px send button)', async () => {
+    it('aligns the input box with the quote bar (sharp corners, chat-body type scale, 26px square send button)', async () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
@@ -870,7 +870,7 @@ describe('CompletionPopover', () => {
         expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
         // 高度上限由同一行盒推导（3 行 + 上下 padding），不再写死 px
         expect(taRule).toContain('max-height: calc(var(--input-line-height) * 3')
-        // 发送按钮与聊天输入框对齐：26px 圆形
+        // 发送按钮：26px 方形（尖角风格里不能有圆形）
         const btn = document.querySelector('.completion-popover-send')!
         const btnStyles = window.getComputedStyle(btn)
         expect(btnStyles.width).toBe('26px')
@@ -883,11 +883,45 @@ describe('CompletionPopover', () => {
             })
             .join('\n')
         const inputRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-input')).join('\n')
-        expect(inputRule).toContain('border-radius: 20px')
+        // 输入容器与 QuoteQuestionBar 同为尖角（不再是 20px 胶囊）
+        expect(inputRule).toContain('border-radius: 0')
+        expect(inputRule).not.toContain('20px')
         // 背景用 --bg-primary，与卡片 tertiary 底色区分（避免融合）
         expect(inputRule).toContain('background: var(--bg-primary')
+        // focus 用 inset 描边，方形边框不会溢出容器
+        const focusRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-input:focus-within')).join('\n')
+        expect(focusRule).toContain('inset 0 0 0 1px')
         // 不再使用胶囊圆角 999px
         expect(inputRule).not.toContain('999px')
+    })
+
+    it('keeps every corner on the sharp scale (no rounded controls)', async () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+        await nextTick()
+
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        // 只看本组件自己的规则：document.styleSheets 里还混着全局 CSS
+        // （agent-icon 的 20% 圆角、KaTeX 等），整体扫描会误判成回归。
+        const own = cssText
+            .split('\n')
+            .filter((line) => line.includes('.completion-popover'))
+            .join('\n')
+        // 与 QuoteQuestionBar 同一套硬朗几何：容器 3px、内部块 0/3px。
+        // 曾经容器 14px + 胶囊输入框 20px + 圆形发送键 50% + 胶囊动作按钮，
+        // 方输入框贴在圆卡片上像后拼上去的。任何新元素都不得再引入
+        // --radius-md/lg/full 或 50%/20px。
+        expect(own).not.toContain('border-radius: 50%')
+        expect(own).not.toContain('border-radius: 20px')
+        expect(own).not.toContain('border-radius: var(--radius-md)')
+        expect(own).not.toContain('border-radius: var(--radius-lg)')
+        expect(own).not.toContain('border-radius: var(--radius-full)')
+        expect(own).not.toContain('999px')
     })
 
     it('sends the message to the session and dismisses on send click', async () => {

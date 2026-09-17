@@ -228,7 +228,15 @@ paths:
       description: |
         按维度聚合 `chat_metadata` 的 token / 成本统计。
 
-        项目范围通过项目 Cookie 传递，不是查询参数——`dims` 里**没有** `project`。
+        **项目范围**由 `scope` 决定：
+        - `scope=project`（默认）：限制在项目 Cookie 指定的单个项目内，Cookie
+          必填。浏览器面板走这条路径。
+        - `scope=all`：聚合实例内**全部项目**，仅授予携带本机 AI 令牌的调用方
+          （`/cb-usage` 斜杠命令）；浏览器会话请求会被拒绝。该模式要求**不**发送
+          项目 Cookie，同时发送两者返回 400。跨项目统计通常配合 `dims=project`。
+
+        `dims` 合法值含 `project`，但只在 `scope=all` 下有区分度——单项目范围内
+        所有行项目相同。
 
         **响应结构**：
         - `totals`：所有行的合计，字段 `input` / `output` / `total` / `cacheHit` /
@@ -243,6 +251,14 @@ paths:
         （约等于助手回复完成），不是用户提问时刻。
       operationId: usageStats
       parameters:
+        - name: scope
+          in: query
+          description: |
+            统计范围。默认 `project`（限制在项目 Cookie 指定的项目内）。
+            `all` 聚合实例内全部项目，仅本机 AI 令牌可用，且必须不带项目 Cookie。
+          schema:
+            type: string
+            enum: [project, all]
         - name: start
           in: query
           required: true
@@ -261,14 +277,15 @@ paths:
           in: query
           required: true
           description: |
-            聚合维度。**重复该参数**以多维分组（1..3 个，不可重复）——
+            聚合维度。**重复该参数**以多维分组（1..4 个，不可重复）——
             例如 `dims=model&dims=backend`。逗号分隔会被拒绝。
-            合法值仅 `model` / `backend` / `agent`。
+            合法值为 `model` / `backend` / `agent` / `project`；`project`
+            只在 `scope=all` 下有区分度。
           schema:
             type: array
             items:
               type: string
-              enum: [model, backend, agent]
+              enum: [model, backend, agent, project]
         - name: metrics
           in: query
           required: true
@@ -646,15 +663,56 @@ paths:
   /api/recent-projects:
     get:
       tags: [Projects]
-      summary: 最近项目
+      summary: 最近项目（按 git 仓库分组）
+      description: |
+        返回最近项目，按 git 仓库分组。同一仓库的多个路径（主仓库、链接工作树、
+        作为独立项目打开的仓库内子目录）归入同一组，便于客户端展示从属关系；
+        不属于任何仓库的路径各自成组（`items` 长度为 1）。
+        排序由服务端决定：组按组内最近访问时间倒序，组内按各自访问时间倒序。
       operationId: recentProjectsList
       responses:
         "200":
-          description: 最近项目列表
+          description: 最近项目分组列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    repoRoot:
+                      type: string
+                      description: 仓库主工作树根目录；非仓库分组为空字符串
+                    groupName:
+                      type: string
+                      description: 分组显示名（repoRoot 的目录名）；非仓库分组为空字符串
+                    items:
+                      type: array
+                      description: 组内路径，按访问时间倒序
+                      items:
+                        type: object
+                        properties:
+                          path:
+                            type: string
+                          kind:
+                            type: string
+                            enum: [main, worktree, subdir, plain]
+                            description: |
+                              main=仓库主工作树；worktree=链接工作树；
+                              subdir=仓库内子目录（非仓库根）；plain=不属于任何仓库
     post:
       tags: [Projects]
       summary: 记录最近项目
       operationId: recentProjectsAdd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -2270,6 +2328,11 @@ paths:
         （强制下载）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
         token 不存在一律 404，零信息暴露。
 
+        **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
+        `{token}/file` 需要把内容内联进 JSON，故对超过内联上限（10MB）的文件
+        返回 200 但 `content` 为空、`tooLarge: true`（仅元数据），由分享页降级为
+        下载入口；`{token}/download` 与 `{token}/local/...` 流式返回，无大小上限。
+
         `?path=` 仅接受落在**该分享自身范围**内的绝对路径，范围在创建分享时确定并
         随分享记录持久化（文件在所选项目内 → 项目根；否则 → 该文件所在目录）。
         范围之外的路径返回 404，与 `RootPaths` 无关。
@@ -2277,7 +2340,9 @@ paths:
       security: []
       responses:
         "200":
-          description: 分享内容
+          description: |
+            分享内容。`content` 为空且 `tooLarge: true` 表示文件超过内联上限，
+            仅返回元数据（`name`/`path`/`size`/`supported`），需改用 `download` 子路径。
         "404":
           $ref: "#/components/responses/Error"
 
@@ -3541,7 +3606,9 @@ paths:
       description: |
         跨会话聚合搜索并返回命中位置，供会话搜索抽屉高亮。
         `q` 为空时进入「浏览全部」模式：列出该项目下的会话，此时
-        `archived`/`sort`/`cursor` 仍然生效。
+        `archived`/`session_type`/`sort`/`cursor` 仍然生效。
+        浏览态不会混排两类会话：`all`/`chat` 均列出对话会话，只有显式
+        `task` 才切换到任务执行会话。
       requestBody:
         required: true
         content:
@@ -3571,6 +3638,15 @@ paths:
                   type: string
                   enum: [all, active, archived]
                   description: 归档筛选（字符串，非布尔）。默认 `all`。
+                session_type:
+                  type: string
+                  enum: [all, chat, task]
+                  description: |
+                    会话类型筛选。`task` 对应库中的 `scheduled` 会话（计划任务的
+                    单次执行会话），`chat` 为交互式对话。默认 `all`，即不做类型
+                    限制（搜索态下两类都会返回）。
+                    浏览态（`q` 为空）一次只列出一类：`all`/`chat` 列出对话，
+                    `task` 列出任务执行。
                 sort:
                   type: string
                   enum: [newest, oldest, relevance]

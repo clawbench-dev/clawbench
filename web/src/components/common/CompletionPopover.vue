@@ -324,7 +324,11 @@ function handleSummaryClick(event: MouseEvent): void {
     width: 100%;
     background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
     color: var(--text-primary);
-    border-radius: var(--radius-lg);
+    /* Sharp-corner geometry, same language as QuoteQuestionBar (--radius-xs
+       container, 0 inside it). A 0-radius input on a 14px card read as pasted
+       on, which is exactly what the quote bar was fixed for; the two surfaces
+       are the same kind of floating reply bar, so they must not disagree. */
+    border-radius: var(--radius-xs);
     padding: var(--space-4) var(--space-5);
     box-shadow: var(--shadow-lg);
     border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
@@ -453,7 +457,7 @@ function handleSummaryClick(event: MouseEvent): void {
     color: var(--accent-color);
     background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-xs);
 }
 
 .completion-popover-project-badge svg {
@@ -481,7 +485,7 @@ function handleSummaryClick(event: MouseEvent): void {
     row-gap: 4px;
 }
 
-/* 附件胶囊 chip：表示用户消息带附件，不泄漏具体文件。与文字引用块同行并存 */
+/* 附件 chip：表示用户消息带附件，不泄漏具体文件。与文字引用块同行并存 */
 .completion-popover-attachment-chip {
     flex-shrink: 0;
     display: inline-flex;
@@ -495,7 +499,7 @@ function handleSummaryClick(event: MouseEvent): void {
     color: var(--accent-color);
     background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-color) 40%, transparent);
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-xs);
     user-select: none;
 }
 
@@ -653,8 +657,9 @@ function handleSummaryClick(event: MouseEvent): void {
     margin-bottom: 0;
 }
 
-/* 快捷输入框 — 与聊天界面 ChatInputBar 输入框样式对齐（圆角 20px、固定不随高度变化）。
-   背景用 --bg-primary（白/更亮）与卡片的 --bg-tertiary 底色区分，避免融合。
+/* 快捷输入框 — 与 QuoteQuestionBar 的输入行对齐（尖角、26px 方形按钮、
+   focus 用 inset 描边）。背景用 --bg-primary（白/更亮）与卡片的 --bg-tertiary
+   底色区分，避免融合。
    纵向 padding 必须上下对称：行是 align-items: flex-end，任何上下差都会直接
    表现为按钮相对 textarea 偏心（原先 4px 上 / 6px 下，按钮偏下 1px）。5px 是
    字面值，因为间距刻度从 4px 直接跳到 6px，中间没有 token。 */
@@ -668,14 +673,16 @@ function handleSummaryClick(event: MouseEvent): void {
     padding: 5px var(--space-3);
     background: var(--bg-primary, #fff);
     border: none;
-    border-radius: 20px;
+    border-radius: 0;
     overflow: hidden;
     transition: background var(--duration-slow), box-shadow var(--duration-slow);
 }
 
+/* Inset ring (not an outer 0 0 0 1px) so the square outline cannot spill past
+   the container's own edge — same choice as .qq-input-container. */
 .completion-popover-input:focus-within {
     background: var(--bg-primary, #fff);
-    box-shadow: 0 0 0 1px var(--accent-color, #0066cc);
+    box-shadow: inset 0 0 0 1px var(--accent-color, #0066cc);
 }
 
 .completion-popover-textarea {
@@ -702,6 +709,9 @@ function handleSummaryClick(event: MouseEvent): void {
     color: var(--text-muted);
 }
 
+/* Send: square 26px, matching .qq-send-btn in the quote bar and the icon
+   buttons elsewhere in the app. A circle here would be the only rounded
+   control on an otherwise hard-edged card. */
 .completion-popover-send {
     flex-shrink: 0;
     display: flex;
@@ -713,7 +723,7 @@ function handleSummaryClick(event: MouseEvent): void {
     background: var(--accent-color);
     color: #fff;
     border: none;
-    border-radius: 50%;
+    border-radius: var(--radius-xs);
     cursor: pointer;
     transition: opacity var(--duration-base);
 }
@@ -723,8 +733,9 @@ function handleSummaryClick(event: MouseEvent): void {
     cursor: not-allowed;
 }
 
-/* ── 底部动作按钮：标记已读 / 打开 —— 胶囊形（图标 + 文字） ──
-   标记已读：描边弱化次级样式；打开：accent 实底主操作 */
+/* ── 底部动作按钮：标记已读 / 打开 —— 方形 28px（图标 + 文字） ──
+   标记已读：描边弱化次级样式；打开：accent 实底主操作。
+   与发送键同为尖角（--radius-xs），不再是胶囊——卡片上只保留一套圆角语言。 */
 .completion-popover-action-btn {
     flex-shrink: 0;
     display: inline-flex;
@@ -732,7 +743,7 @@ function handleSummaryClick(event: MouseEvent): void {
     gap: 5px;
     height: 28px;
     padding:0 var(--space-6);
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-xs);
     font-size: var(--font-size-sm);
     line-height: 1;
     font-weight: var(--font-weight-medium);
@@ -793,7 +804,7 @@ function handleSummaryClick(event: MouseEvent): void {
         transparent 0%,
         color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary))) 55%
     );
-    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    border-radius: 0 0 var(--radius-xs) var(--radius-xs);
 }
 
 /* Android 通知风格：卡片从顶部滑下 + 淡入（标准缓动曲线），离开反向滑回 */

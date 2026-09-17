@@ -33,6 +33,7 @@
       :count-label="mode === 'file' ? t('git.history.records') : t('git.history.commitRecords')"
       :selected-s-h-a="selectedSHA"
       :mode="mode"
+      :wt-file-count="workingTreeFileCount"
       @select="onCommitSelect"
       @search="onSearch"
       @load-more="loadMoreCommits"
@@ -210,7 +211,7 @@ const {
   selectedFilePath, diffState,
   commitListRef,
   selectedCommit, isWorkingTree, mode, stagedFiles, unstagedFiles,
-  hasStaged, hasUnstaged, totalFileCount,
+  hasStaged, hasUnstaged, totalFileCount, workingTreeFileCount,
   fileTypeLabel, fileSplit, badgeClass, resetListState,
   loadMoreCommits, onSearch, onRefresh, onFilesRefresh,
   reloadPreservingDrillDown,

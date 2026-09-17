@@ -5,56 +5,31 @@
  * preserves the old `scrollTop` across the rewrite — so new lines accumulate
  * below the viewport unless we re-pin the box to the bottom.
  *
- * The follow rules mirror the outer chat list (scrollState.ts), simplified for
- * a single small element:
- *  - While the user has NOT scrolled up to read earlier reasoning, every content
- *    update pins the box to the bottom (auto-follow the live stream).
- *  - Any upward drag latches "left the bottom". While latched the box is never
- *    yanked down — the user is reading past reasoning.
- *  - Scrolling back to the bottom (within RESUME_FOLLOW_PX) unlocks follow.
+ * The follow rule mirrors the outer chat list (scrollState.ts), simplified for
+ * a single small element: the box follows the live stream while the user has
+ * not deliberately scrolled away. "Away" is decided purely by distance from the
+ * bottom, sampled only on real user input.
+ *
+ * The same reasoning as the outer list applies to why there is no direction
+ * test: content growth moves `scrollTop` by a pixel in either direction, and
+ * reading that as "the user scrolled up" would latch follow off while the user
+ * sits at the bottom. Distance from the bottom is the only question that
+ * distinguishes "reading earlier reasoning" from "at the bottom".
  *
  * All decision logic is pure (no Vue/DOM) so it is unit-testable.
  */
 
-/** Unlock band width: how close to the bottom the user must return before follow resumes. */
+/** Unlock band width: how close to the bottom the user must be to keep following. */
 export const RESUME_FOLLOW_PX = 50
 
-export interface ThinkingScrollState {
-  /** True when the user has scrolled up to read earlier content. */
-  userLeftBottom: boolean
-}
-
-export function initialThinkingScrollState(): ThinkingScrollState {
-  return { userLeftBottom: false }
-}
-
 /**
- * Update the "user left the bottom" latch from a user scroll event on the
- * thinking content box. Same contract as the outer chat list: any upward
- * movement immediately locks follow off; scrolling back within the unlock band
- * restores it; anything else leaves the latch unchanged.
+ * Whether the box at the given distance from the bottom counts as "the user
+ * has left the bottom". Sampled on user input only — content-driven scroll
+ * events must not call this.
  */
-export function updateThinkingUserLeftBottom(
-  current: boolean,
-  args: {
-    /** True when the scroll moved toward the top (scrollTop decreased). */
-    scrollingUp: boolean
-    /** Distance from the bottom of the box (scrollHeight - scrollTop - clientHeight). */
-    distFromBottom: number
-    /** Unlock band width; defaults to RESUME_FOLLOW_PX. */
-    resumePx?: number
-  },
+export function isThinkingUserAwayFromBottom(
+  distFromBottom: number,
+  resumePx: number = RESUME_FOLLOW_PX,
 ): boolean {
-  if (args.scrollingUp) return true
-  if (args.distFromBottom <= (args.resumePx ?? RESUME_FOLLOW_PX)) return false
-  return current
-}
-
-/**
- * Whether a content update should re-pin the thinking box to the bottom.
- * The box follows only when the user has not deliberately scrolled up to read
- * earlier reasoning — the same "never yank a reading user" rule as the chat.
- */
-export function shouldFollowThinking(s: ThinkingScrollState): boolean {
-  return !s.userLeftBottom
+  return distFromBottom > resumePx
 }

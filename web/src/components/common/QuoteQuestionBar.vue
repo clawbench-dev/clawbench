@@ -33,6 +33,16 @@
           </button>
         </div>
 
+        <!-- Pending attachment (composer mode only): the issue/PR URL or file the
+             bar will attach when committed. Read-only — it is not in the chat
+             context yet, so there is nothing to remove here; closing the bar
+             discards it. -->
+        <div v-if="composerAttachment" class="qq-pending-attachment">
+          <Link v-if="composerAttachment.kind === 'url'" :size="13" class="qq-pending-icon" />
+          <FileIcon v-else :path="composerAttachment.path || composerAttachment.label" :size="13" class="qq-pending-icon" />
+          <span class="qq-pending-label">{{ composerAttachment.label }}</span>
+        </div>
+
         <!-- Input -->
         <div class="qq-input-container">
           <div class="qq-input-row">
@@ -60,11 +70,12 @@
 </template>
 
 <script setup>
-import { Plus, Send, Copy } from 'lucide-vue-next'
+import { Plus, Send, Copy, Link } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
 import { copyText } from '@/utils/clipboard.ts'
+import FileIcon from '@/components/common/FileIcon.vue'
 
 const { t } = useI18n()
 
@@ -75,6 +86,9 @@ const props = defineProps({
   // a text selection. The bar is then useful with no quote at all, so it skips
   // the collapsed preview and goes straight to the input.
   composerMode: Boolean,
+  // The attachment the composer will add on commit, previewed as a chip. Null in
+  // the normal selection flow, which has no attachment of its own.
+  composerAttachment: Object,
 })
 const emit = defineEmits(['add', 'send', 'close', 'pin', 'unpin'])
 
@@ -424,6 +438,39 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   text-overflow: clip;
   word-break: break-word;
   max-height: 120px;
+}
+
+/* ===== Pending attachment chip (composer mode) =====
+   Read-only preview of what the bar will attach on commit. Mirrors the chat
+   input's .attachment-ref tint, but on this bar's sharp-corner scale
+   (--radius-xs, never the pill/round radii used elsewhere) and with no close
+   button — the entry is not in the chat context yet, so dismissing the bar is
+   the way to discard it. */
+.qq-pending-attachment {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0 var(--space-3);
+  height: 22px;
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 20%, transparent);
+  border-radius: var(--radius-xs);
+  color: var(--accent-color);
+  font-size: var(--font-size-xs);
+}
+
+.qq-pending-icon {
+  flex-shrink: 0;
+}
+
+.qq-pending-label {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* Input container — square, matching the bar's sharp geometry. Background stays

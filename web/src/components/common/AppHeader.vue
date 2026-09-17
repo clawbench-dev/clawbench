@@ -54,28 +54,48 @@
       <template v-else>
         <div v-if="recentItems.length === 0" class="app-menu-message">{{ t('appHeader.noRecentProjects') }}</div>
         <div v-else class="app-menu-scroll">
-          <div
-            v-for="item in recentItems"
-            :key="item.path"
-            class="app-menu-item app-menu-item--stacked"
-            :class="{ active: item.path === projectRoot }"
-            @click="selectRecent(item)"
-          >
-            <Projector :size="14" class="item-icon" />
-            <span class="item-body">
-              <span class="item-name">{{ item.name }}</span>
-              <span class="item-path">{{ item.displayPath }}</span>
-            </span>
-            <HintTooltip :content="item.path" />
-            <button
-              class="item-remove-btn"
-              type="button"
-              :title="t('appHeader.removeProject')"
-              :aria-label="t('appHeader.removeProject')"
-              @click.stop="removeRecent(item)"
+          <div v-for="block in recentBlocks" :key="block.key" class="recent-block">
+            <!-- Group header: a pure label for the shared repository. It is not
+                 clickable and has no remove button — it stands for no single
+                 path, so deleting "it" would be meaningless. -->
+            <div v-if="block.showHeader" class="recent-group-header">
+              <FolderTree :size="12" class="group-icon" />
+              <span class="group-name">{{ block.groupName }}</span>
+              <span class="group-count">· {{ block.count }}</span>
+            </div>
+            <div
+              v-for="item in block.items"
+              :key="item.path"
+              class="app-menu-item app-menu-item--stacked"
+              :class="{
+                active: item.path === projectRoot,
+                'is-nested': block.showHeader,
+                'is-last-nested': block.showHeader && item === block.items[block.items.length - 1],
+              }"
+              @click="selectRecent(item)"
             >
-              <X :size="14" />
-            </button>
+              <span v-if="block.showHeader" class="item-nest-line" aria-hidden="true"></span>
+              <Projector :size="14" class="item-icon" />
+              <span class="item-body">
+                <span class="item-name">
+                  {{ item.name }}
+                  <span v-if="block.showHeader && item.kind !== 'plain'" class="item-kind">{{
+                    t(`appHeader.repoKind${item.kind.charAt(0).toUpperCase()}${item.kind.slice(1)}`)
+                  }}</span>
+                </span>
+                <span class="item-path">{{ item.displayPath }}</span>
+              </span>
+              <HintTooltip :content="item.path" />
+              <button
+                class="item-remove-btn"
+                type="button"
+                :title="t('appHeader.removeProject')"
+                :aria-label="t('appHeader.removeProject')"
+                @click.stop="removeRecent(item)"
+              >
+                <X :size="14" />
+              </button>
+            </div>
           </div>
         </div>
         <div class="menu-divider"></div>
@@ -211,7 +231,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, X, Palette, Sun, Moon } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -597,10 +617,35 @@ function setProjectPanelRef(el: HTMLElement | null) {
     dropdownPanelRef.value = el
 }
 const loadingRecent = ref(false)
+
+/** A project path as classified by the backend relative to its git repository. */
+type RepoKind = 'main' | 'worktree' | 'subdir' | 'plain'
+
 interface RecentItem {
   name: string
   path: string
   displayPath: string
+  /** Git role of this path inside its repository; 'plain' when not in a repo. */
+  kind: RepoKind
+  /**
+   * Grouping key — the repository's common dir, or '' for a path outside any
+   * repository. Items sharing a key are rendered as one nested block.
+   */
+  groupKey: string
+  /** Repo display name for the group header; '' for a lone project. */
+  groupName: string
+}
+
+/** One rendered block: a repo group (possibly with a header) or a lone project. */
+interface RecentBlock {
+  key: string
+  /** Repo display name; empty for a lone project. */
+  groupName: string
+  /** Whether to render the group header. A single-member group is flattened. */
+  showHeader: boolean
+  /** Member count shown next to the group name. */
+  count: number
+  items: RecentItem[]
 }
 
 interface BranchEntry {
@@ -608,6 +653,48 @@ interface BranchEntry {
 }
 
 const recentItems = ref<RecentItem[]>([])
+
+/**
+ * The recent projects as render blocks.
+ *
+ * The backend already grouped by git repository and ordered everything, so
+ * this only decides presentation: a group of one is flattened to a plain row,
+ * because a header above a single path carries no information and would double
+ * the height of a list that is mostly unrelated projects.
+ */
+const recentBlocks = computed<RecentBlock[]>(() => {
+  const blocks: RecentBlock[] = []
+  const byKey = new Map<string, RecentBlock>()
+  for (const item of recentItems.value) {
+    if (!item.groupKey) {
+      blocks.push({
+        key: `lone:${item.path}`,
+        groupName: '',
+        showHeader: false,
+        count: 1,
+        items: [item],
+      })
+      continue
+    }
+    const existing = byKey.get(item.groupKey)
+    if (existing) {
+      existing.items.push(item)
+      existing.count = existing.items.length
+      existing.showHeader = true
+      continue
+    }
+    const block: RecentBlock = {
+      key: `group:${item.groupKey}`,
+      groupName: item.groupName,
+      showHeader: false,
+      count: 1,
+      items: [item],
+    }
+    byKey.set(item.groupKey, block)
+    blocks.push(block)
+  }
+  return blocks
+})
 
 // Dynamic dropdown positioning (teleported to body, needs fixed positioning)
 const dropdownStyle = ref<Record<string, string>>({})
@@ -634,14 +721,34 @@ async function loadRecentProjects() {
     loadingRecent.value = true
     try {
         const resp = await fetch('/api/recent-projects')
-        const paths = await resp.json()
-        recentItems.value = paths.map((p: string) => {
-            const name = baseName(p)
-            // Display relative to home directory for cleaner paths (shared pure
-            // helper handles separator normalization + prefix matching).
-            const displayPath = recentProjectDisplayPath(p, props.homeDir || '')
-            return { name, path: p, displayPath }
-        })
+        const groups = await resp.json()
+        // The backend groups by git repository and orders both groups and
+        // items; flatten back to a list, carrying the grouping key per item so
+        // the render blocks can rebuild the structure.
+        const items: RecentItem[] = []
+        for (const group of groups as Array<{
+            repoRoot?: string
+            groupName?: string
+            items?: Array<{ path?: string; kind?: string }>
+        }>) {
+            const groupKey = group.repoRoot || ''
+            const groupName = group.groupName || ''
+            for (const entry of group.items || []) {
+                const p = entry.path || ''
+                if (!p) continue
+                items.push({
+                    name: baseName(p),
+                    path: p,
+                    // Display relative to home directory for cleaner paths (shared pure
+                    // helper handles separator normalization + prefix matching).
+                    displayPath: recentProjectDisplayPath(p, props.homeDir || ''),
+                    kind: (entry.kind as RecentItem['kind']) || 'plain',
+                    groupKey,
+                    groupName,
+                })
+            }
+        }
+        recentItems.value = items
     } catch {
         recentItems.value = []
     } finally {
@@ -1176,6 +1283,75 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     padding-top: var(--space-2);
     padding-bottom: var(--space-2);
     align-items: center;
+}
+
+/* ── Recent projects: repository groups ──────────────────────────────────────
+   Paths of one git repository (main worktree, linked worktrees, subdirectories
+   opened as their own project) are nested under a shared header. The header is
+   a pure label: it stands for no single path, so it has no click target and no
+   remove button. */
+.recent-group-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: var(--space-2) var(--space-5) 2px;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    /* Not a control — no pointer cursor, no hover highlight. */
+    cursor: default;
+    user-select: none;
+}
+
+.recent-group-header .group-icon {
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+.recent-group-header .group-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recent-group-header .group-count {
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+/* Nested rows are indented and joined by a vertical connector that runs down
+   the left of the group; the last row's segment stops at its centre so the
+   line terminates instead of dangling past the group. */
+.app-menu-item.is-nested {
+    position: relative;
+    padding-left: calc(var(--space-5) + 16px);
+}
+
+.app-menu-item.is-nested .item-nest-line {
+    position: absolute;
+    left: calc(var(--space-5) + 5px);
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border-color, var(--text-muted));
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+.app-menu-item.is-nested.is-last-nested .item-nest-line {
+    bottom: 50%;
+}
+
+.app-menu-item.app-menu-item--stacked .item-kind {
+    margin-left: 6px;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: var(--font-weight-normal);
+    color: var(--text-muted);
+    background: var(--bg-tertiary, rgba(127, 127, 127, 0.15));
+    vertical-align: 1px;
+    white-space: nowrap;
 }
 
 .app-menu-item.app-menu-item--stacked .item-body {

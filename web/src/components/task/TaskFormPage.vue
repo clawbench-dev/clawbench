@@ -99,8 +99,11 @@
           </div>
 
           <!-- Read-only event context block: shows exactly what will be injected.
-               Not editable — the variables are filled from the triggering event. -->
-          <div class="form-group">
+               Not editable — the variables are filled from the triggering event.
+               Hidden until at least one event is selected: with no trigger there
+               is no context, and listing every possible variable would document
+               a payload that can never arrive. -->
+          <div v-if="eventContextTemplate" class="form-group">
             <label class="form-label">{{ t('task.form.eventContext') }}</label>
             <pre class="event-context-block">{{ eventContextTemplate }}</pre>
             <div class="form-hint">{{ t('task.form.eventContextHint') }}</div>
@@ -259,7 +262,8 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
 import { useForgeBinding } from '@/composables/useForgeBinding'
-import { FORGE_EVENT_TRANSITIONS, FORGE_REPO_TARGETED_TRANSITIONS, expandStoredEventTypes, offeredEventValues, eventKindLabel, eventTransitionLabel } from '@/utils/forgeEventLabels' 
+import { FORGE_EVENT_TRANSITIONS, FORGE_REPO_TARGETED_TRANSITIONS, expandStoredEventTypes, offeredEventValues, eventKindLabel, eventTransitionLabel, transitionOfEventKey } from '@/utils/forgeEventLabels' 
+import { eventContextTemplateText, isRepoTargetedOnly } from '@/utils/forgeEventContextVars'
 import { humanizeCron } from '@/utils/format.ts'
 import '@/assets/modal-footer-btn.css'
 
@@ -372,38 +376,15 @@ async function loadBoundRepo() {
 }
 
 // The read-only context block mirrors the backend's EventPromptTemplate: only
-// variables relevant to the selected event types are listed.
+// variables relevant to the selected event types are listed. The variable set
+// and its gating live in the shared registry so this block, the overview card's
+// sample block and the backend cannot drift apart.
 const eventContextTemplate = computed(() => {
-  const types = selectedEventTypes.value
-  const showAll = types.length === 0
-  // Keys are kind-scoped ("pr.commented"), so match on the transition suffix
-  // (and on the bare legacy form, which a pre-split task may still carry).
-  const show = (transition) => showAll || types.some(x => x === transition || x.endsWith('.' + transition))
-  // A pipeline-only subscription never carries an item, so the item line is
-  // omitted rather than advertising an {{ITEM_TYPE}} that can never arrive.
-  const repoTargetedOnly = types.length > 0
-    && types.every(x => FORGE_REPO_TARGETED_TRANSITIONS.includes(x))
-
-  const lines = [
-    `- ${t('task.form.varEventType')}：{{EVENT_TYPE}}`,
-    `- ${t('task.form.varRepo')}：{{REPO}}`,
-  ]
-  if (!repoTargetedOnly) {
-    lines.push(`- ${t('task.form.varItem')}：{{ITEM_TYPE}} #{{ITEM_NUMBER}}`)
-  }
-  lines.push(
-    `- ${t('task.form.varTitle')}：{{TITLE}}`,
-    `- ${t('task.form.varUrl')}：{{URL}}`,
-    `- ${t('task.form.varAuthor')}：{{AUTHOR}}`,
-    `- ${t('task.form.varState')}：{{STATE}}`,
-  )
-  if (show('commented')) lines.push(`- ${t('task.form.varCommentBody')}：{{COMMENT_BODY}}`)
-  if (show('pipeline_done')) {
-    lines.push(`- ${t('task.form.varPipelineStatus')}：{{PIPELINE_STATUS}}`)
-    lines.push(`- ${t('task.form.varPipelineUrl')}：{{PIPELINE_URL}}`)
-    lines.push(`- ${t('task.form.varActorIsSelf')}：{{ACTOR_IS_SELF}}`)
-  }
-  return `## ${t('task.form.eventContextHeader')}\n${lines.join('\n')}`
+  const transitions = new Set(selectedEventTypes.value.map(transitionOfEventKey))
+  return eventContextTemplateText({
+    transitions,
+    repoTargetedOnly: isRepoTargetedOnly(transitions),
+  })
 })
 
 // Frequency preset

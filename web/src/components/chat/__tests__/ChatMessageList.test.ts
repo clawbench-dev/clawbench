@@ -89,10 +89,13 @@ describe('ChatMessageList — scroll sticky抖动 fix', () => {
   it('rAF correction is guarded against an active user scroll', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // The rAF correction must not scroll while the user is scrolling.
-    expect(source).toContain('if (isUserScrolling(buildScrollState())) return')
-    // …and must not follow once the user has scrolled away (non-force).
+    // The rAF correction must not scroll while the user is scrolling. That is
+    // now expressed by the single shouldPin decision point, which rejects a
+    // held touch before anything else — so no separate isUserScrolling check is
+    // needed (and having one would be a second, divergent guard).
     expect(source).toContain('shouldPin(buildScrollState(), force)')
+    // …and must not follow once the user has scrolled away (non-force).
+    expect(source).toMatch(/if \(shouldPin\(buildScrollState\(\), force\)\) \{\s*el2\.scrollTop = el2\.scrollHeight/)
   })
 
   it('scrollToBottom returns early when the user is scrolling (touch drag)', async () => {
@@ -103,16 +106,17 @@ describe('ChatMessageList — scroll sticky抖动 fix', () => {
     expect(source).not.toContain('if (userTouching && !force) return')
   })
 
-  it('scrollToBottom with force=true defers the pin while the user is scrolling', async () => {
-    // New semantic: force=true no longer overrides an active user scroll.
-    // The pin is deferred (pendingFollow) and flushed only after the scroll
-    // stops — never while the user's finger is on the screen.
+  it('a force pin goes through the single shouldPin decision point', async () => {
+    // force=true no longer has its own deferral branch. Every pin (force or
+    // not) is decided by shouldPin, which blocks only on a held touch or on the
+    // "user is away" latch for non-force pins. The old pendingFollow queue was
+    // removed because it depended on a "scroll stopped" signal that a streaming
+    // turn never emits, so queued pins were silently lost.
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // scrollToBottom must consult isUserScrolling before pinning
-    expect(source).toContain('isUserScrolling(buildScrollState())')
-    // A force pin during a user scroll is deferred, not applied
-    expect(source).toMatch(/if \(isUserScrolling\(buildScrollState\(\)\)\) \{\s*if \(force\) pendingFollow = true/)
+    expect(source).toMatch(/function scrollToBottom\(force = false\) \{[\s\S]*?if \(shouldPin\(buildScrollState\(\), force\)\) \{\s*followToBottom\(force\)/)
+    // No deferral queue anywhere
+    expect(source).not.toContain('pendingFollow')
     // The old "force overrides userTouching" check must be gone
     expect(source).not.toContain('if (userTouching && !force) return')
   })
@@ -144,9 +148,9 @@ describe('ChatMessageList — rewind event pass-through', () => {
  * during a fling yanked the view back to the bottom ("弹回" snap-back).
  *
  * New behavior:
- * - force=true means "content grew, pin to bottom", but NEVER overrides an
- *   active user scroll — the pin is deferred (pendingFollow) and flushed by
- *   onScrollStopped only if the user is still near the bottom.
+ * - Every pin (force or not) goes through the single shouldPin decision point.
+ *   A held touch always blocks; the "user is away" latch blocks only non-force
+ *   pins. Nothing is queued for later.
  * - All decisions read live container geometry instead of the cached
  *   isAtBottom ref.
  * - The unconditional setTimeout(300) force pin is removed.
@@ -159,33 +163,36 @@ describe('ChatMessageList — force pin is guarded by user scrolling', () => {
     const source = typeof mod.default === 'string' ? mod.default : ''
     // Guards imported from the pure module, fed by the shared state builder
     expect(source).toContain('function buildScrollState()')
-    expect(source).toContain('if (isUserScrolling(buildScrollState()))')
-    expect(source).toContain('shouldPin(buildScrollState(), force)')  })
-  it('force pin is deferred (pendingFollow) while the user is scrolling, not applied', async () => {
-    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
-    const source = typeof mod.default === 'string' ? mod.default : ''
-    // A force pin during a user scroll is deferred to pendingFollow and never
-    // applied while the user is still scrolling (the appLog diagnostic line
-    // sits between the two statements).
-    expect(source).toMatch(/if \(isUserScrolling\(buildScrollState\(\)\)\) \{\s*if \(force\) pendingFollow = true[\s\S]*?return\s*\}/)
+    expect(source).toContain('shouldPin(buildScrollState(), force)')
+    // The latch is re-sampled under the user-input predicate
+    expect(source).toContain('if (isUserScrolling(buildScrollState())) {')
   })
 
-  it('onScrollStopped clears pendingFollow unconditionally and always flushes a deferred force pin', async () => {
+  it('a force pin is never queued — it runs or is rejected in the same tick', async () => {
+    // The removed deferral was the bug: a queued force pin was flushed only by
+    // onScrollStopped, and a streaming turn keeps emitting scroll events, so the
+    // flush never ran. A send whose reply arrived a few seconds later (slow
+    // network) therefore never got pinned.
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // onScrollStopped resets ownership and clears the deferred flag no matter what
+    expect(source).not.toContain('pendingFollow')
+    expect(source).not.toMatch(/if \(force\)\s*pendingFollow/)
+  })
+
+  it('onScrollStopped no longer flushes a queued pin', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // onScrollStopped still flushes the jump highlight and releases programmatic
+    // ownership, and still does a distance-gated safety clear of the latch.
     expect(source).toContain('function onScrollStopped()')
-    // pendingFollow is always cleared here — stale pins never fire later.
-    // A deferred force pin is ALWAYS flushed: pendingFollow is only ever set by
-    // explicit user-intent pins (sending a message, answering a question card,
-    // switching sessions), and the user took an action expecting to see the
-    // bottom. The old RESUME_FOLLOW_PX gate dropped the pin when the user had
-    // scrolled far up (e.g. answered a card while reading earlier context), so
-    // their answer appeared out of view — exactly the "AskUserQuestion answer
-    // doesn't scroll to bottom" bug.
-    expect(source).toMatch(/if \(pendingFollow\) \{\s*pendingFollow = false[\s\S]*?scrollToBottom\(true\)/)
-    expect(source).not.toMatch(/if \(dist <= RESUME_FOLLOW_PX\) \{\s*scrollToBottom\(true\)/)
+    expect(source).toContain('flushMessageHighlight()')
     expect(source).toContain('setProgrammatic(false)')
+    expect(source).toMatch(/if \(dist <= RESUME_FOLLOW_PX\) \{\s*isAtBottom\.value = true\s*userLeftBottom = false/)
+    // …but it must not re-pin on behalf of a queued request.
+    const fnStart = source.indexOf('function onScrollStopped()')
+    const fnEnd = source.indexOf('\n}', fnStart)
+    const fnBody = source.slice(fnStart, fnEnd)
+    expect(fnBody).not.toContain('scrollToBottom(true)')
   })
 
   it('the unconditional force setTimeout(300) pin is removed', async () => {
@@ -209,10 +216,13 @@ describe('ChatMessageList — force pin is guarded by user scrolling', () => {
     expect(source).toContain('restoreAnchor(messagesRef.value, scrollAnchor)')
   })
 
-  it('programmatic scrolling maps to the programmatic owner', async () => {
+  it('programmatic scrolling is a single boolean flag (no owner channel)', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    expect(source).toContain("scrollOwner.value = val ? 'programmatic' : 'idle'")
+    // The scrollOwner channel was removed with the rest of the follow memory:
+    // it existed only to feed the follow decision, which no longer reads it.
+    expect(source).toContain('function setProgrammatic(val)')
+    expect(source).not.toContain('scrollOwner')
   })
 })
 
@@ -252,46 +262,50 @@ describe('ChatMessageList — DOM reconciliation key (listKey)', () => {
 })
 
 /**
- * Tests for the stream-follow persistence fix.
+ * Tests for the follow latch.
  *
- * Root cause: a single throttled render flush (ContentBlocks.vue, 300ms) can
- * grow scrollHeight by a large amount in one frame when a burst of tokens
- * arrives at once. A distance-based follow check then rejects the follow
- * (gap too big) and the viewport is never pulled down again — every later
- * flush re-reads an even larger gap, so follow is lost permanently.
+ * The latch answers one question: "when the user last drove the scroll
+ * surface, were they at the bottom?" It is sampled ONLY inside a user-input
+ * window, from the distance to the bottom. Content-driven scroll events never
+ * touch it.
  *
- * Fix: follow is decided ONLY by "did the user scroll away?" — no distance or
- * grace-band heuristic.
- * - As long as the user has not deliberately left the bottom, content growth
- *   (streaming, render flush, lazy load) always re-pins to the bottom.
- * - The moment the user scrolls away from the bottom (past NEAR_BOTTOM_PX),
- *   userLeftBottom latches on and ALL follow is suppressed — a user reading
- *   older content is never yanked back, regardless of how much arrives.
- * - userLeftBottom clears when the user scrolls back near the bottom, switches
- *   session, or taps the bottom FAB.
+ * Root cause of the "stuck mid-conversation" bug this replaced: the old latch
+ * was direction-driven (any 1px upward movement = "user scrolled up") and was
+ * evaluated on EVERY scroll event. During streaming the browser nudges
+ * scrollTop by a pixel (scroll anchoring / clamping), so the latch flipped on
+ * while the user sat at the very bottom — after which every follow pin was
+ * rejected and the content kept growing below the viewport.
  */
 describe('ChatMessageList — stream-follow persistence', () => {
-  it('scrollToBottom consults the geometry + userLeftBottom state', async () => {
+  it('samples the latch only while the user is driving the scroll surface', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // The follow decision feeds the latched "user left" flag
-    expect(source).toContain('userLeftBottom,')
+    // The re-sample must be gated on the user-input predicate, so a
+    // content-growth scroll event (no input flag set) leaves the latch alone.
+    expect(source).toMatch(/if \(isUserScrolling\(buildScrollState\(\)\)\) \{\s*userLeftBottom = isUserAwayFromBottom\(distFromBottom\)/)
   })
 
-  it('a user who scrolls away from the bottom is never yanked back (userLeftBottom)', async () => {
+  it('the latch is distance-only — no direction test anywhere', async () => {
+    // A direction test cannot distinguish a deliberate drag from a 1px layout
+    // nudge, and its unconditional "any upward pixel = left" branch is exactly
+    // what let a layout nudge masquerade as a scroll away.
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // Leaving the bottom is DIRECTION-driven, not distance-driven: any upward
-    // drag latches the "left" flag immediately — a user who stops mid-drag
-    // inside the near-bottom band must stay locked, or the next streamed pin
-    // yanks them (the snap-back jitter bug).
-    // Direction uses prevScrollTop — captured before any branch so programmatic
-    // stream pins (which return early) cannot freeze lastScrollTop at a stale
-    // pre-stream value and poison upward-drag detection.
-    expect(source).toContain('scrollingUp: el.scrollTop < prevScrollTop')
-    expect(source).toContain('updateUserLeftBottom(userLeftBottom, {')
-    // Returning to the bottom (within RESUME_FOLLOW_PX) clears it
-    expect(source).toContain('updateUserLeftBottom')
+    expect(source).toContain('userLeftBottom = isUserAwayFromBottom(distFromBottom)')
+    expect(source).not.toContain('scrollingUp')
+    expect(source).not.toContain('updateUserLeftBottom')
+  })
+
+  it('the follow decision no longer depends on scroll-stop detection', async () => {
+    // The old force pin was queued as `pendingFollow` and flushed only by
+    // onScrollStopped. A streaming turn never lets the scroll stream stop, so
+    // the queued pin never ran — the "sent a message but the reply is never
+    // followed" bug. The queue is gone; scroll-stop now only serves the jump
+    // highlight and releasing programmatic ownership.
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).not.toContain('pendingFollow')
+    expect(source).not.toContain('deferred (user scrolling)')
   })
 
   it('session switch resets the follow latch', async () => {
@@ -314,23 +328,29 @@ describe('ChatMessageList — stream-follow persistence', () => {
     expect(source).toMatch(/scrollToBottomSmooth\(\)[\s\S]*?userLeftBottom = false/)
   })
 
-  it('an upward drag inside the near-bottom band latches userLeftBottom immediately', async () => {
-    // Root cause of "很难拖上去、抽搐" (snap-back jitter): the old latch only
-    // fired past NEAR_BOTTOM_PX, so a user who stopped mid-drag inside the
-    // band stayed "at the bottom" and the next streamed pin yanked them back.
+  it('every user-input flag is bounded by its own end signal', async () => {
+    // The root of the "clicked once, then the reply never followed" bug:
+    // mouseDownActive had NO release path (mouseup was never listened), so a
+    // single click left it set forever and every later content-growth scroll
+    // was misread as a user gesture. Each flag must have a real end signal.
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // The latch decision delegates to the direction-driven pure function
-    expect(source).toContain('userLeftBottom = updateUserLeftBottom(')
-    expect(source).toContain('scrollingUp: el.scrollTop < prevScrollTop')
-    // The old distance-only latch must be gone
-    expect(source).not.toContain('if (distFromBottom > NEAR_BOTTOM_PX) {')
+    // touch → touchend/touchcancel (template), mouse → document mouseup,
+    // wheel → decay timer.
+    expect(source).toContain('function onDocumentMouseUp()')
+    expect(source).toContain("document.addEventListener('mouseup', onDocumentMouseUp)")
+    expect(source).toMatch(/function onWheelScroll\(\) \{\s*wheelActive = true[\s\S]*?wheelDecayTimer = setTimeout/)
+    // …and no flag is refreshed by scroll events (handleScroll never assigns them)
+    const handleScroll = source.slice(source.indexOf('function handleScroll()'), source.indexOf('// Touch tracking:'))
+    expect(handleScroll).not.toMatch(/userTouching = true/)
+    expect(handleScroll).not.toMatch(/wheelActive = true/)
+    expect(handleScroll).not.toMatch(/mouseDownActive = true/)
   })
 
   it('streamed pin paths skip the write when already glued to the bottom (gap <= 0)', async () => {
     // followToBottom's rAF correction and the content-growth observer both
     // re-pin on every streamed frame; writing the same scrollTop emits an
-    // unnecessary scroll event that restarts the 250ms user-scroll window.
+    // unnecessary scroll event.
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
     // rAF correction: no write when the gap is already <= 0
@@ -348,38 +368,31 @@ describe('ChatMessageList — stream-follow persistence', () => {
     // pins never set).
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    expect(source).toContain('if (userTouching || wheelActive || mouseDownActive) {')
-    expect(source).not.toContain('if (!programmaticScrolling && (userTouching || wheelActive || mouseDownActive)) {')
+    expect(source).toContain('if (isUserScrolling(buildScrollState())) {')
+    expect(source).not.toContain('if (!programmaticScrolling && isUserScrolling(buildScrollState())) {')
   })
 
   it('lastScrollTop is captured before any branch so programmatic pins cannot freeze it', async () => {
     // Regression: during streaming, every stream-pin scroll event takes the
     // `if (programmaticScrolling)` early-return path. The old code updated
     // lastScrollTop only AFTER that branch, so it froze at a stale pre-stream
-    // value (typically 0). Every subsequent upward drag then read
-    // `el.scrollTop < lastScrollTop` as false → the userLeftBottom latch never
-    // fired → streamed pins yanked the user back to the bottom no matter how
-    // far they dragged up ("无论如何向上拖拽都会被拽回到底部" bug; refresh fixed
-    // it only by resetting the frozen value).
+    // value (typically 0) and the FAB direction detection never fired.
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
     // The previous position must be captured BEFORE the programmatic branch.
     const capture = source.indexOf('const prevScrollTop = lastScrollTop')
     expect(capture).toBeGreaterThan(-1)
     expect(source.indexOf('lastScrollTop = el.scrollTop')).toBeGreaterThan(capture)
-    // Both the user-scroll latch and the FAB direction logic consume the
-    // pre-branch capture, not the (possibly frozen) module-level variable.
-    expect(source).toContain('scrollingUp: el.scrollTop < prevScrollTop')
     expect(source).toContain('const scrollDelta = el.scrollTop - prevScrollTop')
   })
 
   it('a force pin (send message / answer card) clears the userLeftBottom latch', async () => {
     // Regression: sending a message while streaming force-pins the viewport to
-    // the bottom, but the one-way userLeftBottom latch (tripped by an earlier
-    // upward scroll while reading context during a long tool call) was never
-    // cleared by the force pin. The AI reply then streams BELOW the just-sent
-    // message and every subsequent non-force pin is rejected — the view stays
-    // stuck at the user bubble and the streamed reply is never followed.
+    // the bottom, but a one-way latch (tripped by an earlier scroll while
+    // reading context during a long tool call) was never cleared by the force
+    // pin. The AI reply then streams BELOW the just-sent message and every
+    // subsequent non-force pin is rejected — the view stays stuck at the user
+    // bubble and the streamed reply is never followed.
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
     // The latch clear must live INSIDE followToBottom, gated on force.
@@ -412,7 +425,66 @@ describe('ChatMessageList — stream-follow persistence', () => {
     const source = typeof mod.default === 'string' ? mod.default : ''
     // The user-input latch block must release programmatic ownership first so
     // the FAB logic on this same event is not skipped by the early return.
-    expect(source).toMatch(/if \(userTouching \|\| wheelActive \|\| mouseDownActive\) \{[\s\S]*?if \(programmaticScrolling\) setProgrammatic\(false\)/)
+    expect(source).toMatch(/if \(isUserScrolling\(buildScrollState\(\)\)\) \{[\s\S]*?if \(programmaticScrolling\) setProgrammatic\(false\)/)
+  })
+})
+
+/**
+ * Regressions for the two user-reported symptoms. Both had the same root
+ * cause: a follow latch that could latch ON without any user gesture and then
+ * never release.
+ *
+ * 1. "Sometimes after sending, the page stops at some middle position instead
+ *    of the bottom."
+ * 2. "After sending, when the assistant reply appears a few seconds late
+ *    (slow network), it is not followed."
+ */
+describe('ChatMessageList — follow latch cannot latch on without a gesture', () => {
+  it('a click (mousedown without scroll) does not leave a permanent user-scroll marker', async () => {
+    // Root cause of both symptoms: mouseDownActive was set by ANY mousedown and
+    // had no release path (mouseup was never listened). A single click in the
+    // message area therefore left it set forever, so every later
+    // content-growth scroll event was misread as a user gesture and latched the
+    // follow latch off while the user sat at the bottom.
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // mouseup is listened on the document (the button is often released outside
+    // the list) and clears the flag.
+    expect(source).toContain("document.addEventListener('mouseup', onDocumentMouseUp)")
+    expect(source).toMatch(/function onDocumentMouseUp\(\) \{\s*mouseDownActive = false\s*\}/)
+    // and the listener is removed on unmount (no leak across sessions)
+    expect(source).toContain("document.removeEventListener('mouseup', onDocumentMouseUp)")
+  })
+
+  it('a content-driven scroll event cannot latch follow off', async () => {
+    // A slow reply means the assistant message appears seconds after the send.
+    // In that window the list keeps growing, and the browser nudges scrollTop.
+    // Those scroll events arrive with NO input flag set, so the latch must not
+    // be re-sampled — otherwise the delayed reply lands while follow is off.
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // The only assignment to the latch in handleScroll is inside the
+    // user-input-gated block.
+    const handleScroll = source.slice(source.indexOf('function handleScroll()'), source.indexOf('// Touch tracking:'))
+    const latchWrites = handleScroll.match(/userLeftBottom\s*=/g) || []
+    expect(latchWrites.length).toBe(1)
+    const gateIdx = handleScroll.indexOf('if (isUserScrolling(buildScrollState())) {')
+    const writeIdx = handleScroll.indexOf('userLeftBottom = isUserAwayFromBottom(distFromBottom)')
+    expect(gateIdx).toBeGreaterThan(-1)
+    expect(writeIdx).toBeGreaterThan(gateIdx)
+  })
+
+  it('a delayed assistant reply still gets pinned (no queued pin to lose)', async () => {
+    // With the queue removed, a force pin runs (or is rejected) in the same
+    // tick — there is no "wait for scroll to stop" signal that a streaming turn
+    // never emits. The late reply's own content growth is then caught by the
+    // content-growth observer.
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).not.toContain('pendingFollow')
+    // The observer re-pins on growth whenever the user has not scrolled away.
+    expect(source).toContain('if (!shouldPin(buildScrollState(), false)) return')
+    expect(source).toContain('el.scrollTop = el.scrollHeight')
   })
 })
 
@@ -473,7 +545,8 @@ describe('ChatMessageList — session switch resets scroll state, no position me
     // State machine reset on currentSessionId change
     expect(source).toContain('watch(() => props.currentSessionId')
     expect(source).toContain('userLeftBottom = false')
-    expect(source).toContain('pendingFollow = false')
+    // Every user-input flag is cleared too, so the rebuilt list starts clean.
+    expect(source).toMatch(/userTouching = false\s*wheelActive = false\s*mouseDownActive = false/)
     // No position memory left behind
     expect(source).not.toContain('saveChatScrollPosition')
     expect(source).not.toContain('clearChatScrollPosition')

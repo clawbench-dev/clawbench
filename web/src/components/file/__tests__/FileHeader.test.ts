@@ -51,6 +51,7 @@ const i18n = createI18n({
           finishEditing: 'Finish editing',
           details: 'Details',
           setAsBackground: 'Set as theme background',
+          openDirectory: 'Open directory',
         },
         overlay: { back: 'Back', forward: 'Forward' },
       },
@@ -155,6 +156,9 @@ describe('FileHeader', () => {
       },
       global: {
         plugins: [i18n],
+        // The More menu is Teleported to body; render it inline so the items are
+        // reachable through the wrapper.
+        stubs: { Teleport: { template: '<div><slot /></div>' } },
         provide: {
           openLightbox: mockOpenLightbox,
         },
@@ -164,6 +168,19 @@ describe('FileHeader', () => {
 
   function getMenuOpen(wrapper: ReturnType<typeof mount>): boolean {
     return (wrapper.vm as any).$.setupState.menuOpen
+  }
+
+  /** Open the More menu and return its items (permanent group first). */
+  async function openMenuItems(wrapper: ReturnType<typeof mount>) {
+    ;(wrapper.vm as any).$.setupState.toggleMenu()
+    await nextTick()
+    return wrapper.findAll('.file-header-dropdown-menu .dropdown-item')
+  }
+
+  /** Open the More menu and find an item by its label text. */
+  async function menuItemByText(wrapper: ReturnType<typeof mount>, text: string) {
+    const items = await openMenuItems(wrapper)
+    return items.find(b => b.text().includes(text))
   }
 
   beforeEach(() => {
@@ -222,6 +239,94 @@ describe('FileHeader', () => {
     expect(btns.length).toBeGreaterThan(0)
   })
 
+  describe('refresh button placement', () => {
+    it('is the first inline toolbar button', () => {
+      const wrapper = mountHeader()
+      const inline = wrapper.findAll('.header-actions > .file-header-btn')
+      expect(inline[0].attributes('title')).toBe('Refresh')
+    })
+
+    it('is the highest-priority demotable item, so it collapses last', () => {
+      // useToolbarOverflow keeps a prefix of the demotable list inline, so
+      // position 0 in the overflow array = leftmost = last to collapse. This
+      // guards the template order staying in sync with the overflow array.
+      const wrapper = mountHeader()
+      const ids = (wrapper.vm as any).$.setupState.toolbarInlineIds
+      expect(ids[0]).toBe('refresh')
+    })
+
+    it('precedes TOC and search for a markdown file', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered' })
+      const inline = wrapper.findAll('.header-actions > .file-header-btn')
+      const titles = inline.map(b => b.attributes('title') ?? '')
+      expect(titles[0]).toBe('Refresh')
+      expect(titles.indexOf('Refresh')).toBeLessThan(titles.indexOf('TOC'))
+      expect(titles.indexOf('Refresh')).toBeLessThan(titles.indexOf('Search'))
+    })
+
+    it('is absent for media files, which have no text content to reload', () => {
+      // Guards the counterpart: the reorder must not have made refresh
+      // unconditional. An image has nothing to re-fetch into a text view.
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
+      const titles = wrapper.findAll('.header-actions > .file-header-btn').map(b => b.attributes('title') ?? '')
+      expect(titles).not.toContain('Refresh')
+      expect((wrapper.vm as any).$.setupState.toolbarInlineIds).not.toContain('refresh')
+    })
+  })
+
+  describe('permanent More-menu actions', () => {
+    // The 11 low-frequency / destructive actions must never occupy toolbar
+    // space, regardless of how wide the header is. useToolbarOverflow is mocked
+    // to report "everything fits", so an inline button here would be a real
+    // regression rather than an overflow artifact.
+    // Each entry carries the file fixture that makes the action applicable, so
+    // the assertion covers the real gating rather than a permissive fixture.
+    const PERMANENT_CASES: Array<{ title: string; props?: Record<string, unknown> }> = [
+      { title: 'Details' },
+      { title: 'Open directory' },
+      { title: 'File history' },
+      { title: 'Share link' },
+      { title: 'Word Wrap' },
+      { title: 'Line Numbers' },
+      { title: 'Sticky Scroll' },
+      { title: 'Delete' },
+      { title: 'Open as text', props: { file: { name: 'app.apk', path: '/tmp/app.apk', content: null, isBinary: true, size: 100 } } },
+      { title: 'Export HTML', props: { file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered' } },
+      { title: 'Set as theme background', props: { file: { name: 'photo.png', path: '/tmp/photo.png', content: null, isImage: true } } },
+    ]
+
+    it('renders none of them inline, even when the toolbar has room', () => {
+      const wrapper = mountHeader({
+        file: { name: 'app.apk', path: '/tmp/app.apk', content: null, isBinary: true, size: 100 },
+      })
+      const inlineTitles = wrapper.findAll('.header-actions > .file-header-btn')
+        .map(b => b.attributes('title') ?? '')
+      for (const { title } of PERMANENT_CASES) {
+        expect(inlineTitles, `"${title}" must not be an inline toolbar button`).not.toContain(title)
+      }
+    })
+
+    it('exposes them as menu items instead', async () => {
+      for (const { title, props } of PERMANENT_CASES) {
+        const wrapper = mountHeader(props)
+        const items = await openMenuItems(wrapper)
+        const labels = items.map(i => i.text())
+        expect(labels.some(l => l.includes(title)), `"${title}" must be in the More menu`).toBe(true)
+        wrapper.unmount()
+      }
+    })
+
+    it('renders the More button even when nothing overflows', () => {
+      // The menu is the only entry point for these actions, so the button must
+      // exist unconditionally — not gated on toolbarCollapsedIds.
+      const wrapper = mountHeader()
+      expect((wrapper.vm as any).$.setupState.toolbarCollapsedIds).toEqual([])
+      const moreBtn = wrapper.find('.dropdown-wrapper > .file-header-btn')
+      expect(moreBtn.exists()).toBe(true)
+      expect(moreBtn.attributes('title')).toBe('More')
+    })
+  })
+
   it('emits toggleView when handleToggleView is called', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
     const vm = wrapper.vm as any
@@ -264,19 +369,25 @@ describe('FileHeader', () => {
   })
 
   describe('binary file openAsText button', () => {
-    it('renders the button with a real Code2 SVG icon', () => {
+    it('lives in the More menu with a real Code2 SVG icon', async () => {
       const wrapper = mountHeader({ file: { name: 'app.apk', path: '/tmp/app.apk', content: null, isBinary: true, size: 100 } })
-      const btn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Open as text')
+      const btn = await menuItemByText(wrapper, 'Open as text')
       expect(btn).toBeTruthy()
       // Code2 must be imported: an unresolved <code2> custom element renders
-      // with no SVG, leaving a visually empty button (blank gap in the toolbar)
+      // with no SVG, leaving a visually empty menu row
       expect(btn!.find('svg').exists()).toBe(true)
       expect(btn!.find('code2').exists()).toBe(false)
     })
 
-    it('is hidden for non-binary files', () => {
+    it('is not rendered inline in the toolbar', () => {
+      const wrapper = mountHeader({ file: { name: 'app.apk', path: '/tmp/app.apk', content: null, isBinary: true, size: 100 } })
+      const inline = wrapper.findAll('.header-actions > .file-header-btn').find(b => b.attributes('title') === 'Open as text')
+      expect(inline).toBeUndefined()
+    })
+
+    it('is hidden for non-binary files', async () => {
       const wrapper = mountHeader()
-      const btn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Open as text')
+      const btn = await menuItemByText(wrapper, 'Open as text')
       expect(btn).toBeUndefined()
     })
   })
@@ -363,19 +474,24 @@ describe('FileHeader', () => {
   })
 
   describe('file details button', () => {
-    it('renders as the last toolbar action (after delete)', () => {
+    it('is the first item in the More menu, before delete', async () => {
       const wrapper = mountHeader()
-      const btns = wrapper.findAll('.header-actions .file-header-btn')
-      const detailsIdx = btns.findIndex(b => b.attributes('title') === 'Details')
-      const deleteIdx = btns.findIndex(b => b.attributes('title') === 'Delete')
-      expect(detailsIdx).toBeGreaterThanOrEqual(0)
-      expect(deleteIdx).toBeGreaterThanOrEqual(0)
-      expect(detailsIdx).toBeGreaterThan(deleteIdx)
+      const items = await openMenuItems(wrapper)
+      const detailsIdx = items.findIndex(b => b.text().includes('Details'))
+      const deleteIdx = items.findIndex(b => b.text().includes('Delete'))
+      expect(detailsIdx).toBe(0)
+      expect(deleteIdx).toBeGreaterThan(detailsIdx)
     })
 
-    it('emits showDetails when the details button is clicked', async () => {
+    it('is not rendered inline in the toolbar', () => {
       const wrapper = mountHeader()
-      const btn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Details')
+      const inline = wrapper.findAll('.header-actions > .file-header-btn').find(b => b.attributes('title') === 'Details')
+      expect(inline).toBeUndefined()
+    })
+
+    it('emits showDetails when the details menu item is clicked', async () => {
+      const wrapper = mountHeader()
+      const btn = await menuItemByText(wrapper, 'Details')
       expect(btn).toBeTruthy()
       await btn!.trigger('click')
       expect(wrapper.emitted('showDetails')).toBeTruthy()
@@ -538,8 +654,12 @@ describe('FileHeader', () => {
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(false)
       const ids = vm.$.setupState.toolbarInlineIds
-      expect(ids).toContain('wordWrap')
-      expect(ids).toContain('lineNumbers')
+      expect(ids).not.toContain('wordWrap')
+      expect(ids).not.toContain('lineNumbers')
+      // ...they live in the More menu instead
+      expect(vm.$.setupState.permanentMenuIds).toContain('wordWrap')
+      expect(vm.$.setupState.permanentMenuIds).toContain('lineNumbers')
+      expect(vm.$.setupState.permanentMenuIds).toContain('stickyScroll')
     })
 
     it('includes the lightbox view button for image files only', () => {
@@ -598,9 +718,11 @@ describe('FileHeader', () => {
       expect(vm.$.setupState.isEditable).toBe(true)
       const ids = vm.$.setupState.toolbarInlineIds
       expect(ids).toContain('edit')
-      expect(ids).toContain('wordWrap')
-      expect(ids).toContain('lineNumbers')
       expect(ids).toContain('refresh')
+      // Code-display preferences are menu-only now.
+      expect(ids).not.toContain('wordWrap')
+      expect(vm.$.setupState.permanentMenuIds).toContain('wordWrap')
+      expect(vm.$.setupState.permanentMenuIds).toContain('lineNumbers')
     })
 
     it('emits toggleEdit when edit button is clicked', async () => {
@@ -672,30 +794,34 @@ describe('FileHeader', () => {
   })
 
   describe('share link button', () => {
-    it('includes shareLink in the toolbar for a regular file', () => {
+    it('is a permanent More-menu item for a regular file', () => {
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
-      const ids = (wrapper.vm as any).$.setupState.toolbarInlineIds
-      expect(ids).toContain('shareLink')
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.permanentMenuIds).toContain('shareLink')
+      expect(vm.$.setupState.toolbarInlineIds).not.toContain('shareLink')
     })
 
-    it('hides shareLink while editing', () => {
+    it('is removed from the menu while editing', () => {
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: true })
-      const ids = (wrapper.vm as any).$.setupState.toolbarInlineIds
+      const ids = (wrapper.vm as any).$.setupState.permanentMenuIds
       expect(ids).not.toContain('shareLink')
     })
 
-    it('emits shareLink when the share link button is clicked', async () => {
+    it('emits shareLink when the menu item is clicked', async () => {
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
-      const button = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Share link')
+      const button = await menuItemByText(wrapper, 'Share link')
       expect(button).toBeTruthy()
       await button!.trigger('click')
       expect(wrapper.emitted('shareLink')).toBeTruthy()
     })
 
     it('shows the active state when the file is shared', async () => {
+      // The mount-time watcher queries the server for authoritative share state;
+      // it must agree with markShared or the async response clears the flag.
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ path: '/tmp/readme.md' }) }))
       markShared('/tmp/readme.md')
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
-      const button = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Share link (active)')
+      const button = await menuItemByText(wrapper, 'Share link (active)')
       expect(button).toBeTruthy()
       expect(button!.classes()).toContain('active')
       expect((wrapper.vm as any).$.setupState.isShared).toBe(true)
@@ -711,9 +837,9 @@ describe('FileHeader', () => {
       expect((wrapper.vm as any).$.setupState.isShared).toBe(false)
     })
 
-    it('is not active for an unshared file', () => {
+    it('is not active for an unshared file', async () => {
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
-      const button = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Share link')
+      const button = await menuItemByText(wrapper, 'Share link')
       expect(button).toBeTruthy()
       expect(button!.classes()).not.toContain('active')
       expect((wrapper.vm as any).$.setupState.isShared).toBe(false)
@@ -721,16 +847,16 @@ describe('FileHeader', () => {
   })
 
   describe('set as background', () => {
-    it('shows the set-as-background button for supported image files', () => {
+    it('shows the set-as-background menu item for supported image files', async () => {
       const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null, isImage: true } })
-      const button = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Set as theme background')
+      const button = await menuItemByText(wrapper, 'Set as theme background')
       expect(button).toBeTruthy()
       expect((wrapper.vm as any).$.setupState.isWallpaperSource).toBe(true)
     })
 
-    it('does not show the set-as-background button for non-image files', () => {
+    it('does not show the menu item for non-image files', async () => {
       const wrapper = mountHeader({ file: { name: 'main.ts', path: '/tmp/main.ts', content: 'const x = 1' } })
-      const button = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Set as theme background')
+      const button = await menuItemByText(wrapper, 'Set as theme background')
       expect(button).toBeUndefined()
       expect((wrapper.vm as any).$.setupState.isWallpaperSource).toBe(false)
     })
@@ -742,7 +868,7 @@ describe('FileHeader', () => {
 
     it('emits setAsBackground with the file path when clicked', async () => {
       const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null, isImage: true } })
-      const button = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Set as theme background')
+      const button = await menuItemByText(wrapper, 'Set as theme background')
       expect(button).toBeTruthy()
       await button!.trigger('click')
       const emitted = wrapper.emitted('setAsBackground')

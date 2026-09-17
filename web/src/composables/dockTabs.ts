@@ -72,8 +72,11 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'forge', titleKey: 'nav.forge' },
   { id: 'tasks', titleKey: 'nav.tasks' },
   { id: 'terminal', titleKey: 'terminal.title' },
-  { id: 'proxy', titleKey: 'nav.portForward' },
   { id: 'stats', titleKey: 'nav.stats' },
+  // Port mapping sits second-to-last on purpose: settings stays the final tab
+  // (it is the "exit" affordance at the end of the dock), while port mapping
+  // is an operational tab that belongs with the other tools above it.
+  { id: 'proxy', titleKey: 'nav.portForward' },
   { id: 'settings', titleKey: 'nav.settings' },
 ]
 

@@ -82,7 +82,14 @@
             @click="$emit('select', c)"
           >
             <div class="git-commit-info">
-              <div class="git-commit-msg">{{ c.msg }}</div>
+              <div class="git-commit-msg">
+                <span class="git-commit-msg-text">{{ c.msg }}</span>
+                <span
+                  v-if="c.isWT && wtFileCount > 0"
+                  class="git-commit-file-count count-badge"
+                  :title="t('git.history.fileCount', { count: wtFileCount })"
+                >{{ wtFileCount }}</span>
+              </div>
               <div class="git-commit-meta">
                 <span v-if="!c.isWT" class="git-commit-sha">{{ c.sha.slice(0, 7) }}</span>
                 <span v-if="c.refs && c.refs.length" class="git-commit-refs">
@@ -132,6 +139,8 @@ const props = defineProps({
   selectedSHA: { type: String, default: null },
   refreshHint: { type: Boolean, default: false },
   mode: { type: String, default: 'project' }, // 'project' | 'file'
+  /** Changed-file count badge on the working-tree row (0 hides it). */
+  wtFileCount: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['select', 'search', 'load-more', 'refresh', 'manage'])
@@ -407,12 +416,29 @@ defineExpose({ observeList, unobserveList, commitSearch })
 .git-commit-msg {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The clamp lives on the text span, not the flex row, so the working-tree
+   file-count badge stays a sibling instead of being swallowed by the clamp. */
+.git-commit-msg-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  color: inherit;
+}
+
+/* Working-tree row: how many files the workspace has changed. Shape comes from
+   the shared .count-badge — only colour and weight belong here. */
+.git-commit-file-count {
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, transparent);
+  color: var(--accent-color, #4a90d9);
+  font-weight: var(--font-weight-bold);
 }
 
 .git-commit-meta {

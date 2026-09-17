@@ -27,6 +27,10 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.archiveAll': 'All',
       'sessionSearch.archiveActive': 'Active',
       'sessionSearch.archiveArchived': 'Archived',
+      'sessionSearch.filterType': 'Type',
+      'sessionSearch.typeAll': 'All',
+      'sessionSearch.typeChat': 'Chat',
+      'sessionSearch.typeTask': 'Task',
       'sessionSearch.sortLabel': 'Sort',
       'sessionSearch.sortRelevance': 'Relevance',
       'sessionSearch.sortNewest': 'Newest',
@@ -140,6 +144,7 @@ function createState(overrides = {}) {
     searchMode: '',
     preferMode: 'hybrid' as const,
     archivedFilter: 'all' as const,
+    typeFilter: 'all' as const,
     sortOrder: 'relevance' as const,
     timeRange: 'all' as const,
     customFrom: '',
@@ -159,6 +164,7 @@ const sampleResult = {
   archived: false,
   created_at: '2025-01-01',
   match_count: 3,
+  session_type: 'chat',
   chunks: [{
     chunk_id: 1,
     chunk_text: 'some matching text here',
@@ -572,18 +578,20 @@ describe('SessionSearchDrawer', () => {
     expect(mockSetQuery).not.toHaveBeenCalled()
   })
 
-  it('renders archive and sort dropdown triggers on the search row', () => {
+  it('renders archive, sort and type dropdown triggers on the search row', () => {
     const wrapper = mountDrawer()
     const triggers = wrapper.findAll('.filter-dropdown-btn')
-    expect(triggers).toHaveLength(3)
-    // Triggers: mode / archive / sort. Defaults: Hybrid / All / Relevance.
+    expect(triggers).toHaveLength(4)
+    // Triggers: mode / archive / sort / type. Defaults: Hybrid / All / Relevance / All.
     expect(triggers[0].text()).toContain('Hybrid')
     expect(triggers[1].text()).toContain('All')
     expect(triggers[2].text()).toContain('Relevance')
-    // Mode trigger is never highlighted; archive/sort are when non-default.
+    expect(triggers[3].text()).toContain('All')
+    // Mode trigger is never highlighted; the filters are when non-default.
     expect(triggers[0].classes()).not.toContain('filter-active')
     expect(triggers[1].classes()).not.toContain('filter-active')
     expect(triggers[2].classes()).not.toContain('filter-active')
+    expect(triggers[3].classes()).not.toContain('filter-active')
   })
 
   it('opens the archive dropdown and lists the three options', async () => {
@@ -644,6 +652,61 @@ describe('SessionSearchDrawer', () => {
     await wrapper.findAll('.filter-dropdown-btn')[2].trigger('click')
     await wrapper.findAll('.filter-menu-item')[0].trigger('click')
     expect(mockSetFilters).not.toHaveBeenCalled()
+  })
+
+  // ── Session type filter ──
+  it('opens the type dropdown and lists the three options', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.findAll('.filter-dropdown-btn')[3].trigger('click')
+    const items = wrapper.findAll('.filter-menu-item')
+    expect(items.map(i => i.text())).toEqual(['All', 'Chat', 'Task'])
+  })
+
+  it('applies the type filter via the dropdown', async () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test' }))
+    const wrapper = mountDrawer()
+
+    await wrapper.findAll('.filter-dropdown-btn')[3].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[2].trigger('click')
+    expect(mockSetFilters).toHaveBeenCalledWith({ type: 'task' })
+  })
+
+  it('does not re-apply the type filter when choosing the already-active option', async () => {
+    mockSearchState.mockReturnValue(createState({ typeFilter: 'all' }))
+    const wrapper = mountDrawer()
+
+    await wrapper.findAll('.filter-dropdown-btn')[3].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[0].trigger('click')
+    expect(mockSetFilters).not.toHaveBeenCalled()
+  })
+
+  it('highlights the type trigger when a non-default type is active', () => {
+    mockSearchState.mockReturnValue(createState({ typeFilter: 'task' }))
+    const wrapper = mountDrawer()
+    const trigger = wrapper.findAll('.filter-dropdown-btn')[3]
+    expect(trigger.classes()).toContain('filter-active')
+    expect(trigger.text()).toContain('Task')
+  })
+
+  it('badges both session types in the result list', () => {
+    const taskResult = { ...sampleResult, session_id: 's2', session_type: 'scheduled' }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult, taskResult] }))
+    const wrapper = mountDrawer()
+
+    const badges = wrapper.findAll('.session-search-item-type')
+    expect(badges.map(b => b.text())).toEqual(['Chat', 'Task'])
+    // The class carries the raw stored type so each badge can be styled apart.
+    expect(badges[0].classes()).toContain('session-search-item-type-chat')
+    expect(badges[1].classes()).toContain('session-search-item-type-scheduled')
+  })
+
+  it('omits the type badge when the backend reports no session type', () => {
+    mockSearchState.mockReturnValue(createState({
+      query: 'test',
+      results: [{ ...sampleResult, session_type: '' }],
+    }))
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-item-type').exists()).toBe(false)
   })
 
   // ── Time range ──

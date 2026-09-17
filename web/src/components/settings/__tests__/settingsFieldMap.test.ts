@@ -403,10 +403,47 @@ describe('settingsFieldMap', () => {
 
   // ── Notification (push) panel ──
 
+  it('notification items are split into in-app and desktop/system sections', () => {
+    const items = categoryItems['notification'].filter(e => e.type === 'item').map(e => e.spec)
+
+    const inApp = items.filter(i => i.sectionHeader === 'settings.items.inAppNotifySection')
+    expect(inApp.map(i => i.key)).toEqual(['inAppNotification', 'notificationSound'])
+
+    const desktop = items.filter(i => i.sectionHeader === 'settings.items.desktopSystemSection')
+    expect(desktop.map(i => i.key)).toEqual(['floatingStatusWindow', 'liveUpdate'])
+
+    // Every item must carry one of the two section headers, so no row can fall
+    // into the header-less "其他" card at the bottom of the page.
+    expect(items.every(i => i.sectionHeader === 'settings.items.inAppNotifySection'
+      || i.sectionHeader === 'settings.items.desktopSystemSection')).toBe(true)
+  })
+
+  it('inAppNotification is a local switch defaulting on', () => {
+    const item = categoryItems['notification']
+      .filter(e => e.type === 'item')
+      .map(e => e.spec)
+      .find(i => i.key === 'inAppNotification')
+
+    expect(item).toBeDefined()
+    expect(item!.type).toBe('switch')
+    expect(item!.source).toBe('local')
+    // Not app-only: the completion card exists in browser mode too.
+    expect(item!.appOnly).toBeFalsy()
+  })
+
+  it('desktop/system notification items stay app-only', () => {
+    const items = categoryItems['notification'].filter(e => e.type === 'item').map(e => e.spec)
+    const desktop = items.filter(i => i.sectionHeader === 'settings.items.desktopSystemSection')
+    expect(desktop.every(i => i.appOnly === true)).toBe(true)
+  })
+
   it('notification panel has entrySelector with push_mode, dingtalk optionSubFields, and connectivityTest', () => {
     const panels = getCategoryPanels('notification')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
+    // The panel now carries a section title ("移动端通知") so it renders as its
+    // own headed card rather than a bare card next to the flat items.
+    expect(cfg.titleKey).toBe('settings.items.mobileNotifySection')
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('push_mode')
     expect(cfg.entrySelector!.type).toBe('select')

@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
+import { cleanupDragGhost } from '@/utils/attachDrag'
 import SplitView from '@/components/common/SplitView.vue'
 // jsdom does not implement CSS.escape (used by scrollToEntryAndSelect). Polyfill it.
 const cssGlobal = globalThis as unknown as { CSS?: { escape?: (v: string) => string } }
@@ -356,6 +357,7 @@ const i18n = createI18n({
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
         search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
+        nav: { parentDir: '返回上一级' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -3765,6 +3767,105 @@ describe('FileManagerContent — internal move helpers', () => {
   })
 })
 
+// ── Drag payload written on dragstart (file manager → chat attachments) ──
+
+describe('FileManagerContent — dragstart attach payload', () => {
+  // Each dragstart installs a 5s ghost safety timer; clear it so the test file
+  // does not report leaked timers.
+  afterEach(() => { cleanupDragGhost() })
+
+  /** dataTransfer stand-in that records what the dragstart handler writes. */
+  function makeDT() {
+    const store: Record<string, string> = {}
+    return {
+      setData: vi.fn((type: string, value: string) => { store[type] = value }),
+      setDragImage: vi.fn(),
+      effectAllowed: '',
+      getData: (type: string) => store[type] ?? '',
+      _store: store,
+    }
+  }
+
+  it('writes only the single item when nothing is multi-selected', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+    const dt = makeDT()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+
+    const payload = JSON.parse(dt.getData('application/x-clawbench-attach'))
+    expect(payload).toEqual({ path: 'test.ts', isDir: false })
+    // No `entries` key at all — the single-item shape must stay unchanged.
+    expect('entries' in payload).toBe(false)
+  })
+
+  it('writes the whole selection, tagging directories via metaForPath', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await nextTick()
+    // Ctrl+click builds a multi-selection that includes the "src" directory.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.dir-item').trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    const dt = makeDT()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+
+    const payload = JSON.parse(dt.getData('application/x-clawbench-attach'))
+    expect(payload.path).toBe('test.ts')
+    expect(payload.entries).toHaveLength(3)
+    expect(payload.entries).toEqual(expect.arrayContaining([
+      { path: 'test.ts', isDir: false },
+      { path: 'readme.md', isDir: false },
+      { path: 'src', isDir: true },
+    ]))
+  })
+
+  it('keeps the multi-selection active after dragging to chat', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await nextTick()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    const dt = makeDT()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+    await nextTick()
+
+    // The user can still run batch delete/archive right after the drop.
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(2)
+  })
+
+  it('labels the drag ghost with the selection count', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await nextTick()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    const dt = makeDT()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+
+    const ghost = document.querySelector('[data-attach-ghost]')
+    expect(ghost?.textContent).toContain('已选 2 项')
+  })
+
+  it('labels the drag ghost with the file name for a single item', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+    const dt = makeDT()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+
+    const ghost = document.querySelector('[data-attach-ghost]')
+    expect(ghost?.textContent).toContain('test.ts')
+  })
+})
+
 // ── Dropdown positioning & close ──
 
 describe('FileManagerContent — dropdowns', () => {
@@ -3951,6 +4052,99 @@ describe('FileManagerContent — empty state text', () => {
   it('shows noFiles message when no currentDir and no entries', () => {
     const wrapper = mountContent({ entries: [], currentDir: '' })
     expect(wrapper.find('.empty-state').exists()).toBe(true)
+  })
+})
+
+describe('FileManagerContent — up one level', () => {
+  const parentEntries = [
+    { name: 'utils', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 },
+    { name: 'other.ts', type: 'file', modified: '2025-01-01T00:00:00Z', size: 10 },
+  ]
+
+  it('renders the up button only when a currentDir is set', async () => {
+    const atRoot = mountContent({ currentDir: '' })
+    expect(atRoot.find('.dir-up-btn').exists()).toBe(false)
+
+    const nested = mountContent({ currentDir: 'src' })
+    expect(nested.find('.dir-up-btn').exists()).toBe(true)
+  })
+
+  it('clicking the up button emits navigateDir with the parent directory', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils' })
+    await wrapper.find('.dir-up-btn').trigger('click')
+    const emitted = wrapper.emitted('navigateDir')
+    expect(emitted).toBeTruthy()
+    expect(emitted![emitted!.length - 1][0]).toBe('src')
+  })
+
+  it('walks a single-level directory up to the project root', async () => {
+    const wrapper = mountContent({ currentDir: 'src', entries: parentEntries })
+    await wrapper.find('.dir-up-btn').trigger('click')
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('')
+
+    // Root listing: the nav row is hidden (v-if="currentDir") but the entry we
+    // left must still be selected there.
+    await wrapper.setProps({ currentDir: '', entries: [{ name: 'src', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 }] })
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('src')
+  })
+
+  it('selects the directory it just left once the parent listing arrives', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils' })
+    await wrapper.find('.dir-up-btn').trigger('click')
+
+    // The parent listing lands; the child we came from is now a row in it.
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    try {
+      await wrapper.setProps({ currentDir: 'src', entries: parentEntries })
+      await nextTick()
+
+      // Survives the currentDir watcher that clears the selection, and is applied
+      // to the entry of the *new* listing (not the one being left).
+      expect(wrapper.vm._getSelectedPath()).toBe('src/utils')
+      expect(wrapper.find('.dir-item[data-path="src/utils"]').classes()).toContain('active')
+      // The row may be off-screen in a long parent listing, so the selection
+      // must also be revealed — selecting alone would leave it invisible.
+      expect(scrollSpy.mock.instances).toContain(
+        wrapper.find('.dir-item[data-path="src/utils"]').element,
+      )
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+
+  it('does not select anything when the user lands elsewhere instead', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils' })
+    await wrapper.find('.dir-up-btn').trigger('click')
+
+    // A different navigation won the race — the pending child is meaningless in
+    // whatever listing actually rendered.
+    await wrapper.setProps({ currentDir: 'docs', entries: parentEntries })
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('')
+  })
+
+  it('does not arm a selection while a directory load is in flight', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils', dirLoading: true })
+    await wrapper.find('.dir-up-btn').trigger('click')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+  })
+
+  it('drops the restored selection on the next directory change', async () => {
+    const wrapper = mountContent({ currentDir: 'src/utils' })
+    await wrapper.find('.dir-up-btn').trigger('click')
+    await wrapper.setProps({ currentDir: 'src', entries: parentEntries })
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('src/utils')
+
+    // The restored highlight belongs to that one transition — a later move must
+    // not keep a selection for an entry that is not in the new listing.
+    await wrapper.setProps({ currentDir: 'docs', entries: parentEntries })
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('')
   })
 })
 

@@ -33,6 +33,9 @@
 
     <!-- Region 2: Toolbar (ResizeObserver target) -->
     <div ref="headerActionsRef" class="header-actions">
+      <!-- Refresh button — first in the toolbar, and the last to collapse. -->
+      <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
+
       <!-- TOC button (only for file types that support TOC) -->
       <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
         <List :size="14" />
@@ -63,9 +66,6 @@
         <Maximize2 :size="14" />
       </button>
 
-      <!-- Refresh button -->
-      <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
-
       <!-- Toggle view button (source/rendered). Always an eye icon: highlighted
            when the rendered preview is shown, dimmed for the source view. It is
            disabled while editing so the edit button stays the sole relevant control. -->
@@ -78,79 +78,80 @@
         <Pencil :size="14" />
       </button>
 
-      <!-- Word wrap toggle button -->
-      <button v-if="toolbarInlineIds.includes('wordWrap')" class="file-header-btn" :class="{ active: wordWrap }" @click.stop="handleToggleWordWrap" :title="t('file.header.wordWrap')">
-        <TextWrap :size="14" />
-      </button>
-
-      <!-- Line numbers toggle button -->
-      <button v-if="toolbarInlineIds.includes('lineNumbers')" class="file-header-btn" :class="{ active: showLineNumbers }" @click.stop="handleToggleLineNumbers" :title="t('file.header.lineNumbers')">
-        <Hash :size="14" />
-      </button>
-
-      <!-- Sticky scroll toggle button -->
-      <button v-if="toolbarInlineIds.includes('stickyScroll')" class="file-header-btn" :class="{ active: stickyScroll }" @click.stop="handleToggleStickyScroll" :title="t('file.header.stickyScroll')">
-        <Pin :size="14" />
-      </button>
-
-      <!-- Open as text button (binary files only) -->
-      <button v-if="file.isBinary && toolbarInlineIds.includes('openAsText')" class="file-header-btn" @click.stop="handleOpenAsText" :title="t('file.header.openAsText')">
-        <Code2 :size="14" />
-      </button>
-
-      <!-- Share external button (app mode only) -->
-      <button v-if="isAppMode && toolbarInlineIds.includes('shareExternal')" class="file-header-btn" @click.stop="handleShareExternal" :title="t('file.header.shareExternal')">
-        <Share2 :size="14" />
-      </button>
-
-      <!-- Share link button (create/manage a public link for this file) -->
-      <button v-if="!editing && toolbarInlineIds.includes('shareLink')" class="file-header-btn" :class="{ active: isShared }" @click.stop="$emit('shareLink')" :title="isShared ? t('file.header.shareLinkActive') : t('file.header.shareLink')">
-        <ScreenShare :size="14" />
-      </button>
+      <!-- Word wrap / line numbers / sticky scroll moved to the More menu
+           (permanentMenuIds): they are editor preferences, set once and rarely
+           touched, and all three are also available in Settings → File display. -->
 
       <!-- Download button -->
       <button v-if="toolbarInlineIds.includes('download')" class="file-header-btn" @click.stop="handleDownload" :title="t('common.download')">
         <Download :size="14" />
       </button>
 
-      <!-- Export HTML button (markdown rendered only) -->
-      <button v-if="isMarkdown && effectiveViewMode === 'rendered' && toolbarInlineIds.includes('exportHtml')" class="file-header-btn" @click.stop="handleExportHtml" :title="t('file.header.exportHtml')">
-        <FileOutput :size="14" />
-      </button>
+      <!-- Open as text, share link, export HTML, set as wallpaper, open
+           directory, file history, delete and details are all permanent More-menu
+           actions (see permanentMenuIds) — no inline buttons for them. -->
 
-      <!-- Set as theme background (image files only) -->
-      <button v-if="isWallpaperSource && toolbarInlineIds.includes('setAsBackground')" class="file-header-btn" @click.stop="handleSetAsBackground" :title="t('file.header.setAsBackground')">
-        <Image :size="14" />
-      </button>
-
-      <!-- Open directory button -->
-      <button v-if="toolbarInlineIds.includes('openDirectory')" class="file-header-btn" @click.stop="handleOpenDirectory" :title="t('file.header.openDirectory')">
-        <FolderOpen :size="14" />
-      </button>
-
-      <!-- Git history button -->
-      <button v-if="toolbarInlineIds.includes('gitHistory')" class="file-header-btn" @click.stop="handleGitHistory" :title="t('file.header.fileHistory')">
-        <GitBranch :size="14" />
-      </button>
-
-      <!-- Delete button -->
-      <button v-if="toolbarInlineIds.includes('delete')" class="file-header-btn danger" @click.stop="handleDelete" :title="t('common.delete')">
-        <Trash2 :size="14" />
-      </button>
-
-      <!-- File details button (always the last toolbar action) -->
-      <button v-if="toolbarInlineIds.includes('details')" class="file-header-btn" @click.stop="$emit('showDetails')" :title="t('file.header.details')">
-        <Info :size="14" />
-      </button>
-
-      <!-- More actions dropdown (only when collapsed items exist) -->
-      <div v-if="toolbarCollapsedIds.length > 0" class="dropdown-wrapper" ref="dropdownRef">
-        <button class="file-header-btn" @click.stop="toggleMenu" :title="t('file.header.more')">
+      <!-- More actions dropdown. Always rendered: permanentMenuIds is never
+           empty (delete is unconditional), and overflow-collapsed toolbar items
+           are appended after the permanent group. -->
+      <div class="dropdown-wrapper" ref="dropdownRef">
+        <button class="file-header-btn" :class="{ active: menuOpen }" @click.stop="toggleMenu" :title="t('file.header.more')">
           <MoreVertical :size="14" />
         </button>
         <Teleport to="body">
           <div v-if="menuOpen" ref="menuRef" class="file-header-dropdown-menu" :style="menuStyle">
-            <!-- Collapsed toolbar items -->
+            <!-- Permanent group: low-frequency and destructive actions that never
+                 occupy toolbar space. Order here is the display order. -->
+            <button v-if="permanentMenuIds.includes('details')" class="dropdown-item" @click="$emit('showDetails'); menuOpen = false">
+              <Info :size="14" />
+              {{ t('file.header.details') }}
+            </button>
+            <button v-if="permanentMenuIds.includes('openDirectory')" class="dropdown-item" @click="handleOpenDirectory">
+              <FolderOpen :size="14" />
+              {{ t('file.header.openDirectory') }}
+            </button>
+            <button v-if="permanentMenuIds.includes('gitHistory')" class="dropdown-item" @click="handleGitHistory">
+              <GitBranch :size="14" />
+              {{ t('file.header.fileHistory') }}
+            </button>
+            <button v-if="permanentMenuIds.includes('shareLink')" class="dropdown-item" :class="{ active: isShared }" @click="$emit('shareLink'); menuOpen = false">
+              <ScreenShare :size="14" />
+              {{ isShared ? t('file.header.shareLinkActive') : t('file.header.shareLink') }}
+            </button>
+            <button v-if="permanentMenuIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText">
+              <Code2 :size="14" />
+              {{ t('file.header.openAsText') }}
+            </button>
+            <button v-if="permanentMenuIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml">
+              <FileOutput :size="14" />
+              {{ t('file.header.exportHtml') }}
+            </button>
+            <button v-if="permanentMenuIds.includes('setAsBackground')" class="dropdown-item" @click="handleSetAsBackground">
+              <Image :size="14" />
+              {{ t('file.header.setAsBackground') }}
+            </button>
+            <button v-if="permanentMenuIds.includes('wordWrap')" class="dropdown-item" @click="handleToggleWordWrap">
+              <TextWrap :size="14" />
+              {{ t('file.header.wordWrap') }}
+              <span v-if="wordWrap" class="wrap-check">✓</span>
+            </button>
+            <button v-if="permanentMenuIds.includes('lineNumbers')" class="dropdown-item" @click="handleToggleLineNumbers">
+              <Hash :size="14" />
+              {{ t('file.header.lineNumbers') }}
+              <span v-if="showLineNumbers" class="wrap-check">✓</span>
+            </button>
+            <button v-if="permanentMenuIds.includes('stickyScroll')" class="dropdown-item" @click="handleToggleStickyScroll">
+              <Pin :size="14" />
+              {{ t('file.header.stickyScroll') }}
+              <span v-if="stickyScroll" class="wrap-check">✓</span>
+            </button>
+            <button v-if="permanentMenuIds.includes('delete')" class="dropdown-item danger" @click="handleDelete(); menuOpen = false">
+              <Trash2 :size="14" />
+              {{ t('common.delete') }}
+            </button>
+
+            <!-- Overflow group: toolbar items demoted for lack of width. -->
+            <div v-if="toolbarCollapsedIds.length > 0" class="dropdown-divider"></div>
             <button v-if="toolbarCollapsedIds.includes('toc')" class="dropdown-item" :class="{ active: tocOpen }" @click="handleToggleToc(); menuOpen = false">
               <List :size="14" />
               {{ t('file.header.toc') }}
@@ -183,33 +184,9 @@
               <Pencil :size="14" />
               {{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}
             </button>
-            <button v-if="toolbarCollapsedIds.includes('wordWrap')" class="dropdown-item" @click="handleToggleWordWrap">
-              <TextWrap :size="14" />
-              {{ t('file.header.wordWrap') }}
-              <span v-if="wordWrap" class="wrap-check">✓</span>
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('lineNumbers')" class="dropdown-item" @click="handleToggleLineNumbers">
-              <Hash :size="14" />
-              {{ t('file.header.lineNumbers') }}
-              <span v-if="showLineNumbers" class="wrap-check">✓</span>
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('stickyScroll')" class="dropdown-item" @click="handleToggleStickyScroll">
-              <Pin :size="14" />
-              {{ t('file.header.stickyScroll') }}
-              <span v-if="stickyScroll" class="wrap-check">✓</span>
-            </button>
-            <!-- Collapsible extra items (shown inline when space allows) -->
-            <button v-if="file.isBinary && toolbarCollapsedIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText(); menuOpen = false">
-              <Code2 :size="14" />
-              {{ t('file.header.openAsText') }}
-            </button>
             <button v-if="isAppMode && toolbarCollapsedIds.includes('shareExternal')" class="dropdown-item" @click="handleShareExternal">
               <Share2 :size="14" />
               {{ t('file.header.shareExternal') }}
-            </button>
-            <button v-if="!editing && toolbarCollapsedIds.includes('shareLink')" class="dropdown-item" :class="{ active: isShared }" @click="$emit('shareLink'); menuOpen = false">
-              <ScreenShare :size="14" />
-              {{ isShared ? t('file.header.shareLinkActive') : t('file.header.shareLink') }}
             </button>
             <a v-if="!isAppMode && toolbarCollapsedIds.includes('download')" class="dropdown-item" :href="buildLocalFileUrl(file.path, { download: true })" :download="file.name" @click="menuOpen = false">
               <Download :size="14" />
@@ -218,30 +195,6 @@
             <button v-else-if="toolbarCollapsedIds.includes('download')" class="dropdown-item" @click="handleDownload">
               <Download :size="14" />
               {{ t('common.download') }}
-            </button>
-            <button v-if="isMarkdown && effectiveViewMode === 'rendered' && toolbarCollapsedIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml(); menuOpen = false">
-              <FileOutput :size="14" />
-              {{ t('file.header.exportHtml') }}
-            </button>
-            <button v-if="isWallpaperSource && toolbarCollapsedIds.includes('setAsBackground')" class="dropdown-item" @click="handleSetAsBackground">
-              <Image :size="14" />
-              {{ t('file.header.setAsBackground') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('openDirectory')" class="dropdown-item" @click="handleOpenDirectory">
-              <FolderOpen :size="14" />
-              {{ t('file.header.openDirectory') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('gitHistory')" class="dropdown-item" @click="handleGitHistory">
-              <GitBranch :size="14" />
-              {{ t('file.header.fileHistory') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('delete')" class="dropdown-item danger" @click="handleDelete(); menuOpen = false">
-              <Trash2 :size="14" />
-              {{ t('common.delete') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('details')" class="dropdown-item" @click="$emit('showDetails'); menuOpen = false">
-              <Info :size="14" />
-              {{ t('file.header.details') }}
             </button>
           </div>
         </Teleport>
@@ -326,37 +279,28 @@ function triggerRefresh() {
   emit('refresh')
 }
 
-// Responsive toolbar overflow — only the "More" dropdown is always-inline (1)
+// Responsive toolbar overflow — only the "More" dropdown is always-inline (1).
+// Permanent menu actions are excluded from the demotable list entirely, so they
+// never render inline and never appear in collapsedIds.
+// The array order must mirror the template order: index 0 renders leftmost and
+// is the last to collapse.
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => headerActionsRef.value,
   () => {
     const ids = []
+    if (hasTextContent.value) ids.push('refresh')
     if (hasToc.value) ids.push('toc')
     if (hasSearch.value) ids.push('search')
     if (hasFitWidth.value) ids.push('fitWidth')
     ids.push('attach')
     if (isImageFile.value) ids.push('viewImage')
-    if (hasTextContent.value) ids.push('refresh')
     if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value)) ids.push('toggleView')
     // Edit always sits right next to the preview toggle: the two form a single
     // view-mode control pair with no other buttons in between.
     if (isEditable.value) ids.push('edit')
-    if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('wordWrap')
-    if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('lineNumbers')
-    if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('stickyScroll')
     // Extra actions demote to the More dropdown when space runs out.
-    // Order = left-to-right display priority; delete is kept last.
-    if (props.file?.isBinary) ids.push('openAsText')
     if (isAppMode.value) ids.push('shareExternal')
-    if (!props.editing) ids.push('shareLink')
     ids.push('download')
-    if (isMarkdown.value && effectiveViewMode.value === 'rendered') ids.push('exportHtml')
-    if (isWallpaperSource.value) ids.push('setAsBackground')
-    ids.push('openDirectory')
-    ids.push('gitHistory')
-    ids.push('delete')
-    // Details is the very last toolbar action (collapses into "More" first).
-    ids.push('details')
     return ids
   },
   { inlineCount: 1, gap: 8 },
@@ -431,6 +375,31 @@ const hasSearch = computed(() => {
 const hasFitWidth = computed(() => {
     if (!props.file) return false
     return fileType.value?.isPdf || (fileType.value?.isOffice && props.file.name?.toLowerCase().endsWith('.pptx')) || false
+})
+
+// Actions that live in the "More" menu permanently instead of competing for
+// toolbar width. They are either low-frequency (file details, open directory,
+// file history, share link, open as text, export HTML, set as wallpaper),
+// editor preferences already exposed in Settings (word wrap, line numbers,
+// sticky scroll), or destructive (delete — hiding it avoids stray clicks).
+// Order here is the display order inside the menu; the toolbar never renders
+// these inline.
+const permanentMenuIds = computed(() => {
+  const ids = []
+  ids.push('details')
+  ids.push('openDirectory')
+  ids.push('gitHistory')
+  if (!props.editing) ids.push('shareLink')
+  if (props.file?.isBinary) ids.push('openAsText')
+  if (isMarkdown.value && effectiveViewMode.value === 'rendered') ids.push('exportHtml')
+  if (isWallpaperSource.value) ids.push('setAsBackground')
+  if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) {
+    ids.push('wordWrap')
+    ids.push('lineNumbers')
+    ids.push('stickyScroll')
+  }
+  ids.push('delete')
+  return ids
 })
 
 function handleToggleView() {

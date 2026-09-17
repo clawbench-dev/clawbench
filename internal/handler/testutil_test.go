@@ -443,6 +443,24 @@ func decodeRespJSON(t *testing.T, body io.Reader, target interface{}) {
 	}
 }
 
+// canonPath resolves a test path the way production canonicalizes repo roots
+// (filepath.Abs + Clean, then EvalSymlinks with a Clean fallback). On macOS
+// every t.TempDir() lives under /var, a symlink to /private/var, so the raw test
+// path never matches the value the handler returns; Linux hides this because
+// /tmp has no symlinked ancestor.
+func canonPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	abs = filepath.Clean(abs)
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return abs
+	}
+	return resolved
+}
+
 // callHandler calls a handler function with the given request and returns the response recorder.
 func callHandler(handler http.HandlerFunc, req *http.Request) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()

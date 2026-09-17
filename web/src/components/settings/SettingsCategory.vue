@@ -19,6 +19,9 @@
   </div>
   <!-- Standard settings category with mixed items + panels -->
   <div v-else class="settings-category">
+    <!-- Brand header for the About page: logo + name + slogan, above the
+         version/actions cards. -->
+    <SettingsAboutBrand v-if="categoryId === 'about'" />
     <template v-for="card in cards" :key="card.type === 'group' ? 'group-' + (card.title || 'basic') : card.config.panelId">
       <!-- Flat items grouped into a card -->
       <SettingsCard
@@ -90,6 +93,7 @@ import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
 import SettingsCard from './SettingsCard.vue'
+import SettingsAboutBrand from './SettingsAboutBrand.vue'
 import WallpaperSetting from './WallpaperSetting.vue'
 import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'

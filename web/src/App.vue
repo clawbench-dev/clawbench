@@ -316,6 +316,7 @@
         :visible="quoteQuestion.visible.value"
         :quoteData="quoteQuestion.quoteData.value"
         :composerMode="quoteQuestion.composerMode.value"
+        :composerAttachment="quoteQuestion.composerAttachment.value"
         @add="quoteQuestion.addToConversation($event)"
         @send="quoteQuestion.sendMessage($event)"
         @close="quoteQuestion.closeSheet()"
@@ -557,7 +558,7 @@ import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
-import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
+import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -1161,6 +1162,11 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
     // 重放阶段（页面刷新/断线重连补发的历史完成）不弹窗：
     // isReplayingEvents 在 fetchPendingEvents 与 WS replay 窗口期间为 true。
     if (skipReplay && isReplayingEvents.value) return
+    // 应用内通知开关（本地设置，默认开）：关闭后不再弹完成卡片。
+    // 只拦新的完成事件——已经在屏幕上的卡片保留，等它自己关掉（用户预期：
+    // 关开关不该把正在看的内容突然抽走）。提示音与系统/IM 推送各有自己的
+    // 开关，不受这里影响。
+    if (localConfig.inAppNotification === false) return
     const sessionId = data.session_id
     if (!sessionId) return
     // 聊天界面在前台激活且正是当前会话时，用户正看着结果，不弹；
@@ -2081,8 +2087,10 @@ const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
 // "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
-// composer mode: the issue/PR URL is attached, and NO body text is quoted by
-// default — the user selects the part they care about, then types their message.
+// composer mode: the issue/PR URL is previewed as a chip in the bar and NO body
+// text is quoted by default — the user selects the part they care about, then
+// types their message. The attachment only reaches the chat input when the user
+// commits (send / add), so dismissing the bar leaves the input untouched.
 // The bar is global (position: fixed), so no tab switch is needed on open; the
 // add path switches to chat via onAdd.
 function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
@@ -2099,7 +2107,8 @@ function handleForgeQuote(payload: { item?: { url?: string; slug?: string; numbe
 
 // "Quote in chat" from the file browser header. Same composer as the forge
 // header, but the attachment is the local file instead of an external URL, and
-// no quote text is pre-filled — the user types the instruction themselves.
+// no quote text is pre-filled — the user types the instruction themselves. The
+// file likewise stays a preview chip until the user commits.
 function handleFileQuoteInChat(path: string) {
   if (!path) return
   quoteQuestion.openComposer({
@@ -2146,17 +2155,25 @@ function onChatColDragLeave() {
 function onChatColDrop(e: DragEvent) {
   chatDropCounter = 0
   chatDropActive.value = false
-  // Internal attach drag (from the file manager) → attach the referenced path.
+  // Internal attach drag (from the file manager) → attach the referenced path(s).
   const internal = hasAttachDragData(e.dataTransfer)
   if (internal) {
     if (!isWideScreen.value) return
     const data = readAttachDragData(e.dataTransfer)
     if (!data) return
     e.preventDefault()
+    // A multi-selection drag carries the whole set; a plain drag is one item.
     // A ranged drag (e.g. a mermaid diagram's md code fence) attaches the file
     // as a line-range reference; plain file drags stay whole-file.
-    addAttachedFile(data.path, data.isDir, data.startLine, data.endLine)
-    toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    const targets = attachDragTargets(data)
+    const added = targets.filter(t => addAttachedFile(t.path, t.isDir, t.startLine, t.endLine)).length
+    if (added === 0) {
+      toast.show(t('chat.attach.alreadyAttached'), { icon: '📎', type: 'info', duration: 1500 })
+    } else if (targets.length > 1) {
+      toast.show(t('chat.attach.addedToChatN', { n: added }), { icon: '📎', type: 'success', duration: 1500 })
+    } else {
+      toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    }
     return
   }
   // OS file drop → upload & auto-attach each file.

@@ -101,7 +101,8 @@ func TestSyncPipelines_NewRunAfterBaselineFires(t *testing.T) {
 	require.Len(t, sink.events, 1, "the new run must fire")
 	assert.Equal(t, forge.EventPipeline, sink.events[0].Type)
 	assert.Equal(t, int64(101), sink.events[0].PipelineRunID)
-	assert.Equal(t, "failure", sink.events[0].PipelineStatus)
+	require.NotNil(t, sink.events[0].Pipeline, "the run detail must travel with the event")
+	assert.Equal(t, forge.PipelineFailure, sink.events[0].Pipeline.Status)
 	assert.Equal(t, "octocat", sink.events[0].Actor, "actor is carried so the prompt can judge")
 }
 

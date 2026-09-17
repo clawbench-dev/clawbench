@@ -101,8 +101,13 @@ vi.mock('@/composables/useAgents', () => ({
   }),
 }))
 
+// Hoisted (and deliberately a plain object, not a ref) because the vi.mock
+// factory below runs before module imports — a `ref()` here would hit the TDZ
+// on the hoisted vue import. Cases set `.value` before mounting, so the render
+// reads the intended value without needing reactivity.
+const mockIsAppMode = vi.hoisted(() => ({ value: false }))
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: ref(false) }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode }),
 }))
 
 const mockCanInstallPwa = ref(false)
@@ -237,9 +242,13 @@ const i18n = createI18n({
           sortDirHint: '排序方向',
           sortDirAsc: '升序',
           sortDirDesc: '降序',
+          inAppNotifySection: '应用内通知',
+          inAppNotification: '应用内完成通知',
+          inAppNotificationDesc: '会话或任务完成时弹出结果卡片',
+          desktopSystemSection: '桌面与系统',
+          mobileNotifySection: '移动端通知',
           notificationSound: '任务完成提示音',
           notificationSoundDesc: '任务完成或需要审批时播放提示音和振动',
-          notificationSoundSection: '提示音',
           uploadMaxSize: '上传大小上限',
           uploadMaxSizeDesc: '上传大小上限',
           uploadMaxFiles: '上传文件上限',
@@ -249,6 +258,7 @@ const i18n = createI18n({
           ragRetentionDays: '保留天数',
           aboutServerVersion: '服务器版本',
           aboutServerVersionDesc: '服务器版本',
+          aboutBrandSlogan: '从掌心到桌面',
           aboutAppVersion: 'APP版本',
           aboutAppVersionDesc: 'APP版本',
           serverRestart: '重启服务器',
@@ -362,6 +372,8 @@ afterEach(() => {
 describe('SettingsCategory', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Reset app mode: individual cases flip it to cover the app-only rows.
+    mockIsAppMode.value = false
     mockDialogConfirm.mockResolvedValue(false)
     mockGetServerValueWithDefault.mockImplementation((key: string) => {
       // Simple flat-dot-path resolver against serverConfig
@@ -568,6 +580,21 @@ describe('SettingsCategory', () => {
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const appVersionItem = allItems.find(i => i.props().label === 'APP版本')
       expect(appVersionItem).toBeFalsy()
+    })
+
+    it('renders the brand header above the version card', () => {
+      const wrapper = mountCategory('about')
+      expect(wrapper.findComponent({ name: 'SettingsAboutBrand' }).exists()).toBe(true)
+      // The brand block must come first — it is the page's entry point, not a
+      // footer after the settings rows.
+      expect(wrapper.find('.settings-category').element.firstElementChild?.className)
+        .toContain('about-brand')
+    })
+
+    it('does not render the brand header on other categories', () => {
+      // SettingsAboutBrand is keyed off the category id; a missing guard would
+      // put the logo on every settings page.
+      expect(mountCategory('chat').findComponent({ name: 'SettingsAboutBrand' }).exists()).toBe(false)
     })
   })
 
@@ -907,6 +934,46 @@ describe('SettingsCategory', () => {
       await wrapper.vm.$nextTick()
 
       expect(mockSetLocalConfig).toHaveBeenCalledWith('notificationSound', true)
+    })
+
+    it('renders inAppNotification as switch item', () => {
+      const wrapper = mountCategory('notification')
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = allItems.find(i => i.props().label === '应用内完成通知')
+      expect(item).toBeTruthy()
+      expect(item!.props().type).toBe('switch')
+    })
+
+    it('saves inAppNotification locally when toggled off', async () => {
+      const wrapper = mountCategory('notification')
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = allItems.find(i => i.props().label === '应用内完成通知')
+      expect(item).toBeTruthy()
+
+      await item!.vm.$emit('update:modelValue', false)
+      await wrapper.vm.$nextTick()
+
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('inAppNotification', false)
+    })
+
+    it('groups the flat items into 应用内通知 then 桌面与系统 cards in app mode', () => {
+      mockIsAppMode.value = true
+      const wrapper = mountCategory('notification')
+      const titles = wrapper.findAllComponents({ name: 'SettingsCard' })
+        .map(c => c.props().title)
+
+      expect(titles).toEqual(['应用内通知', '桌面与系统'])
+    })
+
+    it('drops the 桌面与系统 card entirely in browser mode (app-only rows)', () => {
+      const wrapper = mountCategory('notification')
+      const titles = wrapper.findAllComponents({ name: 'SettingsCard' })
+        .map(c => c.props().title)
+
+      // Both desktop/system rows are appOnly, so the card must not render as an
+      // empty headed card in browser mode.
+      expect(titles).not.toContain('桌面与系统')
+      expect(titles).toEqual(['应用内通知'])
     })
   })
 

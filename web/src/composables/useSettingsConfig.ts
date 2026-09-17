@@ -330,6 +330,9 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   uiScale: 1,
   recentFilesCount: 10,
   headerShortcutTips: true,
+  // Default ON so existing users keep seeing the completion card. Only gates the
+  // in-app card itself — the alert sound and system/IM push have their own switches.
+  inAppNotification: true,
   notificationSound: true,
   floatingStatusWindow: false,
   liveUpdate: true,

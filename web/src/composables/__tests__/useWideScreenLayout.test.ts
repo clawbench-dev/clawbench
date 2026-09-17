@@ -316,6 +316,27 @@ describe('dock tab registry (single source of truth)', () => {
     expect(DOCK_TABS.map((t) => t.id).slice(0, primary.length)).toEqual(primary)
   })
 
+  it('places port mapping second-to-last, with settings still the final tab', () => {
+    // The dock order is a product decision, not an implementation detail: port
+    // mapping is an operational tab that sits with the other tools, while
+    // settings stays the last tab (the "exit" affordance at the end of the
+    // dock). Asserting the tail rather than the whole list keeps this from
+    // breaking every time an unrelated tab is inserted earlier.
+    const ids = DOCK_TABS.map((t) => t.id)
+    expect(ids[ids.length - 1]).toBe('settings')
+    expect(ids[ids.length - 2]).toBe('proxy')
+  })
+
+  it('keeps port mapping after terminal in the rendered secondary list', () => {
+    // Guards the concrete move: proxy used to sit between terminal and stats,
+    // so the rendered order changed even though the id set did not. Without
+    // this, a revert of the registry edit would still pass every other test.
+    const rendered = secondaryDockTabs()
+    expect(rendered.indexOf('proxy')).toBeGreaterThan(rendered.indexOf('terminal'))
+    expect(rendered.indexOf('proxy')).toBeGreaterThan(rendered.indexOf('stats'))
+    expect(rendered.indexOf('proxy')).toBeLessThan(rendered.indexOf('settings'))
+  })
+
   it('every registry entry carries an i18n title key', () => {
     for (const tab of DOCK_TABS) {
       expect(tab.titleKey, `${tab.id} has no titleKey`).toMatch(/^[a-z]+\.[A-Za-z]/)

@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   ATTACH_DRAG_MIME,
   setAttachDragData,
+  setMultiAttachDragData,
   readAttachDragData,
   hasAttachDragData,
+  attachDragTargets,
   estimateTextWidth,
   computeAttachDragImageSize,
   buildAttachDragImage,
@@ -59,7 +61,6 @@ describe('readAttachDragData', () => {
   it('returns null for null', () => {
     expect(readAttachDragData(null)).toBeNull()
   })
-
   it('returns null for undefined', () => {
     expect(readAttachDragData(undefined)).toBeNull()
   })
@@ -332,5 +333,138 @@ describe('startAttachDrag', () => {
     const ghost = document.querySelector('[data-attach-ghost]')
     expect(ghost?.textContent).toContain('deep/dir/pic.png')
     cleanupDragGhost()
+  })
+})
+
+describe('setMultiAttachDragData', () => {
+  it('round-trips the whole multi-selection alongside the cursor item', () => {
+    const dt = mockDataTransfer()
+    setMultiAttachDragData(dt, 'src/a.ts', false, [
+      { path: 'src/a.ts', isDir: false },
+      { path: 'src', isDir: true },
+    ])
+    expect(readAttachDragData(dt)).toEqual({
+      path: 'src/a.ts',
+      isDir: false,
+      entries: [
+        { path: 'src/a.ts', isDir: false },
+        { path: 'src', isDir: true },
+      ],
+    })
+    expect(dt.getData('text/plain')).toBe('src/a.ts')
+  })
+
+  it('degrades to a single-item payload when fewer than two entries are given', () => {
+    const dt = mockDataTransfer()
+    setMultiAttachDragData(dt, 'src/a.ts', false, [{ path: 'src/a.ts', isDir: false }])
+    // Exactly the single-item shape — no `entries` key at all.
+    expect(readAttachDragData(dt)).toEqual({ path: 'src/a.ts', isDir: false })
+    expect(dt.getData(ATTACH_DRAG_MIME)).not.toContain('entries')
+  })
+
+  it('does not throw when setData throws', () => {
+    const dt = { setData: () => { throw new Error('nope') } } as unknown as DataTransfer
+    expect(() => setMultiAttachDragData(dt, '/x', false, [
+      { path: '/x', isDir: false },
+      { path: '/y', isDir: false },
+    ])).not.toThrow()
+  })
+})
+
+describe('multi-selection payload sanitizing', () => {
+  it('omits the entries key entirely when absent, so single-item payloads stay byte-identical', () => {
+    const dt = mockDataTransfer()
+    dt.setData(ATTACH_DRAG_MIME, '{"path":"/x","isDir":false}')
+    const data = readAttachDragData(dt)
+    expect(data).toEqual({ path: '/x', isDir: false })
+    expect(Object.prototype.hasOwnProperty.call(data, 'entries')).toBe(false)
+  })
+
+  it('drops malformed entries and coerces isDir to boolean', () => {
+    const dt = mockDataTransfer()
+    dt.setData(ATTACH_DRAG_MIME, JSON.stringify({
+      path: '/cursor',
+      isDir: false,
+      entries: [
+        { path: '/ok', isDir: 1 },
+        { path: '', isDir: false },        // empty path
+        { path: 42, isDir: true },         // non-string path
+        null,                              // not an object
+        'nope',                            // not an object
+        { isDir: true },                   // missing path
+      ],
+    }))
+    expect(readAttachDragData(dt)).toEqual({
+      path: '/cursor',
+      isDir: false,
+      entries: [{ path: '/ok', isDir: false }],
+    })
+  })
+
+  it('drops the entries key when no entry survives sanitizing', () => {
+    const dt = mockDataTransfer()
+    dt.setData(ATTACH_DRAG_MIME, JSON.stringify({
+      path: '/cursor',
+      isDir: false,
+      entries: [{ path: 42 }, null],
+    }))
+    const data = readAttachDragData(dt)
+    expect(data).toEqual({ path: '/cursor', isDir: false })
+    expect(Object.prototype.hasOwnProperty.call(data, 'entries')).toBe(false)
+  })
+
+  it('drops the entries key when it is not an array', () => {
+    const dt = mockDataTransfer()
+    dt.setData(ATTACH_DRAG_MIME, JSON.stringify({ path: '/cursor', isDir: false, entries: 'oops' }))
+    const data = readAttachDragData(dt)
+    expect(data).toEqual({ path: '/cursor', isDir: false })
+    expect(Object.prototype.hasOwnProperty.call(data, 'entries')).toBe(false)
+  })
+})
+
+describe('attachDragTargets', () => {
+  it('expands a multi-selection into every entry as a whole file', () => {
+    expect(attachDragTargets({
+      path: 'src/a.ts',
+      isDir: false,
+      entries: [
+        { path: 'src/a.ts', isDir: false },
+        { path: 'src', isDir: true },
+      ],
+    })).toEqual([
+      { path: 'src/a.ts', isDir: false },
+      { path: 'src', isDir: true },
+    ])
+  })
+
+  it('drops line ranges when entries are present — multi-selection is whole-file only', () => {
+    expect(attachDragTargets({
+      path: 'docs/guide.md',
+      isDir: false,
+      startLine: 5,
+      endLine: 9,
+      entries: [
+        { path: 'docs/guide.md', isDir: false },
+        { path: 'docs/other.md', isDir: false },
+      ],
+    })).toEqual([
+      { path: 'docs/guide.md', isDir: false },
+      { path: 'docs/other.md', isDir: false },
+    ])
+  })
+
+  it('returns a single target preserving the line range when there are no entries', () => {
+    expect(attachDragTargets({ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 9 }))
+      .toEqual([{ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 9 }])
+  })
+
+  it('returns a single whole-file target for a plain drag', () => {
+    expect(attachDragTargets({ path: '/x/a.ts', isDir: false }))
+      .toEqual([{ path: '/x/a.ts', isDir: false, startLine: undefined, endLine: undefined }])
+  })
+
+  it('falls back to the single item when entries is an empty array', () => {
+    expect(attachDragTargets({ path: '/x/a.ts', isDir: true, entries: [] }))
+      .toEqual([{ path: '/x/a.ts', isDir: true, startLine: undefined, endLine: undefined }])
   })
 })

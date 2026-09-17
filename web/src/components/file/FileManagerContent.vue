@@ -185,6 +185,9 @@
       <!-- Breadcrumb (multi-select info is merged into the bottom bar so the
            directory context is never obscured) -->
       <div v-if="currentDir" class="dir-nav-bottom">
+        <button class="dir-up-btn" :title="t('file.nav.parentDir')" @click="goToParentDir">
+          <ArrowLeft :size="14" />
+        </button>
         <DirBreadcrumb :path="currentDir" @navigate="$emit('navigateDir', $event)" />
       </div>
     </div>
@@ -535,9 +538,9 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
-import { joinPath, normalizeSlashes } from '@/utils/path'
+import { joinPath, normalizeSlashes, baseName, dirName } from '@/utils/path'
 import { useDirPreview } from '@/composables/useDirPreview'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -554,7 +557,7 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
-import { setAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
+import { setAttachDragData, setMultiAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
@@ -709,12 +712,30 @@ function onItemDragStart(entry, e) {
     if (!isWideScreen.value) return
     if (searchHasQuery.value) return // moving search results around the dir tree is ambiguous
     const path = pathOf(entry)
-    dragSourcePaths.value = collectDraggedPaths(entry, path)
-    setAttachDragData(e.dataTransfer, path, entry.type === 'dir')
+    const paths = collectDraggedPaths(entry, path)
+    dragSourcePaths.value = paths
+    const isDir = entry.type === 'dir'
+    if (paths.length > 1) {
+        // Multi-selection: carry the whole set so dropping on the chat column
+        // attaches all of it. isDir resolves through metaForPath (not
+        // entryByPath) because the selection may outlive the current listing —
+        // a stale path must not be silently downgraded to a file.
+        setMultiAttachDragData(
+            e.dataTransfer,
+            path,
+            isDir,
+            paths.map(p => ({ path: p, isDir: metaForPath(p).type === 'dir' })),
+        )
+    } else {
+        setAttachDragData(e.dataTransfer, path, isDir)
+    }
     e.dataTransfer.effectAllowed = 'move'
     // Build a DOM ghost element off-screen for reliable snapshot in Chrome.
     // The ghost must stay in the DOM until dragend — cleanupDragGhost() handles that.
-    const ghost = buildAttachDragImage(entry.name, entry.type === 'dir')
+    const ghost = buildAttachDragImage(
+        paths.length > 1 ? t('file.multiSelect.selectedCount', { n: paths.length }) : entry.name,
+        isDir,
+    )
     e.dataTransfer.setDragImage(ghost, 14, 16)
 }
 
@@ -1454,6 +1475,44 @@ watch(() => props.currentDir, () => {
     thumbErrors.clear()
     selectedPath.value = ''
 })
+
+/**
+ * Directory the "up one level" button was just used to leave, so it can be
+ * highlighted in its parent's listing once that listing arrives. Holds
+ * `{ parent, path }`: `parent` is the directory we are navigating to and `path`
+ * is the child entry to select there.
+ */
+let pendingParentSelect = null
+
+/**
+ * Up-one-level button: navigate to the parent directory and, once its listing
+ * is rendered, select + scroll to the child we came from (Explorer/Finder
+ * behavior). Emitting navigateDir directly — rather than reusing the back
+ * state machine — keeps the button's meaning fixed: back-navigation could
+ * resolve to a search/multi-select/origin step instead of walking up.
+ */
+function goToParentDir() {
+    // navigateToDir silently no-ops while a load is in flight; setting a pending
+    // selection now would fire against an unrelated listing later.
+    if (props.dirLoading) return
+    const child = baseName(props.currentDir)
+    if (!child) return
+    pendingParentSelect = { parent: dirName(props.currentDir), path: props.currentDir }
+    emit('navigateDir', pendingParentSelect.parent)
+}
+
+// Post-flush so this runs after the watcher above has cleared the selection
+// (pre-flush watchers on the same source run in creation order), and after the
+// new listing has rendered — which is what scrollToEntryAndSelect retries on.
+watch(() => props.currentDir, () => {
+    const pending = pendingParentSelect
+    if (!pending) return
+    pendingParentSelect = null
+    // A different directory means the user navigated elsewhere in the meantime;
+    // the pending child no longer belongs to the visible listing.
+    if (props.currentDir !== pending.parent) return
+    scrollToEntryAndSelect(pending.path)
+}, { flush: 'post' })
 
 const ctxMenu = reactive({ visible: false, x: 0, y: 0, entry: null })
 
@@ -2591,11 +2650,40 @@ function scrollSelectedIntoView(path) {
     border-top: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-primary, #fff);
     padding: var(--space-1) var(--space-4);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+/* Pinned outside the breadcrumb's horizontal scroll area so it stays reachable
+   when a deep path overflows. */
+.dir-up-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px var(--space-3);
+    border: none;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-muted, #999);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background var(--duration-base), color var(--duration-base);
+}
+
+@media (hover: hover) {
+    .dir-up-btn:hover {
+        background: var(--bg-secondary, #e0e0e0);
+        color: var(--accent-color, #4a90d9);
+    }
 }
 
 .dir-nav-bottom :deep(.dir-breadcrumb) {
     padding: 0;
     min-height: 0;
+    flex: 1;
+    min-width: 0;
 }
 
 /* ── Multi-select toolbar (replaces the browse toolbar in place) ── */

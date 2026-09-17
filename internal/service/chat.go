@@ -2,6 +2,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -1038,53 +1039,32 @@ func titleFromFileEntries(files []model.FileEntry) string {
 	return strings.Join(names, ", ")
 }
 
-// GetRecentProjects returns the most recent project paths.
-// It filters out paths whose directories no longer exist on disk
-// and removes those stale entries from the database.
+// GetRecentProjects returns the most recent project paths as a flat list.
+//
+// It filters out paths whose directories no longer exist on disk (removing
+// those rows from the database) and caps the result at the configured limit.
+// Callers that need to know which paths belong to the same git repository use
+// GetRecentProjectGroups instead; this flat form exists for callers that only
+// need the most recent path, such as the default-project fallback.
 func GetRecentProjects() ([]string, error) {
 	limit := model.RecentProjectsMaxCount
 	if limit <= 0 {
 		limit = 10
 	}
-	var paths []string
-	rows, err := dbRead.Query("SELECT project_path FROM recent_projects ORDER BY accessed_at DESC LIMIT ?", limit)
+
+	valid, err := loadRecentProjectRows(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
-		}
-		paths = append(paths, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 
-	// Filter out projects whose directories no longer exist
-	var valid []string
-	var stale []string
-	for _, p := range paths {
-		info, statErr := os.Stat(p)
-		if statErr == nil && info.IsDir() {
-			valid = append(valid, p)
-		} else {
-			stale = append(stale, p)
+	paths := make([]string, 0, limit)
+	for _, r := range valid {
+		if len(paths) >= limit {
+			break
 		}
+		paths = append(paths, r.path)
 	}
-
-	// Clean up stale entries from database
-	for _, p := range stale {
-		if delErr := RemoveRecentProject(p); delErr != nil {
-			slog.Warn("failed to remove stale recent project", slog.String("path", p), slog.String("err", delErr.Error()))
-		} else {
-			slog.Info("removed stale recent project", slog.String("path", p))
-		}
-	}
-
-	return valid, nil
+	return paths, nil
 }
 
 // AddRecentProject upserts a project path and prunes old entries beyond configured limit.
@@ -1985,6 +1965,42 @@ func NormalizeSessionSortOrder(v string) string {
 	}
 }
 
+// Session type filter values for session search. "task" is the user-facing name
+// for sessions whose stored session_type is 'scheduled' (one per task
+// execution); "chat" is an interactive conversation.
+const (
+	SessionTypeFilterAll  = "all"
+	SessionTypeFilterChat = "chat"
+	SessionTypeFilterTask = "task"
+)
+
+// NormalizeSessionTypeFilter maps a raw type filter to a known value, defaulting
+// to "all" for empty/unknown input.
+func NormalizeSessionTypeFilter(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case SessionTypeFilterChat:
+		return SessionTypeFilterChat
+	case SessionTypeFilterTask:
+		return SessionTypeFilterTask
+	default:
+		return SessionTypeFilterAll
+	}
+}
+
+// SessionTypeDBValue maps a type filter to the value stored in
+// chat_sessions.session_type, or "" when the filter is unfiltered ("all").
+// Callers use the empty string as "no predicate".
+func SessionTypeDBValue(filter string) string {
+	switch NormalizeSessionTypeFilter(filter) {
+	case SessionTypeFilterChat:
+		return "chat"
+	case SessionTypeFilterTask:
+		return "scheduled"
+	default:
+		return ""
+	}
+}
+
 // RecentSession is a lightweight listing row used by session search's "browse
 // all" mode (empty query): every chat session for the project, newest first,
 // including archived ones that can still be resumed/restored. It deliberately
@@ -1997,6 +2013,10 @@ type RecentSession struct {
 	ProjectPath string
 	Archived    bool
 	CreatedAt   time.Time
+	// SessionType is the raw stored value: "chat" or "scheduled". Browse mode
+	// only ever lists "chat" rows, but the field is populated so callers can
+	// render a type badge without special-casing browse mode.
+	SessionType string
 }
 
 // GetRecentSessions returns chat sessions for a project in the given time
@@ -2007,14 +2027,25 @@ type RecentSession struct {
 // sortOrder selects newest/oldest time ordering (relevance falls back to newest
 // here, since browse mode has no search score).
 //
+// typeFilter narrows by session type. Browse mode is deliberately limited to
+// interactive sessions: "all"/"chat" both list session_type='chat', and only an
+// explicit "task" switches to 'scheduled'. Selecting "task" therefore lists task
+// executions instead of conversations — it never mixes the two.
+//
 // Cursor pagination: pass the last row's created_at (formatted "2006-01-02
 // 15:04:05") and id to fetch the next page. The returned bool reports whether
 // more rows remain after this page.
-func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder, fromTime, toTime, cursor, cursorID string) ([]RecentSession, bool, error) {
-	query := `SELECT s.id, s.title, s.backend, s.project_path, s.archived, s.created_at
+func GetRecentSessions(projectPath string, limit int, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID string) ([]RecentSession, bool, error) {
+	// Browse mode never mixes session types: each selection lists exactly one
+	// type, and "all" means "all conversations" (not "conversations + tasks").
+	sessionType := "chat"
+	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
+		sessionType = "scheduled"
+	}
+	query := `SELECT s.id, s.title, s.backend, s.project_path, s.archived, s.created_at, s.session_type
 		FROM chat_sessions s
-		WHERE s.session_type = 'chat'`
-	args := []interface{}{}
+		WHERE s.session_type = ?`
+	args := []interface{}{sessionType}
 	if projectPath != "" {
 		query += " AND s.project_path = ?"
 		args = append(args, projectPath)
@@ -2065,7 +2096,7 @@ func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder, 
 	for rows.Next() {
 		var s RecentSession
 		var archived int
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.ProjectPath, &archived, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.ProjectPath, &archived, &s.CreatedAt, &s.SessionType); err != nil {
 			return nil, false, err
 		}
 		s.Archived = archived != 0

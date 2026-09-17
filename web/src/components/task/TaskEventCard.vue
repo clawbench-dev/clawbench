@@ -57,8 +57,10 @@
 
   <!-- Read-only rendering of the block the backend prepends to the prompt.
        Values are illustrative — the real ones come from the triggering event —
-       so they are tinted and marked as samples rather than presented as data. -->
-  <div class="overview-card">
+       so they are tinted and marked as samples rather than presented as data.
+       Hidden when the task subscribes to no event: there is no trigger, so no
+       context is ever injected and the samples would document nothing. -->
+  <div v-if="contextRows.length > 0" class="overview-card">
     <h3 class="card-title">
       <Braces class="card-icon" :size="14" />
       <span class="prompt-title-text">{{ t('task.overview.eventContext') }}</span>
@@ -80,6 +82,7 @@ import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, Braces, Zap } from 'lucide-vue-next'
 import { eventChips, eventKindLabel, type EventChip } from '@/utils/forgeEventLabels'
+import { eventContextSampleRows, isRepoTargetedOnly } from '@/utils/forgeEventContextVars'
 import { useForgeBinding } from '@/composables/useForgeBinding'
 import { formatDateTimeWithYear } from '@/utils/format'
 
@@ -132,10 +135,13 @@ const repoLabel = computed(() => {
 })
 
 // ── Event context preview ──
-// Mirrors the backend's EventPromptTemplate ordering, but substitutes sample
-// values so the user sees the shape of what will be injected. Variables scoped
-// to a transition only appear when that transition is subscribed.
-const subscribedTransitions = computed(() => new Set(eventChips(eventTypes.value).map(c => c.transition)))
+// The variable set and its gating live in the shared registry, so this block,
+// the form's placeholder block and the backend render cannot drift apart. Here
+// each row is filled with a sample value so the user sees the shape of what
+// will be injected.
+const subscribedTransitions = computed(
+    () => new Set(eventChips(eventTypes.value).map(c => c.transition)),
+)
 
 // The sample item is whichever kind the task actually subscribes to, so an
 // issue-only task does not show a "pr #123" sample it will never receive.
@@ -151,10 +157,6 @@ const sampleKind = computed<'issue' | 'pr' | ''>(() => {
     return ''
 })
 
-// Only meaningful for an issue/PR subscription; a pipeline has no item URL, so
-// the sample falls back to the repository's own URL.
-const sampleItemPath = computed(() => (sampleKind.value === 'issue' ? 'issues' : 'pull'))
-
 /**
  * True when every subscribed transition is repository-targeted (a pipeline).
  *
@@ -162,10 +164,15 @@ const sampleItemPath = computed(() => (sampleKind.value === 'issue' ? 'issues' :
  * `ITEM_TYPE #ITEM_NUMBER` row — that would describe a payload the task can
  * never get.
  */
-const repoTargetedOnly = computed(() => {
-    const chips = eventChips(eventTypes.value)
-    return chips.length > 0 && chips.every(c => c.kind === 'repo')
-})
+const repoTargetedOnly = computed(() => isRepoTargetedOnly(subscribedTransitions.value))
+
+// Only a real repository identity may appear in a sample URL — the generic
+// "any bound repo" label is prose, not a host.
+const sampleRepo = computed(() => boundRepoLabel.value || 'owner/repo')
+
+// Only meaningful for an issue/PR subscription; a pipeline has no item URL, so
+// the sample falls back to the repository's own URL.
+const sampleItemPath = computed(() => (sampleKind.value === 'issue' ? 'issues' : 'pull'))
 
 const sampleState = computed(() => {
     const transitions = subscribedTransitions.value
@@ -174,59 +181,33 @@ const sampleState = computed(() => {
     return 'open'
 })
 
-interface ContextRow {
-    label: string
-    placeholder: string
-    value: string
-}
+/** Sample values that depend on the task's own subscription, keyed by placeholder. */
+const sampleOverrides = computed<Record<string, string>>(() => ({
+    // The first subscribed transition, so the sample event type is concrete.
+    EVENT_TYPE: eventChips(eventTypes.value)[0]?.key ?? 'pr.opened',
+    REPO: sampleRepo.value,
+    // Keyed by the registry's placeholder token, which is the backend's own
+    // spelling ("ITEM_TYPE #ITEM_NUMBER" is ONE variable rendering two values).
+    'ITEM_TYPE #ITEM_NUMBER': `${sampleKind.value} #123`,
+    // A pipeline task has no item to point at, so the sample is the repository
+    // root rather than a fabricated issue/PR link.
+    URL: sampleKind.value === ''
+        ? `https://${sampleRepo.value}`
+        : `https://${sampleRepo.value}/${sampleItemPath.value}/123`,
+    STATE: sampleState.value,
+    // Free-text samples are localized (and marked as samples) rather than taken
+    // from the registry's literal defaults, which are only there so the
+    // registry is self-describing.
+    TITLE: t('task.overview.eventSampleTitle'),
+    COMMENT_BODY: t('task.overview.eventSampleComment'),
+}))
 
-// Only a real repository identity may appear in a sample URL — the generic
-// "any bound repo" label is prose, not a host.
-const sampleRepo = computed(() => boundRepoLabel.value || 'owner/repo')
-
-const contextRows = computed<ContextRow[]>(() => {
-    const subscribed = subscribedTransitions.value
-    const showAll = subscribed.size === 0
-    const show = (transition: string) => showAll || subscribed.has(transition)
-    const rows: ContextRow[] = [
-        { label: t('task.form.varEventType'), placeholder: 'EVENT_TYPE', value: sampleEventType.value },
-        { label: t('task.form.varRepo'), placeholder: 'REPO', value: sampleRepo.value },
-    ]
-    if (!repoTargetedOnly.value) {
-        rows.push({ label: t('task.form.varItem'), placeholder: 'ITEM_TYPE #ITEM_NUMBER', value: `${sampleKind.value} #123` })
-    }
-    rows.push(
-        { label: t('task.form.varTitle'), placeholder: 'TITLE', value: t('task.overview.eventSampleTitle') },
-        {
-            label: t('task.form.varUrl'),
-            placeholder: 'URL',
-            // A pipeline task has no item to point at, so the sample is the
-            // repository root rather than a fabricated issue/PR link.
-            value: sampleKind.value === ''
-                ? `https://${sampleRepo.value}`
-                : `https://${sampleRepo.value}/${sampleItemPath.value}/123`,
-        },
-        { label: t('task.form.varAuthor'), placeholder: 'AUTHOR', value: 'octocat' },
-        { label: t('task.form.varState'), placeholder: 'STATE', value: sampleState.value },
-    )
-    if (show('commented')) {
-        rows.push({ label: t('task.form.varCommentBody'), placeholder: 'COMMENT_BODY', value: t('task.overview.eventSampleComment') })
-    }
-    if (show('pipeline_done')) {
-        rows.push({ label: t('task.form.varPipelineStatus'), placeholder: 'PIPELINE_STATUS', value: 'success' })
-        rows.push({ label: t('task.form.varPipelineUrl'), placeholder: 'PIPELINE_URL', value: 'https://ci.example.com/run/42' })
-        // The value is the backend's literal rendering (是 / 否), not a
-        // translated string: the sample mirrors exactly what will be injected.
-        rows.push({ label: t('task.form.varActorIsSelf'), placeholder: 'ACTOR_IS_SELF', value: '否' })
-    }
-    return rows
-})
-
-/** The first subscribed transition, used to make the sample event type concrete. */
-const sampleEventType = computed(() => {
-    const first = eventChips(eventTypes.value)[0]
-    return first ? first.key : 'pr.opened'
-})
+const contextRows = computed(() =>
+    eventContextSampleRows(
+        { transitions: subscribedTransitions.value, repoTargetedOnly: repoTargetedOnly.value },
+        sampleOverrides.value,
+    ),
+)
 </script>
 
 <style scoped>

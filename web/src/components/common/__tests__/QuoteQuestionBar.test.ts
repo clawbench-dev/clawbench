@@ -66,6 +66,55 @@ describe('QuoteQuestionBar', () => {
       const wrapper = mountBar({ composerMode: true, visible: false })
       expect(wrapper.find('.quote-question-bar').exists()).toBe(false)
     })
+
+    describe('pending attachment chip', () => {
+      it('renders the URL the composer will attach', () => {
+        const wrapper = mountBar({
+          composerMode: true,
+          composerAttachment: { kind: 'url', label: 'acme/widgets#7', url: 'https://github.com/acme/widgets/issues/7' },
+        })
+
+        const chip = wrapper.find('.qq-pending-attachment')
+        expect(chip.exists()).toBe(true)
+        expect(chip.text()).toContain('acme/widgets#7')
+      })
+
+      it('renders a local file attachment with the file icon', () => {
+        const wrapper = mountBar({
+          composerMode: true,
+          composerAttachment: { kind: 'file', label: 'main.ts', path: '/proj/src/main.ts' },
+        })
+
+        const chip = wrapper.find('.qq-pending-attachment')
+        expect(chip.exists()).toBe(true)
+        expect(chip.text()).toContain('main.ts')
+        expect(chip.find('.lucide-link').exists()).toBe(false)
+      })
+
+      it('offers no remove button — the chip is not in the chat context yet', () => {
+        // Dismissing the bar is the way to discard it; a close button here would
+        // imply the entry already exists somewhere it could be removed from.
+        const wrapper = mountBar({
+          composerMode: true,
+          composerAttachment: { kind: 'url', label: 'acme/widgets#7', url: 'https://github.com/acme/widgets/issues/7' },
+        })
+
+        expect(wrapper.find('.qq-pending-attachment .attachment-close-btn').exists()).toBe(false)
+        expect(wrapper.find('.qq-pending-attachment button').exists()).toBe(false)
+      })
+
+      it('is absent in the normal selection flow', () => {
+        const wrapper = mountBar({ composerMode: false, quoteData: QUOTE })
+
+        expect(wrapper.find('.qq-pending-attachment').exists()).toBe(false)
+      })
+
+      it('is absent in composer mode with no attachment', () => {
+        const wrapper = mountBar({ composerMode: true, composerAttachment: null })
+
+        expect(wrapper.find('.qq-pending-attachment').exists()).toBe(false)
+      })
+    })
   })
 
   describe('normal selection flow (unchanged)', () => {

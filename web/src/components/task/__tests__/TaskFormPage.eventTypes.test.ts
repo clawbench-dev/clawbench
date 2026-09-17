@@ -58,6 +58,12 @@ const i18n = createI18n({
           varItem: 'item', varTitle: 'title', varUrl: 'url', varAuthor: 'author',
           varState: 'state', varCommentBody: 'comment', varPipelineStatus: 'ps', varPipelineUrl: 'pu',
           varActorIsSelf: 'self',
+          varPrevState: 'prev', varBody: 'body', varLabels: 'labels', varAssignees: 'assignees',
+          varDraft: 'draft', varSourceBranch: 'branch', varMergedAt: 'mergedAt',
+          varCreatedAt: 'createdAt', varUpdatedAt: 'updatedAt', varCommentCount: 'commentCount',
+          varCommentId: 'commentId', varPipelineNumber: 'pn', varPipelineRef: 'pr',
+          varPipelineSha: 'psha', varPipelineTrigger: 'ptr', varPipelineDuration: 'pd',
+          varPipelineLinkedPrs: 'plpr',
           repeatMode: 'Repeat', presets: {},
         },
       },
@@ -251,5 +257,84 @@ describe('TaskFormPage watched repository', () => {
       expect(wrapper.find('.event-repo-readonly').text()).toContain('acme/widgets')
     })
     expect(wrapper.find('.form-warning').exists()).toBe(false)
+  })
+
+  // ── Event context block ──
+  // The block is the user's only documentation of what the task will receive, so
+  // it must advertise the newly-added variables for the subscriptions that can
+  // actually yield them.
+  describe('event context block', () => {
+    // selectedEventTypes is a computed over the form ref, so the block only
+    // re-renders after a tick.
+    const blockText = async (eventTypes: string) => {
+      formRef.value.eventTypes = eventTypes
+      await wrapper.vm.$nextTick()
+      return wrapper.text()
+    }
+    let wrapper: ReturnType<typeof mountForm>
+
+    beforeEach(() => { wrapper = mountForm() })
+
+    // With no event selected the task has no trigger, so nothing is injected.
+    // Showing the block (or a heading with no rows) would document a payload
+    // that can never arrive.
+    it('hides the block entirely until an event is selected', async () => {
+      await blockText('')
+      expect(wrapper.find('.event-context-block').exists()).toBe(false)
+      // Not merely empty — the label and hint go too.
+      expect(wrapper.text()).not.toContain('Context')
+    })
+
+    it('shows the block once an event is selected', async () => {
+      await blockText('pr.opened')
+      expect(wrapper.find('.event-context-block').exists()).toBe(true)
+      expect(wrapper.text()).toContain('{{EVENT_TYPE}}')
+    })
+
+    it('lists the item-scoped variables for a PR subscription', async () => {
+      const text = await blockText('pr.opened')
+      for (const placeholder of [
+        '{{BODY}}', '{{LABELS}}', '{{ASSIGNEES}}', '{{SOURCE_BRANCH}}', '{{PREV_STATE}}',
+        '{{DRAFT}}', '{{MERGED_AT}}', '{{CREATED_AT}}', '{{UPDATED_AT}}', '{{COMMENT_COUNT}}',
+      ]) {
+        expect(text, `missing ${placeholder}`).toContain(placeholder)
+      }
+    })
+
+    it('does not list pipeline variables for an issue/PR subscription', async () => {
+      const text = await blockText('pr.opened')
+      expect(text).not.toContain('{{PIPELINE_')
+      expect(text).not.toContain('{{COMMENT_BODY}}')
+    })
+
+    // The regression: the block used to compare a kind-scoped subscription key
+    // ("pr.commented") against a bare scoped transition, so the comment
+    // variables never appeared for a real (kind-scoped) subscription.
+    it('lists the comment variables for a kind-scoped commented subscription', async () => {
+      const text = await blockText('pr.commented')
+      expect(text).toContain('{{COMMENT_BODY}}')
+      expect(text).toContain('{{COMMENT_ID}}')
+    })
+
+    it('lists the pipeline variables for a pipeline subscription', async () => {
+      const text = await blockText('pipeline_done')
+      expect(text).toContain('{{PIPELINE_STATUS}}')
+      expect(text).toContain('{{PIPELINE_REF}}')
+      expect(text).toContain('{{PIPELINE_SHA}}')
+      expect(text).toContain('{{ACTOR_IS_SELF}}')
+    })
+
+    it('omits every item-scoped variable for a pipeline-only subscription', async () => {
+      const text = await blockText('pipeline_done')
+      expect(text).not.toContain('{{ITEM_TYPE')
+      expect(text).not.toContain('{{BODY}}')
+      expect(text).not.toContain('{{SOURCE_BRANCH}}')
+      expect(text).not.toContain('{{MERGED_AT}}')
+    })
+
+    it('hides PREV_STATE for a commented-only subscription', async () => {
+      // Its previous state equals the current one, so the line would be noise.
+      expect(await blockText('pr.commented')).not.toContain('{{PREV_STATE}}')
+    })
   })
 })
