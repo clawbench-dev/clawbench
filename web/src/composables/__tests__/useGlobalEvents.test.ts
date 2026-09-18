@@ -15,6 +15,14 @@ vi.mock('@/composables/useLocale', () => ({
     gt: (key: string) => key, // Return key itself for test assertions
 }))
 
+// Forge label helpers are mocked to echo their inputs so the notification text
+// is asserted structurally (which label was used) rather than against the real
+// translation table.
+vi.mock('@/utils/forgeEventLabels', () => ({
+    eventKindLabel: (kind: string) => `kind:${kind}`,
+    unreadReasonLabel: (transition: string) => `reason:${transition}`,
+}))
+
 // Mock the native bridge — the Web frontend must keep the Android device cursor
 // in sync with the in-memory cursor so background push doesn't re-deliver
 // terminal events the user already saw in the foreground.
@@ -995,6 +1003,184 @@ describe('useGlobalEvents', () => {
                 expect.objectContaining({ type: 'clawbench-open-task' })
             )
             dispatchSpy.mockRestore()
+        })
+    })
+
+    // ── forge_event browser notification ──
+    //
+    // Forge changes used to update the dock badge only; the IM robots were the
+    // sole out-of-app surface. These pin the browser/system path.
+    describe('browser notification for forge_event', () => {
+        function forgeEventData(overrides: Record<string, unknown> = {}) {
+            return {
+                event: {
+                    platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets',
+                    item_type: 'pr', number: 42, event_type: 'merged',
+                },
+                item: {
+                    type: 'pr', number: 42, title: 'Fix the thing',
+                    url: 'https://github.com/acme/widgets/pull/42',
+                },
+                ...overrides,
+            }
+        }
+
+        it('shows a notification composed from repo, kind, number and reason', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: forgeEventData() })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'acme/widgets · kind:pr #42 · reason:merged',
+                expect.objectContaining({
+                    body: 'Fix the thing',
+                    tag: expect.stringContaining('clawbench-forge_event-widgets'),
+                })
+            )
+        })
+
+        it('omits the item number for a pipeline (a "#0" reads as a broken reference)', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'forge_event',
+                data: {
+                    event: {
+                        platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets',
+                        item_type: 'pipeline', number: 0, event_type: 'pipeline_done',
+                    },
+                    item: { type: 'pipeline', number: 0, title: 'CI', url: 'https://github.com/acme/widgets/actions/runs/7' },
+                },
+            })
+
+            const title = mockShowBrowserNotification.mock.calls[0][0]
+            expect(title).toBe('acme/widgets · kind:pipeline · reason:pipeline_done')
+            expect(title).not.toContain('#0')
+        })
+
+        it('falls back to the reason when the item carries no title', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'forge_event',
+                data: {
+                    event: { owner: 'acme', repo: 'widgets', item_type: 'issue', number: 1, event_type: 'commented' },
+                    item: { type: 'issue', number: 1, url: 'https://github.com/acme/widgets/issues/1' },
+                },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'acme/widgets · kind:issue #1 · reason:commented',
+                expect.objectContaining({ body: 'reason:commented' })
+            )
+        })
+
+        it('does not notify when the event identity is missing', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: {} })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('notification onClick dispatches clawbench-open-forge', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+            const ws = connectAndGetWs()
+            ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: forgeEventData() })
+
+            const onClick = mockShowBrowserNotification.mock.calls[0][1].onClick
+            expect(onClick).toBeDefined()
+            onClick()
+
+            expect(dispatchSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'clawbench-open-forge' })
+            )
+            dispatchSpy.mockRestore()
+        })
+
+        it('does not notify for a replayed forge_event (caught-up history)', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'forge_event',
+                replayed: true,
+                data: forgeEventData(),
+            })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+    })
+
+    // ── push_mode is not a gate ──
+    //
+    // The system-notification decision belongs to the local `browserNotification`
+    // setting (checked inside showBrowserNotification) and page focus. Gating it
+    // here on the server-side push_mode made the switch unreachable for anyone
+    // who had picked DingTalk/飞书, and silenced the desktop tab of users whose
+    // push_mode was changed for their phone.
+    describe('browser notification is independent of push_mode', () => {
+        it('still notifies when push_mode is dingtalk', async () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const settings = await import('@/composables/useSettingsConfig')
+            settings.serverConfig.value = { push_mode: 'dingtalk' }
+
+            try {
+                const ws = connectAndGetWs()
+                ws.receive({
+                    type: 'event',
+                    id: nextId(),
+                    event: 'session_update',
+                    data: { session_id: 's1', status: 'completed', response_preview: 'Done!' },
+                })
+
+                expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            } finally {
+                settings.serverConfig.value = {}
+            }
+        })
+
+        it('still notifies when push_mode is disabled', async () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const settings = await import('@/composables/useSettingsConfig')
+            settings.serverConfig.value = { push_mode: 'disabled' }
+
+            try {
+                const ws = connectAndGetWs()
+                ws.receive({
+                    type: 'event',
+                    id: nextId(),
+                    event: 'task_update',
+                    data: { task_id: '5', status: 'completed', response_preview: 'ok' },
+                })
+
+                expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            } finally {
+                settings.serverConfig.value = {}
+            }
         })
     })
 

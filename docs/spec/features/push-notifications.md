@@ -34,17 +34,40 @@ sequenceDiagram
 
 ### 功能清单
 
-- **WebSocket 实时事件**：在线时通过 WebSocket 接收实时事件（session_update、task_update 等），延迟更低、信息更丰富
+- **WebSocket 实时事件**：在线时通过 WebSocket 接收实时事件（session_update、task_update、forge_event 等），延迟更低、信息更丰富
 - **通知音效开关**：`notificationSound` 本地设置（默认开启）控制 `playNotificationSound()` 是否播放——关闭后 Web Audio API 不再初始化，防止打断蓝牙耳机的音乐播放
 - **应用内通知开关**：`inAppNotification` 本地设置（默认开启）控制应用内完成卡片（CompletionPopover）是否弹出。关闭后 `App.vue` 的 `handleCompletionEvent` 在入队前早返回，只拦新的完成事件——已在屏幕上的卡片保留至用户关闭。该开关只管卡片，提示音与系统/IM 推送各有独立开关，互不影响
-- **设置页小节划分**：推送通知页按使用场景分三节——「应用内通知」（完成卡片 + 提示音，均本地即时生效）、「桌面与系统」（悬浮状态窗 + 灵动岛，app-only，浏览器模式下整卡隐藏）、「移动端通知」（推送模式面板，服务端设置，改完点保存）
+- **浏览器通知开关**：`browserNotification` 本地设置（默认开启）控制 `showBrowserNotification()` 是否投递系统通知。**与 `push_mode` 完全解耦**——`push_mode` 选的是手机/IM 通道（原生推送 / 钉钉 / 飞书 / 关闭），而本开关只管「这个浏览器要不要弹系统通知」。二者解耦的原因：把浏览器通知挂在 `push_mode === 'native'` 上时，任何选了钉钉/飞书的用户会连带失去桌面端提醒，而那个开关对他们不可达。开关在 `showBrowserNotification()` 内部统一判定，因此会话、任务、forge 三类生产者自动遵守
+- **设置页小节划分**：推送通知页按使用场景分四节——「应用内通知」（完成卡片 + 提示音，均本地即时生效）、「浏览器通知」（系统通知开关，本地即时生效，**浏览器与 App 模式都渲染**）、「桌面与系统」（悬浮状态窗 + 灵动岛，app-only，浏览器模式下整卡隐藏）、「移动端通知」（推送模式面板，服务端设置，改完点保存）
 - **事件缓冲与回放**：WebSocket 断线期间的事件缓冲在服务端，重连后自动回放。确保不丢失关键通知
 - **任务完成推送预览**：WebSocket 通知包含任务完成的响应摘要预览文本和 `Done:` 前缀，用户不用打开 App 就能判断任务是否成功
 - **权限审批推送**：ACP 后端请求工具调用审批时，WebSocket 通知包含工具名称（如 `execute_command`、`write_file`），用户可以及时审批，避免因未审批而阻塞 AI 执行
+- **仓库事件系统通知**：`forge_event`（议题/合并请求/流水线的 opened/closed/merged/reopened/commented/pipeline_done）在页面失焦时弹系统通知，标题形如 `owner/repo · 合并请求 #42 · 已合并`，正文为条目标题，点击切到「议题与合并」页签。与钉钉/飞书推送互不影响：IM 推送受 `forge.notify.*` 服务端开关门控，系统通知受本地 `browserNotification` 门控
+
+### 浏览器系统通知的触发条件
+
+```mermaid
+flowchart TD
+    A[WS 事件] --> B{replayed 回放?}
+    B -->|是| Z[不通知：补历史，非实时完成]
+    B -->|否| C{页面可见且聚焦?}
+    C -->|是| Z
+    C -->|否| D{browserNotification 本地开关?}
+    D -->|关| Z
+    D -->|开| E{事件类型}
+    E -->|session_update completed/cancelled/permission_pending| F[会话标题 + 摘要/工具名]
+    E -->|task_update running/completed/failed/cancelled| G[任务名 + 摘要]
+    E -->|forge_event| H[owner/repo · 类型 #号 · 原因 + 条目标题]
+    F --> I[playNotificationSound + 系统通知]
+    G --> I
+    H --> I
+```
 
 ### 设计要点
 
 - **推送是 WS 的后备而非替代**：推送通知有延迟、有字数限制、无法交互——在线时始终优先使用 WebSocket
+- **系统通知与 IM 推送是两个独立通道**：`browserNotification`（本地）管浏览器/桌面壳的系统通知；`push_mode`（服务端）管手机原生推送与钉钉/飞书。二者不互为门控，一个用户可能两者都开。`forge_event` 的 WS 广播与未读角标**不受任何通知开关影响**——角标回答「有没有新变化」，开关回答「要不要打扰」
+- **回放事件永不通知**：`fetchPendingEvents()` 拉取的和 WS 重连缓冲回放的（`replayed: true`）都是补历史，用户并未亲眼看到事件发生，因此抑制通知与未读自动清除
 - **断线缓冲窗口有限（10s）**：WebSocket 断线后只缓冲 10s 内的事件，超过的事件进入离线持久化
 - **终态推送去重守卫**：服务端用 `terminalPushDone` 标记（`sync.Map`，按 sessionID）保证同一会话只发送一次终态推送——防止 done/cancel 并发竞态导致"完成"与"取消"双重矛盾通知。终态事件统一由 `markDoneAndSendFinal` 触发，新会话开始时重置标记
 

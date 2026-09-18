@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import type { NotificationNav } from '@/utils/clawbenchNative'
+import { localConfig } from '@/composables/useSettingsConfig'
 
 const TAG = 'Notification'
 
@@ -39,6 +40,12 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
  * Show browser notification.
  * In a native host with a nativeNotify bridge (Electron), routes to the main
  * process so the OS notification still appears when the window is hidden/minimized.
+ *
+ * Gated by the local `browserNotification` setting (设置 → 推送通知 → 浏览器通知).
+ * That switch is independent of the server-side `push_mode`: push_mode picks the
+ * mobile/IM channel, this picks whether THIS browser surfaces system
+ * notifications. Checked here rather than at each call site so every producer
+ * (session/task/forge) honors it uniformly.
  */
 export function showBrowserNotification(
   title: string,
@@ -51,6 +58,9 @@ export function showBrowserNotification(
     nav?: NotificationNav
   }
 ): void {
+  // Respect the browser-notification setting — skip entirely when disabled
+  if (localConfig.browserNotification === false) return
+
   // Don't show notifications when page is visible and focused
   if (document.visibilityState === 'visible' && document.hasFocus()) {
     return

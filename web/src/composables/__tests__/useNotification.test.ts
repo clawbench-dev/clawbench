@@ -37,6 +37,13 @@ vi.mock('@/composables/useLocale', () => ({
     gt: (key: string) => key,
 }))
 
+// The browser-notification switch lives in localConfig (reactive). The mock is
+// mutable so each test can flip it without re-importing the module.
+const mockLocalConfig: Record<string, unknown> = { browserNotification: true }
+vi.mock('@/composables/useSettingsConfig', () => ({
+    localConfig: mockLocalConfig,
+}))
+
 describe('useNotification', () => {
     beforeEach(() => {
         mockNotificationInstances.length = 0
@@ -44,6 +51,7 @@ describe('useNotification', () => {
         mockRequestPermissionResult = 'granted'
         MockNotification.permission = 'default'
         MockNotification.requestPermission.mockClear()
+        mockLocalConfig.browserNotification = true
     })
 
     afterEach(() => {
@@ -297,6 +305,79 @@ describe('useNotification', () => {
             const closeSpy = vi.spyOn(notification, 'close')
             closeAllNotifications()
             expect(closeSpy).toHaveBeenCalled()
+        })
+
+        // ── browserNotification setting gate ──
+        //
+        // The local switch (设置 → 推送通知 → 浏览器通知) is independent of the
+        // server-side push_mode: push_mode picks the mobile/IM channel, this one
+        // decides whether THIS browser surfaces system notifications. It is
+        // enforced here so every producer (session/task/forge) honors it.
+
+        it('does not create a notification when browserNotification is off', async () => {
+            ;(globalThis as any).Notification = MockNotification
+            MockNotification.permission = 'granted'
+            mockLocalConfig.browserNotification = false
+
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const { showBrowserNotification } = await import('@/composables/useNotification')
+            showBrowserNotification('Test Title', { body: 'Test body' })
+
+            expect(mockNotificationInstances).toHaveLength(0)
+        })
+
+        it('does not route to the native host when browserNotification is off', async () => {
+            ;(globalThis as any).Notification = MockNotification
+            MockNotification.permission = 'granted'
+            mockLocalConfig.browserNotification = false
+
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const nativeNotify = vi.fn().mockResolvedValue(undefined)
+            ;(window as any).ClawBenchNative = { nativeNotify }
+
+            const { showBrowserNotification } = await import('@/composables/useNotification')
+            showBrowserNotification('Native Title')
+
+            expect(nativeNotify).not.toHaveBeenCalled()
+            expect(mockNotificationInstances).toHaveLength(0)
+        })
+
+        it('creates a notification when the setting is explicitly true', async () => {
+            ;(globalThis as any).Notification = MockNotification
+            MockNotification.permission = 'granted'
+            mockLocalConfig.browserNotification = true
+
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const { showBrowserNotification } = await import('@/composables/useNotification')
+            showBrowserNotification('Test')
+
+            expect(mockNotificationInstances).toHaveLength(1)
+        })
+
+        it('defaults to enabled when the setting is unset (undefined)', async () => {
+            ;(globalThis as any).Notification = MockNotification
+            MockNotification.permission = 'granted'
+            // Simulates a user who never touched the switch: the key exists with
+            // its default, but a legacy/absent value must not silence alerts.
+            delete mockLocalConfig.browserNotification
+
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            try {
+                const { showBrowserNotification } = await import('@/composables/useNotification')
+                showBrowserNotification('Test')
+
+                expect(mockNotificationInstances).toHaveLength(1)
+            } finally {
+                mockLocalConfig.browserNotification = true
+            }
         })
     })
 

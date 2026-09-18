@@ -53,7 +53,7 @@ flowchart TD
     D --> E{首次同步?}
     E -->|是| F[仅建快照，不派发]
     E -->|否| G[写入 forge_events 去重]
-    G --> H[通知 sink：WS 未读 + IM 推送]
+    G --> H[通知 sink：WS 未读 + 系统通知 + IM 推送]
     G --> I[任务 sink：匹配事件任务]
 ```
 
@@ -111,7 +111,8 @@ sequenceDiagram
 
 - **Provider 抽象隔离平台差异**：`internal/forge/` 定义统一的 `Provider` 接口与模型（`Item`/`Comment`/`Change`），GitHub 走 `google/go-github`，GitLab 用自建轻量 REST v4 client——刻意避开官方 SDK 的重依赖树（protovalidate/protobuf/cel-go/graphql-go/keyring）。平台差异（GitHub 只有 `owner/repo` 两段、GitLab 允许多级 group；GitLab `merged`/`locked` 归一为 closed；GitHub issues 端点混入 PR 需剔除）在 adapter 内消化，上层只见统一模型
 - **变化靠本地快照 diff，而非平台事件 API**：GitHub `issues?since` 只表明"变了"而不表明"变成了什么事件"，GitLab events API 粒度只到天。因此以水位线增量拉取 + `forge_items` 快照对比推导事件，把"发生了什么"的判断权握在自己手里。水位线**必须整批（所有页）拉完才推进**，边界用严格 `>` 加 1s 重叠窗口，并对事件做 `dedupe_key` 去重——不依赖时间戳唯一性
-- **未读与通知解耦**：两者共用同一事件源但独立于开关。通知是"提醒你"，未读是"有变化"——把两者绑在一起会让关闭某类通知连带让徽标失去意义，而 AI 任务仍在后台触发，用户彻底失去信号
+- **未读与通知解耦**：两者共用同一事件源但独立于开关。通知是"提醒你"，未读是"有变化"——把两者绑在一起会让关闭某类通知连带让徽标失去意义，而 AI 任务仍在后台触发，用户彻底失去信号。浏览器系统通知同理：`forge_event` 的 WS 广播**不受任何通知开关门控**（角标靠它保持实时），系统通知则受本地 `browserNotification` 门控——IM 推送受 `forge.notify.*` 服务端开关门控，三个通道各自独立
+- **广播 payload 手工构造而非序列化结构体**：`ForgeEventDispatcher.HandleChange` 广播的 `event` 对象是显式 snake_case map（`platform`/`host`/`owner`/`repo`/`item_type`/`number`/`event_type`），不是 `ForgeEvent` 结构体。该结构体没有 json tag，直接序列化会得到 PascalCase（`EventType`）并泄漏内部簿记列（`DedupeKey`/`ItemKey`）；前端按字段名读取通知文案，一次"顺手改成结构体"的简化会静默让所有仓库通知退化成空标题。有测试（`TestForgeDispatcher_PayloadEventKeysAreSnakeCase`）同时断言键名存在与 PascalCase 键不存在
 - **防递归靠身份识别而非提示词**：`CLAWBENCH_SCHEDULED=1` 只能阻止 AI 通过 `/cb-task` 再建任务，挡不住 AI 用 `gh`/`glab` 写回 forge 再触发自己。因此触发器解析凭据对应的账号登录名（缓存 10 分钟），抑制 acting actor 等于该账号的事件——比对 item 作者会漏掉"AI 评论别人的 issue"。**流水线事件刻意豁免**：CI 结束不是"用户做的动作"，而是几分钟前某次运行（可能是别人、可能是定时或 push 触发）的结果；抑制"自己"的流水线恰好会砍掉最有价值的场景——AI 推了修复、CI 失败、而负责修复的任务永远不跑。actor 仍随事件下发，任务 prompt 通过 `ACTOR_IS_SELF` 变量自行判断
 - **CI 事件用 per-run 去重表而非水位线**：首次见到时仍在运行的 run 不记录，所以"后来完成的更早 run"会被标量水位线永久跳过（run 101 先完成会把水位线推过 100，100 完成时已在水位线之下而静默丢失）。改为每个 run 一行（`PRIMARY KEY (platform,host,owner,repo,run_id)`），天然免疫乱序完成与分页；新鲜度判定直接用 `INSERT ... ON CONFLICT DO NOTHING` 的 `RowsAffected`，避免"先查后写"的窗口
 - **事件不丢优先于事件及时**：运行中再来事件若沿用"直接丢弃"会丢数据。改为持久化事件队列 + 退避重试（任务忙时 10s 退避、最多 30 次），配 per-repo debounce 合并突发——宁可延迟，不可静默丢失

@@ -5,8 +5,8 @@ import { useAppMode } from './useAppMode'
 import { showBrowserNotification } from './useNotification'
 import { playNotificationSound } from './useNotificationSound'
 import { gt } from './useLocale'
-import { serverConfig } from './useSettingsConfig'
 import { stripMarkdownPreview } from '@/utils/format'
+import { eventKindLabel, unreadReasonLabel } from '@/utils/forgeEventLabels'
 import { getNative } from '@/utils/clawbenchNative'
 import { appLog } from '@/utils/appLog'
 
@@ -43,7 +43,35 @@ export interface ServerEvent {
         // handler (it casts to ChatStreamEventData and guards session_id).
         event_type?: string
         payload?: unknown
+        // forge_event body (ForgeEventDispatcher.HandleChange): the derived
+        // change plus the item it belongs to. Optional/loose for the same
+        // reason as above — only the forge branch reads them.
+        event?: ForgeEventIdentity
+        item?: ForgeItemIdentity
     }
+}
+
+/** Identity of a derived forge change (snake_case on the wire). */
+export interface ForgeEventIdentity {
+    platform?: string
+    host?: string
+    owner?: string
+    repo?: string
+    /** "issue" | "pr" | "pipeline" */
+    item_type?: string
+    number?: number
+    /** "opened" | "closed" | "merged" | "reopened" | "commented" | "pipeline_done" */
+    event_type?: string
+}
+
+/** The issue/PR/pipeline a forge change happened on. */
+export interface ForgeItemIdentity {
+    type?: string
+    number?: number
+    title?: string
+    url?: string
+    state?: string
+    author?: string
 }
 
 // Client message types
@@ -462,9 +490,19 @@ function stopHeartbeat() {
  *   completed:          title=TaskCompleted,   alert=responsePreview || TaskCompleted
  *   failed:             title=TaskFailed,      alert=responsePreview || TaskFailed
  *   cancelled:          title=TaskCancelled,   alert=responsePreview || TaskCancelled
+ *
+ * forge_event:
+ *   title = "owner/repo 议题 #12 · 合并" (kind + item + reason)
+ *   alert = the item title (the one field the event does not otherwise carry)
  */
 /**
  * Show a browser notification for a terminal event.
+ *
+ * The system-notification decision is gated by the local `browserNotification`
+ * setting (inside showBrowserNotification) and by page focus — NOT by the
+ * server-side `push_mode`. push_mode selects the mobile/IM channel; a user on
+ * DingTalk push still wants their desktop tab to notify them. Gating on it here
+ * also made the switch unreachable for anyone who had picked DingTalk/飞书.
  *
  * @param skipReplay when true, a replay-phase (caught-up history) event does
  *   NOT produce a notification — it is suppressed like a background event
@@ -473,10 +511,6 @@ function stopHeartbeat() {
  */
 function showEventBrowserNotification(event: string, data: ServerEvent['data'], skipReplay = false) {
     if (!data) return
-
-    // Only show native browser notifications when push_mode is "native"
-    const pushMode = serverConfig.value?.push_mode as string || 'native'
-    if (pushMode !== 'native') return
 
     // A replay-phase event is caught-up history, not a live completion — never
     // notify for it, even if the page is in the background right now.
@@ -550,25 +584,47 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
                 }))
             }
         }
+    } else if (event === 'forge_event') {
+        const ev = data.event
+        const item = data.item
+        // Without an identity there is nothing meaningful to render (and no
+        // reason to interrupt the user), so bail rather than emit a bare title.
+        if (!ev?.event_type) return
+
+        const slug = [ev.owner, ev.repo].filter(Boolean).join('/')
+        const kind = eventKindLabel(ev.item_type || item?.type || '')
+        const reason = unreadReasonLabel(ev.event_type)
+        // A pipeline carries no item number (the syncer builds it with Number 0),
+        // so the falsy check below already drops it — rendering "#0" would look
+        // like a broken reference.
+        const num = ev.number || item?.number
+        const ref = num ? ` #${num}` : ''
+        title = [slug, `${kind}${ref}`.trim(), reason].filter(Boolean).join(' · ')
+        alert_ = item?.title || reason
+
+        // Click: open the Issues & PRs tab. There is no item-level deep link in
+        // the panel yet, so this lands the user where the row (and the unread
+        // badge it belongs to) is visible.
+        onClick = () => {
+            window.dispatchEvent(new CustomEvent('clawbench-open-forge', { detail: { url: item?.url } }))
+        }
     } else {
         return
     }
 
     try {
-        if (pushMode === 'native') {
-            playNotificationSound()
-            showBrowserNotification(title, {
-                body: alert_,
-                tag: `clawbench-${event}-${data.session_id || data.task_id || Date.now()}`,
-                nav: {
-                    sessionId: data.session_id,
-                    taskId: data.task_id,
-                    executionId: data.execution_id,
-                    projectPath: data.project_path,
-                },
-                onClick,
-            })
-        }
+        playNotificationSound()
+        showBrowserNotification(title, {
+            body: alert_,
+            tag: `clawbench-${event}-${data.session_id || data.task_id || data.event?.repo || Date.now()}`,
+            nav: {
+                sessionId: data.session_id,
+                taskId: data.task_id,
+                executionId: data.execution_id,
+                projectPath: data.project_path,
+            },
+            onClick,
+        })
     } catch {
         // Non-critical
     }

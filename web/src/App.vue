@@ -927,6 +927,15 @@ function handleOpenTask(e: Event) {
   }
 }
 
+/**
+ * Handle clawbench-open-forge event — dispatched when a forge (GitHub/GitLab)
+ * system notification is clicked. The panel has no item-level deep link, so the
+ * destination is the Issues & PRs tab where the row and its unread badge live.
+ */
+function handleOpenForge() {
+  switchTab('forge')
+}
+
 // Register browse-scoped drawers with tab-drawer binding
 const detailsDrawer = useTabDrawer('view')
 const tocDrawer = useTabDrawer('view')
@@ -1461,6 +1470,7 @@ function registerAppEventListeners() {
   window.addEventListener('attach-to-chat', playQuoteEmitAnimation)
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
+  window.addEventListener('clawbench-open-forge', handleOpenForge)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
       const resolved = (e as CustomEvent<string>).detail
@@ -2899,6 +2909,7 @@ onUnmounted(() => {
     window.removeEventListener('attach-to-chat', playQuoteEmitAnimation)
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
+    window.removeEventListener('clawbench-open-forge', handleOpenForge)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
     stopFlushTimer()

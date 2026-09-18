@@ -4,7 +4,6 @@ import { playNotificationSound } from '@/composables/useNotificationSound'
 import { showBrowserNotification } from '@/composables/useNotification'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
-import { serverConfig } from '@/composables/useSettingsConfig'
 
 interface TaskItem {
   id: number
@@ -72,21 +71,21 @@ export function resetTaskTabState() {
 
 /** Called when a task execution completes (runningCount drops to 0) */
 function onTaskCompleted(task: TaskItem) {
-    // Sound + haptic + browser notification (only when push_mode is "native")
-    const pushMode = serverConfig.value?.push_mode as string || 'native'
-    if (pushMode === 'native') {
-        playNotificationSound()
-        try {
-            showBrowserNotification(task.name || gt('task.title'), {
-                body: gt('task.exec.completed'),
-                tag: `task-completed-${task.id}`,
-                onClick: () => {
-                    if (switchTabCallback) switchTabCallback('tasks')
-                },
-            })
-        } catch {
-            // Non-critical
-        }
+    // Sound + haptic + system notification. Whether a system notification is
+    // actually shown is decided inside showBrowserNotification, gated by the
+    // local `browserNotification` setting and by page focus — NOT by the
+    // server-side push_mode (which selects the mobile/IM channel).
+    playNotificationSound()
+    try {
+        showBrowserNotification(task.name || gt('task.title'), {
+            body: gt('task.exec.completed'),
+            tag: `task-completed-${task.id}`,
+            onClick: () => {
+                if (switchTabCallback) switchTabCallback('tasks')
+            },
+        })
+    } catch {
+        // Non-critical
     }
     // Navigate to the tasks tab on click
     const navigateToHistory = () => {
