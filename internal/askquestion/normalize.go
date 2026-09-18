@@ -27,18 +27,45 @@ func canonicalKey(k string) string {
 	k = strings.TrimSpace(k)
 	k = strings.Trim(k, `"'`)
 	k = strings.ToLower(k)
-	k = strings.NewReplacer("-", "", "_", "", " ", "").Replace(k)
+	// Strip separators only. An explicit set (rather than unicode.IsSpace) keeps
+	// this identical to the TypeScript mirror's [-_\s] class; a tab or NBSP in a
+	// key name is not a separator a model would emit.
+	k = strings.NewReplacer("-", "", "_", "", " ", "", "\t", "", "\n", "", "\r", "").Replace(k)
 	return k
 }
 
-// lookup finds the first key whose canonical form equals canonical(canonicalName).
+// lookup finds the value whose canonical key equals canonicalName.
+//
+// Go map iteration is randomized, so a payload carrying two keys that fold to
+// the same canonical form (production data contains both `question` and the
+// stray-quoted `"question`) would otherwise resolve differently on each run —
+// and differently from the TypeScript mirror, which iterates keys in insertion
+// order. To keep both sides deterministic and identical, the exact canonical
+// key wins; otherwise the lexicographically smallest raw key is chosen.
 func lookup(m map[string]any, canonicalName string) (any, bool) {
+	var bestKey string
+	var bestVal any
+	found := false
 	for k, v := range m {
-		if canonicalKey(k) == canonicalName {
-			return v, true
+		if canonicalKey(k) != canonicalName {
+			continue
+		}
+		if !found || preferKey(k, bestKey, canonicalName) {
+			bestKey, bestVal, found = k, v, true
 		}
 	}
-	return nil, false
+	return bestVal, found
+}
+
+// preferKey reports whether candidate is a better match than current. An exact
+// key match (no decoration to strip) is preferred; ties break on raw key order.
+func preferKey(candidate, current, canonicalName string) bool {
+	candExact := candidate == canonicalName
+	curExact := current == canonicalName
+	if candExact != curExact {
+		return candExact
+	}
+	return candidate < current
 }
 
 // NormalizeInput converts a Path-A tool input into canonical items.

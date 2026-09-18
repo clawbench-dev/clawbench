@@ -221,3 +221,88 @@ func TestToInputMap(t *testing.T) {
 		t.Errorf("an option without a description must omit the key: %+v", opts[1])
 	}
 }
+
+// The span must never reach past its own payload. Regression: a sentence that
+// merely MENTIONS the tag, followed by a genuine question, used to have the
+// whole sentence deleted because the span ran to the later tag's close.
+func TestExtract_ProseMentioningTagIsNotSwallowed(t *testing.T) {
+	text := "要发起提问，就用 <ask-question> 标签包起来，里面放 <item> 元素。\n\n现在问你：\n" +
+		"<ask-question><item><header>Q2</header><multi-select>false</multi-select>" +
+		"<question>第二个?</question><option><label>B</label></option></item></ask-question>"
+	ms := Extract(text)
+	if len(ms) != 2 {
+		t.Fatalf("expected both open tags located, got %d (%+v)", len(ms), ms)
+	}
+	// Only the second tag is a payload; the first is prose.
+	if ms[0].Parsed {
+		t.Error("the prose mention must not parse as a payload")
+	}
+	if !ms[1].Parsed {
+		t.Fatalf("the real question must parse, reason=%q", ms[1].Reason)
+	}
+	stripped := Strip(text, ms)
+	if !strings.Contains(stripped, "要发起提问") {
+		t.Fatalf("the prose was deleted: %q", stripped)
+	}
+	if !strings.Contains(stripped, "现在问你") {
+		t.Fatalf("the text between the mention and the question was deleted: %q", stripped)
+	}
+	if strings.Contains(stripped, "第二个?") {
+		t.Fatalf("the real payload should have been removed: %q", stripped)
+	}
+}
+
+// The standard-close branch must not reach a close that belongs to a later tag.
+func TestExtract_StandardCloseOfLaterTagIsNotConsumed(t *testing.T) {
+	text := "说明：<ask-question> 只是个标签名。\n" +
+		"<ask-question><item><header>H</header><question>Q?</question><option><label>A</label></option></item></ask-question>"
+	ms := Extract(text)
+	stripped := Strip(text, ms)
+	if !strings.Contains(stripped, "说明：") {
+		t.Fatalf("prose before the real tag was deleted: %q", stripped)
+	}
+}
+
+// Regression: a non-standard close that belongs to an OUTER element (the
+// details block) must not be consumed, even when the gap is punctuation-only.
+func TestExtract_OuterCloseIsNotConsumed(t *testing.T) {
+	text := "分析\n<details>\n<summary>更多</summary>\n<ask-question>\n" +
+		"<item><header>H</header><question>Q?</question><option><label>A</label></option></item>\n" +
+		"</details>\n正文"
+	ms := Extract(text)
+	stripped := Strip(text, ms)
+	if !strings.Contains(stripped, "</details>") {
+		t.Fatalf("the outer </details> was consumed: %q", stripped)
+	}
+	if !strings.Contains(stripped, "正文") {
+		t.Fatalf("following prose was consumed: %q", stripped)
+	}
+}
+
+// An obfuscated close with no matching outer open tag is still accepted.
+func TestExtract_ObfuscatedCloseStillAcceptedWhenSelfContained(t *testing.T) {
+	text := "前\n<ask-question><item><header>H</header><question>Q?</question>" +
+		"<option><label>A</label></option></item>\n</\uFF5C\uFF5CDSML\uFF5C\uFF5Cquestion>"
+	ms := Extract(text)
+	if len(ms) != 1 || !ms[0].Parsed {
+		t.Fatalf("expected the obfuscated close to be accepted, got %+v", ms)
+	}
+	if got := Strip(text, ms); strings.Contains(got, "<ask-question") {
+		t.Errorf("the tag should have been removed, got %q", got)
+	}
+}
+
+func TestCloseTagName(t *testing.T) {
+	cases := map[string]string{
+		"</details>":           "details",
+		"</ask-question>":      "ask-question",
+		"</DIV>":               "div",
+		"</｜｜DSML｜｜parameter>": "｜｜dsml｜｜parameter",
+		"</>":                  "",
+	}
+	for in, want := range cases {
+		if got := closeTagName(in); got != want {
+			t.Errorf("closeTagName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -84,15 +84,33 @@ function canonicalKey(k: string): string {
     .trim()
     .replace(/^["'\s]+|["'\s]+$/g, '')
     .toLowerCase()
-    .replace(/[-_\s]/g, '')
+    // Strip separators only, matching the Go mirror exactly (see canonicalKey).
+    .replace(/[-_ \t\n\r]/g, '')
 }
 
-/** Find the first value whose canonical key equals `canonicalName`. */
+/**
+ * Find the value whose canonical key equals `canonicalName`.
+ *
+ * A payload can carry two keys folding to the same canonical form (production
+ * data contains both `question` and the stray-quoted `"question`). The exact
+ * canonical key wins; ties break on raw key order. The Go mirror applies the
+ * identical rule, so both sides resolve such payloads the same way.
+ */
 function lookup(m: Record<string, unknown>, canonicalName: string): unknown {
+  let bestKey: string | undefined
   for (const k of Object.keys(m)) {
-    if (canonicalKey(k) === canonicalName) return m[k]
+    if (canonicalKey(k) !== canonicalName) continue
+    if (bestKey === undefined || preferKey(k, bestKey, canonicalName)) bestKey = k
   }
-  return undefined
+  return bestKey === undefined ? undefined : m[bestKey]
+}
+
+/** Whether `candidate` is a better key match than `current`. */
+function preferKey(candidate: string, current: string, canonicalName: string): boolean {
+  const candExact = candidate === canonicalName
+  const curExact = current === canonicalName
+  if (candExact !== curExact) return candExact
+  return candidate < current
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -374,15 +392,44 @@ function tagText(re: RegExp, s: string): string {
  * question text ("< 5" / "> 5") survive.
  */
 function decodeText(s: string): string {
-  return s
-    .replace(RE_ANY_TAG, '')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&')
+  return unescapeEntities(s.replace(RE_ANY_TAG, ''))
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/**
+ * The shared Go/TS entity table. It covers the five XML entities plus the
+ * common typographic and symbol entities that appear in assistant output.
+ * The Go mirror holds an identical table; adding an entry here without adding
+ * it there breaks the parity tests.
+ */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
+  nbsp: '\u00a0', hellip: '\u2026', mdash: '\u2014', ndash: '\u2013',
+  copy: '\u00a9', reg: '\u00ae', trade: '\u2122',
+  laquo: '\u00ab', raquo: '\u00bb', times: '\u00d7', divide: '\u00f7',
+  deg: '\u00b0', plusmn: '\u00b1', middot: '\u00b7', bull: '\u2022',
+  lsquo: '\u2018', rsquo: '\u2019', ldquo: '\u201c', rdquo: '\u201d',
+}
+
+const RE_ENTITY_REF = /&(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g
+
+/**
+ * Decode the shared entity set plus decimal/hex numeric references. Unknown
+ * entities are left verbatim.
+ */
+function unescapeEntities(s: string): string {
+  if (!s.includes('&')) return s
+  return s.replace(RE_ENTITY_REF, (ref, body: string) => {
+    if (body[0] === '#') {
+      const hex = body.length > 1 && (body[1] === 'x' || body[1] === 'X')
+      const digits = hex ? body.slice(2) : body.slice(1)
+      const n = parseInt(digits, hex ? 16 : 10)
+      if (!Number.isFinite(n) || n <= 0 || n > 0x10ffff) return ref
+      return String.fromCodePoint(n)
+    }
+    return NAMED_ENTITIES[body] ?? ref
+  })
 }
 
 const KNOWN_TAG_NAMES = [
@@ -450,7 +497,6 @@ const RE_OPEN_TAG = /<ask-question\b[^>]*>/g
 const RE_STD_CLOSE = /<\/ask-question\s*>/
 const RE_ANY_CLOSE = /<\/[^>]+>/
 const RE_CHILD_CLOSE = /<\/(?:item|option)\s*>/g
-const RE_STRUCTURAL = /<(?:details|summary|table|div|pre|section|blockquote|ul|ol|h[1-6])[\s>]|```|^#{1,6}\s/m
 const RE_CODE_FENCE = /```[\s\S]*?```/g
 // Inline code cannot span a line break. Without that restriction an orphaned
 // backtick earlier in a long message pairs with a backtick inside a real
@@ -512,7 +558,7 @@ export function extractAskMatches(text: string): AskMatch[] {
 }
 
 function locate(text: string, openStart: number, openEnd: number): AskMatch {
-  const bound = boundSpan(text, openEnd)
+  const bound = boundSpan(text, openStart, openEnd)
   const inner = text.slice(openEnd, bound.innerEnd)
   const items = parseItems(inner)
   if (items.length > 0) {
@@ -543,37 +589,87 @@ interface Bound { innerEnd: number; spanEnd: number; reason: string }
  * close, so the whole block was deleted. Here the span is bounded at the last
  * real child close unless the gap to a standard close is provably empty.
  */
-function boundSpan(text: string, openEnd: number): Bound {
+function boundSpan(text: string, openStart: number, openEnd: number): Bound {
   const close = RE_STD_CLOSE.exec(text.slice(openEnd))
   if (close) {
     const closeStart = openEnd + close.index
     const closeEnd = closeStart + close[0].length
-    const childEnd = lastChildEnd(text, openEnd, closeStart)
-    if (childEnd < 0) {
-      // A standard close with no child close: hand the whole inner range to the
-      // parser; it will fail and the caller retains the text.
-      return { innerEnd: closeStart, spanEnd: closeEnd, reason: ReasonParseFailed }
-    }
-    const gap = text.slice(childEnd, closeStart)
-    if (isCleanGap(gap) && !RE_STRUCTURAL.test(gap)) {
-      return { innerEnd: closeStart, spanEnd: closeEnd, reason: '' }
+    if (!hasNestedPayloadStart(text.slice(openEnd, closeStart))) {
+      const childEnd = lastChildEnd(text, openEnd, closeStart)
+      if (childEnd < 0) {
+        // A standard close with no child close: hand the whole inner range to
+        // the parser; it will fail and the caller retains the text.
+        return { innerEnd: closeStart, spanEnd: closeEnd, reason: ReasonParseFailed }
+      }
+      // A mention AFTER the last child close means the close belongs to a later
+      // tag: this tag's payload ended at childEnd.
+      const gap = text.slice(childEnd, closeStart)
+      if (isCleanGap(gap) && !gap.includes('<ask-question')) {
+        return { innerEnd: closeStart, spanEnd: closeEnd, reason: '' }
+      }
     }
   }
-  // No usable standard close. A non-standard close is accepted only when the
-  // text between the last child close and it is pure junk — otherwise that
-  // close belongs to unrelated content (the <details> case).
+  // No usable standard close. A non-standard close is accepted only when it
+  // belongs to this payload: the gap since the last child close must be
+  // content-free AND the close name must not match an element opened before
+  // this tag.
   const childEnd = lastChildEnd(text, openEnd, text.length)
   if (childEnd < 0) {
     return { innerEnd: openEnd, spanEnd: openEnd, reason: ReasonNoChildClose }
   }
+  // Self-containment: if another payload STARTS before this child end, those
+  // children belong to that later tag, so this tag has no payload of its own.
+  if (hasNestedPayloadStart(text.slice(openEnd, childEnd))) {
+    return { innerEnd: openEnd, spanEnd: openEnd, reason: ReasonNoStandardClose }
+  }
   const anyClose = RE_ANY_CLOSE.exec(text.slice(childEnd))
   if (anyClose) {
     const closeStart = childEnd + anyClose.index
-    if (isCleanGap(text.slice(childEnd, closeStart))) {
-      return { innerEnd: childEnd, spanEnd: closeStart + anyClose[0].length, reason: '' }
+    const closeEnd = closeStart + anyClose[0].length
+    const closeName = closeTagName(text.slice(closeStart, closeEnd))
+    const gap = text.slice(childEnd, closeStart)
+    if (isCleanGap(gap) && !gap.includes('<ask-question') &&
+        closeName !== '' && !hasOuterOpen(text, openStart, closeName)) {
+      return { innerEnd: childEnd, spanEnd: closeEnd, reason: '' }
     }
   }
   return { innerEnd: childEnd, spanEnd: childEnd, reason: ReasonNoStandardClose }
+}
+
+/**
+ * Matches an ask-question open tag that is itself followed by an <item>, i.e.
+ * the beginning of a genuine sibling payload.
+ */
+const RE_NESTED_PAYLOAD_START = /<ask-question\b[^>]*>\s*<item\b/s
+
+/**
+ * Whether `region` contains the start of another payload.
+ *
+ * A plain substring search for '<ask-question' is too blunt: a payload may
+ * legitimately mention the tag in its own question text (e.g. "how should a
+ * literal <ask-question> be rendered?"), and treating that mention as a sibling
+ * tag both leaks the real payload and can delete part of it. Requiring the
+ * mention to be followed by <item> distinguishes a sibling payload from prose.
+ */
+function hasNestedPayloadStart(region: string): boolean {
+  return RE_NESTED_PAYLOAD_START.test(region)
+}
+
+/** Extract the element name from a closing tag, or '' when malformed. */
+function closeTagName(tag: string): string {
+  const inner = tag.replace(/^<\//, '').replace(/>$/, '').trim()
+  if (inner === '') return ''
+  return inner.split(/\s+/)[0].toLowerCase()
+}
+
+/**
+ * Whether an open tag named `name` appears before openStart. When it does, a
+ * matching close belongs to that outer element — the details-before-question
+ * shape — and must not be consumed.
+ */
+function hasOuterOpen(text: string, openStart: number, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`<${escaped}[\\s>/]`, 'i').test(text.slice(0, openStart))
 }
 
 /** End offset of the last </item> or </option> in text[from:to], or -1. */

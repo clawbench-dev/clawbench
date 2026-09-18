@@ -174,6 +174,23 @@ describe('parseItems', () => {
     expect(got[0].options[0].label).toBe('R&D')
   })
 
+  it('decodes the shared entity set and numeric references', () => {
+    const got = parseItems(
+      '<item><header>H</header><question>Q?</question>' +
+      '<option><label>Step&nbsp;1 &hellip; &#8212; end &copy;</label></option></item>',
+    )
+    expect(got[0].options[0].label).toBe('Step 1 \u2026 \u2014 end \u00a9')
+  })
+
+  it('leaves entities outside the shared table verbatim', () => {
+    // Go and TS must agree: an entity neither table knows stays as written.
+    const got = parseItems(
+      '<item><header>H</header><question>Q?</question>' +
+      '<option><label>&epsilon; &forall;</label></option></item>',
+    )
+    expect(got[0].options[0].label).toBe('&epsilon; &forall;')
+  })
+
   it('rejects a JSON payload (support deliberately removed)', () => {
     expect(parseItems('{"questions":[{"question":"Q?"}]}')).toEqual([])
   })
@@ -270,6 +287,57 @@ describe('extractAskMatches', () => {
     const ms = extractAskMatches(text)
     expect(ms).toHaveLength(1)
     expect(ms[0].parsed![0].header).toBe('宽度')
+  })
+
+  it('does not swallow prose that merely mentions the tag', () => {
+    // D1 regression: an unparseable mention followed by a real question used to
+    // have the whole prose span (and the real tag's open) deleted.
+    const text =
+      '要发起提问，就用 <ask-question> 标签包起来，里面放 <item> 元素。\n\n现在问你：\n' +
+      '<ask-question><item><header>Q2</header><multi-select>false</multi-select>' +
+      '<question>第二个?</question><option><label>B</label></option></item></ask-question>'
+    const ms = extractAskMatches(text)
+    expect(ms).toHaveLength(2)
+    expect(ms[0].parsed).toBeNull()
+    expect(ms[1].parsed).not.toBeNull()
+    const stripped = stripAskMatches(text, ms)
+    expect(stripped).toContain('要发起提问')
+    expect(stripped).toContain('现在问你')
+    expect(stripped).not.toContain('第二个?')
+  })
+
+  it('does not consume an outer element\'s closing tag', () => {
+    // D2 regression: the gap was punctuation-only, so </details> was eaten.
+    const text =
+      '分析\n<details>\n<summary>更多</summary>\n<ask-question>\n' +
+      '<item><header>H</header><question>Q?</question><option><label>A</label></option></item>\n' +
+      '</details>\n正文'
+    const stripped = stripAskMatches(text, extractAskMatches(text))
+    expect(stripped).toContain('</details>')
+    expect(stripped).toContain('正文')
+  })
+
+  it('converts a payload that mentions the tag in its own text', () => {
+    // The self-containment guard must not mistake a literal mention for a
+    // sibling payload.
+    const text =
+      '<ask-question><item><header>H</header><question>怎么处理 <ask-question> 标签露出？</question>' +
+      '<option><label>A</label></option></item></ask-question>'
+    const ms = extractAskMatches(text)
+    expect(ms).toHaveLength(1)
+    expect(ms[0].parsed).not.toBeNull()
+    expect(stripAskMatches(text, ms)).toBe('')
+  })
+
+  it('does not split a payload when an early item mentions the tag', () => {
+    const text =
+      '<ask-question><item><question>Q about <ask-question> tags</question><option><label>A</label></option></item>' +
+      '<item><question>Q2?</question><option><label>B</label></option></item></ask-question>'
+    const ms = extractAskMatches(text)
+    expect(ms).toHaveLength(1)
+    expect(ms[0].parsed).toHaveLength(2)
+    // No dangling fragment may be left behind.
+    expect(stripAskMatches(text, ms)).toBe('')
   })
 
   it('tolerates an obfuscated closing tag', () => {

@@ -224,3 +224,43 @@ func TestNormalizeInput_QuestionArrayPreferredOverWrapper(t *testing.T) {
 		t.Fatalf("expected the direct questions array to win, got %+v", got)
 	}
 }
+
+// Go map iteration is randomized, so a payload with two keys folding to the
+// same canonical form used to resolve differently run to run. Loop enough
+// times that the old first-match behavior would fail deterministically.
+func TestNormalizeInput_DuplicateCanonicalKeysAreDeterministic(t *testing.T) {
+	for i := range 300 {
+		got := NormalizeInput(map[string]any{
+			"question":       "UNQUOTED",
+			`"question`:      "QUOTED",
+			"QUESTion":       "OTHER",
+			"question" + " ": "TRAILING",
+		})
+		if len(got) != 1 {
+			t.Fatalf("run %d: expected 1 item, got %+v", i, got)
+		}
+		// The exact canonical key wins over every decorated variant.
+		if got[0].Question != "UNQUOTED" {
+			t.Fatalf("run %d: expected the exact key to win, got %q", i, got[0].Question)
+		}
+	}
+}
+
+func TestCanonicalKey_Separators(t *testing.T) {
+	// A tab IS a separator (aligned with the TS mirror); a NBSP is not.
+	if got := canonicalKey("multi\tselect"); got != "multiselect" {
+		t.Errorf("tab should be a separator, got %q", got)
+	}
+	if got := canonicalKey("multi-select"); got != "multiselect" {
+		t.Errorf("hyphen should be a separator, got %q", got)
+	}
+	if got := canonicalKey("multi_select"); got != "multiselect" {
+		t.Errorf("underscore should be a separator, got %q", got)
+	}
+	if got := canonicalKey("multiSelect"); got != "multiselect" {
+		t.Errorf("camelCase should fold, got %q", got)
+	}
+	if got := canonicalKey(`"question`); got != "question" {
+		t.Errorf("stray quote should be stripped, got %q", got)
+	}
+}

@@ -1,8 +1,8 @@
 package askquestion
 
 import (
-	"html"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -183,9 +183,14 @@ func tagText(re *regexp.Regexp, s string) string {
 // decodeText strips nested tags, unescapes entities, and collapses whitespace.
 // Only tag-shaped constructs are removed, so literal comparison operators in
 // question text ("< 5" / "> 5") survive.
+//
+// Entity decoding uses an explicit table (see unescapeEntities) rather than
+// html.UnescapeString: the TypeScript mirror cannot carry the full HTML5
+// table, so using the superset here would silently diverge on any entity the
+// mirror does not know.
 func decodeText(s string) string {
 	s = reAnyTag.ReplaceAllString(s, "")
-	s = html.UnescapeString(s)
+	s = unescapeEntities(s)
 	return strings.Join(strings.Fields(s), " ")
 }
 
@@ -283,4 +288,52 @@ func hasTagNamePrefix(rest, name string) bool {
 var knownTagNames = []string{
 	"ask-question", "item", "header", "question", "option", "options",
 	"label", "description", "multi-select", "multi_select", "multiSelect",
+}
+
+// namedEntities is the shared Go/TS entity table. It covers the five XML
+// entities plus the common typographic and symbol entities that appear in
+// assistant output. The TypeScript mirror holds an identical table; adding an
+// entry here without adding it there breaks the parity tests.
+var namedEntities = map[string]string{
+	"amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'",
+	"nbsp": "\u00a0", "hellip": "\u2026", "mdash": "\u2014", "ndash": "\u2013",
+	"copy": "\u00a9", "reg": "\u00ae", "trade": "\u2122",
+	"laquo": "\u00ab", "raquo": "\u00bb", "times": "\u00d7", "divide": "\u00f7",
+	"deg": "\u00b0", "plusmn": "\u00b1", "middot": "\u00b7", "bull": "\u2022",
+	"lsquo": "\u2018", "rsquo": "\u2019", "ldquo": "\u201c", "rdquo": "\u201d",
+}
+
+var reEntityRef = regexp.MustCompile(`&(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);`)
+
+// unescapeEntities decodes the shared entity set plus decimal/hex numeric
+// references. Unknown entities are left verbatim.
+func unescapeEntities(s string) string {
+	if !strings.Contains(s, "&") {
+		return s
+	}
+	return reEntityRef.ReplaceAllStringFunc(s, func(ref string) string {
+		body := ref[1 : len(ref)-1]
+		if body[0] == '#' {
+			return decodeNumericEntity(body[1:], ref)
+		}
+		if v, ok := namedEntities[body]; ok {
+			return v
+		}
+		return ref
+	})
+}
+
+// decodeNumericEntity decodes a decimal (&#9745;) or hex (&#x1F600;) reference,
+// returning the original text when the code point is invalid.
+func decodeNumericEntity(body, original string) string {
+	base := 10
+	if len(body) > 1 && (body[0] == 'x' || body[0] == 'X') {
+		base = 16
+		body = body[1:]
+	}
+	n, err := strconv.ParseInt(body, base, 32)
+	if err != nil || n <= 0 || n > 0x10FFFF {
+		return original
+	}
+	return string(rune(n))
 }
