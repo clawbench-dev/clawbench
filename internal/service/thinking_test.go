@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -340,4 +341,278 @@ func TestSlimThinkingInContent_PreservesParentToolCallID(t *testing.T) {
 	if _, hasText := parsed.Blocks[0]["text"]; hasText {
 		t.Error("slim block should not have text")
 	}
+}
+
+// ── ReplaceThinkingForMessage: single-transaction batch rewrite ──
+//
+// Before this function existed, persistThinkingToDB deleted the message's rows
+// and then called UpsertThinking once per record — N+1 independent transactions
+// with no outer transaction. A 9737-block turn produced 5938 rows and took
+// 5.89s (95% of finalize), and a crash between the delete and the inserts lost
+// the message's reasoning entirely while the content row kept its slim
+// think_id markers.
+func TestReplaceThinkingForMessage(t *testing.T) {
+	dbDir := t.TempDir()
+	if err := initTestDB(dbDir); err != nil {
+		t.Fatalf("initTestDB: %v", err)
+	}
+	defer func() {
+		db.Close()
+		dbRead.Close()
+	}()
+
+	sessionID := "thinking-batch-sess"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+		sessionID, "/test", "test", "Batch Session")
+	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
+	if err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+	msgID, _ := res.LastInsertId()
+
+	countRows := func(t *testing.T) int {
+		t.Helper()
+		var n int
+		if err := dbRead.QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		return n
+	}
+
+	t.Run("rewrites all rows in one call", func(t *testing.T) {
+		// Pre-existing rows, as the 500ms streaming flush would have left them.
+		require.NoError(t, UpsertThinking(msgID, sessionID, "th_stale", "stale text"))
+		require.NoError(t, UpsertThinking(msgID, sessionID, "th_keep", "old text"))
+
+		recs := []ThinkingRecord{
+			{ThinkID: "th_keep", Text: "final keep"},
+			{ThinkID: "th_new", Text: "brand new"},
+		}
+		require.NoError(t, ReplaceThinkingForMessage(msgID, sessionID, recs))
+
+		if got := countRows(t); got != 2 {
+			t.Fatalf("row count = %d, want 2", got)
+		}
+		// The retired think_id must be gone — MergeConsecutiveThinkingBlocks
+		// merges adjacent blocks and leaves such orphans behind.
+		if rec, _ := GetThinking("th_stale", msgID); rec != nil {
+			t.Errorf("stale think_id still present: %+v", rec)
+		}
+		if rec, _ := GetThinking("th_keep", msgID); rec == nil || rec.Text != "final keep" {
+			t.Errorf("th_keep = %+v, want text 'final keep'", rec)
+		}
+		if rec, _ := GetThinking("th_new", msgID); rec == nil || rec.Text != "brand new" {
+			t.Errorf("th_new = %+v, want text 'brand new'", rec)
+		}
+	})
+
+	t.Run("handles more rows than the bound-variable limit allows in one INSERT", func(t *testing.T) {
+		// SQLite caps a statement at 32766 bound variables and this INSERT binds
+		// 4 per row (seq is a literal), so an unchunked statement fails past
+		// 8191 rows. 9000 exceeds that ceiling, so this fails if the chunking is
+		// removed. The production message that triggered this work had 5938 rows,
+		// which fits one statement but sits close enough to the edge to matter.
+		const n = 9000
+		recs := make([]ThinkingRecord, 0, n)
+		for i := range n {
+			recs = append(recs, ThinkingRecord{
+				ThinkID: fmt.Sprintf("th_bulk_%05d", i),
+				Text:    fmt.Sprintf("reasoning segment %d", i),
+			})
+		}
+		require.NoError(t, ReplaceThinkingForMessage(msgID, sessionID, recs))
+		if got := countRows(t); got != n {
+			t.Fatalf("row count = %d, want %d", got, n)
+		}
+		last, err := GetThinking(fmt.Sprintf("th_bulk_%05d", n-1), msgID)
+		require.NoError(t, err)
+		require.NotNil(t, last)
+		require.Equal(t, fmt.Sprintf("reasoning segment %d", n-1), last.Text)
+	})
+
+	t.Run("skips records with empty think_id or text", func(t *testing.T) {
+		recs := []ThinkingRecord{
+			{ThinkID: "th_ok", Text: "valid"},
+			{ThinkID: "", Text: "no id"},
+			{ThinkID: "th_empty_text", Text: ""},
+		}
+		require.NoError(t, ReplaceThinkingForMessage(msgID, sessionID, recs))
+		if got := countRows(t); got != 1 {
+			t.Fatalf("row count = %d, want 1 (only the valid record)", got)
+		}
+	})
+
+	t.Run("empty record set is a no-op", func(t *testing.T) {
+		require.NoError(t, UpsertThinking(msgID, sessionID, "th_survivor", "still here"))
+		require.NoError(t, ReplaceThinkingForMessage(msgID, sessionID, nil))
+		if rec, _ := GetThinking("th_survivor", msgID); rec == nil {
+			t.Error("empty record set must not delete existing rows")
+		}
+	})
+}
+
+// TestReplaceThinkingForMessage_AtomicOnFailure pins the property the old
+// delete-then-upsert loop lacked: a failure part-way through must leave the
+// previous rows untouched, never a half-rewritten message. Under the old shape
+// the DELETE had already committed on its own, so a failure during the inserts
+// left the message with no thinking rows at all.
+//
+// The failure is injected with a BEFORE INSERT trigger that aborts on a marker
+// text. That fires after the DELETE inside the transaction, which is exactly the
+// window that used to lose data.
+func TestReplaceThinkingForMessage_AtomicOnFailure(t *testing.T) {
+	dbDir := t.TempDir()
+	if err := initTestDB(dbDir); err != nil {
+		t.Fatalf("initTestDB: %v", err)
+	}
+	defer func() {
+		db.Close()
+		dbRead.Close()
+	}()
+
+	sessionID := "thinking-atomic-sess"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+		sessionID, "/test", "test", "Atomic Session")
+	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
+	if err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+	msgID, _ := res.LastInsertId()
+
+	// Rows that must survive a failed rewrite.
+	require.NoError(t, UpsertThinking(msgID, sessionID, "th_preexisting", "precious"))
+
+	// Abort any insert carrying the marker text.
+	_, err = db.Exec(`
+		CREATE TRIGGER fail_marked_insert BEFORE INSERT ON chat_thinking
+		WHEN NEW.text = 'TRIGGER_FAIL'
+		BEGIN SELECT RAISE(ABORT, 'injected failure'); END;
+	`)
+	require.NoError(t, err)
+
+	bad := []ThinkingRecord{
+		{ThinkID: "th_first", Text: "fine"},
+		{ThinkID: "th_bad", Text: "TRIGGER_FAIL"},
+	}
+	err = ReplaceThinkingForMessage(msgID, sessionID, bad)
+	require.Error(t, err, "a failing record must surface an error")
+
+	// The whole rewrite rolled back: the pre-existing row is intact and none of
+	// the new rows leaked in.
+	rec, err := GetThinking("th_preexisting", msgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec, "pre-existing row must survive a failed batch rewrite")
+	require.Equal(t, "precious", rec.Text)
+
+	if leaked, _ := GetThinking("th_first", msgID); leaked != nil {
+		t.Errorf("row from the failed transaction leaked: %+v", leaked)
+	}
+
+	var n int
+	require.NoError(t, dbRead.QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n))
+	require.Equal(t, 1, n, "only the pre-existing row may remain")
+}
+
+// TestReplaceThinkingForMessage_DuplicateThinkIDLastWins guards a semantic the
+// batch must preserve: the previous delete-then-insert-per-record loop resolved a
+// repeated think_id by last-wins (each iteration deleted the prior row and wrote
+// its own). A plain multi-row INSERT would instead violate
+// UNIQUE(think_id, message_id, seq) and abort the whole rewrite.
+func TestReplaceThinkingForMessage_DuplicateThinkIDLastWins(t *testing.T) {
+	dbDir := t.TempDir()
+	if err := initTestDB(dbDir); err != nil {
+		t.Fatalf("initTestDB: %v", err)
+	}
+	defer func() {
+		db.Close()
+		dbRead.Close()
+	}()
+
+	sessionID := "thinking-dup-sess"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+		sessionID, "/test", "test", "Dup Session")
+	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
+	if err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+	msgID, _ := res.LastInsertId()
+
+	recs := []ThinkingRecord{
+		{ThinkID: "th_dup", Text: "first"},
+		{ThinkID: "th_other", Text: "other"},
+		{ThinkID: "th_dup", Text: "second"},
+	}
+	require.NoError(t, ReplaceThinkingForMessage(msgID, sessionID, recs))
+
+	var n int
+	require.NoError(t, dbRead.QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n))
+	require.Equal(t, 2, n, "duplicate think_id must collapse to one row")
+
+	rec, err := GetThinking("th_dup", msgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.Equal(t, "second", rec.Text, "the last occurrence wins, as before")
+}
+
+// TestPersistThinkingToDB_SlimsAndReplacesRows covers the end-to-end
+// Finalize entry point: it must slim the content, drop rows whose think_id the
+// final merge retired, and store exactly the live records.
+//
+// Scope note: this pins the observable outcome of persistThinkingToDB, NOT that
+// the write is transactional — the old per-record shape produced the same rows,
+// so reverting the wiring does not fail here. Transactionality is covered by
+// TestReplaceThinkingForMessage_AtomicOnFailure.
+func TestPersistThinkingToDB_SlimsAndReplacesRows(t *testing.T) {
+	dbDir := t.TempDir()
+	if err := initTestDB(dbDir); err != nil {
+		t.Fatalf("initTestDB: %v", err)
+	}
+	defer func() {
+		db.Close()
+		dbRead.Close()
+	}()
+
+	sessionID := "thinking-persist-sess"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+		sessionID, "/test", "test", "Persist Session")
+	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
+	if err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+	msgID, _ := res.LastInsertId()
+
+	// Rows the streaming flush already persisted, including one whose think_id
+	// the final merge retired (must disappear).
+	require.NoError(t, AppendThinkingSegment(msgID, sessionID, "th_retired", 0, "old partial"))
+	require.NoError(t, AppendThinkingSegment(msgID, sessionID, "th_live", 0, "old partial"))
+
+	// Finalize content: thinking text present for th_live, th_retired gone, and
+	// one brand-new block. After persistThinkingToDB the content must be slim
+	// and chat_thinking must hold exactly the two live records.
+	content := `{"blocks":[
+		{"type":"thinking","think_id":"th_live","text":"final reasoning"},
+		{"type":"thinking","text":"brand new reasoning"},
+		{"type":"text","text":"the answer"}
+	]}`
+
+	slim := persistThinkingToDB(content, msgID, sessionID)
+	require.NotEqual(t, content, slim, "content should be slimmed")
+	require.NotContains(t, slim, "final reasoning", "thinking text must move out of content")
+	require.Contains(t, slim, "th_live", "slim block keeps its think_id marker")
+
+	var n int
+	require.NoError(t, dbRead.QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n))
+	require.Equal(t, 2, n, "exactly the two live records")
+
+	if rec, _ := GetThinking("th_retired", msgID); rec != nil {
+		t.Errorf("retired think_id must be removed, got %+v", rec)
+	}
+	live, err := GetThinking("th_live", msgID)
+	require.NoError(t, err)
+	require.NotNil(t, live)
+	require.Equal(t, "final reasoning", live.Text)
 }
