@@ -11,6 +11,7 @@ import {
   THUMB_DEFAULT_WIDTH,
   THUMB_MOBILE_WIDTH,
 } from '@/utils/chatRenderUtils.ts'
+import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
 
 // ─── rewriteImageUrls ────────────────────────────────────────────────────────
 
@@ -828,6 +829,22 @@ describe('markInlineSvgs (alias wrapInlineSvgs)', () => {
     expect(result).toContain('data-x="a&gt;b"')
   })
 
+  it('marks a katex-internal svg when a literal > in a quoted attr hides the ancestry', () => {
+    // The tag regex is `[^>]*`, so a LITERAL `>` inside a quoted attribute
+    // truncates the open tag and the walker misses the `.katex` ancestry on
+    // that element. This is a known limitation of the hand-rolled scanner:
+    // defense 2 in mediaBlockFactory (`closest('.katex')`) is what actually
+    // keeps the formula safe. Pinning the current behavior here means removing
+    // defense 2 cannot silently regress the end-to-end guarantee.
+    const html = '<div data-x="a>b" class="katex">'
+      + '<svg viewBox="0 0 1 1"><path d="M0 0"></path></svg>'
+      + '</div>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('class="lightbox-svg"')
+    // …and the DOM guard still refuses to lift it into a media figure.
+    expect(annotateMediaBlocks(result)).not.toContain('image-block-wrapper')
+  })
+
   // ── KaTeX internal typography SVGs (issue #473) ──
   //
   // KaTeX draws stretchy delimiters (\underbrace, \overbrace, \sqrt,
@@ -864,9 +881,45 @@ describe('markInlineSvgs (alias wrapInlineSvgs)', () => {
   })
 
   it('does not treat an unrelated class containing "katex" as KaTeX markup', () => {
-    // Word-boundary check: `my-katex-widget` / `katexfoo` are not KaTeX.
-    const html = '<div class="my-katex-widget"><svg viewBox="0 0 10 10"><rect></rect></svg></div>'
-    expect(wrapInlineSvgs(html)).toContain('class="lightbox-svg"')
+    // `my-katex-widget` / `katexfoo` are not KaTeX (no boundary match).
+    for (const cls of ['my-katex-widget', 'katexfoo']) {
+      const html = `<div class="${cls}"><svg viewBox="0 0 10 10"><rect></rect></svg></div>`
+      expect(wrapInlineSvgs(html)).toContain('class="lightbox-svg"')
+    }
+  })
+
+  it('does not treat an AI-authored `katex-<word>` class as KaTeX markup', () => {
+    // The suffix set is an explicit allow-list, not a `-\w+` wildcard. A
+    // wrapper the AI happens to name `katex-widget` / `katex-diagram` is NOT
+    // KaTeX output, so its content svg must keep the media marker. (The DOM
+    // guard in mediaBlockFactory cannot rescue this: `closest('.katex')`
+    // matches only the exact `katex` token.)
+    for (const cls of ['katex-widget', 'katex-diagram', 'katex-box', 'katex-foo']) {
+      const html = `<div class="${cls}"><svg viewBox="0 0 10 10"><rect></rect></svg></div>`
+      expect(wrapInlineSvgs(html)).toContain('class="lightbox-svg"')
+    }
+  })
+
+  it('suppresses the svg for every class KaTeX actually stamps', () => {
+    // The allow-list must cover the real markers (katex.min.css + renderer):
+    // `katex`, `katex-display`, `katex-html`, `katex-mathml`, `katex-error`.
+    for (const cls of ['katex', 'katex-display', 'katex-html', 'katex-mathml', 'katex-error']) {
+      const html = `<div class="${cls}"><svg viewBox="0 0 10 10"><rect></rect></svg></div>`
+      expect(wrapInlineSvgs(html)).not.toContain('lightbox-svg')
+    }
+  })
+
+  it('ignores an attribute merely ending in "class" (data-class)', () => {
+    // `\bclass` would match inside `data-class` (`-` is a word boundary):
+    // it falsely flagged the element as KaTeX, and the inject path would have
+    // written `lightbox-svg` INTO the data-class value.
+    const flagged = '<div data-class="katex"><svg viewBox="0 0 10 10"><rect></rect></svg></div>'
+    expect(wrapInlineSvgs(flagged)).toContain('class="lightbox-svg"')
+
+    const injected = wrapInlineSvgs('<svg data-class="x" viewBox="0 0 1 1"><rect></rect></svg>')
+    expect(injected).toContain('class="lightbox-svg"')
+    expect(injected).toContain('data-class="x"')
+    expect(injected).not.toContain('data-class="x lightbox-svg"')
   })
 
   it('does not leak the KaTeX flag through a void element (img/br)', () => {

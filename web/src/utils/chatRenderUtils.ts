@@ -160,7 +160,7 @@ export function markInlineSvgs(html: string): string {
       const inKatex = tagStack.some(t => t.katex)
 
       // Idempotency: skip SVGs already carrying the lightbox-svg marker class.
-      const alreadyMarked = /\bclass\s*=\s*("|')[^"']*\blightbox-svg\b[^"']*\1/i.test(openTag)
+      const alreadyMarked = /(?:^|\s)class\s*=\s*("|')[^"']*\blightbox-svg\b[^"']*\1/i.test(openTag)
 
       if (alreadyMarked || inInteractive || inKatex) {
         // Treat this svg as a balanced unit: skip its full span untouched.
@@ -182,9 +182,10 @@ export function markInlineSvgs(html: string): string {
       if (closeEnd >= 0) {
         const innerHtml = html.slice(openIndex + openTag.length, closeEnd - '</svg>'.length)
         // Add the lightbox-svg marker class, preserving any existing class.
-        // Handles both single- and double-quoted class attributes.
-        const tagged = /(\bclass\s*=\s*("|')[^"']*)\2/i.test(openTag)
-          ? openTag.replace(/(\bclass\s*=\s*("|')[^"']*)\2/i, '$1 lightbox-svg$2')
+        // Handles both single- and double-quoted class attributes. `(?:^|\s)`
+        // (not `\b`) keeps `data-class="…"` from being treated as the class.
+        const tagged = /((?:^|\s)class\s*=\s*("|')[^"']*)\2/i.test(openTag)
+          ? openTag.replace(/((?:^|\s)class\s*=\s*("|')[^"']*)\2/i, '$1 lightbox-svg$2')
           : openTag.replace(/\/?>$/, ' class="lightbox-svg">')
 
         result.push(html.slice(lastIndex, openIndex))
@@ -200,9 +201,12 @@ export function markInlineSvgs(html: string): string {
     }
 
     // Track non-svg tags for the interactive-container / KaTeX-ancestry
-    // heuristics. A tag counts as KaTeX when its class carries the `katex`
-    // marker — KaTeX stamps `katex`, `katex-display` and `katex-html` on its
-    // wrappers, and every internal glyph svg lives under one of them.
+    // heuristics. A tag counts as KaTeX when its class carries one of the
+    // markers KaTeX actually stamps — `katex`, `katex-display`, `katex-html`,
+    // `katex-mathml` and `katex-error` — and every internal glyph svg lives
+    // under one of them. The suffix set is an explicit allow-list, NOT a
+    // `-\w+` wildcard: an AI-authored wrapper like `class="katex-widget"` is
+    // not KaTeX markup, and its content svg must keep the media marker.
     if (tag.startsWith('</')) {
       if (tagStack[tagStack.length - 1]?.name === name) tagStack.pop()
     } else if (!/\/>$/.test(tag) && !VOID_TAGS.has(name)) {
@@ -210,9 +214,11 @@ export function markInlineSvgs(html: string): string {
       // stale entry that never pops, leaking its flags onto every later element
       // — e.g. a <br> inside .katex would suppress the marker on a genuine
       // content svg further down the document.
-      const cls = tag.match(/\bclass\s*=\s*("([^"]*)"|'([^']*)')/i)
+      // `(?:^|\s)class` (not `\bclass`) so an attribute merely *ending* in
+      // "class" — e.g. `data-class="katex"` — is not mistaken for the class.
+      const cls = tag.match(/(?:^|\s)class\s*=\s*("([^"]*)"|'([^']*)')/i)
       const classAttr = cls ? (cls[2] ?? cls[3] ?? '') : ''
-      const katex = /(^|\s)katex(-\w+)?(\s|$)/.test(classAttr)
+      const katex = /(^|\s)katex(-display|-html|-mathml|-error)?(\s|$)/.test(classAttr)
       tagStack.push({ name, katex })
     }
   }
