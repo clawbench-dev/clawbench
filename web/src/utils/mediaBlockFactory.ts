@@ -57,7 +57,8 @@ function stampLightboxImg(el: Element): void {
  * bare `svg.lightbox-svg` (marker class added by markInlineSvgs in the chat
  * pipeline; bare svg in file previews is left as-is, as before).
  * SVG elements still inside an interactive UI element injected by the pipeline
- * (a/button) are skipped — they are not content media.
+ * (a/button), or inside KaTeX-rendered markup, are skipped — they are not
+ * content media.
  *
  * Media are inline-flow in the marked output; lifting them to block requires:
  *   - media alone in a <p> → the <p> is replaced by the figure;
@@ -86,6 +87,12 @@ export function annotateMediaBlocks(html: string): string {
             continue
         }
         if (isSvg && el.closest('button')) continue // UI icon, not content
+        // KaTeX draws stretchy delimiters (\underbrace, \sqrt, \xrightarrow …)
+        // with its own internal <svg> glyph fragments. They are formula layout,
+        // not content media — lifting one into a block figure tears the formula
+        // apart and blows the message width out (issue #473). markInlineSvgs
+        // already declines to mark them; this is the authoritative guard.
+        if (isSvg && el.closest('.katex')) continue
 
         const isLocal = el.hasAttribute('data-attach-src')
         const shareMode = isShareMode()

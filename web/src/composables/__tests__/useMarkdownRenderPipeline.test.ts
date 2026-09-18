@@ -344,3 +344,67 @@ describe('data-source-line through the full markdown preview pipeline', () => {
     expect(html).toContain('data-source-line="8"')
   })
 })
+
+// --- Issue #473: KaTeX typography SVGs must not be lifted into media blocks ---
+
+describe('KaTeX stretchy-delimiter svgs are not hijacked as media (issue #473)', () => {
+  // KaTeX draws \underbrace / \overbrace / \sqrt / \xrightarrow / \vec with its
+  // own internal <svg> glyph fragments nested under `.katex`. Before the fix,
+  // markInlineSvgs marked them `lightbox-svg` and annotateMediaBlocks lifted
+  // each into a block-level `.image-block-wrapper`, which tore the formula
+  // apart and blew the message width out (measured 6012px in a 400px viewport).
+  const cases: Array<[string, string]> = [
+    ['\\underbrace', '$$\\underbrace{a}_{b}$$'],
+    ['\\overbrace', '$$\\overbrace{a}^{b}$$'],
+    ['\\sqrt', '$$\\sqrt{x}$$'],
+    ['\\xrightarrow', '$$a \\xrightarrow{b} c$$'],
+    ['\\vec', '$$\\vec{x}$$'],
+  ]
+
+  for (const [name, md] of cases) {
+    it(`does not wrap the internal svg of ${name} in a media figure`, () => {
+      const html = renderMarkdownHtml(md)
+      expect(html).not.toContain('image-block-wrapper')
+      expect(html).not.toContain('lightbox-svg-wrap')
+      // The formula still rendered (KaTeX markup present, no error fallback).
+      expect(html).toContain('class="katex"')
+      expect(html).not.toContain('katex-error')
+    })
+  }
+
+  it('keeps every svg of a dense multi-formula reply inside its formula', () => {
+    // The reported reply: two \underbrace in one display formula, plus inline
+    // math and bare-underscore notation on surrounding lines.
+    const md = [
+      '所有方法的原始梯度，最后都能整理成这个形状：',
+      '',
+      '$$\\sum_t \\underbrace{GC(q,o,t)}_{\\text{标量}} \\cdot \\underbrace{\\nabla_\\theta \\log \\pi_\\theta(o_t|\\cdot)}_{\\text{求导结果}}$$',
+      '',
+      '- SFT/RFT/DPO 的数据都从 π_sft 来',
+      '- **PPO 的 $A_t$**：唯一**逐 token 不同**的 GC',
+      '- **GRPO 的 $\\hat A_{i,t} + \\beta(\\frac{\\pi_{ref}}{\\pi_\\theta}-1)$**：KL 以梯度系数出现',
+    ].join('\n')
+    const html = renderMarkdownHtml(md)
+
+    // No formula fragment was promoted to a content media block.
+    expect(html).not.toContain('image-block-wrapper')
+    expect(html).not.toContain('lightbox-svg-wrap')
+    // All three formulas rendered (one display + two inline).
+    expect(html.match(/class="katex"/g)).toHaveLength(3)
+    expect(html).not.toContain('katex-error')
+    // The stretchy brace glyphs survive inside the display formula.
+    expect(html).toContain('class="stretchy"')
+    // Bare underscores were never emphasis to begin with (CommonMark intraword
+    // rule) — regression guard so a future "fix" cannot introduce <em> here.
+    expect(html).not.toContain('<em>')
+    expect(html).toContain('π_sft')
+  })
+
+  it('still lifts a genuine inline content svg returned by the AI', () => {
+    // The KaTeX guard must not become a blanket svg veto.
+    const md = '<svg viewBox="0 0 10 10" width="10" height="10"><rect width="10" height="10"></rect></svg>'
+    const html = renderMarkdownHtml(md)
+    expect(html).toContain('image-block-wrapper')
+    expect(html).toContain('lightbox-svg-wrap')
+  })
+})

@@ -828,6 +828,63 @@ describe('markInlineSvgs (alias wrapInlineSvgs)', () => {
     expect(result).toContain('data-x="a&gt;b"')
   })
 
+  // ── KaTeX internal typography SVGs (issue #473) ──
+  //
+  // KaTeX draws stretchy delimiters (\underbrace, \overbrace, \sqrt,
+  // \xrightarrow, \vec …) with its OWN <svg> glyph fragments nested under
+  // `.katex` wrappers. They are part of the formula layout, not content media:
+  // marking one makes annotateMediaBlocks lift it into a block-level figure,
+  // which destroys the formula and blows the message width out.
+
+  it('does not mark a KaTeX stretchy-delimiter svg (katex-html ancestry)', () => {
+    // Shape of a real KaTeX \underbrace glyph (see katex.min.css .brace-left).
+    const html = '<span class="katex"><span class="katex-html"><span class="stretchy">'
+      + '<svg width="400em" height="0.548em" viewBox="0 0 400000 548"><path d="M0 0"></path></svg>'
+      + '</span></span></span>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toBe(html)
+    expect(result).not.toContain('lightbox-svg')
+  })
+
+  it('does not mark an svg inside katex-display (display-mode formula)', () => {
+    const html = '<span class="katex-display"><span class="katex"><span class="katex-html">'
+      + '<svg viewBox="0 0 400000 548"><path d="M0 0"></path></svg>'
+      + '</span></span></span>'
+    expect(wrapInlineSvgs(html)).toBe(html)
+  })
+
+  it('still marks a content svg that merely follows a formula', () => {
+    // The KaTeX ancestry must not leak past the closing tags: a bare svg after
+    // a formula is still content media and must get the marker.
+    const html = '<span class="katex"><span class="katex-html">x</span></span>'
+      + '<svg viewBox="0 0 10 10"><rect></rect></svg>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('class="lightbox-svg"')
+    expect(result.match(/class="lightbox-svg"/g)).toHaveLength(1)
+  })
+
+  it('does not treat an unrelated class containing "katex" as KaTeX markup', () => {
+    // Word-boundary check: `my-katex-widget` / `katexfoo` are not KaTeX.
+    const html = '<div class="my-katex-widget"><svg viewBox="0 0 10 10"><rect></rect></svg></div>'
+    expect(wrapInlineSvgs(html)).toContain('class="lightbox-svg"')
+  })
+
+  it('does not leak the KaTeX flag through a void element (img/br)', () => {
+    // Void elements have no closing tag. If one were pushed onto the tag stack
+    // it would never pop, permanently flagging the rest of the document as
+    // KaTeX — silently suppressing the marker on later content svgs.
+    const html = '<span class="katex"><span class="katex-html"><img src="x.png"><br></span></span>'
+      + '<svg viewBox="0 0 10 10"><rect></rect></svg>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('<svg viewBox="0 0 10 10" class="lightbox-svg">')
+  })
+
+  it('does not leak the KaTeX flag through a self-closing element', () => {
+    const html = '<span class="katex"><span class="katex-html"><rect/></span></span>'
+      + '<svg viewBox="0 0 10 10"><rect></rect></svg>'
+    expect(wrapInlineSvgs(html)).toContain('<svg viewBox="0 0 10 10" class="lightbox-svg">')
+  })
+
   it('does not mark svg inside a button (pipeline-injected UI icon)', () => {
     const html = '<button class="chat-file-open-btn" data-file-path="src/main.go"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 1"></path></svg></button>'
     const result = wrapInlineSvgs(html)

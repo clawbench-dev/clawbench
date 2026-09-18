@@ -135,6 +135,35 @@ describe('annotateMediaBlocks', () => {
     expect(annotateMediaBlocks(html)).toBe(html)
   })
 
+  // Issue #473: KaTeX renders stretchy delimiters (\underbrace, \sqrt,
+  // \xrightarrow …) with its own internal <svg> glyph fragments. Lifting one
+  // into a block figure tears the formula apart — this guard is authoritative
+  // even if a caller hands us an already-marked katex svg.
+  it('does not lift an svg nested inside .katex (formula typography)', () => {
+    const html = '<p><span class="katex"><span class="katex-html"><span class="stretchy">'
+      + '<svg class="lightbox-svg" viewBox="0 0 400000 548"><path d="M0 0"></path></svg>'
+      + '</span></span></span></p>'
+    const out = annotateMediaBlocks(html)
+    expect(out).not.toContain('image-block-wrapper')
+    expect(out).not.toContain('lightbox-svg-wrap')
+    // The formula markup itself is untouched.
+    expect(out).toContain('class="stretchy"')
+  })
+
+  it('does not lift a katex svg nested in a list item or table cell', () => {
+    const html = '<ul><li><span class="katex"><svg class="lightbox-svg" viewBox="0 0 1 1"></svg></span></li></ul>'
+    expect(annotateMediaBlocks(html)).not.toContain('image-block-wrapper')
+  })
+
+  it('still lifts a content svg that merely follows a formula', () => {
+    // The .katex guard must be ancestry-scoped, not a blanket svg veto.
+    const html = '<p><span class="katex"><span class="katex-html">x</span></span>'
+      + '<svg class="lightbox-svg" viewBox="0 0 10 10"><rect></rect></svg></p>'
+    const out = annotateMediaBlocks(html)
+    expect(out).toContain('image-block-wrapper')
+    expect(out.match(/image-block-wrapper/g)).toHaveLength(1)
+  })
+
   it('is idempotent — re-applying does not double-wrap', () => {
     const html = '<p><img src="x.png"></p>'
     const once = annotateMediaBlocks(html)
