@@ -906,6 +906,36 @@ describe('FileManagerContent — handleItemClick', () => {
 
     expect(wrapper.emitted('navigateDir')).toBeFalsy()
   })
+
+  it('PC: closing the viewed file keeps the row highlighted', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    // Open a file: the click highlights it and the parent starts the viewer.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    await wrapper.setProps({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
+
+    // Close the viewer: the parent nulls currentFile. The highlight the user
+    // just had must survive — closing a file does not deselect it.
+    await wrapper.setProps({ currentFile: null })
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
+    const row = wrapper.find('.file-item[data-path="test.ts"]')
+    expect(row.classes()).toContain('active')
+  })
+
+  it('an external selection (chat annotation) still pushes the highlight in', async () => {
+    const wrapper = mountContent()
+    expect(wrapper.vm._getSelectedPath()).toBe('')
+
+    await wrapper.setProps({ currentFile: { path: 'readme.md', name: 'readme.md' } })
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
+    expect(wrapper.find('.file-item[data-path="readme.md"]').classes()).toContain('active')
+  })
 })
 
 // ── Preview mode (single-click quick preview) ──

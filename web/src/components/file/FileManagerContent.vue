@@ -1062,8 +1062,12 @@ function clearRangeAnchor() {
     rangeAnchorPath.value = ''
     rangeBaseSelection = new Set()
 }
-// Sync from external file selection (e.g. chat annotation, search)
-watch(() => props.currentFile?.path ?? '', p => { selectedPath.value = p })
+// Sync from external file selection (e.g. chat annotation, search).
+// Only push a real path in: closing the viewed file nulls `currentFile`, and
+// blanking the highlight then would drop the selection the user just had.
+// Directory changes clear `selectedPath` on their own (see the currentDir
+// watcher), so a null here never needs to clear it.
+watch(() => props.currentFile?.path ?? '', p => { if (p) selectedPath.value = p })
 
 // ── Thumbnail loading errors ──
 const thumbErrors = reactive(new Set())
