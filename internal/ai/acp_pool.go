@@ -671,20 +671,20 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 		return ACPCachedState{}
 	}
 
-	if !conn.mu.TryLock() {
-		return ACPCachedState{}
-	}
+	// Snapshot under stateMu (a leaf lock, so this cannot block on an in-flight
+	// RPC the way c.mu can).
+	conn.stateMu.Lock()
 	currentModeID := conn.currentModeID
 	currentThinkingEffortID := conn.currentThinkingEffortID
 	currentModelID := conn.currentModelID
 	planState := conn.cachedPlanState
 	usageState := conn.cachedUsageState
+	conn.stateMu.Unlock()
 	replayPending := conn.loadSessionActive.Load()
 	agentID := ""
 	if conn.agent != nil {
 		agentID = conn.agent.ID
 	}
-	conn.mu.Unlock()
 
 	if agentID == "" {
 		return ACPCachedState{}
@@ -754,14 +754,16 @@ func (m *ACPConnManager) GetCurrentModelIDByAgentID(agentID string) string {
 	defer m.mu.Unlock()
 
 	for key, conn := range m.conns {
-		conn.mu.Lock()
 		matched := (conn.agent != nil && conn.agent.ID == agentID) || key == agentID
-		if matched && conn.currentModelID != "" {
-			modelID := conn.currentModelID
-			conn.mu.Unlock()
+		if !matched {
+			continue
+		}
+		conn.stateMu.Lock()
+		modelID := conn.currentModelID
+		conn.stateMu.Unlock()
+		if modelID != "" {
 			return modelID
 		}
-		conn.mu.Unlock()
 	}
 	return ""
 }
@@ -941,7 +943,26 @@ type ACPConn struct {
 	// and permanently hang the session (see the idle-sweep vs. new-prompt race).
 	procMu sync.Mutex
 
-	// cached state — populated from NewSession/ResumeSession responses
+	// stateMu guards the cached session state below. It is a LEAF lock: never
+	// held across an RPC, and never held while acquiring c.mu.
+	//
+	// Why not c.mu: these fields are written by the SDK's notification
+	// goroutine (mapACPSessionUpdate → SetCachedPlanState / SetCachedUsageState /
+	// SetCachedModelListState / HasCurrentChanged / UpdateCachedCurrent). RPC
+	// methods like NewSession/ResumeSession hold c.mu while waiting for queued
+	// notifications to drain (SDK waitNotificationsUpTo), so taking c.mu from a
+	// notification callback deadlocks: the RPC waits for notifications, the
+	// notification waits for c.mu. The agent keeps emitting the whole time, the
+	// SDK's bounded queue (1024) overflows, and the SDK kills the connection —
+	// surfacing as "peer disconnected before response" while the process is
+	// still alive (observed 2026-09-17, notification queue overflow).
+	//
+	// Lock order: c.mu → stateMu is allowed (RPC paths snapshot state);
+	// stateMu → c.mu is forbidden.
+	stateMu sync.Mutex
+
+	// cached state — populated from NewSession/ResumeSession responses.
+	// Guarded by stateMu, NOT c.mu (see stateMu).
 	currentModeID           string
 	currentThinkingEffortID string
 	currentModelID          string
@@ -953,7 +974,7 @@ type ACPConn struct {
 	// The legacy fields (currentModeID, currentThinkingEffortID, currentModelID)
 	// are kept for backward compatibility and are the canonical source of truth
 	// for those well-known categories. This map is used for any additional
-	// categories and as a unified access pattern.
+	// categories and as a unified access pattern. Guarded by stateMu.
 	currentSelections map[string]string
 
 	// lastSetConfig tracks the last values successfully sent to the agent via
@@ -1448,43 +1469,43 @@ func (c *ACPConn) SetLoadSessionActiveForTest(v bool) {
 
 // GetCurrentModeID returns the session's current mode ID.
 func (c *ACPConn) GetCurrentModeID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentModeID
 }
 
 // SetCurrentModeID sets the session's current mode ID.
 func (c *ACPConn) SetCurrentModeID(modeID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentModeID = modeID
 }
 
 // GetCurrentThinkingEffortID returns the session's current thinking effort ID.
 func (c *ACPConn) GetCurrentThinkingEffortID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentThinkingEffortID
 }
 
 // SetCurrentThinkingEffortID sets the session's current thinking effort ID.
 func (c *ACPConn) SetCurrentThinkingEffortID(effortID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentThinkingEffortID = effortID
 }
 
 // GetCurrentModelID returns the session's current model ID.
 func (c *ACPConn) GetCurrentModelID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentModelID
 }
 
 // SetCurrentModelID sets the session's current model ID.
 func (c *ACPConn) SetCurrentModelID(modelID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentModelID = modelID
 }
 
@@ -1499,9 +1520,10 @@ func (c *ACPConn) SetCurrentModelID(modelID string) {
 // For well-known categories ("mode", "thought_level", "model"), this delegates
 // to the existing legacy field for backward compatibility. For other categories,
 // it uses the currentSelections map.
+// Called from the SDK notification goroutine — uses stateMu, never c.mu.
 func (c *ACPConn) UpdateCachedCurrent(category, value string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	switch category {
 	case "mode":
 		c.currentModeID = value
@@ -1521,8 +1543,8 @@ func (c *ACPConn) UpdateCachedCurrent(category, value string) {
 // For well-known categories, it reads from the legacy field. For other categories,
 // it reads from the currentSelections map.
 func (c *ACPConn) GetCurrentSelection(category string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	switch category {
 	case "mode":
 		return c.currentModeID
@@ -1540,9 +1562,10 @@ func (c *ACPConn) GetCurrentSelection(category string) string {
 
 // HasCurrentChanged checks if the given value differs from the session's current
 // selection for the specified category.
+// Called from the SDK notification goroutine — uses stateMu, never c.mu.
 func (c *ACPConn) HasCurrentChanged(category, value string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	var current string
 	switch category {
 	case "mode":
@@ -1560,30 +1583,33 @@ func (c *ACPConn) HasCurrentChanged(category, value string) bool {
 }
 
 // SetCachedPlanState caches the plan state from a plan_update event.
+// Called from the SDK notification goroutine — uses stateMu, never c.mu
+// (see ACPConn.stateMu for why c.mu would deadlock).
 func (c *ACPConn) SetCachedPlanState(state *PlanState) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.cachedPlanState = state
 }
 
 // GetCachedPlanState returns the cached plan state.
 func (c *ACPConn) GetCachedPlanState() *PlanState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.cachedPlanState
 }
 
 // SetCachedUsageState caches the usage state from a usage_update event.
+// Called from the SDK notification goroutine — uses stateMu, never c.mu.
 func (c *ACPConn) SetCachedUsageState(state *UsageState) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.cachedUsageState = state
 }
 
 // GetCachedUsageState returns the cached usage state.
 func (c *ACPConn) GetCachedUsageState() *UsageState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.cachedUsageState
 }
 
@@ -1833,20 +1859,20 @@ func (c *ACPConn) resetLastSetConfig() {
 }
 
 func (c *ACPConn) UpdateCachedCurrentModel(modelID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentModelID = modelID
 }
 
 func (c *ACPConn) UpdateCachedCurrentMode(modeID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentModeID = modeID
 }
 
 func (c *ACPConn) UpdateCachedCurrentThinkingEffort(effortID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentThinkingEffortID = effortID
 }
 
@@ -1880,13 +1906,10 @@ func (c *ACPConn) SetCachedModeState(state *ModeState) {
 	if state == nil {
 		return
 	}
-	c.mu.Lock()
+	agentID := c.AgentID()
+	c.stateMu.Lock()
 	c.currentModeID = state.CurrentModeID
-	agentID := ""
-	if c.agent != nil {
-		agentID = c.agent.ID
-	}
-	c.mu.Unlock()
+	c.stateMu.Unlock()
 	if agentID != "" && len(state.AvailableModes) > 0 {
 		GetAgentCapabilityRegistry().UpdateModes(agentID, state.AvailableModes)
 	}
@@ -1897,22 +1920,17 @@ func (c *ACPConn) SetCachedConfigState(state *ConfigOptionState) {
 	if state == nil {
 		return
 	}
-	c.mu.Lock()
-	agentID := ""
-	if c.agent != nil {
-		agentID = c.agent.ID
-	}
-	c.mu.Unlock()
+	agentID := c.AgentID()
 	if agentID != "" {
 		GetAgentCapabilityRegistry().UpdateConfigState(agentID, state)
 		if !GetAgentCapabilityRegistry().HasAvailableModes(agentID) {
 			if derived := modeStateFromConfigState(state); derived != nil && len(derived.AvailableModes) > 0 {
 				GetAgentCapabilityRegistry().UpdateModes(agentID, derived.AvailableModes)
-				c.mu.Lock()
+				c.stateMu.Lock()
 				if c.currentModeID == "" {
 					c.currentModeID = derived.CurrentModeID
 				}
-				c.mu.Unlock()
+				c.stateMu.Unlock()
 			}
 		}
 	}
@@ -1924,13 +1942,10 @@ func (c *ACPConn) SetCachedThinkingEffortState(state *ThinkingEffortState) {
 	if state == nil {
 		return
 	}
-	c.mu.Lock()
+	agentID := c.AgentID()
+	c.stateMu.Lock()
 	c.currentThinkingEffortID = state.CurrentID
-	agentID := ""
-	if c.agent != nil {
-		agentID = c.agent.ID
-	}
-	c.mu.Unlock()
+	c.stateMu.Unlock()
 	if agentID != "" && len(state.AvailableLevels) > 0 {
 		GetAgentCapabilityRegistry().UpdateThinkingEfforts(agentID, state.AvailableLevels)
 	}
@@ -1942,13 +1957,10 @@ func (c *ACPConn) SetCachedModelListState(state *ModelListState) {
 	if state == nil {
 		return
 	}
-	c.mu.Lock()
+	agentID := c.AgentID()
+	c.stateMu.Lock()
 	c.currentModelID = state.CurrentModelID
-	agentID := ""
-	if c.agent != nil {
-		agentID = c.agent.ID
-	}
-	c.mu.Unlock()
+	c.stateMu.Unlock()
 	if agentID != "" && len(state.Models) > 0 {
 		GetAgentCapabilityRegistry().UpdateModels(agentID, state.Models)
 	}
@@ -1967,15 +1979,15 @@ func (c *ACPConn) HasNewAvailableModes(newModes []ModeDef) bool {
 
 // HasCurrentModeChanged checks if the given modeId differs from the session's current mode.
 func (c *ACPConn) HasCurrentModeChanged(modeID string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentModeID != modeID
 }
 
 // HasCurrentThinkingEffortChanged checks if the given effortId differs from the session's current thinking effort.
 func (c *ACPConn) HasCurrentThinkingEffortChanged(effortID string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentThinkingEffortID != effortID
 }
 

@@ -245,7 +245,11 @@ type cachedConfigSnapshot struct {
 }
 
 // snapshotCachedConfig captures current session-level config values before a respawn.
+// Takes stateMu, not c.mu: the caller (ensureAliveWithSession) already holds c.mu,
+// and stateMu is a leaf lock so acquiring it there is safe.
 func (c *ACPConn) snapshotCachedConfig() cachedConfigSnapshot {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return cachedConfigSnapshot{
 		mode:   c.currentModeID,
 		model:  c.currentModelID,

@@ -38,9 +38,7 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	}
 
 	// Clear stale plan state from the previous turn
-	c.mu.Lock()
-	c.cachedPlanState = nil
-	c.mu.Unlock()
+	c.SetCachedPlanState(nil)
 
 	// Reset the per-turn _meta extension accumulator so stale metadata from a
 	// previous turn cannot leak into this one's message-level metadata.
@@ -352,9 +350,7 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	// CodeBuddy is excluded: its usage_update.cost carries credit, not money
 	// (see costFieldCarriesCredit). The real credit is persisted separately
 	// from _meta.usage.credit below.
-	c.mu.Lock()
-	cachedUsage := c.cachedUsageState
-	c.mu.Unlock()
+	cachedUsage := c.GetCachedUsageState()
 	if cachedUsage != nil && cachedUsage.Cost > 0 && !costFieldCarriesCredit(backendID) {
 		meta.CostUSD = cachedUsage.Cost
 	}
