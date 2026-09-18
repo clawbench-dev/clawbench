@@ -836,6 +836,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	defer service.StopQueueReaper()
 	defer service.StopForgePoller()
 	defer service.StopBingWallpaperWorker()
+	defer service.StopMetricsPusher()
 
 	// Determine port before loading skills/agents (skills and agents need {{PORT}})
 	port := cfg.Port
@@ -1181,6 +1182,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// cycle between ws and service). StreamHub.Emit stores user_message before
 	// broadcast so offline clients can recover them after reconnect.
 	ws.GetManager().StreamHub().SetEventStoreFunc(service.StoreNotifiableEvent)
+
+	// Push system-resource metrics over WS while (and only while) a client
+	// declares interest. Started after ws.InitManager so GetManager is non-nil.
+	service.StartMetricsPusher()
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)

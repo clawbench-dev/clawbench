@@ -219,6 +219,10 @@ func readClientMessages(mgr *Manager, conn *websocket.Conn, writeMu *sync.Mutex,
 			handleCancelViaWS(msg.SessionID, clientID)
 		case "permission_respond":
 			handlePermissionRespondViaWS(msg, clientID)
+		case "metrics_preference":
+			// The interval is clamped inside SetClientMetricsPreference, so a
+			// client cannot request an absurdly fast sampler.
+			mgr.SetClientMetricsPreference(clientID, msg.MetricsEnabled, msg.MetricsIntervalMs)
 		default:
 			slog.Warn("ws: unknown client message type", "type", msg.Type, "client_id", clientID)
 		}

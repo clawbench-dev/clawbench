@@ -39,6 +39,14 @@ const runningExecs = [
   { id: 'session-abc', startedAt: new Date(Date.now() - 65000).toISOString(), triggerType: 'auto', status: 'running' },
 ]
 
+// The component subscribes to task_update over the WS channel to drive
+// running-status sync (it no longer polls), so useGlobalEvents must be mocked.
+vi.mock('@/composables/useGlobalEvents', () => ({
+  useGlobalEvents: () => ({
+    onEvent: vi.fn(() => vi.fn()),
+  }),
+}))
+
 vi.mock('@/composables/useTaskHistory.ts', async () => {
   const { ref } = await import('vue')
   return {

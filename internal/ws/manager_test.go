@@ -1508,3 +1508,231 @@ func TestDisconnectClientIfCurrent_ReplacedConnNoOp(t *testing.T) {
 	_ = infoA.conn.CloseNow()
 	_ = infoB.conn.CloseNow()
 }
+
+// ---------- System-resource telemetry delivery ----------
+
+// telemetryMsg builds a representative non-critical telemetry frame.
+func telemetryMsg() ServerMessage {
+	return ServerMessage{Type: MessageTypeEvent, Event: "system_resources", Data: map[string]any{"cpu": 12.5}}
+}
+
+// connectedMetricsSub registers a subscription whose conn is non-nil (the
+// "connected" signal MetricsDemand and telemetry delivery both check) and that
+// has declared metrics interest. Returns the subscription for inspection.
+//
+// A zero-value &websocket.Conn{} cannot be used here: Subscribe's replace path
+// calls Close on the previous conn, which panics on an uninitialized Conn. A
+// real accepted connection is required.
+func connectedMetricsSub(t *testing.T, mgr *Manager, clientID string) *ClientSubscription {
+	t.Helper()
+	conn := acceptRealConn(t)
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(conn, &writeMu, clientID, "")
+	if sub == nil {
+		t.Fatal("expected a subscription")
+	}
+	if !mgr.SetClientMetricsPreference(clientID, true, defaultMetricsIntervalMs) {
+		t.Fatal("expected the preference to be recorded")
+	}
+	return sub
+}
+
+// acceptRealConn starts a throwaway WS server and returns the server side of an
+// accepted connection. The connection is never read from or written to, so it
+// only serves as a non-nil conn; it is closed when the test ends.
+func acceptRealConn(t *testing.T) *websocket.Conn {
+	t.Helper()
+	connCh := make(chan *websocket.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		connCh <- c
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, "ws"+srv.URL[4:], nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	t.Cleanup(func() { _ = client.CloseNow() })
+
+	select {
+	case c := <-connCh:
+		return c
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never accepted the connection")
+		return nil
+	}
+}
+
+// TestManager_Telemetry_DoesNotBufferReplay is the regression test for the core
+// hazard: at 1Hz, a buffered telemetry stream would evict real chat/task events
+// from the 50-entry reconnect replay buffer within a minute.
+func TestManager_Telemetry_DoesNotBufferReplay(t *testing.T) {
+	mgr := NewManagerForTest()
+	sub := connectedMetricsSub(t, mgr, "telemetry-1")
+
+	for range 60 {
+		mgr.BroadcastToMetricsWatchers(telemetryMsg())
+	}
+
+	if buffered := sub.GetBufferedEvents(); len(buffered) != 0 {
+		t.Fatalf("telemetry must not enter the replay buffer, got %d entries", len(buffered))
+	}
+
+	// Sanity: a real event on the same subscription IS buffered, proving the
+	// assertion above is about telemetry specifically and not a broken buffer.
+	mgr.BroadcastEvent(ServerMessage{Type: MessageTypeEvent, ID: "real-1", Event: "session_update"})
+	if buffered := sub.GetBufferedEvents(); len(buffered) != 1 {
+		t.Fatalf("expected the ordinary event to be buffered, got %d entries", len(buffered))
+	}
+}
+
+// TestManager_Telemetry_QueueFullDoesNotCloseConnection pins the second half of
+// the hazard: losing one metric frame must never tear down the chat connection.
+func TestManager_Telemetry_QueueFullDoesNotCloseConnection(t *testing.T) {
+	mgr := NewManagerForTest()
+	sub := connectedMetricsSub(t, mgr, "telemetry-full")
+
+	// Make the queue deterministic to fill: nothing drains it (no writer started).
+	sub.mu.Lock()
+	sub.sendQueue = make(chan []byte, 1)
+	sub.mu.Unlock()
+
+	if n := mgr.BroadcastToMetricsWatchers(telemetryMsg()); n != 1 {
+		t.Fatalf("expected the first frame to be accepted, got %d", n)
+	}
+	// Queue is full now. Telemetry must drop, not close.
+	if n := mgr.BroadcastToMetricsWatchers(telemetryMsg()); n != 0 {
+		t.Fatalf("expected the overflowing frame to be dropped, got %d", n)
+	}
+
+	sub.mu.Lock()
+	stillConnected := sub.conn != nil
+	sub.mu.Unlock()
+	if !stillConnected {
+		t.Fatal("telemetry overflow must not disconnect the client")
+	}
+}
+
+// TestManager_BroadcastToMetricsWatchers_SkipsNonWatchers verifies delivery is
+// gated on an explicit declaration, not just on being connected.
+func TestManager_BroadcastToMetricsWatchers_SkipsNonWatchers(t *testing.T) {
+	mgr := NewManagerForTest()
+
+	// Connected but never declared.
+	var wmu1 sync.Mutex
+	if mgr.Subscribe(acceptRealConn(t), &wmu1, "silent", "") == nil {
+		t.Fatal("expected a subscription")
+	}
+	// Connected and declared.
+	connectedMetricsSub(t, mgr, "watcher")
+
+	if n := mgr.BroadcastToMetricsWatchers(telemetryMsg()); n != 1 {
+		t.Fatalf("expected exactly the declaring client to receive the frame, got %d", n)
+	}
+}
+
+func TestManager_MetricsDemand_Gating(t *testing.T) {
+	t.Run("no subscriptions", func(t *testing.T) {
+		mgr := NewManagerForTest()
+		count, interval := mgr.MetricsDemand()
+		if count != 0 || interval != 0 {
+			t.Fatalf("expected (0,0), got (%d,%d)", count, interval)
+		}
+	})
+
+	t.Run("declared but disconnected contributes no demand", func(t *testing.T) {
+		mgr := NewManagerForTest()
+		connectedMetricsSub(t, mgr, "gone")
+		mgr.DisconnectClient("gone")
+
+		count, _ := mgr.MetricsDemand()
+		if count != 0 {
+			t.Fatalf("a disconnected client must not keep the sampler running, got count=%d", count)
+		}
+	})
+
+	t.Run("disabled declaration", func(t *testing.T) {
+		mgr := NewManagerForTest()
+		connectedMetricsSub(t, mgr, "off")
+		mgr.SetClientMetricsPreference("off", false, 0)
+
+		if count, _ := mgr.MetricsDemand(); count != 0 {
+			t.Fatalf("expected no demand after disabling, got %d", count)
+		}
+	})
+
+	t.Run("fastest interval wins across clients", func(t *testing.T) {
+		mgr := NewManagerForTest()
+		connectedMetricsSub(t, mgr, "slow")
+		mgr.SetClientMetricsPreference("slow", true, 5000)
+		connectedMetricsSub(t, mgr, "fast")
+		mgr.SetClientMetricsPreference("fast", true, 1000)
+
+		count, interval := mgr.MetricsDemand()
+		if count != 2 {
+			t.Fatalf("expected 2 watchers, got %d", count)
+		}
+		if interval != 1000 {
+			t.Fatalf("expected the fastest interval to win, got %d", interval)
+		}
+	})
+}
+
+func TestManager_SetClientMetricsPreference_UnknownClient(t *testing.T) {
+	mgr := NewManagerForTest()
+	if mgr.SetClientMetricsPreference("nobody", true, 1000) {
+		t.Fatal("expected false for an unknown client")
+	}
+}
+
+// TestManager_Subscribe_ResetsMetricsPreference pins that a reconnecting client
+// must re-declare: preserving a stale flag would keep the sampler running for a
+// client that never comes back to declare.
+func TestManager_Subscribe_ResetsMetricsPreference(t *testing.T) {
+	mgr := NewManagerForTest()
+	connectedMetricsSub(t, mgr, "reconnect")
+	if count, _ := mgr.MetricsDemand(); count != 1 {
+		t.Fatalf("precondition failed: expected 1 watcher, got %d", count)
+	}
+
+	// Reconnect (same clientID, new connection).
+	var wmu sync.Mutex
+	if mgr.Subscribe(acceptRealConn(t), &wmu, "reconnect", "") == nil {
+		t.Fatal("expected the reconnect to succeed")
+	}
+
+	if count, _ := mgr.MetricsDemand(); count != 0 {
+		t.Fatalf("a fresh connection must start with no metrics preference, got count=%d", count)
+	}
+}
+
+func TestNormalizeMetricsInterval(t *testing.T) {
+	tests := []struct {
+		name      string
+		enabled   bool
+		requested int
+		want      int
+	}{
+		{"disabled clears the interval", false, 1000, 0},
+		{"too fast is clamped to the default", true, 1, defaultMetricsIntervalMs},
+		{"zero falls back to the default", true, 0, defaultMetricsIntervalMs},
+		{"within range is kept", true, 5000, 5000},
+		{"too slow is clamped to the maximum", true, 999999, maxMetricsIntervalMs},
+		{"exactly the minimum is kept", true, minMetricsIntervalMs, minMetricsIntervalMs},
+		{"exactly the maximum is kept", true, maxMetricsIntervalMs, maxMetricsIntervalMs},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeMetricsInterval(tc.enabled, tc.requested); got != tc.want {
+				t.Fatalf("normalizeMetricsInterval(%v, %d) = %d, want %d", tc.enabled, tc.requested, got, tc.want)
+			}
+		})
+	}
+}

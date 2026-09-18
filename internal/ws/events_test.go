@@ -275,3 +275,91 @@ func TestEventsHandler_ReplayTagsReplayedEvent(t *testing.T) {
 		}
 	}
 }
+
+// TestEventsHandler_MetricsPreference verifies the client can declare (and
+// withdraw) system-resource push interest over the wire, and that the server
+// clamps an absurd interval.
+func TestEventsHandler_MetricsPreference(t *testing.T) {
+	mgr := newTestManager()
+	origMgr := defaultManager
+	defaultManager = mgr
+	defer func() { defaultManager = origMgr }()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/ai/events/ws", EventsHandler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:] + "/api/ai/events/ws?client_id=metrics-pref"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, resp, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer writeCancel()
+
+	// Declare interest at the foreground rate.
+	require.NoError(t, conn.Write(writeCtx, websocket.MessageText,
+		[]byte(`{"type":"metrics_preference","metrics_enabled":true,"metrics_interval_ms":1000}`)))
+
+	require.Eventually(t, func() bool {
+		count, interval := mgr.MetricsDemand()
+		return count == 1 && interval == defaultMetricsIntervalMs
+	}, 2*time.Second, 20*time.Millisecond, "server should record the declared demand")
+
+	// An absurdly fast request is clamped rather than honored.
+	require.NoError(t, conn.Write(writeCtx, websocket.MessageText,
+		[]byte(`{"type":"metrics_preference","metrics_enabled":true,"metrics_interval_ms":1}`)))
+	require.Eventually(t, func() bool {
+		_, interval := mgr.MetricsDemand()
+		return interval == defaultMetricsIntervalMs
+	}, 2*time.Second, 20*time.Millisecond, "a 1ms request must be clamped")
+
+	// Withdraw interest.
+	require.NoError(t, conn.Write(writeCtx, websocket.MessageText,
+		[]byte(`{"type":"metrics_preference","metrics_enabled":false}`)))
+	require.Eventually(t, func() bool {
+		count, _ := mgr.MetricsDemand()
+		return count == 0
+	}, 2*time.Second, 20*time.Millisecond, "server should drop the demand when disabled")
+}
+
+// TestEventsHandler_UnknownMessageTypeIsIgnored verifies an unrecognized client
+// message does not close the connection (the switch's default branch only warns).
+func TestEventsHandler_UnknownMessageTypeIsIgnored(t *testing.T) {
+	mgr := newTestManager()
+	origMgr := defaultManager
+	defaultManager = mgr
+	defer func() { defaultManager = origMgr }()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/ai/events/ws", EventsHandler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:] + "/api/ai/events/ws?client_id=unknown-msg"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer writeCancel()
+	require.NoError(t, conn.Write(writeCtx, websocket.MessageText, []byte(`{"type":"nonsense_type"}`)))
+
+	// The connection must still accept a valid message afterwards.
+	require.NoError(t, conn.Write(writeCtx, websocket.MessageText,
+		[]byte(`{"type":"metrics_preference","metrics_enabled":true,"metrics_interval_ms":1000}`)))
+	require.Eventually(t, func() bool {
+		count, _ := mgr.MetricsDemand()
+		return count == 1
+	}, 2*time.Second, 20*time.Millisecond, "connection should survive an unknown message type")
+}

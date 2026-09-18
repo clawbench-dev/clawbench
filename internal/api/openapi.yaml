@@ -174,7 +174,14 @@ paths:
     get:
       tags: [System]
       summary: 系统资源实时指标
-      description: CPU、内存、磁盘、网络等指标快照，供资源面板轮询。
+      description: |
+        CPU、内存、磁盘、网络等指标快照，供程序化访问 / 健康检查使用。
+
+        UI 已改为 WebSocket 推送，不再轮询本端点：客户端通过
+        `/api/ai/events/ws` 发送 `metrics_preference` 声明订阅速率
+        （前台 1000ms / 后台 5000ms / 关闭），服务端仅在存在订阅者时
+        按最快请求速率采样并推送 `system_resources` 事件。
+        本端点保留给无 WS 能力的调用方，不使用时零成本（采样是惰性的）。
       operationId: systemResources
       responses:
         "200":
@@ -1530,6 +1537,12 @@ paths:
         WebSocket 端点，承载聊天流式事件、通知与状态推送。OpenAPI 不建模升级握手：
         客户端使用 `ws(s)://<host>/api/ai/events/ws` 建连，消息为 JSON 事件对象。
         重连时服务端回放断线期间缓冲的事件（带 `replayed: true` 标记）。
+
+        客户端消息类型：`subscribe` / `unsubscribe` / `cancel` /
+        `permission_respond` / `ack` / `pong` / `metrics_preference`。
+        `metrics_preference` 声明是否订阅系统资源推送及速率
+        （`{"type":"metrics_preference","metrics_enabled":true,"metrics_interval_ms":1000}`），
+        服务端据此按需采样并推送 `system_resources` 事件；该事件不进回放缓冲。
       operationId: eventsWS
       responses:
         "101":

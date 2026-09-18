@@ -54,6 +54,10 @@ type ClientMessage =
     | { type: 'unsubscribe'; session_id: string }
     | { type: 'cancel'; session_id: string }
     | { type: 'permission_respond'; session_id: string; tool_call_id: string; option_id: string; cancelled: boolean }
+    // Declares interest in server-pushed system-resource metrics. The server
+    // only samples while at least one client declares `metrics_enabled`, and at
+    // the fastest interval any of them asked for.
+    | { type: 'metrics_preference'; metrics_enabled: boolean; metrics_interval_ms?: number }
 
 type EventHandler = (event: string, data: ServerEvent['data']) => void
 

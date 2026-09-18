@@ -78,6 +78,7 @@ import { ref, watch, onUnmounted, computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Square, History, Trash2, Zap } from 'lucide-vue-next'
 import { useTaskHistory } from '@/composables/useTaskHistory.ts'
+import { useGlobalEvents } from '@/composables/useGlobalEvents.ts'
 import { eventSourceLabel } from '@/utils/forgeEventLabels'
 import { formatDuration, formatDateTime } from '@/utils/format.ts'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -89,6 +90,9 @@ const props = defineProps({
 })
 
 const { t } = useI18n()
+
+// WS subscription used to drive running-status sync (replaces a 3s poll).
+const { onEvent } = useGlobalEvents()
 
 // Scroll container and sentinel refs for IntersectionObserver
 const listRef = ref(null)
@@ -146,18 +150,23 @@ function setupObserver() {
   observer.observe(sentinelRef.value)
 }
 
-let pollTimer = null
+// ── Running-status sync ──
+// Driven by the backend's task_update broadcast rather than a 3s poll: the
+// scheduler already emits `running` on start (OnStarted) and a terminal status
+// on completion, so polling only ever re-learned what the server had just told
+// us. This component is the sole consumer of runningExecutions, so it subscribes
+// for its own task only.
+let unsubscribeTaskUpdate = null
+let resyncTimer = null
 
-function startPolling() {
-  stopPolling()
-  pollTimer = setInterval(loadRunningStatus, 3000)
-}
-
-function stopPolling() {
-  if (pollTimer !== null) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
+/** Coalesce a burst of task_update events (running → completed arrive
+ *  back-to-back) into a single GET /api/tasks/{id}. */
+function scheduleRunningStatusSync() {
+  if (resyncTimer) clearTimeout(resyncTimer)
+  resyncTimer = setTimeout(() => {
+    resyncTimer = null
+    loadRunningStatus()
+  }, 200)
 }
 
 // ── Live elapsed-time display for running executions ──
@@ -206,15 +215,30 @@ watch(
 
 watch(() => props.task?.id, (newId) => {
   if (!newId) {
-    stopPolling()
     stopElapsedTicker()
     return
   }
   onTaskChange()
   loadExecutions().then(() => nextTick(setupObserver))
+  // Authoritative initial sync. `running` events are not persisted for offline
+  // replay (IsNotifiableEvent keeps only completed/failed/cancelled), so the
+  // live subscription alone could miss a run that started while we were away.
   loadRunningStatus()
-  startPolling()
 }, { immediate: true })
+
+// Subscribe to this task's updates. A `running` event is emitted by the
+// scheduler's OnStarted hook, so a run started after mount appears without
+// polling.
+unsubscribeTaskUpdate = onEvent((event, data) => {
+  if (event !== 'task_update') return
+  // props.task.id is a number; the server sends task_id as a string.
+  if (String(data?.task_id ?? '') !== String(props.task?.id ?? '')) return
+  scheduleRunningStatusSync()
+})
+
+// WS reconnect is the sole state-sync trigger (see useGlobalEvents): resync the
+// running list so a run that started while disconnected is not missing.
+window.addEventListener('clawbench-reconnect', scheduleRunningStatusSync)
 
 // Re-setup observer when the external scroll root becomes available.
 // Note: this relies on the scroll root (TaskDetailPage.detail-scroll) staying
@@ -227,7 +251,15 @@ watch(() => props.scrollRoot?.value, () => {
 })
 
 onUnmounted(() => {
-  stopPolling()
+  if (unsubscribeTaskUpdate) {
+    unsubscribeTaskUpdate()
+    unsubscribeTaskUpdate = null
+  }
+  if (resyncTimer) {
+    clearTimeout(resyncTimer)
+    resyncTimer = null
+  }
+  window.removeEventListener('clawbench-reconnect', scheduleRunningStatusSync)
   stopElapsedTicker()
   onTaskChange() // Abort in-flight requests (ISS-016)
   if (observer) {
