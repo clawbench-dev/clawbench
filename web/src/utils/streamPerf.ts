@@ -172,6 +172,30 @@ export function taskChanged(oldTask: Record<string, unknown>, newTask: Record<st
  * Supports a "fast path" mode: when deferEnhancements is true,
  * blocks are initially cached with skipEnhancements=true and
  * scheduled for upgrade to the full pipeline via requestIdleCallback.
+ *
+ * Entries are keyed by message id (the DB row id, globally unique across
+ * sessions) plus a caller-supplied `scope`. The scope exists because the
+ * rendered HTML is NOT a pure function of the block text: it also depends on
+ * rendering inputs that the message id knows nothing about.
+ *
+ *   - `projectRoot`: the path annotators resolve every detected path relative
+ *     to it, so the same text renders different `data-file-path` values under a
+ *     different project (or worktree) root.
+ *   - `locale`: the annotators bake translated labels into the HTML
+ *     (`gt('chat.attach.openFile')`, `gt('common.copy')`, …), and the language
+ *     toggle is live — no page reload.
+ *
+ * Putting those inputs in the key (rather than only clearing the cache when
+ * they change) makes a stale hit impossible: a lookup under a new project root
+ * simply misses. It also makes the dependency explicit at the call site, where
+ * the value is read during render — which is what lets Vue re-run the render
+ * when it changes. Clearing alone does NOT re-render: a cache hit short-circuits
+ * `renderTextBlock`, so the render effect has no dependency on the input and
+ * the DOM would keep the old annotations until some unrelated re-render.
+ *
+ * Because the cache now outlives session switches, it needs a bound:
+ * `MAX_ENTRIES` caps how many rendered blocks are retained and evicts
+ * least-recently-used ones first.
  */
 export class StaticBlockCache {
   private cache = new Map<string, string>()
@@ -180,32 +204,69 @@ export class StaticBlockCache {
   private upgradeScheduled = false
   private upgradeFn: (() => void) | null = null
 
-  private makeKey(msgId: string | number, blockIdx: number, text: string): string {
+  /**
+   * Upper bound on retained entries. Each entry is one block's rendered HTML
+   * string; a long-lived cache over a big session can otherwise grow without
+   * limit. Map preserves insertion order, so the first key is the oldest —
+   * `get()` re-inserts on hit to keep that ordering LRU rather than FIFO.
+   */
+  private static readonly MAX_ENTRIES = 3000
+
+  private makeKey(msgId: string | number, blockIdx: number, text: string, scope: string): string {
     const prefix = text.length > 40 ? text.slice(0, 20) : ''
     const suffix = text.slice(-20)
-    return `${msgId}-${blockIdx}-${text.length}-${prefix}${suffix}`
+    // `scope` is last so the msgId/blockIdx/text part stays readable in a
+    // debugger. Empty scope keeps the historical key shape for callers that
+    // have no rendering inputs to distinguish (e.g. tests, TaskExecDetail).
+    const scopePart = scope ? `-${scope}` : ''
+    return `${msgId}-${blockIdx}-${text.length}-${prefix}${suffix}${scopePart}`
   }
 
-  get(msgId: string | number, blockIdx: number, text: string): string | undefined {
-    return this.cache.get(this.makeKey(msgId, blockIdx, text))
+  /** Drop oldest entries until the cache is back under the cap. */
+  private evictIfNeeded(): void {
+    while (this.cache.size > StaticBlockCache.MAX_ENTRIES) {
+      const oldest = this.cache.keys().next().value
+      if (oldest === undefined) break
+      this.cache.delete(oldest)
+      this.deferredKeys.delete(oldest)
+    }
   }
 
-  set(msgId: string | number, blockIdx: number, text: string, html: string, deferred = false): void {
-    const key = this.makeKey(msgId, blockIdx, text)
+  get(msgId: string | number, blockIdx: number, text: string, scope = ''): string | undefined {
+    const key = this.makeKey(msgId, blockIdx, text, scope)
+    const hit = this.cache.get(key)
+    if (hit === undefined) return undefined
+    // Refresh recency: delete + re-set moves the key to the end of the
+    // insertion order so eviction above is LRU, not FIFO.
+    this.cache.delete(key)
+    this.cache.set(key, hit)
+    return hit
+  }
+
+  set(msgId: string | number, blockIdx: number, text: string, html: string, deferred = false, scope = ''): void {
+    const key = this.makeKey(msgId, blockIdx, text, scope)
+    // Re-inserting an existing key must also refresh its recency.
+    this.cache.delete(key)
     this.cache.set(key, html)
     if (deferred) {
       this.deferredKeys.add(key)
     }
+    this.evictIfNeeded()
+  }
+
+  /** Number of retained entries (for tests / diagnostics). */
+  get size(): number {
+    return this.cache.size
   }
 
   /** Mark an entry as upgraded from deferred to full render */
-  markUpgraded(msgId: string | number, blockIdx: number, text: string): void {
-    this.deferredKeys.delete(this.makeKey(msgId, blockIdx, text))
+  markUpgraded(msgId: string | number, blockIdx: number, text: string, scope = ''): void {
+    this.deferredKeys.delete(this.makeKey(msgId, blockIdx, text, scope))
   }
 
   /** Check if an entry was rendered with deferred enhancements */
-  isDeferred(msgId: string | number, blockIdx: number, text: string): boolean {
-    return this.deferredKeys.has(this.makeKey(msgId, blockIdx, text))
+  isDeferred(msgId: string | number, blockIdx: number, text: string, scope = ''): boolean {
+    return this.deferredKeys.has(this.makeKey(msgId, blockIdx, text, scope))
   }
 
   /** Set the function to call when deferred entries need upgrading */

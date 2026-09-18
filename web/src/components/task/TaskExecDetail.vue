@@ -258,7 +258,6 @@ provide('chatRender', {
 provide('chatSession', { getAgentBackend, getAgentName })
 provide('chatUI', { navigateToFileViewer: () => emit('close') })
 provide('autoSpeech', useAutoSpeech())
-provide('layoutRefreshKey', ref(0))
 
 // ── Summary / Original toggle ──
 const hasSummary = computed(() => props.execDetail?.summary != null && props.execDetail.summary !== '')

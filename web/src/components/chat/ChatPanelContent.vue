@@ -7,6 +7,7 @@
       :expandedTools="render.expandedTools.value"
       :blockTasks="render.blockTasks"
       :blockAskQuestions="render.blockAskQuestions"
+      :staticBlockCache="render.staticBlockCache"
       :agents="agentsList"
       :currentAgent="currentAgent"
       :currentSessionId="identity.currentSessionId.value"
@@ -257,9 +258,6 @@ const messageStore = createChatMessageStore(messages)
 const renderedMessages = computed(() => messages.value)
 const inputDisabled = ref(false)
 const loading = ref(false)
-// Incremented when the panel reopens, so ChatMessageItem can re-check
-// overflow after being hidden (display:none gives scrollHeight=0).
-const layoutRefreshKey = ref(0)
 const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || null)
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
@@ -648,7 +646,6 @@ provide('chatSession', { getAgentBackend, getAgentName, sessionId: () => identit
 // the correct tab (file → view, dir → browse), so this is a no-op to avoid overriding.
 provide('chatUI', { navigateToFileViewer: () => {} })
 provide('autoSpeech', autoSpeech)
-provide('layoutRefreshKey', layoutRefreshKey)
 
 // 子抽屉的视觉隐藏由 useTabDrawer.effectiveOpen 自动处理（切换 tab 时
 // effectiveOpen 变 false，openRef 保留原值），不需要在 active 变化时
@@ -671,11 +668,6 @@ watch(() => props.active, async (val) => {
     // skipIfUnchanged=true preserves scroll position when no new messages arrived while tab was hidden
     await session.loadHistory(isFirstOpen, true, true)
     hasLoadedOnce = true
-    // Bump layoutRefreshKey AFTER loadHistory so ChatMessageItem re-checks
-    // collapse state with the fresh messages and valid scrollHeight.
-    nextTick(() => {
-      layoutRefreshKey.value++
-    })
   }
 }, { immediate: true })
 

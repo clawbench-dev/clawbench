@@ -292,6 +292,82 @@ describe('StaticBlockCache', () => {
     expect(cache.get('msg2', 0, 'b')).toBeUndefined()
   })
 
+  // ── Bounded retention (LRU) ──
+  //
+  // The cache is deliberately NOT cleared on session/project switch (keys are
+  // globally-unique DB message ids), so it needs a bound. These tests pin the
+  // eviction policy: least-recently-USED, not simply oldest-inserted.
+
+  it('retains entries across a simulated session switch (no clear)', () => {
+    const cache = new StaticBlockCache()
+    cache.set('session-a-msg', 0, 'text', '<p>from session A</p>')
+
+    // A session switch no longer calls clear(); the old entry must survive.
+    cache.set('session-b-msg', 0, 'text', '<p>from session B</p>')
+
+    expect(cache.get('session-a-msg', 0, 'text')).toBe('<p>from session A</p>')
+    expect(cache.get('session-b-msg', 0, 'text')).toBe('<p>from session B</p>')
+  })
+
+  it('evicts least-recently-used entries once over the cap', () => {
+    const cache = new StaticBlockCache()
+    const MAX = 3000
+
+    for (let i = 0; i < MAX; i++) {
+      cache.set(`msg${i}`, 0, 'text', `<p>${i}</p>`)
+    }
+    expect(cache.size).toBe(MAX)
+
+    // Refresh msg0 so it becomes the most recently used.
+    expect(cache.get('msg0', 0, 'text')).toBe('<p>0</p>')
+
+    // One more insert pushes us over the cap.
+    cache.set('msg-overflow', 0, 'text', '<p>new</p>')
+    expect(cache.size).toBe(MAX)
+
+    // msg0 was touched, so it must survive; msg1 (next oldest) is evicted.
+    expect(cache.get('msg0', 0, 'text')).toBe('<p>0</p>')
+    expect(cache.get('msg1', 0, 'text')).toBeUndefined()
+    expect(cache.get('msg-overflow', 0, 'text')).toBe('<p>new</p>')
+  })
+
+  it('re-setting an existing key refreshes its recency and does not grow the cache', () => {
+    const cache = new StaticBlockCache()
+    const MAX = 3000
+
+    for (let i = 0; i < MAX; i++) {
+      cache.set(`msg${i}`, 0, 'text', `<p>${i}</p>`)
+    }
+
+    // Overwrite the oldest entry — same key, new value.
+    cache.set('msg0', 0, 'text', '<p>updated</p>')
+    expect(cache.size).toBe(MAX)
+
+    cache.set('msg-overflow', 0, 'text', '<p>new</p>')
+    expect(cache.size).toBe(MAX)
+
+    // msg0 was re-set (most recent), so msg1 is the eviction victim.
+    expect(cache.get('msg0', 0, 'text')).toBe('<p>updated</p>')
+    expect(cache.get('msg1', 0, 'text')).toBeUndefined()
+  })
+
+  it('eviction also drops the deferred flag for the evicted key', () => {
+    const cache = new StaticBlockCache()
+    const MAX = 3000
+
+    cache.set('oldest', 0, 'text', '<p>old</p>', true)
+    expect(cache.isDeferred('oldest', 0, 'text')).toBe(true)
+
+    for (let i = 0; i < MAX; i++) {
+      cache.set(`msg${i}`, 0, 'text', `<p>${i}</p>`)
+    }
+
+    // 'oldest' was evicted, so its deferred flag must be gone too — otherwise
+    // scheduleUpgrade would keep chasing a key that is no longer cached.
+    expect(cache.isDeferred('oldest', 0, 'text')).toBe(false)
+    expect(cache.deferredCount).toBe(0)
+  })
+
   it('differentiates by msgId', () => {
     const cache = new StaticBlockCache()
     cache.set('msg1', 0, 'text', '<p>A</p>')

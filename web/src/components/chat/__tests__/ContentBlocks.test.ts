@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick, reactive } from 'vue'
+import { nextTick, reactive, markRaw } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 import { apiGet } from '@/utils/api'
@@ -59,7 +59,10 @@ vi.mock('@/utils/api', () => ({
 }))
 
 vi.mock('@/stores/app.ts', () => ({
-  store: { state: { tasks: [] } },
+  // `reactive` (not a plain object) because ContentBlocks reads
+  // `store.state.projectRoot` during render to build its cache scope; the
+  // projectRoot-scope test below asserts the DOM re-renders when it changes.
+  store: { state: reactive({ tasks: [] as unknown[], projectRoot: '/proj/alpha' }) },
 }))
 
 vi.mock('@/utils/contentBlocks.ts', () => ({
@@ -2284,5 +2287,97 @@ describe('streaming render cost', () => {
     await nextTick()
 
     expect(wrapper.html()).toContain('step one two')
+  })
+})
+
+// ── Static block cache: scope + reactivity contract ──
+//
+// Two things are guarded here, both invisible to a cache-only unit test:
+//
+//  1. The cache instance must be passed through `markRaw`. It is handed to
+//     this component as a prop, and Vue would otherwise proxy it; `get()`
+//     mutates Maps to maintain LRU order, so those writes would land on
+//     reactive state DURING render and re-trigger the render effect that
+//     called `get()` — "Maximum recursive updates exceeded". A mounted
+//     component is the only place that failure is observable.
+//
+//  2. The key must include a scope covering projectRoot (path annotators
+//     resolve relative to it) and locale (translated labels are baked into
+//     the HTML). Without it, enabling the cache serves the previous project's
+//     annotations after a switch.
+//
+// `renderTextBlock` below is a pure function of its arguments; it must not read
+// reactive state, or the spy itself would drive re-renders and mask the subject.
+describe('static block cache scope', () => {
+  it('does not recurse when the cache instance is bound', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    // `markRaw` mirrors what useChatRender does. Without it, Vue proxies the
+    // instance, `get()`'s LRU writes become reactive mutations during render,
+    // and the render effect re-triggers itself until Vue aborts with
+    // "Maximum recursive updates exceeded".
+    const cache = markRaw(new StaticBlockCache())
+    const renderTextBlock = vi.fn(() => '<p>stable</p>')
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'hello' }],
+      staticBlockCache: cache,
+      renderTextBlock,
+    })
+    await nextTick()
+    await nextTick()
+
+    // Reaching here at all proves no recursive-update loop was thrown.
+    expect(wrapper.find('.content-blocks').exists()).toBe(true)
+  })
+
+  it('keys entries by projectRoot so a switch cannot serve stale HTML', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const cache = markRaw(new StaticBlockCache())
+    const renderTextBlock = vi.fn((_t: string) => `<p data-root="${store.state.projectRoot}">block</p>`)
+
+    store.state.projectRoot = '/proj/alpha'
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'hello' }],
+      staticBlockCache: cache,
+      renderTextBlock,
+    })
+    expect(wrapper.html()).toContain('data-root="/proj/alpha"')
+
+    // Same block, new root: the scope changed, so the lookup must miss and the
+    // block must re-render rather than serve the alpha HTML.
+    store.state.projectRoot = '/proj/beta'
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'hello' }] })
+    await nextTick()
+
+    expect(wrapper.html()).toContain('data-root="/proj/beta"')
+    expect(wrapper.html()).not.toContain('data-root="/proj/alpha"')
+  })
+
+  it('reuses a cached entry when the scope is unchanged', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const cache = markRaw(new StaticBlockCache())
+    const renderTextBlock = vi.fn(() => '<p>stable</p>')
+
+    store.state.projectRoot = '/proj/alpha'
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'hello' }],
+      staticBlockCache: cache,
+      renderTextBlock,
+    })
+    // Count only calls for THIS block. The component also renders a summary
+    // line via renderTextBlock(summary || '', …) on every pass (template line
+    // 10), which is unrelated to the cache and would otherwise pollute the
+    // count. Matching on the block text isolates the cached path.
+    const blockCalls = () =>
+      renderTextBlock.mock.calls.filter((c) => c[0] === 'hello').length
+    const afterMount = blockCalls()
+    expect(afterMount).toBeGreaterThan(0)
+
+    // New array identity, same text, same scope: the entry must hit, so the
+    // expensive pipeline must not run again for this block.
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'hello' }] })
+    await nextTick()
+
+    expect(blockCalls()).toBe(afterMount)
   })
 })

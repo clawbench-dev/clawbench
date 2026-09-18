@@ -361,6 +361,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- defineProps runtime declarations require any for complex prop types */
 import { ref, watch, onUnmounted, computed, onMounted, onUpdated, reactive, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import i18n from '@/i18n'
 import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
 import { askCardKey } from '@/utils/askQuestionState.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
@@ -395,6 +396,40 @@ const TAG = 'ContentBlocks'
 
 const { t } = useI18n()
 const thinkingContent = useThinkingContent()
+
+/**
+ * Current UI locale, read from the global i18n instance rather than
+ * `useI18n()`'s `locale` ref.
+ *
+ * The annotators bake translated labels into the cached HTML via `gt()`, which
+ * resolves against `i18n.global.locale` — so that is the value the cache key
+ * must track. Taking `locale` out of `useI18n()` instead would add a separate
+ * reactivity subscription on this component and measurably perturb the
+ * streaming render path (two streaming-cost tests regressed).
+ */
+function i18nGlobalLocale(): string {
+  return String(i18n.global.locale.value)
+}
+
+/**
+ * Rendering inputs that are NOT captured by (msgId, blockIdx, text) but DO
+ * change the rendered HTML, and so must participate in the cache key:
+ *
+ *   - `projectRoot`: the path annotators resolve every detected path relative
+ *     to it, so the same block renders a different `data-file-path` under a
+ *     different project (or worktree) root.
+ *   - `locale`: the annotators bake translated labels into the HTML
+ *     (`gt('chat.attach.openFile')` in useFilePathAnnotation, `gt('common.copy')`
+ *     in useCodeBlockHeader), and switching language is live — no reload.
+ *
+ * This is read inside `getBlockHtml`, i.e. during render, which is what makes
+ * it a reactive dependency: when either input changes, Vue re-runs the render
+ * and the lookup below misses (the key changed) instead of serving stale HTML.
+ * Merely clearing the cache on change is NOT enough — a cache hit returns
+ * before `renderTextBlock` runs, so the render effect would hold no dependency
+ * on the input and the DOM would keep the previous project's annotations.
+ */
+const cacheScope = computed(() => `${store.state.projectRoot}\u0000${i18nGlobalLocale()}`)
 
 // Auto-expand tools (AskUserQuestion, PermissionApproval) need input to render inline.
 // In slim format, input is absent from DB-loaded content — fetch from API automatically.
@@ -1320,7 +1355,10 @@ function getBlockHtml(bi: number, block: any) {
   if (!props.streaming) {
     // Non-streaming: full pipeline with cache
     if (props.staticBlockCache) {
-      const cached = props.staticBlockCache.get(props.msgId, ai, block.text)
+      // Read the scope before the lookup: this both keys the entry correctly
+      // and registers the render-time dependency on projectRoot/locale.
+      const scope = cacheScope.value
+      const cached = props.staticBlockCache.get(props.msgId, ai, block.text, scope)
       if (cached !== undefined) {
         return cached
       }
@@ -1329,7 +1367,7 @@ function getBlockHtml(bi: number, block: any) {
       // scrollHeight to change after initial paint, creating a visible "snap"
       // when scrollToBottom corrects for the height difference.
       const fullHtml = props.renderTextBlock(block.text, props.msgId, ai, false, false)
-      props.staticBlockCache.set(props.msgId, ai, block.text, fullHtml, false)
+      props.staticBlockCache.set(props.msgId, ai, block.text, fullHtml, false, scope)
       return fullHtml
     }
     return props.renderTextBlock(block.text, props.msgId, ai, false)

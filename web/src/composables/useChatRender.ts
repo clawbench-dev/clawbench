@@ -1,4 +1,4 @@
-import { ref, reactive, nextTick, watch, type Ref } from 'vue'
+import { ref, reactive, nextTick, watch, markRaw, type Ref } from 'vue'
 import { renderMarkdown as baseRenderMarkdown, renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { formatToolInput } from '@/utils/renderToolDetail.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -49,7 +49,17 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
   }, { deep: true })
 
   // ── StaticBlockCache for non-streaming re-renders ──
-  const staticBlockCache = new StaticBlockCache()
+  //
+  // `markRaw` is REQUIRED, not a micro-optimization. This instance is passed
+  // down as a prop to ContentBlocks, and Vue would otherwise wrap it in a
+  // reactive proxy. `get()` mutates internal Maps to maintain LRU order, so
+  // with a proxy those writes happen to reactive state DURING render — which
+  // re-triggers the very render effect that called `get()`, producing
+  // "Maximum recursive updates exceeded" and a frozen UI. (Reproduced with a
+  // mounted ContentBlocks; `markRaw` makes it stop.) The cache is deliberately
+  // opaque state with no template dependency, so opting it out of reactivity
+  // is also the semantically correct choice.
+  const staticBlockCache = markRaw(new StaticBlockCache())
 
   // Upgrade deferred (fast-path) cache entries to full pipeline render.
   // Called via requestIdleCallback after initial fast render for instant display.
@@ -80,15 +90,50 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
   })
 
   // Re-render when theme changes — clear caches since rendering may differ
+  // (code-block syntax colours, table chrome). Theme is a rendering input, so
+  // unlike session switches this genuinely invalidates every cached entry.
   watch(theme, () => {
     staticBlockCache.clear()
     updateRenderedContents(true)
   })
 
-  // Clear caches when session changes
+  // Session switches must NOT clear the rendered-block cache.
+  //
+  // The key contains the DB message id (globally unique across sessions) and a
+  // scope covering the rendering inputs that actually vary (projectRoot,
+  // locale), so an entry can never be mistaken for a different session's block
+  // or for the same block under different inputs. Clearing here meant every
+  // switch re-ran the full markdown pipeline for every historical block —
+  // seconds of 100%-busy main thread on a heavy session, which is what made
+  // "switch a few times" freeze the UI.
+  // The cache is LRU-bounded (StaticBlockCache.MAX_ENTRIES), so retaining
+  // across sessions cannot grow without limit.
+  //
+  // The thinking-text cache IS still cleared: it is keyed by session and its
+  // loader re-fetches per session, so stale entries there are a correctness
+  // problem rather than a perf win.
   watch(currentSessionId, () => {
-    staticBlockCache.clear()
     clearThinkingCache()
+  })
+
+  // Project switches drop the previous project's rendered blocks.
+  //
+  // Correctness no longer depends on this: `ContentBlocks` puts `projectRoot`
+  // in the cache scope, so a lookup under a new root misses regardless. This
+  // watcher exists to RECLAIM memory — without it the cache would retain an
+  // entry for every block of every project visited, and the MAX_ENTRIES LRU
+  // would evict still-reusable entries from the current project to make room
+  // for ones that can never be hit again.
+  //
+  // It does not reintroduce the per-session cost the watcher above avoids:
+  // project switches are rare (explicit project change, worktree jump) and
+  // genuinely invalidate every entry, whereas session switches are frequent
+  // and do not.
+  //
+  // Locale is deliberately NOT watched here: it is part of the same scope, so
+  // a language change misses on its own. Adding a watcher would be redundant.
+  watch(() => store.state.projectRoot, () => {
+    staticBlockCache.clear()
   })
 
   type BlockTaskEntry = { taskId?: number; deleted?: boolean; loading?: boolean; task?: unknown; [key: string]: unknown }
