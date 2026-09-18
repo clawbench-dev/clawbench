@@ -463,8 +463,29 @@ func (c *ACPConn) killProcessLocked() {
 
 // spawnLocked spawns the agent process and initializes the connection (must hold c.mu).
 //
-//nolint:gocyclo // complex spawn logic with multiple sequential setup steps
-func (c *ACPConn) spawnLocked(ctx context.Context) error {
+// On failure the connection is left in a clean, explicitly-dead state via
+// markSpawnFailedLocked (see the deferred cleanup below) so a later
+// ensureAliveWithSession cannot mistake it for a reusable connection.
+//
+//nolint:gocyclo,gocognit // complex spawn logic with multiple sequential setup steps; the failure-cleanup defer is part of that sequence
+func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
+	// A failed spawn must not leave the connection looking alive. The
+	// assignments that would normally clear this state (c.cmd/c.conn/c.client/
+	// c.alive/c.startedAt) all sit AFTER Initialize succeeds, so without this
+	// defer every early return below would leave the PREVIOUS connection's
+	// fields in place — while the kill-old-process step above had already
+	// cleared c.cmd. Because isAliveLocked() skips its process probe when c.cmd
+	// is nil, such a connection reported alive if its Done() had not fired yet,
+	// and the next ensureAliveWithSession reused it instead of respawning.
+	//
+	// A defer (rather than cleanup at each return site) keeps this true for
+	// future early returns added to this function.
+	defer func() {
+		if err != nil {
+			c.markSpawnFailedLocked()
+		}
+	}()
+
 	// Kill any existing process first
 	if c.cmd != nil && c.cmd.Process != nil {
 		killStart := time.Now()

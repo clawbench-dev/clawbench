@@ -2105,6 +2105,37 @@ func (c *ACPConn) killAndMarkDeadLocked() {
 	c.resetLastSetConfig()
 }
 
+// markSpawnFailedLocked records that a spawn attempt failed, leaving the
+// connection unusable. Must be called with c.mu held, after any partially
+// created process/filter has been reaped.
+//
+// Why this must exist: spawnLocked assigns c.cmd/c.conn/c.client/c.alive/
+// c.startedAt only AFTER a successful Initialize. Without this cleanup a failed
+// spawn left the PREVIOUS connection's fields in place while c.cmd had already
+// been cleared by the kill-old-process step. isAliveLocked() skips the process
+// probe when c.cmd is nil, so a stale connection whose Done() had not yet fired
+// (the documented "orphaned grandchild holds the stdout write end" case) was
+// reported ALIVE — and the next ensureAliveWithSession took its early-return
+// branch, reusing a connection that could never serve a prompt.
+//
+// c.acpSID is deliberately preserved (same as killAndMarkDeadLocked) so the
+// next attempt can still recover the session via ResumeSession. startedAt is
+// zeroed rather than left stale: crash diagnostics derive uptime from it, and a
+// stale value reports the previous process's lifetime for a process that never
+// started.
+func (c *ACPConn) markSpawnFailedLocked() {
+	c.cmd = nil
+	c.conn = nil
+	c.client = nil
+	// Drop the I/O handles too: they belong to the process that just failed to
+	// come up. A stale stdin/rawRPC would otherwise point at a dead pipe.
+	c.stdoutFilter = nil
+	c.stdin = nil
+	c.rawRPC = nil
+	c.alive = false
+	c.startedAt = time.Time{}
+}
+
 // close kills the agent process and marks the connection as dead.
 // Unlike killAndMarkDead, this clears acpSID because callers (idle sweep,
 // pool teardown, RemoveConn) permanently discard the connection.
