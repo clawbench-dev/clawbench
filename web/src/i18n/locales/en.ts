@@ -853,6 +853,7 @@ export default {
         timeout: 'AI response timed out (30 min)',
         empty: 'AI returned no content',
         agent_no_run: 'The agent did not run this request — reset the session',
+        agent_init_timeout: 'The agent did not start in time (60s) — check whether it is installed and reachable',
         parse_error: 'AI output parse error',
         backend_exit: 'AI backend exited abnormally',
         request_failed: 'AI request failed',

@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -1375,4 +1376,65 @@ func TestGetCurrentModelIDByAgentID_EmptyWhenNoConnOrNoSelection(t *testing.T) {
 	defer mgr.CloseConn("sid-no-selection")
 
 	assert.Equal(t, "", mgr.GetCurrentModelIDByAgentID("agent-no-selection"))
+}
+
+// --- spawnLocked Initialize timeout ---
+
+// TestSpawnLocked_InitializeTimeout_ReturnsTypedError drives the REAL spawn path
+// against a process that starts but never answers Initialize, proving the
+// deadline is classified as a startup failure rather than a generic handshake
+// error. The helper is the test binary itself, which ignores stdin entirely —
+// exactly the "process up but never ready" shape this fix targets.
+//
+// This is the end-to-end guard for the double-timeout bug: without the typed
+// error, the wrapped SDK deadline would be retried by ExecuteStream and the
+// user would wait twice the handshake budget for a failure already decided.
+func TestSpawnLocked_InitializeTimeout_ReturnsTypedError(t *testing.T) {
+	origTimeout := acpInitializeTimeout
+	acpInitializeTimeout = 150 * time.Millisecond
+	defer func() { acpInitializeTimeout = origTimeout }()
+
+	// The spawned helper only blocks when this is set. spawnLocked passes
+	// os.Environ() to the child, so t.Setenv reaches it — without the marker
+	// the helper would exit at once and the failure would look like a
+	// peer-disconnect instead of a deadline, testing the wrong branch.
+	t.Setenv("GO_WANT_INIT_TIMEOUT_HELPER", "1")
+
+	agent := &model.Agent{
+		ID:         "test-init-timeout",
+		Backend:    "acp-stdio",
+		AcpCommand: os.Args[0] + " -test.run=^TestSpawnLockedInitTimeoutHelper$",
+	}
+	conn := newACPConn(agent, "sid-init-timeout")
+	conn.cwd = t.TempDir()
+
+	err := conn.spawnLocked(context.Background())
+	require.Error(t, err, "an unresponsive Initialize must fail the spawn")
+
+	var initTimeout *acpInitTimeoutError
+	require.ErrorAs(t, err, &initTimeout, "deadline must surface as acpInitTimeoutError, not a generic error")
+	assert.Equal(t, "test-init-timeout", initTimeout.AgentID())
+	assert.Equal(t, 150*time.Millisecond, initTimeout.Timeout())
+
+	// The whole point: ExecuteStream's retry gate must NOT treat this as
+	// retryable, or the user waits for a second identical handshake.
+	assert.False(t, isACPPeerDisconnected(err), "init timeout must not be classified as a retryable disconnect")
+
+	// A failed spawn must leave the connection explicitly dead (not reusable).
+	conn.mu.Lock()
+	alive, cmd := conn.alive, conn.cmd
+	conn.mu.Unlock()
+	assert.False(t, alive, "failed spawn must not leave the connection alive")
+	assert.Nil(t, cmd, "failed spawn must clear the process handle")
+}
+
+// TestSpawnLockedInitTimeoutHelper is not a test on its own. It is the fake
+// agent spawned by TestSpawnLocked_InitializeTimeout_ReturnsTypedError: it
+// blocks without ever reading stdin or writing a response, so the ACP
+// Initialize handshake can only end by timeout.
+func TestSpawnLockedInitTimeoutHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_INIT_TIMEOUT_HELPER") != "1" {
+		return
+	}
+	time.Sleep(30 * time.Second)
 }

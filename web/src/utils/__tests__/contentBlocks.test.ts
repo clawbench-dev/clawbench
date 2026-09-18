@@ -35,6 +35,12 @@ describe('isSevereWarning', () => {
   it('returns false for parse_error', () => {
     expect(isSevereWarning({ reason: 'parse_error' })).toBe(false)
   })
+  // agent_init_timeout is an agent-side startup failure, not a mid-response
+  // interruption — it renders amber like backend_exit/agent_no_run rather than
+  // the red used for disconnect/timeout/panic.
+  it('returns false for agent_init_timeout', () => {
+    expect(isSevereWarning({ reason: 'agent_init_timeout' })).toBe(false)
+  })
   it('returns false for unknown reason', () => {
     expect(isSevereWarning({ reason: 'some_other' })).toBe(false)
   })
@@ -130,6 +136,27 @@ describe('getWarningText', () => {
       : key
     expect(getWarningText({ reason: 'agent_no_run', text: 'The agent did not run this request' }, tFound))
       .toBe('The agent did not run this request — reset the session')
+  })
+
+  // agent_init_timeout is a distinct reason from backend_exit: the agent
+  // process started but never reached protocol readiness, so the copy must
+  // point at startup rather than at the model/backend.
+  it('resolves agent_init_timeout to its own message, not the backend_exit fallback', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.agent_init_timeout'
+      ? 'The agent did not start in time (60s) — check whether it is installed and reachable'
+      : key
+    expect(getWarningText({ reason: 'agent_init_timeout', text: 'The agent did not start within 1m0s' }, tFound))
+      .toBe('The agent did not start in time (60s) — check whether it is installed and reachable')
+  })
+
+  it('does not append the raw backend detail for agent_init_timeout', () => {
+    // Unlike backend_exit/parse_error, the detail here is the SDK's JSON blob
+    // ("acp: agent ... : {\"code\":-32603,...}"), which is noise for the user.
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.agent_init_timeout'
+      ? 'The agent did not start in time (60s)'
+      : key
+    expect(getWarningText({ reason: 'agent_init_timeout', text: 'acp: agent "x": {"code":-32603}' }, tFound))
+      .toBe('The agent did not start in time (60s)')
   })
 
   it('appends suffix to parse_error detail path', () => {

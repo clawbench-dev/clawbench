@@ -856,6 +856,7 @@ export default {
         timeout: 'AI 响应超时（30分钟）',
         empty: 'AI 未返回任何内容',
         agent_no_run: 'Agent 未执行本轮请求，建议重置会话',
+        agent_init_timeout: 'Agent 启动超时（60 秒）——请检查其是否已安装并可正常访问',
         parse_error: 'AI 输出解析错误',
         backend_exit: 'AI 后端异常退出',
         request_failed: 'AI 请求失败',

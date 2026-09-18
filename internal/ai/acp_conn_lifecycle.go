@@ -623,7 +623,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	rawRPC := newACPRawRPC(stdinWriter, conn.Done())
 	stdoutFilter.SetRawSink(rawRPC)
 
-	initCtx, initCancel := context.WithTimeout(ctx, 60*time.Second)
+	initCtx, initCancel := context.WithTimeout(ctx, acpInitializeTimeout)
 	defer initCancel()
 
 	initStart := time.Now()
@@ -644,6 +644,20 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	if err != nil {
 		stdoutFilter.Close()
 		_ = cmd.Process.Kill()
+		// Distinguish "the agent never came up" from a generic handshake error.
+		// The SDK renders the deadline as InternalError(-32603) with
+		// "context deadline exceeded" in its data, which isACPPeerDisconnected
+		// would otherwise classify as a retryable disconnect — retrying the
+		// same handshake just burns a second full timeout.
+		if initCtx.Err() == context.DeadlineExceeded {
+			agentID := ""
+			if c.agent != nil {
+				agentID = c.agent.ID
+			}
+			slog.Warn("acp conn: agent initialize timed out, not retryable",
+				"agent_id", agentID, "clawbench_sid", c.clawbenchSID, "timeout", acpInitializeTimeout)
+			return &acpInitTimeoutError{agentID: agentID, timeout: acpInitializeTimeout, cause: err}
+		}
 		return fmt.Errorf("acp: initialize: %w", err)
 	}
 

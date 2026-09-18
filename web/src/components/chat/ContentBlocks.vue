@@ -474,7 +474,7 @@ function errorSourceLabel(block: any) { return getErrorSourceLabel(block, t) }
 /** Reasons that indicate a stuck/broken agent session — showing a "reset session"
  *  button lets the user recycle the agent connection and recover.
  *  User-initiated cancels (user_cancel/context_cancel) are excluded. */
-const RESETABLE_REASONS = new Set(['empty', 'agent_no_run', 'request_failed', 'refused', 'backend_exit', 'timeout', 'parse_error', 'panic', 'disconnect'])
+const RESETABLE_REASONS = new Set(['empty', 'agent_no_run', 'agent_init_timeout', 'request_failed', 'refused', 'backend_exit', 'timeout', 'parse_error', 'panic', 'disconnect'])
 function isResetableReason(reason: string | undefined): boolean {
   return !!reason && RESETABLE_REASONS.has(reason)
 }

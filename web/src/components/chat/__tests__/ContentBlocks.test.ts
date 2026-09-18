@@ -640,6 +640,19 @@ describe('ContentBlocks', () => {
       expect(wrapper.emitted('reset-session')![0]).toEqual([{ reason: 'agent_no_run' }])
     })
 
+    // An agent that never came up leaves the connection unusable; the reset
+    // button is the only way to force a fresh spawn, so it must be offered.
+    it('shows reset button for agent_init_timeout', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'agent_init_timeout', text: 'The agent did not start within 1m0s' }],
+      })
+      const btn = wrapper.find('.warning-reset-btn')
+      expect(btn.exists()).toBe(true)
+      await btn.trigger('click')
+      expect(wrapper.emitted('reset-session')).toBeTruthy()
+      expect(wrapper.emitted('reset-session')![0]).toEqual([{ reason: 'agent_init_timeout' }])
+    })
+
     it('shows reset button on severe warning (timeout)', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'warning', reason: 'timeout', text: 'Timed out' }],

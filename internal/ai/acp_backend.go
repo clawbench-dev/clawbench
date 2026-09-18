@@ -90,6 +90,27 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			}
 		}
 		if err != nil {
+			// An Initialize timeout means the agent process never reached
+			// protocol readiness. It is not a disconnect, so it was already
+			// excluded from the retry above (isACPPeerDisconnected returns
+			// false for it) — retrying the same handshake would just burn a
+			// second full timeout. Surface it with its own reason so the UI
+			// says "the agent failed to start" instead of the misleading
+			// "AI backend exited abnormally", and without the raw SDK blob
+			// (the cause is all JSON) that would otherwise reach the user.
+			var initTimeout *acpInitTimeoutError
+			if errors.As(err, &initTimeout) {
+				slog.Error("acp: agent failed to initialize",
+					"session_id", req.SessionID, "agent_id", b.agent.ID,
+					"timeout", initTimeout.Timeout(), "error", err)
+				forwardACPEvent(ch, StreamEvent{
+					Type:        "error",
+					Error:       fmt.Sprintf("The agent did not start within %s", initTimeout.Timeout()),
+					Reason:      ReasonAgentInitTimeout,
+					ErrorSource: "agent",
+				})
+				return
+			}
 			// ACP connection failed — surface the error directly.
 			// Do NOT fall back to CLI backend: the user chose ACP transport
 			// and silent fallback hides real problems (e.g., NewSession timeout).

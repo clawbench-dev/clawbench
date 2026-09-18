@@ -125,6 +125,54 @@ func looksLikeAgentNoRun(stopReason string, outputEvents int64, inputTokens, out
 }
 
 // ---------------------------------------------------------------------------
+// acpInitTimeoutError — typed error for an agent that never answered Initialize
+// ---------------------------------------------------------------------------
+
+// acpInitTimeoutError indicates the agent process was started but did not answer
+// the ACP Initialize handshake within acpInitializeTimeout. The process exists
+// yet never reached protocol readiness — typically because npx is still
+// downloading packages, the machine is starved, or the agent is blocked on a
+// network call.
+//
+// Why this needs its own type: the SDK reports the deadline as InternalError
+// (-32603) whose data carries "context deadline exceeded", which
+// isACPPeerDisconnected classifies as a retryable disconnect. For Initialize
+// that classification is wrong twice over:
+//   - retrying repeats the SAME handshake and burns a second full timeout, so
+//     the user waits 2×60s for a failure that was already decided;
+//   - the UI falls back to the generic "AI backend exited abnormally", which
+//     points at the model/backend rather than at a startup problem.
+//
+// Not retryable: ExecuteStream surfaces it immediately with
+// ReasonAgentInitTimeout so the user sees an actionable "agent failed to start"
+// message and can retry deliberately.
+//
+// Deliberately does NOT implement Unwrap. Unwrapping would expose the SDK's
+// *RequestError to errors.As, and acpErrorDetails would then stamp a
+// meaningless "[-32603]" code onto a timeout that has no JSON-RPC meaning.
+type acpInitTimeoutError struct {
+	agentID string
+	timeout time.Duration
+	cause   error
+}
+
+func (e *acpInitTimeoutError) Error() string {
+	return fmt.Sprintf("acp: agent %q did not initialize within %s: %v", e.agentID, e.timeout, e.cause)
+}
+
+// AgentID returns the agent that failed to initialize.
+func (e *acpInitTimeoutError) AgentID() string { return e.agentID }
+
+// Timeout returns the handshake budget that was exhausted.
+func (e *acpInitTimeoutError) Timeout() time.Duration { return e.timeout }
+
+// isACPInitTimeout reports whether the error is an agent Initialize timeout.
+func isACPInitTimeout(err error) bool {
+	var e *acpInitTimeoutError
+	return errors.As(err, &e)
+}
+
+// ---------------------------------------------------------------------------
 // ACPConnManager — singleton managing one ACP connection per ClawBench session
 // ---------------------------------------------------------------------------
 
@@ -167,6 +215,16 @@ const (
 var (
 	globalManager     *ACPConnManager
 	globalManagerOnce sync.Once
+
+	// acpInitializeTimeout bounds the ACP Initialize handshake (spawn → ready).
+	// A healthy agent answers in ~1s, but the first launch of an npx-based
+	// agent may spend far longer downloading packages, so the budget is
+	// generous. Exceeding it is treated as a startup failure and is NOT
+	// retried: see acpInitTimeoutError.
+	//
+	// A var (not a const) so tests can shrink it instead of waiting 60s; same
+	// pattern as crashDiagWaitTimeout and loadWaitTimeout.
+	acpInitializeTimeout = 60 * time.Second
 )
 
 // GetACPConnManager returns the singleton connection manager.
