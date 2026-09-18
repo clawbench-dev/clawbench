@@ -15,7 +15,6 @@ import {
   setChatCollapsed,
   computeIsWideScreen,
   WIDE_SCREEN_DOCK_TABS,
-  WIDE_SCREEN_LEFT_TAB_KEY,
   WIDE_SCREEN_SPLIT_RATIO_KEY,
   WIDE_SCREEN_CHAT_COLLAPSED_KEY,
   WIDE_SCREEN_PRIMARY_TABS,
@@ -82,17 +81,17 @@ describe('useWideScreenLayout', () => {
     expect(WIDE_SCREEN_DOCK_TABS).toContain(leftTab.value)
   })
 
-  it('switchLeftTab ignores invalid tabs and persists valid ones', () => {
+  it('switchLeftTab ignores invalid tabs and applies valid ones', () => {
+    const { leftTab } = useWideScreenLayout()
     switchLeftTab('terminal')
-    expect(localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)).toBe('terminal')
+    expect(leftTab.value).toBe('terminal')
     switchLeftTab('not-a-tab' as never)
-    expect(localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)).toBe('terminal')
+    expect(leftTab.value).toBe('terminal')
   })
 
-  it('view is a wide-screen dock tab and can be switched/persisted to', () => {
+  it('view is a wide-screen dock tab and can be switched to', () => {
     expect(WIDE_SCREEN_DOCK_TABS).toContain('view')
     switchLeftTab('view')
-    expect(localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)).toBe('view')
     const { leftTab } = useWideScreenLayout()
     expect(leftTab.value).toBe('view')
   })
@@ -117,11 +116,14 @@ describe('useWideScreenLayout', () => {
     expect(Number(localStorage.getItem(WIDE_SCREEN_SPLIT_RATIO_KEY))).toBeCloseTo(0.35)
   })
 
-  it('restores persisted leftTab on init', () => {
-    localStorage.setItem(WIDE_SCREEN_LEFT_TAB_KEY, 'settings')
+  it('starts on browse and keeps no cross-init memory of its own', () => {
+    // leftTab is no longer persisted here — remembering it per project is
+    // useProjectPanel.ts's job (issue #474). This module must always come up on
+    // its default, so a re-init cannot resurrect another project's tab.
+    switchLeftTab('settings')
     _resetForTest()
     const { leftTab } = useWideScreenLayout()
-    expect(leftTab.value).toBe('settings')
+    expect(leftTab.value).toBe('browse')
   })
 
   it('fresh init with no persisted ratio keeps splitRatio at 0.5', () => {
@@ -435,11 +437,9 @@ describe('wide dock tab reachability (regression)', () => {
     )
   })
 
-  it('forge is switchable and persists across a re-init', () => {
+  it('forge is switchable', () => {
     expect(WIDE_SCREEN_DOCK_TABS).toContain('forge')
     switchLeftTab('forge')
-    expect(localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)).toBe('forge')
-    _resetForTest()
     const { leftTab } = useWideScreenLayout()
     expect(leftTab.value).toBe('forge')
   })

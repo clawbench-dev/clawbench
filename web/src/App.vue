@@ -548,6 +548,14 @@ import { useAndroidBackPress } from './composables/useAndroidBackPress'
 import { useDirectoryReturn } from './composables/useDirectoryReturn'
 import { store } from './stores/app.ts'
 import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
+import {
+  beginPanelSwitch,
+  endPanelSwitch,
+  isPanelSwitchInFlight,
+  loadProjectPanel,
+  resolvePanelTab,
+  saveProjectPanel,
+} from './composables/useProjectPanel.ts'
 import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
@@ -607,6 +615,13 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   if (previousProjectPath) {
     navigationByProject.set(previousProjectPath, navigation.snapshot())
   }
+  // Suppress panel persistence for the whole switch. setProject() below resets
+  // the store, which nulls `currentFile` and fires the "file closed → fall back
+  // to the file manager" watcher; without this guard that watcher would rewrite
+  // the left tab, and the panel-save watcher would write the OLD project's tab
+  // into the NEW project's key. Opened before setProject() so no reset-triggered
+  // write can slip through.
+  beginPanelSwitch()
   // ── Phase 1: Fade out ──
   switchingProject.value = true
   await nextTick()
@@ -622,6 +637,7 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   } catch (err) {
     // Project doesn't exist — revert fade-out and show error
     switchingProject.value = false
+    endPanelSwitch()
     const msgKey = (err as Error & { msgKey?: string })?.msgKey
     if (msgKey === 'NotADirectory') {
       toast.show(t('appHeader.projectPathNotFound'), { icon: '⚠️', type: 'error', duration: 3000 })
@@ -685,24 +701,26 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
     loadSSHInfo(),
     loadTerminalStatus(),
   ])
-  // Workspace restore is awaited (separately from the fire-and-forget batch)
-  // because it may switch the active tab (activateView). Awaiting it here —
-  // BEFORE the Phase 7 pending-navigation switch — makes the final tab
-  // deterministic: without this, a deep-link navigation below could race with
-  // restore's switchTab('view') and the landing tab would depend on async
-  // completion order. When a pending navigation exists, restore must NOT
-  // re-activate the file-view tab at all, otherwise it would clobber the
-  // navigation target.
-  //
-  // activateView stays false even without pending navigation: switching
-  // projects must land on the chat tab just like cold start — the restored
-  // file loads into state (header badge shows it) but the user stays in chat.
-  // Previously the file-view tab was re-activated on project switch, which
-  // made the landing tab differ from cold start (regression: switching
-  // projects jumped away from chat whenever the project had a last-opened
-  // file). The user can still open the file by clicking the header badge.
-  await restoreProjectWorkspace({ activateView: false })
+  // Workspace restore is awaited so `currentFile` is populated BEFORE the
+  // remembered panel is applied — a remembered 'view' panel is only meaningful
+  // once the file it should display actually exists in state.
+  await restoreProjectWorkspace()
   if (isAppMode.value) syncToNative().catch(() => {})
+
+  // Apply this project's remembered panel. Ordering matters twice over:
+  //   - after restore, so `currentFile` is already set (see above);
+  //   - before endPanelSwitch(), so the read sees THIS project's record and not
+  //     anything the switching watchers might have written.
+  // The write-back is explicit because the save watcher is still suppressed: it
+  // also normalizes the record (e.g. a remembered 'view' with no surviving file
+  // is stored back as 'browse', so the fallback does not have to be recomputed).
+  const rememberedPanel = loadProjectPanel(resolvedProjectPath)
+  applyPanelTab(resolvePanelTab(rememberedPanel, isWideScreen.value, !!store.state.currentFile))
+  saveProjectPanel(resolvedProjectPath, currentPanelTab.value)
+  // Re-enable panel persistence before Phase 7: a pending navigation switches to
+  // tasks or opens a session, and THAT landing panel is what the user should come
+  // back to the next time this project is opened.
+  endPanelSwitch()
 
   // ── Phase 7: Handle cross-project pending navigation ──
   if (pendingTaskNav) {
@@ -748,6 +766,27 @@ const chatActive = computed(() => (isWideScreen.value ? 'chat' : activeTab.value
 const leftPanelActive = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
 const panelIsActive = (tabId: string) =>
   isWideScreen.value ? leftTab.value === tabId : activeTab.value === tabId
+
+// The panel the user is currently on, in the layout's own terms: the left column
+// tab on a wide screen, the single active tab on a narrow one. This is what
+// gets remembered per project (see useProjectPanel.ts).
+const currentPanelTab = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
+
+/**
+ * Show `tab` as the active panel, routing to whichever mechanism owns it:
+ * the wide-screen dock, or the narrow-mode tab. Both accept the same tab ids.
+ */
+function applyPanelTab(tab: string) {
+  if (isWideScreen.value) switchLeftTab(tab)
+  else switchTab(tab)
+}
+
+// Remember which panel each project was last on, so switching back restores it.
+// Suppressed during a project switch — see beginPanelSwitch() in hotSwitchProject.
+watch(currentPanelTab, (tab) => {
+  if (isPanelSwitchInFlight()) return
+  saveProjectPanel(store.state.projectRoot, tab)
+})
 
 // Focus-aware keyboard gating: a panel's global shortcuts only fire when the
 // user is actually working in that pane (wide-screen) or that tab (narrow).
@@ -1103,15 +1142,12 @@ function closeOverlayAndSync() {
  * switch (hotSwitchProject) — keeps both paths in sync and avoids divergence.
  * If the saved file can no longer be opened (deleted/moved), its stale record
  * is cleared so it isn't retried and re-reported on every launch/switch.
+ *
+ * The landing panel is NOT decided here: it is remembered per project and
+ * applied by the caller afterwards (applyPanelTab), once `currentFile` exists.
  */
-async function restoreProjectWorkspace(opts: { activateView?: boolean } = {}) {
-  // activateView: on cold start (initializeApp) AND project switch
-  // (hotSwitchProject) the app must land on the chat tab — restoring the last
-  // opened file loads it into state but does NOT switch the user away from
-  // chat. Both paths stay consistent: no project switch re-activates the
-  // file-view tab anymore (regression: switching projects jumped to the file
-  // viewer whenever the project had a last-opened file).
-  return restoreProjectWorkspaceImpl({ switchTab, ...opts })
+async function restoreProjectWorkspace() {
+  return restoreProjectWorkspaceImpl()
 }
 
 const { isAppMode } = useAppMode()
@@ -1559,6 +1595,11 @@ async function initializeApp() {
   // Restore last browsed directory + last opened file (per-project), falling
   // back to the project root if the saved dir/file no longer exists.
   await restoreProjectWorkspace()
+  // Then restore the panel this project was last on. Done as state (not via a
+  // component ref) because the app subtree is not mounted yet — isAuthenticated
+  // only flips after this function resolves, so the dock/file manager do not
+  // exist here. `currentFile` is already populated by the restore above.
+  applyPanelTab(resolvePanelTab(loadProjectPanel(store.state.projectRoot), isWideScreen.value, !!store.state.currentFile))
   return true
 }
 
@@ -1704,7 +1745,12 @@ watch(() => currentFile.value, (file, prevFile) => {
     markdownViewMode.value = 'rendered'
     // When the open file is closed while the user is on the file-view tab,
     // fall back to the file manager tab automatically.
-    if (!file && prevFile) {
+    //
+    // Skipped during a project switch: resetProjectState() nulls `currentFile`
+    // on every switch, so this would fire unconditionally and rewrite the left
+    // tab to 'browse' — destroying the tab we are about to restore. The panel is
+    // restored from the target project's own record instead (issue #474).
+    if (!file && prevFile && !isPanelSwitchInFlight()) {
         const currentTab = isWideScreen.value ? leftTab.value : activeTab.value
         if (currentTab === 'view') switchTab('browse')
     }
