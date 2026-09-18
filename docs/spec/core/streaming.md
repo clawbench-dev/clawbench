@@ -123,6 +123,7 @@ sequenceDiagram
 
 - **WS 单通道统一推送**：聊天流和系统事件共用 `/api/ai/events/ws`，由 `StreamHub` 做会话级扇出（多客户端订阅同一 session）；避免双通道带来的状态同步问题
 - **流式入库批量合并**：高频流事件（tool-call、context-state、thinking）不逐事件写库，而是合并进 500ms flush 周期的批量写——tool-call 只在 flush 时重扫最新块状态、context-state 原子合并、thinking 以固定 ID 覆盖写全文；content 行无变化时跳过整行 UPDATE，Finalize 前补一次 flush 防止流末尾排队数据丢失。落库吞吐与写放大被大幅压缩
+- **Finalize 的 thinking 重写必须是单事务**：收尾时把整轮 thinking 块从暂存状态改写为最终行，语义是"先全删、再按最新块集合插入"——合并相邻块会淘汰部分 think_id，被淘汰的行必须清掉，所以不能只做增量 upsert。逐条 upsert 的写法会让每个块自带一个事务，长回合实测近万块产生数千次独立提交，收尾耗时几乎全部耗在这里；更要紧的是删与插之间没有事务边界，崩溃落在"删完、未插完"的窗口会让该消息的 thinking 行整体消失，而正文里只剩瘦标记，前端按需加载得到 404、思考内容永久丢失。单事务后删插原子，失败整体回滚到 500ms flush 已落盘的那一份
 - **WS 侧另做 50ms 合流（与入库 flush 是两个独立窗口）**：`SessionExecutor.forwardEvent` 把连续的 `content`/`thinking` delta 交给 `streamCoalescer` 合并后再推送。合并条件是 **type 且 `parent_tool_call_id` 都相同**——后者是正确性要求而非优化：前端用 `findBlockByTypeBackward(blocks, type, parent)` 定位块，跨 parent 合并会把子智能体的文本算到父块上。非 delta 事件是**顺序屏障**，先 flush 缓冲再发出，保证工具卡片不会越过它之前的正文。窗口 50ms（`wsCoalesceInterval`，与 `ai/acp_debounce.go` 的 tool 去抖一致）**刻意远小于** 500ms 的入库窗口：入库窗口管的是写放大（行陈旧无害，前端从 WS 渲染），这个窗口管的是帧数与 token 上屏延迟，且必须低于前端自身 300ms 的渲染节流才不会多渲染一帧。单帧上限 32KB（`maxCoalescedBytes`），防止长突发合并成 MB 级帧。`RunWithChannel` 退出时经 `defer` 强制 flush 一次——终端 `done` 由 handler/scheduler 在本函数返回**之后**发出，漏掉这次 flush 会让残留 delta 落在 `done` 之后，而前端此时已退出流式态、会直接丢弃。实测 33KB 回复从 3062 帧降到约 1/9
 - **断线缓冲只是减震**：缓冲窗口（10s / 50 条）有限，**不是持久化方案**。重连超时（>120s）后客户端通过 REST API 重新加载会话完整状态
 - **权限确认用 `permission_respond`**：WS 客户端消息支持 `permission_respond`（替代旧 HTTP `/api/ai/permission`），ACP 权限待审场景下前端用此消息回传决策
