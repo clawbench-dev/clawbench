@@ -34,6 +34,28 @@ describe('SHORTCUT_TIPS', () => {
     expect(openList?.keys).toContain('Ctrl+K')
   })
 
+  // Regression guard: these file-manager / terminal shortcuts were implemented
+  // in the components (FileManagerContent.handleKeydown, TerminalHelpDrawer)
+  // long before they were listed here, so a rename or deletion of any of these
+  // entries silently re-introduces the "implemented but undiscoverable" gap.
+  it('lists every implemented file-manager keyboard shortcut', () => {
+    const byLeaf = (leaf: string) => SHORTCUT_TIPS.find(t => t.contextKey.endsWith(`.${leaf}`))
+    expect(byLeaf('contextBrowseNavigate')?.keys).toEqual(['↑', '↓', 'Home', 'End'])
+    expect(byLeaf('contextBrowseOpen')?.keys).toEqual(['Enter'])
+    expect(byLeaf('contextBrowseToggleSelect')?.keys).toEqual(['Space'])
+    expect(byLeaf('contextBrowseEscape')?.keys).toEqual(['Esc'])
+  })
+
+  it('lists the terminal Ctrl+Z suspend shortcut alongside Ctrl+C/D/L', () => {
+    const suspend = SHORTCUT_TIPS.find(t => t.contextKey.endsWith('.contextTermSuspend'))
+    expect(suspend).toBeDefined()
+    expect(suspend?.keys).toEqual(['Ctrl+Z'])
+    const terminalKeys = SHORTCUT_TIPS
+      .filter(t => t.context === 'terminal')
+      .flatMap(t => t.keys ?? [])
+    expect(terminalKeys).toEqual(expect.arrayContaining(['Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Ctrl+Z']))
+  })
+
   it('getShortcutTipsForContext always includes common and chat tips', () => {
     for (const ctx of SHORTCUT_CONTEXT_ORDER) {
       const result = getShortcutTipsForContext(ctx)

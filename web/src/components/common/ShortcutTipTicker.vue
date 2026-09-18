@@ -135,11 +135,20 @@ watch(effectiveTips, () => {
   height: 100%;
   display: flex;
   align-items: center;
+  /* Center the tip within the free header region (between the file capsule
+     and the theme toggle) instead of hugging the capsule. */
+  justify-content: center;
   cursor: pointer;
 }
 
+/* fit-content (not 100%): a short tip lets the viewport shrink to its own
+   width so the flex centering above takes effect, while a long tip still
+   caps at the available width — keeping scrollWidth > clientWidth so the
+   marquee overflow measurement in schedule() stays correct. */
 .stt-viewport {
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
