@@ -307,7 +307,8 @@ describe('FileManagerContent — handleCtxMenu', () => {
     nameEl.textContent = 'test.ts'
     item.appendChild(nameEl)
 
-    const e = { clientX: 150, clientY: 250, target: item }
+    // Right-click the name zone — only the icon and the name open the entry menu.
+    const e = { clientX: 150, clientY: 250, target: nameEl }
 
     await wrapper.vm.handleCtxMenu(e)
     await nextTick()
@@ -316,6 +317,29 @@ describe('FileManagerContent — handleCtxMenu', () => {
     expect(wrapper.vm.ctxMenu.y).toBe(250)
     expect(wrapper.vm.ctxMenu.visible).toBe(true)
     expect(wrapper.vm.ctxMenu.entry).toEqual({ type: 'file', name: 'test.ts', path: 'test.ts' })
+  })
+
+  it('opens the empty-area menu when the right-click lands outside the name zone', async () => {
+    const wrapper = mountContent()
+
+    const item = document.createElement('div')
+    item.classList.add('file-item')
+    item.dataset.action = 'file'
+    item.dataset.path = 'test.ts'
+
+    const nameEl = document.createElement('span')
+    nameEl.classList.add('file-name')
+    nameEl.textContent = 'test.ts'
+    item.appendChild(nameEl)
+
+    // The row itself is padding / gap around the name zone.
+    const e = { clientX: 150, clientY: 250, target: item }
+
+    await wrapper.vm.handleCtxMenu(e)
+    await nextTick()
+
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
   })
 })
 

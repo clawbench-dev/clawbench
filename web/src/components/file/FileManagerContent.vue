@@ -1550,12 +1550,33 @@ function onContainerLongPress(e) {
     nextTick(() => clampCtxMenu())
 }
 
+// ── Context menu hit zone (Windows Explorer-like) ──
+//
+// Only the icon and the name are the entry's hit zone. Right-clicking the
+// padding around a row, the size/date meta column or any other part of the row
+// falls through to the empty-area menu (paste / new file / new folder /
+// terminal), matching Explorer — where the background of the details view is
+// background even when a row occupies that pixel.
+//
+// The name label is `width: 100%` inside the info column, so the blank stretch
+// beside a short name is inside `.file-name` and therefore still part of the
+// entry; only the strip of the info column outside the label (and everything
+// else in the row) is background.
+const CTX_ENTRY_ZONE_SELECTOR = '.file-icon-wrap, .grid-thumb, .file-name, .grid-name'
+
+/** The row/tile under `el`, or null when `el` is not in the entry's hit zone. */
+function resolveCtxEntry(el) {
+    const zone = el?.closest?.(CTX_ENTRY_ZONE_SELECTOR)
+    if (!zone) return null
+    return zone.closest('.file-item, .grid-item') || null
+}
+
 function handleCtxMenu(e) {
     // When re-triggered from the ctx-overlay (second right-click while the menu
     // is open), e.target is the overlay itself. The overlay covers the whole
     // viewport, so elementFromPoint would return it — temporarily disable its
     // pointer events to reveal the element beneath the cursor.
-    let item = e.target?.closest?.('.file-item, .grid-item') || null
+    let item = resolveCtxEntry(e.target)
     const fromOverlay = !!e.target?.classList?.contains('ctx-overlay')
     if (!item && fromOverlay) {
         const overlay = e.target
@@ -1563,7 +1584,7 @@ function handleCtxMenu(e) {
         overlay.style.pointerEvents = 'none'
         try {
             const hit = document.elementFromPoint(e.clientX, e.clientY)
-            item = hit?.closest?.('.file-item, .grid-item') || null
+            item = resolveCtxEntry(hit)
         } finally {
             overlay.style.pointerEvents = prev
         }
