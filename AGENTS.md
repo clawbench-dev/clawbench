@@ -4,7 +4,7 @@
 
 ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、SSH 隧道端口转发、任务系统（含 GitHub/GitLab 事件触发）。
 
-规格文档：`docs/spec/`（模块索引见 `docs/spec/README.md`）。
+规格文档：`docs/spec/`（模块索引见 `docs/spec/README.md`）。面向使用者的图文操作手册：`docs/user-guid/user-guid.md`（截图维护流程见 `docs/Skills/clawbench-user-guide/SKILL.md`）。
 
 ## 构建与运行
 
@@ -66,12 +66,13 @@ npm test                                              # Vitest 前端测试
 | `internal/wallpaper/` | 壁纸校验 / 缩放 / 编码 + 磁盘布局与生效解析；handler 与 service worker 共用。缩放上限取舍见源码注释 |
 | `internal/gitignore/` | 判定「git 是否会跟踪该路径」：go-git 模式引擎 + 来自 index 的三条规则（已跟踪文件/含已跟踪文件的目录永不忽略、祖先被排除则整体忽略、自身最后一条匹配）。文件管理器灰显与 cloc 排除共用；按真实 `git check-ignore` 差分验证 |
 | `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；会话运行态收敛在 `session_runner.go`（单一 owner runner，运行态与可取消性同源），AI 回合编排唯一实现 `run_turn.go`，请求构造唯一实现 `chat_request.go`，队列兜底回收 `queue_reaper.go`；最近项目分组（`recent_project_groups.go` + `repo_layout.go`，纯文件系统识别主仓库/工作树/子目录）；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）、桌面端升级检查（`desktop_upgrade.go`）等后台 worker |
-| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；15 个后端子包；CLI/ACP 均支持无进度看门狗；`compact_detect.go` 识别各后端上下文压缩信号（压缩后下一轮重注入系统提示） |
+| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；15 个后端子包；CLI/ACP 均支持无进度看门狗；`compact_detect.go` 识别各后端上下文压缩信号（压缩后下一轮重注入系统提示）；ACP 连接缓存状态用 leaf lock `stateMu`（绝不在 RPC 期间持有），避免通知回调与在飞 RPC 互相等待致通知队列溢出杀连接 |
+| `internal/askquestion/` | `<ask-question>` 载荷解析的**唯一** Go 实现（叶子包，不 import 任何 internal 包）；与前端 `web/src/utils/askQuestion.ts` 互为镜像，由 `testdata/parity_corpus.json` 双向固化。契约：检测即解析、不可解析一律原样保留（绝不剥离） |
 | `internal/model/` | 数据模型、后端注册表、模型发现（`ModelSource` 注册表 + 单一合并点 `ResolveModels`）、27 个 LLM Provider |
 | `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
 | `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类（ClusterWorker） |
 | `internal/terminal/` | Web 终端：PTY 会话、环形缓冲回放、多标签 |
-| `internal/ws/` | WebSocket 事件通道：StreamHub 会话级扇出，Manager 广播 + 重连缓冲回放；`delivery_stats.go` 记录按原因的投递丢弃计数（`GET /api/ws/delivery-stats`），关键事件在通道满时等待空位（ACP 来源除外） |
+| `internal/ws/` | WebSocket 事件通道：StreamHub 会话级扇出，Manager 广播 + 重连缓冲回放；`delivery_stats.go` 记录按原因的投递丢弃计数（`GET /api/ws/delivery-stats`），关键事件在通道满时等待空位（ACP 来源除外）。遥测类事件（`system_resources`）走**非缓冲投递**路径（不写回放缓冲、队列满时丢弃而非断连），需求由客户端 `metrics_preference` 声明 |
 | `internal/ssh/` + `internal/proxy/` | SSH 隧道服务器；HTTP 反向代理 + 端口转发 |
 | `internal/forge/` | GitHub/GitLab 集成：平台无关的只读 `Provider` 抽象（统一 Issue/PR/Comment/Pipeline 模型）+ `github/`（go-github）/ `gitlab/`（轻量 REST client）adapter；remote URL 解析（host 与 scheme 分离解析）、per-host 令牌桶限流、事件推导引擎。**无 host 安全闸门**（内网/自建实例一律放行，风险提示在前端绑定弹窗） |
 | `internal/push/` | IM 机器人推送：`common/`（共享接口 + 会话命令）、`dingtalk/`（Stream API）、`feishu/`（Lark SDK WebSocket + 互动卡片） |
@@ -88,7 +89,9 @@ npm test                                              # Vitest 前端测试
 
 Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System）。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
 
-宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。
+`web/src/utils/askQuestion.ts` 与 Go 的 `internal/askquestion` 互为镜像（共享语料 `internal/askquestion/testdata/parity_corpus.json` 双向固化）——改一侧必须同步另一侧，否则同一段文本会在前后端得到不同解析。
+
+宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。左侧面板归属（宽屏 Dock 显示哪个页签）是**项目属性**而非代码路径属性，由 `useProjectPanel.ts` 按 `clawbench-project-panel:<项目根>` 记忆；项目切换期间用计数器抑制误写（可并发调用，布尔会被先结束者清掉）。
 
 `web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `.clawbench-web/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。
 

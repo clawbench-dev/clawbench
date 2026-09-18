@@ -56,7 +56,8 @@ sequenceDiagram
 - **按订阅需求采样，而非定时推送**：`MetricsPusher` 每秒检查 `Manager.MetricsDemand()`，只有在存在**已连接且已声明**的订阅者时才采样。无订阅者时不触碰采样器——这是把旧版"每个打开的标签页永远每 5s 请求一次"（全站请求量第一的端点，累计 12 万次）压到与实际观看人数成正比的关键
 - **速率由客户端声明，服务端取最快值**：客户端用 `metrics_preference` 声明期望间隔（前台 1000ms / 后台 5000ms / 关闭），服务端钳制到 `[1000ms, 60000ms]` 后按多个订阅者中的**最小间隔**采样，同一帧推给所有订阅者。混合速率时慢客户端会多收，接受这一点以换取不做每客户端调度的简单性
 - **遥测走独立的非缓冲投递路径**：`BroadcastToMetricsWatchers` 与 `BroadcastEvent` 的关键差异是**不写回放缓冲**。1Hz 遥测若进入 50 条的重连回放缓冲，会在一分钟内挤掉聊天/任务事件——这是真实功能回归，故有专门的回归测试守护。同样地，发送队列满时遥测**丢弃而不关闭连接**：为丢一帧指标而中断正在进行的聊天流式输出是更严重的故障
-- **新连接清空偏好**：`Subscribe` 会重置 `metricsEnabled`。服务端无法区分"重连后仍想要"与"重连后永不声明"，保留陈旧标志会让采样器为已离开的客户端空转。客户端在 `watch(connected)` 里重新注册并重新声明，代价至多是一个间隔的空窗
+- **新连接清空偏好**：`Subscribe` 会重置 `metricsEnabled`。服务端无法区分"重连后仍想要"与"重连后永不声明"，保留陈旧标志会让采样器为已离开的客户端空转。客户端在 `watch(connected, {immediate: true})` 里重新注册并重新声明，代价至多是一个间隔的空窗。`immediate` 不能省：现在能工作只是因为模块被静态导入、求值时 socket 尚未连上；若该模块将来被懒加载或晚于连接导入，watcher 永不触发、handler 不注册、面板永久冻结且没有兜底 fetch
+- **陈旧连接不得写入新连接的订阅**：同一 clientID 多标签页时 `Subscribe` 会替换连接，但旧连接的读循环可能仍在 dispatch 中，把它的声明写到新连接的订阅上，让采样器为一个已死 socket 继续跑。`SetClientMetricsPreference` 因此带 conn 身份守卫（与 `DisconnectClientIfCurrent` / `StopWriter` 同模式），拒绝 `sub.conn != conn` 的写入
 - **不干净断开由 conn 门控兜底**：`MetricsDemand` 要求 `sub.conn != nil`。半开 socket 最多让需求多活约 10 分钟（读空闲超时 + ping 写失败强制关闭），有界且代价可忽略
 - **500ms 缓存防采样间隔过短**：CPU 和网络速率需要两个采样点之间的时间差才能计算。500ms TTL 缓存确保同一采样周期内的所有请求共享同一组数据，避免噪声；worker 与 HTTP 端点共用同一采样器，不会重复读 `/proc`
 - **内存已用排除缓存**：Linux 上 `MemoryInfo.Used = Total - Available`，而非 `Total - Free`。`Available` 包含可回收的 buffers/cache，更能反映实际可用内存
