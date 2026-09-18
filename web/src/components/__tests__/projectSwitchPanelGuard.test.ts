@@ -21,10 +21,26 @@ import { join } from 'node:path'
 
 const APP_VUE = readFileSync(join(__dirname, '..', '..', 'App.vue'), 'utf8')
 
+/**
+ * Strip comments so an assertion cannot be satisfied by prose.
+ *
+ * Without this, `expect(src).toContain('loadTasks()')` passed even after the
+ * real call was deleted, because a nearby explanatory comment also contained
+ * the literal text — the test guarded nothing.
+ *
+ * Trailing (`// …` after code) comments are removed too, not just whole-line
+ * ones. Otherwise `if (!file && prevFile) { // isPanelSwitchInFlight()` would
+ * satisfy a same-line `toContain` assertion for the guard while the guard is
+ * absent from the condition.
+ *
+ * Note this is deliberately naive about strings — App.vue contains no `//`
+ * inside a string literal on a line this file asserts about. If that changes,
+ * switch to a real parser rather than loosening this.
+ */
 function stripComments(src: string): string {
   return src
     .replace(/\/\*[\s\S]*?\*\//g, '')   // block comments
-    .replace(/^\s*\/\/.*$/gm, '')       // whole-line comments
+    .replace(/\/\/.*$/gm, '')           // line comments, whole-line or trailing
 }
 
 /**
@@ -75,23 +91,34 @@ describe('project switch suppresses panel writes', () => {
     expect(beginAt).toBeLessThan(setProjectAt)
   })
 
-  it('closes the suppression window on every exit path', () => {
-    // Two exits: the setProject() failure early-return, and the normal
-    // completion. Both must clear the flag — a leaked `true` silently disables
-    // panel persistence for the rest of the session.
-    const occurrences = body.match(/endPanelSwitch\(\)/g) ?? []
-    expect(occurrences.length).toBe(2)
+  it('releases the suppression window on every exit path', () => {
+    // Release must not depend on reaching the end of the function: callers
+    // invoke hotSwitchProject fire-and-forget with a swallowing `.catch()`, so an
+    // early return or a thrown error would otherwise strand the flag at >= 1 and
+    // silently disable panel persistence for the rest of the session.
+    expect(body, 'no try/finally around the switch body').toContain('finally {')
+    // The backstop is the idempotent releaser, called from the finally.
+    const finallyAt = body.lastIndexOf('finally {')
+    expect(body.slice(finallyAt)).toContain('releasePanelSwitch()')
   })
 
-  it('closes the window on the failed-switch early return', () => {
-    // The catch block returns early; without ending the switch there, the flag
-    // stays true forever and panel persistence dies silently.
-    const catchAt = body.indexOf('catch (err)')
-    const returnAt = body.indexOf('return', catchAt)
-    const endAt = body.indexOf('endPanelSwitch()')
-    expect(catchAt).toBeGreaterThan(-1)
-    expect(endAt).toBeGreaterThan(catchAt)
-    expect(endAt).toBeLessThan(returnAt)
+  it('makes the release idempotent so the finally cannot double-count', () => {
+    // The normal path releases before Phase 7 (so the pending navigation's
+    // landing panel gets recorded); the finally then runs too. Without the guard
+    // flag the counter would go negative and later switches would leak.
+    expect(body).toContain('panelSwitchReleased')
+    const guardAt = body.indexOf('if (panelSwitchReleased) return')
+    expect(guardAt, 'release is not idempotent').toBeGreaterThan(-1)
+    expect(body.indexOf('endPanelSwitch()')).toBeGreaterThan(guardAt)
+  })
+
+  it('releases the window before the pending-navigation phase', () => {
+    // Phase 7 switches to tasks / opens a session; that landing panel is what the
+    // user should return to, so persistence must be live again by then.
+    const releaseAt = body.indexOf('releasePanelSwitch()')
+    const phase7At = body.indexOf('if (pendingTaskNav)', releaseAt)
+    expect(releaseAt).toBeGreaterThan(-1)
+    expect(phase7At, 'Phase 7 must still follow the release').toBeGreaterThan(-1)
   })
 
   it('applies the remembered panel only after the workspace restore', () => {
@@ -104,19 +131,16 @@ describe('project switch suppresses panel writes', () => {
     expect(restoreAt).toBeLessThan(applyAt)
   })
 
-  it('reads the target project\'s record and re-enables persistence before pending navigation', () => {
-    const readAt = body.indexOf('loadProjectPanel(resolvedProjectPath)')
-    // The LAST endPanelSwitch() is the normal-completion one; the first is the
-    // failure early-return (asserted above).
-    const endAt = body.lastIndexOf('endPanelSwitch()')
-    expect(readAt, 'must read the resolved (normalized) project path').toBeGreaterThan(-1)
-    expect(readAt).toBeLessThan(endAt)
-    // Phase 7 switches to tasks / opens a session; that landing panel is what the
-    // user should return to, so it must be recorded — hence endPanelSwitch first.
-    // Located by searching AFTER endAt, since the parameter name also appears in
-    // the signature.
-    const phase7At = body.indexOf('if (pendingTaskNav)', endAt)
-    expect(phase7At, 'Phase 7 must still follow the re-enable').toBeGreaterThan(-1)
+  it('stands down when a newer switch already landed on another project', () => {
+    // Two switches can overlap (callers are not serialized). If a newer one
+    // finished first, applying this older switch's panel would drag the user to
+    // the wrong project's tab and record the wrong panel under this key.
+    const guardAt = body.indexOf('store.state.projectRoot === resolvedProjectPath')
+    expect(guardAt, 'missing re-entrancy guard before applying the panel').toBeGreaterThan(-1)
+    const applyAt = body.indexOf('applyPanelTab(')
+    const saveAt = body.indexOf('saveProjectPanel(resolvedProjectPath, currentPanelTab.value)')
+    expect(applyAt).toBeGreaterThan(guardAt)
+    expect(saveAt).toBeGreaterThan(guardAt)
   })
 
   it('writes the applied panel back to the target project explicitly', () => {
@@ -179,5 +203,35 @@ describe('the wide-screen layout keeps no global leftTab storage', () => {
     const stripped = stripComments(layoutSrc)
     expect(stripped).not.toContain('clawbench-widescreen-left-tab')
     expect(stripped).not.toContain('WIDE_SCREEN_LEFT_TAB_KEY')
+  })
+})
+
+describe('stripComments removes trailing comments too', () => {
+  // The same-line `toContain` assertions above are only meaningful if a comment
+  // on that line cannot satisfy them. A trailing `//` comment is the realistic
+  // way that would happen, so guard the helper itself.
+  it('strips a trailing comment so it cannot satisfy a same-line assertion', () => {
+    const line = '    if (!file && prevFile) { // isPanelSwitchInFlight()'
+    expect(line).toContain('isPanelSwitchInFlight()')
+    expect(stripComments(line)).not.toContain('isPanelSwitchInFlight()')
+  })
+
+  it('strips whole-line comments', () => {
+    expect(stripComments('// isPanelSwitchInFlight()')).not.toContain('isPanelSwitchInFlight()')
+  })
+
+  it('strips block comments', () => {
+    expect(stripComments('/* isPanelSwitchInFlight() */')).not.toContain('isPanelSwitchInFlight()')
+  })
+
+  it('keeps real code intact', () => {
+    const src = 'if (!file && prevFile && !isPanelSwitchInFlight()) {\n  x()\n}'
+    expect(stripComments(src)).toContain('isPanelSwitchInFlight()')
+  })
+
+  it('does not let a trailing comment fake the re-entrancy guard', () => {
+    // The exact shape the guard assertion would otherwise accept.
+    const faked = 'if (true) { // store.state.projectRoot === resolvedProjectPath'
+    expect(stripComments(faked)).not.toContain('store.state.projectRoot === resolvedProjectPath')
   })
 })

@@ -622,6 +622,22 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   // into the NEW project's key. Opened before setProject() so no reset-triggered
   // write can slip through.
   beginPanelSwitch()
+  // Release the suppression exactly once, on whichever comes first:
+  //   - the hand-off before Phase 7 (normal path), so the pending navigation's
+  //     landing panel is recorded as this project's panel; or
+  //   - the `finally` below (early return, thrown error, rejected await).
+  // The finally is what makes this leak-proof. Callers invoke hotSwitchProject
+  // fire-and-forget with a swallowing `.catch()`, so an exception raised anywhere
+  // between here and the hand-off would otherwise strand the flag at >= 1 and
+  // silently disable panel persistence for the rest of the session — no log, no
+  // error, and exactly the failure mode this feature exists to fix.
+  let panelSwitchReleased = false
+  const releasePanelSwitch = () => {
+    if (panelSwitchReleased) return
+    panelSwitchReleased = true
+    endPanelSwitch()
+  }
+  try {
   // ── Phase 1: Fade out ──
   switchingProject.value = true
   await nextTick()
@@ -635,9 +651,9 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   try {
     resolvedProjectPath = await store.setProject(newProjectPath)
   } catch (err) {
-    // Project doesn't exist — revert fade-out and show error
+    // Project doesn't exist — revert fade-out and show error.
+    // The panel-switch flag is released by the outer `finally`.
     switchingProject.value = false
-    endPanelSwitch()
     const msgKey = (err as Error & { msgKey?: string })?.msgKey
     if (msgKey === 'NotADirectory') {
       toast.show(t('appHeader.projectPathNotFound'), { icon: '⚠️', type: 'error', duration: 3000 })
@@ -709,18 +725,27 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
 
   // Apply this project's remembered panel. Ordering matters twice over:
   //   - after restore, so `currentFile` is already set (see above);
-  //   - before endPanelSwitch(), so the read sees THIS project's record and not
-  //     anything the switching watchers might have written.
+  //   - before releasePanelSwitch(), so the read sees THIS project's record and
+  //     not anything the switching watchers might have written.
   // The write-back is explicit because the save watcher is still suppressed: it
   // also normalizes the record (e.g. a remembered 'view' with no surviving file
   // is stored back as 'browse', so the fallback does not have to be recomputed).
-  const rememberedPanel = loadProjectPanel(resolvedProjectPath)
-  applyPanelTab(resolvePanelTab(rememberedPanel, isWideScreen.value, !!store.state.currentFile))
-  saveProjectPanel(resolvedProjectPath, currentPanelTab.value)
+  //
+  // Re-entrancy guard: a second switch can start and finish while this one is
+  // awaiting (the callers are not serialized), leaving the store on a different
+  // project. Applying this older switch's panel would drag the user to the wrong
+  // project's tab, and writing `currentPanelTab` would record the NEWER project's
+  // panel under this one's key. The latest completed switch owns the landing
+  // state, so this one stands down.
+  if (store.state.projectRoot === resolvedProjectPath) {
+    const rememberedPanel = loadProjectPanel(resolvedProjectPath)
+    applyPanelTab(resolvePanelTab(rememberedPanel, isWideScreen.value, !!store.state.currentFile))
+    saveProjectPanel(resolvedProjectPath, currentPanelTab.value)
+  }
   // Re-enable panel persistence before Phase 7: a pending navigation switches to
   // tasks or opens a session, and THAT landing panel is what the user should come
   // back to the next time this project is opened.
-  endPanelSwitch()
+  releasePanelSwitch()
 
   // ── Phase 7: Handle cross-project pending navigation ──
   if (pendingTaskNav) {
@@ -754,6 +779,12 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
       // stale session there.
       isStillRelevant: () => store.state.projectRoot === resolvedProjectPath,
     })
+  }
+  } finally {
+    // Backstop for every other exit: the setProject() failure return above, a
+    // thrown error, or a rejected await. Idempotent, so the normal path's
+    // earlier release is not double-counted.
+    releasePanelSwitch()
   }
 }
 
