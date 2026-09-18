@@ -1052,7 +1052,7 @@ function handleThinkingClick(block: any, bi: number) {
     // Expand inline with animation
     expandingThinking.value[blockKey] = true
     thinkingExpanded.value[blockKey] = true
-    blockHtmlCache.value = {}
+    invalidateBlockHtml()
     // Slim block (think_id, no text): lazy-load the thinking text on expand
     if (!block.text && block.think_id) {
       thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
@@ -1123,7 +1123,7 @@ function triggerThinkingCollapse(blockKey: string) {
   // the wrapper transitions from 1fr→0fr immediately.
   collapsingThinking.value[blockKey] = true
   delete thinkingExpanded.value[blockKey]
-  blockHtmlCache.value = {}
+  invalidateBlockHtml()
   // After transition completes, clean up collapsing state
   const t = setTimeout(() => {
     delete collapsingThinking.value[blockKey]
@@ -1237,10 +1237,25 @@ onUpdated(restoreAskStates)
 
 // ── Throttled streaming render ──
 const blockHtmlCache = ref<Record<string, any>>({})
+// Source text behind each cache entry. The flush reuses the cached HTML when the
+// source is unchanged instead of re-running marked + DOMPurify for every block
+// every 300ms — in a long turn with concurrent sub-agents that was thousands of
+// sanitize passes per flush, freezing the main thread for seconds.
+// Kept non-reactive (a Map) so it never triggers the blockHtmlCache watcher.
+const _blockHtmlSource = new Map<string, string>()
 let _throttleTimer: ReturnType<typeof setTimeout> | null = null
 let _throttlePending = false
 const THROTTLE_MS = 300
 const _blockFlushScheduler = new StreamFrameScheduler()
+
+/** Drop every cached block's HTML and its source, forcing a full re-render.
+ *  Use this instead of assigning `blockHtmlCache.value = {}` directly —
+ *  clearing only the HTML would leave the source map matching, and the next
+ *  flush would treat the (now empty) cache as up to date and render nothing. */
+function invalidateBlockHtml() {
+  blockHtmlCache.value = {}
+  _blockHtmlSource.clear()
+}
 
 function flushBlockHtml() {
   _throttleTimer = null
@@ -1255,18 +1270,44 @@ function flushBlockHtml() {
   // other streaming updates (debouncedRender, scrollTick).
   _blockFlushScheduler.schedule('flush', () => {
     const newCache: Record<string, string> = {}
+    // Rebuilt in the same pass so entries for blocks that disappeared
+    // (content_reset, merge, rewind) don't linger and wrongly mark a future
+    // same-keyed block as already rendered.
+    const newSources = new Map<string, string>()
     for (let i = 0; i < (props.blocks?.length || 0); i++) {
       const block = props.blocks[i]
-      const key = stableBlockKey(i, block)
+      // Sub-agent children are not rendered in this flat loop (the template
+      // skips them via isChildBlock and mounts them inside their parent's
+      // recursive group). Rendering their markdown here would compute HTML
+      // that never reaches the DOM — measured at 98.4% of all text/thinking
+      // blocks in a concurrent-subagent turn, i.e. the bulk of the freeze.
+      if (isChildBlock(block)) continue
       if (block.type === 'text') {
-        // streaming=true: deferred rendering — pure markdown only
-        newCache[key] = props.renderTextBlock(block.text, props.msgId, i, true)
+        const key = stableBlockKey(i, block)
+        const src = block.text ?? ''
+        // Unchanged source → reuse the existing HTML (no marked/DOMPurify).
+        if (_blockHtmlSource.get(key) === src && blockHtmlCache.value[key] !== undefined) {
+          newCache[key] = blockHtmlCache.value[key]
+        } else {
+          // streaming=true: deferred rendering — pure markdown only
+          newCache[key] = props.renderTextBlock(block.text, props.msgId, i, true)
+        }
+        newSources.set(key, src)
       } else if (block.type === 'thinking') {
-        // Thinking blocks use renderMarkdownHtml during streaming
-        newCache[`t-${key}`] = renderMarkdownHtml(block.text, { skipKatex: true })
+        const key = `t-${stableBlockKey(i, block)}`
+        const src = block.text ?? ''
+        if (_blockHtmlSource.get(key) === src && blockHtmlCache.value[key] !== undefined) {
+          newCache[key] = blockHtmlCache.value[key]
+        } else {
+          // Thinking blocks use renderMarkdownHtml during streaming
+          newCache[key] = renderMarkdownHtml(block.text, { skipKatex: true })
+        }
+        newSources.set(key, src)
       }
     }
     blockHtmlCache.value = newCache
+    _blockHtmlSource.clear()
+    for (const [k, v] of newSources) _blockHtmlSource.set(k, v)
     // Throttled render flush can change content height (paragraph wrapping, code blocks, etc.)
     // without a corresponding onScrollBottom call from the stream handler. Notify the parent
     // so it can re-sync the scroll position if the user is at the bottom.
@@ -1299,11 +1340,22 @@ function getBlockHtml(bi: number, block: any) {
   }
   // Streaming: deferred rendering with throttling
   const key = stableBlockKey(bi, block)
+  const src = block.text ?? ''
   if (blockHtmlCache.value[key] !== undefined) {
+    // Only re-render when the source actually changed. Re-rendering on every
+    // template pass (which the flush itself triggers by replacing the cache
+    // object) re-armed the 300ms timer forever, so a long turn never stopped
+    // re-running marked + DOMPurify. An unchanged block just serves its HTML.
+    if (_blockHtmlSource.get(key) === src) {
+      return blockHtmlCache.value[key]
+    }
     if (!_throttleTimer) {
       const newCache = { ...blockHtmlCache.value }
       newCache[key] = props.renderTextBlock(block.text, props.msgId, ai, true)
       blockHtmlCache.value = newCache
+      // The write above is fresh for this text — record it so the next flush
+      // does not re-render (and so it is not treated as stale).
+      _blockHtmlSource.set(key, src)
       _throttleTimer = setTimeout(flushBlockHtml, THROTTLE_MS)
     } else {
       _throttlePending = true
@@ -1312,6 +1364,7 @@ function getBlockHtml(bi: number, block: any) {
   }
   const html = props.renderTextBlock(block.text, props.msgId, ai, true)
   blockHtmlCache.value = { ...blockHtmlCache.value, [key]: html }
+  _blockHtmlSource.set(key, src)
   return html
 }
 
@@ -1342,10 +1395,16 @@ function getThinkingTextHtml(text: string, bi: number, block: any) {
   const cacheKey = `t-${stableBlockKey(bi, block)}`
   // Streaming: deferred rendering with throttling (same pattern as text blocks)
   if (blockHtmlCache.value[cacheKey] !== undefined) {
+    // Unchanged source → serve the cached HTML instead of re-rendering (and
+    // re-arming the timer) on every template pass. See getBlockHtml.
+    if (_blockHtmlSource.get(cacheKey) === text) {
+      return blockHtmlCache.value[cacheKey]
+    }
     if (!_throttleTimer) {
       const newCache = { ...blockHtmlCache.value }
       newCache[cacheKey] = renderMarkdownHtml(text, streamingOpts)
       blockHtmlCache.value = newCache
+      _blockHtmlSource.set(cacheKey, text ?? '')
       _throttleTimer = setTimeout(flushBlockHtml, THROTTLE_MS)
     } else {
       _throttlePending = true
@@ -1354,6 +1413,7 @@ function getThinkingTextHtml(text: string, bi: number, block: any) {
   }
   const html = renderMarkdownHtml(text, streamingOpts)
   blockHtmlCache.value = { ...blockHtmlCache.value, [cacheKey]: html }
+  _blockHtmlSource.set(cacheKey, text ?? '')
   return html
 }
 
@@ -1372,7 +1432,7 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     // streamed deep-think starts pinned to the bottom again.
     thinkingScrollLeft = {}
     // Clear throttle cache and force a full re-render of thinking HTML
-    blockHtmlCache.value = {}
+    invalidateBlockHtml()
   }
 })
 
@@ -1380,29 +1440,39 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
 // Only the block currently being streamed stays expanded — when its output
 // completes it collapses immediately. Blocks the user manually expanded are kept open.
 let _prevDoneKeys = new Set<string>()
-watch(() => props.blocks.filter((b: any) => b.type === 'thinking' && b.done).map((b: any) => stableBlockKey(props.blocks.indexOf(b), b)), (doneKeys: string[]) => {
-  if (!props.streaming) {
-    // Not streaming: nothing to collapse live; remember the done set for later.
-    _prevDoneKeys = new Set(doneKeys)
-    return
-  }
-  const doneSet = new Set(doneKeys)
-  for (const key of doneKeys) {
-    // Collapse only the blocks that JUST finished streaming (newly done),
-    // skipping ones already collapsed/collapsing or manually expanded.
-    if (_prevDoneKeys.has(key)) continue
-    if (thinkingExpanded.value[key] || collapsingThinking.value[key]) continue
-    triggerThinkingCollapse(key)
-  }
-  _prevDoneKeys = doneSet
-  // Clear throttle cache so DOM re-renders with complete thinking content
-  blockHtmlCache.value = {}
-})
+// The watched value is a joined STRING, not a fresh array: a watcher returning an
+// array is never `Object.is`-equal to its previous value, so it fired on every
+// blocks mutation — invalidating the whole HTML cache on each streaming tick and
+// defeating the incremental cache. A string compares by value, so this only runs
+// on a real done-set change. Building it with map/filter/join also avoids the
+// indexOf-per-thinking-block (O(n²) on a message with thousands of blocks).
+watch(
+  () => props.blocks.map((b: any, i: number) => (b?.type === 'thinking' && b.done ? stableBlockKey(i, b) : '')).filter(Boolean).join('|'),
+  (joined: string) => {
+    const doneKeys = joined ? joined.split('|') : []
+    if (!props.streaming) {
+      // Not streaming: nothing to collapse live; remember the done set for later.
+      _prevDoneKeys = new Set(doneKeys)
+      return
+    }
+    const doneSet = new Set(doneKeys)
+    for (const key of doneKeys) {
+      // Collapse only the blocks that JUST finished streaming (newly done),
+      // skipping ones already collapsed/collapsing or manually expanded.
+      if (_prevDoneKeys.has(key)) continue
+      if (thinkingExpanded.value[key] || collapsingThinking.value[key]) continue
+      triggerThinkingCollapse(key)
+    }
+    _prevDoneKeys = doneSet
+    // Clear throttle cache so DOM re-renders with complete thinking content
+    invalidateBlockHtml()
+  },
+)
 
 // Reset cache when panel becomes active — allows re-render with fresh markdown
 watch(() => props.active, (active) => {
   if (active) {
-    blockHtmlCache.value = {}
+    invalidateBlockHtml()
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
   }

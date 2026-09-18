@@ -2167,3 +2167,122 @@ describe('AskUserQuestion restore on mount', () => {
     expect(arg?.classList?.contains('content-blocks')).toBe(true)
   })
 })
+
+// ── Streaming render cost: child-block skip + incremental HTML cache ──
+//
+// A long turn with concurrent sub-agents fragments the message into thousands
+// of tiny blocks (measured: 5,756 blocks, text median 14.5 chars, 98.4% of
+// text/thinking blocks belonging to sub-agents). The throttled flush used to
+// re-run marked + DOMPurify for EVERY block on EVERY tick, including the child
+// blocks the template never renders. A Chrome trace showed DOMPurify's
+// parseFromString at 73.77% of main-thread CPU with a single 10-second frozen
+// animation frame. These tests pin the two guards that prevent it.
+describe('streaming render cost', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** Text arguments the component asked to render ('' is the summary slot). */
+  function renderedTexts(spy: ReturnType<typeof vi.fn>): string[] {
+    return spy.mock.calls.map((c) => c[0] as string).filter((x) => x !== '')
+  }
+
+  it('does not render sub-agent child blocks in the root flush', async () => {
+    const spy = vi.fn((text: string) => `<p>${text}</p>`)
+    const parentId = 'call_parent'
+    const make = (visible: string) => [
+      { type: 'tool_use', name: 'Agent', id: parentId, done: true },
+      { type: 'text', text: visible },
+      // Child of the Agent block above — rendered inside the (collapsed)
+      // recursive group, never in this flat loop.
+      { type: 'text', text: 'CHILD-BLOCK', parent_tool_call_id: parentId },
+    ]
+    const wrapper = mountBlocks({ blocks: make('TOP-LEVEL'), streaming: true, renderTextBlock: spy })
+    await nextTick()
+
+    // Two content changes are what actually drives the throttled flush body:
+    // the first arms the 300ms timer, the second sets _throttlePending. A
+    // single change only re-renders through getBlockHtml and never reaches the
+    // flush loop these tests exist to cover.
+    await wrapper.setProps({ blocks: make('TOP-LEVEL-2') })
+    await nextTick()
+    await wrapper.setProps({ blocks: make('TOP-LEVEL-3') })
+    await nextTick()
+    vi.advanceTimersByTime(400)
+    await nextTick()
+
+    expect(renderedTexts(spy)).toContain('TOP-LEVEL-3')
+    expect(renderedTexts(spy)).not.toContain('CHILD-BLOCK')
+    // The child is genuinely skipped, not merely rendered elsewhere.
+    expect(wrapper.html()).not.toContain('CHILD-BLOCK')
+  })
+
+  it('reuses cached HTML for unchanged blocks in the flush', async () => {
+    const spy = vi.fn((text: string) => `<p>${text}</p>`)
+    const make = (a: string, b: string) => [
+      { type: 'text', text: a },
+      { type: 'text', text: b },
+    ]
+    const wrapper = mountBlocks({ blocks: make('A1', 'B1'), streaming: true, renderTextBlock: spy })
+    await nextTick()
+
+    // First change arms the 300ms timer; the second sets _throttlePending, so
+    // the tick below actually runs the flush loop (a single change only goes
+    // through getBlockHtml and never reaches it). Only the second block's text
+    // differs, so the flush must reuse A1's cached HTML.
+    await wrapper.setProps({ blocks: make('A1', 'B2') })
+    await nextTick()
+    await wrapper.setProps({ blocks: make('A1', 'B3') })
+    await nextTick()
+    vi.advanceTimersByTime(400)
+    await nextTick()
+
+    const texts = renderedTexts(spy)
+    // A1 rendered exactly once (mount). Without reuse the flush re-renders it,
+    // making this 2.
+    expect(texts.filter((t) => t === 'A1')).toHaveLength(1)
+    expect(texts.filter((t) => t === 'B3')).toHaveLength(1)
+    expect(wrapper.html()).toContain('A1')
+    expect(wrapper.html()).toContain('B3')
+  })
+
+  it('stops re-rendering once no block text changes', async () => {
+    const spy = vi.fn((text: string) => `<p>${text}</p>`)
+    const blocks = [{ type: 'text', text: 'STEADY' }]
+    const wrapper = mountBlocks({ blocks, streaming: true, renderTextBlock: spy })
+    await nextTick()
+    const afterMount = renderedTexts(spy).length
+
+    // Several template passes and flush ticks with identical content.
+    for (let i = 0; i < 3; i++) {
+      await wrapper.setProps({ blocks: [{ type: 'text', text: 'STEADY' }] })
+      await nextTick()
+      vi.advanceTimersByTime(400)
+      await nextTick()
+    }
+
+    // Without the incremental cache this grew on every tick (the flush replaced
+    // the cache object, re-rendering the template and re-arming the timer).
+    expect(renderedTexts(spy).length).toBe(afterMount)
+  })
+
+  it('still re-renders a thinking block whose text grows', async () => {
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'thinking', text: 'step one', done: false }],
+      streaming: true,
+    })
+    await nextTick()
+    expect(wrapper.html()).toContain('step one')
+
+    await wrapper.setProps({ blocks: [{ type: 'thinking', text: 'step one two', done: false }] })
+    await nextTick()
+    vi.advanceTimersByTime(400)
+    await nextTick()
+
+    expect(wrapper.html()).toContain('step one two')
+  })
+})
