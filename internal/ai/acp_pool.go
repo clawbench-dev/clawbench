@@ -909,7 +909,24 @@ type ACPConn struct {
 	// chain. A blocked notification chain would deadlock RPC calls like
 	// NewSession, which wait for queued notifications to be processed
 	// (see waitNotificationsUpTo in the ACP SDK).
+	//
+	// This tracks CONNECTION LIVENESS only (any notification counts) and
+	// feeds the idle sweep via lastActivityNano. The stall watchdog must NOT
+	// use it — see lastModelProgress.
 	lastSessionUpdate atomic.Int64
+
+	// lastModelProgress is the UnixNano timestamp of the most recent
+	// MODEL-DRIVEN activity for the running prompt: agent text, thinking, or
+	// a tool call/update. The stall watchdog compares against this, not
+	// lastSessionUpdate, because agents also emit housekeeping notifications
+	// that keep arriving while the model produces nothing at all — CodeBuddy
+	// re-emits AvailableCommandsUpdate every ~8 minutes when its plugin
+	// registry refreshes (and CurrentMode/ConfigOption/Usage updates are
+	// similar). Keying the watchdog off lastSessionUpdate made it blind to a
+	// hung turn: that 8-minute heartbeat always landed inside the 30-minute
+	// window, so a prompt stuck on an upstream empty-stream never got killed.
+	// Updated atomically for the same lock-free reason as lastSessionUpdate.
+	lastModelProgress atomic.Int64
 
 	// toolInFlight is true while the agent is executing a tool call (a
 	// tool_use was emitted but no tool_result yet). A no-progress stall
@@ -1152,6 +1169,16 @@ func (c *ACPConn) TouchSessionUpdate() {
 	c.lastSessionUpdate.Store(time.Now().UnixNano())
 }
 
+// TouchModelProgress records the current time as the connection's most recent
+// model-driven activity (agent text, thinking, or a tool call/update). The
+// stall watchdog uses this instead of TouchSessionUpdate so housekeeping
+// notifications (AvailableCommandsUpdate and friends) cannot mask a turn in
+// which the model has stopped producing anything. Lock-free for the same
+// reason as TouchSessionUpdate.
+func (c *ACPConn) TouchModelProgress() {
+	c.lastModelProgress.Store(time.Now().UnixNano())
+}
+
 // lastActivityNano returns the later of lastUsed and lastSessionUpdate as a
 // UnixNano timestamp, representing the last time the connection did any work
 // (either an explicit use or an incoming SessionUpdate from an async workflow).
@@ -1204,8 +1231,21 @@ func (c *ACPConn) TurnOutputEvents() int64 {
 }
 
 // isStalled reports whether the running prompt has made no progress for the
-// given window. Progress is defined as any incoming SessionUpdate OR an
-// in-flight tool call. A zero window disables the check.
+// given window. Progress is defined as MODEL-DRIVEN activity (agent text,
+// thinking, or a tool call/update) OR an in-flight tool call. A zero window
+// disables the check.
+//
+// Deliberately NOT keyed off lastSessionUpdate: housekeeping notifications
+// (AvailableCommandsUpdate, CurrentModeUpdate, UsageUpdate, ...) keep arriving
+// while the model is producing nothing, so using the any-notification
+// timestamp would let a hung turn run forever. See lastModelProgress.
+//
+// Legitimate long pauses stay protected by toolInFlight rather than by the
+// heartbeat. The important one is a permission request awaiting user approval:
+// the underlying tool's ToolCall is emitted before RequestPermission blocks
+// and its ToolCallUpdate only arrives after the user answers, so the tool is
+// in flight for the whole wait and this returns false no matter how long the
+// user takes.
 func (c *ACPConn) isStalled(timeout time.Duration) bool {
 	if timeout <= 0 {
 		return false
@@ -1213,7 +1253,7 @@ func (c *ACPConn) isStalled(timeout time.Duration) bool {
 	if c.toolInFlight.Load() {
 		return false
 	}
-	last := c.lastSessionUpdate.Load()
+	last := c.lastModelProgress.Load()
 	if last == 0 {
 		last = c.lastUsed.UnixNano()
 	}

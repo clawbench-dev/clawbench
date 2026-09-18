@@ -37,18 +37,18 @@ func TestACPConn_IsStalled(t *testing.T) {
 
 	t.Run("fresh activity is not stalled", func(t *testing.T) {
 		conn.SetToolInFlight(false)
-		conn.TouchSessionUpdate()
+		conn.TouchModelProgress()
 		assert.False(t, conn.isStalled(30*time.Minute))
 	})
 
 	t.Run("old activity with no tool is stalled", func(t *testing.T) {
 		conn.SetToolInFlight(false)
-		conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+		conn.lastModelProgress.Store(time.Now().Add(-10 * time.Minute).UnixNano())
 		assert.True(t, conn.isStalled(30*time.Second))
 	})
 
 	t.Run("in-flight tool suppresses stall regardless of staleness", func(t *testing.T) {
-		conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+		conn.lastModelProgress.Store(time.Now().Add(-10 * time.Minute).UnixNano())
 		conn.SetToolInFlight(true)
 		assert.False(t, conn.isStalled(30*time.Second),
 			"an in-flight tool must keep the stream alive (e.g. a long-running `sleep`)")
@@ -56,9 +56,35 @@ func TestACPConn_IsStalled(t *testing.T) {
 
 	t.Run("no SessionUpdate yet but fresh connection is not stalled", func(t *testing.T) {
 		conn.SetToolInFlight(false)
-		conn.lastSessionUpdate.Store(0) // no SessionUpdate received yet
+		conn.lastModelProgress.Store(0) // no model output received yet
 		conn.lastUsed = time.Now()      // but the connection was just created/used
 		assert.False(t, conn.isStalled(30*time.Second), "a brand-new connection must not be killed immediately")
+	})
+
+	t.Run("housekeeping notifications do not count as progress", func(t *testing.T) {
+		// Regression: the stall watchdog must key off MODEL progress, not any
+		// notification. CodeBuddy re-emits AvailableCommandsUpdate every ~8
+		// minutes on plugin refresh; counting that as progress kept a hung turn
+		// (upstream empty stream) alive for 7h37m until the user cancelled.
+		conn.SetToolInFlight(false)
+		conn.lastModelProgress.Store(time.Now().Add(-45 * time.Minute).UnixNano())
+		// The agent keeps talking, but only housekeeping — no model output.
+		conn.TouchSessionUpdate()
+		assert.True(t, conn.isStalled(30*time.Minute),
+			"a heartbeat must not mask a turn whose model produced nothing")
+	})
+
+	t.Run("permission wait is protected by the in-flight tool, not the heartbeat", func(t *testing.T) {
+		// The main legitimate long pause: a permission request awaiting user
+		// approval. The tool's ToolCall lands before RequestPermission blocks,
+		// so toolInFlight stays true for the entire wait (observed: an
+		// ExitPlanMode approval card sat in-flight for 45s). If this ever
+		// regresses, a user who leaves the approval card open past the stall
+		// window would have their session killed.
+		conn.lastModelProgress.Store(time.Now().Add(-2 * time.Hour).UnixNano())
+		conn.SetToolInFlight(true)
+		assert.False(t, conn.isStalled(30*time.Minute),
+			"a user answering an approval card late must not lose the session")
 	})
 }
 
@@ -104,7 +130,7 @@ func TestACPConn_StartStallWatchdog_CancelsOnStall(t *testing.T) {
 	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
 	conn.stallTimeout = 200 * time.Millisecond
 	// No activity for a while, no tool in flight → stalled.
-	conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+	conn.lastModelProgress.Store(time.Now().Add(-10 * time.Minute).UnixNano())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -124,7 +150,7 @@ func TestACPConn_StartStallWatchdog_CancelsOnStall(t *testing.T) {
 func TestACPConn_StartStallWatchdog_DoesNotFireWithToolInFlight(t *testing.T) {
 	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
 	conn.stallTimeout = 200 * time.Millisecond
-	conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+	conn.lastModelProgress.Store(time.Now().Add(-10 * time.Minute).UnixNano())
 	conn.SetToolInFlight(true) // agent is running a long tool (e.g. `sleep`)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -151,6 +177,75 @@ func TestACPConn_StartStallWatchdog_DoesNotFireWithToolInFlight(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("watchdog did not fire after the in-flight tool completed")
 	}
+}
+
+func TestIsModelProgressUpdate(t *testing.T) {
+	text := &acp.ContentBlockText{Text: "hi"}
+	status := acp.ToolCallStatusInProgress
+
+	t.Run("model-driven updates count as progress", func(t *testing.T) {
+		cases := map[string]acp.SessionUpdate{
+			"agent text":     {AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Content: acp.ContentBlock{Text: text}}},
+			"agent thinking": {AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{Content: acp.ContentBlock{Text: text}}},
+			"tool call":      {ToolCall: &acp.SessionUpdateToolCall{ToolCallId: "c1"}},
+			"tool update":    {ToolCallUpdate: &acp.SessionToolCallUpdate{ToolCallId: "c1", Status: &status}},
+			"plan":           {Plan: &acp.SessionUpdatePlan{}},
+			"plan update":    {PlanUpdate: &acp.SessionPlanUpdate{}},
+			"plan removed":   {PlanRemoved: &acp.SessionUpdatePlanRemoved{}},
+		}
+		for name, u := range cases {
+			assert.True(t, isModelProgressUpdate(u), "%s should count as model progress", name)
+		}
+	})
+
+	t.Run("housekeeping updates do not count as progress", func(t *testing.T) {
+		cases := map[string]acp.SessionUpdate{
+			// The one that caused the 7h37m hang.
+			"available commands": {AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{}},
+			"current mode":       {CurrentModeUpdate: &acp.SessionCurrentModeUpdate{}},
+			"config option":      {ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{}},
+			"session info":       {SessionInfoUpdate: &acp.SessionSessionInfoUpdate{}},
+			"usage":              {UsageUpdate: &acp.SessionUsageUpdate{}},
+			"user message echo":  {UserMessageChunk: &acp.SessionUpdateUserMessageChunk{Content: acp.ContentBlock{Text: text}}},
+		}
+		for name, u := range cases {
+			assert.False(t, isModelProgressUpdate(u), "%s must not count as model progress", name)
+		}
+	})
+}
+
+func TestClawBenchACPClient_SessionUpdate_ModelProgressVsHeartbeat(t *testing.T) {
+	// End-to-end wiring: a model-output notification must advance the stall
+	// watchdog's clock, while a housekeeping heartbeat must not.
+	agent := &model.Agent{ID: "test-progress-agent", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "session-progress")
+	c := NewClawBenchACPClient()
+	c.connRef = conn
+
+	ctx := context.Background()
+	notif := func(u acp.SessionUpdate) acp.SessionNotification {
+		return acp.SessionNotification{SessionId: acp.SessionId("sess-progress"), Update: u}
+	}
+
+	// Housekeeping must NOT move the model-progress clock.
+	conn.lastModelProgress.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+	before := conn.lastModelProgress.Load()
+	err := c.SessionUpdate(ctx, notif(acp.SessionUpdate{
+		AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{},
+	}))
+	assert.NoError(t, err)
+	assert.Equal(t, before, conn.lastModelProgress.Load(),
+		"AvailableCommandsUpdate must not count as model progress")
+
+	// Agent text MUST move it.
+	err = c.SessionUpdate(ctx, notif(acp.SessionUpdate{
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "real output"}},
+		},
+	}))
+	assert.NoError(t, err)
+	assert.Greater(t, conn.lastModelProgress.Load(), before,
+		"agent text must count as model progress")
 }
 
 func TestACPConn_KillAndMarkDead_PreservesAcpSID(t *testing.T) {
@@ -218,7 +313,7 @@ func TestACPConn_StallWatchdog_UsesKillAndMarkDead(t *testing.T) {
 	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
 	conn.stallTimeout = 200 * time.Millisecond
 	conn.acpSID = "acp-session-789"
-	conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+	conn.lastModelProgress.Store(time.Now().Add(-10 * time.Minute).UnixNano())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

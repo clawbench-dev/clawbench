@@ -220,8 +220,16 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	// (atomic) — this callback runs on the ACP notification processing
 	// goroutine, and RPCs like NewSession hold conn.mu while waiting for queued
 	// notifications to be processed. Taking conn.mu here would deadlock.
+	//
+	// Two distinct signals: every notification refreshes connection liveness
+	// (idle sweep), but only model-driven ones refresh the stall watchdog's
+	// progress clock. Housekeeping notifications arrive on the agent's own
+	// schedule and must not mask a turn whose model has stopped producing.
 	if c.connRef != nil {
 		c.connRef.TouchSessionUpdate()
+		if isModelProgressUpdate(n.Update) {
+			c.connRef.TouchModelProgress()
+		}
 	}
 
 	// During LoadSession replay, collect messages in buffer instead of
@@ -249,6 +257,37 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 
 	mapACPSessionUpdate(n.Update, ch, ctx, c.connRef, deb)
 	return nil
+}
+
+// isModelProgressUpdate reports whether an ACP session update represents
+// model-driven output (agent text, thinking, tool activity, or a plan) as
+// opposed to housekeeping the agent emits on its own schedule.
+//
+// The stall watchdog keys off model progress, so this classifier decides
+// whether a hung turn is detected. Housekeeping variants — most notably
+// AvailableCommandsUpdate, which CodeBuddy re-emits every ~8 minutes on plugin
+// registry refresh — keep arriving while the model produces nothing, so
+// counting them as progress makes the watchdog blind to exactly the failure it
+// exists to catch (a prompt stuck on an upstream empty stream).
+//
+// Allowlist rather than denylist: a future housekeeping variant is then
+// excluded by default instead of silently disarming the watchdog.
+func isModelProgressUpdate(update acp.SessionUpdate) bool {
+	switch {
+	case update.AgentMessageChunk != nil, // model text
+		update.AgentThoughtChunk != nil, // model reasoning
+		update.ToolCall != nil,          // model requested a tool
+		update.ToolCallUpdate != nil,    // tool status/result
+		update.Plan != nil,              // model's execution plan
+		update.PlanUpdate != nil,
+		update.PlanRemoved != nil:
+		return true
+	default:
+		// UserMessageChunk (user/steer echo), AvailableCommandsUpdate,
+		// CurrentModeUpdate, ConfigOptionUpdate, SessionInfoUpdate,
+		// UsageUpdate — none of these prove the model is still working.
+		return false
+	}
 }
 
 // mergeAndSyncCommands merges incoming ACP commands with pre-scanned plugin

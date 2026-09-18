@@ -57,8 +57,11 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 
 	// Reset the stall baseline and in-flight tool state for this turn so the
 	// watchdog counts progress from now, and a leftover in-flight tool from a
-	// previous turn can't suppress it.
+	// previous turn can't suppress it. Both timestamps are set: the any-event
+	// one feeds the idle sweep, the model-progress one feeds the stall
+	// watchdog (housekeeping notifications must not count as progress).
 	c.TouchSessionUpdate()
+	c.TouchModelProgress()
 	c.SetToolInFlight(false)
 	// Reset the per-turn model-output counter: a turn that ends with
 	// stopReason=end_turn but zero output events never ran the model.
