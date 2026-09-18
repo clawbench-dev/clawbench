@@ -314,12 +314,18 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         return
       }
       const start = held?.startLine ?? 1
+      const total = fileTotalLines.value
       slicedCode.value = {
         code: '',
         startLine: start,
         endLine: start - 1,
-        totalLines: fileTotalLines.value ?? start,
-        lineOutOfRange: !windowTruncated.value,
+        totalLines: total ?? start,
+        // An empty file has no lines for an annotation to be out of range OF —
+        // the notice means "your line reference is past EOF", not "this file is
+        // blank". sliceCodeForPreview makes the same distinction for the
+        // non-empty-window path; this branch has to repeat it because it builds
+        // the slice itself.
+        lineOutOfRange: total !== 0 && !windowTruncated.value,
         renderTruncated: false,
       }
       return

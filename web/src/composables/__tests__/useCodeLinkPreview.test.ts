@@ -1192,6 +1192,31 @@ describe('useCodeLinkPreview', () => {
     expect(preview.slicedCode.value?.lineOutOfRange).toBe(false)
   })
 
+  it('shows an empty file as blank, without the out-of-range notice', async () => {
+    // The reported case: a zero-byte text file. The server's empty-file path
+    // returns an empty window carrying no windowStart, which the pane reads as
+    // the whole file — 0 lines. Nothing can be out of range when a file has no
+    // lines at all, so the notice must stay off.
+    mockApiGet.mockResolvedValue({
+      content: '',
+      name: 'empty.txt',
+      path: 'empty.txt',
+      supported: true,
+      size: 0,
+      windowEnd: 0,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'empty.txt' })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    expect(preview.status.value).toBe('ready')
+    expect(preview.slicedCode.value?.code).toBe('')
+    expect(preview.slicedCode.value?.totalLines).toBe(0)
+    expect(preview.slicedCode.value?.lineOutOfRange).toBe(false)
+  })
+
   it('still reports an out-of-range annotation on a windowed response', async () => {
     // The empty-window encoding (windowStart present, windowEnd = Start-1) is
     // unchanged: an annotation past EOF must still surface the notice.
