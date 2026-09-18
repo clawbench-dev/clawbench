@@ -27,6 +27,20 @@ allowed-tools: Bash(playwright-cli:*), Bash(curl:*), Bash(python3:*)
 
 **不要固定 1280×720 视口 + zoom=1**：文字会有明显锯齿。也不要 zoom=1.25 配 1280 视口——有效宽度降到 1024，正好卡宽屏断点，三栏被压扁。
 
+### 主题必须显式钉成 github-dark
+
+**新浏览器 profile 的默认主题是 `auto`（跟随系统）**。在本环境系统是亮色 → 截图整片白底，与既有图（深色）完全不一致。
+
+```js
+localStorage.setItem('clawbench-settings-theme', JSON.stringify('github-dark'));
+```
+
+既有图的实测背景色（用于自检）：`#161B22` / `#0D1117` / `#21262D`。
+
+**同时**这个键是 `localStorage`，所以必须**在 reload 之前写**（reload 后由 `useSettingsConfig` 读取生效）。同理适用于分栏比例与两个浮层抑制键——见 §二、§五。
+
+> 用 `--persistent --profile <dir>` 可让 localStorage 跨浏览器重启保留，省去重复登录与重复设置。但实测本机内存紧张时持久化 profile 更容易被 OOM 杀掉，改用「单次调用内完成全部操作」更稳（见 §二十 第 25 条）。
+
 ### 登录页是例外
 
 `.login-page` 是 `min-height:100vh` + `overflow:hidden` + flex 居中（`web/src/components/LoginView.vue:326-334`）。内容（品牌区 + 表单）在 720px 高度下放不下，而 `overflow:hidden` **禁止滚动**，表单会被永久裁掉。
@@ -61,10 +75,64 @@ const vis = (e) => {
 |---|---|
 | `.welcome-overlay` | `localStorage['clawbench_welcome_dismissed']='true'`（reload 前写） |
 | `.up-overlay` | `localStorage['clawbench-upgrade-skip']=<latest_version>`；版本升级后旧值失效，须重新取。也可点 `.up-skip` |
-| `.completion-popover-backdrop` | **是队列**，关一个弹下一个。须循环点「标记已读」直到空（实测队列深度 2–3） |
+| `.completion-popover-backdrop` | **先 `page.reload()`**（首选，见下）；点「标记已读」循环清空只作兜底 |
+
+### 完成通知卡片：**截图前必须 reload**（用户明确要求）
+
+**这是清除卡片的第一手段，不是兜底。** 循环点「标记已读」只清当前队列，仍有三个漏网场景：脚本没写清队列逻辑、清完又有新会话完成、以及最坑的——**整轮 setup 从未执行**（见下文「登录判定」）。
+
+为什么 reload 可靠（已核源码）：
+
+- `useCompletionPopover` 的 `queue` / `active` 是**模块级内存状态**（`web/src/composables/useCompletionPopover.ts:29-30`），reload 即清零。
+- 刷新后的 WS replay 会补发历史 `completed` 事件，但 `web/src/App.vue:1209` 有显式拦截：
+  ```js
+  if (skipReplay && isReplayingEvents.value) return   // 重放阶段不弹窗
+  ```
+  → **卡片不会复活**。
+
+**实测代价（第一版踩坑）**：`openfile.sh` / `annot.sh` / `termqc.sh` 三个脚本**没有**清卡片逻辑，导致 **22 张**截图带着卡片交付（全部 `preview-*`、`annot-01/02`、`term-04/05`、两个 `dialog-*`、`sess-03/04`）。用户一眼看出「非常碍眼」。
+
+**像素级自检判据**（比 DOM 检查更可靠，因为卡片是 fixed 定位、DOM 上一直在）：
+
+PC 宽屏 1280px 下卡片几何固定（`max-width: min(680px,92vw)` + `inset:0` + `align-items:flex-start`）→ 占 **x=300..980, y=8..220**。取左右竖边框像素比对参考色：
+
+```python
+CARD_L=(47,71,100); CARD_R=(48,73,102)   # github-dark 主题下的实测边框色
+l = px[300,110]; r = px[979,110]
+card = sum(abs(l[i]-CARD_L[i]) for i in range(3)) < 40 and \
+       sum(abs(r[i]-CARD_R[i]) for i in range(3)) < 40
+```
+
+命中图 Δ=0–30，干净图 Δ=80–180，双峰分离清晰。**交付前必须对全部图跑一遍**，期望只剩 `00-completion-popover.png`（有意演示）。
 
 - 升级弹窗是**延迟出现**的（登录后数秒），DOM 检查跑早了会误判为无弹窗 → 截完图才发现被盖。**截图动作与浮层检查要在同一次 evaluate 内完成**。
 - 机会性取材：升级弹窗本身是「应用自升级」特性、完成通知卡是「完成通知弹窗」特性，遇到了就顺手存档（编号 `00-*`）。
+
+### 登录判定：必须用 `/api/me`，不能用 DOM
+
+**最隐蔽的坑：判定「要不要登录」若用 `document.querySelector('input[type=password]')`，在已登录但 SPA 尚未渲染完时可能为真 → `page.click('button.login-btn')` 等 30s 超时 → 整个 `evaluate` 从未执行 → 截图落成上一轮残留图，且**与上一张 md5 相同**。**
+
+实测：一批 5 张设置图（`set-12`~`set-16`）md5 完全一致，全部是同一张陈旧图。
+
+正确写法：
+
+```js
+// 用接口判定登录态，超时可控
+let meStatus = 0;
+try {
+  meStatus = await page.evaluate(async () => {
+    try { const r = await fetch('/api/me', { credentials: 'include' }); return r.status; }
+    catch (e) { return 0; }
+  });
+} catch (e) { meStatus = 0; }
+
+if (meStatus !== 200) {
+  await page.waitForSelector('input[type=password]', { timeout: 15000 }).catch(() => {});
+  // ... 有表单才填，填完 page.click('button.login-btn')
+}
+```
+
+**并且必须加产出防线**：解析脚本输出，若 `setup` 返回字符串错误（含 `MISS` / `not found`）或 `ov.card === true` 或登录异常，就在文件名后打 `[NEEDS REVIEW]` 标记，不要静默写图。否则残留图会被当成新图混进交付。
 
 ## 三、演示数据（可新建，不动存量）
 
@@ -103,7 +171,37 @@ const vis = (e) => {
 
 - **设置首页 16 个分类**（每行 96px，两列）在 648px 可视高度里只能完整显示 13 个，必然截断。接受它，或用滚动分两张。
 - **Git 提交列表**同理，只能显示前几条。
-- 宽屏三栏在 1280px 下：左栏 440–620px、聊天 451–600px、会话侧栏固定 280px。左栏拖到 **440px** 时实测 38 个文件名 **0 截断**（最长 `package-lock.json`、`CONTRIBUTING.en.md` 完整），聊天可见宽 511px——这是较好的平衡点。
+
+### 左栏必须收窄到 441px（用户明确要求）
+
+**默认要求，不是可选项。** 宽屏三栏在 1280px 下：左栏 + 聊天 + 会话侧栏（固定 280px）。
+
+| 左栏宽 | 聊天可见宽 | 评价 |
+|---|---|---|
+| 615–619px（第一版实际用的） | **334px** | ❌ 用户反馈「聊天消息显示很小」 |
+| **441px（正确值）** | **510px** | ✅ 文件名 0 截断，聊天够宽 |
+
+实测：左栏 441px 时，文件管理器 **338 个叶子节点 0 截断**（`scrollWidth > clientWidth` 计数为 0）、Markdown 预览 **922 个节点 0 截断**、表格 **183 个单元格 0 裁剪**（最长 `package-lock.json`、`CONTRIBUTING.en.md` 完整）。
+
+**为什么第一版会跑到 615px**：分栏比例是**全局共享**的（`localStorage['clawbench-widescreen-split-ratio']`），默认 0.5；1280px 视口下容器 1232px，0.5 就是左 616 / 聊天 335。必须显式设置。
+
+**正确设置方式——写 localStorage 比例 + reload**（不要用拖拽事件，脆弱且被 zoom 干扰）：
+
+```js
+// 容器 = (colRight.x + colRight.w) - colLeft.x，实测 zoom=2 下 2464 设备px → 1232 逻辑px
+// ratio = 441 / 1232 = 0.3580
+localStorage.setItem('clawbench-widescreen-split-ratio', String(441 / 1232));
+```
+
+**三个必须注意的时序陷阱**（都实测踩过）：
+
+1. **测量必须在「视口 2560 + zoom=2」已生效之后**。若在 `setViewportSize` 之前测，视口还是默认 1280，容器算成 641，比例偏大一倍 → 左栏被拉到 848px、聊天只剩 103px。
+2. **必须在 `.col-left` / `.col-right` 渲染完成之后测**。登录后立刻测会拿到 `no layout`，静默沿用旧比例。
+3. **改完比例要再 reload 一次**——`useWideScreenLayout` 只在启动时读 localStorage。
+
+比例生效范围：`clampRatio()` 会把左栏限制在 `[MIN_PANEL_WIDTH=320, container-320]`；441px 在此范围内，安全。
+
+> 这是**改浏览器状态**，不要改源码默认值。
 
 ## 六、验收方法
 
@@ -427,3 +525,16 @@ await page.evaluate(async () => {
 20. **视觉模型（mmx）在小尺寸整图上频繁误判** —— 实测把已渲染的 Mermaid 报成「聊天内容」、把视频播放器报成「静态图片」、把提交详情报成「文件树」。**以 DOM 实测为准**，mmx 只用于「整体观感是否协调」这类定性判断。
 21. **聊天快捷发送入口是「空输入时点发送按钮」**，不是单独的按钮；终端快捷指令按钮有 3 个同名元素
 22. **点菜单/抽屉前先清 `ctx-overlay`、`modal-overlay`、`completion-popover-backdrop` 三种遮罩**，否则点击静默失败
+
+### 第二版补充（返工实测）
+
+23. **完成通知卡片：截图前 `page.reload()`**（首选手段）——卡片是内存队列，reload 即清；`App.vue:1209` 跳过 replay 的历史 completed 事件，故不会复活。第一版三个脚本没做这件事，交付了 **22 张带卡片的图**。判据见 §二（像素级 x=300/979, y=110）。**交付前对全部图跑一遍检测。**
+24. **左栏默认收窄到 441px**（聊天 510px）。默认比例 0.5 在 1280 视口下是左 616 / 聊天 **334px**，太窄。设置方式＝写 `localStorage['clawbench-widescreen-split-ratio'] = 441/1232` 再 reload；**测量必须在 zoom=2 且三栏已渲染之后**。见 §五。
+25. **`cap.sh` 式的多命令往返在本机不可靠** —— 有 11+ 个并发 `codebuddy --acp` agent（各 ~750MB），可用内存常 < 5GB，playwright 的 chrome 会在两条命令之间被 OOM 杀掉（`Browser 'ug' is not open` / `Session closed`）。**解法：把 open → 登录 → 设置 → setup → 截图压进一次 `run-code`**，并内置重试。
+26. **登录判定必须用 `/api/me` 而非 DOM**。用 `input[type=password]` 判会在已登录时误判 → `page.click('button.login-btn')` 等 30s 超时 → **整个 evaluate 从未执行，截图落成上一轮残留图**（实测 5 张设置图 md5 完全相同）。并且**产出侧要加防线**：setup 返回错误字符串 / `ov.card===true` 时给文件名打 `[NEEDS REVIEW]`。
+27. **`page.evaluate` 的页面上下文没有裸 `setTimeout`** —— 必须 `window.setTimeout`。统一在 setup 包装里注入 `const sleep = ms => new Promise(r => window.setTimeout(r, ms))`，否则每段 setup 各自声明会撞 `Identifier 'sleep' has already been declared`。
+28. **右键菜单只认「图标或名称」命中区** —— 在行的 padding / 元信息列上右键会落到**空白区菜单**（粘贴/新建文件/新建文件夹/在此打开终端，仅 4 项）。文件菜单 9 项、目录菜单 11 项。命中区选择器：`.file-icon-wrap, .grid-thumb, .file-name, .grid-name`。用 `.file-name` 派发 `contextmenu` 最稳。
+29. **Git「管理」入口按钮 title 就是「管理」**（`git.manage.title`），点开后是「提交列表 › 管理」，内部三个标签：分支 / 标签 / 工作树。`git-02/03/04` 分别是这三个标签页。
+30. **终端 Dock 页签会因状态未加载而缺席** —— `isTerminalDisabled` 来自 `/api/terminal/status` 的异步结果；页面长期未刷新时该页签不渲染。**reload 后即正常出现**。实测终端按钮有 3 个同名 `button[title="快捷指令"]`。
+31. **主题必须显式钉成 `github-dark`**（新 profile 默认 `auto` → 跟随系统亮色，整片白底）。见 §一。
+32. **交付前检查图片唯一性** —— `md5sum *.png | awk '{print $1}' | sort | uniq -d`。第二版发现 `annot-04-filepath-jump.png` 与 `share-01-dialog-initial.png` **md5 完全相同**（既有错配：前者应为「文件路径跳转后的查看器」，实际却是分享弹窗），已重截修正。**"文件数对得上"不代表内容对**。
