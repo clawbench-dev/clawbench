@@ -13,7 +13,7 @@
 // singletons (including `currentFile`) BEFORE the new project root is known to
 // the watchers, so any watcher that persists on change would write the OLD
 // project's panel into the NEW project's key.
-import { isDockTabId } from '@/composables/dockTabs'
+import { isDockTabId, type TabId } from '@/composables/dockTabs'
 
 /** localStorage key prefix; the project root is appended. */
 export const PROJECT_PANEL_PREFIX = 'clawbench-project-panel:'
@@ -78,18 +78,22 @@ export function loadProjectPanel(root: string): string | null {
  *    left column is always visible there), chat on narrow ones.
  * 2. `chat` on a wide screen → `browse`. Chat is the right-hand pane there and
  *    is never a valid left-column tab, so it cannot be applied.
- * 3. `view` with no file open → `browse`. Landing on an empty viewer is worse
- *    than landing on the file manager; this is the one narrowing kept from the
- *    "cold start must not jump to the file viewer" decision (commit e1bb5fb55),
- *    which this feature otherwise supersedes.
+ * 3. `view` with no file open → `browse`, on BOTH layouts. This is deliberately
+ *    layout-independent, unlike rules 1/2/4: the user was working with files, so
+ *    the file manager is the useful landing panel even on a narrow screen (where
+ *    the layout default is chat). The alternative — rule 1's default — would
+ *    drop them on chat and discard the only context the memory still carries.
+ *    This is also the one narrowing kept from the "cold start must not jump to
+ *    the file viewer" decision (commit e1bb5fb55), which this feature otherwise
+ *    supersedes.
  * 4. Anything not in the dock-tab registry → the same default as rule 1.
  */
 export function resolvePanelTab(
   remembered: string | null,
   isWideScreen: boolean,
   hasOpenFile: boolean,
-): string {
-  const fallback = isWideScreen ? 'browse' : 'chat'
+): TabId {
+  const fallback: TabId = isWideScreen ? 'browse' : 'chat'
   if (!remembered) return fallback
   if (isWideScreen && remembered === 'chat') return 'browse'
   if (remembered === 'view' && !hasOpenFile) return 'browse'

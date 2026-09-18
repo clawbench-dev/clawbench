@@ -806,6 +806,15 @@ const currentPanelTab = computed(() => (isWideScreen.value ? leftTab.value : act
 /**
  * Show `tab` as the active panel, routing to whichever mechanism owns it:
  * the wide-screen dock, or the narrow-mode tab. Both accept the same tab ids.
+ *
+ * Idempotent, but NOT side-effect-free: `switchLeftTab` early-returns when the
+ * tab is unchanged, which skips its registered `sideEffects` (reloading the file
+ * list / tasks). Restoring a panel therefore does not guarantee those reloads
+ * ran. That is fine only because every caller restores AFTER
+ * `restoreProjectWorkspace()`, which has already loaded the target directory —
+ * the reload would be a duplicate request. If the file-list load is ever moved
+ * out of that restore, restore the panel first and load explicitly instead of
+ * relying on this call.
  */
 function applyPanelTab(tab: string) {
   if (isWideScreen.value) switchLeftTab(tab)

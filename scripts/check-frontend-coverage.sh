@@ -367,6 +367,8 @@ else:
     # Cross-reference: Istanbul paths are now normalized to web/src/...
     diff_stats = {}
     exempt_stats = {}
+    # Changed files with no coverage entry at all — reported, never gated.
+    no_coverage_files = []
     dir_diff_stats = defaultdict(lambda: {"total": 0, "covered": 0})
 
     for file_path, lines in sorted(changed_lines.items()):
@@ -401,6 +403,13 @@ else:
                     break
 
         if cov_data is None:
+            # No coverage entry at all. This is NOT the same as "0% covered": the
+            # file never entered coverage-final.json because no test imports it
+            # (e.g. App.vue, whose only tests read it as source text). Istanbul
+            # cannot report a line it never instrumented, so these changed lines
+            # are silently unenforced — record them so the report can say so
+            # instead of implying the change was measured and passed.
+            no_coverage_files.append(file_path)
             continue
 
         # Check exemption
@@ -439,9 +448,20 @@ else:
             dir_diff_stats[top_dir]["total"] += total_changed
             dir_diff_stats[top_dir]["covered"] += covered_changed
 
+    # Files with no coverage entry are reported in both branches — the whole
+    # point is that the gate cannot see them.
+    def print_no_coverage_files():
+        if not no_coverage_files:
+            return
+        print(f"\n{YELLOW}{BOLD}Changed files with NO coverage data (not gated — no test imports them):{RESET}")
+        for file_path in sorted(no_coverage_files):
+            print(f"  {YELLOW}{file_path}{RESET}")
+        print(f"  {YELLOW}Their changed lines are NOT measured by Tier 2. Review them by hand.{RESET}")
+
     if not diff_stats:
         tier2_skipped = True
         print(f"\n{CYAN}ℹ Tier 2 (Diff Coverage) SKIPPED — no changed frontend lines with coverage data{RESET}")
+        print_no_coverage_files()
     else:
         print()
         print(f"{BOLD}╔══════════════════════════════════════════════════════════════════╗{RESET}")
@@ -491,6 +511,8 @@ else:
             for file_path, stats in sorted(exempt_stats.items()):
                 pct = (stats["covered"] / stats["total"] * 100) if stats["total"] > 0 else 0
                 print(f"  {YELLOW}{file_path:<50} {stats['covered']}/{stats['total']} ({pct:.1f}%){RESET}")
+
+        print_no_coverage_files()
 
         print()
         if tier2_pass:
