@@ -282,17 +282,28 @@ describe('useSystemResources (WS push)', () => {
     expect(declarations()).toHaveLength(afterFirst)
   })
 
-  it('never polls over HTTP', async () => {
-    const { useSystemResources } = await freshComposable()
-    await connectSocket()
-    const { startPolling, stopPolling } = useSystemResources()
+  it('never polls over HTTP, even over time', async () => {
+    // Fake timers MUST be installed before startPolling(): a timer created
+    // under real timers is not captured retroactively, so advancing fake time
+    // would never fire a reintroduced poll and the test would pass vacuously.
+    vi.useFakeTimers()
+    try {
+      const { useSystemResources } = await freshComposable()
+      await connectSocket()
+      const { startPolling, stopPolling } = useSystemResources()
 
-    startPolling()
-    emitEvent('system_resources', SAMPLE_RESOURCES)
-    stopPolling()
-    await nextTick()
+      startPolling()
+      emitEvent('system_resources', SAMPLE_RESOURCES)
 
-    expect(mockFetch).not.toHaveBeenCalled()
+      // Advance well past the old 1s/5s poll intervals.
+      vi.advanceTimersByTime(30000)
+      await nextTick()
+
+      stopPolling()
+      expect(mockFetch).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

@@ -221,8 +221,12 @@ func readClientMessages(mgr *Manager, conn *websocket.Conn, writeMu *sync.Mutex,
 			handlePermissionRespondViaWS(msg, clientID)
 		case "metrics_preference":
 			// The interval is clamped inside SetClientMetricsPreference, so a
-			// client cannot request an absurdly fast sampler.
-			mgr.SetClientMetricsPreference(clientID, msg.MetricsEnabled, msg.MetricsIntervalMs)
+			// client cannot request an absurdly fast sampler. conn is passed for
+			// the identity guard: a replaced connection must not write onto the
+			// newer connection's subscription.
+			if !mgr.SetClientMetricsPreference(clientID, conn, msg.MetricsEnabled, msg.MetricsIntervalMs) {
+				slog.Debug("ws: ignored metrics_preference from a stale connection", "client_id", clientID)
+			}
 		default:
 			slog.Warn("ws: unknown client message type", "type", msg.Type, "client_id", clientID)
 		}

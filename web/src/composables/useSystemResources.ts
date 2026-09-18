@@ -108,6 +108,12 @@ function onMetricsEvent(event: string, data: unknown) {
 // here: useGlobalEvents.destroy() clears the shared handler array on project
 // switch / logout, and unlike frp_status there is no fallback fetch to recover
 // — the panel would simply freeze forever.
+//
+// immediate: true matters even though the socket is normally still closed at
+// module-eval time. Without it the watcher only fires on a later transition, so
+// if this module were ever imported after the socket was already up (lazy
+// chunk, late import), no handler would be registered and the panel would never
+// receive a frame. The immediate call is a cheap no-op while disconnected.
 watch(connected, (isConnected) => {
   if (!isConnected) return
   unsubscribe?.() // no-op if the array was already wiped
@@ -116,7 +122,7 @@ watch(connected, (isConnected) => {
   // the new connection's intent), so re-declare unconditionally.
   lastDeclared = null
   declareRate()
-})
+}, { immediate: true })
 
 // Pause/resume with tab visibility. In browser mode the socket stays open, so
 // the explicit disable message is what stops server-side sampling; in App mode

@@ -1531,15 +1531,32 @@ func connectedMetricsSub(t *testing.T, mgr *Manager, clientID string) *ClientSub
 	if sub == nil {
 		t.Fatal("expected a subscription")
 	}
-	if !mgr.SetClientMetricsPreference(clientID, true, defaultMetricsIntervalMs) {
+	if !mgr.SetClientMetricsPreference(clientID, conn, true, defaultMetricsIntervalMs) {
 		t.Fatal("expected the preference to be recorded")
 	}
 	return sub
 }
 
+// metricsSubConn returns the connection a subscription is currently bound to,
+// for tests that need to pass the identity-guard argument.
+func metricsSubConn(t *testing.T, mgr *Manager, clientID string) *websocket.Conn {
+	t.Helper()
+	mgr.mu.Lock()
+	sub, ok := mgr.subscriptions[clientID]
+	mgr.mu.Unlock()
+	if !ok {
+		t.Fatalf("no subscription for %q", clientID)
+	}
+	sub.mu.Lock()
+	defer sub.mu.Unlock()
+	return sub.conn
+}
+
 // acceptRealConn starts a throwaway WS server and returns the server side of an
-// accepted connection. The connection is never read from or written to, so it
-// only serves as a non-nil conn; it is closed when the test ends.
+// accepted connection. The connection is never written to; it only serves as a
+// non-nil conn. A client-side reader goroutine drains the socket so a graceful
+// Close (e.g. Subscribe's "replaced" handshake) completes immediately instead
+// of stalling until wsWriteTimeout.
 func acceptRealConn(t *testing.T) *websocket.Conn {
 	t.Helper()
 	connCh := make(chan *websocket.Conn, 1)
@@ -1560,6 +1577,16 @@ func acceptRealConn(t *testing.T) *websocket.Conn {
 		t.Fatalf("dial failed: %v", err)
 	}
 	t.Cleanup(func() { _ = client.CloseNow() })
+
+	// Drain incoming frames (and the peer's close frame) so the server-side
+	// Close handshake can finish.
+	go func() {
+		for {
+			if _, _, err := client.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}()
 
 	select {
 	case c := <-connCh:
@@ -1595,11 +1622,58 @@ func TestManager_Telemetry_DoesNotBufferReplay(t *testing.T) {
 
 // TestManager_Telemetry_QueueFullDoesNotCloseConnection pins the second half of
 // the hazard: losing one metric frame must never tear down the chat connection.
+//
+// The assertion must observe the CLIENT side. Checking `sub.conn != nil` here
+// would be vacuous — only disconnectClient nulls that field, while the overflow
+// path calls conn.CloseNow(), which leaves sub.conn intact. A mutation flipping
+// telemetryDelivery.closeOnOverflow to true would still pass such a test.
 func TestManager_Telemetry_QueueFullDoesNotCloseConnection(t *testing.T) {
 	mgr := NewManagerForTest()
-	sub := connectedMetricsSub(t, mgr, "telemetry-full")
 
-	// Make the queue deterministic to fill: nothing drains it (no writer started).
+	var wmu sync.Mutex
+	connCh := make(chan *websocket.Conn, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		if mgr.Subscribe(conn, &wmu, "telemetry-full", "") == nil {
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+			return
+		}
+		connCh <- conn
+		// No writer started — the send queue is never drained, so a push beyond
+		// its capacity must overflow.
+		<-r.Context().Done()
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, "ws"+server.URL[4:], nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = client.CloseNow() }()
+
+	var serverConn *websocket.Conn
+	select {
+	case serverConn = <-connCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never accepted the connection")
+	}
+
+	if !mgr.SetClientMetricsPreference("telemetry-full", serverConn, true, defaultMetricsIntervalMs) {
+		t.Fatal("expected the preference to be recorded")
+	}
+
+	// Shrink the queue so overflow is deterministic without waiting for 256 pushes.
+	// Deliberately no writer goroutine: nothing drains the queue, which is what
+	// makes the second push overflow.
+	mgr.mu.Lock()
+	sub := mgr.subscriptions["telemetry-full"]
+	mgr.mu.Unlock()
 	sub.mu.Lock()
 	sub.sendQueue = make(chan []byte, 1)
 	sub.mu.Unlock()
@@ -1607,16 +1681,28 @@ func TestManager_Telemetry_QueueFullDoesNotCloseConnection(t *testing.T) {
 	if n := mgr.BroadcastToMetricsWatchers(telemetryMsg()); n != 1 {
 		t.Fatalf("expected the first frame to be accepted, got %d", n)
 	}
-	// Queue is full now. Telemetry must drop, not close.
+	// Queue is full now. Telemetry must DROP this frame, not close the socket.
 	if n := mgr.BroadcastToMetricsWatchers(telemetryMsg()); n != 0 {
 		t.Fatalf("expected the overflowing frame to be dropped, got %d", n)
 	}
 
-	sub.mu.Lock()
-	stillConnected := sub.conn != nil
-	sub.mu.Unlock()
-	if !stillConnected {
-		t.Fatal("telemetry overflow must not disconnect the client")
+	// Prove the socket is still alive by writing on it directly. If the overflow
+	// had called CloseNow, this write would fail — which is exactly what a
+	// mutation flipping closeOnOverflow to true produces.
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer writeCancel()
+	if err := serverConn.Write(writeCtx, websocket.MessageText, []byte("still-alive")); err != nil {
+		t.Fatalf("telemetry overflow closed the connection: write failed: %v", err)
+	}
+
+	readCtx, readCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer readCancel()
+	_, data, readErr := client.Read(readCtx)
+	if readErr != nil {
+		t.Fatalf("telemetry overflow closed the connection: %v", readErr)
+	}
+	if string(data) != "still-alive" {
+		t.Fatalf("expected the liveness probe, got %s", data)
 	}
 }
 
@@ -1661,7 +1747,7 @@ func TestManager_MetricsDemand_Gating(t *testing.T) {
 	t.Run("disabled declaration", func(t *testing.T) {
 		mgr := NewManagerForTest()
 		connectedMetricsSub(t, mgr, "off")
-		mgr.SetClientMetricsPreference("off", false, 0)
+		mgr.SetClientMetricsPreference("off", metricsSubConn(t, mgr, "off"), false, 0)
 
 		if count, _ := mgr.MetricsDemand(); count != 0 {
 			t.Fatalf("expected no demand after disabling, got %d", count)
@@ -1671,9 +1757,9 @@ func TestManager_MetricsDemand_Gating(t *testing.T) {
 	t.Run("fastest interval wins across clients", func(t *testing.T) {
 		mgr := NewManagerForTest()
 		connectedMetricsSub(t, mgr, "slow")
-		mgr.SetClientMetricsPreference("slow", true, 5000)
+		mgr.SetClientMetricsPreference("slow", metricsSubConn(t, mgr, "slow"), true, 5000)
 		connectedMetricsSub(t, mgr, "fast")
-		mgr.SetClientMetricsPreference("fast", true, 1000)
+		mgr.SetClientMetricsPreference("fast", metricsSubConn(t, mgr, "fast"), true, 1000)
 
 		count, interval := mgr.MetricsDemand()
 		if count != 2 {
@@ -1687,7 +1773,7 @@ func TestManager_MetricsDemand_Gating(t *testing.T) {
 
 func TestManager_SetClientMetricsPreference_UnknownClient(t *testing.T) {
 	mgr := NewManagerForTest()
-	if mgr.SetClientMetricsPreference("nobody", true, 1000) {
+	if mgr.SetClientMetricsPreference("nobody", nil, true, 1000) {
 		t.Fatal("expected false for an unknown client")
 	}
 }
@@ -1734,5 +1820,54 @@ func TestNormalizeMetricsInterval(t *testing.T) {
 				t.Fatalf("normalizeMetricsInterval(%v, %d) = %d, want %d", tc.enabled, tc.requested, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestManager_SetClientMetricsPreference_RejectsStaleConnection pins the
+// identity guard: a replaced connection's read loop must not write its
+// declaration onto the newer connection's subscription. Without the guard, a
+// tab that had the panel open would keep the sampler running after its socket
+// was replaced.
+func TestManager_SetClientMetricsPreference_RejectsStaleConnection(t *testing.T) {
+	mgr := NewManagerForTest()
+
+	// First connection declares interest.
+	oldConn := acceptRealConn(t)
+	var wmu1 sync.Mutex
+	if mgr.Subscribe(oldConn, &wmu1, "same-id", "") == nil {
+		t.Fatal("expected the first subscription")
+	}
+	if !mgr.SetClientMetricsPreference("same-id", oldConn, true, defaultMetricsIntervalMs) {
+		t.Fatal("expected the first declaration to be recorded")
+	}
+	if count, _ := mgr.MetricsDemand(); count != 1 {
+		t.Fatalf("precondition failed: expected 1 watcher, got %d", count)
+	}
+
+	// A second connection replaces the first (same clientID).
+	newConn := acceptRealConn(t)
+	var wmu2 sync.Mutex
+	if mgr.Subscribe(newConn, &wmu2, "same-id", "") == nil {
+		t.Fatal("expected the replacement to succeed")
+	}
+	// Subscribe reset the preference, so demand is now zero.
+	if count, _ := mgr.MetricsDemand(); count != 0 {
+		t.Fatalf("expected the replacement to clear demand, got %d", count)
+	}
+
+	// The OLD connection's late declaration must be rejected.
+	if mgr.SetClientMetricsPreference("same-id", oldConn, true, defaultMetricsIntervalMs) {
+		t.Fatal("expected a stale-connection declaration to be rejected")
+	}
+	if count, _ := mgr.MetricsDemand(); count != 0 {
+		t.Fatalf("a stale declaration must not create demand, got %d", count)
+	}
+
+	// The CURRENT connection's declaration must still be accepted.
+	if !mgr.SetClientMetricsPreference("same-id", newConn, true, defaultMetricsIntervalMs) {
+		t.Fatal("expected the current connection's declaration to be recorded")
+	}
+	if count, _ := mgr.MetricsDemand(); count != 1 {
+		t.Fatalf("expected the current declaration to take effect, got %d", count)
 	}
 }

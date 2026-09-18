@@ -598,8 +598,16 @@ func (m *Manager) HasConnectedClients() bool {
 // pushes and at what interval. enabled=false clears the preference. Returns
 // false when clientID has no subscription.
 //
+// conn is the caller's own connection. It is used as an identity guard: when a
+// client reconnects, Subscribe installs the new connection and resets the
+// preference, but the OLD connection's read loop may still be mid-dispatch and
+// would otherwise write its stale declaration onto the NEW connection's
+// subscription — keeping the sampler running for a declaration that came from a
+// dead socket. Mirrors the identity checks in DisconnectClientIfCurrent and
+// StopWriter.
+//
 // Lock order: m.mu → sub.mu (the only allowed direction).
-func (m *Manager) SetClientMetricsPreference(clientID string, enabled bool, intervalMs int) bool {
+func (m *Manager) SetClientMetricsPreference(clientID string, conn *websocket.Conn, enabled bool, intervalMs int) bool {
 	intervalMs = normalizeMetricsInterval(enabled, intervalMs)
 
 	m.mu.Lock()
@@ -609,9 +617,13 @@ func (m *Manager) SetClientMetricsPreference(clientID string, enabled bool, inte
 		return false
 	}
 	sub.mu.Lock()
+	defer sub.mu.Unlock()
+	if sub.conn != conn {
+		// A newer connection replaced this one — the declaration is stale.
+		return false
+	}
 	sub.metricsEnabled = enabled
 	sub.metricsIntervalMs = intervalMs
-	sub.mu.Unlock()
 	return true
 }
 
