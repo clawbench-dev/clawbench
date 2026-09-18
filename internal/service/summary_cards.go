@@ -5,20 +5,11 @@ import (
 	"strconv"
 	"strings"
 
+	"clawbench/internal/askquestion"
 	"clawbench/internal/model"
 )
 
-var (
-	scheduledTaskIDRe  = regexp.MustCompile(`<scheduled-task\s+id="(\d+)"`)
-	askQuestionBlockRe = regexp.MustCompile(`(?s)<ask-question>(.*?)</ask-question>`)
-	askItemRe          = regexp.MustCompile(`(?s)<item>(.*?)</item>`)
-	askHeaderRe        = regexp.MustCompile(`(?s)<header>(.*?)</header>`)
-	askQuestionRe      = regexp.MustCompile(`(?s)<question>(.*?)</question>`)
-	askMultiRe         = regexp.MustCompile(`(?s)<multi-select>\s*(\w+)\s*</multi-select>`)
-	askOptionRe        = regexp.MustCompile(`(?s)<option>(.*?)</option>`)
-	askLabelRe         = regexp.MustCompile(`(?s)<label>(.*?)</label>`)
-	askDescRe          = regexp.MustCompile(`(?s)<description>(.*?)</description>`)
-)
+var scheduledTaskIDRe = regexp.MustCompile(`<scheduled-task\s+id="(\d+)"`)
 
 // isSummaryCardTool reports whether a tool_use block should be persisted into
 // summaryCards.tools. Only AskUserQuestion qualifies: PermissionApproval is an
@@ -136,49 +127,25 @@ func extractFromText(cards *model.SummaryCards, text string) {
 		}
 		cards.TaskIDs = append(cards.TaskIDs, id)
 	}
-	for _, block := range askQuestionBlockRe.FindAllStringSubmatch(text, -1) {
-		parseAskQuestionItems(cards, block[1])
-	}
-}
-
-// parseAskQuestionItems extracts individual <item> cards from an <ask-question> block.
-func parseAskQuestionItems(cards *model.SummaryCards, inner string) {
-	for _, im := range askItemRe.FindAllStringSubmatch(inner, -1) {
-		item := im[1]
+	// Parsing is delegated to internal/askquestion so the summary cards agree
+	// with the content blocks: the old regex here required a literal
+	// </ask-question>, so a tag with a non-standard close produced a tool card
+	// but no summary card.
+	for _, item := range askquestion.AllItems(askquestion.Extract(text)) {
 		card := model.AskQuestionCard{
-			Header:   firstMatch(askHeaderRe, item),
-			Question: firstMatch(askQuestionRe, item),
+			Header:      item.Header,
+			MultiSelect: item.MultiSelect,
+			Question:    item.Question,
 		}
-		mm := askMultiRe.FindStringSubmatch(item)
-		if len(mm) == 2 {
-			card.MultiSelect = strings.TrimSpace(mm[1]) == "true"
+		for _, opt := range item.Options {
+			card.Options = append(card.Options, model.AskQuestionOption{
+				Label:       opt.Label,
+				Description: opt.Description,
+			})
 		}
-		parseAskOptions(&card, item)
-		if card.Question != "" && len(card.Options) > 0 {
+		// A card with neither question text nor options is unanswerable.
+		if card.Question != "" || len(card.Options) > 0 {
 			cards.AskQuestions = append(cards.AskQuestions, card)
 		}
 	}
-}
-
-// parseAskOptions extracts <option> entries from an <item> block.
-func parseAskOptions(card *model.AskQuestionCard, item string) {
-	for _, om := range askOptionRe.FindAllStringSubmatch(item, -1) {
-		optText := om[1]
-		opt := model.AskQuestionOption{Label: firstMatch(askLabelRe, optText)}
-		if d := firstMatch(askDescRe, optText); d != "" {
-			opt.Description = d
-		}
-		if opt.Label != "" {
-			card.Options = append(card.Options, opt)
-		}
-	}
-}
-
-// firstMatch returns the trimmed text of the first subexpression match, or "".
-func firstMatch(re *regexp.Regexp, s string) string {
-	m := re.FindStringSubmatch(s)
-	if len(m) == 2 {
-		return strings.TrimSpace(m[1])
-	}
-	return ""
 }

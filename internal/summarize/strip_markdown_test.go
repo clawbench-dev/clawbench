@@ -398,3 +398,34 @@ func TestStripMarkdown_AskQuestion_InvalidContent(t *testing.T) {
 	// Should fall back to stripped text
 	assert.Contains(t, result, "not valid json")
 }
+
+// An unclosed <option> (24% of production payloads) must still be spoken: the
+// old regex required a literal </ask-question> and skipped the whole block.
+func TestStripMarkdown_AskQuestion_UnclosedOptionStillSpoken(t *testing.T) {
+	input := "分析如下\n<ask-question>\n<item>\n<header>操作确认</header>\n<multi-select>false</multi-select>\n" +
+		"<question>可以停掉吗？</question>\n<option>\n<label>停掉主实例</label>\n<description>kill 后重启</description>\n</item>\n</ask-question>"
+	result := StripMarkdown(input)
+	assert.Contains(t, result, "可以停掉吗")
+	assert.Contains(t, result, "停掉主实例")
+	assert.NotContains(t, result, "<ask-question>")
+	assert.NotContains(t, result, "<option>")
+}
+
+// An option carrying its label in an attribute (12% of production payloads)
+// must be spoken too.
+func TestStripMarkdown_AskQuestion_OptionAttributeStillSpoken(t *testing.T) {
+	input := `<ask-question><item><header>Pick</header><multi-select>false</multi-select><question>Which?</question><option value="restore_only"><label>restore_only</label></option></item></ask-question>`
+	result := StripMarkdown(input)
+	assert.Contains(t, result, "Which?")
+	assert.Contains(t, result, "restore_only")
+}
+
+// An unparseable payload must never be read as raw XML: the tags are stripped
+// and only the inner text survives.
+func TestStripMarkdown_AskQuestion_UnparseableNeverSpeaksTags(t *testing.T) {
+	input := `<ask-question>{"questions":[{"question":"你最喜欢哪种水果？"}]}</ask-question>`
+	result := StripMarkdown(input)
+	assert.NotContains(t, result, "<ask-question>")
+	assert.NotContains(t, result, "</ask-question>")
+	assert.Contains(t, result, "你最喜欢哪种水果")
+}

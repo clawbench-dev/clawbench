@@ -6,6 +6,7 @@ import { useCommitHashAnnotation } from '@/composables/useCommitHashAnnotation.t
 import { clearThinkingCache } from '@/composables/useThinkingContent.ts'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
+import { appLog } from '@/utils/appLog.ts'
 import { createTaskBlockStore } from '@/utils/taskBlockStore.ts'
 import {
   extractScheduledTaskIds,
@@ -15,9 +16,6 @@ import {
   taskChanged,
   StaticBlockCache,
 } from '@/utils/streamPerf.ts'
-import {
-  parseAskQuestionContent,
-} from '@/utils/chatRenderUtils.ts'
 import {
   parseAssistantContent,
   toolCallSummary,
@@ -221,15 +219,19 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
     // Detect ask-question tags
     const askResult = detectAskQuestion(text)
 
-    if (askResult.found) {
+    if (askResult.matches.length > 0) {
       const askKey = `${msgId}-${blockIdx}`
-      if (!blockAskQuestions[askKey]) {
-        const parsed = parseAskQuestionContent(askResult.content!)
-        if (parsed) {
-          blockAskQuestions[askKey] = parsed
-        }
+      if (askResult.items.length > 0) {
+        blockAskQuestions[askKey] = { questions: askResult.items }
+      } else {
+        // A previously-parsed block whose payload now fails must not keep a
+        // stale card alongside the retained raw text.
+        delete blockAskQuestions[askKey]
+        appLog.w('AskQuestion', `unparseable payload retained: ${askResult.reasons.join(',')}`)
       }
-      // Remove the matched ask-question tag from the rendered text
+      // Remove only the parsed spans. Unparseable tags are deliberately kept:
+      // their raw text is the only remaining copy of the question, and
+      // deleting it was the silent content-loss defect.
       const cleanText = stripScheduledTaskTags(stripAskQuestionTag(text, askResult))
       return cleanText ? renderMarkdown(cleanText, { skipEnhancements: deferEnhancements }) : ''
     }

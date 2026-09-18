@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -143,115 +144,109 @@ func TestConvertAskQuestionBlocks_TextBeforeAndAfter(t *testing.T) {
 	}
 }
 
-// --- extractXMLCandidate ---
-
-func TestExtractXMLCandidate_EmptyString(t *testing.T) {
-	if extractXMLCandidate("") != "" {
-		t.Fatal("expected empty string for empty input")
-	}
-	if extractXMLCandidate("   ") != "" {
-		t.Fatal("expected empty string for whitespace input")
-	}
-}
-
-func TestExtractXMLCandidate_XMLWithItemAndQuestionAndOption(t *testing.T) {
-	input := `<item><question>Q?</question><option>A</option></item>`
-	result := extractXMLCandidate(input)
-	if result == "" {
-		t.Fatal("expected non-empty result for valid XML with item/question/option")
-	}
-}
-
-func TestExtractXMLCandidate_XMLWithItemSpace(t *testing.T) {
-	input := `<item attr="1"><question>Q?</question><option>A</option></item>`
-	result := extractXMLCandidate(input)
-	if result == "" {
-		t.Fatal("expected non-empty result for XML with <item > tag")
-	}
-}
-
-func TestExtractXMLCandidate_XMLMissingQuestion(t *testing.T) {
-	input := `<item><option>A</option></item>`
-	if extractXMLCandidate(input) != "" {
-		t.Fatal("expected empty result when <question> is missing")
-	}
-}
-
-func TestExtractXMLCandidate_XMLMissingOption(t *testing.T) {
-	input := `<item><question>Q?</question></item>`
-	if extractXMLCandidate(input) != "" {
-		t.Fatal("expected empty result when <option> is missing")
-	}
-}
-
-func TestExtractXMLCandidate_JSONIsRejected(t *testing.T) {
-	input := `{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}`
-	if extractXMLCandidate(input) != "" {
-		t.Fatal("expected empty result for JSON content (only XML is supported)")
-	}
-}
-
-func TestExtractXMLCandidate_PlainText(t *testing.T) {
-	if extractXMLCandidate("plain text content") != "" {
-		t.Fatal("expected empty result for plain text")
-	}
-}
-
-// --- parseAskQuestionXML ---
-
-func TestParseAskQuestionXML_NoItems(t *testing.T) {
-	if parseAskQuestionXML("no items here") != nil {
-		t.Fatal("expected nil for content with no <item> tags")
-	}
-}
-
-func TestParseAskQuestionXML_ItemMissingQuestion(t *testing.T) {
-	input := `<item><header>H</header><option><label>A</label></option></item>`
-	if parseAskQuestionXML(input) != nil {
-		t.Fatal("expected nil when item has no <question>")
-	}
-}
-
-func TestParseAskQuestionXML_ItemMissingOptions(t *testing.T) {
-	input := `<item><question>Q?</question></item>`
-	if parseAskQuestionXML(input) != nil {
-		t.Fatal("expected nil when item has no <option>")
-	}
-}
-
-func TestParseAskQuestionXML_OptionMissingLabel(t *testing.T) {
-	input := `<item><question>Q?</question><option><description>D</description></option></item>`
-	if parseAskQuestionXML(input) != nil {
-		t.Fatal("expected nil when option has no <label>")
-	}
-}
-
-func TestParseAskQuestionXML_MultiSelectTrue(t *testing.T) {
-	input := `<item><header>H</header><multi-select>true</multi-select><question>Q?</question><option><label>A</label></option></item>`
-	result := parseAskQuestionXML(input)
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	questions := result["questions"].([]map[string]any)
-	if !questions[0]["multiSelect"].(bool) {
-		t.Fatal("expected multiSelect=true")
-	}
-}
-
-func TestParseAskQuestionXML_OptionWithDescription(t *testing.T) {
-	input := `<item><question>Q?</question><option><label>A</label><description>Desc</description></option></item>`
-	result := parseAskQuestionXML(input)
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	questions := result["questions"].([]map[string]any)
-	opts := questions[0]["options"].([]map[string]any)
-	if opts[0]["description"] != "Desc" {
-		t.Fatalf("expected description 'Desc', got %v", opts[0]["description"])
-	}
-}
-
 // --- ConvertAskQuestionBlocks additional cases ---
+
+// 27% of production text blocks contain more than one <ask-question> tag. The
+// previous implementation converted only the last one and leaked the rest as
+// raw XML.
+func TestConvertAskQuestionBlocks_MultipleTagsMergeIntoOneBlock(t *testing.T) {
+	one := `<ask-question><item><header>Q1</header><multi-select>false</multi-select><question>第一个?</question><option><label>A</label></option></item></ask-question>`
+	two := `<ask-question><item><header>Q2</header><multi-select>false</multi-select><question>第二个?</question><option><label>B</label></option></item></ask-question>`
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: one + "\n中间\n" + two},
+	}
+
+	result := ConvertAskQuestionBlocks(blocks)
+
+	toolCount := 0
+	var questions []map[string]any
+	for _, b := range result {
+		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
+			toolCount++
+			qs, _ := b.Input["questions"].([]map[string]any)
+			questions = qs
+		}
+		if b.Type == "text" && strings.Contains(b.Text, "<ask-question") {
+			t.Errorf("no raw tag may remain in the text block, got %q", b.Text)
+		}
+	}
+	if toolCount != 1 {
+		t.Fatalf("expected exactly 1 merged tool block, got %d", toolCount)
+	}
+	if len(questions) != 2 {
+		t.Fatalf("expected both tags' questions merged, got %d", len(questions))
+	}
+	if questions[0]["header"] != "Q1" || questions[1]["header"] != "Q2" {
+		t.Errorf("unexpected question order: %+v", questions)
+	}
+}
+
+// An unparseable payload must stay in the text block: its raw text is the only
+// remaining copy of the question.
+func TestConvertAskQuestionBlocks_UnparseableTagIsRetained(t *testing.T) {
+	payload := `<ask-question>{"questions":[{"question":"你最喜欢哪种水果？"}]}</ask-question>`
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "前言\n" + payload + "\n后记"},
+	}
+
+	result := ConvertAskQuestionBlocks(blocks)
+
+	if len(result) != 1 || result[0].Type != "text" {
+		t.Fatalf("expected a single unchanged text block, got %+v", result)
+	}
+	if !strings.Contains(result[0].Text, "你最喜欢哪种水果？") {
+		t.Fatalf("the unparseable payload must be retained, got %q", result[0].Text)
+	}
+}
+
+// The over-strip regression: an unclosed tag followed by a <details> block used
+// to consume the details block (the next closing token) and delete real prose.
+func TestConvertAskQuestionBlocks_UnclosedTagDoesNotSwallowFollowingBlock(t *testing.T) {
+	text := "分析如下\n<ask-question>\n<item><header>H</header><multi-select>false</multi-select>" +
+		"<question>Q?</question><option><label>A</label></option></item>\n\n" +
+		"<details>\n<summary>更多</summary>\n正文内容必须保留\n</details>"
+	blocks := []model.ContentBlock{{Type: "text", Text: text}}
+
+	result := ConvertAskQuestionBlocks(blocks)
+
+	foundTool := false
+	for _, b := range result {
+		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
+			foundTool = true
+		}
+		if b.Type == "text" && !strings.Contains(b.Text, "正文内容必须保留") {
+			t.Fatalf("the details body was swallowed, got %q", b.Text)
+		}
+	}
+	if !foundTool {
+		t.Fatal("expected the unclosed tag to still convert")
+	}
+}
+
+// An option without a <label> (12% of production payloads use attributes) must
+// now parse rather than being silently rejected.
+func TestConvertAskQuestionBlocks_OptionAttributeIsUnderstood(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: `<ask-question><item><header>Pick</header><multi-select>false</multi-select><question>Which?</question><option value="restore_only"><label>restore_only</label></option></item></ask-question>`},
+	}
+
+	result := ConvertAskQuestionBlocks(blocks)
+
+	for _, b := range result {
+		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
+			qs, _ := b.Input["questions"].([]map[string]any)
+			if len(qs) != 1 {
+				t.Fatalf("expected 1 question, got %+v", qs)
+			}
+			opts, _ := qs[0]["options"].([]map[string]any)
+			if len(opts) != 1 || opts[0]["label"] != "restore_only" {
+				t.Fatalf("expected the attribute label to be used, got %+v", opts)
+			}
+			return
+		}
+	}
+	t.Fatal("expected an AskUserQuestion block")
+}
 
 func TestConvertAskQuestionBlocks_WrongCloseTag(t *testing.T) {
 	// Non-standard closing tag variant
@@ -313,7 +308,7 @@ func TestConvertAskQuestionBlocks_NonTextBlock(t *testing.T) {
 }
 
 func TestConvertAskQuestionBlocks_OnlyAskQuestionTagNoValidContent(t *testing.T) {
-	// Has <ask-question> tag but extractXMLCandidate returns empty
+	// Has <ask-question> tag but no parseable payload
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: `<ask-question>just some text without proper structure</ask-question>`},
 	}

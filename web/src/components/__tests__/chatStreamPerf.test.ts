@@ -246,7 +246,8 @@ describe('detectAskQuestion (early exit optimization)', () => {
     const text = 'Some text <ask-question><item><header>Pick</header><multi-select>false</multi-select><question>Which?</question><option><label>A</label><description>Option A</description></option></item></ask-question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.content).toBeDefined()
+    expect(result.matches).toHaveLength(1)
+    expect(result.items).toHaveLength(1)
   })
 
   it('returns found=false when tag is present but content is not valid XML', () => {

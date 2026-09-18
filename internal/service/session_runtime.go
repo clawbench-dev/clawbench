@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/askquestion"
 	"clawbench/internal/model"
 	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/push/feishu"
@@ -1155,19 +1156,24 @@ func askQuestionText(blocks []model.ContentBlock) string {
 	var qs []model.AskQuestionCard
 	qs = append(qs, cards.AskQuestions...)
 	for _, tool := range cards.Tools {
-		raw, ok := tool.Input["questions"]
-		if !ok {
-			continue
+		// Normalize first: a tool input may use a malformed shape (flat
+		// question+options, an items wrapper, choices instead of options) that
+		// the strict JSON decode below would reject, silently dropping the
+		// questions from the recommendation prompt.
+		for _, item := range askquestion.NormalizeInput(tool.Input) {
+			card := model.AskQuestionCard{
+				Header:      item.Header,
+				MultiSelect: item.MultiSelect,
+				Question:    item.Question,
+			}
+			for _, opt := range item.Options {
+				card.Options = append(card.Options, model.AskQuestionOption{
+					Label:       opt.Label,
+					Description: opt.Description,
+				})
+			}
+			qs = append(qs, card)
 		}
-		data, err := json.Marshal(raw)
-		if err != nil {
-			continue
-		}
-		var parsed []model.AskQuestionCard
-		if json.Unmarshal(data, &parsed) != nil {
-			continue
-		}
-		qs = append(qs, parsed...)
 	}
 	if len(qs) == 0 {
 		return ""

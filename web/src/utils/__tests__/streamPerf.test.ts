@@ -22,13 +22,21 @@ describe('isValidAskContent', () => {
     expect(isValidAskContent(raw)).toBe(false)
   })
 
-  it('rejects XML without <question> tag', () => {
+  // An item is renderable when it carries question text OR at least one option
+  // — the bar the renderer applies. Detection is now "does it parse", so these
+  // are no longer rejected on a literal-substring technicality.
+  it('accepts XML with <option> but no <question>', () => {
     const raw = '<item><header>Choice</header><multi-select>false</multi-select><option><label>A</label></option></item>'
-    expect(isValidAskContent(raw)).toBe(false)
+    expect(isValidAskContent(raw)).toBe(true)
   })
 
-  it('rejects XML without <option> tag', () => {
+  it('accepts XML with <question> but no <option>', () => {
     const raw = '<item><header>Choice</header><multi-select>false</multi-select><question>Which?</question></item>'
+    expect(isValidAskContent(raw)).toBe(true)
+  })
+
+  it('rejects an item with neither question nor options', () => {
+    const raw = '<item><header>Choice</header><multi-select>false</multi-select></item>'
     expect(isValidAskContent(raw)).toBe(false)
   })
 
@@ -47,15 +55,26 @@ describe('detectAskQuestion', () => {
     const text = 'Some text before\n<ask-question><item><header>Choice</header><multi-select>false</multi-select><question>Which?</question><option><label>A</label><description>Fast</description></option></item></ask-question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.fullTag).toContain('<ask-question>')
-    expect(result.fullTag).toContain('</ask-question>')
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0].raw).toContain('<ask-question>')
+    expect(result.matches[0].raw).toContain('</ask-question>')
+    expect(result.items[0].question).toBe('Which?')
   })
 
   it('detects <ask-question> with multiple <item> elements', () => {
     const text = '工作区是干净的。\n\n<ask-question>\n<item><header>下一步</header><multi-select>false</multi-select><question>你想做什么？</question><option><label>推送到远程</label><description>推送提交</description></option><option><label>取消</label><description>不做任何操作</description></option></item>\n</ask-question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.fullTag).toContain('<ask-question>')
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].options).toHaveLength(2)
+  })
+
+  it('detects every tag when several are present', () => {
+    const one = '<ask-question><item><header>Q1</header><multi-select>false</multi-select><question>第一个?</question><option><label>A</label></option></item></ask-question>'
+    const two = '<ask-question><item><header>Q2</header><multi-select>false</multi-select><question>第二个?</question><option><label>B</label></option></item></ask-question>'
+    const result = detectAskQuestion(`${one}\n中间\n${two}`)
+    expect(result.found).toBe(true)
+    expect(result.items.map(i => i.header)).toEqual(['Q1', 'Q2'])
   })
 
   it('returns found=false for text without <ask-question>', () => {
@@ -65,13 +84,14 @@ describe('detectAskQuestion', () => {
   })
 
   it('detects <ask-question> with obfuscated closing tag (fullwidth pipe)', () => {
-    // Real case: model emits </｜｜DSML｜｜question> instead of </ask-question>
-    const text = '`gh` 已给出设备认证码。需要在浏览器中完成登录：\n\n<ask-question>\n<item><header>GitHub 认证</header><multi-select>false</multi-select><question>请打开 https://github.com/login/device 并输入代码完成登录。完成后告诉我。</question><option><label>已打开链接</label><description>我已在浏览器中完成认证，继续推送</description></option><option><label>我手动来</label><description>我自己执行 gh auth login -w 完成登录后手动推送</description></option></item>\n</｜｜DSML｜｜question>'
+    // Real case: model emits a non-standard closing tag with fullwidth pipes
+    // instead of </ask-question>
+    const text = '`gh` 已给出设备认证码。需要在浏览器中完成登录：\n\n<ask-question>\n<item><header>GitHub 认证</header><multi-select>false</multi-select><question>请打开 https://github.com/login/device 并输入代码完成登录。完成后告诉我。</question><option><label>已打开链接</label><description>我已在浏览器中完成认证，继续推送</description></option><option><label>我手动来</label><description>我自己执行 gh auth login -w 完成登录后手动推送</description></option></item>\n</\uFF5C\uFF5CDSML\uFF5C\uFF5Cquestion>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.fullTag).toBeDefined()
-    expect(result.content).toBeDefined()
-    expect(isValidAskContent(result.content!)).toBe(true)
+    expect(result.matches).toHaveLength(1)
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].header).toBe('GitHub 认证')
   })
 
   it('returns found=false when tag is present but content is not valid XML', () => {

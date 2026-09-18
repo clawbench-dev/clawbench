@@ -654,20 +654,39 @@ describe('parseAskQuestionContent', () => {
     expect(result!.questions[0].options[0].description).toBeUndefined()
   })
 
-  it('returns null for item without question', () => {
+  // An item is renderable when it carries question text OR at least one option
+  // — the same bar classifyAskQuestionsInput (renderToolDetail.ts) applies. A
+  // question with no options is still answerable via the supplementary field,
+  // and an option list with no question text still presents a choice. The old
+  // "requires both" rule was one of the divergences between the five parsers.
+  it('keeps an item with options but no question text', () => {
     const input = `<item>
     <header>H</header>
     <multi-select>false</multi-select>
     <option><label>A</label></option>
   </item>`
-    expect(parseAskQuestionContent(input)).toBeNull()
+    const result = parseAskQuestionContent(input)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].options[0].label).toBe('A')
+    expect(result!.questions[0].question).toBe('')
   })
 
-  it('returns null for item without options', () => {
+  it('keeps an item with a question but no options', () => {
     const input = `<item>
     <header>H</header>
     <multi-select>false</multi-select>
     <question>Q?</question>
+  </item>`
+    const result = parseAskQuestionContent(input)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].question).toBe('Q?')
+    expect(result!.questions[0].options).toEqual([])
+  })
+
+  it('returns null for an item with neither question nor options', () => {
+    const input = `<item>
+    <header>H</header>
+    <multi-select>false</multi-select>
   </item>`
     expect(parseAskQuestionContent(input)).toBeNull()
   })

@@ -118,6 +118,53 @@ func TestExtractSummaryCardsAskQuestionPerItemHeader(t *testing.T) {
 	}
 }
 
+// The old regex required a literal </ask-question>, so a tag with a
+// non-standard close produced a tool card (converted in block_helpers) but no
+// summary card — the summary view silently lost the question.
+func TestExtractSummaryCardsAskQuestion_NonStandardCloseTag(t *testing.T) {
+	blocks := []model.ContentBlock{{
+		Type: "text",
+		Text: `<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item></user_query>`,
+	}}
+	cards := extractSummaryCards(blocks)
+	if len(cards.AskQuestions) != 1 {
+		t.Fatalf("expected the non-standard close to be tolerated, got %+v", cards.AskQuestions)
+	}
+	if cards.AskQuestions[0].Question != "Q?" {
+		t.Fatalf("unexpected question: %+v", cards.AskQuestions[0])
+	}
+}
+
+// An unclosed option (24% of production payloads) must still yield options.
+func TestExtractSummaryCardsAskQuestion_UnclosedOption(t *testing.T) {
+	blocks := []model.ContentBlock{{
+		Type: "text",
+		Text: "<ask-question>\n<item>\n<header>操作确认</header>\n<multi-select>false</multi-select>\n" +
+			"<question>可以停掉吗？</question>\n<option>\n<label>停掉主实例</label>\n<description>kill 后重启</description>\n</item>\n</ask-question>",
+	}}
+	cards := extractSummaryCards(blocks)
+	if len(cards.AskQuestions) != 1 {
+		t.Fatalf("expected 1 ask-question, got %+v", cards.AskQuestions)
+	}
+	opts := cards.AskQuestions[0].Options
+	if len(opts) != 1 || opts[0].Label != "停掉主实例" || opts[0].Description != "kill 后重启" {
+		t.Fatalf("unexpected options: %+v", opts)
+	}
+}
+
+// An unparseable payload contributes no summary card; the raw text stays in the
+// block (the caller retains it) rather than being consumed.
+func TestExtractSummaryCardsAskQuestion_UnparseableProducesNoCard(t *testing.T) {
+	blocks := []model.ContentBlock{{
+		Type: "text",
+		Text: `<ask-question>{"questions":[{"question":"Q?"}]}</ask-question>`,
+	}}
+	cards := extractSummaryCards(blocks)
+	if len(cards.AskQuestions) != 0 {
+		t.Fatalf("expected no summary card for a JSON payload, got %+v", cards.AskQuestions)
+	}
+}
+
 func TestExtractSummaryCardsWarnings(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "warning", Text: "Server restarted, AI response interrupted", Reason: "restart"},

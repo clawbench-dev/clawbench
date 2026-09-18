@@ -277,9 +277,11 @@ export function convertVideoLinks(html: string, projectRoot?: string): string {
 }
 
 /**
- * Parse ask-question content from XML or JSON format.
- * Tries XML first, falls back to JSON if XML fails.
- * Returns null if parsing fails or no valid questions found.
+ * Parse ask-question content from XML format.
+ *
+ * Delegates to the canonical parser (`@/utils/askQuestion.ts`). Returns null if
+ * parsing fails or no valid questions were found. The content may include the
+ * <ask-question> wrapper or be a bare payload.
  */
 export function parseAskQuestionContent(rawContent: string): { questions: Array<Record<string, unknown>> } | null {
   return parseAskQuestionXML(rawContent) as { questions: Array<Record<string, unknown>> } | null

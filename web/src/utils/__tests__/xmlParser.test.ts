@@ -150,7 +150,8 @@ describe('detectAskQuestion', () => {
     const text = 'Some text before <ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item></ask-question> more text'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.content).toContain('<item>')
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].question).toBe('Q?')
   })
 
   it('returns found=false when no ask-question tag', () => {

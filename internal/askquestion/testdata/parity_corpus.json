@@ -1,0 +1,142 @@
+{
+  "comment": "Shared Go/TS parity corpus for ask-question parsing. Asserted by internal/askquestion/parity_test.go and web/src/utils/__tests__/askQuestionParity.test.ts. Every payload is a real malformed sample harvested from ClawBench.db (chat_tool_calls.input for path A, chat_history text blocks for path B).",
+  "input": [
+    {
+      "name": "flat question+options without wrapper",
+      "raw": {"\"question": "以上理解是否正确？", "options": "[{\"label\": \"旋转 Spinner\"}, {\"label\": \"脉冲骨架条\"}]", "question": "以上理解是否正确？"},
+      "want": [{"header": "", "multiSelect": false, "question": "以上理解是否正确？", "options": [{"label": "旋转 Spinner"}, {"label": "脉冲骨架条"}]}]
+    },
+    {
+      "name": "items wrapper with underscore multi_select",
+      "raw": {"items": [{"header": "费用行", "multi_select": false, "question": "怎么展示？", "options": [{"label": "有币种显符号"}]}]},
+      "want": [{"header": "费用行", "multiSelect": false, "question": "怎么展示？", "options": [{"label": "有币种显符号"}]}]
+    },
+    {
+      "name": "params.items double wrap",
+      "raw": {"params": {"items": [{"header": "识别方式", "multi_select": false, "question": "怎么识别？", "options": [{"label": "围栏约定"}]}]}},
+      "want": [{"header": "识别方式", "multiSelect": false, "question": "怎么识别？", "options": [{"label": "围栏约定"}]}]
+    },
+    {
+      "name": "parameters wrapper with choices",
+      "raw": {"parameters": [{"question": "背景层怎么处理？", "choices": [{"label": "顺手一起修"}, {"label": "只做模糊"}]}]},
+      "want": [{"header": "", "multiSelect": false, "question": "背景层怎么处理？", "options": [{"label": "顺手一起修"}, {"label": "只做模糊"}]}]
+    },
+    {
+      "name": "message instead of question",
+      "raw": {"message": "架构图现在有两种改法，想确认你的偏好：", "options": [{"label": "只删截图素材"}]},
+      "want": [{"header": "", "multiSelect": false, "question": "架构图现在有两种改法，想确认你的偏好：", "options": [{"label": "只删截图素材"}]}]
+    },
+    {
+      "name": "string multiSelect coerced to bool",
+      "raw": {"questions": [{"header": "Features", "multiSelect": "true", "question": "选哪些？", "options": [{"label": "Auth"}]}]},
+      "want": [{"header": "Features", "multiSelect": true, "question": "选哪些？", "options": [{"label": "Auth"}]}]
+    },
+    {
+      "name": "string options coerced to objects",
+      "raw": {"questions": [{"question": "选哪个？", "options": ["A", "B"]}]},
+      "want": [{"header": "", "multiSelect": false, "question": "选哪个？", "options": [{"label": "A"}, {"label": "B"}]}]
+    },
+    {
+      "name": "hallucinated type object yields nothing",
+      "raw": {"type": "ask-question"},
+      "want": []
+    },
+    {
+      "name": "hallucinated askUserQuestion boolean yields nothing",
+      "raw": {"askUserQuestion": true},
+      "want": []
+    },
+    {
+      "name": "hallucinated taskId yields nothing",
+      "raw": {"taskId": ""},
+      "want": []
+    },
+    {
+      "name": "hallucinated schema yields nothing",
+      "raw": {"schema": [{"name": "header", "type": "string"}]},
+      "want": []
+    },
+    {
+      "name": "empty object yields nothing",
+      "raw": {},
+      "want": []
+    },
+    {
+      "name": "flat question only is kept",
+      "raw": {"question": "存量统计展示在哪里？"},
+      "want": [{"header": "", "multiSelect": false, "question": "存量统计展示在哪里？", "options": []}]
+    }
+  ],
+  "extract": [
+    {
+      "name": "well formed payload",
+      "text": "前言\n<ask-question>\n<item><header>Approach</header><multi-select>false</multi-select><question>Which approach?</question><option><label>Option A</label><description>Fast</description></option><option><label>Option B</label><description>Safe</description></option></item>\n</ask-question>\n后记",
+      "wantParsed": [true],
+      "wantItems": [[{"header": "Approach", "multiSelect": false, "question": "Which approach?", "options": [{"label": "Option A", "description": "Fast"}, {"label": "Option B", "description": "Safe"}]}]],
+      "wantStripped": "前言\n\n后记"
+    },
+    {
+      "name": "unclosed option still parses",
+      "text": "前言\n<ask-question>\n<item>\n<header>操作确认</header>\n<multi-select>false</multi-select>\n<question>可以停掉吗？</question>\n<option>\n<label>停掉主实例</label>\n<description>kill 后重启</description>\n</item>\n</ask-question>\n后记",
+      "wantParsed": [true],
+      "wantItems": [[{"header": "操作确认", "multiSelect": false, "question": "可以停掉吗？", "options": [{"label": "停掉主实例", "description": "kill 后重启"}]}]],
+      "wantStripped": "前言\n\n后记"
+    },
+    {
+      "name": "option attributes still parse",
+      "text": "前\n<ask-question><item><header>Pick</header><multi-select>false</multi-select><question>Which?</question><option value=\"A\"><label>A</label></option><option value=\"B\"><label>B</label></option></item></ask-question>\n后",
+      "wantParsed": [true],
+      "wantItems": [[{"header": "Pick", "multiSelect": false, "question": "Which?", "options": [{"label": "A"}, {"label": "B"}]}]],
+      "wantStripped": "前\n\n后"
+    },
+    {
+      "name": "plural options wrapper still parses",
+      "text": "前\n<ask-question><item><header>人月数调整</header><multi-select>false</multi-select><question>是否需要回滚?</question><options><option><label>保留现状</label><description>按 git 数据</description></option><option><label>回滚</label></option></options></item></ask-question>\n后",
+      "wantParsed": [true],
+      "wantItems": [[{"header": "人月数调整", "multiSelect": false, "question": "是否需要回滚?", "options": [{"label": "保留现状", "description": "按 git 数据"}, {"label": "回滚"}]}]],
+      "wantStripped": "前\n\n后"
+    },
+    {
+      "name": "bare text option becomes label",
+      "text": "前\n<ask-question><item><header>确认</header><multi-select>false</multi-select><question>是会话搜索抽屉吗？</question><option>是，就是会话搜索抽屉</option><option>不是，我要改的是文件名搜索</option></item></ask-question>\n后",
+      "wantParsed": [true],
+      "wantItems": [[{"header": "确认", "multiSelect": false, "question": "是会话搜索抽屉吗？", "options": [{"label": "是，就是会话搜索抽屉"}, {"label": "不是，我要改的是文件名搜索"}]}]],
+      "wantStripped": "前\n\n后"
+    },
+    {
+      "name": "obfuscated close tag parses",
+      "text": "前\n<ask-question><item><header>GitHub 认证</header><multi-select>false</multi-select><question>请完成登录。</question><option><label>已打开链接</label></option></item>\n\u003c/\uff5c\uff5cDSML\uff5c\uff5cquestion\u003e",
+      "wantParsed": [true],
+      "wantItems": [[{"header": "GitHub 认证", "multiSelect": false, "question": "请完成登录。", "options": [{"label": "已打开链接"}]}]],
+      "wantStripped": "前\n"
+    },
+    {
+      "name": "unclosed tag does not swallow following details block",
+      "text": "分析如下\n<ask-question>\n<item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item>\n\n<details>\n<summary>更多</summary>\n正文内容必须保留\n</details>",
+      "wantParsed": [true],
+      "wantItems": [[{"header": "H", "multiSelect": false, "question": "Q?", "options": [{"label": "A"}]}]],
+      "wantStripped": "分析如下\n\n\n<details>\n<summary>更多</summary>\n正文内容必须保留\n</details>"
+    },
+    {
+      "name": "unparseable payload is retained not stripped",
+      "text": "前言\n<ask-question>\n{\"questions\":[{\"question\":\"你最喜欢哪种水果？\"}]}\n</ask-question>\n后记",
+      "wantParsed": [false],
+      "wantItems": [],
+      "wantStripped": "前言\n<ask-question>\n{\"questions\":[{\"question\":\"你最喜欢哪种水果？\"}]}\n</ask-question>\n后记"
+    },
+    {
+      "name": "two tags both convert",
+      "text": "<ask-question><item><header>Q1</header><multi-select>false</multi-select><question>第一个?</question><option><label>A</label></option></item></ask-question>\n中间\n<ask-question><item><header>Q2</header><multi-select>false</multi-select><question>第二个?</question><option><label>B</label></option></item></ask-question>",
+      "wantParsed": [true, true],
+      "wantItems": [[{"header": "Q1", "multiSelect": false, "question": "第一个?", "options": [{"label": "A"}]}], [{"header": "Q2", "multiSelect": false, "question": "第二个?", "options": [{"label": "B"}]}]],
+      "wantStripped": "\n中间\n"
+    },
+    {
+      "name": "tag inside code fence is ignored",
+      "text": "你可以这样用：\n\n```\n<ask-question>\n<item><header>Choice</header><question>Pick one</question><option><label>A</label></option></item>\n</ask-question>\n```\n\n这就是全部。",
+      "wantParsed": [],
+      "wantItems": [],
+      "wantStripped": "你可以这样用：\n\n```\n<ask-question>\n<item><header>Choice</header><question>Pick one</question><option><label>A</label></option></item>\n</ask-question>\n```\n\n这就是全部。"
+    }
+  ]
+}
