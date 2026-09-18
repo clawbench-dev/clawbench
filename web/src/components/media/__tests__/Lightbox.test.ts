@@ -799,6 +799,66 @@ describe('Lightbox', () => {
     })
   })
 
+  // ── open with an explicit file path ──
+
+  describe('open with an explicit file path', () => {
+    // The file-manager quick preview opens an image WITHOUT opening it in the
+    // viewer, so store.state.currentFile still points at whatever was open
+    // before. The explicit path must win — otherwise the toolbar shows the
+    // wrong filename and Download targets the wrong file.
+    it('uses the explicit path for the filename instead of the store current file', async () => {
+      mockStoreState.currentFile = { path: '/project/unrelated.png', name: 'unrelated.png' }
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+      await nextTick()
+
+      expect(vm.currentFilePath).toBe('assets/logo.png')
+      expect(vm.currentFileName).toBe('logo.png')
+    })
+
+    it('falls back to the store current file when no path is given', async () => {
+      mockStoreState.currentFile = { path: '/project/image.png', name: 'image.png' }
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/project/image.png')
+      await nextTick()
+
+      expect(vm.currentFilePath).toBe('/project/image.png')
+      expect(vm.currentFileName).toBe('image.png')
+    })
+
+    it('builds sibling navigation from the explicit path', async () => {
+      mockStoreState.currentDir = '/project/assets'
+      _dirEntries = [
+        { name: 'logo.png', type: 'file' },
+        { name: 'banner.png', type: 'file' },
+      ]
+      mockStoreState.currentFile = { path: '/project/unrelated.png', name: 'unrelated.png' }
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+      await nextTick()
+
+      expect(vm.siblingFiles.map((e: any) => e.name)).toEqual(['logo.png', 'banner.png'])
+      expect(vm.currentIndex).toBe(0)
+    })
+
+    it('ignores the explicit path for SVG (no file identity)', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('', '<svg></svg>', 'assets/logo.png')
+      await nextTick()
+
+      expect(vm.currentFilePath).toBe('')
+      expect(vm.currentIndex).toBe(-1)
+    })
+  })
+
   // ── open with SVG ──
 
   describe('open with SVG', () => {

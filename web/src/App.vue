@@ -2522,7 +2522,10 @@ provide('hotSwitchProject', hotSwitchProject)
 // Lightbox — expose open/openMdImages/openSvg via ref and provide at App level
 // so TableRowModal (in <main> subtree, not Lightbox's subtree) can inject them
 const lightboxRef = ref<InstanceType<typeof Lightbox> | null>(null)
-provide('openLightbox', (url: string, svg?: string) => lightboxRef.value?.open(url, svg))
+// The optional third arg is the image's file path: callers whose image is not
+// the store's currently-opened file (file-manager quick preview) need it so the
+// filename, sibling navigation and Download target resolve correctly.
+provide('openLightbox', (url: string, svg?: string, filePath?: string) => lightboxRef.value?.open(url, svg, filePath))
 provide('openSvgLightbox', (svg: string) => lightboxRef.value?.openSvg(svg))
 provide('openMdImages', (imgs: string[], idx: number) => lightboxRef.value?.openMdImages(imgs, idx))
 

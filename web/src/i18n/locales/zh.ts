@@ -1228,6 +1228,7 @@ export default {
       quotedToChat: '已将代码引用添加到对话',
       copyPath: '复制路径',
       pathCopied: '已复制文件路径',
+      openLightbox: '放大查看',
       revealInTree: '打开目录',
       quoteShort: '引用',
       openFileShort: '完整文件',

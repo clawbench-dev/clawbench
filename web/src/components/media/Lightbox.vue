@@ -373,7 +373,16 @@ function navigateMdImage(newIdx, direction) {
     }
 }
 
-function open(url, svg = '') {
+/**
+ * Open the Lightbox.
+ *
+ * `filePath` is optional and only needed by callers whose image is NOT the
+ * store's currently-opened file (e.g. a file-manager quick preview): the
+ * filename, the directory-sibling navigation and the Download action all
+ * resolve from it. When omitted, the store's current file is used, which is
+ * what the file viewer's own header button relies on.
+ */
+function open(url, svg = '', filePath = '') {
     currentUrl.value = svg ? '' : withCacheBuster(normalizeUrl(url))
     currentSvg.value = svg
     lightboxVisible.value = true
@@ -397,10 +406,12 @@ function open(url, svg = '') {
     mdImages.value = []
     mdCurrentIndex.value = -1
 
-    // Build navigation from store's current file
-    if (!svg && store.state.currentFile?.path) {
-        currentFilePath.value = store.state.currentFile.path
-        buildSiblingList(store.state.currentFile.path)
+    // Build navigation from the explicit path, falling back to the store's
+    // current file (the file-viewer path, where the file IS open).
+    const navPath = filePath || store.state.currentFile?.path || ''
+    if (!svg && navPath) {
+        currentFilePath.value = navPath
+        buildSiblingList(navPath)
     } else {
         currentFilePath.value = ''
         siblingFiles.value = []

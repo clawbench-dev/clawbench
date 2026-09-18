@@ -1225,6 +1225,7 @@ export default {
       quotedToChat: 'Quoted code added to chat',
       copyPath: 'Copy path',
       pathCopied: 'File path copied',
+      openLightbox: 'View image',
       revealInTree: 'Open Directory',
       quoteShort: 'Quote',
       openFileShort: 'Full file',

@@ -234,6 +234,17 @@
           <Folder :size="15" />
         </button>
 
+        <!-- Zoom image (image targets only): opens the shared Lightbox. -->
+        <button
+          v-if="isImageTarget"
+          class="code-preview-footer-btn icon-btn fbtn"
+          :title="t('file.codePreview.openLightbox')"
+          :aria-label="t('file.codePreview.openLightbox')"
+          @click="handleViewLightbox"
+        >
+          <Maximize2 :size="15" />
+        </button>
+
         <!-- Open Full / View Details — primary action. Both cases render the
              same control: an oversize file opens the same way (the label already
              reads "Full file"). -->
@@ -506,6 +517,21 @@
           >
             <ExternalLink :size="12" />
           </button>
+          <!-- Zoom image (image targets only): opens the shared Lightbox.
+               Sits directly beside Open File — both are file-level actions, so
+               they stay grouped and separate from the code tools above. -->
+          <button
+            v-if="isImageTarget"
+            class="code-preview-btn"
+            :title="t('file.codePreview.openLightbox')"
+            :aria-label="t('file.codePreview.openLightbox')"
+            :data-tooltip="t('file.codePreview.openLightbox')"
+            @pointerenter="showTooltip($event, t('file.codePreview.openLightbox'))"
+            @pointerleave="hideTooltip()"
+            @click="handleViewLightbox"
+          >
+            <Maximize2 :size="12" />
+          </button>
         </div>
       </div>
 
@@ -639,7 +665,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, inject, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Folder, Hash, Link, MessageSquare, Pin, RefreshCw, Search, TextWrap, X } from 'lucide-vue-next'
+import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Folder, Hash, Link, Maximize2, MessageSquare, Pin, RefreshCw, Search, TextWrap, X } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
@@ -649,6 +675,7 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
 import { getFileType } from '@/utils/fileType'
+import { buildLocalFileUrl } from '@/utils/download'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
@@ -671,6 +698,12 @@ const { t } = useI18n()
 const { localConfig, setLocalConfig } = useSettingsConfig()
 const switchTab = inject<(tab: string) => void>('switchTab', () => {})
 const activeTab = inject<Ref<string> | undefined>('activeTab', undefined)
+/** Shared full-screen image viewer, provided by App.vue (and the share SPA).
+ *  Injected rather than imported so this card stays free of the Lightbox's
+ *  document-level listeners unless the action is actually used. The third arg
+ *  carries the file path so the Lightbox resolves the right filename / sibling
+ *  navigation / download target — a preview click does not open the file. */
+const openLightbox = inject<((url: string, svg?: string, filePath?: string) => void) | null>('openLightbox', null)
 
 /**
  * The docked pane reuses the floating card's chrome — the same header row
@@ -735,6 +768,10 @@ const showRenderToggle = computed(() => Boolean(props.preview.canRenderMarkdown?
 // numbers, copy code, rendered/source toggle) are hidden — they are meaningless
 // for media.
 const isMediaView = computed(() => Boolean(props.preview.isMediaTarget?.value))
+/** Image targets (raster + SVG) get a Lightbox action; video/audio/PDF do not
+ *  — the Lightbox renders images only. `isImageTarget` already returns false
+ *  for a directory target, so a directory named `assets.png` stays a listing. */
+const isImageTarget = computed(() => Boolean(props.preview.isImageTarget?.value))
 const mediaKind = computed<'image' | 'video' | 'audio' | 'pdf' | null>(() => {
   const p = props.preview
   if (p.isImageTarget?.value) return 'image'
@@ -1043,6 +1080,23 @@ const handleRevealInTree = async () => {
   // navigates to the containing directory and highlights the file there.
   // No toast — the resulting file-manager navigation is self-evident.
   await navToFileInManager(filePath)
+}
+
+/**
+ * Open an image target in the shared full-screen Lightbox (zoom / pan), the
+ * same surface the file viewer's header button uses. The Lightbox derives its
+ * sibling navigation from the store's *opened* file, which a preview-only click
+ * does not set, so from here it behaves as a single-image viewer.
+ *
+ * The preview card is deliberately NOT closed: the Lightbox is an overlay on
+ * top of it, so dismissing the Lightbox returns to the preview exactly as it
+ * was. Closing here would also collapse the file manager's docked pane (via
+ * the `closed` emit), which is not what "zoom in" should do.
+ */
+const handleViewLightbox = () => {
+  const filePath = props.preview.target.value?.filePath
+  if (!filePath || typeof openLightbox !== 'function') return
+  openLightbox(buildLocalFileUrl(filePath), '', filePath)
 }
 
 const toggleWordWrap = () => {
