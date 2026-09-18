@@ -615,7 +615,17 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	stdinWriter := &lockedWriter{dst: stdinPipe}
 
 	conn := acp.NewClientSideConnection(client, stdinWriter, stdoutFilter)
-	conn.SetLogger(slog.Default())
+	// Deliberately NOT calling conn.SetLogger here. The SDK's SetLogger writes
+	// c.logger without synchronization (connection.go:125) while receive() —
+	// started by NewClientSideConnection above — reads it via loggerOrDefault()
+	// (connection.go:128). Setting it after construction is therefore a data
+	// race that `go test -race ./internal/ai` reports intermittently, failing
+	// whichever unrelated test happens to be running.
+	//
+	// The call is also redundant: loggerOrDefault() falls back to
+	// slog.Default(), which is exactly what was being passed. Production sets
+	// slog.Default once at startup (cmd/server/main.go), before any connection
+	// exists, so SDK diagnostics still reach the same handler.
 
 	// Raw side channel: lets backends call private methods the SDK rejects
 	// (e.g. CodeBuddy's session/steer). Responses are demuxed from the filter's
