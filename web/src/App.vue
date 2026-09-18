@@ -1006,13 +1006,36 @@ function handleOpenTask(e: Event) {
   }
 }
 
+/** Payload of the `clawbench-open-forge` event (forge system notification tap). */
+interface OpenForgeDetail { projectPath?: string }
+
 /**
- * Handle clawbench-open-forge event — dispatched when a forge (GitHub/GitLab)
- * system notification is clicked. The panel has no item-level deep link, so the
- * destination is the Issues & PRs tab where the row and its unread badge live.
+ * Handle clawbench-open-forge — dispatched when a forge (GitHub/GitLab) system
+ * notification is clicked.
+ *
+ * The forge panel is project-scoped: it shows the repository bound to the
+ * ACTIVE project. A change in a repository bound by another project must
+ * therefore switch projects first, or the user lands on a panel that has no
+ * such row (and the notification looks like a lie). The panel has no item-level
+ * deep link, so the destination is the Issues & PRs tab either way.
  */
-function handleOpenForge() {
-  switchTab('forge')
+function handleOpenForge(e: Event) {
+  const detail = (e as CustomEvent<OpenForgeDetail>).detail
+  const projectPath = detail?.projectPath
+  if (!projectPath || projectPath === store.state.projectRoot) {
+    // Same project (or the event carried no attribution): nothing to switch.
+    switchTab('forge')
+    return
+  }
+  // hotSwitchProject resolves even when the target project is unusable — it
+  // toasts and returns early rather than rejecting — so the tab is opened after
+  // the attempt settles either way. That is also the right fallback: the user
+  // lands on the forge panel they can actually see, instead of nothing happening.
+  hotSwitchProject(projectPath)
+    .catch(() => {
+      appLog.w(TAG, 'clawbench-open-forge: project switch threw, opening current project')
+    })
+    .finally(() => switchTab('forge'))
 }
 
 // Register browse-scoped drawers with tab-drawer binding

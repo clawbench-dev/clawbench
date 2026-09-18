@@ -16,6 +16,32 @@ const TAG = 'NotificationSound'
 
 let audioCtx: AudioContext | null = null
 
+/**
+ * Minimum gap between two chimes, in ms.
+ *
+ * The chime itself is ~350ms long, so anything arriving inside this window
+ * would overlap it and turn into noise rather than an alert. One forge poll
+ * derives events in a loop (forge_syncer.go drains a batch per repo), so a
+ * sync touching 20 items used to fire 20 overlapping chimes. The
+ * notifications themselves are already deduped per item — this only stops the
+ * sound from stacking. A genuinely separate notification arriving after the
+ * window still plays.
+ */
+const SOUND_DEDUPE_WINDOW_MS = 800
+
+let lastPlayedAt = 0
+
+/**
+ * Test-only: reset the module's cached state (the coalescing window and the
+ * lazily-created AudioContext) so each case starts from a clean slate. Without
+ * this, the first case that plays also caches the context, and later cases see
+ * a constructor that is never called again.
+ */
+export function _resetSoundThrottleForTesting() {
+  lastPlayedAt = 0
+  audioCtx = null
+}
+
 function getAudioContext(): AudioContext {
   if (!audioCtx) {
     audioCtx = new AudioContext()
@@ -46,6 +72,13 @@ function vibrateNotification() {
 export function playNotificationSound() {
   // Respect the notification sound setting — skip if user disabled it
   if (localConfig.notificationSound === false) return
+
+  // Coalesce a burst into one chime. Checked before touching the AudioContext
+  // so a suppressed call does no work at all. Vibration is skipped with it —
+  // a burst of 20 haptic pulses is the same problem.
+  const nowMs = Date.now()
+  if (nowMs - lastPlayedAt < SOUND_DEDUPE_WINDOW_MS) return
+  lastPlayedAt = nowMs
 
   try {
     const ctx = getAudioContext()

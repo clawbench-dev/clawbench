@@ -15,12 +15,23 @@ vi.mock('@/composables/useLocale', () => ({
     gt: (key: string) => key, // Return key itself for test assertions
 }))
 
-// Forge label helpers are mocked to echo their inputs so the notification text
-// is asserted structurally (which label was used) rather than against the real
-// translation table.
-vi.mock('@/utils/forgeEventLabels', () => ({
-    eventKindLabel: (kind: string) => `kind:${kind}`,
-    unreadReasonLabel: (transition: string) => `reason:${transition}`,
+// NOTE: forgeEventLabels is deliberately NOT mocked. An earlier version mocked
+// eventKindLabel/unreadReasonLabel to echo their inputs, which made the title
+// assertions structurally clean but blind to a real defect: "pipeline" had no
+// KIND_LABEL_KEYS entry and rendered as the raw English token in a Chinese
+// title. The mock accepted anything, so the test passed. Assert against the
+// real helpers and the real i18n keys.
+//
+// STORAGE_KEY is part of the module's public surface — useSettingsConfig reads
+// it at import time — so the mock must expose it alongside the default export.
+vi.mock('@/i18n', () => ({
+    STORAGE_KEY: 'clawbench-locale',
+    default: {
+        global: {
+            t: (key: string) => key,
+            locale: { value: 'zh' },
+        },
+    },
 }))
 
 // Mock the native bridge — the Web frontend must keep the Android device cursor
@@ -1033,8 +1044,10 @@ describe('useGlobalEvents', () => {
             ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: forgeEventData() })
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            // Real helpers + real i18n keys (the i18n mock echoes keys), so a
+            // missing KIND_LABEL_KEYS entry surfaces as a raw token here.
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
-                'acme/widgets · kind:pr #42 · reason:merged',
+                'acme/widgets · task.form.eventKindPr #42 · forge.overview.reason.merged',
                 expect.objectContaining({
                     body: 'Fix the thing',
                     tag: expect.stringContaining('clawbench-forge_event-widgets'),
@@ -1061,8 +1074,11 @@ describe('useGlobalEvents', () => {
             })
 
             const title = mockShowBrowserNotification.mock.calls[0][0]
-            expect(title).toBe('acme/widgets · kind:pipeline · reason:pipeline_done')
+            // "pipeline" must resolve to the repository-pipeline label, not leak
+            // the raw wire token into a localized title.
+            expect(title).toBe('acme/widgets · task.form.eventKindRepo · forge.overview.reason.pipeline_done')
             expect(title).not.toContain('#0')
+            expect(title).not.toContain('pipeline ·')
         })
 
         it('falls back to the reason when the item carries no title', () => {
@@ -1081,8 +1097,8 @@ describe('useGlobalEvents', () => {
             })
 
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
-                'acme/widgets · kind:issue #1 · reason:commented',
-                expect.objectContaining({ body: 'reason:commented' })
+                'acme/widgets · task.form.eventKindIssue #1 · forge.overview.reason.commented',
+                expect.objectContaining({ body: 'forge.overview.reason.commented' })
             )
         })
 
@@ -1096,20 +1112,58 @@ describe('useGlobalEvents', () => {
             expect(mockShowBrowserNotification).not.toHaveBeenCalled()
         })
 
-        it('notification onClick dispatches clawbench-open-forge', () => {
+        it('notification onClick dispatches clawbench-open-forge with the project path', () => {
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
             const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
 
             const ws = connectAndGetWs()
-            ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: forgeEventData() })
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'forge_event',
+                data: forgeEventData({
+                    event: {
+                        platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets',
+                        item_type: 'pr', number: 42, event_type: 'merged',
+                        project_path: '/home/u/proj-b',
+                    },
+                }),
+            })
 
             const onClick = mockShowBrowserNotification.mock.calls[0][1].onClick
             expect(onClick).toBeDefined()
             onClick()
 
+            // The panel is project-scoped, so the destination project must travel
+            // with the event — without it the click opens the ACTIVE project's
+            // panel, where this repository's row does not exist.
             expect(dispatchSpy).toHaveBeenCalledWith(
-                expect.objectContaining({ type: 'clawbench-open-forge' })
+                expect.objectContaining({
+                    type: 'clawbench-open-forge',
+                    detail: { projectPath: '/home/u/proj-b' },
+                })
+            )
+            dispatchSpy.mockRestore()
+        })
+
+        it('dispatches clawbench-open-forge with an undefined project path when unattributed', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+            const ws = connectAndGetWs()
+            // forgeEventData() has no project_path on the event.
+            ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: forgeEventData() })
+
+            mockShowBrowserNotification.mock.calls[0][1].onClick()
+
+            // The listener falls back to the current project when it is absent.
+            expect(dispatchSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: 'clawbench-open-forge',
+                    detail: { projectPath: undefined },
+                })
             )
             dispatchSpy.mockRestore()
         })

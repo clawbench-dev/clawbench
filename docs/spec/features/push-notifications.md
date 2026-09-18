@@ -43,6 +43,8 @@ sequenceDiagram
 - **任务完成推送预览**：WebSocket 通知包含任务完成的响应摘要预览文本和 `Done:` 前缀，用户不用打开 App 就能判断任务是否成功
 - **权限审批推送**：ACP 后端请求工具调用审批时，WebSocket 通知包含工具名称（如 `execute_command`、`write_file`），用户可以及时审批，避免因未审批而阻塞 AI 执行
 - **仓库事件系统通知**：`forge_event`（议题/合并请求/流水线的 opened/closed/merged/reopened/commented/pipeline_done）在页面失焦时弹系统通知，标题形如 `owner/repo · 合并请求 #42 · 已合并`，正文为条目标题，点击切到「议题与合并」页签。与钉钉/飞书推送互不影响：IM 推送受 `forge.notify.*` 服务端开关门控，系统通知受本地 `browserNotification` 门控
+- **跨项目仓库事件点击切项目**：forge 面板与未读角标都是**项目作用域**的，而 `forge_event` 广播到所有客户端。因此事件携带 `event.project_path`（`ForgeRepoRef.ProjectPath`，非身份字段——`Key()` 忽略它，同一仓库被两个项目绑定仍是一个轮询/防抖单元）；点击时若目标项目不是当前项目，先 `hotSwitchProject` 再切页签，否则会落到当前项目的面板、而那一行并不存在。切换失败则回退到当前项目的面板（不静默失败）
+- **提示音按窗口合并**：一次 forge 轮询会循环派发整批事件（`forge_syncer.go` 每仓库 drain 一批），逐条播放会让 ~350ms 的提示音重叠成噪音。`playNotificationSound()` 内置 800ms 合并窗口，窗口内的重复调用直接返回（通知本身仍逐条显示，且已按条目去重）。窗口外的新通知照常发声
 
 ### 浏览器系统通知的触发条件
 
@@ -58,7 +60,7 @@ flowchart TD
     E -->|session_update completed/cancelled/permission_pending| F[会话标题 + 摘要/工具名]
     E -->|task_update running/completed/failed/cancelled| G[任务名 + 摘要]
     E -->|forge_event| H[owner/repo · 类型 #号 · 原因 + 条目标题]
-    F --> I[playNotificationSound + 系统通知]
+    F --> I[提示音 800ms 合并窗口 + 系统通知]
     G --> I
     H --> I
 ```

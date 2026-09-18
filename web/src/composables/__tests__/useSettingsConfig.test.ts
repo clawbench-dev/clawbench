@@ -207,6 +207,30 @@ describe('useSettingsConfig', () => {
     localStorage.removeItem('clawbench-settings-inAppNotification')
   })
 
+  // Browser/system notifications default ON: they are a separate channel from
+  // the server-side push_mode, so an upgrading user who never touched this
+  // switch keeps getting desktop alerts.
+  it('localConfig has browserNotification defaulting to true', () => {
+    const { localConfig } = useSettingsConfig()
+    localStorage.removeItem('clawbench-settings-browserNotification')
+    expect('browserNotification' in localConfig).toBe(true)
+    expect(localConfig.browserNotification).toBe(true)
+  })
+
+  it('setLocalConfig persists browserNotification to localStorage', () => {
+    const { localConfig, setLocalConfig } = useSettingsConfig()
+
+    setLocalConfig('browserNotification', false)
+    expect(localConfig.browserNotification).toBe(false)
+    expect(localStorage.getItem('clawbench-settings-browserNotification')).toBe('false')
+
+    setLocalConfig('browserNotification', true)
+    expect(localConfig.browserNotification).toBe(true)
+    expect(localStorage.getItem('clawbench-settings-browserNotification')).toBe('true')
+
+    localStorage.removeItem('clawbench-settings-browserNotification')
+  })
+
   it('localConfig has messageDisplayMode defaulting to mixed', () => {
     const { localConfig } = useSettingsConfig()
     localStorage.removeItem('clawbench-settings-messageDisplayMode')

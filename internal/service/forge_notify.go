@@ -79,6 +79,13 @@ func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef
 				"item_type":  event.ItemType,
 				"number":     event.Number,
 				"event_type": event.EventType,
+				// The project that has this repository bound. The unread badge
+				// and the forge panel are project-scoped, so a notification
+				// clicked while another project is active must first switch to
+				// this one — otherwise it lands on a panel where the row does
+				// not exist. Empty when no binding could be attributed; the
+				// frontend treats that as "stay on the current project".
+				"project_path": repo.ProjectPath,
 			},
 			"item": map[string]any{
 				contentKeyType: string(item.Type),

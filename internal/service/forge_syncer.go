@@ -73,7 +73,12 @@ func (s *ForgeSyncer) SyncRepo(ctx context.Context, pf ProjectForge) error {
 // SyncRepoWithOptions runs one incremental sync with explicit options.
 func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, opts SyncOptions) error {
 	repoKey := ForgeRepoKey{Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo}
-	repoRef := ForgeRepoRef{Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo}
+	repoRef := ForgeRepoRef{
+		Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo,
+		// Carried so notifications can navigate to a project that has this repo
+		// bound. Not part of the repo identity — see ForgeRepoRef.ProjectPath.
+		ProjectPath: pf.ProjectPath,
+	}
 	remote := forge.Remote{
 		Platform: forge.Platform(pf.Platform),
 		Host:     pf.Host,

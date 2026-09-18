@@ -20,9 +20,31 @@ import {
   eventTypesSummary,
   parseEventUrl,
   eventSourceLabel,
+  eventKindLabel,
   FORGE_EVENT_TRANSITIONS,
   FORGE_REPO_TARGETED_TRANSITIONS,
 } from '@/utils/forgeEventLabels'
+
+describe('eventKindLabel', () => {
+  // The i18n mock echoes keys, so this asserts the MAPPING (which key a wire
+  // value resolves to). A missing entry is the failure mode that matters: the
+  // helper falls back to the raw token, so an unmapped "pipeline" rendered an
+  // untranslated English word inside a Chinese notification title.
+  it('maps every item type the backend can put on the wire', () => {
+    expect(eventKindLabel('issue')).toBe('task.form.eventKindIssue')
+    expect(eventKindLabel('pr')).toBe('task.form.eventKindPr')
+    // forge.ItemTypePipeline = "pipeline" — the real wire value for a CI event.
+    expect(eventKindLabel('pipeline')).toBe('task.form.eventKindRepo')
+    // The form's pseudo-kind, still used for subscription grouping.
+    expect(eventKindLabel('repo')).toBe('task.form.eventKindRepo')
+  })
+
+  it('falls back to the raw token for an unrecognized kind', () => {
+    // Deliberate: a future backend type degrades to something readable rather
+    // than an empty string. It must NOT silently resolve to a real label.
+    expect(eventKindLabel('bogus')).toBe('bogus')
+  })
+})
 
 describe('splitEventTypes', () => {
   it('splits, trims and drops empties', () => {

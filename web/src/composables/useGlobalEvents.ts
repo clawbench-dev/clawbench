@@ -62,6 +62,12 @@ export interface ForgeEventIdentity {
     number?: number
     /** "opened" | "closed" | "merged" | "reopened" | "commented" | "pipeline_done" */
     event_type?: string
+    /**
+     * Project that has this repository bound. The forge panel is project-scoped,
+     * so a click must switch to this project before opening the tab — otherwise
+     * it lands on a panel where the changed row does not exist.
+     */
+    project_path?: string
 }
 
 /** The issue/PR/pipeline a forge change happened on. */
@@ -602,11 +608,15 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
         title = [slug, `${kind}${ref}`.trim(), reason].filter(Boolean).join(' · ')
         alert_ = item?.title || reason
 
-        // Click: open the Issues & PRs tab. There is no item-level deep link in
-        // the panel yet, so this lands the user where the row (and the unread
-        // badge it belongs to) is visible.
+        // Click: open the Issues & PRs tab, switching projects first when the
+        // change belongs to a repository bound by another project. The panel has
+        // no item-level deep link, so the destination is the tab where the row
+        // and its unread badge live.
+        const projectPath = ev.project_path
         onClick = () => {
-            window.dispatchEvent(new CustomEvent('clawbench-open-forge', { detail: { url: item?.url } }))
+            window.dispatchEvent(new CustomEvent('clawbench-open-forge', {
+                detail: { projectPath },
+            }))
         }
     } else {
         return

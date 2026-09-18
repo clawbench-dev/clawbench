@@ -207,6 +207,35 @@ func TestForgeDispatcher_PayloadEventKeysAreSnakeCase(t *testing.T) {
 	assert.NotContains(t, ev, "EventType", "PascalCase key means the struct was marshalled directly")
 }
 
+// TestForgeDispatcher_PayloadCarriesProjectPath pins the field the frontend
+// needs to navigate to the right project. The unread badge and the forge panel
+// are project-scoped, so without it a notification clicked while another
+// project is active opens a panel where the row does not exist.
+func TestForgeDispatcher_PayloadCarriesProjectPath(t *testing.T) {
+	var payload map[string]any
+	d := service.NewForgeEventDispatcher(fullNotifyConfig, func(msg any) {
+		payload = msg.(map[string]any)
+	}, nil)
+
+	d.HandleChange(context.Background(), service.ForgeRepoRef{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ProjectPath: "/home/u/proj-b",
+	}, testItem(), forge.Change{Type: forge.EventClosed, Number: 1})
+
+	require.NotNil(t, payload)
+	ev := payload["event"].(map[string]any)
+	assert.Equal(t, "/home/u/proj-b", ev["project_path"])
+}
+
+// TestForgeRepoRef_KeyIgnoresProjectPath guards the debounce bucket identity:
+// the same repository bound by two projects must remain ONE bucket, otherwise
+// a burst affecting both bindings would be debounced twice independently.
+func TestForgeRepoRef_KeyIgnoresProjectPath(t *testing.T) {
+	a := service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b", ProjectPath: "/proj/one"}
+	b := service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b", ProjectPath: "/proj/two"}
+	assert.Equal(t, a.Key(), b.Key(), "project path must not split the repo identity")
+}
+
 func TestFormatForgeEventMessage(t *testing.T) {
 	event := service.ForgeEvent{
 		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",

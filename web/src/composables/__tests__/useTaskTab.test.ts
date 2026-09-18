@@ -531,6 +531,52 @@ describe('useTaskTab', () => {
       )
     })
 
+    // ── push_mode must NOT gate the system notification ──
+    //
+    // The decision belongs to the local `browserNotification` setting (checked
+    // inside showBrowserNotification) and to page focus. It used to be gated on
+    // `serverConfig.push_mode === 'native'`, which silenced the desktop tab of
+    // anyone who had picked DingTalk/飞书/关闭 for their PHONE.
+    //
+    // Regression guard note: without these cases the gate could be re-added and
+    // the suite would stay green — `serverConfig` defaults to `{}`, so the old
+    // `|| 'native'` fallback made the gate pass in every existing test. These
+    // cases set a non-native push_mode so a re-added gate actually fails.
+    it('notifies on completion even when push_mode is dingtalk', async () => {
+      const settings = await import('@/composables/useSettingsConfig')
+      settings.serverConfig.value = { push_mode: 'dingtalk' }
+
+      try {
+        const { loadTasks } = useTaskTab()
+        mockTasksResponse([makeTask({ runningCount: 1 })])
+        await loadTasks()
+        mockTasksResponse([makeTask({ runningCount: 0, runCount: 1 })])
+        await loadTasks()
+
+        expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+        expect(mockPlayNotificationSound).toHaveBeenCalledTimes(1)
+      } finally {
+        settings.serverConfig.value = {}
+      }
+    })
+
+    it('notifies on completion even when push_mode is disabled', async () => {
+      const settings = await import('@/composables/useSettingsConfig')
+      settings.serverConfig.value = { push_mode: 'disabled' }
+
+      try {
+        const { loadTasks } = useTaskTab()
+        mockTasksResponse([makeTask({ runningCount: 1 })])
+        await loadTasks()
+        mockTasksResponse([makeTask({ runningCount: 0, runCount: 1 })])
+        await loadTasks()
+
+        expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+      } finally {
+        settings.serverConfig.value = {}
+      }
+    })
+
     it('shows toast on completion with task name', async () => {
       const { loadTasks } = useTaskTab()
 
