@@ -39,12 +39,20 @@ describe('SessionList selected-row tint covers the archive button', () => {
     expect(src).not.toContain('.session-row.pinned.active .session-item')
   })
 
-  it('keeps running fill in background-color so the active background-image survives', async () => {
+  it('leaves the row background to the selection tint alone', async () => {
     const src = await sessionListSource()
-    // A `background:` shorthand here would reset background-image and erase the
-    // selection tint on running rows.
-    expect(src).toMatch(/\.session-row\.running\s*\{[\s\S]*?background-color:\s*rgba\(34,\s*197,\s*94,\s*0\.05\)/)
-    expect(src).toMatch(/\.session-row\.active\.running\s*\{[\s\S]*?background-color:/)
+    // The running state used to add a tinted background, which had to be
+    // declared in the `background-color` slot so the active row's
+    // `background-image` tint survived. The running signal is now a bottom
+    // band and paints no row background at all, so the two can no longer
+    // collide — assert the row keeps its own background free.
+    const runningRule = src.match(/\.session-row\.running\s*\{[^}]*\}/)?.[0]
+    expect(runningRule, '.session-row.running should exist').toBeTruthy()
+    expect(runningRule, 'the running row must not paint a background').not.toMatch(
+      /background(-color)?\s*:/,
+    )
+    // The selection tint is still declared on the row, not the inner cell.
+    expect(src).toMatch(/\.session-row\.active\s*\{[\s\S]*?background-image:/)
   })
 
   it('does not clobber the tint with a hover background shorthand', async () => {
