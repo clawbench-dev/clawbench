@@ -126,12 +126,13 @@ export function detectAskQuestion(text: string): AskQuestionResult {
 }
 
 /**
- * Remove the successfully parsed <ask-question> spans from text.
+ * Replace every located <ask-question> span with what should be shown in its
+ * place.
  *
- * Unparseable spans are deliberately retained: their raw text is the only
- * remaining copy of the question, and deleting it was the silent content-loss
- * defect. `result.matches` carries the parse outcome, so a span that failed is
- * left untouched.
+ * Parsed spans are removed (the card renders them). Unparseable spans are
+ * replaced by their inner text, so a malformed payload degrades to readable
+ * Markdown rather than exposing raw tags. Nothing is discarded either way —
+ * `result.matches` carries the parse outcome and the fallback text.
  */
 export function stripAskQuestionTag(text: string, result: AskQuestionResult): string {
   if (result.matches.length === 0) return text

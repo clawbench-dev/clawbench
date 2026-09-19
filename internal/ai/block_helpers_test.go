@@ -96,7 +96,9 @@ func TestConvertAskQuestionBlocks_XMLFormat(t *testing.T) {
 	}
 }
 
-func TestConvertAskQuestionBlocks_JSONContentNotConverted(t *testing.T) {
+func TestConvertAskQuestionBlocks_JSONContentIsRecovered(t *testing.T) {
+	// JSON is not the documented format, but recovering it beats discarding a
+	// readable question.
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: `<ask-question>{"questions":[{"question":"Pick one","header":"Choice","multiSelect":false,"options":[{"label":"A","description":"First"}]}]}</ask-question>`},
 	}
@@ -104,9 +106,14 @@ func TestConvertAskQuestionBlocks_JSONContentNotConverted(t *testing.T) {
 
 	for _, b := range result {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
-			t.Fatalf("expected no AskUserQuestion block for JSON content, got: %+v", result)
+			qs, _ := b.Input["questions"].([]map[string]any)
+			if len(qs) != 1 || qs[0]["question"] != "Pick one" {
+				t.Fatalf("unexpected recovered questions: %+v", qs)
+			}
+			return
 		}
 	}
+	t.Fatalf("expected the JSON payload to be recovered, got: %+v", result)
 }
 
 func TestConvertAskQuestionBlocks_NoTags(t *testing.T) {
@@ -184,7 +191,7 @@ func TestConvertAskQuestionBlocks_MultipleTagsMergeIntoOneBlock(t *testing.T) {
 // An unparseable payload must stay in the text block: its raw text is the only
 // remaining copy of the question.
 func TestConvertAskQuestionBlocks_UnparseableTagIsRetained(t *testing.T) {
-	payload := `<ask-question>{"questions":[{"question":"你最喜欢哪种水果？"}]}</ask-question>`
+	payload := `<ask-question>这里没有列表也没有 JSON，只是一段说明。</ask-question>`
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: "前言\n" + payload + "\n后记"},
 	}
@@ -194,8 +201,8 @@ func TestConvertAskQuestionBlocks_UnparseableTagIsRetained(t *testing.T) {
 	if len(result) != 1 || result[0].Type != "text" {
 		t.Fatalf("expected a single unchanged text block, got %+v", result)
 	}
-	if !strings.Contains(result[0].Text, "你最喜欢哪种水果？") {
-		t.Fatalf("the unparseable payload must be retained, got %q", result[0].Text)
+	if !strings.Contains(result[0].Text, "这里没有列表也没有 JSON") {
+		t.Fatalf("the unparseable payload text must be retained, got %q", result[0].Text)
 	}
 }
 
@@ -408,3 +415,54 @@ func TestConvertAskQuestionBlocks_DefensiveCopy(t *testing.T) {
 }
 
 // --- ExtractToolCallMeta ---
+
+// Under the native-Markdown contract an unparseable payload degrades to
+// readable text: the wrapper is stripped so no raw tag reaches the user, and
+// the payload's own text survives.
+func TestConvertAskQuestionBlocks_UnparseableDegradesToMarkdown(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "前言\n<ask-question>\n这里没有列表也没有 JSON，只是一段说明。\n</ask-question>\n后记"},
+	}
+
+	result := ConvertAskQuestionBlocks(blocks)
+
+	if len(result) != 1 || result[0].Type != "text" {
+		t.Fatalf("expected a single text block, got %+v", result)
+	}
+	if strings.Contains(result[0].Text, "<ask-question") {
+		t.Errorf("the wrapper must be stripped, got %q", result[0].Text)
+	}
+	if !strings.Contains(result[0].Text, "这里没有列表也没有 JSON") {
+		t.Errorf("the payload text must survive, got %q", result[0].Text)
+	}
+}
+
+// The current format is native Markdown inside the tag.
+func TestConvertAskQuestionBlocks_MarkdownFormat(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "前言\n<ask-question>\n**方案选择**\n你更倾向哪种？\n- 方案 A — 快\n- 方案 B — 安全\n</ask-question>\n后记"},
+	}
+
+	result := ConvertAskQuestionBlocks(blocks)
+
+	var got map[string]any
+	for _, b := range result {
+		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
+			got = b.Input
+		}
+		if b.Type == "text" && strings.Contains(b.Text, "<ask-question") {
+			t.Errorf("no raw tag may remain, got %q", b.Text)
+		}
+	}
+	if got == nil {
+		t.Fatalf("expected an AskUserQuestion block, got %+v", result)
+	}
+	qs, _ := got["questions"].([]map[string]any)
+	if len(qs) != 1 || qs[0]["header"] != "方案选择" {
+		t.Fatalf("unexpected questions: %+v", qs)
+	}
+	opts, _ := qs[0]["options"].([]map[string]any)
+	if len(opts) != 2 || opts[0]["label"] != "方案 A" || opts[0]["description"] != "快" {
+		t.Fatalf("unexpected options: %+v", opts)
+	}
+}

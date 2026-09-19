@@ -32,19 +32,56 @@ var (
 	rePluralOption = regexp.MustCompile(`(?i)</?options\s*>`)
 )
 
-// ParseItems understands the (possibly repaired) inner payload of an
-// <ask-question> block. It returns nil when nothing renderable was found —
-// callers must then retain the raw text.
+// ParseItems understands the inner payload of an <ask-question> block.
+// It returns nil when nothing renderable was found.
 //
-// A JSON payload is intentionally not accepted: JSON support was removed on
-// purpose (commit d189374e1) and is treated as an unparseable payload.
+// The current format is native Markdown (see markdown.go). The legacy XML shape
+// is still accepted so historical conversations keep rendering their cards —
+// without it, every old card would degrade to visible markup.
+//
+// Ordering: a payload containing legacy child elements is parsed as XML only.
+// Running the Markdown parser over XML would "succeed" by treating the tags as
+// question text and produce a garbage card, so the shape is detected first
+// rather than relying on the parsers to disagree.
+//
+// JSON is not a supported input format (the system prompt mandates Markdown),
+// but it is recovered when possible — see recoverJSONItems — because models
+// still emit it and the alternative is discarding a readable question.
 func ParseItems(inner string) []Item {
 	if strings.TrimSpace(inner) == "" {
 		return nil
 	}
 	if looksLikeJSON(inner) {
-		return nil
+		// JSON is not the documented format, but models still emit it. Recovery
+		// is attempted because the alternative is discarding a readable
+		// question; if it fails the payload renders as Markdown instead.
+		return recoverJSONItems(inner)
 	}
+	if looksLikeLegacyXML(inner) {
+		return parseXMLItems(inner)
+	}
+	if items := parseMarkdownItems(inner); len(items) > 0 {
+		return items
+	}
+	// Not obviously XML, but a malformed payload may still carry XML children
+	// (e.g. a bare <item> with no wrapper).
+	return parseXMLItems(inner)
+}
+
+// looksLikeLegacyXML reports whether the payload carries any legacy child
+// element. Only these names are checked: a question that merely mentions a tag
+// in prose must still be parsed as Markdown.
+func looksLikeLegacyXML(s string) bool {
+	for _, name := range []string{"<item", "<option", "<question", "<header", "<label", "<description", "<multi-select", "<multi_select", "<options"} {
+		if strings.Contains(strings.ToLower(s), name) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseXMLItems is the legacy XML parser.
+func parseXMLItems(inner string) []Item {
 	// <options> is a plural wrapper some models emit around the real <option>
 	// elements; drop the wrapper so the option scan sees its children.
 	normalized := rePluralOption.ReplaceAllString(inner, "")

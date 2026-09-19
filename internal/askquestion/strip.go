@@ -2,16 +2,18 @@ package askquestion
 
 import "strings"
 
-// Strip removes every successfully parsed span from text and leaves the rest
-// byte-for-byte intact.
+// Strip replaces every located span with what should be shown in its place.
 //
-// Unparseable spans are deliberately NOT removed: their Raw is the only
-// remaining copy of the question, and deleting it is exactly the silent-loss
-// defect this package exists to prevent. Callers that want a readable
-// rendering of an unparseable span must keep it visible (the frontend lets it
-// fall through to markdown; the backend leaves it in the text block).
+//   - A parsed span is removed entirely (the card renders it).
+//   - An unparsed span is replaced by its Fallback: the payload with the
+//     ask-question wrapper removed, so it renders as ordinary Markdown instead
+//     of exposing raw markup.
 //
-// Spans are removed from the end backwards so earlier offsets stay valid.
+// No content is ever discarded. An unparsed span's Fallback holds everything
+// the span contained, so the failure mode is "renders as plain text" — never
+// the silent loss this package exists to prevent.
+//
+// Spans are applied from the end backwards so earlier offsets stay valid.
 func Strip(text string, matches []Match) string {
 	if len(matches) == 0 {
 		return text
@@ -20,13 +22,19 @@ func Strip(text string, matches []Match) string {
 	b.Grow(len(text))
 	prev := 0
 	for _, m := range matches {
-		if !m.Parsed {
-			continue
-		}
 		if m.Start < prev || m.End > len(text) || m.End <= m.Start {
 			continue
 		}
 		b.WriteString(text[prev:m.Start])
+		if m.Parsed {
+			// The card renders it; nothing goes into the text stream.
+		} else if m.Fallback != "" {
+			b.WriteString(m.Fallback)
+		} else {
+			// Defensive: a fallback is always set for an unparsed span, but an
+			// empty one would erase content, so keep the raw text.
+			b.WriteString(m.Raw)
+		}
 		prev = m.End
 	}
 	b.WriteString(text[prev:])

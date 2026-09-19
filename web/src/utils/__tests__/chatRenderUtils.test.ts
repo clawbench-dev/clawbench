@@ -692,9 +692,11 @@ describe('parseAskQuestionContent', () => {
     expect(parseAskQuestionContent(input)).toBeNull()
   })
 
-  it('returns null for JSON content (only XML is supported)', () => {
+  it('recovers JSON content rather than returning null', () => {
     const input = '{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"}]}]}'
-    expect(parseAskQuestionContent(input)).toBeNull()
+    const result = parseAskQuestionContent(input)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].header).toBe('Approach')
   })
 })
 

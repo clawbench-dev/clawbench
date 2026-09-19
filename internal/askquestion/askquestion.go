@@ -54,6 +54,15 @@ type Match struct {
 	Parsed bool
 	// Reason is a Reason* code describing why an unparsed span was left alone.
 	Reason string
+	// Fallback is the text to show in place of an unparsed span: the payload
+	// with its ask-question wrapper removed, so it renders as ordinary
+	// Markdown. It is set only when Parsed is false and is never empty for a
+	// non-empty span.
+	//
+	// Showing the inner text (rather than the raw tag) means a parse failure
+	// degrades to readable prose instead of exposing markup. No content is
+	// lost either way — Fallback always contains everything the span held.
+	Fallback string
 }
 
 // Reason codes for an unparsed span. Exported so consumers outside this
@@ -69,3 +78,7 @@ const (
 	// ReasonParseFailed means the span was bounded but yielded no question.
 	ReasonParseFailed = "parse_failed"
 )
+
+// KeyQuestions is the canonical key for the question array in a tool input. It
+// is exported so the several producers of that shape cannot drift apart.
+const KeyQuestions = "questions"

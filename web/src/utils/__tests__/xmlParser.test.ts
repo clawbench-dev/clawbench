@@ -113,9 +113,13 @@ describe('parseAskQuestionXML', () => {
     expect(result!.questions[0].multiSelect).toBe(false)
   })
 
-  it('returns null for JSON content (only XML is supported)', () => {
+  it('recovers JSON content rather than returning null', () => {
+    // JSON is not the documented format, but recovering it beats discarding a
+    // readable question.
     const json = `{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"}]}]}`
-    expect(parseAskQuestionXML(json)).toBeNull()
+    const result = parseAskQuestionXML(json)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].header).toBe('Approach')
   })
 })
 

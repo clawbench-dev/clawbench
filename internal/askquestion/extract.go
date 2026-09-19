@@ -112,16 +112,20 @@ func locate(text string, openStart, openEnd int) Match {
 		}
 	}
 
-	// Unparseable: report the span but mark it so callers retain the text.
+	// Unparseable: report the span and the text to show in its place. The
+	// fallback is the inner text with the wrapper stripped, so the caller can
+	// render it as Markdown rather than exposing raw markup.
 	end := spanEnd
 	if end <= openStart {
 		end = openEnd
 	}
+	raw := text[openStart:end]
 	return Match{
-		Start:  openStart,
-		End:    end,
-		Raw:    text[openStart:end],
-		Reason: reason,
+		Start:    openStart,
+		End:      end,
+		Raw:      raw,
+		Reason:   reason,
+		Fallback: fallbackText(raw),
 	}
 }
 
@@ -268,4 +272,17 @@ func isGapNoise(r rune) bool {
 		return true
 	}
 	return false
+}
+
+// fallbackText renders an unparsed span as plain text: the ask-question wrapper
+// and its legacy child elements are removed, everything else is kept.
+//
+// If stripping the wrapper would leave nothing (an empty tag), the raw span is
+// returned unchanged — an empty fallback would silently erase the span.
+func fallbackText(raw string) string {
+	stripped := strings.TrimSpace(stripAskTags(raw))
+	if stripped == "" {
+		return raw
+	}
+	return stripped
 }
