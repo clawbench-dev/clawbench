@@ -18,8 +18,23 @@ export function injectTableRowAttrs(html: string): string {
 
   const parser = new DOMParser()
   const doc = parser.parseFromString(html, 'text/html')
+  if (!injectTableRowAttrsIn(doc)) return html
+  return doc.body.innerHTML
+}
+
+/**
+ * Add row/table indices inside an already-parsed Document, mutating it in place.
+ *
+ * Split out of `injectTableRowAttrs` so the markdown pipeline can run several
+ * annotation steps over ONE parsed document instead of each step paying its own
+ * `parseFromString` + `body.innerHTML` round trip.
+ *
+ * @returns true when anything changed, so the string wrapper can return the
+ *   original HTML untouched on a no-op.
+ */
+export function injectTableRowAttrsIn(doc: Document): boolean {
   const tables = doc.querySelectorAll('table')
-  if (tables.length === 0) return html
+  if (tables.length === 0) return false
 
   let changed = false
 
@@ -36,8 +51,7 @@ export function injectTableRowAttrs(html: string): string {
     }
   }
 
-  if (!changed) return html
-  return doc.body.innerHTML
+  return changed
 }
 
 /**

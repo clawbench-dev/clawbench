@@ -112,9 +112,21 @@ export function annotateCommitHashes(
 ): { html: string; detectedSHAs: string[] } {
     if (!html) return { html: '', detectedSHAs: [] }
 
-    const detectedSHAs: string[] = []
-
     const doc = new DOMParser().parseFromString(html, 'text/html')
+    const detectedSHAs = annotateCommitHashesIn(doc)
+    return { html: doc.body.innerHTML, detectedSHAs }
+}
+
+/**
+ * Annotate commit hashes inside an already-parsed Document, mutating it in place.
+ *
+ * Split out of `annotateCommitHashes` so the markdown pipeline can run several
+ * annotation steps over ONE parsed document instead of each step paying its own
+ * `parseFromString` + `body.innerHTML` round trip. Behaviour is identical to
+ * the string wrapper — that wrapper is now a thin parse/call/serialize shim.
+ */
+export function annotateCommitHashesIn(doc: Document): string[] {
+    const detectedSHAs: string[] = []
 
     // ── Step 1: <code> tags whose content is purely a commit hash ──
     // Only handles the case where the entire <code> content is a single hash.
@@ -200,7 +212,7 @@ export function annotateCommitHashes(
         }
     }
 
-    return { html: doc.body.innerHTML, detectedSHAs }
+    return detectedSHAs
 }
 
 // Cache of verified commit SHAs: sha -> commit info object (or null if not a commit)

@@ -708,10 +708,10 @@ function handleCtrlArrowMsgJump(e) {
   if (!(e.ctrlKey || e.metaKey)) return
   if (e.key === 'ArrowUp') {
     e.preventDefault()
-    jumpToAdjacentMessage('prev', nearestMessageId.value)
+    jumpToAdjacentMessage('prev', getNearestMessageId())
   } else if (e.key === 'ArrowDown') {
     e.preventDefault()
-    jumpToAdjacentMessage('next', nearestMessageId.value)
+    jumpToAdjacentMessage('next', getNearestMessageId())
   }
 }
 
@@ -944,10 +944,12 @@ function scrollToPreviousMessage() {
   const el = messagesRef.value
   const items = el.querySelectorAll('.chat-messages-list > .chat-message')
   if (items.length === 0) { setProgrammatic(false); return }
+  // Read the container rect ONCE — it is loop-invariant. Re-reading it inside
+  // the loop forced a synchronous layout per message (layout thrashing).
+  const containerRect = el.getBoundingClientRect()
   // Find the first message whose bottom is above the viewport top
   for (let i = items.length - 1; i >= 0; i--) {
     const rect = items[i].getBoundingClientRect()
-    const containerRect = el.getBoundingClientRect()
     if (rect.bottom < containerRect.top + 8) {
       scrollAndHighlight(items[i])
       return
@@ -965,10 +967,11 @@ function scrollToNextMessage() {
   const el = messagesRef.value
   const items = el.querySelectorAll('.chat-messages-list > .chat-message')
   if (items.length === 0) { setProgrammatic(false); return }
+  // Loop-invariant: read once, not once per message.
+  const containerRect = el.getBoundingClientRect()
   // Find the first message whose top is below the viewport bottom
   for (let i = 0; i < items.length; i++) {
     const rect = items[i].getBoundingClientRect()
-    const containerRect = el.getBoundingClientRect()
     if (rect.top > containerRect.bottom - 8) {
       scrollAndHighlight(items[i])
       return
@@ -1029,52 +1032,90 @@ const {
 
 // Nearest user message to viewport center — used for activeId highlight in index
 const scrollTick = ref(0)
-const nearestUserMsgId = computed(() => {
+
+/**
+ * Indices + centre distances for every message, computed in ONE pass.
+ *
+ * Why this exists: the two "nearest message" computeds below used to each walk
+ * every message calling `getBoundingClientRect()`. Reading layout inside a loop
+ * forces a synchronous re-layout on each read (layout thrashing), and both
+ * computeds re-ran on every `scrollTick` bump — i.e. on every scroll frame.
+ * A 130-message session meant ~260 forced full-document re-layouts per frame
+ * (Chrome trace: `Layout dirty=668 total=668`, ~400ms of unattributable time
+ * inside a single 578ms task, freezing the UI).
+ *
+ * Measuring all rects in one tight loop lets the browser batch the reads (one
+ * layout flush for the whole loop instead of one per read), and both consumers
+ * share the result. This is a deliberate read-batching pass: do not add DOM
+ * writes inside it, or the batching is lost.
+ */
+const messageCenters = computed(() => {
   void scrollTick.value // dependency trigger
+  // The message array is a dependency too, not just scrollTick. `centers` is
+  // indexed in lockstep with `props.messages`, and the array can change WITHOUT
+  // a scroll event: a prepend (loadMore) whose anchor delta happens to be zero
+  // leaves scrollTop untouched, so handleScroll never fires. Without this, the
+  // cached `centers` keeps the old length while the DOM has already shifted,
+  // and nearestMessageIndex would pair stale offsets with new messages.
+  void props.messages.length
   const el = messagesRef.value
   if (!el) return null
   const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+  if (items.length === 0) return null
+
+  // Read the container rect ONCE (it was previously re-read on every iteration).
   const containerRect = el.getBoundingClientRect()
   const center = containerRect.top + containerRect.height / 2
-  let nearestUserIdx = null
-  let minDist = Infinity
+
+  // One batched read pass over all message rects.
+  const centers = new Array(items.length)
   for (let i = 0; i < items.length; i++) {
-    const msg = props.messages[i]
-    if (!msg || msg.role !== 'user') continue
     const rect = items[i].getBoundingClientRect()
-    const dist = Math.abs(rect.top + rect.height / 2 - center)
-    if (dist < minDist) {
-      minDist = dist
-      nearestUserIdx = i
-    }
+    centers[i] = rect.top + rect.height / 2
   }
-  if (nearestUserIdx === null) return null
-  return props.messages[nearestUserIdx].id
+  return { centers, center }
 })
 
-// Nearest message of any role to viewport center — anchor for Ctrl+↑/↓ jump
-const nearestMessageId = computed(() => {
-  void scrollTick.value // dependency trigger
-  const el = messagesRef.value
-  if (!el) return null
-  const items = el.querySelectorAll('.chat-messages-list > .chat-message')
-  const containerRect = el.getBoundingClientRect()
-  const center = containerRect.top + containerRect.height / 2
-  let nearestIdx = null
+/** Index of the message whose centre is closest to the viewport centre. */
+function nearestMessageIndex(role) {
+  const data = messageCenters.value
+  if (!data) return null
+  const { centers, center } = data
+  let bestIdx = null
   let minDist = Infinity
-  for (let i = 0; i < items.length; i++) {
-    const msg = props.messages[i]
-    if (!msg) continue
-    const rect = items[i].getBoundingClientRect()
-    const dist = Math.abs(rect.top + rect.height / 2 - center)
+  for (let i = 0; i < centers.length; i++) {
+    if (role) {
+      const msg = props.messages[i]
+      if (!msg || msg.role !== role) continue
+    }
+    const dist = Math.abs(centers[i] - center)
     if (dist < minDist) {
       minDist = dist
-      nearestIdx = i
+      bestIdx = i
     }
   }
-  if (nearestIdx === null) return null
-  return props.messages[nearestIdx].id
+  return bestIdx
+}
+
+const nearestUserMsgId = computed(() => {
+  // Gate on the drawer being open. This computed's only consumer is the index
+  // drawer's `active-id`, but it depends on scrollTick, which bumps on every
+  // scroll frame — including the continuous auto-scroll during streaming. With
+  // a long session that meant a full message walk (getBoundingClientRect per
+  // message) on every frame while the drawer was closed and nobody was looking.
+  if (!userMsgIndexDrawer.effectiveOpen.value) return null
+  const idx = nearestMessageIndex('user')
+  return idx === null ? null : (props.messages[idx]?.id ?? null)
 })
+
+// Nearest message of any role to viewport center — anchor for Ctrl+↑/↓ jump.
+// Read imperatively at jump time (see the keydown handler), so it is a plain
+// function rather than a computed: no dependency tracking, no recompute on
+// every scroll tick for a value nobody reads until a key is pressed.
+function getNearestMessageId() {
+  const idx = nearestMessageIndex()
+  return idx === null ? null : (props.messages[idx]?.id ?? null)
+}
 
 // Watch session switch to reset scroll state and user msg index.
 // Session switches always land at the bottom (switchSession force-scrolls), so
@@ -1136,10 +1177,10 @@ function captureAnchor(el) {
 function restoreAnchor(el, anchor) {
   if (anchor.key) {
     const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+    const containerRect = el.getBoundingClientRect() // loop-invariant: read once
     for (const item of items) {
       if (item.getAttribute('data-msg-key') === anchor.key) {
         const rect = item.getBoundingClientRect()
-        const containerRect = el.getBoundingClientRect()
         const desiredTop = containerRect.top + anchor.offset
         el.scrollTop += rect.top - desiredTop
         return

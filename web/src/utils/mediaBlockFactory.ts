@@ -72,6 +72,19 @@ function stampLightboxImg(el: Element): void {
 export function annotateMediaBlocks(html: string): string {
     if (!html) return html
     const doc = new DOMParser().parseFromString(html, 'text/html')
+    annotateMediaBlocksIn(doc)
+    return doc.body.innerHTML
+}
+
+/**
+ * Lift every <img> / bare inline <svg> into the bordered block figure, mutating
+ * the given Document in place.
+ *
+ * Split out so the markdown pipeline can run several annotation steps over ONE
+ * parsed document instead of each step paying its own `parseFromString` +
+ * `body.innerHTML` round trip.
+ */
+export function annotateMediaBlocksIn(doc: Document): void {
 
     // Iterate a snapshot: each pass moves the element, so a live NodeList would skip.
     const media = Array.from(doc.querySelectorAll('img, svg.lightbox-svg'))
@@ -199,8 +212,6 @@ export function annotateMediaBlocks(html: string): string {
             host.replaceWith(frag)
         }
     }
-
-    return doc.body.innerHTML
 }
 
 /**

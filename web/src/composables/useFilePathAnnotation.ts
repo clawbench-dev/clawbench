@@ -497,10 +497,25 @@ export function annotateFilePaths(
 ): { html: string; detectedPaths: string[] } {
     if (!html) return { html: '', detectedPaths: [] }
 
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const detectedPaths = annotateFilePathsIn(doc, options)
+    return { html: doc.body.innerHTML, detectedPaths }
+}
+
+/**
+ * Annotate file paths inside an already-parsed Document, mutating it in place.
+ *
+ * Split out of `annotateFilePaths` so the markdown pipeline can run several
+ * annotation steps over ONE parsed document instead of each step paying its own
+ * `parseFromString` + `body.innerHTML` round trip. Behaviour is identical to
+ * the string wrapper — that wrapper is now a thin parse/call/serialize shim.
+ */
+export function annotateFilePathsIn(
+    doc: Document,
+    options: AnnotateFilePathsOptions
+): string[] {
     const { projectRoot, baseDir, homeDir } = options
     const detectedPaths: string[] = []
-
-    const doc = new DOMParser().parseFromString(html, 'text/html')
 
     // ── Step 1: <a> tags with local-file hrefs ──
     for (const a of doc.querySelectorAll('a[href]')) {
@@ -617,7 +632,7 @@ export function annotateFilePaths(
         }
     }
 
-    return { html: doc.body.innerHTML, detectedPaths }
+    return detectedPaths
 }
 
 // ── Async verification with fallback swap ──────────────────────────────────────

@@ -152,26 +152,26 @@ function findWorktreeMatch(text: string, searchEntries: SearchEntry[]): SearchEn
  *   2. <code> and <span class="chat-file-path"> tags matching → add class + button
  *   3. Text nodes (outside a/code) → search worktree paths → insert span + button
  *
- * Returns the annotated HTML and a list of detected absolute worktree paths.
+ * Mutates `doc` in place and returns the detected absolute worktree paths.
+ * `applied` is false when there was nothing to do (no cached worktree list),
+ * so the string wrapper can return the original HTML untouched instead of a
+ * re-serialized equivalent.
  */
-export function annotateWorktreePaths(
-    html: string,
+export function annotateWorktreePathsIn(
+    doc: Document,
     { projectRoot }: { projectRoot: string },
-): { html: string; detectedWorktreePaths: string[] } {
-    if (!html) return { html: '', detectedWorktreePaths: [] }
-
+): { detectedWorktreePaths: string[]; applied: boolean } {
     const worktrees = worktreeListCache.get(projectRoot)
     if (!worktrees || worktrees.length === 0) {
         // Cache miss — trigger background fetch, return empty for now
         fetchWorktreeList(projectRoot)
-        return { html, detectedWorktreePaths: [] }
+        return { detectedWorktreePaths: [], applied: false }
     }
 
     const searchEntries = buildSearchEntries(worktrees)
-    if (searchEntries.length === 0) return { html, detectedWorktreePaths: [] }
+    if (searchEntries.length === 0) return { detectedWorktreePaths: [], applied: false }
 
     const detectedWorktreePaths: string[] = []
-    const doc = new DOMParser().parseFromString(html, 'text/html')
 
     // ── Step 1: <a href> tags matching a worktree path ──
     for (const a of doc.querySelectorAll('a[href]')) {
@@ -293,6 +293,25 @@ export function annotateWorktreePaths(
         }
     }
 
+    return { detectedWorktreePaths, applied: true }
+}
+
+/**
+ * Annotate worktree paths in an HTML string.
+ *
+ * Thin wrapper over `annotateWorktreePathsIn` for callers that hold HTML rather
+ * than a parsed Document. The shared-document pipeline uses the `In` form so a
+ * single parse serves every annotation step.
+ */
+export function annotateWorktreePaths(
+    html: string,
+    options: { projectRoot: string },
+): { html: string; detectedWorktreePaths: string[] } {
+    if (!html) return { html: '', detectedWorktreePaths: [] }
+
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const { detectedWorktreePaths, applied } = annotateWorktreePathsIn(doc, options)
+    if (!applied) return { html, detectedWorktreePaths }
     return { html: doc.body.innerHTML, detectedWorktreePaths }
 }
 

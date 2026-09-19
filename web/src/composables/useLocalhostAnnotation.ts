@@ -81,16 +81,30 @@ export function localhostOpenButtonHtml(port: number, protocol: string, url: str
 export function annotateLocalhostUrls(html: string): string {
     if (!html) return html
 
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    if (!annotateLocalhostUrlsIn(doc)) return html
+    return doc.body.innerHTML
+}
+
+/**
+ * Annotate localhost URLs inside an already-parsed Document, mutating it in place.
+ *
+ * Split out of `annotateLocalhostUrls` so the markdown pipeline can run several
+ * annotation steps over ONE parsed document instead of each step paying its own
+ * `parseFromString` + `body.innerHTML` round trip.
+ *
+ * @returns false when the step is a no-op (not App mode, or SSH port forwarding
+ *   disabled), so the string wrapper can return the original HTML untouched.
+ */
+export function annotateLocalhostUrlsIn(doc: Document): boolean {
     // Only annotate in App mode — web mode can access localhost directly,
     // no port forwarding or built-in WebView needed
     const { isAppMode } = useAppMode()
-    if (!isAppMode.value) return html
+    if (!isAppMode.value) return false
 
     // Skip annotation when SSH is disabled (no port forwarding available)
     const { sshInfo } = usePortForward()
-    if (sshInfo.value?.enabled === false) return html
-
-    const doc = new DOMParser().parseFromString(html, 'text/html')
+    if (sshInfo.value?.enabled === false) return false
 
     // ── Step 1: <a href> tags with localhost hrefs → append icon button ──
     for (const a of doc.querySelectorAll('a[href]')) {
@@ -199,7 +213,7 @@ export function annotateLocalhostUrls(html: string): string {
         }
     }
 
-    return doc.body.innerHTML
+    return true
 }
 
 /**

@@ -99,7 +99,8 @@ function onDiffClick(event: MouseEvent) {
 
 .git-diff-scroll :deep(.diff-hunk) {
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: var(--radius-sm, 4px);
+  border-radius: 0;
+  margin: 0 var(--space-2, 4px);
   overflow: hidden;
 }
 
