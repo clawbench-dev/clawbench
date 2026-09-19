@@ -67,7 +67,7 @@ func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef
 	if d.broadcaster != nil {
 		d.broadcaster(map[string]any{
 			contentKeyType: "forge_event",
-			// Explicit snake_case identity rather than marshalling the ForgeEvent
+			// Explicit snake_case identity rather than marshaling the ForgeEvent
 			// struct: that struct carries no json tags, so it would serialize as
 			// PascalCase ("EventType") and leak internal bookkeeping columns
 			// (DedupeKey, ItemKey). The frontend consumes these keys by name.

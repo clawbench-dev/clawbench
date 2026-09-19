@@ -260,3 +260,80 @@ func TestDownloadMedia_OversizedRejectedAndLeavesNoFile(t *testing.T) {
 		t.Errorf("a rejected oversized download must leave no file, found %d", len(entries))
 	}
 }
+
+// TestDownloadMedia_ResourceErrorIsReported verifies an API-level failure is
+// surfaced rather than read as success. The SDK derives Success() from the
+// HTTP status (probed: a 200 with an error code still reports Success=true),
+// so the failure has to arrive as a non-2xx status.
+func TestDownloadMedia_ResourceErrorIsReported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":234001,"msg":"resource not found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	origBase := feishuOpenBaseURL
+	feishuOpenBaseURL = srv.URL
+	t.Cleanup(func() { feishuOpenBaseURL = origBase })
+
+	mgr := newMediaManager(t)
+	_, err := mgr.downloadMedia(context.Background(), "file",
+		`{"file_key":"file_abc","file_name":"a.txt"}`, "om_msg_1", t.TempDir())
+	if err == nil {
+		t.Fatal("expected an error for a non-2xx resource response")
+	}
+	if !strings.Contains(err.Error(), "resource error") {
+		t.Errorf("error should mention the resource error, got %v", err)
+	}
+}
+
+// TestDownloadMedia_TokenFailureIsReported verifies a token-acquisition failure
+// aborts before the resource call, so no half-built request reaches the API.
+func TestDownloadMedia_TokenFailureIsReported(t *testing.T) {
+	origBase := feishuOpenBaseURL
+	feishuOpenBaseURL = "http://127.0.0.1:1/unreachable"
+	t.Cleanup(func() { feishuOpenBaseURL = origBase })
+
+	// Drop the cached token so getAccessToken must fetch one, which fails.
+	mgr := NewManager(&model.FeishuConfig{AppID: "test-app", AppSecret: "test-secret"})
+
+	_, err := mgr.downloadMedia(context.Background(), "file",
+		`{"file_key":"file_abc","file_name":"a.txt"}`, "om_msg_1", t.TempDir())
+	if err == nil {
+		t.Fatal("expected an error when the tenant token cannot be obtained")
+	}
+	if !strings.Contains(err.Error(), "get token") {
+		t.Errorf("error should mention the token step, got %v", err)
+	}
+}
+
+// TestDownloadMedia_NoProjectPathIsRejected verifies the download fails cleanly
+// when the target session has no project root.
+func TestDownloadMedia_NoProjectPathIsRejected(t *testing.T) {
+	mediaTestServer(t, "x")
+	mgr := newMediaManager(t)
+
+	_, err := mgr.downloadMedia(context.Background(), "file",
+		`{"file_key":"file_abc","file_name":"a.txt"}`, "om_msg_1", "")
+	if err == nil {
+		t.Fatal("expected an error when the session has no project path")
+	}
+}
+
+// TestDownloadMedia_FileWithoutNameGetsFallback verifies a file callback whose
+// payload omits file_name still produces a usable attachment name.
+func TestDownloadMedia_FileWithoutNameGetsFallback(t *testing.T) {
+	mediaTestServer(t, "bytes")
+	mgr := newMediaManager(t)
+	project := t.TempDir()
+
+	entry, err := mgr.downloadMedia(context.Background(), "file",
+		`{"file_key":"file_abc"}`, "om_msg_1", project)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Path != ".clawbench/uploads/attachment" {
+		t.Errorf("path = %q, want .clawbench/uploads/attachment", entry.Path)
+	}
+}

@@ -2,11 +2,16 @@ package common
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+
+	"clawbench/internal/model"
 )
 
 func TestClassifyIncoming(t *testing.T) {
@@ -267,5 +272,230 @@ func TestSaveAttachment_RejectsOversizedAndRemovesPartial(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("a rejected oversized save must leave no file, found %d", len(entries))
+	}
+}
+
+// TestSaveAttachment_ExactLimitSucceeds pins the boundary the "read one byte
+// past the limit" trick exists for: a file of exactly maxBytes must be
+// accepted, while maxBytes+1 must not. A naive io.Copy with a bare
+// io.LimitReader would silently truncate instead of rejecting.
+func TestSaveAttachment_ExactLimitSucceeds(t *testing.T) {
+	project := t.TempDir()
+
+	entry, err := SaveAttachment(project, "exact.bin", strings.NewReader(strings.Repeat("a", 1024)), 1024)
+	if err != nil {
+		t.Fatalf("a file exactly at the limit must be accepted, got %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(project, filepath.FromSlash(entry.Path)))
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	if len(got) != 1024 {
+		t.Errorf("saved %d bytes, want 1024 (must not be truncated)", len(got))
+	}
+
+	_, err = SaveAttachment(project, "over.bin", strings.NewReader(strings.Repeat("a", 1025)), 1024)
+	if !errors.Is(err, ErrAttachmentTooLarge) {
+		t.Fatalf("one byte over the limit must be rejected, got %v", err)
+	}
+}
+
+// TestSaveAttachment_NoProjectPathFails verifies the guard that keeps an
+// attachment from being written relative to the process CWD when the session
+// carries no project root.
+func TestSaveAttachment_NoProjectPathFails(t *testing.T) {
+	_, err := SaveAttachment("", "a.txt", strings.NewReader("x"), 1024)
+	if err == nil {
+		t.Fatal("expected an error when the project path is empty")
+	}
+}
+
+// TestSaveAttachment_ReaderErrorRemovesPartial verifies a mid-stream read
+// failure does not leave a truncated attachment behind — the prompt would
+// otherwise reference a file whose contents are silently cut short.
+func TestSaveAttachment_ReaderErrorRemovesPartial(t *testing.T) {
+	project := t.TempDir()
+
+	_, err := SaveAttachment(project, "broken.bin", &failingReader{}, 1024)
+	if err == nil {
+		t.Fatal("expected an error when the reader fails mid-stream")
+	}
+
+	uploads := filepath.Join(project, ".clawbench", "uploads")
+	entries, rerr := os.ReadDir(uploads)
+	if rerr != nil {
+		if os.IsNotExist(rerr) {
+			return
+		}
+		t.Fatalf("read uploads: %v", rerr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("a failed save must leave no file, found %d", len(entries))
+	}
+}
+
+// failingReader yields some bytes and then fails, simulating a dropped
+// connection partway through a media download.
+type failingReader struct{ n int }
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if r.n >= 16 {
+		return 0, errors.New("connection reset")
+	}
+	n := copy(p, strings.Repeat("x", 8))
+	r.n += n
+	return n, nil
+}
+
+// TestAttachmentMaxBytes_DefaultWhenUnset pins the fallback: an unloaded
+// config leaves UploadMaxSizeMB at zero, which must not be interpreted as
+// "reject everything".
+func TestAttachmentMaxBytes_DefaultWhenUnset(t *testing.T) {
+	orig := model.UploadMaxSizeMB
+	t.Cleanup(func() { model.UploadMaxSizeMB = orig })
+
+	for _, mb := range []int{0, -1} {
+		model.UploadMaxSizeMB = mb
+		if got := AttachmentMaxBytes(); got != 100*1024*1024 {
+			t.Errorf("UploadMaxSizeMB=%d: AttachmentMaxBytes() = %d, want the 100MB default", mb, got)
+		}
+	}
+
+	model.UploadMaxSizeMB = 7
+	if got := AttachmentMaxBytes(); got != 7*1024*1024 {
+		t.Errorf("AttachmentMaxBytes() = %d, want 7MB", got)
+	}
+}
+
+// TestDownloadAttachment_Success verifies the happy path: the bytes land in the
+// project's uploads directory under a sanitized name.
+func TestDownloadAttachment_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("remote-bytes"))
+	}))
+	defer srv.Close()
+
+	project := t.TempDir()
+	entry, err := DownloadAttachment(srv.Client(), srv.URL+"/report.txt", project, "report.txt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Path != ".clawbench/uploads/report.txt" {
+		t.Errorf("path = %q, want .clawbench/uploads/report.txt", entry.Path)
+	}
+	got, err := os.ReadFile(filepath.Join(project, filepath.FromSlash(entry.Path)))
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	if string(got) != "remote-bytes" {
+		t.Errorf("content = %q, want remote-bytes", string(got))
+	}
+}
+
+// TestDownloadAttachment_NonOKStatus verifies a non-200 response is reported
+// rather than saved — an error page must never become an attachment.
+func TestDownloadAttachment_NonOKStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<html>denied</html>"))
+	}))
+	defer srv.Close()
+
+	project := t.TempDir()
+	_, err := DownloadAttachment(srv.Client(), srv.URL, project, "x.txt")
+	if err == nil {
+		t.Fatal("expected an error for a non-200 response")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("error should mention the status, got %v", err)
+	}
+	assertNoUploads(t, project)
+}
+
+// TestDownloadAttachment_DeclaredLengthTooLarge verifies the Content-Length
+// pre-check: a server that advertises an oversized body is rejected before a
+// single byte is read.
+func TestDownloadAttachment_DeclaredLengthTooLarge(t *testing.T) {
+	orig := model.UploadMaxSizeMB
+	model.UploadMaxSizeMB = 1
+	t.Cleanup(func() { model.UploadMaxSizeMB = orig })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(2*1024*1024))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	project := t.TempDir()
+	_, err := DownloadAttachment(srv.Client(), srv.URL, project, "big.bin")
+	if !errors.Is(err, ErrAttachmentTooLarge) {
+		t.Fatalf("err = %v, want ErrAttachmentTooLarge", err)
+	}
+	assertNoUploads(t, project)
+}
+
+// TestDownloadAttachment_UndeclaredLengthStillCapped verifies the size cap also
+// holds when the server sends no Content-Length (chunked transfer), which is
+// the case the pre-check cannot cover.
+func TestDownloadAttachment_UndeclaredLengthStillCapped(t *testing.T) {
+	orig := model.UploadMaxSizeMB
+	model.UploadMaxSizeMB = 1
+	t.Cleanup(func() { model.UploadMaxSizeMB = orig })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Flushing forces chunked encoding, so ContentLength stays -1.
+		flusher, _ := w.(http.Flusher)
+		for range 4 {
+			_, _ = w.Write([]byte(strings.Repeat("a", 512*1024)))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	defer srv.Close()
+
+	project := t.TempDir()
+	_, err := DownloadAttachment(srv.Client(), srv.URL, project, "big.bin")
+	if !errors.Is(err, ErrAttachmentTooLarge) {
+		t.Fatalf("err = %v, want ErrAttachmentTooLarge", err)
+	}
+	assertNoUploads(t, project)
+}
+
+// TestDownloadAttachment_UnreachableURL verifies a transport failure surfaces
+// as an error instead of a zero-value entry.
+func TestDownloadAttachment_UnreachableURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close() // closed before use, so the dial fails
+
+	if _, err := DownloadAttachment(srv.Client(), url, t.TempDir(), "x.txt"); err == nil {
+		t.Fatal("expected an error for an unreachable URL")
+	}
+}
+
+// TestDownloadAttachment_NilClientUsesDefault verifies the nil-client fallback
+// is exercised rather than panicking, and that a malformed URL is reported.
+func TestDownloadAttachment_NilClientUsesDefault(t *testing.T) {
+	project := t.TempDir()
+
+	if _, err := DownloadAttachment(nil, "http://[::1]:namedport/", project, "x.txt"); err == nil {
+		t.Fatal("expected an error for a malformed URL")
+	}
+	assertNoUploads(t, project)
+}
+
+// assertNoUploads fails when the project's uploads directory holds any file.
+func assertNoUploads(t *testing.T, project string) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(project, ".clawbench", "uploads"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		t.Fatalf("read uploads: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected no saved attachments, found %d", len(entries))
 	}
 }

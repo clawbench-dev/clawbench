@@ -108,7 +108,11 @@ func (c *thumbCache) get(key thumbCacheKey) ([]byte, bool) {
 		return nil, false
 	}
 	c.order.MoveToFront(el)
-	return el.Value.(*thumbCacheEntry).jpg, true
+	entry, ok := el.Value.(*thumbCacheEntry)
+	if !ok {
+		return nil, false
+	}
+	return entry.jpg, true
 }
 
 func (c *thumbCache) put(key thumbCacheKey, jpg []byte) {
@@ -116,7 +120,10 @@ func (c *thumbCache) put(key thumbCacheKey, jpg []byte) {
 	defer c.mu.Unlock()
 	if el, ok := c.entries[key]; ok {
 		c.order.MoveToFront(el)
-		entry := el.Value.(*thumbCacheEntry)
+		entry, ok := el.Value.(*thumbCacheEntry)
+		if !ok {
+			return
+		}
 		c.bytes += len(jpg) - len(entry.jpg)
 		entry.jpg = jpg
 	} else {
@@ -130,7 +137,10 @@ func (c *thumbCache) put(key thumbCacheKey, jpg []byte) {
 			break
 		}
 		c.order.Remove(oldest)
-		entry := oldest.Value.(*thumbCacheEntry)
+		entry, ok := oldest.Value.(*thumbCacheEntry)
+		if !ok {
+			continue
+		}
 		delete(c.entries, entry.key)
 		c.bytes -= len(entry.jpg)
 	}
@@ -171,8 +181,8 @@ func trackDecodeStart() {
 	thumbDecodeTracker.decodes.Add(1)
 	cur := thumbDecodeTracker.inFlight.Add(1)
 	for {
-		max := thumbDecodeTracker.maxSeen.Load()
-		if cur <= max || thumbDecodeTracker.maxSeen.CompareAndSwap(max, cur) {
+		seen := thumbDecodeTracker.maxSeen.Load()
+		if cur <= seen || thumbDecodeTracker.maxSeen.CompareAndSwap(seen, cur) {
 			break
 		}
 	}

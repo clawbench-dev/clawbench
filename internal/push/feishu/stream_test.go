@@ -2,9 +2,13 @@ package feishu
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -783,4 +787,231 @@ func TestOnMessageReceive_FileWithNoStickyTarget(t *testing.T) {
 	if sent {
 		t.Error("a file with no target session must not be sent")
 	}
+}
+
+// fileEvent builds a p2p file/image event carrying the given msg_type and
+// content JSON.
+func fileEvent(msgType, content string) *larkim.P2MessageReceiveV1 {
+	chatType := "p2p"
+	senderType := "user"
+	return &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				ChatId:      strPtr("chat1"),
+				MessageId:   strPtr("om_msg_1"),
+				MessageType: strPtr(msgType),
+				Content:     strPtr(content),
+			},
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: strPtr("ou_user1")},
+				SenderType: &senderType,
+			},
+		},
+	}
+}
+
+// replyCapture points feishuMessageURL at a stub that records the card content
+// of the next SendPostMessage call, so tests can assert on what the user was
+// actually told. feishuMessageURL is package state, so it is restored on cleanup.
+//
+// The handler runs on an httptest server goroutine while the test goroutine
+// polls, so the captured value is guarded by a mutex.
+func replyCapture(t *testing.T) *replyBox {
+	t.Helper()
+	box := new(replyBox)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		box.set(fmt.Sprint(body["content"]))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintln(w, `{"code":0,"msg":"ok"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	origURL := feishuMessageURL
+	feishuMessageURL = srv.URL
+	t.Cleanup(func() { feishuMessageURL = origURL })
+
+	return box
+}
+
+// replyBox is a mutex-guarded string written by the stub server goroutine and
+// read by the test goroutine.
+type replyBox struct {
+	mu  sync.Mutex
+	val string
+}
+
+func (b *replyBox) set(s string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.val = s
+}
+
+func (b *replyBox) get() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.val
+}
+
+// A file whose sticky session has since been archived/deleted must tell the
+// user to re-pick rather than downloading into nowhere.
+func TestOnMessageReceive_FileWithUnavailableStickySession(t *testing.T) {
+	mediaTestServer(t, "x")
+	reply := replyCapture(t)
+
+	mgr, _ := stickyTestEnv(t, "deadbeef00000000", stickySessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sent := false
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(string, string, []model.FileEntry) error {
+		sent = true
+		return nil
+	}
+
+	_ = mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"a.txt"}`))
+
+	got := waitForReplyText(t, reply)
+	if sent {
+		t.Error("a file whose sticky session is gone must not be sent anywhere")
+	}
+	if !strings.Contains(got, "/ls") {
+		t.Errorf("reply should point at /ls, got %s", got)
+	}
+}
+
+// A media message arriving with no session messenger wired up must tell the
+// user rather than failing silently.
+func TestOnMessageReceive_FileWithNoMessenger(t *testing.T) {
+	mediaTestServer(t, "x")
+	reply := replyCapture(t)
+
+	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", stickySessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	sessionMessenger = nil
+
+	if err := mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"a.txt"}`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := waitForReplyText(t, reply)
+	if !strings.Contains(got, "会话服务不可用") {
+		t.Errorf("reply should say the session service is unavailable, got %s", got)
+	}
+}
+
+// A download failure must be reported to the user and must not send an
+// attachment to the session.
+func TestOnMessageReceive_FileDownloadFailure(t *testing.T) {
+	// Point the resource endpoint at a failing server.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":1,"msg":"denied"}`))
+	}))
+	t.Cleanup(srv.Close)
+	origBase := feishuOpenBaseURL
+	feishuOpenBaseURL = srv.URL
+	t.Cleanup(func() { feishuOpenBaseURL = origBase })
+
+	reply := replyCapture(t)
+	sessions := []common.SessionInfo{
+		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: t.TempDir()},
+	}
+	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", sessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sent := false
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(string, string, []model.FileEntry) error {
+		sent = true
+		return nil
+	}
+
+	_ = mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"a.txt"}`))
+
+	got := waitForReplyText(t, reply)
+	if sent {
+		t.Error("a failed download must not send an attachment")
+	}
+	if !strings.Contains(got, "下载失败") {
+		t.Errorf("reply should report the download failure, got %s", got)
+	}
+}
+
+// An oversized file must be reported with the size-specific message and must
+// not reach the session.
+func TestOnMessageReceive_FileTooLarge(t *testing.T) {
+	orig := model.UploadMaxSizeMB
+	model.UploadMaxSizeMB = 1
+	t.Cleanup(func() { model.UploadMaxSizeMB = orig })
+
+	mediaTestServer(t, strings.Repeat("a", 2*1024*1024))
+	reply := replyCapture(t)
+	sessions := []common.SessionInfo{
+		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: t.TempDir()},
+	}
+	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", sessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sent := false
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(string, string, []model.FileEntry) error {
+		sent = true
+		return nil
+	}
+
+	_ = mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"big.bin"}`))
+
+	got := waitForReplyText(t, reply)
+	if sent {
+		t.Error("an oversized attachment must not be sent")
+	}
+	if !strings.Contains(got, "大小上限") {
+		t.Errorf("reply should mention the size limit, got %s", got)
+	}
+}
+
+// A send failure after a successful download must be reported and must not
+// move the sticky target.
+func TestOnMessageReceive_FileSendFailure(t *testing.T) {
+	mediaTestServer(t, "bytes")
+	reply := replyCapture(t)
+	sessions := []common.SessionInfo{
+		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: t.TempDir()},
+	}
+	mgr, setCalls := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", sessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(string, string, []model.FileEntry) error {
+		return fmt.Errorf("session busy")
+	}
+
+	_ = mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"a.txt"}`))
+
+	got := waitForReplyText(t, reply)
+	if !strings.Contains(got, "发送文件失败") {
+		t.Errorf("reply should report the send failure, got %s", got)
+	}
+	if len(*setCalls) != 0 {
+		t.Errorf("a failed send must not update the sticky target, got %v", *setCalls)
+	}
+}
+
+// waitForReplyText blocks until the async media handler has sent its reply.
+func waitForReplyText(t *testing.T, box *replyBox) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s := box.get(); s != "" {
+			return s
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for a reply")
+	return ""
 }

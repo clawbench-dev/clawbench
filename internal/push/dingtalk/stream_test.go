@@ -1031,3 +1031,195 @@ func TestOnChatBotMessage_FileWithNoStickyTargetAsksForSession(t *testing.T) {
 		t.Errorf("reply should point at /ls, got %s", string(*reply))
 	}
 }
+
+// A file whose sticky session has since been archived/deleted must tell the
+// user to re-pick rather than downloading into nowhere.
+func TestOnChatBotMessage_FileWithUnavailableStickySession(t *testing.T) {
+	srv, gotCode := mediaTestServer(t, "x", http.StatusOK)
+	mgr, reply, _ := stickyTestEnv(t, "deadbeef00000000", stickySessions)
+	mgr.httpClient = srv.Client()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "file"
+	data.Content = map[string]any{"downloadCode": "code-1", "fileName": "a.txt"}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitForReply(t, reply)
+	if *gotCode != "" {
+		t.Errorf("must not download when the sticky session is gone, got code %q", *gotCode)
+	}
+	if !strings.Contains(string(*reply), "/ls") {
+		t.Errorf("reply should point at /ls, got %s", string(*reply))
+	}
+}
+
+// A media message arriving with no session messenger wired up must produce a
+// visible reply instead of failing silently.
+func TestOnChatBotMessage_FileWithNoMessenger(t *testing.T) {
+	mgr, reply, _ := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", stickySessions)
+	sessionMessenger = nil
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "file"
+	data.Content = map[string]any{"downloadCode": "code-1", "fileName": "a.txt"}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitForReply(t, reply)
+	if !strings.Contains(string(*reply), "会话服务不可用") {
+		t.Errorf("reply should say the session service is unavailable, got %s", string(*reply))
+	}
+}
+
+// A download failure must be reported to the user and must not send an
+// attachment to the session.
+func TestOnChatBotMessage_FileDownloadFailureReplies(t *testing.T) {
+	// A 403 from the blob endpoint makes DownloadAttachment fail.
+	srv, _ := mediaTestServer(t, "denied", http.StatusForbidden)
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
+	}
+	mgr, reply, _ := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", sessions)
+	mgr.httpClient = srv.Client()
+	mgr.cfg = &model.DingTalkConfig{AppKey: "test-app-key"}
+	mgr.cachedToken = "test-access-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sent := make(chan []model.FileEntry, 1)
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(_, _ string, files []model.FileEntry) error {
+		sent <- files
+		return nil
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "file"
+	data.Content = map[string]any{"downloadCode": "code-1", "fileName": "a.txt"}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitForReply(t, reply)
+	if !strings.Contains(string(*reply), "下载失败") {
+		t.Errorf("reply should report the download failure, got %s", string(*reply))
+	}
+	select {
+	case files := <-sent:
+		t.Errorf("a failed download must not send an attachment, got %d files", len(files))
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// An oversized file must produce the size-specific message rather than the
+// generic download-failure text.
+func TestOnChatBotMessage_FileTooLargeRepliesWithSizeLimit(t *testing.T) {
+	orig := model.UploadMaxSizeMB
+	model.UploadMaxSizeMB = 1
+	t.Cleanup(func() { model.UploadMaxSizeMB = orig })
+
+	srv, _ := mediaTestServer(t, strings.Repeat("a", 2*1024*1024), http.StatusOK)
+	sessions := []common.SessionInfo{
+		{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: t.TempDir()},
+	}
+	mgr, reply, _ := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", sessions)
+	mgr.httpClient = srv.Client()
+	mgr.cfg = &model.DingTalkConfig{AppKey: "test-app-key"}
+	mgr.cachedToken = "test-access-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "file"
+	data.Content = map[string]any{"downloadCode": "code-1", "fileName": "big.bin"}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitForReply(t, reply)
+	if !strings.Contains(string(*reply), "大小上限") {
+		t.Errorf("reply should mention the size limit, got %s", string(*reply))
+	}
+}
+
+// A send failure after a successful download must be reported, and the sticky
+// target must not move.
+func TestOnChatBotMessage_FileSendFailureReplies(t *testing.T) {
+	srv, _ := mediaTestServer(t, "bytes", http.StatusOK)
+	sessions := []common.SessionInfo{
+		{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: t.TempDir()},
+	}
+	mgr, reply, setCalls := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", sessions)
+	mgr.httpClient = srv.Client()
+	mgr.cfg = &model.DingTalkConfig{AppKey: "test-app-key"}
+	mgr.cachedToken = "test-access-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(_, _ string, _ []model.FileEntry) error {
+		return fmt.Errorf("session busy")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "file"
+	data.Content = map[string]any{"downloadCode": "code-1", "fileName": "a.txt"}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitForReply(t, reply)
+	if !strings.Contains(string(*reply), "发送文件失败") {
+		t.Errorf("reply should report the send failure, got %s", string(*reply))
+	}
+	if len(*setCalls) != 0 {
+		t.Errorf("a failed send must not update the sticky target, got %v", *setCalls)
+	}
+}
+
+// waitForReply blocks until the async media handler has written its reply.
+func waitForReply(t *testing.T, reply *[]byte) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(*reply) > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for a reply")
+}

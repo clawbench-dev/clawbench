@@ -179,10 +179,10 @@ func TestForgeDispatcher_PayloadCarriesItemIdentity(t *testing.T) {
 }
 
 // TestForgeDispatcher_PayloadEventKeysAreSnakeCase pins the wire shape of the
-// `event` object. It is built by hand rather than by marshalling ForgeEvent
+// `event` object. It is built by hand rather than by marshaling ForgeEvent
 // (which has no json tags) so the browser notification path can read the
 // transition and item identity by a documented name. A regression to struct
-// marshalling would emit "EventType" and silently break the notification text.
+// marshaling would emit "EventType" and silently break the notification text.
 func TestForgeDispatcher_PayloadEventKeysAreSnakeCase(t *testing.T) {
 	var payload map[string]any
 	d := service.NewForgeEventDispatcher(fullNotifyConfig, func(msg any) {
@@ -194,7 +194,7 @@ func TestForgeDispatcher_PayloadEventKeysAreSnakeCase(t *testing.T) {
 
 	require.NotNil(t, payload)
 	ev, ok := payload["event"].(map[string]any)
-	require.True(t, ok, "event must be a map, not a struct (struct marshalling is PascalCase)")
+	require.True(t, ok, "event must be a map, not a struct (struct marshaling is PascalCase)")
 	assert.Equal(t, "github", ev["platform"])
 	assert.Equal(t, "github.com", ev["host"])
 	assert.Equal(t, "acme", ev["owner"])
@@ -204,7 +204,7 @@ func TestForgeDispatcher_PayloadEventKeysAreSnakeCase(t *testing.T) {
 	// Internal bookkeeping must not reach the wire.
 	assert.NotContains(t, ev, "DedupeKey")
 	assert.NotContains(t, ev, "ItemKey")
-	assert.NotContains(t, ev, "EventType", "PascalCase key means the struct was marshalled directly")
+	assert.NotContains(t, ev, "EventType", "PascalCase key means the struct was marshaled directly")
 }
 
 // TestForgeDispatcher_PayloadCarriesProjectPath pins the field the frontend
