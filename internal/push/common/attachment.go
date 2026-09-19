@@ -117,7 +117,22 @@ func SaveAttachment(projectPath, filename string, r io.Reader, maxBytes int64) (
 	if err != nil {
 		return model.FileEntry{}, err
 	}
-	defer func() { _ = f.Close() }()
+	// The handle must be closed before any os.Remove below: Windows refuses to
+	// delete a file that is still open, so relying on the deferred Close would
+	// silently leave the partial file behind there (the deferred call runs
+	// after the Remove). closed tracks that so the defer stays a no-op once we
+	// have already closed it.
+	closed := false
+	defer func() {
+		if !closed {
+			_ = f.Close()
+		}
+	}()
+	closeAndRemove := func() {
+		_ = f.Close()
+		closed = true
+		_ = os.Remove(dst)
+	}
 
 	if maxBytes <= 0 {
 		maxBytes = AttachmentMaxBytes()
@@ -126,11 +141,11 @@ func SaveAttachment(projectPath, filename string, r io.Reader, maxBytes int64) (
 	// anything larger is detected rather than silently truncated.
 	written, err := io.Copy(f, io.LimitReader(r, maxBytes+1))
 	if err != nil {
-		_ = os.Remove(dst)
+		closeAndRemove()
 		return model.FileEntry{}, fmt.Errorf("write attachment: %w", err)
 	}
 	if written > maxBytes {
-		_ = os.Remove(dst)
+		closeAndRemove()
 		return model.FileEntry{}, ErrAttachmentTooLarge
 	}
 

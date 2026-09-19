@@ -34,10 +34,35 @@ import (
 // Initialize failure is the ordinary case this file exercises, and a
 // Done()-still-open connection is what isAliveLocked's own comment describes.
 
+// spawnCounterEnv names the env var carrying the counter file path to the
+// helper process. Using an env var (rather than a shell script) keeps the fake
+// agent portable: Windows cannot execute a `#!/bin/sh` file, so a script-based
+// agent made these tests fail there.
+const spawnCounterEnv = "CLAWBENCH_TEST_SPAWN_COUNTER"
+
+// TestSpawnCountingAgentHelper is not a test on its own. It is the fake agent
+// spawned by newSpawnCountingAgent: it records one launch and exits without
+// ever speaking ACP, so Initialize fails fast (the pipe closes).
+func TestSpawnCountingAgentHelper(t *testing.T) {
+	path := os.Getenv(spawnCounterEnv)
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err == nil {
+		_, _ = f.WriteString("launched\n")
+		_ = f.Close()
+	}
+	os.Exit(0)
+}
+
 // newSpawnCountingAgent returns an agent whose command appends one line to a
 // counter file each time it is launched, then exits immediately. Initialize
-// therefore fails fast (the pipe closes), and the counter gives a reliable
-// record of spawn ATTEMPTS.
+// therefore fails fast, and the counter gives a reliable record of spawn
+// ATTEMPTS.
+//
+// The fake agent re-executes the test binary with a helper -test.run filter
+// instead of using a shell script, so the same test works on Windows.
 //
 // c.cmd is not usable as a probe here: spawnLocked only assigns it on a
 // successful spawn, so a failed attempt leaves it unchanged.
@@ -46,11 +71,7 @@ func newSpawnCountingAgent(t *testing.T) (*model.Agent, func() int) {
 
 	dir := t.TempDir()
 	counter := filepath.Join(dir, "spawn-count")
-	script := filepath.Join(dir, "fake-agent.sh")
-
-	// Append then exit: the SDK sees EOF and Initialize returns an error.
-	body := "#!/bin/sh\necho launched >> " + counter + "\nexit 0\n"
-	require.NoError(t, os.WriteFile(script, []byte(body), 0o755))
+	t.Setenv(spawnCounterEnv, counter)
 
 	count := func() int {
 		data, err := os.ReadFile(counter)
@@ -59,7 +80,11 @@ func newSpawnCountingAgent(t *testing.T) (*model.Agent, func() int) {
 		}
 		return strings.Count(string(data), "launched")
 	}
-	return &model.Agent{ID: "spawn-failure-test", Backend: "acp-stdio", AcpCommand: script}, count
+	return &model.Agent{
+		ID:         "spawn-failure-test",
+		Backend:    "acp-stdio",
+		AcpCommand: os.Args[0] + " -test.run=^TestSpawnCountingAgentHelper$",
+	}, count
 }
 
 // TestSpawnLocked_FailureLeavesConnectionDead pins the post-condition: after a
