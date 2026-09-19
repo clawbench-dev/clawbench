@@ -3,7 +3,10 @@ package feishu
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/push/common"
@@ -238,10 +241,24 @@ func strPtr(s string) *string { return &s }
 type mockSessionMessenger struct {
 	sessions []common.SessionInfo
 	running  map[string]bool
+	sendErr  error
+	SendFn   func(sid, msg string, files []model.FileEntry) error
 }
 
-func (m *mockSessionMessenger) FindSessionsByPrefix(_ string, _ bool) ([]common.SessionInfo, error) {
-	return m.sessions, nil
+func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
+	// Filter by prefix like the real implementation: returning every session
+	// for any prefix makes any multi-session fixture look ambiguous.
+	lower := strings.ToLower(prefix)
+	var out []common.SessionInfo
+	for _, s := range m.sessions {
+		if len(s.ID) >= len(lower) && strings.ToLower(s.ID[:len(lower)]) == lower {
+			if runningOnly && !m.running[s.ID] {
+				continue
+			}
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 func (m *mockSessionMessenger) ListRecentSessions(limit int) ([]common.SessionInfo, error) {
@@ -255,8 +272,20 @@ func (m *mockSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return m.running[sessionID]
 }
 
-func (m *mockSessionMessenger) SendMessageToSession(_, _ string) error {
-	return nil
+func (m *mockSessionMessenger) SendMessageToSession(sid, msg string, files []model.FileEntry) error {
+	if m.SendFn != nil {
+		return m.SendFn(sid, msg, files)
+	}
+	return m.sendErr
+}
+
+func (m *mockSessionMessenger) GetSessionInfo(sessionID string) (common.SessionInfo, error) {
+	for _, s := range m.sessions {
+		if s.ID == sessionID {
+			return s, nil
+		}
+	}
+	return common.SessionInfo{}, fmt.Errorf("session %s not found", sessionID)
 }
 
 // ============================================================================
@@ -322,12 +351,16 @@ func (m *mockSessionMessengerListError) ListRecentSessions(_ int) ([]common.Sess
 	return nil, fmt.Errorf("db error")
 }
 func (m *mockSessionMessengerListError) IsSessionRunning(_ string) bool { return false }
-func (m *mockSessionMessengerListError) SendMessageToSession(_, _ string) error {
+func (m *mockSessionMessengerListError) SendMessageToSession(_, _ string, _ []model.FileEntry) error {
 	return nil
 }
 
+func (m *mockSessionMessengerListError) GetSessionInfo(string) (common.SessionInfo, error) {
+	return common.SessionInfo{}, fmt.Errorf("not found")
+}
+
 // ============================================================================
-// handleSessionCommand tests
+// deliverToSession tests
 // ============================================================================
 
 func TestHandleSessionCommand_ResolveFails(t *testing.T) {
@@ -337,7 +370,8 @@ func TestHandleSessionCommand_ResolveFails(t *testing.T) {
 
 	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
 	// Should not panic — sends error message
-	mgr.handleSessionCommand(context.Background(), "ou_user1", "deadbeef", "hello")
+	mgr.deliverToSession(context.Background(), "ou_user1",
+		common.Route{Kind: common.RouteToSession, ShortID: "deadbeef", Message: "hello"})
 }
 
 func TestHandleSessionCommand_NotRunning(t *testing.T) {
@@ -352,7 +386,8 @@ func TestHandleSessionCommand_NotRunning(t *testing.T) {
 
 	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
 	// Session not running → SendMessageToSession path
-	mgr.handleSessionCommand(context.Background(), "ou_user1", "a1b2c3d4", "hello")
+	mgr.deliverToSession(context.Background(), "ou_user1",
+		common.Route{Kind: common.RouteToSession, ShortID: "a1b2c3d4", Message: "hello"})
 }
 
 func TestHandleSessionCommand_Running(t *testing.T) {
@@ -369,7 +404,8 @@ func TestHandleSessionCommand_Running(t *testing.T) {
 
 	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
 	// Session running → EnqueueMessage path
-	mgr.handleSessionCommand(context.Background(), "ou_user1", "a1b2c3d4", "hello")
+	mgr.deliverToSession(context.Background(), "ou_user1",
+		common.Route{Kind: common.RouteToSession, ShortID: "a1b2c3d4", Message: "hello"})
 }
 
 // ============================================================================
@@ -455,20 +491,166 @@ func TestOnMessageReceive_NilSenderId(t *testing.T) {
 	}
 }
 
-func TestOnMessageReceive_NoCommand_SessionList(t *testing.T) {
+func TestOnMessageReceive_NoCommand_NoStickyTarget(t *testing.T) {
 	origDB := db
 	defer func() { db = origDB }()
+	// mockDB reports no recorded target, so a plain message cannot be routed.
 	db = &mockDB{}
 
 	origSM := sessionMessenger
 	defer func() { sessionMessenger = origSM }()
+	sent := false
 	sessionMessenger = &mockSessionMessenger{
 		sessions: []common.SessionInfo{
 			{ID: "abc12345-1111-1111-1111-111111111111", Title: "Recent Session", ProjectPath: "/proj"},
 		},
+		SendFn: func(string, string, []model.FileEntry) error {
+			sent = true
+			return nil
+		},
 	}
 
 	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+
+	event := textEvent("just a message")
+	_ = mgr.onMessageReceive(context.TODO(), event)
+
+	if sent {
+		t.Error("a message with no sticky target must not be sent to a session")
+	}
+}
+
+// --- Sticky session routing ---
+
+func textEvent(text string) *larkim.P2MessageReceiveV1 {
+	chatType := "p2p"
+	senderType := "user"
+	return &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				ChatId:      strPtr("chat1"),
+				MessageId:   strPtr("om_msg_1"),
+				Content:     strPtr(`{"text":` + strconv.Quote(text) + `}`),
+				MessageType: strPtr("text"),
+			},
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: strPtr("ou_user1")},
+				SenderType: &senderType,
+			},
+		},
+	}
+}
+
+// stickyTestEnv wires a mock DB with a recorded target and a capturing messenger.
+func stickyTestEnv(t *testing.T, sticky string, sessions []common.SessionInfo) (*Manager, *[]string) {
+	t.Helper()
+
+	setCalls := new([]string)
+	origDB := db
+	t.Cleanup(func() { db = origDB })
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return sticky, nil },
+		setLastFn: func(_, sessionID string) error {
+			*setCalls = append(*setCalls, sessionID)
+			return nil
+		},
+	}
+
+	origSM := sessionMessenger
+	t.Cleanup(func() { sessionMessenger = origSM })
+	sessionMessenger = &mockSessionMessenger{sessions: sessions}
+
+	return NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"}), setCalls
+}
+
+var stickySessions = []common.SessionInfo{
+	{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: "/proj"},
+	{ID: "deadbeef-2222-2222-2222-222222222222", Title: "Other", ProjectPath: "/proj"},
+}
+
+// A plain message with a recorded target must go to that session.
+func TestOnMessageReceive_PlainTextGoesToStickySession(t *testing.T) {
+	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", stickySessions)
+
+	var sentID, sentMsg string
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(sid, msg string, _ []model.FileEntry) error {
+		sentID, sentMsg = sid, msg
+		return nil
+	}
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("run the tests"))
+
+	if sentID != "abc12345-1111-1111-1111-111111111111" {
+		t.Errorf("sent to %q, want the sticky session", sentID)
+	}
+	if sentMsg != "run the tests" {
+		t.Errorf("sent message = %q, want 'run the tests'", sentMsg)
+	}
+}
+
+// An explicit "@{shortID}" overrides the sticky target and becomes the new one.
+func TestOnMessageReceive_ExplicitTargetOverridesAndUpdatesSticky(t *testing.T) {
+	mgr, setCalls := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", stickySessions)
+
+	var sentID string
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(sid, _ string, _ []model.FileEntry) error {
+		sentID = sid
+		return nil
+	}
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("@deadbeef hi"))
+
+	if sentID != "deadbeef-2222-2222-2222-222222222222" {
+		t.Errorf("sent to %q, want the explicitly named session", sentID)
+	}
+	if len(*setCalls) != 1 || (*setCalls)[0] != "deadbeef-2222-2222-2222-222222222222" {
+		t.Errorf("sticky target updates = %v, want one write of the explicit session", *setCalls)
+	}
+}
+
+// A failed send must not move the sticky target.
+func TestOnMessageReceive_FailedSendDoesNotUpdateSticky(t *testing.T) {
+	mgr, setCalls := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", stickySessions)
+
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(string, string, []model.FileEntry) error {
+		return fmt.Errorf("session gone")
+	}
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("@deadbeef hi"))
+
+	if len(*setCalls) != 0 {
+		t.Errorf("sticky target must not move on a failed send, got %v", *setCalls)
+	}
+}
+
+// A file message downloads and sends an attachment-only message (empty text)
+// to the sticky session.
+func TestOnMessageReceive_FileGoesToStickySessionAsAttachment(t *testing.T) {
+	mediaTestServer(t, "attachment-bytes")
+
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
+	}
+	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", sessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sentCh := make(chan struct {
+		sid   string
+		msg   string
+		files []model.FileEntry
+	}, 1)
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(sid, msg string, files []model.FileEntry) error {
+		sentCh <- struct {
+			sid   string
+			msg   string
+			files []model.FileEntry
+		}{sid, msg, files}
+		return nil
+	}
 
 	chatType := "p2p"
 	senderType := "user"
@@ -477,8 +659,115 @@ func TestOnMessageReceive_NoCommand_SessionList(t *testing.T) {
 			Message: &larkim.EventMessage{
 				ChatType:    &chatType,
 				ChatId:      strPtr("chat1"),
-				Content:     strPtr(`{"text":"just a message"}`),
-				MessageType: strPtr("text"),
+				MessageId:   strPtr("om_msg_1"),
+				MessageType: strPtr("file"),
+				Content:     strPtr(`{"file_key":"file_abc","file_name":"报告.pdf"}`),
+			},
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: strPtr("ou_user1")},
+				SenderType: &senderType,
+			},
+		},
+	}
+
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sentCh:
+		if got.sid != "abc12345-1111-1111-1111-111111111111" {
+			t.Errorf("sent to %q, want the sticky session", got.sid)
+		}
+		if got.msg != "" {
+			t.Errorf("attachment message text = %q, want empty", got.msg)
+		}
+		if len(got.files) != 1 {
+			t.Fatalf("files = %d, want 1", len(got.files))
+		}
+		if got.files[0].Path != ".clawbench/uploads/报告.pdf" {
+			t.Errorf("file path = %q", got.files[0].Path)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the attachment to be sent")
+	}
+}
+
+// An image message is downloaded with the image resource type and sent as an
+// attachment to the sticky session.
+func TestOnMessageReceive_ImageGoesToStickySessionAsAttachment(t *testing.T) {
+	mediaTestServer(t, "png-bytes")
+
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
+	}
+	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", sessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sentCh := make(chan []model.FileEntry, 1)
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(_ string, _ string, files []model.FileEntry) error {
+		sentCh <- files
+		return nil
+	}
+
+	chatType := "p2p"
+	senderType := "user"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				ChatId:      strPtr("chat1"),
+				MessageId:   strPtr("om_msg_1"),
+				MessageType: strPtr("image"),
+				Content:     strPtr(`{"image_key":"img_xyz"}`),
+			},
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: strPtr("ou_user1")},
+				SenderType: &senderType,
+			},
+		},
+	}
+
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case files := <-sentCh:
+		if len(files) != 1 {
+			t.Fatalf("files = %d, want 1", len(files))
+		}
+		if files[0].Path != ".clawbench/uploads/image.png" {
+			t.Errorf("file path = %q, want .clawbench/uploads/image.png", files[0].Path)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the image to be sent")
+	}
+}
+
+// A file message with no sticky target must not be downloaded or sent.
+func TestOnMessageReceive_FileWithNoStickyTarget(t *testing.T) {
+	mediaTestServer(t, "x")
+	mgr, _ := stickyTestEnv(t, "", nil)
+
+	sent := false
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(string, string, []model.FileEntry) error {
+		sent = true
+		return nil
+	}
+
+	chatType := "p2p"
+	senderType := "user"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				ChatId:      strPtr("chat1"),
+				MessageId:   strPtr("om_msg_1"),
+				MessageType: strPtr("file"),
+				Content:     strPtr(`{"file_key":"file_abc","file_name":"a.txt"}`),
 			},
 			Sender: &larkim.EventSender{
 				SenderId:   &larkim.UserId{OpenId: strPtr("ou_user1")},
@@ -488,5 +777,10 @@ func TestOnMessageReceive_NoCommand_SessionList(t *testing.T) {
 	}
 
 	_ = mgr.onMessageReceive(context.TODO(), event)
-	// Should not panic; should call handleSessionList since no @ prefix
+
+	// Give the (should-be-absent) goroutine a chance to run.
+	time.Sleep(100 * time.Millisecond)
+	if sent {
+		t.Error("a file with no target session must not be sent")
+	}
 }

@@ -137,18 +137,42 @@ func scanDingTalkSessionInfos(rows *sql.Rows) []DingTalkSessionInfo {
 }
 
 // SendMessageToSessionFromDingTalk sends a message to a non-running session from DingTalk.
-func SendMessageToSessionFromDingTalk(sessionID, message string) error {
-	return sendMessageToSessionFromPush(sessionID, message)
+func SendMessageToSessionFromDingTalk(sessionID, message string, files []model.FileEntry) error {
+	return sendMessageToSessionFromPush(sessionID, message, files)
 }
 
 // SendMessageToSessionFromFeishu sends a message to a non-running session from Feishu.
-func SendMessageToSessionFromFeishu(sessionID, message string) error {
-	return sendMessageToSessionFromPush(sessionID, message)
+func SendMessageToSessionFromFeishu(sessionID, message string, files []model.FileEntry) error {
+	return sendMessageToSessionFromPush(sessionID, message, files)
+}
+
+// GetSessionInfoForPush returns session metadata for a push backend, or an
+// error when the session does not exist (or is archived).
+//
+// Push backends need ProjectPath to place a downloaded IM attachment in the
+// session's own .clawbench/uploads/ directory.
+func GetSessionInfoForPush(sessionID string) (DingTalkSessionInfo, error) {
+	info := GetSessionFullInfo(sessionID)
+	if info == nil {
+		return DingTalkSessionInfo{}, fmt.Errorf("session %s not found", sessionID)
+	}
+	return DingTalkSessionInfo{
+		ID:          sessionID,
+		Title:       info.Title,
+		ProjectPath: info.ProjectPath,
+		Backend:     info.Backend,
+		AgentID:     info.AgentID,
+		Model:       info.Model,
+	}, nil
 }
 
 // sendMessageToSessionFromPush is the shared implementation for sending a message
 // to a non-running session from any push backend (DingTalk, Feishu, etc.).
-func sendMessageToSessionFromPush(sessionID, message string) error {
+//
+// files are the message's attachments, already written to disk by the caller.
+// An empty message with files is valid: a bare file sent from IM carries no
+// text, and the execution engine injects the attachment path into the prompt.
+func sendMessageToSessionFromPush(sessionID, message string, files []model.FileEntry) error {
 	info := GetSessionFullInfo(sessionID)
 	if info == nil {
 		return fmt.Errorf("session %s not found", sessionID)
@@ -165,17 +189,21 @@ func sendMessageToSessionFromPush(sessionID, message string) error {
 		BackendName: info.Backend,
 		AgentID:     info.AgentID,
 		Message:     message,
+		Files:       files,
 	})
 	if err != nil {
 		return err
 	}
 
 	// Emit user_message for cross-device sync. MessageID is the persisted DB id.
+	// Files ride along so a client that is watching this session renders the
+	// attachment bubble without a reload.
 	ws.EmitToSession(sessionID, ai.StreamEvent{
 		Type: "user_message",
 		UserMessage: &ai.UserMessageData{
 			MessageID: msgID,
 			Content:   message,
+			Files:     files,
 		},
 	})
 

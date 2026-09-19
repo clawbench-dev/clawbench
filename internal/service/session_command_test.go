@@ -88,6 +88,27 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(tool_id, message_id)
 		);
+		-- Push subscriber tables. last_session_id is the sticky push target;
+		-- it is declared here so these tests exercise the real column rather
+		-- than a stub that could drift from the production schema.
+		CREATE TABLE IF NOT EXISTS dingtalk_subscribers (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id         TEXT NOT NULL UNIQUE,
+			conversation_id TEXT NOT NULL DEFAULT '',
+			user_name       TEXT NOT NULL DEFAULT '',
+			source          TEXT NOT NULL DEFAULT 'stream',
+			last_session_id TEXT NOT NULL DEFAULT '',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS feishu_subscribers (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id         TEXT NOT NULL UNIQUE,
+			chat_id         TEXT NOT NULL DEFAULT '',
+			user_name       TEXT NOT NULL DEFAULT '',
+			source          TEXT NOT NULL DEFAULT 'stream',
+			last_session_id TEXT NOT NULL DEFAULT '',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	require.NoError(t, err)
 
@@ -100,7 +121,7 @@ func TestSendMessageToSessionFromDingTalk_NotFound(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	err := SendMessageToSessionFromDingTalk("nonexistent-session", "hello")
+	err := SendMessageToSessionFromDingTalk("nonexistent-session", "hello", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
@@ -1313,7 +1334,7 @@ func TestSendMessageToSessionFromDingTalk_SessionExists_QueuedMessage(t *testing
 	SetSessionRunning(sessionID, true, false)
 	defer SetSessionRunning(sessionID, false, true)
 
-	err = SendMessageToSessionFromDingTalk(sessionID, "hello from dingtalk")
+	err = SendMessageToSessionFromDingTalk(sessionID, "hello from dingtalk", nil)
 
 	// The call should succeed (session was found and message was queued)
 	assert.NoError(t, err)
@@ -1435,7 +1456,7 @@ func TestSendMessageToSessionFromDingTalk_LaunchPath(t *testing.T) {
 
 	// Session is not running → TrySetSessionRunning should succeed
 	// and LaunchSessionExecution will be called
-	err = SendMessageToSessionFromDingTalk(sessionID, "launch message")
+	err = SendMessageToSessionFromDingTalk(sessionID, "launch message", nil)
 	// The launch will fail because there's no real backend, but the function
 	// should not return an error for the launch itself
 	assert.NoError(t, err)
@@ -1713,7 +1734,7 @@ func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *test
 		ClearQueuedMessages(sessionID)
 	}()
 
-	err = SendMessageToSessionFromDingTalk(sessionID, "queued from dingtalk")
+	err = SendMessageToSessionFromDingTalk(sessionID, "queued from dingtalk", nil)
 	assert.NoError(t, err)
 
 	// Verify message IS persisted to DB with queued=1 (enqueue-path now persists).
@@ -1797,7 +1818,7 @@ func TestSendMessageToSessionFromDingTalk_AddChatMessageFails(t *testing.T) {
 	// Drop chat_history to cause AddChatMessage to fail
 	_, _ = db.Exec("DROP TABLE chat_history")
 
-	err = SendMessageToSessionFromDingTalk(sessionID, "this will fail")
+	err = SendMessageToSessionFromDingTalk(sessionID, "this will fail", nil)
 	assert.Error(t, err, "should return error when message persistence fails")
 
 	// Session should no longer be running (rollback)
@@ -2444,7 +2465,7 @@ func TestSendMessageToSessionFromFeishu_NotFound(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	err := SendMessageToSessionFromFeishu("nonexistent-session", "hello")
+	err := SendMessageToSessionFromFeishu("nonexistent-session", "hello", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
@@ -2472,7 +2493,7 @@ func TestSendMessageToSessionFromFeishu_AlreadyRunning_EnqueuesMessage(t *testin
 		ClearQueuedMessages(sessionID)
 	}()
 
-	err = SendMessageToSessionFromFeishu(sessionID, "hello from feishu")
+	err = SendMessageToSessionFromFeishu(sessionID, "hello from feishu", nil)
 	assert.NoError(t, err)
 
 	// Verify message is persisted and queued in DB.
@@ -2494,7 +2515,7 @@ func TestSendMessageToSessionFromFeishu_LaunchPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Session is not running → TrySetSessionRunning should succeed
-	err = SendMessageToSessionFromFeishu(sessionID, "launch from feishu")
+	err = SendMessageToSessionFromFeishu(sessionID, "launch from feishu", nil)
 	assert.NoError(t, err)
 
 	// Wait briefly for the goroutine to start, then clean up
@@ -2516,7 +2537,7 @@ func TestSendMessageToSessionFromFeishu_AddChatMessageFails(t *testing.T) {
 	// Drop chat_history to cause AddChatMessage to fail
 	_, _ = db.Exec("DROP TABLE chat_history")
 
-	err = SendMessageToSessionFromFeishu(sessionID, "this will fail")
+	err = SendMessageToSessionFromFeishu(sessionID, "this will fail", nil)
 	assert.Error(t, err, "should return error when message persistence fails")
 }
 
@@ -2584,4 +2605,117 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&qid)
 	assert.NoError(t, err, "assistant reply row should exist")
 	assert.Equal(t, "pending-2", qid, "drain reply must record the consumed message's queue_id")
+}
+
+// ============================================================================
+// Push attachment + sticky session
+// ============================================================================
+
+// TestSendMessageToSessionFromDingTalk_WithFilesPersistsAttachments verifies a
+// bare attachment message (empty text) is persisted with its files, which is
+// what a file/image sent from IM produces.
+func TestSendMessageToSessionFromDingTalk_WithFilesPersistsAttachments(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "dt-attach-1"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	SetSessionRunning(sessionID, true, false)
+	defer SetSessionRunning(sessionID, false, true)
+
+	files := []model.FileEntry{{Path: ".clawbench/uploads/report.pdf"}}
+	err = SendMessageToSessionFromDingTalk(sessionID, "", files)
+	require.NoError(t, err)
+
+	var content, filesJSON string
+	require.NoError(t, dbRead.QueryRow(
+		"SELECT content, files FROM chat_history WHERE session_id = ? AND role = 'user'", sessionID,
+	).Scan(&content, &filesJSON))
+
+	assert.Equal(t, "", content, "an attachment-only message has empty text")
+	assert.Contains(t, filesJSON, ".clawbench/uploads/report.pdf",
+		"the attachment path must be persisted so the drain loop can re-inject it")
+}
+
+// TestGetSessionInfoForPush covers the lookup push backends use to resolve a
+// project path for downloading an attachment.
+func TestGetSessionInfoForPush(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "dt-info-1"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj/info', 'claude', 'Info Session', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	t.Run("existing session", func(t *testing.T) {
+		info, err := GetSessionInfoForPush(sessionID)
+		require.NoError(t, err)
+		assert.Equal(t, sessionID, info.ID)
+		assert.Equal(t, "/proj/info", info.ProjectPath)
+		assert.Equal(t, "Info Session", info.Title)
+	})
+
+	t.Run("missing session returns an error", func(t *testing.T) {
+		_, err := GetSessionInfoForPush("does-not-exist")
+		assert.Error(t, err, "a missing session must not resolve to an empty info")
+	})
+}
+
+// TestDingTalkLastSessionID_RoundTrip verifies the sticky target persists and
+// reads back, and that an unknown user reads as empty rather than erroring.
+func TestDingTalkLastSessionID_RoundTrip(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	require.NoError(t, UpsertDingTalkSubscriber("u-sticky", "conv-1", "Nick", "stream"))
+
+	t.Run("unset reads as empty", func(t *testing.T) {
+		got, err := GetDingTalkLastSessionID("u-sticky")
+		require.NoError(t, err)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("round trip", func(t *testing.T) {
+		require.NoError(t, SetDingTalkLastSessionID("u-sticky", "sess-abc"))
+		got, err := GetDingTalkLastSessionID("u-sticky")
+		require.NoError(t, err)
+		assert.Equal(t, "sess-abc", got)
+	})
+
+	t.Run("unknown user reads as empty", func(t *testing.T) {
+		got, err := GetDingTalkLastSessionID("nobody")
+		require.NoError(t, err)
+		assert.Equal(t, "", got, "an unknown subscriber must read as empty, not error")
+	})
+
+	t.Run("setting for an unknown user errors", func(t *testing.T) {
+		err := SetDingTalkLastSessionID("nobody", "sess-x")
+		assert.Error(t, err, "the row is expected to exist (upsert runs on every message)")
+	})
+}
+
+// TestFeishuLastSessionID_RoundTrip mirrors the DingTalk sticky-target test for
+// the Feishu subscriber table, which has its own column and accessors.
+func TestFeishuLastSessionID_RoundTrip(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	require.NoError(t, UpsertFeishuSubscriber("ou-sticky", "chat-1", "Nick", "stream"))
+
+	got, err := GetFeishuLastSessionID("ou-sticky")
+	require.NoError(t, err)
+	assert.Equal(t, "", got, "unset must read as empty")
+
+	require.NoError(t, SetFeishuLastSessionID("ou-sticky", "sess-xyz"))
+	got, err = GetFeishuLastSessionID("ou-sticky")
+	require.NoError(t, err)
+	assert.Equal(t, "sess-xyz", got)
 }

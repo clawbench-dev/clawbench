@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/push/common"
 
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
@@ -242,10 +244,12 @@ func TestOnChatBotMessage_ReplyFailure(t *testing.T) {
 
 // mockDBWithCallback is a mock DingtalkDB with optional callback functions.
 type mockDBWithCallback struct {
-	mergeFn  func(users []string)
-	getFn    func() ([]common.SubscriberInfo, error)
-	upsertFn func(userID, conversationID, userName, source string) error
-	deleteFn func(userID string) error
+	mergeFn   func(users []string)
+	getFn     func() ([]common.SubscriberInfo, error)
+	upsertFn  func(userID, conversationID, userName, source string) error
+	deleteFn  func(userID string) error
+	getLastFn func(userID string) (string, error)
+	setLastFn func(userID, sessionID string) error
 }
 
 func (m *mockDBWithCallback) MergeConfigSubscribers(users []string) {
@@ -271,6 +275,20 @@ func (m *mockDBWithCallback) UpsertSubscriber(userID, conversationID, userName, 
 func (m *mockDBWithCallback) DeleteSubscriber(userID string) error {
 	if m.deleteFn != nil {
 		return m.deleteFn(userID)
+	}
+	return nil
+}
+
+func (m *mockDBWithCallback) GetLastSessionID(userID string) (string, error) {
+	if m.getLastFn != nil {
+		return m.getLastFn(userID)
+	}
+	return "", nil
+}
+
+func (m *mockDBWithCallback) SetLastSessionID(userID, sessionID string) error {
+	if m.setLastFn != nil {
+		return m.setLastFn(userID, sessionID)
 	}
 	return nil
 }
@@ -385,7 +403,7 @@ func TestOnChatBotMessage_SessionCommand_EndedSession(t *testing.T) {
 		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Ended Session"},
 		},
-		SendMessageFn: func(sid, msg string) error {
+		SendMessageFn: func(sid, msg string, _ []model.FileEntry) error {
 			sentID = sid
 			sentMsg = msg
 			return nil
@@ -459,7 +477,7 @@ func TestOnChatBotMessage_SessionList(t *testing.T) {
 		SenderNick:       "TestUser",
 		ConversationId:   "conv1",
 		SessionWebhook:   server.URL,
-		Text:             chatbot.BotCallbackDataTextModel{Content: "hello"},
+		Text:             chatbot.BotCallbackDataTextModel{Content: "/ls"},
 	}
 
 	_, err := mgr.onChatBotMessage(context.Background(), data)
@@ -497,7 +515,7 @@ func TestOnChatBotMessage_SessionCommand_SendToNotRunningSession_Fails(t *testin
 		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Ended Session"},
 		},
-		SendMessageFn: func(sid, msg string) error {
+		SendMessageFn: func(sid, msg string, _ []model.FileEntry) error {
 			return fmt.Errorf("session gone")
 		},
 	}
@@ -555,7 +573,7 @@ func TestOnChatBotMessage_SessionList_NilMessenger(t *testing.T) {
 		SenderNick:       "TestUser",
 		ConversationId:   "conv1",
 		SessionWebhook:   server.URL,
-		Text:             chatbot.BotCallbackDataTextModel{Content: "hello"},
+		Text:             chatbot.BotCallbackDataTextModel{Content: "/ls"},
 	}
 
 	_, err := mgr.onChatBotMessage(context.Background(), data)
@@ -597,7 +615,7 @@ func TestOnChatBotMessage_SessionList_ListError(t *testing.T) {
 		SenderNick:       "TestUser",
 		ConversationId:   "conv1",
 		SessionWebhook:   server.URL,
-		Text:             chatbot.BotCallbackDataTextModel{Content: "hello"},
+		Text:             chatbot.BotCallbackDataTextModel{Content: "/ls"},
 	}
 
 	_, err := mgr.onChatBotMessage(context.Background(), data)
@@ -640,7 +658,7 @@ func TestOnChatBotMessage_SessionList_EmptySessions(t *testing.T) {
 		SenderNick:       "TestUser",
 		ConversationId:   "conv1",
 		SessionWebhook:   server.URL,
-		Text:             chatbot.BotCallbackDataTextModel{Content: "hello"},
+		Text:             chatbot.BotCallbackDataTextModel{Content: "/ls"},
 	}
 
 	_, err := mgr.onChatBotMessage(context.Background(), data)
@@ -686,7 +704,7 @@ func TestOnChatBotMessage_SessionList_NoProjectAndNoTitle(t *testing.T) {
 		SenderNick:       "TestUser",
 		ConversationId:   "conv1",
 		SessionWebhook:   server.URL,
-		Text:             chatbot.BotCallbackDataTextModel{Content: "hello"},
+		Text:             chatbot.BotCallbackDataTextModel{Content: "/ls"},
 	}
 
 	_, err := mgr.onChatBotMessage(context.Background(), data)
@@ -722,7 +740,7 @@ func TestOnChatBotMessage_SessionCommand_SendToNotRunningSession_Success(t *test
 		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Idle Session"},
 		},
-		SendMessageFn: func(sid, msg string) error {
+		SendMessageFn: func(sid, msg string, _ []model.FileEntry) error {
 			sentID = sid
 			sentMsg = msg
 			return nil
@@ -759,5 +777,257 @@ func TestOnChatBotMessage_SessionCommand_SendToNotRunningSession_Success(t *test
 	}
 	if sentMsg != "hello" {
 		t.Errorf("expected message 'hello', got %q", sentMsg)
+	}
+}
+
+// --- Sticky session routing ---
+
+// stickyTestEnv wires a mock DB + messenger + reply-capturing webhook for the
+// sticky-session tests. It returns the manager, the captured reply body, and
+// the recorded last-session-id writes.
+func stickyTestEnv(t *testing.T, sticky string, sessions []common.SessionInfo) (*Manager, *[]byte, *[]string) {
+	t.Helper()
+
+	var setCalls []string
+	origDB := db
+	t.Cleanup(func() { db = origDB })
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return sticky, nil },
+		setLastFn: func(_, sessionID string) error {
+			setCalls = append(setCalls, sessionID)
+			return nil
+		},
+	}
+
+	origMessenger := sessionMessenger
+	t.Cleanup(func() { sessionMessenger = origMessenger })
+	sessionMessenger = &mockSessionMessenger{allSessions: sessions}
+
+	reply := new([]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	return &Manager{}, reply, &setCalls
+}
+
+func stickyData(webhook, text string) *chatbot.BotCallbackDataModel {
+	return &chatbot.BotCallbackDataModel{
+		ConversationType: "1",
+		SenderStaffId:    "staff123",
+		SenderNick:       "TestUser",
+		ConversationId:   "conv1",
+		SessionWebhook:   webhook,
+		Text:             chatbot.BotCallbackDataTextModel{Content: text},
+	}
+}
+
+var stickySessions = []common.SessionInfo{
+	{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: "/p"},
+	{ID: "deadbeef-2222-2222-2222-222222222222", Title: "Other", ProjectPath: "/p"},
+}
+
+// A plain message with a recorded target must go to that session, not reply
+// with the session list (the pre-change behavior).
+func TestOnChatBotMessage_PlainTextGoesToStickySession(t *testing.T) {
+	mgr, reply, _ := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", stickySessions)
+
+	var sentID, sentMsg string
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(sid, msg string, _ []model.FileEntry) error {
+		sentID, sentMsg = sid, msg
+		return nil
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if _, err := mgr.onChatBotMessage(context.Background(), stickyData(server.URL, "run the tests")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if sentID != "a1b2c3d4-1111-1111-1111-111111111111" {
+		t.Errorf("sent to %q, want the sticky session", sentID)
+	}
+	if sentMsg != "run the tests" {
+		t.Errorf("sent message = %q, want 'run the tests'", sentMsg)
+	}
+}
+
+// A first-time sender (no recorded target) must be told how to pick, and the
+// message must not be sent anywhere.
+func TestOnChatBotMessage_NoStickyTargetAsksForSession(t *testing.T) {
+	mgr, reply, _ := stickyTestEnv(t, "", stickySessions)
+
+	sent := false
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(string, string, []model.FileEntry) error {
+		sent = true
+		return nil
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if _, err := mgr.onChatBotMessage(context.Background(), stickyData(server.URL, "hello")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if sent {
+		t.Error("a message with no target session must not be sent")
+	}
+	if !strings.Contains(string(*reply), "/ls") {
+		t.Errorf("reply should point at /ls, got %s", string(*reply))
+	}
+}
+
+// An explicit "@{shortID}" must override the sticky target and become the new
+// sticky target after a successful send.
+func TestOnChatBotMessage_ExplicitTargetOverridesAndUpdatesSticky(t *testing.T) {
+	mgr, _, setCalls := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", stickySessions)
+
+	var sentID string
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(sid, _ string, _ []model.FileEntry) error {
+		sentID = sid
+		return nil
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if _, err := mgr.onChatBotMessage(context.Background(), stickyData(server.URL, "@deadbeef hi")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if sentID != "deadbeef-2222-2222-2222-222222222222" {
+		t.Errorf("sent to %q, want the explicitly named session", sentID)
+	}
+	if len(*setCalls) != 1 || (*setCalls)[0] != "deadbeef-2222-2222-2222-222222222222" {
+		t.Errorf("sticky target updates = %v, want one write of the explicit session", *setCalls)
+	}
+}
+
+// A failed send must not move the sticky target, or the user's next unprefixed
+// message would silently go to a session that just rejected one.
+func TestOnChatBotMessage_FailedSendDoesNotUpdateSticky(t *testing.T) {
+	mgr, _, setCalls := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", stickySessions)
+
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(string, string, []model.FileEntry) error {
+		return fmt.Errorf("session gone")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if _, err := mgr.onChatBotMessage(context.Background(), stickyData(server.URL, "@deadbeef hi")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(*setCalls) != 0 {
+		t.Errorf("sticky target must not move on a failed send, got %v", *setCalls)
+	}
+}
+
+// A file message downloads and sends an attachment-only message (empty text)
+// to the sticky session.
+func TestOnChatBotMessage_FileGoesToStickySessionAsAttachment(t *testing.T) {
+	body := "attachment-bytes"
+	srv, _ := mediaTestServer(t, body, http.StatusOK)
+
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
+	}
+	mgr, _, _ := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", sessions)
+	mgr.httpClient = srv.Client()
+	mgr.cfg = &model.DingTalkConfig{AppKey: "test-app-key"}
+	mgr.cachedToken = "test-access-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sentCh := make(chan struct {
+		sid   string
+		msg   string
+		files []model.FileEntry
+	}, 1)
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(sid, msg string, files []model.FileEntry) error {
+		sentCh <- struct {
+			sid   string
+			msg   string
+			files []model.FileEntry
+		}{sid, msg, files}
+		return nil
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "file"
+	data.Content = map[string]any{"downloadCode": "code-1", "fileName": "报告.pdf"}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The download runs in a goroutine so the ack is not delayed.
+	select {
+	case got := <-sentCh:
+		if got.sid != "a1b2c3d4-1111-1111-1111-111111111111" {
+			t.Errorf("sent to %q, want the sticky session", got.sid)
+		}
+		if got.msg != "" {
+			t.Errorf("attachment message text = %q, want empty", got.msg)
+		}
+		if len(got.files) != 1 {
+			t.Fatalf("files = %d, want 1", len(got.files))
+		}
+		if got.files[0].Path != ".clawbench/uploads/报告.pdf" {
+			t.Errorf("file path = %q", got.files[0].Path)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the attachment to be sent")
+	}
+}
+
+// A file message with no sticky target must not download anything.
+func TestOnChatBotMessage_FileWithNoStickyTargetAsksForSession(t *testing.T) {
+	srv, gotCode := mediaTestServer(t, "x", http.StatusOK)
+	mgr, reply, _ := stickyTestEnv(t, "", nil)
+	mgr.httpClient = srv.Client()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "file"
+	data.Content = map[string]any{"downloadCode": "code-1", "fileName": "a.txt"}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Give the (should-be-absent) goroutine a chance to run.
+	time.Sleep(100 * time.Millisecond)
+	if *gotCode != "" {
+		t.Errorf("must not download without a target session, got code %q", *gotCode)
+	}
+	if !strings.Contains(string(*reply), "/ls") {
+		t.Errorf("reply should point at /ls, got %s", string(*reply))
 	}
 }

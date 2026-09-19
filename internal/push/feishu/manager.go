@@ -10,6 +10,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/push/common"
 
+	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
@@ -37,6 +38,12 @@ type Manager struct {
 	started    bool
 	startMu    sync.Mutex
 	httpClient *http.Client
+
+	// larkCli is the OpenAPI client used for outbound calls that the raw HTTP
+	// helpers in sender.go do not cover — currently the message-resource
+	// download. Built from the same credentials so token handling stays
+	// consistent. Nil until the first use (see larkClient).
+	larkCli *lark.Client
 
 	// Per-instance token cache (C2 fix: avoids race during hot-reload credential change)
 	tokenMu     sync.RWMutex

@@ -1480,7 +1480,11 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         if (m.role !== 'user') return false
         if (msgId > 0 && m.id === msgId) return true
         if (remoteQueueId && (m.id === remoteQueueId || m.queueId === remoteQueueId)) return true
-        if (m.content === userContent && !m.pending && !m._remote) return true
+        // Content is only a dedup key when it actually identifies the message.
+        // An attachment-only message (a file/image sent from IM) has content "",
+        // so matching on it would collapse every such message into the first
+        // one and silently drop files sent from another device.
+        if (userContent !== '' && m.content === userContent && !m.pending && !m._remote) return true
         return false
       })
       if (alreadyExists) return state

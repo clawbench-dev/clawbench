@@ -115,6 +115,14 @@ func (dingtalkDBAdapter) DeleteSubscriber(userID string) error {
 	return service.DeleteDingTalkSubscriber(userID)
 }
 
+func (dingtalkDBAdapter) GetLastSessionID(userID string) (string, error) {
+	return service.GetDingTalkLastSessionID(userID)
+}
+
+func (dingtalkDBAdapter) SetLastSessionID(userID, sessionID string) error {
+	return service.SetDingTalkLastSessionID(userID, sessionID)
+}
+
 // dingtalkSessionMessenger bridges the dingtalk package's SessionMessenger interface
 // to service package functions, avoiding import cycles (service → dingtalk → service).
 type dingtalkSessionMessenger struct{}
@@ -167,8 +175,23 @@ func (dingtalkSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return service.IsSessionRunning(sessionID)
 }
 
-func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string) error {
-	return service.SendMessageToSessionFromDingTalk(sessionID, message)
+func (dingtalkSessionMessenger) GetSessionInfo(sessionID string) (common.SessionInfo, error) {
+	info, err := service.GetSessionInfoForPush(sessionID)
+	if err != nil {
+		return common.SessionInfo{}, err
+	}
+	return common.SessionInfo{
+		ID:          info.ID,
+		Title:       info.Title,
+		ProjectPath: info.ProjectPath,
+		Backend:     info.Backend,
+		AgentID:     info.AgentID,
+		Model:       info.Model,
+	}, nil
+}
+
+func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string, files []model.FileEntry) error {
+	return service.SendMessageToSessionFromDingTalk(sessionID, message, files)
 }
 
 // feishuDBAdapter bridges the feishu package's DB interface to service package
@@ -202,6 +225,14 @@ func (feishuDBAdapter) UpsertSubscriber(userID, conversationID, userName, source
 
 func (feishuDBAdapter) DeleteSubscriber(userID string) error {
 	return service.DeleteFeishuSubscriber(userID)
+}
+
+func (feishuDBAdapter) GetLastSessionID(userID string) (string, error) {
+	return service.GetFeishuLastSessionID(userID)
+}
+
+func (feishuDBAdapter) SetLastSessionID(userID, sessionID string) error {
+	return service.SetFeishuLastSessionID(userID, sessionID)
 }
 
 // feishuSessionMessenger bridges the feishu package's SessionMessenger interface
@@ -256,8 +287,23 @@ func (feishuSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return service.IsSessionRunning(sessionID)
 }
 
-func (feishuSessionMessenger) SendMessageToSession(sessionID, message string) error {
-	return service.SendMessageToSessionFromFeishu(sessionID, message)
+func (feishuSessionMessenger) GetSessionInfo(sessionID string) (common.SessionInfo, error) {
+	info, err := service.GetSessionInfoForPush(sessionID)
+	if err != nil {
+		return common.SessionInfo{}, err
+	}
+	return common.SessionInfo{
+		ID:          info.ID,
+		Title:       info.Title,
+		ProjectPath: info.ProjectPath,
+		Backend:     info.Backend,
+		AgentID:     info.AgentID,
+		Model:       info.Model,
+	}, nil
+}
+
+func (feishuSessionMessenger) SendMessageToSession(sessionID, message string, files []model.FileEntry) error {
+	return service.SendMessageToSessionFromFeishu(sessionID, message, files)
 }
 
 // multiHandler sends log records to multiple handlers

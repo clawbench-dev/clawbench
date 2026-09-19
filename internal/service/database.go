@@ -1541,6 +1541,25 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add last_session_id to the push subscriber tables. This is the
+	// sticky target for messages that carry no "@{shortID}" prefix — a plain
+	// text or a file/image sent from DingTalk/Feishu goes to the session the
+	// user last addressed. Pre-existing rows get '' and the handler falls back
+	// to the "/ls" hint rather than guessing a target.
+	for _, tbl := range []string{"dingtalk_subscribers", "feishu_subscribers"} {
+		var exists int
+		_ = db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='last_session_id'", tbl,
+		).Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec(fmt.Sprintf(
+				"ALTER TABLE %s ADD COLUMN last_session_id TEXT NOT NULL DEFAULT ''", tbl,
+			)); err != nil {
+				return fmt.Errorf("failed to add %s.last_session_id column: %w", tbl, err)
+			}
+		}
+	}
+
 	// Migrate: extract metadata from chat_history.content into chat_metadata table.
 	// This is a one-time migration for existing data; new messages are saved
 	// to chat_metadata automatically via SaveMetadata().

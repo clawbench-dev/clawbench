@@ -170,13 +170,19 @@ func (m *mockClientChecker) HasConnectedClients() bool { return m.hasConnected }
 
 // mockDB implements common.PushDB for testing.
 type mockDB struct {
-	subscribers []common.SubscriberInfo
+	subscribers   []common.SubscriberInfo
+	lastSessionID string
 }
 
 func (m *mockDB) MergeConfigSubscribers(_ []string)                {}
 func (m *mockDB) GetSubscribers() ([]common.SubscriberInfo, error) { return m.subscribers, nil }
 func (m *mockDB) UpsertSubscriber(_, _, _, _ string) error         { return nil }
 func (m *mockDB) DeleteSubscriber(_ string) error                  { return nil }
+func (m *mockDB) GetLastSessionID(_ string) (string, error)        { return m.lastSessionID, nil }
+func (m *mockDB) SetLastSessionID(_, sessionID string) error {
+	m.lastSessionID = sessionID
+	return nil
+}
 
 func TestPushSessionEvent_UnknownStatus(t *testing.T) {
 	defer setupPushMode("dingtalk")()

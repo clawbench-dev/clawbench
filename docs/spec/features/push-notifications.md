@@ -119,6 +119,8 @@ sequenceDiagram
 - **Markdown 单聊消息**：`SendMarkdownMessage()`（`internal/push/dingtalk/sender.go`）调用 `/v1.0/robot/oToMessages/batchSend` API，以 `sampleMarkdown` 格式发送，4000 字符截断（`truncateForDingTalk`）
 - **DB Outbox 可靠投递**：`PushSessionEvent()` / `PushTaskEvent()`（`internal/push/dingtalk/push.go`）遍历 DB 订阅者列表逐个发送。**当 WS 客户端在线时抑制推送**——避免重复通知。订阅者数据由 `internal/service/dingtalk_subscribers.go` 管理
 - **交互式命令**：用户在钉钉单聊中发 `@{短ID} 消息内容` 即可向对应会话发送消息。`handleSessionCommand()`（`internal/push/dingtalk/session_command.go`）解析短 ID、匹配运行中会话、入队消息。`handleSessionList()` 列出最近会话按项目分组。消息正文**保留多行**——解析正则使用 `(?s)` 内联标志使 `.` 匹配换行，否则 `@会话ID` 后的多行消息会被截断为第一行；钉钉与飞书共用 `ParseSessionCommand`，一处修复两边生效
+- **粘性会话（无 ID 默认发送）**：不带 `@{短ID}` 的文本、以及文件/图片消息，一律发往该用户**最近一次成功发送过的会话**（`last_session_id`，见下）。首次使用（无记录）回复「发送 /ls 查看会话列表」。`/ls` 是显式列出会话列表的命令，取代了旧的隐式行为（任何无 `@` 前缀的消息都回列表）。用户显式 `@{短ID}` 发送成功后会把粘性目标切换到该会话；**发送失败不切换**，否则用户的下一条无前缀消息会静默进入一个刚拒绝过它的会话
+- **收发文件与图片**：用户向机器人发送文件（`msgtype=file`）或图片（`msgtype=picture`）时，机器人下载并以**纯附件消息**（`content=""`、`files=[entry]`）发往粘性会话。下载为两步：先用 `downloadCode` 换临时下载链接（`POST /v1.0/robot/messageFiles/download`），再 GET 该链接。落盘到该会话项目的 `.clawbench/uploads/`，与网页上传同目录；大小上限复用 `upload.max_size_mb`（超限回复提示并丢弃，不留半截文件）。回调**立即 ack**，下载在 goroutine 中异步执行——钉钉会重投未及时 ack 的帧，同步下载会造成重复消息
 - **热重载**：`hotReloadDingTalk()`（`cmd/server/main.go`）检测凭证变更后原地重配置或重启 Manager，无需重启服务
 
 ### 初始化桥接
@@ -135,6 +137,7 @@ sequenceDiagram
 - **交互式卡片（Interactive Card）**：`SendPostMessage()`（`internal/push/feishu/sender.go`）调用 `/open-apis/im/v1/messages` API，使用 `msg_type="interactive"` 发送交互式卡片消息，支持 Markdown 渲染（飞书 Post 消息不支持 Markdown 渲染，需用交互式卡片）。4000 字符截断（`truncateForFeishu`）
 - **DB Outbox 可靠投递**：`PushSessionEvent()` / `PushTaskEvent()`（`internal/push/feishu/push.go`）遍历 DB 订阅者列表逐个发送。**当 WS 客户端在线时抑制推送**——避免重复通知。订阅者数据由 `internal/service/feishu_subscribers.go` 管理，存储在 `feishu_subscribers` 表（`user_id`、`chat_id`、`user_name`、`source`）
 - **交互式命令**：用户在飞书单聊中发 `@{短ID} 消息内容` 即可向对应会话发送消息。`handleSessionCommand()`（`internal/push/feishu/stream.go`）解析短 ID、匹配运行中会话、入队消息。`handleSessionList()` 列出最近会话按项目分组
+- **粘性会话与收发文件**：与钉钉行为对齐——不带 `@{短ID}` 的文本和文件/图片消息发往该用户最近成功发送过的会话；`/ls` 显式列出会话；无记录时回复选择提示。文件（`message_type=file`，`file_key`）与图片（`message_type=image`，`image_key`）通过 `GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file|image` 下载（`type` 按消息类型取 `file` 或 `image`），以纯附件消息发往粘性会话。落盘目录与大小上限同钉钉；回调同样立即 ack、下载异步
 - **热重载**：`hotReloadFeishu()`（`cmd/server/main.go`）检测凭证变更后原地重配置或重启 Manager，无需重启服务。`Reconfigure()` 返回 `NeedsRestart` 标志区分可原地更新与需重启的变更
 
 ### 初始化桥接
@@ -149,3 +152,28 @@ sequenceDiagram
 | 消息格式 | `sampleMarkdown` 单聊消息 | `interactive` 交互式卡片（支持 Markdown 渲染） |
 | 截断限制 | 4000 字符 | 4000 runes（~12000 bytes CJK） |
 | SDK 依赖 | `open-dingtalk/dingtalk-stream-sdk-go` | `larksuite/oapi-sdk-go/v3/ws` |
+| 文件下载 | `downloadCode` → `POST /v1.0/robot/messageFiles/download` → 临时 URL → GET | `file_key`/`image_key` → `GET /open-apis/im/v1/messages/{id}/resources/{key}?type=file\|image` |
+| 图片消息类型 | `picture`（仅 `downloadCode`，无文件名） | `image`（`image_key`，无文件名） |
+
+### 消息路由与粘性会话
+
+**路由优先级**（`ClassifyIncoming`）：
+
+| 输入 | 行为 |
+|------|------|
+| `@{短ID} 文本` | 发往该会话；成功后把粘性目标切到它 |
+| `/ls` | 回复最近会话列表（按项目分组） |
+| 其它文本 | 发往粘性会话 |
+| 文件 / 图片 | 下载后作为纯附件消息发往粘性会话 |
+| 粘性目标为空 | 回复「发送 /ls 查看会话列表，用 @会话ID 选择」 |
+
+**粘性目标**存在 `dingtalk_subscribers.last_session_id` / `feishu_subscribers.last_session_id`（`pragma_table_info` 守卫的增量迁移）。空值是正常状态——首次使用、或数据库来自该列存在之前——此时必须回退到提示，而不是替用户猜一个会话。
+
+**附件落盘**（`internal/push/common/attachment.go`）：写入会话所属项目的 `.clawbench/uploads/`，与网页上传端点同目录，因此 AI 提示、文件管理器和附件抽屉都把它们当普通上传处理。
+
+- 文件名经 `SanitizeFilename` 清洗：剥离目录分量（远端可传 `../../etc/passwd`）、替换 Windows/Shell 敏感字符、保留扩展名、超长截断。文件名**绝不能**引入路径分隔符，否则 `filepath.Join` 会逃出上传目录
+- 重名按序号递增（与网页上传一致），不覆盖
+- 大小上限复用 `upload.max_size_mb`；超限在下载过程中即拒绝并删除半截文件
+- 提示注入复用 `model.ApplyAttachmentPrefixes`（`internal/model/attachment_prompt.go`），与网页上传同一条路径。`content=""` 的纯附件消息是合法的——会话标题由 `titleFromFileEntries` 兜底
+
+**回调必须立即 ack**：钉钉与飞书都会重投未及时确认的事件，而下载需要两次网络往返。因此媒体下载在 goroutine 中执行，处理函数立刻返回；下载完成后再通过会话 webhook（钉钉）或消息 API（飞书）回复结果。

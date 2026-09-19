@@ -3405,3 +3405,30 @@ describe('queued message action (insert / interrupt)', () => {
     expect(afterDrain.filter((m: any) => m.role === 'assistant').length).toBeGreaterThan(1)
   })
 })
+
+  it('a remote attachment-only message is not swallowed by a local empty-content message', () => {
+    // Cross-device case: this device already sent an attachment-only message
+    // (empty content, adopted DB id, neither pending nor _remote), and another
+    // device then sends a different file. The content-dedup rule matches on
+    // content === "" and would drop the second message entirely, so the user
+    // would never see the file sent from the other device.
+    let s: any[] = [
+      {
+        role: 'user',
+        id: 10,
+        content: '',
+        blocks: [],
+        files: [{ path: '.clawbench/uploads/local.pdf', isDir: false }],
+        createdAt: new Date().toISOString(),
+      },
+    ]
+
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 11, content: '', files: [{ path: '.clawbench/uploads/remote.pdf', isDir: false }] },
+    } as any)
+
+    const userBubbles = s.filter((m: any) => m.role === 'user')
+    expect(userBubbles).toHaveLength(2, 'the remote file must render as its own bubble')
+    expect(userBubbles.map((m: any) => m.files[0].path)).toContain('.clawbench/uploads/remote.pdf')
+  })

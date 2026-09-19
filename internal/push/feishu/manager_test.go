@@ -193,10 +193,12 @@ func TestManager_SetStartedForTest(t *testing.T) {
 
 // mockDBWithCallback is a mock common.PushDB with optional callback functions.
 type mockDBWithCallback struct {
-	mergeFn  func(users []string)
-	getFn    func() ([]common.SubscriberInfo, error)
-	upsertFn func(userID, conversationID, userName, source string) error
-	deleteFn func(userID string) error
+	mergeFn   func(users []string)
+	getFn     func() ([]common.SubscriberInfo, error)
+	upsertFn  func(userID, conversationID, userName, source string) error
+	deleteFn  func(userID string) error
+	getLastFn func(userID string) (string, error)
+	setLastFn func(userID, sessionID string) error
 }
 
 func (m *mockDBWithCallback) MergeConfigSubscribers(users []string) {
@@ -222,6 +224,20 @@ func (m *mockDBWithCallback) UpsertSubscriber(userID, conversationID, userName, 
 func (m *mockDBWithCallback) DeleteSubscriber(userID string) error {
 	if m.deleteFn != nil {
 		return m.deleteFn(userID)
+	}
+	return nil
+}
+
+func (m *mockDBWithCallback) GetLastSessionID(userID string) (string, error) {
+	if m.getLastFn != nil {
+		return m.getLastFn(userID)
+	}
+	return "", nil
+}
+
+func (m *mockDBWithCallback) SetLastSessionID(userID, sessionID string) error {
+	if m.setLastFn != nil {
+		return m.setLastFn(userID, sessionID)
 	}
 	return nil
 }

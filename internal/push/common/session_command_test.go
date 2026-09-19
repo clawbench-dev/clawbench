@@ -1,6 +1,11 @@
 package common
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+
+	"clawbench/internal/model"
+)
 
 func TestShortSessionID(t *testing.T) {
 	tests := []struct {
@@ -149,5 +154,15 @@ func (m *mockMessenger) ListRecentSessions(limit int) ([]SessionInfo, error) {
 	return m.sessions[:limit], nil
 }
 
-func (m *mockMessenger) IsSessionRunning(sessionID string) bool    { return m.running[sessionID] }
-func (m *mockMessenger) SendMessageToSession(string, string) error { return nil }
+func (m *mockMessenger) IsSessionRunning(sessionID string) bool { return m.running[sessionID] }
+
+func (m *mockMessenger) GetSessionInfo(sessionID string) (SessionInfo, error) {
+	for _, s := range m.sessions {
+		if s.ID == sessionID {
+			return s, nil
+		}
+	}
+	return SessionInfo{}, fmt.Errorf("session %s not found", sessionID)
+}
+
+func (m *mockMessenger) SendMessageToSession(string, string, []model.FileEntry) error { return nil }
