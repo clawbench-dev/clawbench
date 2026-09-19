@@ -91,7 +91,7 @@ sequenceDiagram
 
 - **ACP context_state 持久化**：ACP 会话的 mode、thinking effort、usage 状态持久化到 `chat_sessions.context_state` 列（JSON 格式）。服务重启后加载会话时即可恢复状态显示，无需等待 ACP 重连推送。部分更新通过原子合并操作写入，避免并发读-写-合并竞态。详见 [会话生命周期](session-lifecycle.md)
 - **流式事件标准化**：各后端不同的输出格式经 LineParser（CLI）或 ACP 事件翻译层（ACP）统一为标准 StreamEvent 类型。ACP 额外提供 mode_update、config_update、thinking_effort_update、plan_update、model_list_update、commands_update 等能力事件。`model_list_update` 与 REST 通道下发的是**同一份已解析列表**——ACP 只给出原始模型清单，后端经 `EnrichModelList` 附加 CLI 基线与合并结果（CLI 模型 + ACP 模型按 id 合并），三条通道（WS 事件、`GET /api/agents`、`GET /api/ai/chat`）形状一致，避免"新建会话只看到 ACP 模型、看不到 CLI 模型"这类因消费方各自补全而出现的差异
-- **AskQuestion 标签转换**：`ConvertAskQuestionBlocks()` 检测文本 Block 中的 `<ask-question>` XML 标签（AI Agent 偶尔在文本中输出结构化交互请求），将其解析并转换为标准 `tool_use` Block（name=`AskUserQuestion`）。仅支持 XML 格式，容忍非标准闭合标签和未闭合标签。保证前端交互 UI（确认/选择）能统一处理所有形式的交互请求
+- **AskQuestion 标签转换**：`ConvertAskQuestionBlocks()` 检测文本 Block 中的 `<clawbench-ask-question>` 标签（AI Agent 偶尔在文本中输出结构化交互请求），标签内为原生 Markdown，将其解析并转换为标准 `tool_use` Block（name=`AskUserQuestion`）。只认标准闭合标签；未闭合或载荷不可解析时保留可见文字。保证前端交互 UI（确认/选择）能统一处理所有形式的交互请求
 - **无效工具调用清理**：`RemoveRejectedToolBlocks()` 剔除被 CLI 拒绝的工具调用（Status="error" 且输出含 "not found in agent cli"），这些是 AI 幻觉产生的不存在工具名（如 `/commit` 斜杠命令或 `AskUserQuestion` 未转为 tool_use 时）。同时删除引用该工具名的警告 Block，避免前端展示无意义的错误提示
 - **thinking_done 信号**：累加器将 `thinking_done` 事件标记到最近一个 thinking Block 的 `Done` 字段，前端据此在完整响应结束前即可停止思考过程的旋转动画，而非等到整个流结束
 - **thinking 惰性加载（lazy-load）**：聊天流式输出完成后，`Finalize` 将 thinking 文本从消息内容中拆分到独立的 `chat_thinking` 表，前端只收到缩略的 thinking Block（含 `think_id`，不含完整文本）。用户展开 thinking Block 时，前端通过 `GET /api/ai/chat/thinking` 按需加载完整文本（`useThinkingContent` composable）。流式过程中 thinking Block 不缩减，保持完整展示；流结束后立即折叠——避免长 thinking 文本占用大量 DOM 空间，用户只在需要时才加载全文
@@ -127,7 +127,7 @@ sequenceDiagram
 - **CodeBuddy Skills 扫描**：CodeBuddy TUI 模式会自动扫描 `~/.codebuddy/skills/` 并把技能暴露为斜杠命令（`/skill-name`）+ 系统提示词，但 ACP 模式不提供此能力。`ScanCodeBuddySkills()` 扫描该目录下的 `SKILL.md`，用 `yaml.v3` 解析 frontmatter（name + description，支持多行 YAML 折叠/字面量标量），通过 `SkillsToCommands()` 转成 `AvailableCommandInfo` 合入命令列表——技能因此出现在 `/` 斜杠菜单中；同时预构建技能系统提示词摘要（name+description 表格，转义管道/反斜杠防止破坏表格）注入每次 Prompt 的 SystemPrompt，缓存到 ACPConn 避免重复扫描。让本地技能在 Web 会话中与 TUI 模式一致可用
 - **ACP `_meta` 扩展元信息解析**：ACP 协议保留每个请求/响应/通知上的 `_meta` 字段供 Agent 放私有扩展，各 Agent 形态不同——CodeBuddy 用 OpenAI 风格 usage（prompt/completion token、`prompt_cache_*`、credit）外加 `codebuddy.ai/*` 命名空间（usageByCategory、requestId、traceId、modelId），Claude/Codex 在 `PromptResponse._meta.quota` 报每模型 token_count（cachedInput/cachedWrite/input/output/reasoningOutput/total），OpenCode 无 `_meta` 扩展、用量走标准 usage_update 通知。解析按 agent 分发（per-agent adapter，未知后端回退到通用递归扫描），归一化为 canonical 的 token/cost/trace 结构——缓存读/写、thought、cache 分类、credit、request/trace/message ID、请求/响应模型、finish reason 等。归一化结果合并进 usage 状态并持久化到 `chat_metadata` 扩展列，让前端能统一展示各 Agent 的 Token 分项、成本与追踪标识，无需理解每种 Agent 的私有格式
 - **reapplyConfigAfterResume**：ResumeSession 后重新应用 mode/model/thinkingEffort 配置，确保恢复后的会话与用户期望的设置一致。被 agent 拒绝过的配置项（如 `Unknown config option: thinkingEffort`）会被记录为 unsupported，重连后跳过不再重发——避免每次 resume 都触发一次注定失败的 `set_config_option` RPC
-- **共享规则模板（commonRulesTemplate）**：所有 Agent 的系统提示词前注入 `commonRulesTemplate`，包含用户交互格式规范（XML `ask-question` 标签）和媒体生成规则。模板用 `«»` 占位反引号，运行时替换。另有 `mediaRulesTemplate` 仅在用户消息携带文件附件时注入
+- **共享规则模板（commonRulesTemplate）**：所有 Agent 的系统提示词前注入 `commonRulesTemplate`，包含用户交互格式规范（`clawbench-ask-question` 标签，标签内为原生 Markdown）和媒体生成规则。模板用 `«»` 占位反引号，运行时替换；**标签名必须写成真尖括号**，早期误用 `«»` 包裹导致渲染成反引号、模型照抄后无法解析。另有 `mediaRulesTemplate` 仅在用户消息携带文件附件时注入
 
 ### 设计要点
 

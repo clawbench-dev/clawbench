@@ -220,7 +220,7 @@ func TestStringsContainsAnyBlock(t *testing.T) {
 		{
 			name:   "EmptySlice",
 			blocks: nil,
-			substr: "<ask-question",
+			substr: "<clawbench-ask-question",
 			want:   false,
 		},
 		{
@@ -231,32 +231,32 @@ func TestStringsContainsAnyBlock(t *testing.T) {
 		},
 		{
 			name:   "TextBlockContainsSubstring",
-			blocks: []model.ContentBlock{{Type: "text", Text: "<ask-question>hello</ask-question>"}},
-			substr: "<ask-question",
+			blocks: []model.ContentBlock{{Type: "text", Text: "<clawbench-ask-question>hello</clawbench-ask-question>"}},
+			substr: "<clawbench-ask-question",
 			want:   true,
 		},
 		{
 			name:   "TextBlockMissingSubstring",
 			blocks: []model.ContentBlock{{Type: "text", Text: "normal text"}},
-			substr: "<ask-question",
+			substr: "<clawbench-ask-question",
 			want:   false,
 		},
 		{
 			name: "NonTextBlockIgnored",
 			blocks: []model.ContentBlock{
-				{Type: "thinking", Text: "<ask-question>"},
+				{Type: "thinking", Text: "<clawbench-ask-question>"},
 				{Type: "tool_use", Name: "Read"},
 			},
-			substr: "<ask-question",
+			substr: "<clawbench-ask-question",
 			want:   false,
 		},
 		{
 			name: "MultipleBlocks_SubstringInLaterBlock",
 			blocks: []model.ContentBlock{
 				{Type: "text", Text: "first block"},
-				{Type: "text", Text: "second <ask-question> block"},
+				{Type: "text", Text: "second <clawbench-ask-question> block"},
 			},
-			substr: "<ask-question",
+			substr: "<clawbench-ask-question",
 			want:   true,
 		},
 	}

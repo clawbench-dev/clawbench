@@ -344,6 +344,128 @@
     []
    ],
    "wantStripped": "\u003citem\u003e\u003cheader\u003eH\u003c/header\u003e\u003cquestion\u003eQ?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e"
+  },
+  {
+   "name": "mention inside a fenced block is not a sibling",
+   "text": "\u003cclawbench-ask-question\u003e\n**Which syntax?**\nUse it:\n```\n\u003cclawbench-ask-question\u003e\n```\n- Option A\n- Option B\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "Which syntax?",
+      "multiSelect": false,
+      "question": "Use it: \u003cclawbench-ask-question\u003e",
+      "options": [
+       {
+        "label": "Option A"
+       },
+       {
+        "label": "Option B"
+       }
+      ]
+     }
+    ]
+   ],
+   "wantStripped": ""
+  },
+  {
+   "name": "mention indented inside the payload is not a sibling",
+   "text": "\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n  \u003cclawbench-ask-question\u003e note\n- B\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "H",
+      "multiSelect": false,
+      "question": "Q? \u003cclawbench-ask-question\u003e note",
+      "options": [
+       {
+        "label": "A"
+       },
+       {
+        "label": "B"
+       }
+      ]
+     }
+    ]
+   ],
+   "wantStripped": ""
+  },
+  {
+   "name": "mention in a blockquote is not a sibling",
+   "text": "\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\u003e \u003cclawbench-ask-question\u003e 引用\n- B\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "H",
+      "multiSelect": false,
+      "question": "Q? \u003e \u003cclawbench-ask-question\u003e 引用",
+      "options": [
+       {
+        "label": "A"
+       },
+       {
+        "label": "B"
+       }
+      ]
+     }
+    ]
+   ],
+   "wantStripped": ""
+  },
+  {
+   "name": "empty-label option fails the parse instead of vanishing",
+   "text": "\u003cclawbench-ask-question\u003e\nPick one?\n- A\n- — orphan description text\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "Pick one?\n- A\n- — orphan description text"
+  },
+  {
+   "name": "fullwidth digit after a bullet is not a list item",
+   "text": "Q?\n-１选项",
+   "wantParsed": [],
+   "wantItems": [],
+   "wantStripped": "Q?\n-１选项"
+  },
+  {
+   "name": "arabic-indic digit after a bullet is not a list item",
+   "text": "Q?\n-١选项",
+   "wantParsed": [],
+   "wantItems": [],
+   "wantStripped": "Q?\n-١选项"
+  },
+  {
+   "name": "BOM inside question text is preserved",
+   "text": "\u003cclawbench-ask-question\u003e\nQ?﻿BOM\n- A\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "",
+      "multiSelect": false,
+      "question": "Q?﻿BOM",
+      "options": [
+       {
+        "label": "A"
+       }
+      ]
+     }
+    ]
+   ],
+   "wantStripped": ""
   }
  ],
  "input": [

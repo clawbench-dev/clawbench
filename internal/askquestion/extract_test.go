@@ -301,3 +301,37 @@ func TestPlainText_HeaderAsLabel(t *testing.T) {
 		t.Errorf("PlainText = %q, want %q", got, want)
 	}
 }
+
+// A mention of the tag inside the payload's own text must not be mistaken for a
+// sibling payload. Regression: a line-start mention inside a fenced block or an
+// indented example used to make the enclosing tag unparseable, so the card was
+// lost and the raw wrapper leaked.
+func TestExtract_MentionInsidePayloadIsNotASibling(t *testing.T) {
+	cases := map[string]string{
+		"fenced":     tag("**Which syntax?**\nUse it:\n```\n<" + tagName + ">\n```\n- Option A\n- Option B"),
+		"indented":   tag("**H**\nQ?\n- A\n  <" + tagName + "> note\n- B"),
+		"inline":     tag("**H**\n怎么渲染 <" + tagName + "> 这个标签？\n- 保留"),
+		"blockquote": tag("**H**\nQ?\n- A\n> <" + tagName + "> 引用\n- B"),
+	}
+	for name, text := range cases {
+		ms := Extract(text)
+		if len(ms) != 1 || !ms[0].Parsed {
+			t.Errorf("%s: expected one parsed match, got %+v", name, ms)
+		}
+	}
+}
+
+// A bullet whose label is empty must not be dropped: because the span parses,
+// the whole span is removed from the text, so the entry would vanish from both
+// the card and the visible text. Failing the parse keeps it visible.
+func TestExtract_EmptyLabelOptionFailsTheParseInsteadOfVanishing(t *testing.T) {
+	text := tag("Pick one?\n- A\n- — orphan description text")
+	ms := Extract(text)
+	if len(ms) != 1 || ms[0].Parsed {
+		t.Fatalf("expected an unparsed match, got %+v", ms)
+	}
+	stripped := Strip(text, ms)
+	if !strings.Contains(stripped, "orphan description text") {
+		t.Errorf("the dropped entry must stay visible, got %q", stripped)
+	}
+}

@@ -270,6 +270,34 @@ describe('extractAskMatches', () => {
     expect(ms[0].parsed).not.toBeNull()
   })
 
+  // A mention of the tag inside the payload's own text must not be mistaken for
+  // a sibling payload. Regression: a line-start mention inside a fenced block or
+  // an indented example made the enclosing tag unparseable, losing the card and
+  // leaking the raw wrapper.
+  it('does not treat a mention inside the payload as a sibling', () => {
+    for (const payload of [
+      `**Which syntax?**\nUse it:\n\`\`\`\n<${TAG}>\n\`\`\`\n- Option A\n- Option B`,
+      `**H**\nQ?\n- A\n  <${TAG}> note\n- B`,
+      `**H**\n怎么渲染 <${TAG}> 这个标签？\n- 保留`,
+      `**H**\nQ?\n- A\n> <${TAG}> 引用\n- B`,
+    ]) {
+      const ms = extractAskMatches(tag(payload))
+      expect(ms, payload).toHaveLength(1)
+      expect(ms[0].parsed, payload).not.toBeNull()
+    }
+  })
+
+  // A bullet whose label is empty must not be dropped: because the span parses,
+  // the whole span is removed from the text, so the entry would vanish from both
+  // the card and the visible text. Failing the parse keeps it visible.
+  it('fails the parse rather than dropping an empty-label option', () => {
+    const text = tag('Pick one?\n- A\n- — orphan description text')
+    const ms = extractAskMatches(text)
+    expect(ms).toHaveLength(1)
+    expect(ms[0].parsed).toBeNull()
+    expect(stripAskMatches(text, ms)).toContain('orphan description text')
+  })
+
   // A close that belongs to a later tag must not be consumed by the mention
   // before it.
   it('does not consume a later tag\'s close', () => {

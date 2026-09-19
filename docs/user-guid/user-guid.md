@@ -1419,7 +1419,7 @@ GitHub API 有速率限制。稍后再试，或在设置 → GitHub/GitLab 集�
 
 **Q：AI 提问时格式错乱，把一大段 XML 标签直接显示出来了？**
 
-这是 AI **没有按约定的格式提问**导致的。ClawBench 要求 AI 用结构化的 `<ask-question>` XML 提问，这样前端才能渲染成可点的选项卡片；但 AI 有时会写错（标签不配对、少了 `<question>`、混进 Markdown 代码块等），此时 ClawBench **不会擅自丢弃内容**（避免误删你的问题），而是把原始文本照原样显示出来——于是你看到一串标签。
+这是 AI **没有按约定的格式提问**导致的。ClawBench 要求 AI 用结构化的 `<clawbench-ask-question>` 标签提问，这样前端才能渲染成可点的选项卡片；但 AI 有时会写错（标签不配对、少了列表、混进 Markdown 代码块等），此时 ClawBench **不会擅自丢弃内容**（避免误删你的问题），而是把原始文本照原样显示出来——于是你看到一串标签。
 
 遇到这种情况，**直接在输入框告诉 AI 重新提问即可**，例如：
 
@@ -1430,7 +1430,7 @@ GitHub API 有速率限制。稍后再试，或在设置 → GitHub/GitLab 集�
 或者更明确一点：
 
 ```
-你刚才的提问格式不对，请改用 <ask-question> XML 格式重新问一次
+你刚才的提问格式不对，请改用 <clawbench-ask-question> 标签重新问一次
 ```
 
 通常 AI 会立刻改正，把问题渲染成正常的选项卡片。
@@ -1446,7 +1446,7 @@ GitHub API 有速率限制。稍后再试，或在设置 → GitHub/GitLab 集�
 > **正确的提问格式长这样**（供参考，一般不需要你手写）：
 >
 > ```xml
-> <ask-question>
+> <clawbench-ask-question>
 >   <item>
 >     <header>方案</header>
 >     <multi-select>false</multi-select>

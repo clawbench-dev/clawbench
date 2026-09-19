@@ -146,17 +146,46 @@ func boundSpan(text string, openEnd int) (closeStart, closeEnd int, reason strin
 
 	// A later payload opening before this close means the close belongs to
 	// that tag, not this one.
-	if reNestedOpen.MatchString(text[openEnd:cs]) {
+	if hasSiblingPayload(text, openEnd, cs) {
 		return -1, -1, ReasonNoStandardClose
 	}
 	return cs, ce, ReasonParseFailed
 }
 
-// reNestedOpen matches a sibling tag: an open tag at the start of a line. A
-// payload may legitimately mention the tag inline in its own question text
-// ("how should <tag> render?"), and treating that mention as a sibling would
-// both leak the real payload and split it.
+// reNestedOpen matches an open tag at the start of a line.
 var reNestedOpen = regexp.MustCompile(`(?m)^[ \t]*<` + tagName + `\b`)
+
+// hasSiblingPayload reports whether text[from:closeStart] contains the start of
+// a genuine sibling payload rather than a mere mention of the tag.
+//
+// A payload may legitimately mention the tag in its own text — inline in a
+// sentence, inside a fenced block, or in an indented example. Treating such a
+// mention as a sibling both leaks the real payload and splits it.
+//
+// A candidate mention is a genuine sibling only when both hold:
+//
+//   - the enclosing tag does NOT already form a payload of its own, so the
+//     close cannot belong to it, and
+//   - the candidate DOES form a payload ending at this close.
+//
+// Both tests ask whether the text actually parses, which is what distinguishes
+// a real payload from a mention: a fenced or indented example leaves the
+// enclosing region without a list, while a mention that opens a real payload
+// parses. Line-start is checked first only to skip the common inline case
+// cheaply.
+func hasSiblingPayload(text string, from, closeStart int) bool {
+	for _, loc := range reNestedOpen.FindAllStringIndex(text[from:closeStart], -1) {
+		sibOpenEnd := from + loc[1]
+		if len(ParseItems(text[from:sibOpenEnd])) > 0 {
+			// The enclosing tag is itself a payload; the close is its own.
+			return false
+		}
+		if len(ParseItems(text[sibOpenEnd:closeStart])) > 0 {
+			return true
+		}
+	}
+	return false
+}
 
 // fallbackText renders an unparsed span as plain text: the wrapper is removed,
 // everything else is kept.

@@ -175,16 +175,22 @@ func parseMarkdownItems(inner string) []Item {
 		}
 
 		if content, ok := splitListMarker(line); ok {
+			entry := content
 			if m := reCheckbox.FindStringSubmatch(content); m != nil {
 				multi = true
-				if opt, ok := markdownOption(m[1]); ok {
-					options = append(options, opt)
-				}
-				continue
+				entry = m[1]
 			}
-			if opt, ok := markdownOption(content); ok {
-				options = append(options, opt)
+			opt, ok := markdownOption(entry)
+			if !ok {
+				// A marked list item that yields no option is malformed. Fail
+				// the whole payload rather than dropping the line: the caller
+				// then strips only the wrapper and renders the text, so nothing
+				// is silently discarded. Removing just this entry would delete
+				// it from the card AND from the text (the parsed span is
+				// removed wholesale).
+				return nil
 			}
+			options = append(options, opt)
 			continue
 		}
 

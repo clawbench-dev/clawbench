@@ -700,14 +700,14 @@ func TestCodebuddyACP_ExtProbe_ExtensionMethodRouting(t *testing.T) {
 	case recording.sawMethod("_codebuddy.ai/question"):
 		t.Logf("VERDICT: CodeBuddy routed AskUserQuestion through `_codebuddy.ai/question` " +
 			"(extension request). This is the authoritative path for replacing the " +
-			"<ask-question> XML convention.")
+			"<clawbench-ask-question> convention.")
 	case askedViaTool:
 		t.Logf("VERDICT (negative): advertising question=true did NOT route AskUserQuestion " +
 			"through the extension channel. The tool arrived as a NORMAL tool call " +
 			"(sessionUpdate=tool_call, toolName=AskUserQuestion) plus a PermissionApproval. " +
 			"Likely cause: the extension branch is gated on meta.acpConnectionId, which raw " +
 			"stdio ACP sessions do not set. => 档 1 的 question 通道在 stdio 下不可用；" +
-			"ClawBench 应继续使用 <ask-question> XML 约定。")
+			"ClawBench 应继续使用 <clawbench-ask-question> 约定。")
 	default:
 		t.Logf("VERDICT (inconclusive): the model did not call AskUserQuestion at all this run, " +
 			"so neither path was exercised. Re-run or rephrase the prompt.")

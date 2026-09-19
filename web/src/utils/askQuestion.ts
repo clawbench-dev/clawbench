@@ -310,6 +310,15 @@ function trimListSpace(s: string): string {
 }
 
 /**
+ * Whether a code point is a decimal digit (Unicode Nd), matching Go's
+ * unicode.IsDigit. The ASCII-only /\d/ would diverge on fullwidth and
+ * Arabic-Indic digits, which the parity corpus does not cover.
+ */
+function isDigit(cp: number): boolean {
+  return /\p{Nd}/u.test(String.fromCodePoint(cp))
+}
+
+/**
  * Return the content of a list item when `line` starts with a list marker.
  *
  * Beyond CommonMark's "-", "*", "+" and "1.", this accepts the forms models
@@ -332,7 +341,7 @@ function splitListMarker(line: string): { content: string; found: boolean } {
     const rest = trimmed.slice(1)
     if (first === '*') {
       if (!rest.startsWith(' ') && !rest.startsWith('\t')) return { content: '', found: false }
-    } else if (rest !== '' && (/\d/.test(rest[0]) || rest[0] === '-')) {
+    } else if (rest !== '' && (isDigit(rest.codePointAt(0)!) || rest[0] === '-')) {
       return { content: '', found: false }
     }
     return { content: trimListSpace(rest), found: true }
@@ -403,14 +412,17 @@ function parseMarkdownItems(inner: string): AskItem[] {
     const marker = splitListMarker(line)
     if (marker.found) {
       const cb = RE_CHECKBOX.exec(marker.content)
-      if (cb) {
-        multi = true
-        const opt = markdownOption(cb[1])
-        if (opt) options.push(opt)
-        continue
+      if (cb) multi = true
+      const opt = markdownOption(cb ? cb[1] : marker.content)
+      if (!opt) {
+        // A marked list item that yields no option is malformed. Fail the whole
+        // payload rather than dropping the line: the caller then strips only the
+        // wrapper and renders the text, so nothing is silently discarded.
+        // Removing just this entry would delete it from the card AND from the
+        // text (the parsed span is removed wholesale).
+        return []
       }
-      const opt = markdownOption(marker.content)
-      if (opt) options.push(opt)
+      options.push(opt)
       continue
     }
 
@@ -452,6 +464,13 @@ function splitMarkdownOption(s: string): { label: string; desc: string } {
 }
 
 /**
+ * Whitespace matching Go's unicode.IsSpace, which is what the Go mirror's
+ * strings.Fields splits on. JavaScript's \s additionally matches U+FEFF, so
+ * using it here would fold a BOM away and diverge from the Go side.
+ */
+const GO_SPACE = /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/g
+
+/**
  * Remove inline Markdown emphasis markers and decode entities. The card renders
  * plain text, so `**bold**` must not display its asterisks.
  */
@@ -461,7 +480,7 @@ function cleanInline(s: string): string {
     .replace(RE_MD_ITALIC, '$1')
     .replace(/`/g, '')
   // Entity decoding last, matching the Go mirror's cleanInline.
-  return unescapeEntities(stripped).replace(/\s+/g, ' ').trim()
+  return unescapeEntities(stripped).replace(GO_SPACE, ' ').trim()
 }
 
 /**
@@ -642,20 +661,49 @@ function boundSpan(text: string, openEnd: number): Bound {
   if (!m) return { closeStart: -1, closeEnd: -1, reason: ReasonNoStandardClose }
   const closeStart = openEnd + m.index
   const closeEnd = closeStart + m[0].length
-  if (RE_NESTED_OPEN.test(text.slice(openEnd, closeStart))) {
+  if (hasSiblingPayload(text, openEnd, closeStart)) {
     return { closeStart: -1, closeEnd: -1, reason: ReasonNoStandardClose }
   }
   return { closeStart, closeEnd, reason: ReasonParseFailed }
 }
 
-/**
- * A sibling tag: an open tag at the start of a line. A payload may legitimately
- * mention the tag inline in its own question text ("how should <tag> render?"),
- * and treating that mention as a sibling would both leak the real payload and
- * split it.
- */
-const RE_NESTED_OPEN = /^[ \t]*<clawbench-ask-question\b/m
+/** An open tag at the start of a line. */
+const RE_NESTED_OPEN = /(?:^|\n)[ \t]*<clawbench-ask-question\b/g
 
+/**
+ * Whether text[from:closeStart] contains the start of a genuine sibling
+ * payload rather than a mere mention of the tag.
+ *
+ * A payload may legitimately mention the tag in its own text — inline in a
+ * sentence, inside a fenced block, or in an indented example. Treating such a
+ * mention as a sibling both leaks the real payload and splits it.
+ *
+ * A candidate mention is a genuine sibling only when both hold:
+ *
+ *  - the enclosing tag does NOT already form a payload of its own, so the close
+ *    cannot belong to it, and
+ *  - the candidate DOES form a payload ending at this close.
+ *
+ * Both tests ask whether the text actually parses, which is what distinguishes
+ * a real payload from a mention: a fenced or indented example leaves the
+ * enclosing region without a list, while a mention that opens a real payload
+ * parses. Line-start is checked first only to skip the common inline case
+ * cheaply.
+ */
+function hasSiblingPayload(text: string, from: number, closeStart: number): boolean {
+  RE_NESTED_OPEN.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = RE_NESTED_OPEN.exec(text.slice(from, closeStart))) !== null) {
+    const sibOpenEnd = from + m.index + m[0].length
+    if (parseItems(text.slice(from, sibOpenEnd)).length > 0) {
+      // The enclosing tag is itself a payload; the close is its own.
+      return false
+    }
+    if (parseItems(text.slice(sibOpenEnd, closeStart)).length > 0) return true
+    if (m[0].length === 0) RE_NESTED_OPEN.lastIndex++
+  }
+  return false
+}
 /**
  * Replace every located span with what should be shown in its place.
  *
