@@ -1,0 +1,397 @@
+[English](README.en.md) | [中文](README.md)
+
+# ClawBench — AI Workbench, United Across Devices
+
+<p align="center">
+  <img src="docs/screenshots/product_hero.en.png" alt="ClawBench" width="960">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/pc-desktop.png" alt="ClawBench PC Desktop" width="960">
+</p>
+
+**From Palm to Desktop** — An AI workbench for every screen.
+
+Brings the full power of AI coding agents to every screen — phone, tablet, and desktop. File browsing, code editing, AI conversation, Git operations, tasks, one app does it all, whether you're on the go or at your desk.
+
+Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. ClawBench is a complete workbench on every platform — files, code, Git, AI, tasks, TTS — with mobile interactions carefully crafted for one-handed use and full desktop support for serious work.
+
+- **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
+- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
+
+<p align="center">
+  <img src="assets/architecture.en.svg" alt="ClawBench Deployment Architecture" width="640">
+</p>
+
+---
+
+## Screenshots
+
+### Login & Navigation
+
+| Login | Home | Select Project | Settings Panel |
+|-------|------|----------------|----------------|
+| ![Login](docs/screenshots/login.png) | ![Home](docs/screenshots/home.png) | ![Select Project](docs/screenshots/project-select.png) | ![Settings Panel](docs/screenshots/settings-panel.png) |
+
+### File Browsing & Code Editing
+
+| File Browser | Search & Filter | Code Editor | Quote & Ask |
+|-------------|----------------|-------------|-------------|
+| ![File Browser](docs/screenshots/file-browser.png) | ![Search & Filter](docs/screenshots/file-search.png) | ![Code Editor](docs/screenshots/code-editor.png) | ![Quote & Ask](docs/screenshots/quote-question.png) |
+
+### Markdown & Document Preview
+
+| Markdown Render | LaTeX Formulas | Mermaid Diagrams | Table of Contents |
+|-----------------|----------------|------------------|-------------------|
+| ![Markdown Render](docs/screenshots/markdown-preview.png) | ![LaTeX Formulas](docs/screenshots/latex-formula.png) | ![Mermaid Diagrams](docs/screenshots/mermaid-diagram.png) | ![Table of Contents](docs/screenshots/toc-drawer.png) |
+
+### AI Agents
+
+| Agent Selection | AI Conversation | ACP Permission | RAG Search | Session Manager |
+|-----------------|-----------------|----------------|------------|-----------------|
+| ![Agent Selection](docs/screenshots/agent-selector.png) | ![AI Conversation](docs/screenshots/chat-interface.png) | ![ACP Permission](docs/screenshots/acp-permission.png) | ![RAG Search](docs/screenshots/rag-search.png) | ![Session Manager](docs/screenshots/session-manager.png) |
+
+| Recommended Reply |
+|------------------------------|
+| ![Recommended Reply](docs/screenshots/conversation-recommendation.png) |
+
+| Tasks | Create Task | Task Card |
+|-----------------|-------------|-----------|
+| ![Tasks](docs/screenshots/scheduled-tasks.png) | ![Create Task](docs/screenshots/task-create.png) | ![Task Card](docs/screenshots/schedule-proposal.png) |
+
+### Git Integration
+
+| Commit History & Branch Graph | Branch Management | Commit Detail | Comparison Report |
+|-------------------------------|-------------------|---------------|-------------------|
+| ![Commit History & Branch Graph](docs/screenshots/git-history.png) | ![Branch Management](docs/screenshots/git-branches.png) | ![Commit Detail](docs/screenshots/git-commit-detail.png) | ![Comparison Report](docs/screenshots/git-comparison-report.png) |
+
+### Media Preview
+
+| Image Viewer | Video Player | Audio Player | PDF Preview |
+|-------------|-------------|-------------|------------|
+| ![Image Viewer](docs/screenshots/image-viewer.png) | ![Video Player](docs/screenshots/video-player.png) | ![Audio Player](docs/screenshots/audio-player.png) | ![PDF Preview](docs/screenshots/pdf-preview.png) |
+
+### SSH Tunnel & Web Terminal
+
+| Port Forwarding | Interactive Terminal | Key/Symbol Configuration |
+|----------------|---------------------|-------------------------|
+| ![Port Mapping](docs/screenshots/port-forwarding.png) | ![Interactive Terminal](docs/screenshots/terminal.png) | ![Key/Symbol Configuration](docs/screenshots/terminal-key-config.png) |
+
+### System Resource Monitor
+
+| System Monitor |
+|----------------|
+| ![System Monitor](docs/screenshots/system-monitor.png) |
+
+- Real-time monitoring of server CPU, memory, disk, and network usage
+- Header panel display with WebSocket push updates
+- Auto-switches to connection status indicator (disconnected/reconnecting) when WS is down, replacing the resource panel
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- **A PC (Linux / macOS / Windows) or an Android phone with [Termux](docs/TERMUX.md)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)
+- **Any device**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or open the server address in any browser — desktop, tablet, or phone
+
+### npm Install
+
+Install via npm in one command:
+
+```bash
+npm install -g @xulongzhe/clawbench
+# Start
+clawbench
+```
+
+Supports Linux (x64/arm64), macOS (Intel/Apple Silicon), and Windows (x64). npm automatically selects the correct platform-specific binary package.
+
+### Download & Start
+
+Download the latest ZIP package from [GitHub Releases](https://github.com/xulongzhe/clawbench/releases), extract and you're ready:
+
+```bash
+wget https://github.com/xulongzhe/clawbench/releases/latest/download/clawbench-linux-amd64.zip
+unzip clawbench-linux-amd64.zip
+cd clawbench
+./clawbench
+```
+
+### Docker Deployment
+
+```bash
+docker pull ghcr.io/clawbench-dev/clawbench:latest
+docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest
+```
+
+Customize the host port with `-p` (e.g., `-p 20300:20000`). The `clawbench-data` volume persists all data.
+
+> `--restart unless-stopped` (or `always`) is required for in-app upgrades: the container replaces its own binary and exits with code 0, and Docker's restart policy brings the new version back up. Do **not** use `--restart on-failure` — a graceful shutdown exits 0, so it never triggers and the container stays stopped. The recommended upgrade path is still `docker pull` + recreate the container, since rebuilding from an unchanged image reverts the in-place replacement.
+
+To view the auto-generated password:
+
+```bash
+docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/.clawbench/auto-password
+```
+
+> A random 8-character hex password is auto-generated on first startup and printed to the console in a bordered box. Save it securely.
+
+Once deployed, access `http://server-ip:20000` from your phone app or any browser:
+
+- **Android App**: Native integration, auto-connect, full feature support
+- **Mobile / Desktop Browser**: **Chrome** recommended on mobile — supports installing as a PWA app (Add to Home Screen) for a near-native experience
+
+### 📱 Run Completely on an Android Phone (Termux)
+
+> See the full guide in **[Termux (Android)](docs/TERMUX.md)**.
+
+ClawBench runs completely on your Android phone inside [Termux](https://f-droid.org/repo/com.termux.app.apk). The pure-Go `linux-arm64` backend, the built-in web frontend, and your AI coding agents all run locally on the phone — no separate PC or server required:
+
+```bash
+pkg install -y nodejs-lts git
+npm install -g @xulongzhe/clawbench
+clawbench
+```
+
+> 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/PUBLIC_ACCESS.md)**  — supports IPv6 direct connection, FRP tunnel, and EasyTier decentralized networking (no VPS required).
+
+---
+
+## Features
+
+### 📁 File Browser
+- Recursive directory browsing with 120+ file extension support (including Office documents .docx/.xlsx/.xls/.pptx)
+- Search filtering, sorting (name/time/extension/size)
+- **Office document preview**: Word, Excel, and PowerPoint documents rendered natively in the browser — no download needed
+- **File Preview Overlay**: Office files open in a preview overlay on top of the browse tab, supporting navigation stack (multi-file switching + back)
+- **List/Grid View Toggle**: Grid view shows image thumbnails for visual file browsing
+- **Image Thumbnails**: Backend generates proportional thumbnails for quick preview
+- Context menu: rename, delete, copy, cut, paste, new file/folder, download, open as project
+- **Multi-Select Operations**: Toggle multi-select mode from toolbar, batch copy/cut/delete; mobile long-press triggers context menu
+- File upload (all file types supported, configurable size and count)
+- Toggle hidden file visibility
+- **Document search exclusion**: Office documents are excluded from file content search to improve performance (same as PDF)
+- **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
+- **Breadcrumb Drag to Chat**: Drag breadcrumb segments (including Home icon) to chat area to attach directory path as context — consistent with file manager drag behavior
+- **Ctrl+F/Cmd+F Context-Aware Search**: Automatically opens the appropriate search drawer based on current tab — Chat tab: session search (RAG); `view` tab with a file open: in-file content search; `view` tab empty state or `browse` tab: filename search; if already open, focuses the search input
+- **Separate File View Tab**: Directory browsing (`browse`) and file viewing (`view`) are independent tabs — opening a file auto-switches to `view`, closing it stays on `view` showing empty state (recent files list), no auto-return to file manager
+- **File Preview Overlay**: Click a file to open a preview overlay in the `view` tab; supports navigation stack (multi-file switching + back), close to return to empty state
+- **Docked Preview Pane**: A toolbar toggle (eye icon) opens a resizable preview pane below the file list — click any entry to preview it in place without leaving the file manager. Files use the same renderers as the code-link preview card (code slices, media players, Markdown); **directories list their contents**, so you can peek inside a folder without navigating into it, with an "Open directory" button to jump the file manager there (or expand it in place from the quick-preview card). Images in the listing reuse the file manager's thumbnails. Drag the divider to resize (single-line 28px header on both desktop and mobile)
+- **Cross-Surface Jump & Return**: Opening a file from a chat message or task card records the source context — Back returns you to that conversation or task, not to a random tab; desktop shows a top-left nav cluster in the file header, mobile a bottom-center floating capsule (thumb-zone). Reading position is restored precisely when jumping back into a file
+- **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
+- **OpenAPI/Swagger Preview**: OpenAPI spec files (YAML/JSON) rendered as interactive Swagger UI with "Try it out" support; CORS proxy (`/api/openapi-proxy`) enables direct API testing from the preview
+- **File Share Link**: Generate an unguessable public link for any file — anyone with the link can read or download it without logging in (Markdown with TOC, code, images/PDF/media/Office preview). Regenerate rotates the token so old links die instantly; closing the share revokes the link; a shared-files drawer lists and manages all active shares (open file / open in new tab / copy link / one-click clear). The token is the only credential, but it does **not** grant the whole machine: the readable boundary is snapshotted when the share is created (project root when the file lives in the selected project, so cross-directory media references keep working; otherwise the file's own directory), and pre-existing shares without a recorded root fail closed the same way
+- **`.gitignore`-Aware Dimming**: Entries git would not track (matching `.gitignore`, `.git/info/exclude`, a global excludes file, or sitting under an excluded directory) are dimmed in both list and grid views — text and icon only, the row still opens/renames/deletes normally and hovering explains why. It is a visual hint rather than a filter, because the ignored build output or local config is often exactly what you went looking for. Non-Git projects see no marker at all. The same judgement backs the code-inventory (cloc) exclusion rules, so the two surfaces never disagree about what git tracks
+
+### 🎨 Code Preview & Editing
+- CodeMirror-based code browsing and editing dual mode, read-only by default, one-click switch to edit mode
+- Syntax highlighting, sticky line numbers, word wrap toggle, 30+ language extensions (high-frequency static imports, low-frequency lazy loading)
+- **Code Autocompletion**: Language-aware autocompletion for 11 languages (JS/TS/HTML/CSS/Python/SQL/Go/Less/Sass/Liquid/Markdown) in edit mode, leveraging CodeMirror's built-in completion sources
+- **Sticky Scroll**: VS Code-style sticky scroll based on backend tree-sitter symbol data, showing enclosing scope context (functions, classes, structs, etc.) as you scroll
+- **VS Code-Style Search Bar**: `Ctrl+F`/`Cmd+F` opens an inline search bar (case / whole-word / regexp toggles built into the input, prev/next/match count, optional replace row in edit mode) — a custom panel shared by CodeMirror, with the same interaction for Markdown preview
+- **Double-click to copy code line content** (flash animation feedback)
+- **File Change Flash Highlight**: When files are modified externally, deleted characters flash red and new characters flash blue for quick change identification
+- **Quote & Ask**: Select a code snippet, one-click ask AI, auto-attaches file path and line number
+- **File Path Navigation**: Clickable file paths in code previews with import path resolution (e.g., @/composables/useFoo resolves to the actual file path); line range navigation support (e.g., `file.go:42-50`) with flash highlight
+- **Edit Mode**: undo/redo, save & exit, unsaved changes confirmation dialog, visual distinction for edit mode (accent-tinted background + top border)
+- **Markdown Heading-Anchored Scroll Sync**: Scroll position synchronized between rendered view and source edit based on heading anchors
+- **Excalidraw Canvas**: `.excalidraw` files open directly in an in-app canvas editor (embedded independent build in an iframe) with drawing and editing, save-writes back to the original file; language and theme follow the app settings, with unsaved-change confirmation on exit
+- Swipe gestures: swipe left/right to switch files
+
+### 📝 Markdown
+- Toggle between rendered view / source view
+- **Quote & Ask**: Select text, one-click ask AI
+- Smart table of contents drawer (TOC) with tree-sitter code symbol extraction (100+ languages, 17 symbol kind icons), LaTeX math, Mermaid diagrams
+- **Image Lightbox**: Images support zoom, swipe browsing; Mermaid SVG diagrams can be navigated alongside images in lightbox
+- **File Path Navigation**: Clickable file paths in Markdown, with line range navigation
+- **Code Link Preview**: With "File link preview" enabled (Settings → Project & Files → File Display), clicking a validated file path or `path:line` link in Markdown preview opens a code-slice floating card — desktop cards stay until explicitly dismissed (clicking outside the card, Esc, or the close button), `Ctrl/Cmd+Click` pins them, and touch devices open a bottom sheet on tap. The card supports syntax highlighting, line-range highlighting, drag repositioning, and actions like "Quote to chat / Copy path / Reveal in tree / Find in preview", with built-in slice protection (200-line / 512 KiB cap, oversized-file warning)
+- **HTML Export**: Export the rendered Markdown as a standalone self-contained HTML file (media embedded as base64, KaTeX fonts inlined) rebuilt from the shared render pipeline so the exported document matches the in-app preview pixel-for-pixel — including the user's code/UI font choice, right-side TOC rail and lightbox zoom/pan
+
+### 🤖 AI Agents
+- **Streaming Response**: Real-time WebSocket push, thinking process and tool calls fully visible
+- **Multi-Agent Support**: General assistant, coding expert, handyman, etc.; custom agents can be loaded via `config/agents/*.yaml` (supplementary method for non-standard agents)
+- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode — session-level isolation
+- **Thinking Effort Levels**: Per-agent thinking depth selection (Low / Medium / High, etc.), supported by 11 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok/ZCode), selection auto-persisted
+- **Model Selection Modal**: Unified model switching and thinking effort selection in a dual-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
+- **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch
+- **Tasks**: Created via the `/cb-task` built-in command — cron tasks run on a schedule, event tasks fire on GitHub/GitLab events; independent tab with 3-level breadcrumb navigation (list → detail with merged overview & history → execution detail); task cards embedded in chat messages (a scheduled task shows its frequency and next run, an event task shows the events it subscribes to as chips with a lightning icon, instead of an empty frequency row and a meaningless "next run: none"); frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)
+- **Continue Conversation**: One-click continue conversation from task execution detail, auto-copies history messages and summaries to a new session, inherits backend/agent/model/thinking effort; the continued session's title carries a timestamp prefix (`[MM-DD HH:MM]`) and is locked so the first message can't overwrite it
+- **Multi-Session Management**: Create, switch, archive independent sessions, swipe to switch; archived sessions recoverable via search, physical delete (irreversible) and archive retention auto-cleanup available; Ctrl/Cmd+Delete to quick-archive current session. The session list is a **single flat list** (no more "Pinned / Recent" sections) — pinned sessions still sort first and carry a corner marker, since "pinned ones on top" needs a marker, not a second grouping layer
+- **Session Tags**: Tag sessions with your own labels (bug fix, refactor, research…) — long-press a session (right-click on desktop) → "Set tags", pick or create labels in place, and the session row shows its tags. A filter bar above the session list narrows to one tag with a tap (titled, with a clear button; tags wrap and scroll past a height cap instead of being clipped out of reach). Tags are **scoped per project** (a "bug" in one project is unrelated to a "bug" in another — each has its own definition and count), with an optional global scope for cross-project labels like "follow up". Colors are derived from a hash of the tag name, so you never pick a color and the same label always looks the same — and the palette is calibrated per light/dark theme, so tag text stays readable across all 36 themes. In the dialog the chip *is* the toggle (selected = filled with that tag's own color), the delete control is always visible, and load/save/delete failures surface a message instead of failing silently
+- **Unread Badges Are Per-Item**: Unread counts item-by-item rather than by raw event count — three comments on one issue count as one unread, because what you want to know is "what has activity", not "how many things happened". Tasks count per execution record (so "I read run 3 but not run 5" is expressible). The task tab no longer clears its badge just because you switched to it — only opening an execution or pressing "Mark all read" clears it
+- **Swipe Session Toggle**: Toggle left/right swipe session switching in Settings → Chat; defaults to off to prevent accidental switches when scrolling wide content
+- **Wide-Screen Chat Toggle**: A button at the bottom of the wide-screen dock hides/shows the chat area — when hidden, the left pane takes the full width for focused work (files, terminal, etc.) and can be restored on demand
+- **Image Upload**: Upload images for AI conversation (multimodal)
+- **Disconnect Protection**: Messages persist immediately, no data loss on disconnect, 15s heartbeat keep-alive + 30s timeout auto-reconnect (live content updates during polling fallback); on reconnect, auto-checks session state to prevent UI stuck when AI completed during disconnect
+- **Auto Resume**: Automatically sends "continue" after Claude/CodeBuddy/Qoder/CodeWhale/MiMo/Pi/Copilot/Kimi exits Plan Mode
+- **Message Queue**: Messages queue when AI is busy, sent sequentially; queued messages are persisted to the database and dequeued in order for execution
+- **Message Clusters**: Auto-analyze chat history patterns, group semantically similar user messages into clusters, one-click add to Quick Send; Union-Find + Sørensen-Dice similarity, on-demand computation with progress tracking
+- **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; **message display modes** control the default view — Mixed (default: the most recent AI reply shows full text, older messages show summaries), Summary-only or Original-only; individual messages can still be toggled via the bottom banner; summary view also surfaces warning/error banners that were part of the reply; TTS playback also uses the summary
+- **Recommended Reply**: Automatically generates a next-step suggestion after AI reply; recommendation banner above input box, one-click to accept; aware of quick commands and project context
+- **Slash Commands**: Type `/` to open a unified autocomplete menu merging the agent's ACP commands with ClawBench built-ins — `cb-chatsearch` (search conversation history), `cb-task` (manage tasks), and `cb-usage` (token / cost usage statistics). Each row carries a left color bar + icon so agent commands (blue) and ClawBench commands (purple) are visually distinct; user messages show a matching command badge
+- **RAG Results Card**: RAG search results in AI responses rendered as purple-themed cards; click to open detail drawer, one-click resume conversation
+- **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion; thinking content lazy-loaded — after stream ends, only thumbnail is kept, full text loaded on demand when expanded
+- **Sub-Agent Grouping**: When an ACP agent spawns sub-agents (CodeBuddy Task/Agent, Claude/Codex child threads), the child's thinking, text and tool calls are folded into the parent Agent card instead of flooding the main conversation — collapsed as an "N steps" chip, expanding into the full nested trajectory (child thinking still lazy-loaded). Attribution uses the parent tool-call id the agent stamps on `_meta` (CodeBuddy flat key / Claude·Qoder nested key), so parallel sub-agents never get cross-attributed; orphaned or nested blocks fall back to flat rendering so no content is lost
+- **Session Progress Indicator**: Session drawer shows capsule progress bar with color-coded fill (blue/orange/red) based on usage
+- **ACP Context State Persistence**: Mode, thinking effort, and context usage auto-persisted to database; state survives server restarts
+- **Token Usage Detail**: The context-usage panel and message details show input/output/cache-read tokens, cache hits (with hit-rate hit/(hit+miss)), thinking tokens and credit sub-items that stay stable during streaming; tapping an assistant message opens message-level metadata (backend session ID, model, duration, trace identity). Usage comes from per-agent ACP `_meta` extensions normalized by the backend. ACP usage is adopted as the *latest full snapshot* — when multiple usage_update notifications arrive within one turn, the whole snapshot carrying token counters replaces the previous one, while bare cost-only notifications never overwrite, keeping the panel stable during streaming
+- **Usage Statistics**: A "Usage stats" tab in the wide-screen dock aggregates `chat_metadata` usage rows per project — an overview donut of input vs output that drills into cache composition on click, hit-rate cards, and per-metric charts (one chart per selected metric, switchable between bar/pie/trend) whose categories are the selected dimension combos; supports 24h/7d/30d/custom time ranges and model/backend/agent dimension filters, stacking vertically on narrow containers. Usage is kept in an independent ledger (redundant project/backend/agent columns, no cascade delete), so deleting a session or rewinding never erases tokens already spent
+- **Code Stats (Inventory + Delta)**: The stats tab has two more sub-pages alongside usage — **Code inventory** (`GET /api/git/cloc`, gocloc snapshot of the working tree: code/comment/blank lines per language, no git repo required, dependencies and build artifacts excluded, plus a second pass excluding whatever the project's own `.gitignore` excludes — tracked files stay counted even when a pattern matches) and **Code delta** (`GET /api/git/stats`, per-author added/deleted/net lines and commit counts over a time range, bucketed by committer date, with a daily trend chart filterable by author)
+- **CodeBuddy Local Skills in ACP Mode**: `~/.codebuddy/skills/` skills (SKILL.md with name + description) are auto-scanned and exposed as `/` slash commands in web sessions, with a skills summary injected into the system prompt — matching TUI mode behavior
+
+### 🤖 AI Conversation
+- **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status
+- **Extended Thinking**: Complex tasks auto-trigger extended thinking, reasoning visible in real time
+- **File Path Navigation**: Clickable file paths in AI responses, with line range navigation
+- **Code Link Preview**: With "File link preview" enabled, file paths in chat messages support the same code-slice floating preview — click a path for a card, `Ctrl/Cmd+Click` to pin, or tap on touch devices for a bottom sheet, letting you skim AI-referenced code without opening the file
+- **Localhost URL Navigation**: localhost URLs in AI responses (e.g., http://localhost:3000) are auto-detected with an open button; in App mode, port mapping is auto-registered and the URL opens via WebView with zero manual config
+- **Quick Send**: Preset common commands (continue, build, commit, etc.) with drag reorder; an input-bar trailing icon injects the command into the input box for editing before sending; input placeholder hints at the current quick send; message clusters analysis discovers recurring patterns and adds them
+- **Input Draft & Attachment Restore**: When switching sessions, unsent input text, attached files and staged quotes are snapshotted and restored when you switch back — no lost input from accidental session switches
+- **Quote & Ask**: Select code or text, ask AI directly, auto-attaches context
+- **Interactive Question Card**: The AI can ask structured questions mid-conversation (an `<ask-question>` block that the backend converts into an `AskUserQuestion` tool call); the frontend renders it as an interactive option card — one card per question with selectable options (single- or multi-select), an optional free-text supplementary field, a "Recommend" button that asks the AI which option it suggests, and a Submit button that sends the chosen labels back as your reply. In single-select mode, tapping the already-selected option deselects it, so a mis-tap can be undone without being forced to pick another option (Submit re-disables until you answer again). Answers **survive re-renders** — the card body is injected HTML, so switching away while the AI replies, remounting the list, or a foreground/background history reload used to wipe what you had typed and ticked; your supplementary text and selections now persist, and an already-submitted card does not revert to answerable
+- **Current Directory Attachment**: Chat input supports attaching current directory context, AI auto-gets directory structure
+- **Drag & Paste Upload**: Drag files onto chat area or paste clipboard content (screenshots/files), auto-upload and attach as tags without opening the attach drawer
+- **Compact Context**: When ACP session context usage ≥ 75%, a "Compact context" button appears in the session-info bar, one-click sends `/compact` command to free context space
+- **Unread Badge**: Chat panel icon shows unread message count
+- **Attach Drawer Footer**: Selected files shown as persistent scrollable tags at the bottom of the attach drawer, with direct removal support
+- **Auto-Approve Indicator**: Mode chip turns green when auto-approve is enabled, providing visual feedback for ACP permission mode
+- **Reset Session**: A "Reset session" button on AI error/warning banners restarts a stuck agent process (e.g., a tool approved but never executed); the external session ID and chat history are preserved, context is restored on reconnect and the last user message is re-sent
+- **Completion Popup**: When a session or task finishes while the chat UI is not in the foreground (you're on another tab or a different session), an Android-notification-style card slides in from the top — showing the full summary, project name/path, the last user message and the agent backend icon, with a built-in quick input to follow up, a mark-as-read button and a jump button to the session/task detail. Sending a follow-up message or tapping mark-as-read clears the unread badge for that session (via `/api/ai/chat/read`, project-aware so cross-project popups work) and shows a success toast; tapping the backdrop closes the popup (ignored within the first second to prevent accidental taps). The user message renders as a quote-style block that expands on tap. External-project popups show a footer divider with the project name/path. Multiple completions queue up and show one at a time; replaces the old in-UI toast
+- **Scroll Position Retention**: Scrolling position is kept while you read older messages within a session (loading more history mid-session doesn't jump the view); switching sessions/projects always returns to the bottom (tab switches rely on the browser's native scroll retention). After sending a message, if scrolling has stopped, the view unconditionally snaps back to the bottom
+- **Per-Project Session Restore**: Each project remembers the session you last opened (keyed by project root), and reopens it automatically on entry — falling back to default behavior when that session is gone. Jumping between projects doesn't lose your place
+- **Rewind (Backtrack)**: A rewind button on assistant messages (next to Fork) truncates the session in place back to that message — deleting everything after it (including summaries and RAG indexes) and restarting the AI session, while pre-filling the input box with the most recently removed user question for re-editing. Disabled on the last message and hidden while streaming; guarded by a confirmation dialog — ideal for restarting from a point where the AI went astray while keeping prior context
+- **Fork Context Budget**: Forking and rewinding inject the prior conversation into a fresh AI session, so the history is compressed to fit a character budget (`chat.fork_context_budget`, default 100000): large tool-input fields (`content`, `old_string`, `code`…) are first replaced with placeholders while keeping locators, then **every user message is kept** (newest first; one that doesn't fit is truncated rather than dropped, since a partial instruction still constrains the model) while assistant entries fill whatever room is left and are skipped when they don't fit. Measured on a real installation, user messages average ~51 characters against ~12 KB for assistant entries, so keeping all of them costs almost nothing. The new session gets the skeleton of the conversation rather than a diluted full dump
+- **Conversation Index Search**: The user-message index drawer has a search box at the top — pure client-side instant filtering over the fully loaded message list, matching message body text and attachment names (Windows backslash normalized), with matched characters highlighted via `<mark>`; the count badge shows "hits/total" and an empty state appears when nothing matches
+- **Auto-Login on Session Expiry**: When the session cookie (7-day MaxAge) expires, every `/api/*` request is rejected with 401 — `window.fetch` is wrapped once so that any 401 whose body is exactly `{ error: "unauthorized" }` (the unique signature of middleware.Auth) triggers a full-page redirect to `/login`, re-running the mounted auth flow (login page on web; Android App mode auto-reauthenticates with stored credentials)
+- **Auto Clear Unread**: The current session is marked read automatically when execution finishes or when you switch back to the foreground — unread badges exist only for sessions you're not looking at, and clear the moment you return
+
+### 🖼️ Media Preview
+- In-app preview of images, audio, video
+- Lightbox zoom, fullscreen view, support for pinch-zoom and drag
+
+### 📄 Office Document Preview
+- **Word (.docx)**: Native document rendering with table and image support
+- **Excel (.xlsx/.xls)**: Spreadsheet preview with multi-sheet switching, toolbar auto-hidden
+- **PowerPoint (.pptx)**: Slide-by-slide preview with pinch-to-zoom (mobile) and Ctrl+scroll zoom (desktop)
+- **Loading & Error Handling**: Skeleton animation on load; retry and download buttons on failure
+- **AI Integration**: Select text from Office documents and one-click ask AI, file path context auto-attached
+
+### 🔊 TTS Speech Synthesis
+- Auto-summarize and read AI replies aloud, listen while reading
+- **5 TTS Engines**: Edge TTS (free, native Go implementation, no external dependency), MiniMax (best quality), Piper / Kokoro / MOSS-Nano (local offline)
+- **Summarization Backends**: simple (text-only cleanup) and api (OpenAI/Anthropic compatible) modes
+- See [TTS Deployment Guide](docs/TTS.en.md)
+
+### 🎤 Voice Input (STT)
+- Microphone recording → ASR recognition → text filled into chat input, no typing needed on mobile
+- **Dual Mode**: Streaming (WebSocket real-time incremental + final full recognition) and non-streaming (one-shot recognition after recording)
+- **vLLM Whisper Engine**: Connect via OpenAI-compatible endpoint, supports local deployment
+- **Shortcut Key**: Configurable shortcut key (default F9) to toggle recording
+
+### 📂 Git Integration
+- Project-level / file-level commit history browsing
+- **Git Branch Graph**: Vertical branch topology, intuitive branch relationships
+- **Git Diff View**: View changes relative to HEAD, character-level highlighting
+- Commit detail view (author, time, commit message)
+- Working tree changes view (staged / unstaged files)
+- **3-Tab Management**: Worktree / Branches / Tags tabs for unified management, default tab persisted to localStorage
+- **Swipe to Delete**: Branches, worktrees, and tags support swipe-to-delete with safety guards (current branch, default branch, and current worktree cannot be deleted)
+- **Tag Management**: Browse project tags, click a tag to checkout, auto-prompt for dirty working tree
+
+### 🔗 GitHub / GitLab Integration
+- **Forge Panel with Four Tabs**: A single dock panel holds **Activity** (an inbox of unread items across issues, PRs and pipelines, with unread / read / all views — the default landing spot), Issues, Merge Requests and Pipelines. Each tab's empty state shows its own icon, taken from the same registry as the tab label so the two can't drift
+- **Issue & PR/MR Browsing**: Type and state filters (Open/Closed/All), a "mine" filter (assigned to me / created by me / awaiting my review, identity resolved from the token), server-side search, and infinite scroll. The detail view shows the body plus a comment timeline through the same Markdown pipeline used by chat (path jumps, code-link preview, double-click copy & quote)
+- **Repository Binding**: Auto-detects and binds from the project's git remotes (official hosts bind automatically, self-hosted instances need host confirmation), with a manual URL fallback. The binding travels with the project. Self-hosted instances work over **both http and https** (a scheme entered with the credentials is remembered and used; a bare host falls back to https) — the host stays the identity key, so the same instance reached either way is still one repository
+- **Change Awareness & Unread**: A background poller detects repository changes and drives the tab's unread badge. Six event classes (opened / closed / merged / reopened / commented / CI finished) each have their own notification toggle; the unread count is independent of those toggles. Unread counts **items, not events** — three comments on one issue are one unread, and you can mark a single item read or clear the whole repo
+- **CI Run Browsing & PR Cross-Links**: The CI finished event comes with a pipelines list and detail view (status filter defaulting to **all** — it is a run history, so hiding successes by default makes the tab look empty; run title, branch, commit, duration) so a failed run can be inspected without leaving the app. Titles come from the *run* (commit message / manual run name), not the workflow name — otherwise ten runs would all be titled "CI". Both directions of the pipeline↔PR link are provided: a run's detail links to its pull request, and a PR's detail expands to show that change's pipeline runs (loaded on demand, answering "did this change pass CI?" — the path you take while reviewing)
+- **Event-Triggered Tasks**: A task can use "trigger: event" and subscribe to `issue.opened`, `pr.merged`, `pipeline_done`, etc. When an event arrives the AI task fires automatically with a read-only event-context block prepended to the prompt (repo, number, title, URL, author, comment body — conditionally rendered per event type), and the execution record deep-links back to the source issue/PR. Includes a global pause switch and suppression of self-authored events (so the AI writing back to a repo can't trigger itself). Pipeline events are deliberately exempt from that suppression — a failed CI run caused by the AI's own push is exactly the case you want the repair task to handle, so the actor is passed through as an `ACTOR_IS_SELF` flag and the prompt decides
+- **Quote to Chat**: The detail view's quote button stages the issue/PR as a URL attachment (chip shows `owner/repo#123`); select extra text if you like, then let the AI analyze it. The body also supports double-click copy and selection-to-quote
+- **Credentials & Safety**: Tokens are stored per `(platform, host)` (self-hosted GitLab instances are isolated); the config API returns only presence, never plaintext, plus each host's scheme (how it's reached, not how it's authenticated). Self-hosted instances can enable "skip TLS verification" for self-signed certificates (off by default, carries security risk). Private-network and self-hosted hosts are **not** blocked server-side — binding them shows a warning in the dialog instead, because a hard block made an internal GitLab impossible to use; automatic binding still applies only to official hosts
+
+### 🔀 SSH Tunnel Port Mapping
+- **Remote Development**: Access server local ports directly from Android App
+- **Protocol Transparent**: HTTP, HTTPS, WebSocket, SSE, gRPC — no URL rewriting needed
+- **Custom Target Host**: Map to any reachable host (LAN/remote, not limited to 127.0.0.1)
+- **Auto Port Assignment**: Automatically allocates local ports when mapping the same target port to different hosts
+- **Port Editing**: Modify existing port mapping configurations
+- **Auto-Open Localhost URLs**: localhost URLs appearing in chat (e.g., web services started by AI) can be opened with one tap — port mapping is auto-registered and the URL opens via WebView in App mode
+- **Tunnel Health Check & Reconnect**: Auto-checks tunnel health before opening localhost URLs; reconnects if unhealthy; one-tap reconnect for disconnected tunnels
+
+### 💻 Web Terminal
+- **Interactive Terminal**: PTY + WebSocket + xterm.js, operate server terminal directly in browser
+- **Concurrent Sessions**: Each client gets an independent PTY session, no interference
+- **Multi-Tab Management**: Close all tabs, empty state with create button, dock icon shows active session count; background tabs show an unread dot when new output arrives
+- **Three-Mode Gesture System**: Browse (default, touch scroll), Gesture (Termius-style swipe→arrow keys, hold-to-repeat, double-tap→Tab, pinch-to-zoom), Selection (drag-to-select text + floating copy bar)
+- **Virtual Key Toolbar**: Color-coded key groups (modifiers, shortcuts, navigation, arrows, actions), three-state modifier toggle
+- **Key/Symbol Configuration**: Full-screen configuration drawer with keys and symbols dual tabs; supports tap-to-add, drag-to-reorder, gesture mode auto-hides certain keys; configuration persisted to database
+- **Symbol Bar**: Expandable symbol input row with 19 high-frequency terminal symbols, smart sorting using exponential decay (balances frequency and recency)
+- **Selected Text Auto-Copy**: Selected terminal text automatically copied to clipboard with toast feedback
+- **Quick Commands**: CRUD management of common commands with drag reorder, hidden flag, auto-execute (auto-run on every connect/reconnect)
+- **Android Volume Keys**: Volume up/down remapped to arrow keys when terminal is open in the app
+- **Android Soft Keyboard Stability**: Read-only mode prevents soft keyboard popup; tapping terminal avoids keyboard collapse-then-reopen flicker
+- **Terminal Theme Switching**: 157 xterm-theme themes available, `auto` mode follows app dark/light theme
+- **Terminal Input Drawer**: Mobile multi-line text input with clipboard paste support
+- See [Web Terminal User Guide](docs/TERMINAL.en.md)
+
+### 🌐 Internationalization
+- Chinese / English bilingual UI, auto-detect system language
+
+### 📱 Android App
+- Native bridge integration: auto-login, file download (including POST archive downloads), port mapping management
+- Static HTML login page: shown on first launch or connection failure, matches web UI visual style
+- SSH password management, server dialog
+- WebView connection protection: WebView hidden during connection attempts to prevent browser error page flash
+- **Unified Hardware Back**: Android physical/predictive back is delegated to the JS layer and routed through the app's unified back state machine (close overlay → exit edit → file history → jump origin → parent dir); nothing to go back to triggers a double-back-to-exit hint (second press within 2s exits)
+- **Self-Update**: One-click version check, binary download, and service restart from the Web UI; disconnect recovery with polling fallback; version skip option. Downloads are verified against the npm registry's ECDSA signature (trust anchored on npmjs keys, independent of whichever mirror served the metadata) and the declared integrity hash — a hash **mismatch blocks** the upgrade, while anything merely *unverifiable* (missing signature, keys unreachable, no integrity field) proceeds only after you confirm, and the server re-checks that reason fingerprint so a stale confirmation can't be reused
+- **Android Version Mismatch Detection**: before the WebView loads, the native layer compares the APK version with the server version reported by `/api/health`; when the APK is older it shows a blocking native dialog offering APK download or a force-skip (never remembered, so it re-prompts each launch)
+- **Floating Status Window**: System-level overlay capsule (Android 8.0+ `TYPE_APPLICATION_OVERLAY`) that shows real-time session stats (running / pending-approval / unread counts) via the background WebSocket channel. **Only appears when there's something to show** — an active session, a pending approval, unread messages or a running task; it hides once everything clears rather than leaving an idle capsule on screen. Draggable with edge-snapping and position persistence; tap expands a grouped session-list panel (per-project headers with name+path, status dots + unread badges) to jump straight into a session. Toggle + `SYSTEM_ALERT_WINDOW` permission flow in Settings
+- **Live Updates (Dynamic Island)**: Android 16 live-update notifications surface session state on the status bar and lock screen — a single-line status-bar chip (pending approvals > unread > running, highest priority only, auto-removed when empty) plus an expanded-by-default card on the lock screen / notification drawer (full three-group counts). Shares the same overview data as the floating window, so the numbers always agree. Independent opt-in toggle in Settings (on by default); requires the system "Live Updates" notification permission, with graceful fallback to a plain ongoing notification
+- **Full Android i18n**: Native Android UI is fully bilingual (English default + Chinese mirror) — hardcoded Chinese in login/connection errors and notification text has been moved to string resources, with a three-layer language resolution (in-app choice > cookie > system locale)
+
+### 🔔 Notifications
+- Notification sound + haptic feedback (alerts when AI completes); sound can be toggled off in settings to prevent Bluetooth headphone interruption
+- Browser push notifications
+- **Task Completion Push**: Task completion notifications include response preview summary; tap to navigate to execution details
+- **DingTalk/Feishu Bot Push**: Instant push via DingTalk or Feishu bot on AI session completion, permission approval, and task status changes; view session list and send messages to sessions from IM
+- See [DingTalk Push Setup](docs/DINGTALK_PUSH.en.md) | [Feishu Push Setup](docs/FEISHU_PUSH.en.md)
+
+
+### 🎨 Themes
+- **36 Named Themes**: VSCode-style self-contained color schemes sorted by background brightness — 16 light (GitHub Light, One Light, Ayu Light, Light Modern, Light Plus, Quiet Light, Vitesse Light, Bluloco Light, Material Lighter, Alabaster, Everforest Light, High Contrast Light, Nord Light, Catppuccin Latte, Solarized Light, Gruvbox Light) and 20 dark (Solarized Dark/Deep, Monokai, Material Darker, Dark Plus, Bluloco Dark, Nord, Everforest Dark, One Dark Pro, Dracula, Rose Pine, Gruvbox Dark, GitHub Dark, Catppuccin Mocha, Vitesse Dark, Tokyo Night, Kanagawa, Ayu Dark, Night Owl, High Contrast Dark)
+- **Follow System**: `auto` mode picks the default GitHub Light/Dark based on the system color scheme and follows it **live** — switching the OS appearance updates the app without a reload (including iOS home-screen PWAs resumed from the background, where the media-query change event is unreliable). Choosing `auto` is never overwritten by the resolved theme, so it keeps following rather than sticking on whichever theme was applied at startup
+- **Custom Wallpaper Background**: Set any image as the app background — upload it directly or copy a server-local path (rendered as a single `.wallpaper-layer` `<img>` for WebView decoding stability; global across projects; stored in the local gallery via `POST /api/theme/local/upload` + `POST /api/theme/local/select`, served via `GET /api/file/theme-wallpaper`). Panel opacity (lower bound 0.5 to keep text readable) and Gaussian blur are adjustable with sliders. With a wallpaper active, header/Tab panels/sidebars/cards/CodeMirror surfaces turn semi-transparent to let the background show through, while editors and terminals stay opaque for readability
+- **Quick Theme Picker**: Palette button in the header switches themes on the fly with live color previews; its dropdown mirrors the project-picker panel style and pins a "More appearance options" entry that deep-links into Settings → Appearance (full theme grid + fonts + UI zoom)
+- **Click the Logo for "About"**: The header logo is itself a button — tapping it deep-links into Settings → About (version, project info), the natural place to look for "what is this / which version"
+- **Custom Fonts**: Pick from common open-source fonts for code (monospace) and interface (proportional) channels with optional fallback fonts — pure CSS font-stack switching, falls back to defaults when a font isn't installed; App header font configuration, Markdown export and the xterm/CodeMirror/Mermaid renderers all honor the selection
+- **Persistent & Status Bar Aware**: Selection is saved locally and restored on reload; Android status bar color follows the active theme
+
+### 📱 PWA Support
+- Installable to home screen, runs in standalone window
+
+### 🔒 Security
+- Optional password protection (SHA-256 salted hash storage, password change available in settings panel)
+- Multi-instance cookie isolation (cookies auto-prefixed by port, no collisions on same domain)
+- Path traversal protection, all operations restricted to project directory
+- Git parameter injection protection (SHA/branch name/tag name validation, `--` separator)
+- Configurable file upload size and count (default 100MB / 20 files), all file types supported
+- XSS protection (DOMPurify sanitization)
+- File share links use unguessable capability tokens as the sole credential — revoking or regenerating a link kills it instantly; when unused, the public endpoints return 404 so the feature has zero exposure. A token only ever reads within the boundary recorded at creation time (project root, else the file's own directory), so holding any one link cannot reach arbitrary paths on the host
+- Localhost requests are no longer trusted by address alone: the built-in `/cb-*` commands hand the AI subprocess a short-lived HMAC token (30 min, per-process key) which it sends as a header — so a local process can't reach the API just by being local
+- Client log ingestion and the SSH endpoint are authenticated (the log endpoint is a write-to-disk primitive; the public SSH endpoint returns only `{enabled, port}`)
+- TLS support (auto-discover certificate directory; drop in fullchain.pem + privkey.pem to enable HTTPS)
+
+---
+
+## FAQ
+
+See **[FAQ](docs/FAQ.en.md)** .
+
+---
+
+## License
+
+Copyright (c) 2026 xulongzhe
+
+Licensed under the MIT License

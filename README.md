@@ -1,116 +1,126 @@
-[English](README.md) | [中文](README.zh.md)
+[中文](README.md) | [English](README.en.md)
 
-# ClawBench — AI Workbench, United Across Devices
+# ClawBench —— 多端一体的 AI 工作台
 
 <p align="center">
-  <img src="docs/screenshots/product_hero.en.png" alt="ClawBench" width="960">
+  <img src="docs/screenshots/product_hero.png" alt="ClawBench" width="960">
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/pc-desktop.png" alt="ClawBench PC Desktop" width="960">
+  <img src="docs/screenshots/pc-desktop.png" alt="ClawBench PC 桌面端" width="960">
 </p>
 
-**From Palm to Desktop** — An AI workbench for every screen.
+> 🎬 **演示视频**：[OpenClaw 和 Hermes 就是玩具，于是我写了一个能干活的](https://b23.tv/ewACF0h) — Bilibili
 
-Brings the full power of AI coding agents to every screen — phone, tablet, and desktop. File browsing, code editing, AI conversation, Git operations, tasks, one app does it all, whether you're on the go or at your desk.
+**从掌心到桌面，多端一体的 AI 工作台。**
 
-Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. ClawBench is a complete workbench on every platform — files, code, Git, AI, tasks, TTS — with mobile interactions carefully crafted for one-handed use and full desktop support for serious work.
+将强大的 AI 编程智能体能力带到每一块屏幕——手机、平板与桌面。文件浏览、代码编辑、AI 对话、Git 操作、定时调度、命令行终端 —— 一个应用，全部搞定，无论你在通勤路上还是坐在桌前。
 
-- **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
-- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
+**单文件部署，无任何依赖**
 
 <p align="center">
-  <img src="assets/architecture.en.svg" alt="ClawBench Deployment Architecture" width="640">
+  <img src="assets/architecture.zh.svg" alt="ClawBench 部署架构" width="640">
 </p>
+
+- **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA；AI 智能体可在 PC 上运行，也可通过 [Termux](docs/TERMUX.md) 在安卓手机上完全运行
+- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode
 
 ---
 
-## Screenshots
+## 截图预览
 
-### Login & Navigation
+### 登录与导航
 
-| Login | Home | Select Project | Settings Panel |
-|-------|------|----------------|----------------|
-| ![Login](docs/screenshots/login.png) | ![Home](docs/screenshots/home.png) | ![Select Project](docs/screenshots/project-select.png) | ![Settings Panel](docs/screenshots/settings-panel.png) |
+| 登录 | 首页 | 选择项目 | 设置面板 |
+|------|------|----------|----------|
+| ![登录](docs/screenshots/login.png) | ![首页](docs/screenshots/home.png) | ![选择项目](docs/screenshots/project-select.png) | ![设置面板](docs/screenshots/settings-panel.png) |
 
-### File Browsing & Code Editing
+### 文件浏览与代码编辑
 
-| File Browser | Search & Filter | Code Editor | Quote & Ask |
-|-------------|----------------|-------------|-------------|
-| ![File Browser](docs/screenshots/file-browser.png) | ![Search & Filter](docs/screenshots/file-search.png) | ![Code Editor](docs/screenshots/code-editor.png) | ![Quote & Ask](docs/screenshots/quote-question.png) |
+| 文件浏览 | 搜索过滤 | 代码编辑器 | 引用提问 |
+|----------|----------|------------|----------|
+| ![文件浏览](docs/screenshots/file-browser.png) | ![搜索过滤](docs/screenshots/file-search.png) | ![代码编辑器](docs/screenshots/code-editor.png) | ![引用提问](docs/screenshots/quote-question.png) |
 
-### Markdown & Document Preview
+### Markdown 与文档预览
 
-| Markdown Render | LaTeX Formulas | Mermaid Diagrams | Table of Contents |
-|-----------------|----------------|------------------|-------------------|
-| ![Markdown Render](docs/screenshots/markdown-preview.png) | ![LaTeX Formulas](docs/screenshots/latex-formula.png) | ![Mermaid Diagrams](docs/screenshots/mermaid-diagram.png) | ![Table of Contents](docs/screenshots/toc-drawer.png) |
+| Markdown 渲染 | LaTeX 公式 | Mermaid 图表 | 目录导航 |
+|---------------|------------|-------------|----------|
+| ![Markdown 渲染](docs/screenshots/markdown-preview.png) | ![LaTeX 公式](docs/screenshots/latex-formula.png) | ![Mermaid 图表](docs/screenshots/mermaid-diagram.png) | ![目录导航](docs/screenshots/toc-drawer.png) |
 
-### AI Agents
 
-| Agent Selection | AI Conversation | ACP Permission | RAG Search | Session Manager |
-|-----------------|-----------------|----------------|------------|-----------------|
-| ![Agent Selection](docs/screenshots/agent-selector.png) | ![AI Conversation](docs/screenshots/chat-interface.png) | ![ACP Permission](docs/screenshots/acp-permission.png) | ![RAG Search](docs/screenshots/rag-search.png) | ![Session Manager](docs/screenshots/session-manager.png) |
+### AI 智能体
 
-| Recommended Reply |
-|------------------------------|
-| ![Recommended Reply](docs/screenshots/conversation-recommendation.png) |
+| 智能体选择 | AI 对话 | ACP 权限审批 | RAG 检索 | 会话管理 |
+|------------|---------|-------------|----------|----------|
+| ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-interface.png) | ![ACP 权限审批](docs/screenshots/acp-permission.png) | ![RAG 检索](docs/screenshots/rag-search.png) | ![会话管理](docs/screenshots/session-manager.png) |
 
-| Tasks | Create Task | Task Card |
-|-----------------|-------------|-----------|
-| ![Tasks](docs/screenshots/scheduled-tasks.png) | ![Create Task](docs/screenshots/task-create.png) | ![Task Card](docs/screenshots/schedule-proposal.png) |
+| 推荐回复 |
+|----------|
+| ![推荐回复](docs/screenshots/conversation-recommendation.png) |
 
-### Git Integration
+| 任务 | 创建任务 | 任务卡片 |
+|----------|----------|----------|
+| ![任务](docs/screenshots/scheduled-tasks.png) | ![创建任务](docs/screenshots/task-create.png) | ![任务卡片](docs/screenshots/schedule-proposal.png) |
 
-| Commit History & Branch Graph | Branch Management | Commit Detail | Comparison Report |
-|-------------------------------|-------------------|---------------|-------------------|
-| ![Commit History & Branch Graph](docs/screenshots/git-history.png) | ![Branch Management](docs/screenshots/git-branches.png) | ![Commit Detail](docs/screenshots/git-commit-detail.png) | ![Comparison Report](docs/screenshots/git-comparison-report.png) |
+### Git 集成
 
-### Media Preview
+| 提交历史与分支图 | 分支管理 | 提交详情 | 比较报告 |
+|------------------|----------|----------|----------|
+| ![提交历史与分支图](docs/screenshots/git-history.png) | ![分支管理](docs/screenshots/git-branches.png) | ![提交详情](docs/screenshots/git-commit-detail.png) | ![比较报告](docs/screenshots/git-comparison-report.png) |
 
-| Image Viewer | Video Player | Audio Player | PDF Preview |
-|-------------|-------------|-------------|------------|
-| ![Image Viewer](docs/screenshots/image-viewer.png) | ![Video Player](docs/screenshots/video-player.png) | ![Audio Player](docs/screenshots/audio-player.png) | ![PDF Preview](docs/screenshots/pdf-preview.png) |
+### 媒体预览
 
-### SSH Tunnel & Web Terminal
+| 图片查看 | 视频播放 | 音频播放 | PDF 预览 |
+|----------|----------|----------|----------|
+| ![图片查看](docs/screenshots/image-viewer.png) | ![视频播放](docs/screenshots/video-player.png) | ![音频播放](docs/screenshots/audio-player.png) | ![PDF 预览](docs/screenshots/pdf-preview.png) |
 
-| Port Forwarding | Interactive Terminal | Key/Symbol Configuration |
-|----------------|---------------------|-------------------------|
-| ![Port Mapping](docs/screenshots/port-forwarding.png) | ![Interactive Terminal](docs/screenshots/terminal.png) | ![Key/Symbol Configuration](docs/screenshots/terminal-key-config.png) |
+### Office 文档与 Open API 预览
 
-### System Resource Monitor
+| Word 文档 | Open API 预览 | Excel 表格 | PPT 幻灯片 |
+|-----------|---------------|------------|------------|
+| ![Word 文档](docs/screenshots/word-preview.png) | ![Open API 预览](docs/screenshots/openapi-preview.png) | ![Excel 表格](docs/screenshots/excel-preview-2.png) | ![PPT 幻灯片](docs/screenshots/ppt-preview.png) |
 
-| System Monitor |
-|----------------|
-| ![System Monitor](docs/screenshots/system-monitor.png) |
+### SSH 隧道与 Web 终端
 
-- Real-time monitoring of server CPU, memory, disk, and network usage
-- Header panel display with WebSocket push updates
-- Auto-switches to connection status indicator (disconnected/reconnecting) when WS is down, replacing the resource panel
+| 端口映射 | 交互式终端 | 按键/符号配置 |
+|---------|-----------|--------------|
+| ![端口映射](docs/screenshots/port-forwarding.png) | ![交互式终端](docs/screenshots/terminal.png) | ![按键配置](docs/screenshots/terminal-key-config.png) |
+
+### 系统资源监控
+
+| 系统监控 |
+|----------|
+| ![系统监控](docs/screenshots/system-monitor.png) |
+
+- 实时监控服务器 CPU、内存、磁盘、网络使用情况
+- 应用头部面板展示，WebSocket 推送更新
+- WS 断线/重连时自动切换为连接状态提示（断开/重连中），替代系统资源面板
 
 ---
 
-## Quick Start
+## 快速开始
 
-### Prerequisites
+### 前置准备
 
-- **A PC (Linux / macOS / Windows) or an Android phone with [Termux](docs/TERMUX.md)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)
-- **Any device**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or open the server address in any browser — desktop, tablet, or phone
+- **一台 PC（Linux / macOS / Windows）或装有 Termux 的安卓手机**：用于运行 ClawBench 服务端，并安装至少一个 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi）
+- **任意设备**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或用任意浏览器（桌面 / 平板 / 手机）访问服务端地址
 
-### npm Install
+### npm 安装
 
-Install via npm in one command:
+通过 npm 一键安装，国内用户走淘宝源秒下：
 
 ```bash
+# 配置淘宝镜像（仅需一次）
+npm config set registry https://registry.npmmirror.com/
+# 全局安装
 npm install -g @xulongzhe/clawbench
-# Start
+# 启动
 clawbench
 ```
 
-Supports Linux (x64/arm64), macOS (Intel/Apple Silicon), and Windows (x64). npm automatically selects the correct platform-specific binary package.
+### 安装包部署
 
-### Download & Start
-
-Download the latest ZIP package from [GitHub Releases](https://github.com/xulongzhe/clawbench/releases), extract and you're ready:
+从 [GitHub Releases](https://github.com/xulongzhe/clawbench/releases) 下载最新版 ZIP 包，解压即可运行，无需安装：
 
 ```bash
 wget https://github.com/xulongzhe/clawbench/releases/latest/download/clawbench-linux-amd64.zip
@@ -119,35 +129,28 @@ cd clawbench
 ./clawbench
 ```
 
-### Docker Deployment
+
+
+### Docker 部署
 
 ```bash
 docker pull ghcr.io/clawbench-dev/clawbench:latest
 docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest
 ```
 
-Customize the host port with `-p` (e.g., `-p 20300:20000`). The `clawbench-data` volume persists all data.
+修改 `-p` 可自定义端口（如 `-p 20300:20000`），`clawbench-data` 卷持久化数据。
 
-> `--restart unless-stopped` (or `always`) is required for in-app upgrades: the container replaces its own binary and exits with code 0, and Docker's restart policy brings the new version back up. Do **not** use `--restart on-failure` — a graceful shutdown exits 0, so it never triggers and the container stays stopped. The recommended upgrade path is still `docker pull` + recreate the container, since rebuilding from an unchanged image reverts the in-place replacement.
+> `--restart unless-stopped`（或 `always`）是应用内升级的必要条件：容器会替换自身二进制并以退出码 0 退出，依赖 Docker 重启策略把新版本拉起来。请勿使用 `--restart on-failure`——优雅退出的退出码为 0，不会触发重启，容器会停在停止状态。推荐的升级方式仍是 `docker pull` 后重建容器——用未更新的镜像重建会回退就地替换的结果。
 
-To view the auto-generated password:
+> 首次启动会自动生成32位随机密码，以字符框突出打印到控制台，请妥善保存。
 
-```bash
-docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/.clawbench/auto-password
-```
+部署完成后，使用手机 App 或任意浏览器访问 `http://服务器IP:20000` 即可开始使用。
 
-> A random 8-character hex password is auto-generated on first startup and printed to the console in a bordered box. Save it securely.
+### 📱 在安卓手机上完全运行（Termux）
 
-Once deployed, access `http://server-ip:20000` from your phone app or any browser:
+> 完整指南见 **[Termux（安卓）](docs/TERMUX.md)** 。
 
-- **Android App**: Native integration, auto-connect, full feature support
-- **Mobile / Desktop Browser**: **Chrome** recommended on mobile — supports installing as a PWA app (Add to Home Screen) for a near-native experience
-
-### 📱 Run Completely on an Android Phone (Termux)
-
-> See the full guide in **[Termux (Android)](docs/TERMUX.md)**.
-
-ClawBench runs completely on your Android phone inside [Termux](https://f-droid.org/repo/com.termux.app.apk). The pure-Go `linux-arm64` backend, the built-in web frontend, and your AI coding agents all run locally on the phone — no separate PC or server required:
+ClawBench 可在安卓手机的 [Termux](https://f-droid.org/repo/com.termux.app.apk) 终端模拟器中**完全运行**：纯 Go 的 `linux-arm64` 后端、内置 Web 前端、AI 编程智能体全部在手机本地执行，无需额外 PC 或服务器：
 
 ```bash
 pkg install -y nodejs-lts git
@@ -155,242 +158,251 @@ npm install -g @xulongzhe/clawbench
 clawbench
 ```
 
-> 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/PUBLIC_ACCESS.md)**  — supports IPv6 direct connection, FRP tunnel, and EasyTier decentralized networking (no VPS required).
+> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/PUBLIC_ACCESS.md)** ，支持 IPv6 直连、FRP 内网穿透和 EasyTier 去中心化组网（无需 VPS）三种方式。
 
 ---
 
-## Features
+## 功能详解
 
-### 📁 File Browser
-- Recursive directory browsing with 120+ file extension support (including Office documents .docx/.xlsx/.xls/.pptx)
-- Search filtering, sorting (name/time/extension/size)
-- **Office document preview**: Word, Excel, and PowerPoint documents rendered natively in the browser — no download needed
-- **File Preview Overlay**: Office files open in a preview overlay on top of the browse tab, supporting navigation stack (multi-file switching + back)
-- **List/Grid View Toggle**: Grid view shows image thumbnails for visual file browsing
-- **Image Thumbnails**: Backend generates proportional thumbnails for quick preview
-- Context menu: rename, delete, copy, cut, paste, new file/folder, download, open as project
-- **Multi-Select Operations**: Toggle multi-select mode from toolbar, batch copy/cut/delete; mobile long-press triggers context menu
-- File upload (all file types supported, configurable size and count)
-- Toggle hidden file visibility
-- **Document search exclusion**: Office documents are excluded from file content search to improve performance (same as PDF)
-- **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
-- **Breadcrumb Drag to Chat**: Drag breadcrumb segments (including Home icon) to chat area to attach directory path as context — consistent with file manager drag behavior
-- **Ctrl+F/Cmd+F Context-Aware Search**: Automatically opens the appropriate search drawer based on current tab — Chat tab: session search (RAG); `view` tab with a file open: in-file content search; `view` tab empty state or `browse` tab: filename search; if already open, focuses the search input
-- **Separate File View Tab**: Directory browsing (`browse`) and file viewing (`view`) are independent tabs — opening a file auto-switches to `view`, closing it stays on `view` showing empty state (recent files list), no auto-return to file manager
-- **File Preview Overlay**: Click a file to open a preview overlay in the `view` tab; supports navigation stack (multi-file switching + back), close to return to empty state
-- **Docked Preview Pane**: A toolbar toggle (eye icon) opens a resizable preview pane below the file list — click any entry to preview it in place without leaving the file manager. Files use the same renderers as the code-link preview card (code slices, media players, Markdown); **directories list their contents**, so you can peek inside a folder without navigating into it, with an "Open directory" button to jump the file manager there (or expand it in place from the quick-preview card). Images in the listing reuse the file manager's thumbnails. Drag the divider to resize (single-line 28px header on both desktop and mobile)
-- **Cross-Surface Jump & Return**: Opening a file from a chat message or task card records the source context — Back returns you to that conversation or task, not to a random tab; desktop shows a top-left nav cluster in the file header, mobile a bottom-center floating capsule (thumb-zone). Reading position is restored precisely when jumping back into a file
-- **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
-- **OpenAPI/Swagger Preview**: OpenAPI spec files (YAML/JSON) rendered as interactive Swagger UI with "Try it out" support; CORS proxy (`/api/openapi-proxy`) enables direct API testing from the preview
-- **File Share Link**: Generate an unguessable public link for any file — anyone with the link can read or download it without logging in (Markdown with TOC, code, images/PDF/media/Office preview). Regenerate rotates the token so old links die instantly; closing the share revokes the link; a shared-files drawer lists and manages all active shares (open file / open in new tab / copy link / one-click clear). The token is the only credential, but it does **not** grant the whole machine: the readable boundary is snapshotted when the share is created (project root when the file lives in the selected project, so cross-directory media references keep working; otherwise the file's own directory), and pre-existing shares without a recorded root fail closed the same way
-- **`.gitignore`-Aware Dimming**: Entries git would not track (matching `.gitignore`, `.git/info/exclude`, a global excludes file, or sitting under an excluded directory) are dimmed in both list and grid views — text and icon only, the row still opens/renames/deletes normally and hovering explains why. It is a visual hint rather than a filter, because the ignored build output or local config is often exactly what you went looking for. Non-Git projects see no marker at all. The same judgement backs the code-inventory (cloc) exclusion rules, so the two surfaces never disagree about what git tracks
+### 📁 文件浏览
+- 递归目录浏览，支持 120+ 种文件扩展名（含 Office 文档 .docx/.xlsx/.xls/.pptx）
+- 搜索过滤、排序（名称/时间/扩展名/大小）
+- **Office 文档预览**：支持 Word、Excel、PowerPoint 文档直接在浏览器中原生渲染，无需下载到本地
+- **文件预览覆盖层**：点击 Office 文件在文件浏览页上方弹出预览覆盖层，支持导航栈返回
+- **列表/网格视图切换**：网格视图以图片缩略图展示文件，直观浏览图片资源
+- **图片缩略图**：后端生成等比缩放缩略图，快速预览图片内容
+- 右键菜单：重命名、删除、复制、剪切、粘贴、新建文件/文件夹、下载、作为项目打开
+- **多选操作**：工具栏切换多选模式，批量复制/剪切/删除，移动端长按触发右键菜单
+- 文件上传（支持所有文件类型，大小和数量可配置）
+- **文件夹上传**：拖放文件夹上传，保持嵌套目录结构（包括空目录）；也支持文件夹选择器上传
+- **目录树下载**：使用 File System Access API 将整个目录下载到本地，保持完整目录结构
+- **目录跳转**：工具栏定位按钮，输入路径直接跳转到目标目录
+- **拖放移动**：文件管理器内拖放文件/目录到目标目录
+- **粘贴上传**：Ctrl+V 粘贴剪贴板图片上传到当前目录
+- **排序**：按名称/时间/类型/大小排序，支持升序/降序
+- **键盘快捷键**：Ctrl+C/X/V 剪贴板操作、Delete 删除、F2 重命名、Ctrl+N 新建文件、Alt+Up 上级目录、Ctrl+R 刷新、Ctrl+Shift+H 显示隐藏文件、Ctrl+1/Ctrl+2 列表/网格切换
+- 隐藏文件显示/隐藏切换
+- **文档搜索排除**：Office 文档不参与文件内容搜索，提升搜索性能（PDF 同理）
+- **下钻浏览 + 边缘滑动回退**：点击文件夹下钻进入，右边缘左滑返回上一级，移动端直觉操作
+- **面包屑拖拽到聊天**：拖拽面包屑段（含 Home 图标）到聊天区域，自动附加目录路径作为上下文，与文件管理器拖拽行为一致
+- **Ctrl+F/Cmd+F 上下文感知搜索**：根据当前标签页自动打开对应搜索抽屉——聊天标签：会话搜索（RAG）；`view` Tab 有文件打开：文件内容搜索；`view` Tab 空状态或 `browse` Tab：文件名搜索；已打开时聚焦输入框
+- **文件浏览独立 Tab**：目录浏览（`browse`）和文件查看（`view`）各自独立，打开文件自动切换到 `view` Tab，关闭文件后停留在 `view` 显示空状态（最近文件列表），不自动跳回文件管理器
+- **文件预览覆盖层**：点击文件直接在 `view` Tab 中弹出预览覆盖层，支持导航栈（多文件切换 + 返回），关闭即回到空状态
+- **停靠预览窗格**：工具栏的预览开关（眼睛图标）在文件列表下方展开一个可调高度的预览窗格——点任意条目就地预览，不必离开文件管理器。文件复用代码链接预览卡片的渲染（代码切片、媒体播放器、Markdown），**目录则直接列出内容**，不用先进去再退出来，并带「打开目录」按钮可直接让文件管理器跳进去（快捷预览卡里则是原地展开该目录）。目录里的图片复用文件管理器的缩略图。窗格与列表之间的分隔条可拖拽调高（桌面与移动端统一为单行 28px 标题栏）
+- **跨界面跳转与精准返回**：从对话消息/任务卡片点开文件时记录来源上下文——返回键精准退回原对话或任务而非错乱切 Tab；桌面文件顶栏左上角导航簇、移动端底部居中悬浮胶囊（大拇指热区）双入口。跳回文件时精确还原阅读位置
+- **二进制文件预览**：二进制文件显示占位界面，支持"以文本方式打开"；大文件自动截断（64KB 二进制 / 512KB 文本），截断时显示提示横幅
+- **OpenAPI/Swagger 预览**：OpenAPI 规范文件（YAML/JSON）渲染为交互式 Swagger UI，支持"Try it out"在线测试；CORS 代理（`/api/openapi-proxy`）使预览内可直接调用 API
+- **文件分享链接**：为任意文件生成不可猜测的公开链接，任何拿到链接的人免登录即可只读查看或下载（Markdown 带 TOC、代码、图片/PDF/音视频/Office 预览）。重新生成会轮换 token 使旧链接立即失效；关闭分享即撤销链接；"已分享文件"抽屉集中管理所有有效分享（打开文件/新标签页打开/复制链接/一键清空）。token 是唯一凭证，但**不等于交出整台机器**——可读范围在创建分享时固化（文件在所选项目内则边界为项目根，跨目录引用的媒体照常可读；否则收紧到文件所在目录），历史遗留的旧分享记录同样按"文件所在目录"收紧
+- **按 .gitignore 灰显**：git 不会跟踪的条目（命中 `.gitignore`、`.git/info/exclude`、全局排除文件，或位于被排除目录之下）在列表与网格中淡化文字与图标——行本身仍可正常打开/重命名/删除，悬停说明原因。它只是视觉提示而非过滤器，因为被忽略的构建产物或本地配置往往正是你要找的东西；非 Git 项目不出现该标记。同一份判定也驱动代码存量统计的排除规则，两个界面不会对"git 跟不跟踪它"给出不同答案
 
-### 🎨 Code Preview & Editing
-- CodeMirror-based code browsing and editing dual mode, read-only by default, one-click switch to edit mode
-- Syntax highlighting, sticky line numbers, word wrap toggle, 30+ language extensions (high-frequency static imports, low-frequency lazy loading)
-- **Code Autocompletion**: Language-aware autocompletion for 11 languages (JS/TS/HTML/CSS/Python/SQL/Go/Less/Sass/Liquid/Markdown) in edit mode, leveraging CodeMirror's built-in completion sources
-- **Sticky Scroll**: VS Code-style sticky scroll based on backend tree-sitter symbol data, showing enclosing scope context (functions, classes, structs, etc.) as you scroll
-- **VS Code-Style Search Bar**: `Ctrl+F`/`Cmd+F` opens an inline search bar (case / whole-word / regexp toggles built into the input, prev/next/match count, optional replace row in edit mode) — a custom panel shared by CodeMirror, with the same interaction for Markdown preview
-- **Double-click to copy code line content** (flash animation feedback)
-- **File Change Flash Highlight**: When files are modified externally, deleted characters flash red and new characters flash blue for quick change identification
-- **Quote & Ask**: Select a code snippet, one-click ask AI, auto-attaches file path and line number
-- **File Path Navigation**: Clickable file paths in code previews with import path resolution (e.g., @/composables/useFoo resolves to the actual file path); line range navigation support (e.g., `file.go:42-50`) with flash highlight
-- **Edit Mode**: undo/redo, save & exit, unsaved changes confirmation dialog, visual distinction for edit mode (accent-tinted background + top border)
-- **Markdown Heading-Anchored Scroll Sync**: Scroll position synchronized between rendered view and source edit based on heading anchors
-- **Excalidraw Canvas**: `.excalidraw` files open directly in an in-app canvas editor (embedded independent build in an iframe) with drawing and editing, save-writes back to the original file; language and theme follow the app settings, with unsaved-change confirmation on exit
-- Swipe gestures: swipe left/right to switch files
+### 🎨 代码预览与编辑
+- 基于 CodeMirror 的代码浏览/编辑双模式，只读模式默认，一键切换编辑模式
+- 语法高亮，粘性行号，自动换行切换，30+ 语言扩展（高频语言静态导入，低频语言懒加载）
+- **代码自动补全**：编辑模式下为 11 种语言提供语言感知的自动补全（JS/TS/HTML/CSS/Python/SQL/Go/Less/Sass/Liquid/Markdown），基于 CodeMirror 内置补全源
+- **Sticky Scroll**：VS Code 风格的粘性滚动，基于后端 tree-sitter 符号数据，滚动时自动显示当前所在的作用域上下文（函数/类/结构体等）
+- **VS Code 风格搜索条**：`Ctrl+F`/`Cmd+F` 打开内嵌搜索条（大小写/全词/正则三个选项图标内联在输入框内，支持上一个/下一个/匹配计数，编辑模式下带替换行）——CodeMirror 与 Markdown 预览共用同一套交互的自定义搜索面板
+- 双击复制代码行内容（闪烁动画反馈）
+- **文件改动闪烁高亮**：文件被外部修改时，删除字符红色脉冲闪烁，新增字符蓝色脉冲闪烁，快速定位改动
+- **引用提问**：选中代码片段后，一键向 AI 提问，自动附上文件路径和行号
+- **文件路径跳转**：代码预览中的文件路径可点击跳转，支持 import 路径解析（如 @/composables/useFoo 解析为实际文件路径）；支持行范围导航（如 `file.go:42-50`），高亮闪烁指定行范围
+- **编辑模式**：undo/redo、保存退出、未保存变更确认对话框、编辑模式视觉区分（强调色背景+顶部边框）
+- **Markdown 标题锚定滚动同步**：在渲染视图和源码编辑之间切换时，根据标题锚点同步滚动位置
+- **Excalidraw 画布**：`.excalidraw` 文件直接在应用内打开画布编辑器（iframe 内嵌独立构建），支持绘制、编辑、保存写回原文件；语言和主题跟随应用系统设置，退出时自动检测未保存修改并提示
+- 滑动手势：左右滑动切换文件
 
 ### 📝 Markdown
-- Toggle between rendered view / source view
-- **Quote & Ask**: Select text, one-click ask AI
-- Smart table of contents drawer (TOC) with tree-sitter code symbol extraction (100+ languages, 17 symbol kind icons), LaTeX math, Mermaid diagrams
-- **Image Lightbox**: Images support zoom, swipe browsing; Mermaid SVG diagrams can be navigated alongside images in lightbox
-- **File Path Navigation**: Clickable file paths in Markdown, with line range navigation
-- **Code Link Preview**: With "File link preview" enabled (Settings → Project & Files → File Display), clicking a validated file path or `path:line` link in Markdown preview opens a code-slice floating card — desktop cards stay until explicitly dismissed (clicking outside the card, Esc, or the close button), `Ctrl/Cmd+Click` pins them, and touch devices open a bottom sheet on tap. The card supports syntax highlighting, line-range highlighting, drag repositioning, and actions like "Quote to chat / Copy path / Reveal in tree / Find in preview", with built-in slice protection (200-line / 512 KiB cap, oversized-file warning)
-- **HTML Export**: Export the rendered Markdown as a standalone self-contained HTML file (media embedded as base64, KaTeX fonts inlined) rebuilt from the shared render pipeline so the exported document matches the in-app preview pixel-for-pixel — including the user's code/UI font choice, right-side TOC rail and lightbox zoom/pan
+- 渲染视图 / 源码视图一键切换
+- **引用提问**：选中文本，一键向 AI 提问
+- 智能目录抽屉（TOC），支持 Tree-sitter 代码符号提取（100+ 语言，17 种符号类型图标），LaTeX 数学公式，Mermaid 图表
+- **图片灯箱**：图片支持放大、左右切换浏览；Mermaid SVG 图表可与图片一起在灯箱中导航
+- **文件路径跳转**：Markdown 中的文件路径可点击跳转，支持行范围导航
+- **代码链接预览**：开启「设置 → 项目与文件 → 文件显示 → 文件链接预览」后，点击 Markdown 预览中验证通过的文件路径或 `path:line` 链接弹出代码切片浮层卡片——桌面端卡片常驻至显式关闭（点击卡片外、Esc 或关闭按钮）、`Ctrl/Cmd+Click` 固定（Pin），触摸设备点击路径弹出底部抽屉；支持语法高亮、范围行高亮、拖拽定位，以及"引用到对话 / 复制路径 / 打开目录 / 在预览中查找"等操作，大文件自动切片保护（最大 200 行 / 512 KiB，超大文件给出警告）
+- **HTML 导出**：渲染视图工具栏一键导出为自包含 HTML 文件（媒体 base64 内嵌、KaTeX 字体内联），由共享渲染管线从源码重建，导出文档与 App 内预览逐像素一致——含所选代码/界面字体、右侧 TOC 常驻侧栏与灯箱缩放/平移交互
 
-### 🤖 AI Agents
-- **Streaming Response**: Real-time WebSocket push, thinking process and tool calls fully visible
-- **Multi-Agent Support**: General assistant, coding expert, handyman, etc.; custom agents can be loaded via `config/agents/*.yaml` (supplementary method for non-standard agents)
-- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode — session-level isolation
-- **Thinking Effort Levels**: Per-agent thinking depth selection (Low / Medium / High, etc.), supported by 11 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok/ZCode), selection auto-persisted
-- **Model Selection Modal**: Unified model switching and thinking effort selection in a dual-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
-- **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch
-- **Tasks**: Created via the `/cb-task` built-in command — cron tasks run on a schedule, event tasks fire on GitHub/GitLab events; independent tab with 3-level breadcrumb navigation (list → detail with merged overview & history → execution detail); task cards embedded in chat messages (a scheduled task shows its frequency and next run, an event task shows the events it subscribes to as chips with a lightning icon, instead of an empty frequency row and a meaningless "next run: none"); frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)
-- **Continue Conversation**: One-click continue conversation from task execution detail, auto-copies history messages and summaries to a new session, inherits backend/agent/model/thinking effort; the continued session's title carries a timestamp prefix (`[MM-DD HH:MM]`) and is locked so the first message can't overwrite it
-- **Multi-Session Management**: Create, switch, archive independent sessions, swipe to switch; archived sessions recoverable via search, physical delete (irreversible) and archive retention auto-cleanup available; Ctrl/Cmd+Delete to quick-archive current session. The session list is a **single flat list** (no more "Pinned / Recent" sections) — pinned sessions still sort first and carry a corner marker, since "pinned ones on top" needs a marker, not a second grouping layer
-- **Session Tags**: Tag sessions with your own labels (bug fix, refactor, research…) — long-press a session (right-click on desktop) → "Set tags", pick or create labels in place, and the session row shows its tags. A filter bar above the session list narrows to one tag with a tap (titled, with a clear button; tags wrap and scroll past a height cap instead of being clipped out of reach). Tags are **scoped per project** (a "bug" in one project is unrelated to a "bug" in another — each has its own definition and count), with an optional global scope for cross-project labels like "follow up". Colors are derived from a hash of the tag name, so you never pick a color and the same label always looks the same — and the palette is calibrated per light/dark theme, so tag text stays readable across all 36 themes. In the dialog the chip *is* the toggle (selected = filled with that tag's own color), the delete control is always visible, and load/save/delete failures surface a message instead of failing silently
-- **Unread Badges Are Per-Item**: Unread counts item-by-item rather than by raw event count — three comments on one issue count as one unread, because what you want to know is "what has activity", not "how many things happened". Tasks count per execution record (so "I read run 3 but not run 5" is expressible). The task tab no longer clears its badge just because you switched to it — only opening an execution or pressing "Mark all read" clears it
-- **Swipe Session Toggle**: Toggle left/right swipe session switching in Settings → Chat; defaults to off to prevent accidental switches when scrolling wide content
-- **Wide-Screen Chat Toggle**: A button at the bottom of the wide-screen dock hides/shows the chat area — when hidden, the left pane takes the full width for focused work (files, terminal, etc.) and can be restored on demand
-- **Image Upload**: Upload images for AI conversation (multimodal)
-- **Disconnect Protection**: Messages persist immediately, no data loss on disconnect, 15s heartbeat keep-alive + 30s timeout auto-reconnect (live content updates during polling fallback); on reconnect, auto-checks session state to prevent UI stuck when AI completed during disconnect
-- **Auto Resume**: Automatically sends "continue" after Claude/CodeBuddy/Qoder/CodeWhale/MiMo/Pi/Copilot/Kimi exits Plan Mode
-- **Message Queue**: Messages queue when AI is busy, sent sequentially; queued messages are persisted to the database and dequeued in order for execution
-- **Message Clusters**: Auto-analyze chat history patterns, group semantically similar user messages into clusters, one-click add to Quick Send; Union-Find + Sørensen-Dice similarity, on-demand computation with progress tracking
-- **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; **message display modes** control the default view — Mixed (default: the most recent AI reply shows full text, older messages show summaries), Summary-only or Original-only; individual messages can still be toggled via the bottom banner; summary view also surfaces warning/error banners that were part of the reply; TTS playback also uses the summary
-- **Recommended Reply**: Automatically generates a next-step suggestion after AI reply; recommendation banner above input box, one-click to accept; aware of quick commands and project context
-- **Slash Commands**: Type `/` to open a unified autocomplete menu merging the agent's ACP commands with ClawBench built-ins — `cb-chatsearch` (search conversation history), `cb-task` (manage tasks), and `cb-usage` (token / cost usage statistics). Each row carries a left color bar + icon so agent commands (blue) and ClawBench commands (purple) are visually distinct; user messages show a matching command badge
-- **RAG Results Card**: RAG search results in AI responses rendered as purple-themed cards; click to open detail drawer, one-click resume conversation
-- **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion; thinking content lazy-loaded — after stream ends, only thumbnail is kept, full text loaded on demand when expanded
-- **Sub-Agent Grouping**: When an ACP agent spawns sub-agents (CodeBuddy Task/Agent, Claude/Codex child threads), the child's thinking, text and tool calls are folded into the parent Agent card instead of flooding the main conversation — collapsed as an "N steps" chip, expanding into the full nested trajectory (child thinking still lazy-loaded). Attribution uses the parent tool-call id the agent stamps on `_meta` (CodeBuddy flat key / Claude·Qoder nested key), so parallel sub-agents never get cross-attributed; orphaned or nested blocks fall back to flat rendering so no content is lost
-- **Session Progress Indicator**: Session drawer shows capsule progress bar with color-coded fill (blue/orange/red) based on usage
-- **ACP Context State Persistence**: Mode, thinking effort, and context usage auto-persisted to database; state survives server restarts
-- **Token Usage Detail**: The context-usage panel and message details show input/output/cache-read tokens, cache hits (with hit-rate hit/(hit+miss)), thinking tokens and credit sub-items that stay stable during streaming; tapping an assistant message opens message-level metadata (backend session ID, model, duration, trace identity). Usage comes from per-agent ACP `_meta` extensions normalized by the backend. ACP usage is adopted as the *latest full snapshot* — when multiple usage_update notifications arrive within one turn, the whole snapshot carrying token counters replaces the previous one, while bare cost-only notifications never overwrite, keeping the panel stable during streaming
-- **Usage Statistics**: A "Usage stats" tab in the wide-screen dock aggregates `chat_metadata` usage rows per project — an overview donut of input vs output that drills into cache composition on click, hit-rate cards, and per-metric charts (one chart per selected metric, switchable between bar/pie/trend) whose categories are the selected dimension combos; supports 24h/7d/30d/custom time ranges and model/backend/agent dimension filters, stacking vertically on narrow containers. Usage is kept in an independent ledger (redundant project/backend/agent columns, no cascade delete), so deleting a session or rewinding never erases tokens already spent
-- **Code Stats (Inventory + Delta)**: The stats tab has two more sub-pages alongside usage — **Code inventory** (`GET /api/git/cloc`, gocloc snapshot of the working tree: code/comment/blank lines per language, no git repo required, dependencies and build artifacts excluded, plus a second pass excluding whatever the project's own `.gitignore` excludes — tracked files stay counted even when a pattern matches) and **Code delta** (`GET /api/git/stats`, per-author added/deleted/net lines and commit counts over a time range, bucketed by committer date, with a daily trend chart filterable by author)
-- **CodeBuddy Local Skills in ACP Mode**: `~/.codebuddy/skills/` skills (SKILL.md with name + description) are auto-scanned and exposed as `/` slash commands in web sessions, with a skills summary injected into the system prompt — matching TUI mode behavior
+### 🤖 AI 智能体
+- **流式响应**：WebSocket 实时推送，思维过程、工具调用全程可见
+- **多 Agent 支持**：全能助手、编码专家、勤杂工等；自定义 Agent 可通过 `config/agents/*.yaml` 加载（非常规 Agent 的补充方式）
+- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode，会话级隔离
+- **深度思考档位**：支持按智能体选择思考深度（Low / Medium / High 等），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok/ZCode 十一后端支持，选择自动持久化
+- **模型选择模态框**：统一模型切换与思考深度选择，双 Tab 界面，搜索过滤，一键刷新模型列表（支持自动发现的智能体），长按设为默认模型
+- **模型选择持久化**：每个智能体的模型选择和思考档位自动保存到 localStorage，刷新/切换会话自动恢复
+- **任务**：通过 `/cb-task` 内置命令创建，定时任务按 Cron 自动执行、事件任务由 GitHub/GitLab 事件触发；独立标签页管理，3 级面包屑导航（列表 → 详情「概览+历史合一」→ 执行详情）；频率预设（每小时/每天/每周/每月）+ 自定义 Cron 表达式；任务卡片内嵌聊天消息（定时任务展示频率与下次执行，事件任务展示订阅事件芯片 + 闪电图标，不再渲染空白频率行与无意义的「下次执行: 无」）；执行级别已读追踪 + TTS 朗读；执行完成后自动摘要 + 完成通知（音效/震动/Toast）
+- **继续对话**：任务执行详情页可一键继续对话，自动复制历史消息和摘要到新会话，继承后端/智能体/模型/思考档位；续接会话标题带时间戳前缀（`[MM-DD HH:MM]`），并锁定标题避免被首条消息覆盖
+- **多会话管理**：创建、切换、归档独立会话，滑动切换；归档会话可通过搜索恢复，支持物理删除（不可恢复）和归档留存期自动清理；Ctrl/Cmd+Delete 快捷归档当前会话。会话列表是**单一扁平列表**（不再分「置顶 / 最近」两组），置顶会话仍排在最前并带三角标记——用户要的只是"置顶的在上面"，一个标记就够，不必为此多一层分组结构
+- **会话标签**：给会话打自己的标签（bug 修复 / 重构 / 调研……）——长按会话行（桌面右键）选「设置标签」，就地勾选或新建，会话行下方显示标签行；列表上方标签过滤栏一点即筛选（带标题与清除按钮，标签多时自动换行并在超出后滚动，不再被裁掉看不见）。标签**按项目隔离**（A 项目的「bug」和 B 项目的「bug」是两条独立记录，各自管理、各自计数），新建时可选「全局」作用域用于「待跟进」这类跨项目语义。颜色由标签名哈希派生，不用挑颜色，同名永远同色，且色板按明暗主题校准过对比度——标签文字在全部 36 个主题下都清晰可读。设置面板里标签胶囊本身就是选中控件（选中即实心填充该标签自己的颜色），删除按钮常驻可见，加载/保存/删除失败都会明确提示而不再静默
+- **未读按条目计数**：未读按**条目**而非事件条数——同一 issue 连来三条评论只算一条未读，因为用户想知道的是"哪些东西有动静"而不是"发生了几件事"。任务侧按执行记录逐条计数（能表达"第 3 次执行看过了、第 5 次没看"）。任务 tab 不再因为切到该 tab 就自动清零，只有打开执行详情或点「全部标为已读」才清
+- **滑动会话切换开关**：可在设置中开关聊天区域左右滑动切换会话，默认关闭避免滚动宽内容时误触
+- **宽屏聊天区切换**：宽屏 Dock 底部提供聊天区隐藏/显示按钮，隐藏后左侧面板占满宽度，专注文件/终端等工作区，需要时一键恢复
+- **图片上传**：支持上传图片与 AI 对话（多模态）
+- **断连保护**：消息立即落库，网络断开不丢失，15 秒心跳保活 + 30 秒超时自动重连（降级轮询时实时更新内容）；重连后自动检查会话状态，防止因断线期间 AI 完成但界面卡死
+- **自动恢复**：Claude / CodeBuddy / Qoder / CodeWhale / MiMo / Pi / Copilot / Kimi 退出 Plan Mode 后自动发送"继续"
+- **消息队列**：AI 忙碌时消息排队，依次发送；排队消息实时落库，队列按数据库记录按序出队执行
+- **消息聚类分析**：自动分析聊天历史消息模式，将语义相似的用户消息聚类分组，一键添加到快捷发送；Union-Find + Sørensen-Dice 相似度算法，按需计算带进度追踪
+- **自动摘要**：会话完成后自动生成最后一条助手消息的摘要；**消息展示模式**控制默认展示方式——混合模式（默认：最近一条 AI 回复展示原文，其余展示摘要）/ 摘要模式 / 原文模式，单条消息仍可通过底部横幅单独切换；摘要视图也会展示原回复中的 warning/error 横幅；TTS 朗读也使用摘要
+- **推荐回复**：AI 回复完成后自动生成下一步建议，输入框上方展示推荐横幅，一键采纳填入输入框；支持快捷指令感知和项目上下文感知
+- **斜杠命令**：输入 `/` 打开统一的自动补全菜单，合并智能体的 ACP 命令与 ClawBench 内置命令——`cb-chatsearch`（搜索历史对话）、`cb-task`（管理任务）、`cb-usage`（查看 token 用量）。每条命令左侧带色条 + 图标，智能体命令（蓝色）与 ClawBench 命令（紫色）视觉区分；用户消息显示对应的命令徽章
+- **RAG 结果卡片**：AI 回复中的 RAG 搜索结果渲染为紫色卡片，点击弹出详情抽屉，可一键恢复对话
+- **思维流内联显示**：思考过程流式内联展示，完成后自动折叠为可点击芯片；思考内容惰性加载，流结束后仅保存缩略信息，展开时按需加载全文
+- **子智能体内容分组**：ACP 智能体派生子智能体时（CodeBuddy Task/Agent、Claude/Codex 子线程），子智能体的思考/文本/工具调用折叠进发起它的父 Agent 卡片，不再平铺淹没主对话——折叠态显示"N 步"胶囊，展开递归渲染完整子轨迹（子思考仍惰性加载）。归属用智能体在 `_meta` 上打的父工具调用 id 精确判定（CodeBuddy 扁平键 / Claude·Qoder 嵌套键），并行子智能体不会互相错配；孤儿或嵌套子块回退扁平渲染，不丢内容
+- **会话进度指示**：会话抽屉显示胶囊进度条，颜色随用量变化（蓝/橙/红）
+- **ACP 上下文状态持久化**：模式、思考档位、上下文用量自动持久化到数据库，服务器重启后状态不丢失
+- **Token 用量明细**：上下文用量面板与消息详情展示输入/输出/缓存读、缓存命中（命中率 hit/(hit+miss)）、thinking token 与信用额度等分项，流式过程中稳定显示不闪烁（ACP usage 采用「最新完整快照」整体采用语义——每轮内多次 usage_update 通知，带 token 计数的完整快照整体替换，纯 cost 裸通知永不覆盖，保证面板稳定）；点击助手消息可查看消息级元数据（后端会话 ID、模型、耗时、追踪标识），用量来源为各 Agent ACP `_meta` 扩展的归一化解析
+- **用量数据统计**：Dock 新增「数据统计」页签——按项目聚合 `chat_metadata` 用量行，用量总览（input vs output 环形饼图，点击 input 扇区下钻缓存命中构成 + 命中率卡）、按指标拆分的图表（每个选中指标一张，可在直方图/饼图/时间趋势间切换，类目为所选维度的组合）；支持 24h/7d/30d/自定义时间范围与 model/backend/agent 维度筛选，移动端窄容器自动纵向堆叠。用量行是独立台账（冗余项目/后端/智能体列、不级联删除），删除会话或回溯不会抹掉已消耗的 token
+- **代码量统计（存量 + 增量）**：数据统计页签另含两个子页——**代码存量**（`GET /api/git/cloc`，gocloc 对当前工作区做快照：按语言统计代码/注释/空白行与文件数，不要求 Git 仓库，自动排除依赖与构建产物，并按项目自身 `.gitignore` 再排除一层——已跟踪文件即使命中规则也保留）与**代码增量**（`GET /api/git/stats`，按时间范围统计各作者的新增/删除/净增行数与提交数，按 committer date 分桶，附可按作者过滤的每日趋势图）
+- **CodeBuddy ACP 模式本地技能**：自动扫描 `~/.codebuddy/skills/` 的 `SKILL.md`（name + description），技能以 `/` 斜杠命令形式出现在 Web 会话中，同时技能摘要注入系统提示词——与 TUI 模式行为一致
 
-### 🤖 AI Conversation
-- **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status
-- **Extended Thinking**: Complex tasks auto-trigger extended thinking, reasoning visible in real time
-- **File Path Navigation**: Clickable file paths in AI responses, with line range navigation
-- **Code Link Preview**: With "File link preview" enabled, file paths in chat messages support the same code-slice floating preview — click a path for a card, `Ctrl/Cmd+Click` to pin, or tap on touch devices for a bottom sheet, letting you skim AI-referenced code without opening the file
-- **Localhost URL Navigation**: localhost URLs in AI responses (e.g., http://localhost:3000) are auto-detected with an open button; in App mode, port mapping is auto-registered and the URL opens via WebView with zero manual config
-- **Quick Send**: Preset common commands (continue, build, commit, etc.) with drag reorder; an input-bar trailing icon injects the command into the input box for editing before sending; input placeholder hints at the current quick send; message clusters analysis discovers recurring patterns and adds them
-- **Input Draft & Attachment Restore**: When switching sessions, unsent input text, attached files and staged quotes are snapshotted and restored when you switch back — no lost input from accidental session switches
-- **Quote & Ask**: Select code or text, ask AI directly, auto-attaches context
-- **Interactive Question Card**: The AI can ask structured questions mid-conversation (an `<ask-question>` block that the backend converts into an `AskUserQuestion` tool call); the frontend renders it as an interactive option card — one card per question with selectable options (single- or multi-select), an optional free-text supplementary field, a "Recommend" button that asks the AI which option it suggests, and a Submit button that sends the chosen labels back as your reply. In single-select mode, tapping the already-selected option deselects it, so a mis-tap can be undone without being forced to pick another option (Submit re-disables until you answer again). Answers **survive re-renders** — the card body is injected HTML, so switching away while the AI replies, remounting the list, or a foreground/background history reload used to wipe what you had typed and ticked; your supplementary text and selections now persist, and an already-submitted card does not revert to answerable
-- **Current Directory Attachment**: Chat input supports attaching current directory context, AI auto-gets directory structure
-- **Drag & Paste Upload**: Drag files onto chat area or paste clipboard content (screenshots/files), auto-upload and attach as tags without opening the attach drawer
-- **Compact Context**: When ACP session context usage ≥ 75%, a "Compact context" button appears in the session-info bar, one-click sends `/compact` command to free context space
-- **Unread Badge**: Chat panel icon shows unread message count
-- **Attach Drawer Footer**: Selected files shown as persistent scrollable tags at the bottom of the attach drawer, with direct removal support
-- **Auto-Approve Indicator**: Mode chip turns green when auto-approve is enabled, providing visual feedback for ACP permission mode
-- **Reset Session**: A "Reset session" button on AI error/warning banners restarts a stuck agent process (e.g., a tool approved but never executed); the external session ID and chat history are preserved, context is restored on reconnect and the last user message is re-sent
-- **Completion Popup**: When a session or task finishes while the chat UI is not in the foreground (you're on another tab or a different session), an Android-notification-style card slides in from the top — showing the full summary, project name/path, the last user message and the agent backend icon, with a built-in quick input to follow up, a mark-as-read button and a jump button to the session/task detail. Sending a follow-up message or tapping mark-as-read clears the unread badge for that session (via `/api/ai/chat/read`, project-aware so cross-project popups work) and shows a success toast; tapping the backdrop closes the popup (ignored within the first second to prevent accidental taps). The user message renders as a quote-style block that expands on tap. External-project popups show a footer divider with the project name/path. Multiple completions queue up and show one at a time; replaces the old in-UI toast
-- **Scroll Position Retention**: Scrolling position is kept while you read older messages within a session (loading more history mid-session doesn't jump the view); switching sessions/projects always returns to the bottom (tab switches rely on the browser's native scroll retention). After sending a message, if scrolling has stopped, the view unconditionally snaps back to the bottom
-- **Per-Project Session Restore**: Each project remembers the session you last opened (keyed by project root), and reopens it automatically on entry — falling back to default behavior when that session is gone. Jumping between projects doesn't lose your place
-- **Rewind (Backtrack)**: A rewind button on assistant messages (next to Fork) truncates the session in place back to that message — deleting everything after it (including summaries and RAG indexes) and restarting the AI session, while pre-filling the input box with the most recently removed user question for re-editing. Disabled on the last message and hidden while streaming; guarded by a confirmation dialog — ideal for restarting from a point where the AI went astray while keeping prior context
-- **Fork Context Budget**: Forking and rewinding inject the prior conversation into a fresh AI session, so the history is compressed to fit a character budget (`chat.fork_context_budget`, default 100000): large tool-input fields (`content`, `old_string`, `code`…) are first replaced with placeholders while keeping locators, then **every user message is kept** (newest first; one that doesn't fit is truncated rather than dropped, since a partial instruction still constrains the model) while assistant entries fill whatever room is left and are skipped when they don't fit. Measured on a real installation, user messages average ~51 characters against ~12 KB for assistant entries, so keeping all of them costs almost nothing. The new session gets the skeleton of the conversation rather than a diluted full dump
-- **Conversation Index Search**: The user-message index drawer has a search box at the top — pure client-side instant filtering over the fully loaded message list, matching message body text and attachment names (Windows backslash normalized), with matched characters highlighted via `<mark>`; the count badge shows "hits/total" and an empty state appears when nothing matches
-- **Auto-Login on Session Expiry**: When the session cookie (7-day MaxAge) expires, every `/api/*` request is rejected with 401 — `window.fetch` is wrapped once so that any 401 whose body is exactly `{ error: "unauthorized" }` (the unique signature of middleware.Auth) triggers a full-page redirect to `/login`, re-running the mounted auth flow (login page on web; Android App mode auto-reauthenticates with stored credentials)
-- **Auto Clear Unread**: The current session is marked read automatically when execution finishes or when you switch back to the foreground — unread badges exist only for sessions you're not looking at, and clear the moment you return
+### 🤖 AI 对话
+- **工具调用可视化**：名称、参数、执行结果实时展示，成功/失败状态一目了然
+- **深度思考**：复杂任务自动触发 extended thinking，推理过程实时可见
+- **文件路径跳转**：AI 回复中的文件路径可点击跳转，支持行范围导航
+- **代码链接预览**：开启「文件链接预览」设置后，聊天消息中的文件路径同样支持代码切片浮层预览——点击路径弹出卡片、`Ctrl/Cmd+Click` 固定、触摸设备点出底部抽屉，无需打开文件即可快速浏览 AI 引用的代码片段
+- **Localhost URL 跳转**：AI 回复中的 localhost URL（如 http://localhost:3000）自动识别并添加打开按钮，App 模式下自动注册端口映射并通过 WebView 打开，无需手动配置
+- **快捷发送**：预设常用指令（继续、编译、提交等），支持拖拽排序，输入框行尾图标一键加入输入框（便于编辑后再发送），输入框占位提示当前快捷指令；消息聚类分析一键发现常用模式并添加
+- **输入草稿与附件恢复**：切换会话时未发送的输入文本、已选附件和引用提问自动保存，切回时恢复，避免误切会话丢失输入内容
+- **引用提问**：选中代码或文本，直接向 AI 提问，自动附带上下文
+- **交互式提问卡**：AI 可在对话中提出结构化问题（`<ask-question>` 块由后端转换为 `AskUserQuestion` 工具调用），前端渲染为交互式选项卡片——每个问题一张卡，选项可单选或多选，另有可选的自由文本补充栏、"推荐"按钮（让 AI 说出它建议选哪个）和"提交"按钮（把所选标签作为回复发回）。单选模式下再次点击已选中的选项即取消选中，误触后可回到未选状态而无需被迫改选其他项（提交按钮随之重新禁用，直到重新作答）。已填的答案会**跨重渲染保留**——切出去期间 AI 回复、列表重挂载、或前后台切换触发历史重载时，补充信息与勾选都不会丢，已提交状态也不会退回可提交
+- **当前目录附加**：聊天输入支持附加当前目录上下文，AI 自动获取目录结构
+- **拖放/粘贴上传**：拖拽文件到聊天区域或粘贴剪贴板文件（截图/文件），自动上传并附加为标签，无需打开附件抽屉
+- **压缩上下文**：ACP 会话上下文用量 ≥ 75% 时，会话信息栏显示「压缩上下文」按钮，一键发送 `/compact` 命令释放上下文空间
+- **未读徽章**：聊天面板图标显示未读消息数
+- **附件抽屉已选文件**：附件抽屉底部常驻显示已选文件标签，支持横向滚动和直接移除
+- **自动审批指示**：模式芯片在启用 auto-approve 时变为绿色，直观显示权限模式
+- **重置会话**：AI 错误/警告横幅上提供"重置会话"按钮，会话卡死（如工具已批准但未执行）时一键重启 AI 进程；保留外部会话 ID 与聊天历史，重连后自动恢复上下文并重发最后一条用户消息
+- **完成弹窗**：会话或任务完成且聊天界面不在前台时（在看其他 Tab 或当前会话不是目标会话），顶部滑入 Android 通知风格的完成卡片——展示摘要全文、项目名/路径、最近一条用户消息和智能体图标，内置快捷输入框可直接追问，带标记已读按钮和跳转按钮（跳转会话/任务执行详情）；发送追问或点标记已读会调用 `/api/ai/chat/read` 清空该会话未读（独立端点、支持外部项目路径，跨项目弹窗也能标记已读），发送成功弹确认气泡，点击空白处关闭弹窗（展示不足 1 秒防误触）；用户消息以引用式样块展示，可点击展开；外部项目弹窗显示项目名/路径 Footer 区隔。多个完成事件排队依次展示，取代了旧的会话结束 Toast 气泡
+- **滚动保持机制**：向上翻旧内容时滚动位置保留（同会话中途加载旧消息不跳屏），会话/项目切换永远滚到底部；Tab 切换靠浏览器原生保留位置。发送消息后停止滚动则无条件拉回底部
+- **按项目恢复上次会话**：每个项目独立记住最近打开的会话，进入项目自动恢复；会话失效时自动回退默认逻辑
+- **消息回溯（Rewind）**：助手消息上的回溯按钮（位于 Fork 旁）可将会话原址截断到该消息——删除其后所有消息（含摘要/RAG 索引）并重启 AI 会话，被删除的最近一条用户问题自动回填输入框供重新编辑发送。最后一条消息禁用、流式中不显示；操作前有确认对话框，适合从 AI 走偏处重来且保留此前上下文
+- **分叉/回溯的上下文预算**：分叉与回溯要把此前对话注入一个全新的 AI 会话，因此历史会先压缩到字符预算内（`chat.fork_context_budget`，默认 100000）：先把 tool input 里 `content`/`old_string`/`code` 等大字段替换为占位符（保留定位字段），再**保留全部用户消息**（从最新往回；放不下的截断而非丢弃——一条残缺的指令仍然约束模型），助手条目随后填充剩余空间、放不下就跳过。实测用户消息平均约 51 字符而助手条目平均约 12 KB，因此"保留全部用户消息"几乎不占预算。新会话拿到的是对话骨架而不是被稀释的全文
+- **对话索引搜索**：用户消息索引抽屉顶部带搜索框——纯前端即时过滤已全量加载的消息列表，匹配消息正文与附件名（Windows 反斜杠归一），命中字符以 `<mark>` 高亮，计数徽章显示「命中/总数」，无匹配显示空态
+- **登录过期自动跳转**：会话 cookie（7 天）过期后所有 `/api/*` 请求被 401 拒绝——前端统一包装 `fetch`，凡响应体恰为 `{ error: "unauthorized" }` 即整页跳转 `/login` 重新走挂载鉴权流（Web 显示登录页，Android App 模式沿用已存密码自动重登）
+- **未读自动清除**：当前会话执行结束或切回前台时自动标记已读——未读徽标只为"用户没在看"的会话保留，回到会话即消失
 
-### 🖼️ Media Preview
-- In-app preview of images, audio, video
-- Lightbox zoom, fullscreen view, support for pinch-zoom and drag
+### 🖼️ 媒体预览
+- 图片、音频、视频应用内直接预览
+- 灯箱放大、全屏查看，支持缩放和拖拽
 
-### 📄 Office Document Preview
-- **Word (.docx)**: Native document rendering with table and image support
-- **Excel (.xlsx/.xls)**: Spreadsheet preview with multi-sheet switching, toolbar auto-hidden
-- **PowerPoint (.pptx)**: Slide-by-slide preview with pinch-to-zoom (mobile) and Ctrl+scroll zoom (desktop)
-- **Loading & Error Handling**: Skeleton animation on load; retry and download buttons on failure
-- **AI Integration**: Select text from Office documents and one-click ask AI, file path context auto-attached
+### 📄 Office 文档预览
+- **Word (.docx)**：原生渲染文档内容，支持表格、图片排版
+- **Excel (.xlsx/.xls)**：预览表格数据，支持多 Sheet 切换，自动隐藏工具栏
+- **PowerPoint (.pptx)**：幻灯片翻页预览，支持触摸双指缩放（移动端）和 Ctrl+滚轮缩放（桌面端）
+- **加载与容错**：加载中显示骨架动画，失败时提供重试和下载按钮
+- **与 AI 对话集成**：选中 Office 文档中的文本可一键向 AI 提问，自动附带文件路径上下文
 
-### 🔊 TTS Speech Synthesis
-- Auto-summarize and read AI replies aloud, listen while reading
-- **5 TTS Engines**: Edge TTS (free, native Go implementation, no external dependency), MiniMax (best quality), Piper / Kokoro / MOSS-Nano (local offline)
-- **Summarization Backends**: simple (text-only cleanup) and api (OpenAI/Anthropic compatible) modes
-- See [TTS Deployment Guide](docs/TTS.en.md)
+### 🔊 TTS 语音朗读
+- AI 回复自动总结后朗读，边听边看
+- **5 种 TTS 引擎**：Edge TTS（免费，原生 Go 实现，无外部依赖）、MiniMax（音质最佳）、Piper / Kokoro / MOSS-Nano（本地离线）
+- **总结后端**：simple（纯文本清洗）和 api（OpenAI/Anthropic 兼容）两种模式
+- 详见 [TTS 语音合成部署指南](docs/TTS.md)
 
-### 🎤 Voice Input (STT)
-- Microphone recording → ASR recognition → text filled into chat input, no typing needed on mobile
-- **Dual Mode**: Streaming (WebSocket real-time incremental + final full recognition) and non-streaming (one-shot recognition after recording)
-- **vLLM Whisper Engine**: Connect via OpenAI-compatible endpoint, supports local deployment
-- **Shortcut Key**: Configurable shortcut key (default F9) to toggle recording
+### 🎤 语音输入（STT）
+- 麦克风录音 → ASR 识别 → 文字填入输入框，移动端无需打字
+- **双模式**：流式（WebSocket 实时增量识别 + 最终全量）和非流式（录音完成后一次性识别）
+- **vLLM Whisper 引擎**：通过 OpenAI 兼容端点接入，支持本地部署
+- **快捷键触发**：可配置快捷键（默认 F9）切换录音
 
-### 📂 Git Integration
-- Project-level / file-level commit history browsing
-- **Git Branch Graph**: Vertical branch topology, intuitive branch relationships
-- **Git Diff View**: View changes relative to HEAD, character-level highlighting
-- Commit detail view (author, time, commit message)
-- Working tree changes view (staged / unstaged files)
-- **3-Tab Management**: Worktree / Branches / Tags tabs for unified management, default tab persisted to localStorage
-- **Swipe to Delete**: Branches, worktrees, and tags support swipe-to-delete with safety guards (current branch, default branch, and current worktree cannot be deleted)
-- **Tag Management**: Browse project tags, click a tag to checkout, auto-prompt for dirty working tree
+### 📂 Git 集成
+- 项目级 / 文件级提交历史浏览
+- **Git 分支图**：纵向分支拓扑图，直观展示分支关系
+- **Git Diff 视图**：查看文件相对 HEAD 的变更，字符级高亮
+- 提交详情查看（作者、时间、提交信息）
+- 工作树变更视图（已暂存 / 未暂存文件）
+- **三标签页管理**：工作树 / 分支 / 标签三标签页统一管理，默认标签持久化到 localStorage
+- **滑动删除**：分支、工作树、标签支持左滑删除，安全保护（当前分支/默认分支/当前工作树不可删除）
+- **标签管理**：浏览项目标签，点击标签可 Checkout，脏工作树自动弹窗处理
 
-### 🔗 GitHub / GitLab Integration
-- **Forge Panel with Four Tabs**: A single dock panel holds **Activity** (an inbox of unread items across issues, PRs and pipelines, with unread / read / all views — the default landing spot), Issues, Merge Requests and Pipelines. Each tab's empty state shows its own icon, taken from the same registry as the tab label so the two can't drift
-- **Issue & PR/MR Browsing**: Type and state filters (Open/Closed/All), a "mine" filter (assigned to me / created by me / awaiting my review, identity resolved from the token), server-side search, and infinite scroll. The detail view shows the body plus a comment timeline through the same Markdown pipeline used by chat (path jumps, code-link preview, double-click copy & quote)
-- **Repository Binding**: Auto-detects and binds from the project's git remotes (official hosts bind automatically, self-hosted instances need host confirmation), with a manual URL fallback. The binding travels with the project. Self-hosted instances work over **both http and https** (a scheme entered with the credentials is remembered and used; a bare host falls back to https) — the host stays the identity key, so the same instance reached either way is still one repository
-- **Change Awareness & Unread**: A background poller detects repository changes and drives the tab's unread badge. Six event classes (opened / closed / merged / reopened / commented / CI finished) each have their own notification toggle; the unread count is independent of those toggles. Unread counts **items, not events** — three comments on one issue are one unread, and you can mark a single item read or clear the whole repo
-- **CI Run Browsing & PR Cross-Links**: The CI finished event comes with a pipelines list and detail view (status filter defaulting to **all** — it is a run history, so hiding successes by default makes the tab look empty; run title, branch, commit, duration) so a failed run can be inspected without leaving the app. Titles come from the *run* (commit message / manual run name), not the workflow name — otherwise ten runs would all be titled "CI". Both directions of the pipeline↔PR link are provided: a run's detail links to its pull request, and a PR's detail expands to show that change's pipeline runs (loaded on demand, answering "did this change pass CI?" — the path you take while reviewing)
-- **Event-Triggered Tasks**: A task can use "trigger: event" and subscribe to `issue.opened`, `pr.merged`, `pipeline_done`, etc. When an event arrives the AI task fires automatically with a read-only event-context block prepended to the prompt (repo, number, title, URL, author, comment body — conditionally rendered per event type), and the execution record deep-links back to the source issue/PR. Includes a global pause switch and suppression of self-authored events (so the AI writing back to a repo can't trigger itself). Pipeline events are deliberately exempt from that suppression — a failed CI run caused by the AI's own push is exactly the case you want the repair task to handle, so the actor is passed through as an `ACTOR_IS_SELF` flag and the prompt decides
-- **Quote to Chat**: The detail view's quote button stages the issue/PR as a URL attachment (chip shows `owner/repo#123`); select extra text if you like, then let the AI analyze it. The body also supports double-click copy and selection-to-quote
-- **Credentials & Safety**: Tokens are stored per `(platform, host)` (self-hosted GitLab instances are isolated); the config API returns only presence, never plaintext, plus each host's scheme (how it's reached, not how it's authenticated). Self-hosted instances can enable "skip TLS verification" for self-signed certificates (off by default, carries security risk). Private-network and self-hosted hosts are **not** blocked server-side — binding them shows a warning in the dialog instead, because a hard block made an internal GitLab impossible to use; automatic binding still applies only to official hosts
+### 🔗 GitHub / GitLab 集成
+- **forge 面板四个页签**：一个 Dock 面板内含**动态**（跨 issue/PR/流水线的收件箱，支持未读/已读/全部三种视图，默认落点）、议题、合并、流水线。每个页签空状态显示它自己的图标，图标取自与页签标签同一份注册表，两者不会漂移
+- **Issue 与 PR/MR 浏览**：类型与状态筛选（Open/Closed/All）、「跟我相关」（分配给我 / 我提的 / 待我 review，身份从 token 自动识别）、服务端搜索、滚动分页；详情展示正文 + 评论时间线，复用聊天同款 Markdown 渲染（路径跳转、代码链接预览、双击复制引用）
+- **仓库绑定**：优先从项目 git remote 自动识别并绑定（官方 host 自动绑定，自建实例需确认 host），也支持手动填 URL；绑定关系随项目走。自建实例**同时支持 http 与 https**（随凭据填写的协议会被记住并使用，只填主机名则回落到 https）——host 仍是身份键，同一实例两种协议访问到的仍是同一个仓库
+- **变化感知与未读**：后台轮询仓库变化，标签页显示未读徽标；六类事件（新开 / 关闭 / 合并 / 重开 / 评论 / CI 完成）可分别开关通知，未读计数独立于通知开关。未读按**条目**计数——同一 issue 的三条评论算一条未读；可单条标记已读，也可整仓库一键清除
+- **动态页签**：聚合所有条目并可在未读/已读/全部之间切换（默认未读），带行级已读标记与「有新评论」这类事件原因文案。没有已读视图时，点开一行只是本地置灰、下次加载该行就彻底消失，用户无法回看自己读过什么
+- **CI 运行浏览与 PR 双向关联**：CI 完成事件配套流水线列表与详情（状态筛选默认**全部**——它本质是运行历史，默认藏起成功运行会让页签看起来是空的；含运行标题、分支、commit、耗时），失败的 run 不必离开 App 就能查看。标题取**每次运行**的标题（commit message / 手动输入的 run 名）而非 workflow 名——否则十条运行全叫「CI」无法区分。流水线 ↔ PR 两个方向都能跳：从运行详情进关联 PR，从 PR 详情折叠展开该变更的流水线（按需加载，回答「这个变更通过 CI 了吗」——这是审查时的主路径）
+- **事件触发任务**：任务可选「触发方式：事件」，订阅 `issue.opened`、`pr.merged`、`pipeline_done` 等事件；事件到达自动唤起 AI 任务，prompt 前置只读的事件上下文（仓库、编号、标题、链接、作者、评论正文等按事件类型条件注入），执行记录可深链回原始 issue/PR。内置全局暂停开关与 AI 自产事件抑制（防止 AI 写回仓库又触发自己）；**流水线事件刻意豁免该抑制**——AI 自己推的代码让 CI 失败，正是最该让修复任务跑起来的场景，因此 actor 以 `ACTOR_IS_SELF` 变量透传，由 prompt 自行判断
+- **引用到对话**：详情页 header 的引用按钮把 issue/PR 作为 URL 附件带入聊天（chip 显示 `owner/repo#123`），可再划取文本补充，一键让 AI 分析该 Issue/PR；正文也支持双击复制与划取引用
+- **凭据与安全**：token 按 `(平台, host)` 隔离存储（自建 GitLab 各自独立），配置接口只回传存在性、不回传明文，另附各 host 的协议（仅"怎么连"、非"怎么认证"）；自建实例可开启「跳过 TLS 校验」支持自签名证书（默认关，有安全风险）。内网/自建 host **服务端不再拦截**，改为在绑定弹窗里提示——硬拦截会让内网自建 GitLab 完全无法使用；自动绑定仍只限官方 host
 
-### 🔀 SSH Tunnel Port Mapping
-- **Remote Development**: Access server local ports directly from Android App
-- **Protocol Transparent**: HTTP, HTTPS, WebSocket, SSE, gRPC — no URL rewriting needed
-- **Custom Target Host**: Map to any reachable host (LAN/remote, not limited to 127.0.0.1)
-- **Auto Port Assignment**: Automatically allocates local ports when mapping the same target port to different hosts
-- **Port Editing**: Modify existing port mapping configurations
-- **Auto-Open Localhost URLs**: localhost URLs appearing in chat (e.g., web services started by AI) can be opened with one tap — port mapping is auto-registered and the URL opens via WebView in App mode
-- **Tunnel Health Check & Reconnect**: Auto-checks tunnel health before opening localhost URLs; reconnects if unhealthy; one-tap reconnect for disconnected tunnels
+### 🔀 SSH 隧道端口映射
+- **远程开发**：在 Android App 上直接访问服务器本地端口
+- **全协议透明**：HTTP、HTTPS、WebSocket、SSE、gRPC，无需 URL 重写
+- **指定目标地址**：支持映射到任意可达主机（局域网/远程主机，不仅限 127.0.0.1）
+- **自动端口分配**：同一目标端口映射到不同主机时自动分配本地端口
+- **端口编辑**：支持修改已注册的端口映射配置
+- **Localhost URL 自动打开**：聊天中出现的 localhost URL（如 AI 启动的 Web 服务），App 模式下一键自动注册端口映射并通过 WebView 打开
+- **隧道健康检测与重连**：打开 localhost URL 前自动检测隧道健康状态，异常时自动重连；断开的隧道支持一键重连
 
-### 💻 Web Terminal
-- **Interactive Terminal**: PTY + WebSocket + xterm.js, operate server terminal directly in browser
-- **Concurrent Sessions**: Each client gets an independent PTY session, no interference
-- **Multi-Tab Management**: Close all tabs, empty state with create button, dock icon shows active session count; background tabs show an unread dot when new output arrives
-- **Three-Mode Gesture System**: Browse (default, touch scroll), Gesture (Termius-style swipe→arrow keys, hold-to-repeat, double-tap→Tab, pinch-to-zoom), Selection (drag-to-select text + floating copy bar)
-- **Virtual Key Toolbar**: Color-coded key groups (modifiers, shortcuts, navigation, arrows, actions), three-state modifier toggle
-- **Key/Symbol Configuration**: Full-screen configuration drawer with keys and symbols dual tabs; supports tap-to-add, drag-to-reorder, gesture mode auto-hides certain keys; configuration persisted to database
-- **Symbol Bar**: Expandable symbol input row with 19 high-frequency terminal symbols, smart sorting using exponential decay (balances frequency and recency)
-- **Selected Text Auto-Copy**: Selected terminal text automatically copied to clipboard with toast feedback
-- **Quick Commands**: CRUD management of common commands with drag reorder, hidden flag, auto-execute (auto-run on every connect/reconnect)
-- **Android Volume Keys**: Volume up/down remapped to arrow keys when terminal is open in the app
-- **Android Soft Keyboard Stability**: Read-only mode prevents soft keyboard popup; tapping terminal avoids keyboard collapse-then-reopen flicker
-- **Terminal Theme Switching**: 157 xterm-theme themes available, `auto` mode follows app dark/light theme
-- **Terminal Input Drawer**: Mobile multi-line text input with clipboard paste support
-- See [Web Terminal User Guide](docs/TERMINAL.en.md)
+### 💻 Web 终端
+- **交互式终端**：基于 PTY + WebSocket + xterm.js，浏览器内直接操作服务器终端
+- **多会话并发**：每个客户端拥有独立 PTY 会话，互不干扰
+- **多标签管理**：支持关闭所有标签页，空状态显示创建按钮，Dock 图标显示活跃会话数；标签页后台产生新输出时显示未读圆点提示
+- **三模式手势系统**：浏览（默认，支持触摸滚动）、手势（Termius 风格滑动→方向键、长按重复、双击→Tab、捏合缩放）、选择（拖拽选择文本+浮动复制栏）
+- **虚拟按键栏**：按类型分组的颜色编码按键（修饰键、快捷键、导航键、方向键、操作键），修饰键支持三态切换
+- **按键/符号配置**：全屏配置抽屉，按键和符号双标签页，支持点选添加、拖拽排序、手势模式自动隐藏部分按键，配置持久化到数据库
+- **符号栏**：可展开的符号输入行，19 个终端高频符号，过渡动画
+- **选中文本自动复制**：选中终端文本自动复制到剪贴板，Toast 反馈
+- **快捷命令**：CRUD 管理常用命令，支持拖拽排序、隐藏、自动执行（每次连接自动运行）
+- **Android 音量键**：App 内终端打开时，音量键映射为方向键上下
+- **Android 软键盘稳定性**：只读模式下阻止软键盘弹出，点击终端时避免键盘收起再弹出的闪烁
+- **终端主题切换**：157 个 xterm-theme 主题可选，支持 `auto` 模式跟随 App 深色/浅色主题自动切换
+- **终端输入抽屉**：移动端多行文本输入，支持从剪贴板粘贴填充
+- 详见 [Web 终端使用指南](docs/TERMINAL.md)
 
-### 🌐 Internationalization
-- Chinese / English bilingual UI, auto-detect system language
+### 🌐 国际化
+- 中文 / 英文双语界面，自动检测系统语言
 
 ### 📱 Android App
-- Native bridge integration: auto-login, file download (including POST archive downloads), port mapping management
-- Static HTML login page: shown on first launch or connection failure, matches web UI visual style
-- SSH password management, server dialog
-- WebView connection protection: WebView hidden during connection attempts to prevent browser error page flash
-- **Unified Hardware Back**: Android physical/predictive back is delegated to the JS layer and routed through the app's unified back state machine (close overlay → exit edit → file history → jump origin → parent dir); nothing to go back to triggers a double-back-to-exit hint (second press within 2s exits)
-- **Self-Update**: One-click version check, binary download, and service restart from the Web UI; disconnect recovery with polling fallback; version skip option. Downloads are verified against the npm registry's ECDSA signature (trust anchored on npmjs keys, independent of whichever mirror served the metadata) and the declared integrity hash — a hash **mismatch blocks** the upgrade, while anything merely *unverifiable* (missing signature, keys unreachable, no integrity field) proceeds only after you confirm, and the server re-checks that reason fingerprint so a stale confirmation can't be reused
-- **Android Version Mismatch Detection**: before the WebView loads, the native layer compares the APK version with the server version reported by `/api/health`; when the APK is older it shows a blocking native dialog offering APK download or a force-skip (never remembered, so it re-prompts each launch)
-- **Floating Status Window**: System-level overlay capsule (Android 8.0+ `TYPE_APPLICATION_OVERLAY`) that shows real-time session stats (running / pending-approval / unread counts) via the background WebSocket channel. **Only appears when there's something to show** — an active session, a pending approval, unread messages or a running task; it hides once everything clears rather than leaving an idle capsule on screen. Draggable with edge-snapping and position persistence; tap expands a grouped session-list panel (per-project headers with name+path, status dots + unread badges) to jump straight into a session. Toggle + `SYSTEM_ALERT_WINDOW` permission flow in Settings
-- **Live Updates (Dynamic Island)**: Android 16 live-update notifications surface session state on the status bar and lock screen — a single-line status-bar chip (pending approvals > unread > running, highest priority only, auto-removed when empty) plus an expanded-by-default card on the lock screen / notification drawer (full three-group counts). Shares the same overview data as the floating window, so the numbers always agree. Independent opt-in toggle in Settings (on by default); requires the system "Live Updates" notification permission, with graceful fallback to a plain ongoing notification
-- **Full Android i18n**: Native Android UI is fully bilingual (English default + Chinese mirror) — hardcoded Chinese in login/connection errors and notification text has been moved to string resources, with a three-layer language resolution (in-app choice > cookie > system locale)
+- 原生桥接集成：自动登录、文件下载（支持 POST 下载压缩包）、端口映射管理
+- 静态 HTML 登录页：首次启动或连接失败时显示，与 Web 端视觉风格统一
+- SSH 密码管理、服务器对话框
+- WebView 连接保护：连接期间隐藏 WebView，防止浏览器错误页闪现
+- **统一物理返回键**：Android 物理/预测返回键委托给 JS 层，汇入 App 统一返回状态机裁决（关浮层 → 退编辑 → 文件历史 → 跳转来源 → 父目录）；无可返回时双击退出保护（2 秒内第二按才退出）
+- 终端音量键映射：打开终端时音量键作为方向键
+- **应用自升级**：Web 端一键检查版本、下载二进制、重启服务；断线恢复轮询兜底；版本跳过选项。下载会校验 npm registry 的 ECDSA 签名（信任锚固定在 npmjs 的 keys，与提供元数据的镜像无关）与声明的 integrity 哈希——**哈希不匹配直接阻断**，而"无法验证"（缺签名、keys 不可达、无 integrity 字段）只在用户确认后放行，且服务端会重新比对原因码指纹，避免复用陈旧的确认
+- **Android 版本不匹配检测**：加载 WebView 之前，原生层对比 APK 版本与 `/api/health` 返回的服务器版本；APK 落后时弹出阻塞式原生弹窗，提供「下载 APK」与「强制跳过」（不记忆跳过，每次启动都会重新提示）
+- **桌面悬浮状态窗**：系统级悬浮胶囊（Android 8.0+ `TYPE_APPLICATION_OVERLAY`），通过后台 WebSocket 通道实时显示会话统计（执行中 / 权限待审 / 未读计数）；**只在有事时才显示**——后台有活跃会话、待审批、未读或运行中的任务时出现，全部清空即隐藏，不常驻空胶囊；可拖动贴边并记住位置；点击展开按项目分组的会话列表面板（项目分组头显示项目名+路径，状态点 + 未读徽章），点击会话行直达对应会话；设置中提供开关和 `SYSTEM_ALERT_WINDOW` 权限申请流程
+- **Live Updates 实时状态（灵动岛）**：Android 16 实时更新通知把会话状态带上状态栏和锁屏——状态栏单行状态胶囊（待审批 > 未读 > 运行中，按紧急度取最高，全空自动移除）+ 锁屏/通知抽屉默认展开卡片（三组完整计数）；与悬浮窗共享同一份 overview 数据，统计永远一致；独立于悬浮窗的开关（默认开），需系统「实时更新」通知权限，不支持时自动回退普通常驻通知
+- **全量国际化**：Android 原生 UI 全面双语（英文默认 + 中文镜像），登录/连接错误/通知文字等硬编码中文全部抽离，语言跟随 App 内选择 / Cookie / 系统 locale 三层保障
 
-### 🔔 Notifications
-- Notification sound + haptic feedback (alerts when AI completes); sound can be toggled off in settings to prevent Bluetooth headphone interruption
-- Browser push notifications
-- **Task Completion Push**: Task completion notifications include response preview summary; tap to navigate to execution details
-- **DingTalk/Feishu Bot Push**: Instant push via DingTalk or Feishu bot on AI session completion, permission approval, and task status changes; view session list and send messages to sessions from IM
-- See [DingTalk Push Setup](docs/DINGTALK_PUSH.en.md) | [Feishu Push Setup](docs/FEISHU_PUSH.en.md)
+### 🔔 通知
+- 通知音效 + 触觉反馈（AI 完成时提醒）；可在设置中关闭音效，避免打断蓝牙耳机播放
+- 浏览器推送通知
+- **任务完成推送**：任务执行完成后推送包含响应预览摘要，点击跳转至执行详情
+- **钉钉/飞书机器人推送**：AI 会话完成、权限审批、任务状态变更时通过钉钉或飞书机器人即时推送；支持在 IM 中查看会话列表、向会话发送消息
+- 详见 [钉钉推送配置](docs/DINGTALK_PUSH.md) | [飞书推送配置](docs/FEISHU_PUSH.md)
 
 
-### 🎨 Themes
-- **36 Named Themes**: VSCode-style self-contained color schemes sorted by background brightness — 16 light (GitHub Light, One Light, Ayu Light, Light Modern, Light Plus, Quiet Light, Vitesse Light, Bluloco Light, Material Lighter, Alabaster, Everforest Light, High Contrast Light, Nord Light, Catppuccin Latte, Solarized Light, Gruvbox Light) and 20 dark (Solarized Dark/Deep, Monokai, Material Darker, Dark Plus, Bluloco Dark, Nord, Everforest Dark, One Dark Pro, Dracula, Rose Pine, Gruvbox Dark, GitHub Dark, Catppuccin Mocha, Vitesse Dark, Tokyo Night, Kanagawa, Ayu Dark, Night Owl, High Contrast Dark)
-- **Follow System**: `auto` mode picks the default GitHub Light/Dark based on the system color scheme and follows it **live** — switching the OS appearance updates the app without a reload (including iOS home-screen PWAs resumed from the background, where the media-query change event is unreliable). Choosing `auto` is never overwritten by the resolved theme, so it keeps following rather than sticking on whichever theme was applied at startup
-- **Custom Wallpaper Background**: Set any image as the app background — upload it directly or copy a server-local path (rendered as a single `.wallpaper-layer` `<img>` for WebView decoding stability; global across projects; stored in the local gallery via `POST /api/theme/local/upload` + `POST /api/theme/local/select`, served via `GET /api/file/theme-wallpaper`). Panel opacity (lower bound 0.5 to keep text readable) and Gaussian blur are adjustable with sliders. With a wallpaper active, header/Tab panels/sidebars/cards/CodeMirror surfaces turn semi-transparent to let the background show through, while editors and terminals stay opaque for readability
-- **Quick Theme Picker**: Palette button in the header switches themes on the fly with live color previews; its dropdown mirrors the project-picker panel style and pins a "More appearance options" entry that deep-links into Settings → Appearance (full theme grid + fonts + UI zoom)
-- **Click the Logo for "About"**: The header logo is itself a button — tapping it deep-links into Settings → About (version, project info), the natural place to look for "what is this / which version"
-- **Custom Fonts**: Pick from common open-source fonts for code (monospace) and interface (proportional) channels with optional fallback fonts — pure CSS font-stack switching, falls back to defaults when a font isn't installed; App header font configuration, Markdown export and the xterm/CodeMirror/Mermaid renderers all honor the selection
-- **Persistent & Status Bar Aware**: Selection is saved locally and restored on reload; Android status bar color follows the active theme
+### 🎨 主题
+- **36 个命名主题**：VSCode 风格自包含配色方案，按亮度从浅到深排列——亮色 16 个（GitHub Light、One Light、Ayu Light、Light Modern、Light Plus、Quiet Light、Vitesse Light、Bluloco Light、Material Lighter、Alabaster、Everforest Light、High Contrast Light、Nord Light、Catppuccin Latte、Solarized Light、Gruvbox Light），暗色 20 个（Solarized Dark/Deep、Monokai、Material Darker、Dark Plus、Bluloco Dark、Nord、Everforest Dark、One Dark Pro、Dracula、Rose Pine、Gruvbox Dark、GitHub Dark、Catppuccin Mocha、Vitesse Dark、Tokyo Night、Kanagawa、Ayu Dark、Night Owl、High Contrast Dark）
+- **跟随系统**：`auto` 模式下根据系统深浅色自动选择默认 GitHub Light/Dark，并**实时跟随**——切换系统外观立即生效，无需刷新（含 iOS 主屏 PWA 从后台恢复的情形，此时媒体查询的 change 事件不可靠）。选 `auto` 不会被解析出的具体主题覆盖，因此会一直跟随，而不是固定在启动时应用的那个主题上
+- **自定义壁纸背景**：支持上传图片或从服务器本地路径设置为主题背景图（`.wallpaper-layer` 渲染，全局跨项目共享，`POST /api/theme/local/upload` 入库 + `POST /api/theme/local/select` 选中、`GET /api/file/theme-wallpaper` 读取），配套滑块调节面板不透明度（下限 0.5 保证可读性）与高斯模糊；壁纸开启后 header/Tab/面板/卡片/CodeMirror 等界面层半透明透出底层背景，CodeMirror 等编辑区保持不透明保证可读
+- **快捷主题选择器**：Header 上的调色板按钮可即时切换主题，并带实时配色预览；下拉面板风格与项目选择界面统一，底部固定"更多外观选项"入口，点击深链到设置 → 外观（完整主题网格/字体/界面缩放）
+- **点击 Logo 看「关于」**：Header 的 logo 本身是按钮，点击深链到设置 → 关于（版本号、项目信息）——想确认"这是什么、什么版本"时，最符合直觉的入口
+- **自定义字体**：支持选择常用开源字体作为代码字体（等宽）与界面字体（比例）主通道，可另配备选字体——纯 CSS 字体栈切换，设备未安装自动回退默认栈；导出 HTML 与 xterm/CodeMirror/Mermaid 等 JS 渲染器均跟随所选字体
+- **持久化与状态栏适配**：选择本地保存、刷新后恢复；Android 状态栏颜色跟随当前主题
 
-### 📱 PWA Support
-- Installable to home screen, runs in standalone window
+### 📱 PWA 支持
+- 可安装到主屏幕，独立窗口运行
 
-### 🔒 Security
-- Optional password protection (SHA-256 salted hash storage, password change available in settings panel)
-- Multi-instance cookie isolation (cookies auto-prefixed by port, no collisions on same domain)
-- Path traversal protection, all operations restricted to project directory
-- Git parameter injection protection (SHA/branch name/tag name validation, `--` separator)
-- Configurable file upload size and count (default 100MB / 20 files), all file types supported
-- XSS protection (DOMPurify sanitization)
-- File share links use unguessable capability tokens as the sole credential — revoking or regenerating a link kills it instantly; when unused, the public endpoints return 404 so the feature has zero exposure. A token only ever reads within the boundary recorded at creation time (project root, else the file's own directory), so holding any one link cannot reach arbitrary paths on the host
-- Localhost requests are no longer trusted by address alone: the built-in `/cb-*` commands hand the AI subprocess a short-lived HMAC token (30 min, per-process key) which it sends as a header — so a local process can't reach the API just by being local
-- Client log ingestion and the SSH endpoint are authenticated (the log endpoint is a write-to-disk primitive; the public SSH endpoint returns only `{enabled, port}`)
-- TLS support (auto-discover certificate directory; drop in fullchain.pem + privkey.pem to enable HTTPS)
-
----
-
-## FAQ
-
-See **[FAQ](docs/FAQ.en.md)** .
+### 🔒 安全
+- 可选密码保护（SHA-256 加盐哈希存储，设置面板支持修改密码）
+- 多实例部署安全隔离（Cookie 按端口自动前缀，同域名不同端口互不干扰）
+- 路径穿越防护，所有操作限制在项目目录内
+- Git 参数注入防护（SHA/分支名/标签名校验，`--` 分隔符）
+- 文件上传大小和数量可配置（默认 100MB / 20 个），支持所有文件类型
+- XSS 防护（DOMPurify 净化）
+- 文件分享链接以不可猜测的 capability token 为唯一凭证——撤销或重新生成链接立即失效；未使用该功能时公开端点一律 404，零暴露。token 的可读范围以创建时记录的边界为限（项目根，否则收紧到文件所在目录），因此拿到任意一条链接都无法读到主机上的任意路径
+- 本机请求不再凭地址免密：内置 `/cb-*` 命令给 AI 子进程签发短时 HMAC 令牌（30 分钟、进程内随机密钥），AI 以请求头携带——本机进程不能仅凭"在本机"就访问 API
+- 客户端日志上报与 SSH 端点需鉴权（日志端点是"向磁盘追加写入"的原语；公开的 SSH 端点只回传 `{enabled, port}`）
+- TLS 支持（自动发现证书目录，放入 fullchain.pem + privkey.pem 即可启用 HTTPS）
 
 ---
 
-## License
+## 常见问题
+
+详见 **[FAQ](docs/FAQ.md)** 。
+
+---
+
+## 许可证
 
 Copyright (c) 2026 xulongzhe
 
