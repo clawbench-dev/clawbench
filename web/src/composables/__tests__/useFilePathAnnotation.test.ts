@@ -11,6 +11,7 @@ import {
   clearVerifiedCache,
   openFilePath,
   navToFileInManager,
+  revealInFileManager,
 } from '@/composables/useFilePathAnnotation'
 
 // Mock escapeHtml from html utils
@@ -2153,8 +2154,77 @@ describe('openFilePath', () => {
     vi.doUnmock('@/composables/useToast')
   })
 
-  // --- navToFileInManager ---
+  // --- revealInFileManager ---
+  // The origin-recording counterpart of navToFileInManager. It must dispatch the
+  // shared directory-jump event (parent dir as target, the path itself as the
+  // entry to highlight) so the coordinator records a return origin.
+  describe('revealInFileManager', () => {
+    it('dispatches open-directory-from-context targeting the parent dir with the entry highlighted', () => {
+      const mockDispatchEvent = vi.fn()
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = mockDispatchEvent
 
+      revealInFileManager('docs/spec/core/chat-flow.md', 'history')
+
+      expect(mockDispatchEvent).toHaveBeenCalledTimes(1)
+      expect(mockDispatchEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'open-directory-from-context',
+          detail: { path: 'docs/spec/core', revealPath: 'docs/spec/core/chat-flow.md', source: 'history' },
+        })
+      )
+
+      window.dispatchEvent = origDispatch
+    })
+
+    it('targets the project root for a root-level file (empty parent dir)', () => {
+      const mockDispatchEvent = vi.fn()
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = mockDispatchEvent
+
+      revealInFileManager('README.md', 'file')
+
+      expect(mockDispatchEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'open-directory-from-context',
+          detail: { path: '', revealPath: 'README.md', source: 'file' },
+        })
+      )
+
+      window.dispatchEvent = origDispatch
+    })
+
+    it('normalizes Windows separators so the parent dir resolves', () => {
+      const mockDispatchEvent = vi.fn()
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = mockDispatchEvent
+
+      revealInFileManager('web\\src\\foo.ts', 'history')
+
+      expect(mockDispatchEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'open-directory-from-context',
+          detail: { path: 'web/src', revealPath: 'web/src/foo.ts', source: 'history' },
+        })
+      )
+
+      window.dispatchEvent = origDispatch
+    })
+
+    it('dispatches nothing for an empty path', () => {
+      const mockDispatchEvent = vi.fn()
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = mockDispatchEvent
+
+      revealInFileManager('')
+
+      expect(mockDispatchEvent).not.toHaveBeenCalled()
+
+      window.dispatchEvent = origDispatch
+    })
+  })
+
+  // --- navToFileInManager ---
   it('navToFileInManager: shows file-not-found toast when path does not exist', async () => {
     const mockFetch = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/missing.go': 'none' } }) })

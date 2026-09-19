@@ -52,7 +52,7 @@
           @click.stop="onFilesRefresh"
         />
       </div>
-      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" @open-file="onOpenFile" />
+      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" @open-file="onOpenFile" @reveal-file="onRevealFile" />
       <div class="drilldown-body">
         <div v-if="filesLoading" class="git-history-loading">
           <LoadingIndicator size="md" />
@@ -159,7 +159,7 @@
         </div>
       </div>
       <div class="drilldown-body">
-        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" @open-file="onOpenFile" />
+        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" @open-file="onOpenFile" @reveal-file="onRevealFile" />
         <GitDiffView
           :loading="diffState.loading"
           :empty="diffState.empty"
@@ -198,6 +198,7 @@ import { useDiffNavigation } from '@/composables/useDiffNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { shouldShowFullLoading } from '@/utils/gitFileHistory'
 import { useGitHistoryView } from '@/composables/useGitHistoryView'
+import { revealInFileManager } from '@/composables/useFilePathAnnotation.ts'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -217,6 +218,16 @@ const emit = defineEmits(['open-file'])
 function onOpenFile(path) {
   // App.vue's handleSelectFile switches to the file-view tab.
   emit('open-file', path)
+}
+
+/**
+ * Reveal the file in the file manager. Routed through the shared directory-jump
+ * event (not the navToFileInManager primitive) so the jump records a return
+ * origin: this host is a jump-capable surface, and Back must come back here
+ * rather than walking up the directory tree.
+ */
+function onRevealFile(path) {
+  revealInFileManager(path, 'history')
 }
 
 // ─── Shared git-history logic ───────────────────────────────────────────────

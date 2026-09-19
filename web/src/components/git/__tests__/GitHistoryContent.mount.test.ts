@@ -12,9 +12,10 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-const { mockLoadGitBranch, mockGitFetch, mockGitState } = vi.hoisted(() => ({
+const { mockLoadGitBranch, mockGitFetch, mockGitState, mockRevealInFileManager } = vi.hoisted(() => ({
   mockLoadGitBranch: vi.fn().mockResolvedValue(undefined),
   mockGitFetch: vi.fn(),
+  mockRevealInFileManager: vi.fn(),
   // Shared mutable store state so tests can simulate the workspace changing
   // between tab activations (loadGitBranch updates these in production).
   mockGitState: {
@@ -24,6 +25,12 @@ const { mockLoadGitBranch, mockGitFetch, mockGitState } = vi.hoisted(() => ({
     gitDirty: false,
     gitWorkingTreeChangeCount: 0,
   },
+}))
+// Spy on the origin-recording reveal helper. The point of the host wiring is
+// *which* helper it calls and with what source — the helper's own event
+// contract is covered in useFilePathAnnotation.test.ts.
+vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
+  revealInFileManager: mockRevealInFileManager,
 }))
 // gitFetch is what GitHistoryContent actually uses for its git API calls
 // (project-history, working-tree, commit-files, …). Mock it so mounting does
@@ -64,8 +71,11 @@ vi.mock('@/components/git/GitManageContent.vue', () => ({
 vi.mock('@/components/git/GitCommitMeta.vue', () => ({
   default: {
     props: ['commit', 'isWorkingTree', 'filePath'],
-    emits: ['open-file'],
-    template: '<div class="commit-meta-stub"><button class="meta-open-file" @click="$emit(\'open-file\', filePath)" /></div>',
+    emits: ['open-file', 'reveal-file'],
+    template: '<div class="commit-meta-stub">'
+      + '<button class="meta-open-file" @click="$emit(\'open-file\', filePath)" />'
+      + '<button class="meta-reveal-file" @click="$emit(\'reveal-file\', filePath)" />'
+      + '</div>',
   },
 }))
 vi.mock('@/components/git/GitDiffView.vue', () => ({
@@ -401,12 +411,12 @@ describe('GitHistoryContent — files view refresh button', () => {
   })
 })
 
-// The commit-meta panel delegates "open file" to its host, because the same
-// panel also renders inside the mobile file-history sheet (where the origin is
-// the file-viewer stack, not the history tab). The host must therefore forward
-// the panel's open-file event rather than letting the panel navigate itself.
+// The commit-meta panel delegates both row actions to its host, because the
+// same panel also renders inside the mobile file-history sheet (where the
+// origin is the file-viewer stack, not the history tab). The host must forward
+// them rather than letting the panel navigate on its own.
 describe('GitHistoryContent — commit meta file annotation', () => {
-  it('forwards the meta panel open-file event to the host open-file emit', async () => {
+  async function mountInDiffView() {
     routeGitFetch({ wt: [{ path: 'a.ts', type: 'M', staged: false }] })
     const wrapper = mount(GitHistoryContent, {
       props: { mode: 'project', active: true },
@@ -420,12 +430,29 @@ describe('GitHistoryContent — commit meta file annotation', () => {
     await flushPromises()
     vm.drillToFile({ path: 'a.ts', type: 'M', staged: false })
     await flushPromises()
+    return wrapper
+  }
 
+  it('forwards the meta panel open-file event to the host open-file emit', async () => {
+    const wrapper = await mountInDiffView()
     const metaBtn = wrapper.find('.commit-meta-stub .meta-open-file')
     expect(metaBtn.exists()).toBe(true)
     await metaBtn.trigger('click')
 
     expect(wrapper.emitted('open-file')).toEqual([['a.ts']])
+    wrapper.unmount()
+  })
+
+  it('routes reveal through the origin-recording directory jump, not the bare primitive', async () => {
+    const wrapper = await mountInDiffView()
+    const metaBtn = wrapper.find('.commit-meta-stub .meta-reveal-file')
+    expect(metaBtn.exists()).toBe(true)
+    await metaBtn.trigger('click')
+
+    // `source: 'history'` is what makes the jump record a return origin; without
+    // it Back would walk up the directory tree instead of returning here.
+    expect(mockRevealInFileManager).toHaveBeenCalledTimes(1)
+    expect(mockRevealInFileManager).toHaveBeenCalledWith('a.ts', 'history')
     wrapper.unmount()
   })
 })

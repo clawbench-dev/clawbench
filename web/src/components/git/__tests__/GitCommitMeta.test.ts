@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
 vi.mock('vue-i18n', () => ({
@@ -9,12 +9,7 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-const { mockNavToFileInManager } = vi.hoisted(() => ({
-  mockNavToFileInManager: vi.fn().mockResolvedValue(true),
-}))
-
 vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
-  navToFileInManager: mockNavToFileInManager,
   FILE_OPEN_ICON_SVG: '<svg class="file-open-icon"></svg>',
 }))
 
@@ -23,10 +18,6 @@ import GitCommitMeta from '@/components/git/GitCommitMeta.vue'
 function mountMeta(props: Record<string, unknown>) {
   return mount(GitCommitMeta, { props })
 }
-
-beforeEach(() => {
-  mockNavToFileInManager.mockClear()
-})
 
 describe('GitCommitMeta — file path rows', () => {
   it('renders file name + path rows when filePath is present', () => {
@@ -68,7 +59,9 @@ describe('GitCommitMeta — file path rows', () => {
 })
 
 describe('GitCommitMeta — file annotations', () => {
-  function mountWithPath(filePath = 'docs/spec/core/chat-flow.md') {
+  const PATH = 'docs/spec/core/chat-flow.md'
+
+  function mountWithPath(filePath = PATH) {
     return mountMeta({
       commit: { sha: 'a313de64deadbeef', author: 'xulongzhe', date: new Date().toISOString(), msg: 'feat' },
       filePath,
@@ -78,19 +71,14 @@ describe('GitCommitMeta — file annotations', () => {
   it('emits open-file with the path when the file-name row is clicked', async () => {
     const wrapper = mountWithPath()
     await wrapper.find('.diff-meta-file-name').trigger('click')
-
-    // The host owns the jump origin (history tab vs. file-viewer stack), so the
-    // panel must not navigate on its own.
-    expect(wrapper.emitted('open-file')).toEqual([['docs/spec/core/chat-flow.md']])
-    expect(mockNavToFileInManager).not.toHaveBeenCalled()
+    expect(wrapper.emitted('open-file')).toEqual([[PATH]])
   })
 
-  it('reveals the file in the file manager when the path row is clicked', async () => {
+  it('emits reveal-file with the path when the path row is clicked', async () => {
     const wrapper = mountWithPath()
     await wrapper.find('.diff-meta-file-path').trigger('click')
-
-    expect(mockNavToFileInManager).toHaveBeenCalledTimes(1)
-    expect(mockNavToFileInManager).toHaveBeenCalledWith('docs/spec/core/chat-flow.md')
+    expect(wrapper.emitted('reveal-file')).toEqual([[PATH]])
+    // The row must not open the file — that is the other row's action.
     expect(wrapper.emitted('open-file')).toBeFalsy()
   })
 
@@ -102,11 +90,12 @@ describe('GitCommitMeta — file annotations', () => {
     // The buttons repeat the row actions so the affordance is discoverable
     // without hovering the label.
     await buttons[0].trigger('click')
-    expect(wrapper.emitted('open-file')).toEqual([['docs/spec/core/chat-flow.md']])
+    expect(wrapper.emitted('open-file')).toEqual([[PATH]])
+    expect(wrapper.emitted('reveal-file')).toBeFalsy()
 
     await buttons[1].trigger('click')
-    expect(mockNavToFileInManager).toHaveBeenCalledTimes(1)
-    // Row labels were not clicked, so neither action ran twice.
+    expect(wrapper.emitted('reveal-file')).toEqual([[PATH]])
+    // Neither action ran twice.
     expect(wrapper.emitted('open-file')).toHaveLength(1)
   })
 
@@ -121,14 +110,5 @@ describe('GitCommitMeta — file annotations', () => {
     })
     expect(wrapper.find('.diff-meta-annotation').exists()).toBe(false)
     expect(wrapper.find('.diff-meta-open-btn').exists()).toBe(false)
-  })
-
-  it('does not call the manager primitive when the path is empty', async () => {
-    // A row can only render with a path, so this drives the handler directly to
-    // pin the guard: an empty path must not reach the navigation primitive.
-    const wrapper = mountMeta({ commit: { sha: 'abc1234567', msg: 'fix' } })
-    const vm = wrapper.vm as unknown as { revealInManager: () => void }
-    vm.revealInManager()
-    expect(mockNavToFileInManager).not.toHaveBeenCalled()
   })
 })

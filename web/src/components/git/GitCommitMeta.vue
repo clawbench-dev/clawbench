@@ -21,13 +21,13 @@
         <span
           class="diff-meta-value diff-meta-file-path diff-meta-annotation"
           :title="t('git.commitMeta.revealInManager')"
-          @click="revealInManager"
+          @click="emit('reveal-file', filePath)"
         >{{ filePath }}</span>
         <button
           class="diff-meta-open-btn"
           type="button"
           :title="t('git.commitMeta.revealInManager')"
-          @click.stop="revealInManager"
+          @click.stop="emit('reveal-file', filePath)"
           v-html="DIRECTORY_OPEN_ICON_SVG"
         ></button>
       </div>
@@ -64,10 +64,7 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyText } from '@/utils/clipboard.ts'
 import { baseName } from '@/utils/path.ts'
-import {
-  navToFileInManager,
-  FILE_OPEN_ICON_SVG,
-} from '@/composables/useFilePathAnnotation.ts'
+import { FILE_OPEN_ICON_SVG } from '@/composables/useFilePathAnnotation.ts'
 const { t, locale } = useI18n()
 
 const props = defineProps({
@@ -76,13 +73,14 @@ const props = defineProps({
   filePath: String,
 })
 
-// Opening the file is delegated to the host: the same panel is rendered inside
-// the wide-screen history tab and inside the mobile file-history bottom sheet,
-// and only the host knows which surface the jump originates from (history tab
-// vs. the file viewer's own stack). Hardcoding an origin here would send the
-// mobile case back to the wrong place. This mirrors the breadcrumb's open-file
-// emit, which both hosts already handle.
-const emit = defineEmits(['open-file'])
+// Both row actions are delegated to the host. The panel renders inside the
+// wide-screen history tab AND inside the mobile file-history bottom sheet, and
+// only the host knows which surface the jump originates from (history tab vs.
+// the file viewer's own stack) and how to record it as a return target.
+// Navigating from inside the panel would strand the destination with no origin,
+// so Back would walk up the directory tree instead of returning here. This
+// mirrors the breadcrumb's open-file emit, which both hosts already handle.
+const emit = defineEmits(['open-file', 'reveal-file'])
 
 const shaCopied = ref(false)
 
@@ -95,18 +93,6 @@ const fileName = computed(() => {
 // Folder glyph for the "reveal in file manager" button, matching the icon
 // family of the shared file-open annotation (same 12px stroke viewBox).
 const DIRECTORY_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>'
-
-/**
- * Reveal the file in the file manager: navigate to its directory and highlight
- * it there. Unlike opening the file, this needs no host involvement — the
- * primitive dismisses whatever overlay is up and switches to the browse tab on
- * its own, so it behaves identically from the history tab and from the mobile
- * file-history sheet.
- */
-function revealInManager() {
-  if (!props.filePath) return
-  void navToFileInManager(props.filePath)
-}
 
 function copySHA() {
   if (!props.commit?.sha) return

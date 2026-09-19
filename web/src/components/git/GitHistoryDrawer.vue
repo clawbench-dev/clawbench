@@ -58,7 +58,7 @@
           @click.stop="onFilesRefresh"
         />
       </div>
-      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" @open-file="onOpenFile" />
+      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" @open-file="onOpenFile" @reveal-file="onRevealFile" />
       <div class="drilldown-body">
         <div v-if="filesLoading" class="git-history-loading">
           <LoadingIndicator size="md" />
@@ -146,7 +146,7 @@
         />
       </div>
       <div class="drilldown-body">
-        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" @open-file="onOpenFile" />
+        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" @open-file="onOpenFile" @reveal-file="onRevealFile" />
         <GitDiffView
           :loading="diffState.loading"
           :empty="diffState.empty"
@@ -176,6 +176,7 @@ import { store } from '@/stores/app.ts'
 import { consumePendingCommitNavigation } from '@/composables/useCommitNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_OVERLAY } from '@/composables/useEdgeSwipeBack'
 import { useGitHistoryView } from '@/composables/useGitHistoryView'
+import { revealInFileManager } from '@/composables/useFilePathAnnotation.ts'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -194,6 +195,18 @@ const bottomSheetRef = ref(null)
 function onOpenFile(path) {
   emit('open-file', path)
   bottomSheetRef.value?.close()
+}
+
+/**
+ * Reveal the file in the file manager. The sheet lives inside the file view, so
+ * `source: 'file'` makes the coordinator suspend this file visit as a directory
+ * excursion — Back then restores the file the user was viewing instead of
+ * walking up the directory tree. The sheet closes so it does not sit over the
+ * manager.
+ */
+function onRevealFile(path) {
+  bottomSheetRef.value?.close()
+  revealInFileManager(path, 'file')
 }
 
 // ─── Shared git-history logic ───────────────────────────────────────────────

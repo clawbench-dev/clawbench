@@ -16,10 +16,18 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-const { mockGitFetch, mockNavigateToCommit, mockHandleDrillBackToCommits } = vi.hoisted(() => ({
+const { mockGitFetch, mockNavigateToCommit, mockHandleDrillBackToCommits, mockRevealInFileManager } = vi.hoisted(() => ({
   mockGitFetch: vi.fn(),
   mockNavigateToCommit: vi.fn(),
   mockHandleDrillBackToCommits: vi.fn(),
+  mockRevealInFileManager: vi.fn(),
+}))
+
+// Spy on the origin-recording reveal helper: the host's job is to call it with
+// the right source. The helper's own event contract is covered in
+// useFilePathAnnotation.test.ts.
+vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
+  revealInFileManager: mockRevealInFileManager,
 }))
 
 vi.mock('@/utils/gitApi', () => ({
@@ -128,8 +136,11 @@ vi.mock('@/components/git/GitCommitMeta.vue', () => ({
   default: defineComponent({
     name: 'GitCommitMeta',
     props: ['commit', 'isWorkingTree', 'filePath'],
-    emits: ['open-file'],
-    template: '<div class="git-commit-meta-stub"><button class="meta-open-file" @click="$emit(\'open-file\', filePath)" /></div>',
+    emits: ['open-file', 'reveal-file'],
+    template: '<div class="git-commit-meta-stub">'
+      + '<button class="meta-open-file" @click="$emit(\'open-file\', filePath)" />'
+      + '<button class="meta-reveal-file" @click="$emit(\'reveal-file\', filePath)" />'
+      + '</div>',
   }),
 }))
 
@@ -262,6 +273,27 @@ describe('GitHistoryDrawer — mount and close', () => {
     expect(wrapper.emitted('open-file')).toEqual([['src/main.ts']])
     // Opening a file from the sheet must dismiss it, otherwise the viewer is
     // pushed behind an open overlay.
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('reveals via the origin-recording jump with source=file and closes the sheet', async () => {
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.selectedSHA = 'abc123'
+    vm.drillToFile({ path: 'src/main.ts', type: 'M', staged: false })
+    await flushPromises()
+
+    const metaBtn = wrapper.find('.git-commit-meta-stub .meta-reveal-file')
+    expect(metaBtn.exists()).toBe(true)
+    await metaBtn.trigger('click')
+
+    // This sheet lives inside the file view, so source 'file' makes the
+    // coordinator suspend the file visit as a directory excursion: Back then
+    // restores the viewed file instead of walking up the directory tree.
+    expect(mockRevealInFileManager).toHaveBeenCalledTimes(1)
+    expect(mockRevealInFileManager).toHaveBeenCalledWith('src/main.ts', 'file')
+    // The sheet must not sit over the file manager it just revealed.
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 })

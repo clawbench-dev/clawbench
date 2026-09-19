@@ -1021,6 +1021,31 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
 }
 
 /**
+ * Reveal a path in the file manager *through the navigation coordinator*, so the
+ * jump records a return origin and Back returns to the calling surface.
+ *
+ * This is the origin-recording counterpart of navToFileInManager. That primitive
+ * navigates the manager directly and records nothing, so a reveal issued from a
+ * jump-capable surface (chat, git history, task, forge) leaves no return target
+ * and Back walks up the directory tree instead of going back. Prefer this one
+ * whenever the caller is a jump; navToFileInManager stays for reveals that are
+ * already inside the file/view context (its header menu, search results).
+ *
+ * Dispatches the same `open-directory-from-context` event the chat annotation
+ * flow uses, so both end up in the same back-navigation stack. The parent
+ * directory is the jump target and the path itself is highlighted inside it.
+ */
+export function revealInFileManager(resolvedPath: string, source?: NavigationSurface): void {
+    const parsed = parseFileUri(resolvedPath)
+    let targetPath = parsed.path
+    if (!targetPath) return
+    targetPath = normalizeSlashes(targetPath)
+    window.dispatchEvent(new CustomEvent('open-directory-from-context', {
+        detail: { path: dirName(targetPath), revealPath: targetPath, source },
+    }))
+}
+
+/**
  * Open the containing directory of a file/dir path in the file manager,
  * then highlight and scroll to the target item.
  * If the path is a directory itself, navigate into its parent and highlight it.

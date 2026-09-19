@@ -423,7 +423,21 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     await navigateBack('header')
   }
 
-  async function handleOpenDirectoryFromContext(path?: string | null, source?: NavigationSurface | string): Promise<void> {
+  /**
+   * Jump into a directory inside the project, recording the jump origin so Back
+   * returns to the surface the jump started from.
+   *
+   * `revealPath` additionally locates an entry inside the target directory
+   * (reveal-in-manager). Reveal must go through here rather than the standalone
+   * navToFileInManager primitive: only this path records an origin, so calling
+   * navToFileInManager directly strands the file manager with no return target
+   * and Back walks up the directory tree instead of returning to the caller.
+   */
+  async function handleOpenDirectoryFromContext(
+    path?: string | null,
+    source?: NavigationSurface | string,
+    revealPath?: string | null,
+  ): Promise<void> {
     if (path === undefined || path === null) return
     const reqId = ++directoryRequestId
     const surface: string = source ?? (isWideScreen.value && activePane.value === PANE_RIGHT ? 'chat' : leftPanelActive.value)
@@ -478,6 +492,13 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         setActivePane(PANE_LEFT)
       }
       switchTab('browse', true)
+      // Reveal the requested entry now that the listing is on screen. The file
+      // manager retries internally until the entry renders, so no extra delay is
+      // needed here; `revealPath` may be the directory itself (open-directory
+      // from a directory annotation), which highlights its own row.
+      if (revealPath) {
+        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: revealPath } }))
+      }
     } catch (err) {
       if (reqId !== directoryRequestId) return
       abandonJump()
@@ -485,11 +506,11 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     }
   }
 
-  function handleOpenDirectoryFromEvent(e: Event | CustomEvent<{ path?: string; source?: NavigationSurface }>): void {
-    const custom = e as CustomEvent<{ path?: string; source?: NavigationSurface }>
+  function handleOpenDirectoryFromEvent(e: Event | CustomEvent<{ path?: string; source?: NavigationSurface; revealPath?: string }>): void {
+    const custom = e as CustomEvent<{ path?: string; source?: NavigationSurface; revealPath?: string }>
     const path = custom?.detail?.path
     if (path !== undefined && path !== null) {
-      void handleOpenDirectoryFromContext(path, custom.detail?.source)
+      void handleOpenDirectoryFromContext(path, custom.detail?.source, custom.detail?.revealPath)
     }
   }
 
