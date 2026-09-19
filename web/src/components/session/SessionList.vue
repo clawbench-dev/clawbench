@@ -168,7 +168,8 @@ import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useS
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
-import { apiGet, apiPatch } from '@/utils/api.ts'
+import { apiPatch } from '@/utils/api.ts'
+import { coalescedJson } from '@/utils/inflightGet.ts'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -293,8 +294,10 @@ async function fetchSessionsUpTo(minCount) {
   for (;;) {
     let url = `/api/ai/sessions?limit=${limit}${buildTagQuery()}`
     if (cursor) url += buildCursorQuery(cursor)
-    const resp = await fetch(url)
-    const data = await resp.json()
+    // Coalesced: this component is mounted twice (pinned sidebar + mobile
+    // drawer), and both reload on the same signals, so without this each page
+    // is fetched twice for identical data.
+    const data = await coalescedJson(url)
     const list = data.sessions || []
     accumulated.push(...list)
     serverHasMore = !!data.hasMore
@@ -349,7 +352,9 @@ function buildTagQuery() {
 async function loadFilterTags() {
   let tags
   try {
-    const res = await apiGet('/api/ai/session/tags?inUse=1')
+    // Coalesced: both SessionList instances (sidebar + drawer) load tags on
+    // mount and on every sessionListVersion bump.
+    const res = await coalescedJson('/api/ai/session/tags?inUse=1')
     tags = res.tags || []
   } catch (err) {
     // Keep the previous chips on failure. Treating an error as "no tags" would

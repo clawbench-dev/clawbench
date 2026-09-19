@@ -1,6 +1,7 @@
 // Global application state (singleton reactive store)
 import { reactive } from 'vue'
 import { apiGet, apiPost } from '@/utils/api'
+import { coalescedJson } from '@/utils/inflightGet.ts'
 import { appLog } from '@/utils/appLog'
 import { baseName, dirName, isAbsolutePath, normalizeSlashes, toProjectRelative } from '@/utils/path.ts'
 import { gt } from '@/composables/useLocale'
@@ -352,8 +353,12 @@ function resetProjectState(): void {
 // =============================================
 
 async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: string; dirty: boolean; changeCount: number }> {
+    // Coalesced: fifteen call sites refresh the branch (project switch, stream
+    // end, file-watch events, panel mounts), and a single project switch fired
+    // three identical requests. Concurrent callers share one round-trip; a
+    // later caller still gets a fresh read, since the entry clears on settle.
     try {
-        const data = await apiGet<{ isGit: boolean; branch: string; head: string; dirty: boolean; changeCount: number }>('/api/git/branch')
+        const data = await coalescedJson<{ isGit: boolean; branch: string; head: string; dirty: boolean; changeCount: number }>('/api/git/branch')
         state.gitBranch = data.branch || ''
         state.gitHead = data.head || ''
         state.gitDirty = !!data.dirty
