@@ -250,13 +250,19 @@ vi.mock('@/composables/useFileRefresh', () => ({
   isRefreshing: mockIsRefreshing,
 }))
 
+// Hoisted so the vi.mock factory below can close over it.
+const mockThumbable = vi.hoisted(() => ({ value: false }))
+
 vi.mock('@/utils/fileManager', () => ({
   buildThumbUrl: (dir: string, name: string) => `/api/file/thumb?path=${dir}/${name}`,
   isImage: (e: any) => /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(e.name || ''),
   isAudio: (e: any) => /\.(mp3|wav|ogg)$/i.test(e.name || ''),
   isVideo: (e: any) => /\.(mp4|mov)$/i.test(e.name || ''),
-  isThumbable: () => false,
-  isThumbableExt: () => false,
+  // Controllable so the thumbnail lazy-mount tests can exercise the real
+  // render path. Defaults to false, which is what the pre-existing tests
+  // assume (no <img> is expected anywhere in this suite).
+  isThumbable: (e: any) => mockThumbable.value && /\.(png|jpg|jpeg|gif)$/i.test(e?.name || ''),
+  isThumbableExt: (path: string) => mockThumbable.value && /\.(png|jpg|jpeg|gif)$/i.test(path || ''),
   formatSize: (s: number) => {
     if (s >= 1024) return `${(s / 1024).toFixed(1)} KB`
     return `${s} B`
@@ -5285,5 +5291,123 @@ describe('FileManagerContent — gitignored entries', () => {
       expect(row.classes()).not.toContain('git-ignored')
       expect(row.attributes('title')).toBeUndefined()
     })
+  })
+})
+
+// ── Thumbnail lazy mounting ─────────────────────────────────────────────────
+// Entering a directory used to mount one <img> (and therefore one
+// /api/file/thumb decode request) per image in the same tick. `loading="lazy"`
+// did not prevent it — the element still existed and the browser fetched the
+// whole initial viewport immediately. A folder of dozens of images saturated
+// the server's CPU (measured: 32 parallel decodes → 638% CPU, and the DB-free
+// /api/dir slowed 16ms → 72ms).
+//
+// Thumbnails are now mounted only once their row is observed as visible. These
+// tests pin that gate: nothing renders before the observer fires, and the image
+// appears afterwards without needing a prop change.
+describe('thumbnail lazy mounting', () => {
+  const imageEntries = [
+    { name: 'a.png', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
+    { name: 'b.jpg', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
+    { name: 'c.gif', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
+  ]
+
+  // The mock installed in test-setup records instances and exposes triggerAll.
+  const observerInstances = () => {
+    const Ctor = globalThis.IntersectionObserver as unknown as {
+      instances?: Array<{ triggerAll: () => void; elements: Set<Element> }>
+    }
+    return Ctor.instances ?? []
+  }
+
+  beforeEach(() => {
+    const Ctor = globalThis.IntersectionObserver as unknown as { instances?: unknown[] }
+    Ctor.instances = []
+    // Enable the thumbnail path for this block only; the rest of the suite
+    // assumes isThumbable is false so no <img> ever renders.
+    mockThumbable.value = true
+  })
+
+  afterEach(() => {
+    mockThumbable.value = false
+  })
+
+  it('does not mount any thumbnail before its row is visible', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+
+    // Every image entry still renders (as an icon placeholder) — the lazy gate
+    // must not drop rows, only defer their <img>.
+    expect(wrapper.findAll('.file-item')).toHaveLength(3)
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(0)
+  })
+
+  it('mounts the thumbnail once the row is reported visible', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(0)
+
+    // Simulate the rows scrolling into view.
+    observerInstances().forEach(o => o.triggerAll())
+    await nextTick()
+
+    const thumbs = wrapper.findAll('img.file-thumb')
+    expect(thumbs).toHaveLength(3)
+    expect(thumbs[0].attributes('src')).toContain('/api/file/thumb')
+    // Thumbnails must not request SVG/WebP etc. — only decodable formats.
+    expect(thumbs.map(t => t.attributes('src')).join(' ')).not.toContain('.md')
+  })
+
+  it('renders only the entries reported visible, not the whole directory', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+
+    // Report just the first row as visible.
+    const obs = observerInstances()[0]
+    const first = [...obs.elements][0]
+    expect(first).toBeTruthy()
+    const Ctor = globalThis.IntersectionObserver as unknown as {
+      instances: Array<{ callback: (e: unknown[], o: unknown) => void }>
+    }
+    Ctor.instances[0].callback(
+      [{ target: first, isIntersecting: true, intersectionRatio: 1 }],
+      Ctor.instances[0],
+    )
+    await nextTick()
+
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(1)
+  })
+
+  it('ignores non-intersecting observations', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+
+    const obs = observerInstances()[0]
+    const first = [...obs.elements][0]
+    const Ctor = globalThis.IntersectionObserver as unknown as {
+      instances: Array<{ callback: (e: unknown[], o: unknown) => void }>
+    }
+    Ctor.instances[0].callback(
+      [{ target: first, isIntersecting: false, intersectionRatio: 0 }],
+      Ctor.instances[0],
+    )
+    await nextTick()
+
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(0)
+  })
+
+  it('re-gates thumbnails after changing directory', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+    observerInstances().forEach(o => o.triggerAll())
+    await nextTick()
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(3)
+
+    // Switching directories is a different listing; the previous visibility
+    // must not carry over or the new folder's images would all load at once.
+    await wrapper.setProps({ currentDir: 'other', entries: imageEntries })
+    await nextTick()
+
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(0)
   })
 })

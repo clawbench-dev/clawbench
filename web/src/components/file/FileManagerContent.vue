@@ -273,8 +273,8 @@
           :data-path="pathOf(entry)"
           :title="entryTitle(entry)"
         >
-          <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }">
-            <img v-if="entry.type !== 'dir' && isThumbLoaded(entry)" class="file-thumb" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
+          <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }" :ref="(el) => thumbObserve(el, entry)">
+            <img v-if="entry.type !== 'dir' && shouldMountThumb(entry)" class="file-thumb" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
             <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="28" class="file-icon" />
             <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
               <Link2 :size="12" />
@@ -347,8 +347,8 @@
         :data-path="pathOf(entry)"
         :title="entryTitle(entry)"
       >
-        <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }">
-          <img v-if="isThumbLoaded(entry)" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
+        <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }" :ref="(el) => thumbObserve(el, entry)">
+          <img v-if="shouldMountThumb(entry)" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
           <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="32" class="grid-icon" />
           <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
             <Link2 :size="12" />
@@ -1096,6 +1096,100 @@ function appendThumbVersion(url, path) {
     if (!v) return url
     return url + `&t=${v}`
 }
+
+/**
+ * Thumbnails are only mounted once their row scrolls into view.
+ *
+ * The list renders every entry in the directory at once, so entering a folder
+ * with dozens of images previously fired one /api/file/thumb request per image
+ * in the same tick. `loading="lazy"` does NOT prevent that: it defers the
+ * browser's own fetch but still creates the <img>, and for the whole initial
+ * viewport it fetches immediately — the request burst happens regardless.
+ * Each request decodes the full-resolution source and rescales it, so the
+ * fan-in saturated the server's CPU (measured: 32 parallel decodes → 638% CPU,
+ * with the DB-free /api/dir slowing 16ms → 72ms).
+ *
+ * Gating on actual visibility keeps the burst proportional to what the user can
+ * see. The FileIcon is the placeholder, so layout never shifts.
+ */
+const visibleThumbKeys = reactive(new Set())
+let thumbVisibilityObserver = null
+// Elements awaiting observation, keyed by thumb identity. Needed because a
+// list re-render can hand us a new element for a key we already saw.
+const pendingThumbEls = new Map()
+
+/**
+ * Lazily create the observer on first use rather than in onMounted.
+ *
+ * Template ref callbacks run BEFORE onMounted, so an onMounted-created observer
+ * does not exist yet when the first rows register — those rows would take the
+ * "no observer" fallback and mount their thumbnails eagerly, silently disabling
+ * the gate for the entire first screenful (exactly the burst this exists to
+ * prevent).
+ */
+function getThumbVisibilityObserver() {
+  if (thumbVisibilityObserver) return thumbVisibilityObserver
+  if (typeof IntersectionObserver === 'undefined') return null
+  thumbVisibilityObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue
+      const key = e.target.dataset.thumbKey
+      if (key) onThumbVisible(key)
+    }
+  }, {
+    // Start loading slightly before the row is on screen so scrolling stays
+    // ahead of the requests.
+    rootMargin: '200px 0px',
+  })
+  return thumbVisibilityObserver
+}
+
+function thumbObserve(el, entry) {
+    if (!el) return
+    const key = thumbKey(entry)
+    // Already known visible — the image is about to render; nothing to observe.
+    if (visibleThumbKeys.has(key)) return
+    const observer = getThumbVisibilityObserver()
+    if (!observer) {
+        // No IntersectionObserver (very old browser / jsdom without a polyfill):
+        // fail open so thumbnails still work, just without the batching win.
+        visibleThumbKeys.add(key)
+        return
+    }
+    // The observer callback only receives the element, so carry the identity on
+    // it. Set on every call because the same key can be rendered by a fresh
+    // element after a list re-render.
+    el.dataset.thumbKey = key
+    pendingThumbEls.set(key, el)
+    observer.observe(el)
+}
+
+function onThumbVisible(key) {
+    visibleThumbKeys.add(key)
+    const el = pendingThumbEls.get(key)
+    if (el) {
+        thumbVisibilityObserver?.unobserve(el)
+        pendingThumbEls.delete(key)
+    }
+}
+
+/**
+ * Reset visibility tracking when the directory (or the search result set)
+ * changes: keys are name/path-based, so without this a stale "visible" key
+ * could show a thumbnail for an entry the user has not scrolled to yet.
+ */
+function resetThumbVisibility() {
+    visibleThumbKeys.clear()
+    pendingThumbEls.clear()
+    // disconnect() drops all observations at once — cheaper and safer than
+    // unobserving each element, and the next render re-observes what it needs.
+    thumbVisibilityObserver?.disconnect()
+    // Drop the observer too: the next render recreates it lazily. Keeping it
+    // would work, but a fresh instance also clears any queued entries, which
+    // matters when the reset races a pending callback.
+    thumbVisibilityObserver = null
+}
+
 function onThumbError(entry) {
     thumbErrors.add(thumbKey(entry))
 }
@@ -1109,6 +1203,14 @@ function isThumbable(entry) {
 
 function isThumbLoaded(entry) {
     return isThumbable(entry) && !thumbErrors.has(thumbKey(entry))
+}
+
+/**
+ * Whether to actually mount the <img> for this entry: it must be a decodable
+ * image, must not have errored, and must have scrolled into view at least once.
+ */
+function shouldMountThumb(entry) {
+    return isThumbLoaded(entry) && visibleThumbKeys.has(thumbKey(entry))
 }
 function onSortSelect(field) {
   emit('toggleSort', field)
@@ -1190,6 +1292,7 @@ function exitSearch() {
     search.reset() // cancelSearch + clears query/results/total/truncated/searchBasePath
     selectedPath.value = ''
     thumbErrors.clear()
+    resetThumbVisibility()
 }
 
 /**
@@ -1271,8 +1374,14 @@ watch(() => search.state.query, () => {
 
 // Drop the stale arrow-key highlight whenever the result set is replaced, so
 // Enter never opens an entry that no longer belongs to the visible results.
+// The result set is also a different listing, so thumbnail visibility restarts:
+// keys are path/name based and would otherwise mark not-yet-scrolled results as
+// already visible.
 watch(() => search.state.results, () => {
-    if (search.state.query.trim()) selectedPath.value = ''
+    if (search.state.query.trim()) {
+        selectedPath.value = ''
+        resetThumbVisibility()
+    }
 })
 
 /**
@@ -1357,6 +1466,9 @@ onUnmounted(() => {
   window.removeEventListener('highlight-file-item', handleHighlightFileItem)
   if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
   if (pasteOverlayTimer) { clearTimeout(pasteOverlayTimer); pasteOverlayTimer = null }
+  thumbVisibilityObserver?.disconnect()
+  thumbVisibilityObserver = null
+  pendingThumbEls.clear()
 })
 
 // ── Unified display source: directory entries or live search results ──
@@ -1493,6 +1605,7 @@ watch(() => props.currentDir, () => {
     if (multiSelect.active) exitMultiSelect()
     clearRangeAnchor()
     thumbErrors.clear()
+    resetThumbVisibility()
     selectedPath.value = ''
 })
 
