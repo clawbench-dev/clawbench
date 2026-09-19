@@ -560,83 +560,102 @@ export function computeIsWideScreen(cssWidth, screenWidth, screenHeight, dpr) {
 
 实测：`documentElement.style.zoom = '3'` 之后 `window.innerWidth` **仍是 1170**（≥1024）→ 布局依然判宽屏（`wideScreen:true, bottomDock:false`）。zoom 只改变渲染尺寸，不改变 CSS 视口。
 
-### 正确方案：窗口尺寸 = 设备像素，CDP = CSS 视口 + DPR
+### 正确方案：Playwright 原生移动端 context（`isMobile: true`）
+
+**唯一正确的方法**——这是 DevTools「设备模式」的等价物：
 
 ```js
-// ① 窗口设成「设备像素」尺寸（390×3=1170, 844×3=2532）。
-//    这一步决定了 page.screenshot() 的输出尺寸。
-await page.setViewportSize({ width: 1170, height: 2532 });
-
-// ② CDP 把 CSS 视口压回 390×844，并声明 DPR=3。
-const cdp = await page.context().newCDPSession(page);
-await cdp.send('Emulation.setDeviceMetricsOverride', {
-  width: 390, height: 844, deviceScaleFactor: 3, mobile: true,
-  screenWidth: 390, screenHeight: 844,                     // 必须给，见下
-  screenOrientation: { type: 'portraitPrimary', angle: 0 },
+const ctx = await browser.newContext({
+  viewport: { width: 390, height: 844 },
+  deviceScaleFactor: 3,
+  isMobile: true,          // ← 关键：启用移动端语义
+  hasTouch: true,          // ← 关键：触摸事件
+  userAgent: ANDROID_UA,
+  storageState: '/tmp/uidesc/mobile-state.json',   // 复用登录态
 });
-await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
-await cdp.send('Emulation.setUserAgentOverride', { userAgent: ANDROID_UA });
+const p = await ctx.newPage();
+await p.goto(URL, { waitUntil: 'load' });
+await p.screenshot({ path: '/tmp/uidesc/_raw_m2.png' });   // → 1170×2532
 ```
 
-实测：`innerWidth:390, dpr:3, bodyW:390, screenW:390, wideScreen:false, bottomDock:true`，
+实测：`innerWidth:390, bodyW:390, dpr:3, isMobile:true(maxTouchPoints>0)`，
 `page.screenshot()` 输出 **1170×2532**。
 
 | 项 | 值 |
 |---|---|
 | CSS 视口 | **390 × 844**（iPhone 14 逻辑尺寸） |
 | DPR | **3** |
-| 窗口 / 截图原生尺寸 | **1170 × 2532**（= CSS × DPR） |
+| 截图原生尺寸 | **1170 × 2532** |
 | 后处理 | LANCZOS 降到 **585 × 1266**（原生的一半） |
 | 单图体积 | 约 140–290 KB（量化后） |
 
-### ⚠️ 最严重的坑：截图输出尺寸没被断言，导致整批返工
+> 登录态复用：先用已有会话 `page.context().storageState({ path })` 导出，
+> 新 context 用 `storageState` 载入，省去每次登录。
 
-**症状**：图的比例是竖屏，DOM 断言也全对（`innerWidth:390, wideScreen:false`），
-但**肉眼一看元素明显偏大**——一屏只能装 10 来个条目，Dock 图标大得离谱。
+### ⚠️ 最致命的坑：CDP 覆盖 ≠ 移动端（`isMobile` 仍是 false）
 
-**根因**：`page.screenshot()` 截的是**浏览器窗口**，不是 CDP 声明的 CSS 视口。
+**症状**：比例是竖屏、`innerWidth` 也对，但**元素异常小、底部导航栏不可见**，
+整体像「桌面端界面被压进竖屏」——用户一眼看出不对。
 
-- 窗口若还是 1280×720（上一轮遗留），CDP 只改了「度量」，
-  **布局按 390 算、却被拉伸填满 1280 宽的画布** → 所有元素等比放大 3.3 倍。
-- 我当时只断言了 `innerWidth`，没断言**输出尺寸**，所以自检全绿、图全废。
+**根因**：用 `setViewportSize` + CDP `Emulation.setDeviceMetricsOverride` 只改了
+「度量」，**`isMobile` 仍是 false、`maxTouchPoints` 仍是 0**。
+页面的移动端媒体查询（`@media (hover: none)` / `pointer: coarse`）和触摸语义
+**全都没生效**，渲染出的仍是桌面布局。
 
-**正确姿势**：窗口尺寸与 CDP 的 CSS 视口 × DPR **必须一致**，
-并且**在后处理阶段硬断言原始截图尺寸**：
+**A/B 实测对照**（同一页面、同样 390×844）：
+
+| 方法 | `isMobile` | 底部导航栏 | 元素比例 |
+|---|---|---|---|
+| `setViewportSize` + CDP override | **false** | **不可见** | 异常小 |
+| `browser.newContext({ isMobile:true, hasTouch:true })` | **true** | 可见 | 正常 |
+
+**判据速记**：`innerWidth` 对 ≠ 移动端。**必须断言 `navigator.maxTouchPoints > 0`。**
+
+### ⚠️ 第二个坑：截图输出尺寸没被断言
+
+`page.screenshot()` 截的是**视口**，若窗口尺寸与设备像素不一致，
+布局按 390 算、却被拉伸填满更宽的画布 → 元素等比放大。
+**后处理阶段必须硬断言原始截图尺寸**：
 
 ```python
-raw_im = Image.open('/tmp/uidesc/_raw_m.png')
-EXPECT_RAW = (1170, 2532)          # = CSS 390×844 × DPR 3
-if raw_im.size != EXPECT_RAW:
-    print(f"ERROR: raw {raw_im.size} != {EXPECT_RAW} "
-          f"(CDP device emulation did not take over the viewport)", file=sys.stderr)
-    bad = True                      # 打 [NEEDS REVIEW]，绝不静默交付
+raw_im = Image.open('/tmp/uidesc/_raw_m2.png')
+EXPECT = (1170, 2532)          # = CSS 390×844 × DPR 3
+if raw_im.size != EXPECT:
+    print(f"ERROR: raw {raw_im.size} != {EXPECT}", file=sys.stderr)
+    bad = True                  # 打 [NEEDS REVIEW]，绝不静默交付
 ```
 
-**判据速记**：`innerWidth` 对 ≠ 图对。**必须同时断言原始输出像素尺寸。**
+### 三个必须注意的细节
 
-### 四个必须注意的顺序问题（都实测踩过）
-
-1. **`setViewportSize` 必须在 `setDeviceMetricsOverride` 之前**。反了的话 viewport 会覆盖 CDP 的 CSS 视口，`innerWidth` 变回 1170。
-2. **`reload` 会重置 CDP override**。若 setup 需要 reload，必须在 reload **之后**重新应用 CDP。实测踩过：reload 前应用 → `innerWidth:1170`。
-3. **`screenWidth` / `screenHeight` 必须给**。DevTools 设备模式也设这两个；缺了会让 `screen.width` 停留在旧窗口宽度，影响 `computeIsWideScreen` 里依赖 `screen.width > screen.height` 的横竖屏判据。
-4. **UA 必须覆盖**。不覆盖则 `isPC` 仍为 true（`usePlatformDetect.ts:55` 的 `isPC = !isAppMode && !AndroidUA && !iOSUA && !iPadOSUA`），文件管理器单击行为、终端音量键等移动端分支不会生效。
+1. **UA 必须覆盖**。不覆盖则 `isPC` 仍为 true（`usePlatformDetect.ts:55` 的
+   `isPC = !isAppMode && !AndroidUA && !iOSUA && !iPadOSUA`），
+   文件管理器单击行为、终端音量键等移动端分支不会生效。
+2. **登录态用 `storageState` 复用**。先用已有会话导出
+   `page.context().storageState({ path })`，新 context 传 `storageState` 载入。
+   否则每个 context 都要重登，慢且易失败。
+3. **App 模式 stub 用 `ctx.addInitScript`**。注入 `window.ClawBenchNative` 后
+   `useAppMode` 会置 `<html data-app-mode>`、渲染 appOnly 卡片。
+   **context 用完即 `close()`，天然无泄漏**——这比 v1 的 `page.addInitScript` + `dispose()`
+   干净（v1 曾因忘记 dispose 污染后续所有 web 截图）。
 
 ### 移动端构图是否正确的客观判据（DOM 实测，别靠肉眼/视觉模型）
 
-跑一次 `capm.sh` 断言这几个值，**全部落在区间内才算对**：
+跑一次 `capm2.sh` 断言这几个值，**全部落在区间内才算对**：
 
 | 指标 | 正确值 | 说明 |
 |---|---|---|
+| **`isMobile`** | **true**（`maxTouchPoints > 0`） | **最关键**；false 说明没用原生移动 context |
 | `innerWidth` | **390** | CSS 视口宽 |
 | `bodyW` | **390** | body 布局宽度，>390 说明被拉伸 |
-| `screenW` | **390** | 与 `screenWidth` 一致 |
-| `--dock-height` | `calc(47px + 0px)` | Dock 的 CSS 高度定义 |
+| `wideScreen` | **false** | 必须是窄屏布局 |
+| `bottomDock` | **true** | 底部 Dock 可见 |
 | `.bottom-dock-wrapper` 高度 | **48px ≈ 5.7% 屏高** | iOS TabBar 标准 49px，吻合 |
-| `.bottom-dock .dock-btn` | **34×34** | 触摸目标尺寸正常 |
-| 根字号 | **15px** | 项目基准 |
+| `.bottom-dock .dock-btn` | **34px** | 触摸目标尺寸正常 |
+| 原始截图尺寸 | **1170 × 2532** | = CSS × DPR |
 
-> **反例**：布局按 1170 算时，Dock 高度会变成 `47 × (1170/390) ≈ 141px`（占屏高 17%），
-> 这就是「元素明显放大」的量化特征。**发现这个数字偏离，就是 CDP 没接管视口。**
+> **两个反例特征**：
+> 1. `isMobile:false` → 元素异常小、底部 Dock 不可见（桌面布局被压进竖屏）。
+> 2. 原始尺寸 ≠ 1170×2532 → 布局被拉伸，元素等比放大。
 
 > **注意**：视觉模型（mmx）在判断「像不像手机 App」时**频繁幻觉**——实测反复把单栏读成「三栏布局」、
 > 把 8 个 Dock 图标说成「3 个」、把文件管理器说成「会话列表」。**构图正确性一律以 DOM 实测为准**，
@@ -657,13 +676,13 @@ if os.path.getsize(out) > 300*1024 and uniq < 60000:   # UI 截图
 
 实测：`uniq≈22000–35000`（UI）会量化；`uniq≈48701`（含照片）跳过。
 
-### 工具：`/tmp/uidesc/capm.sh`
+### 工具：`/tmp/uidesc/capm2.sh`
 
 ```
 ./capm.sh <输出名> [setup] [等待ms] [模式=web|app] [设备=phone|phone-l|tablet]
 ```
 
-沿用 cap3.sh 的「单次 run-code + 内置重试 + 产出侧 `[NEEDS REVIEW]` 防线」，第 0 步替换为上述 CDP 调用。`recapm.sh` 提供 `dock` / `setcat` 两个批次函数。
+沿用 cap3.sh 的「内置重试 + 产出侧 `[NEEDS REVIEW]` 防线」，核心是 `browser.newContext({ isMobile:true, hasTouch:true, deviceScaleFactor:3 })`。`recapm2.sh` 提供批量重截驱动。
 
 ---
 
@@ -787,20 +806,22 @@ const stub = await page.addInitScript({ content: `
 
 ## 二十五、移动端验收判据
 
-### 每张图必须断言（capm.sh 已内置）
+### 每张图必须断言（capm2.sh 已内置）
 
 **运行期断言（DOM）**：
 
 ```js
 {
-  innerW: 390,           // CDP 生效；≠390 说明 override 被覆盖
-  bodyW: 390,            // body 布局宽；>390 说明布局被拉伸（最易漏的一条）
-  screenW: 390,          // 与 CDP screenWidth 一致
+  isMobile: true,        // maxTouchPoints>0；false 说明没用原生移动 context（最关键）
+  innerW: 390,           // CSS 视口宽
+  bodyW: 390,            // body 布局宽；>390 说明布局被拉伸
   wideScreen: false,     // 必须是移动端布局
   bottomDock: true,      // 底部 Dock 可见
   wideDock: false,       // 宽屏左侧 dock 不可见
   appMode: <按需>,        // app 模式应为 true
   card: false,           // 无完成通知卡片
+  dockH: 48,             // Dock 高度；≈141 说明布局按 1170 算（异常）
+  dockBtn: 34,           // Dock 按钮高度
 }
 ```
 
@@ -841,3 +862,89 @@ if Image.open(raw).size != (1170, 2532):   # CSS 390×844 × DPR 3
 - 文档：`docs/user-guid/user-guid-mobile.md`
 - 截图：`docs/user-guid/screenshots-mobile/`（与桌面 `screenshots/` 平级隔离，避免混入桌面引用校验）
 - 命名：`m-NN-name.png`（`m-` 前缀 + 两位序号 + 语义名）
+
+---
+
+## 二十六、移动端补图：与 README 对齐的完整清单
+
+**触发场景**：README 里已有的截图，移动端文档也要有对应版本。
+
+### README 的 35 张图与移动端对应关系
+
+| README 图 | 移动端文件 | 拍法要点 |
+|---|---|---|
+| login | m-01-login | 清 cookie 后拍（新 context 不传 storageState） |
+| chat-interface / home | m-03-chat | 会话页 + 消息区 |
+| project-select | m-19-project-menu | 点 `.project-switch-btn` |
+| session-manager | m-35-session-manager | 会话列表（6 条） |
+| file-browser | m-09-file-manager | dock「文件管理器」 |
+| file-search | m-21-file-search | **必须先开「全局搜索」**，否则搜不到子目录 |
+| code-editor | m-22-code-editor | 搜 `vite.config.ts` 并单击（`.cm-editor` 出现） |
+| markdown-preview | m-23-markdown-preview | 打开 `AGENTS.md` |
+| toc-drawer | m-24-toc-drawer | 查看器内点 `.file-header-btn[title="目录"]`，用**原生 click** |
+| image-viewer | m-25-image-viewer | 进 `test/images` 打开 `img_chinese_beauty_001.jpg` |
+| audio-player | m-37-audio-player | `test/media/voice-demo.mp3` |
+| video-player | m-38-video-player | `test/media/voice-demo.mp4` |
+| pdf-preview | m-26-pdf-preview | `sample-local-pdf.pdf` |
+| mermaid-diagram | m-27-mermaid-diagram | `mermaid-demo.md`（`.mermaid` 出现） |
+| latex-formula | m-28-latex-formula | `formula-demo.md`（`.katex` 出现） |
+| terminal | m-12-term-keys | **必须执行真实命令**（见下） |
+| terminal-key-config | m-13-term-keybar | 终端底部虚拟键栏 |
+| git-history | m-10-git | dock「项目历史」 |
+| git-branches | m-29-git-branches | 点「管理」→ 分支标签 |
+| git-commit-detail | m-30-git-commit-detail | 点 `.drilldown-item[1]`（**索引 0 是「工作区变更」**） |
+| git-comparison-report | m-36-git-working-tree | 点 `.drilldown-item[0]`（工作区变更，55 文件） |
+| scheduled-tasks | m-31-scheduled-tasks | dock「任务」 |
+| task-create | m-31-task-create | 点「新建任务」按钮 |
+| rag-search | m-07-session-search | 点 `button[title="搜索会话"]` |
+| system-monitor | m-33-system-monitor | dock「数据统计」（**不在溢出菜单里时直接点**） |
+| settings-panel | m-14-settings-index | dock「设置」（**常在溢出菜单**） |
+| port-forwarding | m-32-port-forwarding | dock「端口映射」 |
+| agent-selector | m-34-agent-selector | 点 `button[title*="选择智能体"]` |
+| pc-desktop | — | 桌面专属，跳过 |
+| product_hero.en | — | 宣传图，跳过 |
+
+**仍缺 4 张**（需真实对话交互，成本高）：
+`quote-question`（选中文字弹引用条）、`conversation-recommendation`（AI 推荐回复）、
+`acp-permission`（工具审批卡片）、`schedule-proposal`（聊天内任务建议卡片）。
+
+### 终端截图必须执行真实命令
+
+**空终端截图没有意义。** 必须让终端跑出可见输出：
+
+```js
+// 点 xterm 的 helper textarea 聚焦，再用真实键盘输入
+const ta = await p.$('.xterm-helper-textarea');
+await ta.click({ force: true });
+await p.keyboard.type('ls -la && echo "=== 演示 ===" && git log --oneline -5', { delay: 25 });
+await p.keyboard.press('Enter');
+await p.waitForTimeout(4000);   // 等输出渲染
+```
+
+判据：`.xterm-rows > div` 行数应 > 20（实测 43 行），且能看到命令输出内容。
+
+### 三个实测踩坑
+
+1. **`input[type=text]` 要按 placeholder 筛**。页面里有 `input[type=file]`（上传控件），
+   直接设 value 会抛 `InvalidStateError: This input element accepts a filename`。
+   正确：`[...document.querySelectorAll('input[type=text]')].find(i => i.placeholder.includes('搜索'))`。
+
+2. **文件搜索必须先开「全局搜索」**。默认 `recursive=false` 只搜当前目录一级，
+   搜子目录文件（如 `test/markdown/mermaid-demo.md`）会返回 0 结果。
+   按钮 title 是「全局搜索」，点一下让它 `active`。
+
+3. **项目 cookie 会被误切**。`clawbench_project` cookie 决定搜索根目录。
+   实测误点「文件管理器」里的目录后 cookie 变成了 `.../clawbench/android`，
+   导致所有搜索都在 android 子目录里进行。**发现搜索结果异常时先查这个 cookie**：
+   ```js
+   const ck = await ctx.cookies();
+   ck.find(c => c.name === 'clawbench_project').value   // 应为仓库根，URL 编码
+   ```
+
+4. **`.up-overlay` 会挡住点击**。升级提示浮层拦截 pointer events，
+   导致 `elementHandle.click` 超时 30s。**必须先写 `clawbench-upgrade-skip`**：
+   ```js
+   const r = await fetch('/api/upgrade/check', { credentials: 'include' });
+   const j = await r.json();
+   localStorage.setItem('clawbench-upgrade-skip', j.latest_version);
+   ```

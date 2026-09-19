@@ -139,6 +139,11 @@ ClawBench 的一切操作（会话、文件、Git、任务）都绑定在某个*
 | 输入区 | 多行文本框，`Enter` 发送、`Shift+Enter` 换行（软键盘上是换行键） |
 | 底部按钮 | 左侧附件、右侧发送 |
 
+新建会话时会先弹出**智能体选择器**，选择用哪个 AI CLI：
+
+![智能体选择器](screenshots-mobile/m-34-agent-selector.png)
+
+
 > **注意**：顶部操作条在窄屏下**文字标签会隐藏**，只留图标以节省宽度；左右滑动可看到更多按钮。
 
 ### 5.2 斜杠命令
@@ -185,6 +190,9 @@ ClawBench 的一切操作（会话、文件、Git、任务）都绑定在某个*
 
 > **注意**：桌面端这些按钮**悬停才出现**，触屏没有 hover——所以在手机上它们是**常显**的，直接点即可。
 
+在消息里**选中文字**会弹出引用条，可以把这段内容带进下一轮提问。
+
+
 ### 5.5 语音输入
 
 **长按发送按钮**约 0.5 秒开始录音，松开结束：
@@ -223,6 +231,11 @@ AI 需要你补充信息时会给出**提问卡**（带选项按钮），点选�
 - 归档
 
 > **注意**：归档是**单向**的，归档后不能从界面取消归档。
+
+会话列表支持长按操作（置顶 / 重命名 / 标签 / 归档）：
+
+![会话管理](screenshots-mobile/m-35-session-manager.png)
+
 
 ### 6.2 会话搜索
 
@@ -275,6 +288,11 @@ AI 需要你补充信息时会给出**提问卡**（带选项按钮），点选�
 | 多选 | 进入批量操作 |
 | 跳转 | 直接输入路径跳转 |
 | 显示隐藏文件 | 切换 `.` 开头文件可见性 |
+
+工具栏下方是**搜索框**，输入即筛当前目录；配合「递归搜索」「全局搜索」开关可搜整个项目：
+
+![文件搜索](screenshots-mobile/m-21-file-search.png)
+
 
 面包屑在工具栏下方，点任意一级可跳回。**返回上一级**按钮在目录层级 > 1 时出现。
 
@@ -337,13 +355,29 @@ AI 需要你补充信息时会给出**提问卡**（带选项按钮），点选�
 
 Markdown 渲染支持标题、列表、表格、代码块、公式、Mermaid 图、内嵌图片。
 
+![Markdown 预览](screenshots-mobile/m-23-markdown-preview.png)
+
+
 - 工具栏的**目录**按钮唤出 TOC 抽屉，点标题跳转
+
+![TOC 目录](screenshots-mobile/m-24-toc-drawer.png)
+
 - 表格支持横向滚动查看宽表
 - 公式（LaTeX）渲染为排版后的数学符号
+
+![LaTeX 公式](screenshots-mobile/m-28-latex-formula.png)
+
+Mermaid 图表（时序图、甘特图、流程图、ER 图）会渲染为图形：
+
+![Mermaid 图表](screenshots-mobile/m-27-mermaid-diagram.png)
+
 
 ### 8.3 代码
 
 CodeMirror 编辑器，支持**浏览 / 编辑双模式**：
+
+![代码编辑器](screenshots-mobile/m-22-code-editor.png)
+
 
 - 语法高亮、行号、自动换行、粘性滚动
 - `Mod+F` 搜索
@@ -356,6 +390,19 @@ CodeMirror 编辑器，支持**浏览 / 编辑双模式**：
 - 灯箱：点工具栏灯箱按钮全屏查看
 - 音频/视频：内联播放器，支持播放暂停、进度拖动、音量
 - PDF / PPT：**双指捏合缩放**
+
+![图片查看器](screenshots-mobile/m-25-image-viewer.png)
+
+音频与视频使用内联播放器：
+
+![音频播放器](screenshots-mobile/m-37-audio-player.png)
+
+![视频播放器](screenshots-mobile/m-38-video-player.png)
+
+PDF 分页渲染，支持缩放与翻页：
+
+![PDF 预览](screenshots-mobile/m-26-pdf-preview.png)
+
 
 ### 8.5 下载、导出与分享
 
@@ -379,6 +426,11 @@ CodeMirror 编辑器，支持**浏览 / 编辑双模式**：
 - 终端字号可调
 
 ![终端按键栏](screenshots-mobile/m-13-term-keybar.png)
+
+终端支持完整的交互式 shell——上图是执行 `ls -la` 与 `git log --oneline -5` 后的实际输出：
+
+![终端执行命令](screenshots-mobile/m-12-term-keys.png)
+
 
 ### 9.2 手势
 
@@ -409,6 +461,19 @@ CodeMirror 编辑器，支持**浏览 / 编辑双模式**：
 
 Diff 抽屉用红绿标出增删行，支持左右滑动查看长行。
 
+**分支 / 标签 / 工作树**管理：
+
+![分支管理](screenshots-mobile/m-29-git-branches.png)
+
+点提交查看详情（SHA / 作者 / 时间 / 文件列表）：
+
+![提交详情](screenshots-mobile/m-30-git-commit-detail.png)
+
+工作区变更按「已暂存 / 未暂存」分组，点文件看 diff：
+
+![工作区变更](screenshots-mobile/m-36-git-working-tree.png)
+
+
 ## 11. 任务
 
 「任务」页签管理定时任务与事件任务：
@@ -423,6 +488,13 @@ Diff 抽屉用红绿标出增删行，支持左右滑动查看长行。
 
 任务完成后会有通知（应用内卡片 / 系统通知 / IM 推送，取决于设置）。
 
+![任务列表](screenshots-mobile/m-31-scheduled-tasks.png)
+
+点「新建任务」填写表单（名称 / 执行 Agent / 触发方式 / 频率 / Cron / 提示词）：
+
+![新建任务](screenshots-mobile/m-31-task-create.png)
+
+
 ## 12. 数据统计
 
 「数据统计」页签提供：
@@ -431,6 +503,9 @@ Diff 抽屉用红绿标出增删行，支持左右滑动查看长行。
 - **代码存量**：项目代码行数统计（按语言）
 - **代码增量**：一段时间内的代码变更量
 - **系统资源**：服务器 CPU、内存、磁盘、网络实时监控
+
+![数据统计](screenshots-mobile/m-33-system-monitor.png)
+
 
 ## 13. 设置
 
@@ -457,6 +532,11 @@ Diff 抽屉用红绿标出增删行，支持左右滑动查看长行。
 | **安全** | 访问密码、会话有效期 |
 | **调试** | 日志捕获、重配服务器（App 专有） |
 | **关于** | 版本信息、更新检查 |
+
+端口映射页可把服务器端口转发到本地（App 模式支持自动建立 SSH 隧道）：
+
+![端口映射](screenshots-mobile/m-32-port-forwarding.png)
+
 
 ---
 
