@@ -28,7 +28,7 @@
           type="button"
           :title="t('git.commitMeta.revealInManager')"
           @click.stop="emit('reveal-file', filePath)"
-          v-html="DIRECTORY_OPEN_ICON_SVG"
+          v-html="FILE_OPEN_ICON_SVG"
         ></button>
       </div>
     </template>
@@ -89,10 +89,6 @@ const shaCopied = ref(false)
 const fileName = computed(() => {
   return props.filePath ? baseName(props.filePath) : ''
 })
-
-// Folder glyph for the "reveal in file manager" button, matching the icon
-// family of the shared file-open annotation (same 12px stroke viewBox).
-const DIRECTORY_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>'
 
 function copySHA() {
   if (!props.commit?.sha) return

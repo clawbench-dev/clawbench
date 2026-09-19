@@ -104,6 +104,15 @@ describe('GitCommitMeta — file annotations', () => {
     expect(wrapper.findAll('.diff-meta-open-btn svg')).toHaveLength(2)
   })
 
+  it('uses the same jump icon for both rows', () => {
+    const wrapper = mountWithPath()
+    const [fileIcon, pathIcon] = wrapper.findAll('.diff-meta-open-btn svg').map(s => s.html())
+    // Both rows jump somewhere, so they share the shared file-open glyph rather
+    // than one of them inventing a folder icon.
+    expect(fileIcon).toBe(pathIcon)
+    expect(fileIcon).toContain('file-open-icon')
+  })
+
   it('does not render annotation rows without a file path', () => {
     const wrapper = mountMeta({
       commit: { sha: 'abc1234567', author: 'me', date: new Date().toISOString(), msg: 'fix' },
