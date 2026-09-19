@@ -39,12 +39,18 @@ export function formatErrorCode(
  * For parse_error and backend_exit, appends detail after colon/newline.
  * For request_failed, appends the human-readable error detail.
  * Appends a structured error-code suffix (e.g. " [HTTP 500]") when present.
+ * When the agent reported its own reason (error_detail), that is appended
+ * after the localized label so a placeholder code like -32603 is not the only
+ * thing the user sees.
  */
 export function getWarningText(
-  block: { reason?: string; text?: string; error_code?: number; http_status?: number },
+  block: { reason?: string; text?: string; error_code?: number; http_status?: number; error_detail?: string },
   t: (key: string) => string
 ): string {
   const codeSuffix = formatErrorCode(block)
+  // An agent-reported detail is strictly more informative than the localized
+  // label alone; the code suffix still follows it so both remain visible.
+  const detailSuffix = block.error_detail ? ': ' + block.error_detail : ''
   if (block.reason) {
     const key = `chat.contentBlocks.warningReasons.${block.reason}`
     const translated = t(key)
@@ -66,11 +72,11 @@ export function getWarningText(
       if (block.reason === 'request_failed' && block.text) {
         return translated + ': ' + block.text + codeSuffix
       }
-      return translated + codeSuffix
+      return translated + detailSuffix + codeSuffix
     }
   }
   // Fallback: no reason code or no matching i18n key
-  return (block.text || '') + codeSuffix
+  return (block.text || '') + detailSuffix + codeSuffix
 }
 
 /**

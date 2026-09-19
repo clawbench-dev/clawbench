@@ -218,9 +218,12 @@ func (c *ACPConn) emitRefusalWarningIfRefused(resp acp.PromptResponse, streamCh 
 	if resp.StopReason != acp.StopReasonRefusal {
 		return
 	}
+	// The agent's own reason, when it reports one. CodeBuddy's -32603 is a
+	// placeholder that explains nothing; its _meta carries the real cause.
+	detail := refusalDetailFromMeta(resp.Meta)
 	slog.Warn("acp conn: prompt refused by agent",
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
-		"stop_reason", resp.StopReason)
+		"stop_reason", resp.StopReason, "detail", detail)
 	httpStatus := acpHTTPStatusFromMeta(resp.Meta)
 	forwardACPEvent(streamCh, StreamEvent{
 		Type:        "warning",
@@ -229,6 +232,7 @@ func (c *ACPConn) emitRefusalWarningIfRefused(resp acp.PromptResponse, streamCh 
 		ErrorCode:   -32603, // JSON-RPC internal error (matches CodeBuddy refusal rpcCode)
 		HTTPStatus:  httpStatus,
 		ErrorSource: "agent",
+		ErrorDetail: detail,
 	})
 }
 

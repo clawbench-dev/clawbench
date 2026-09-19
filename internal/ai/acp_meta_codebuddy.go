@@ -1,5 +1,11 @@
 package ai
 
+import (
+	"encoding/json"
+	"strings"
+	"unicode/utf8"
+)
+
 // ---------------------------------------------------------------------------
 // CodeBuddy ACP _meta adapter
 // ---------------------------------------------------------------------------
@@ -49,7 +55,100 @@ const (
 	metaKeyCodeBuddyFinishReason = "codebuddy.ai/finishReason"
 	metaKeyCodeBuddyOutcome      = "codebuddy.ai/outcome"
 	metaKeyCodeBuddyAgentPhase   = "codebuddy.ai/agentPhase"
+	// metaKeyCodeBuddyErrorMessage carries the refusal payload on a
+	// stopReason=refusal PromptResponse: a JSON-encoded
+	// {code,message,data} blob whose data.details holds the real cause.
+	metaKeyCodeBuddyErrorMessage = "codebuddy.ai/errorMessage"
+	// metaKeyCodeBuddyErrorMessageBare is the same payload under an unprefixed
+	// key. CodeBuddy uses it on the out-of-band control-command failure path
+	// (a plain message string rather than the JSON blob), and both shapes reach
+	// the client as stopReason=refusal.
+	metaKeyCodeBuddyErrorMessageBare = "errorMessage"
 )
+
+// maxErrorDetailRunes bounds the extracted refusal detail so a pathological
+// upstream payload cannot bloat every persisted warning block. The details are
+// human-readable one-liners (e.g. "Bad substitution: o.gaps.join"), so this is
+// far above any real value.
+const maxErrorDetailRunes = 300
+
+// refusalDetailFromMeta extracts the human-readable failure reason from a
+// PromptResponse._meta on a refusal.
+//
+// CodeBuddy reports stopReason=refusal with a generic JSON-RPC code (-32603
+// Internal error) and stashes the real cause in _meta as a JSON string:
+//
+//	{"code":-32603,"message":"Internal error","data":{"details":"Bad substitution: x"}}
+//
+// The `details` field carries the actionable text; `message` alone is the
+// generic "Internal error". When the payload parses but neither field carries
+// usable text, the result is "" so the caller falls back to the generic
+// refusal copy rather than echoing a JSON envelope as if it were a reason.
+//
+// A bare (non-JSON) string is returned as-is: CodeBuddy uses that shape too
+// (the sensitive-input block path and the out-of-band control-command failure
+// path put the message directly there), and a malformed/truncated blob is
+// likewise surfaced verbatim — the text still tells the user more than the
+// bare -32603 code.
+func refusalDetailFromMeta(meta map[string]any) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	raw := metaString(meta[metaKeyCodeBuddyErrorMessage])
+	if raw == "" {
+		raw = metaString(meta[metaKeyCodeBuddyErrorMessageBare])
+	}
+	if raw == "" {
+		return ""
+	}
+
+	detail, parsed := refusalDetailFromPayload(raw)
+	if !parsed {
+		// Not a JSON object (bare string, or a malformed/truncated blob): the
+		// raw text is all we have, and it beats the bare code.
+		detail = raw
+	}
+	return truncateRunes(strings.TrimSpace(detail), maxErrorDetailRunes)
+}
+
+// refusalDetailFromPayload pulls data.details (preferred) or message out of a
+// JSON-encoded error payload. The bool reports whether raw parsed as a JSON
+// object at all: when it did but neither field carried usable text, the caller
+// must NOT echo the raw blob (a JSON envelope like {"code":-32603} is noise,
+// not a reason), whereas unparseable text is worth surfacing verbatim.
+func refusalDetailFromPayload(raw string) (detail string, parsed bool) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "{") {
+		return "", false
+	}
+	var payload struct {
+		Message string `json:"message"`
+		Data    struct {
+			Details string `json:"details"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return "", false
+	}
+	if details := strings.TrimSpace(payload.Data.Details); details != "" {
+		return details, true
+	}
+	// "Internal error" and friends are the generic placeholder, not a cause.
+	msg := strings.TrimSpace(payload.Message)
+	if msg == "" || msg == "Internal error" {
+		return "", true
+	}
+	return msg, true
+}
+
+// truncateRunes truncates s to at most n runes, appending an ellipsis marker
+// when it was cut. Rune-based so a multi-byte detail never splits mid-character.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "…"
+}
 
 // tokenUsageFromCodeBuddyUsage builds a metaTokenUsage from the OpenAI-style
 // _meta.usage block that CodeBuddy reports.

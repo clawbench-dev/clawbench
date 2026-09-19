@@ -188,7 +188,7 @@ func TestExtractSummaryCardsAskQuestion_JSONProducesNoCard(t *testing.T) {
 func TestExtractSummaryCardsWarnings(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "warning", Text: "Server restarted, AI response interrupted", Reason: "restart"},
-		{Type: "error", Text: "AI backend exited", Reason: "backend_exit", ErrorCode: -32603, HTTPStatus: 500, ErrorSource: "agent"},
+		{Type: "error", Text: "AI backend exited", Reason: "backend_exit", ErrorCode: -32603, HTTPStatus: 500, ErrorSource: "agent", ErrorDetail: "Bad substitution: o.gaps.join"},
 		{Type: "text", Text: "ordinary answer"},
 		{Type: "tool_use", Name: "Bash", ID: "t1", Done: true, Status: "success"},
 	}
@@ -202,7 +202,7 @@ func TestExtractSummaryCardsWarnings(t *testing.T) {
 	if w0.Type != "warning" || w0.Text != "Server restarted, AI response interrupted" || w0.Reason != "restart" {
 		t.Fatalf("restart warning mismatch: %+v", w0)
 	}
-	if w0.ErrorCode != 0 || w0.HTTPStatus != 0 || w0.ErrorSource != "" {
+	if w0.ErrorCode != 0 || w0.HTTPStatus != 0 || w0.ErrorSource != "" || w0.ErrorDetail != "" {
 		t.Fatalf("restart warning should carry no structured error fields: %+v", w0)
 	}
 	// Error block (red banner with structured fields preserved).
@@ -212,6 +212,12 @@ func TestExtractSummaryCardsWarnings(t *testing.T) {
 	}
 	if w1.ErrorCode != -32603 || w1.HTTPStatus != 500 || w1.ErrorSource != "agent" {
 		t.Fatalf("error warning structured fields lost: %+v", w1)
+	}
+	// The agent-reported detail must survive the summary view, where the full
+	// content blocks are stripped — otherwise the banner loses its only
+	// actionable text.
+	if w1.ErrorDetail != "Bad substitution: o.gaps.join" {
+		t.Fatalf("error warning detail lost: %+v", w1)
 	}
 	// text/tool blocks must not be collected as warnings.
 }

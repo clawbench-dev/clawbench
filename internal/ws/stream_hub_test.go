@@ -386,6 +386,7 @@ func TestStreamEventToPayload_ErrorCarriesStructuredFields(t *testing.T) {
 		ErrorCode:   -32603,
 		HTTPStatus:  500,
 		ErrorSource: "agent",
+		ErrorDetail: "Bad substitution: o.gaps.join",
 	})
 	m, ok := payload.(map[string]any)
 	assert.True(t, ok)
@@ -393,6 +394,7 @@ func TestStreamEventToPayload_ErrorCarriesStructuredFields(t *testing.T) {
 	assert.Equal(t, -32603, m["error_code"])
 	assert.Equal(t, 500, m["http_status"])
 	assert.Equal(t, "agent", m["error_source"])
+	assert.Equal(t, "Bad substitution: o.gaps.join", m["error_detail"])
 }
 
 func TestStreamEventToPayload_WarningCarriesStructuredFields(t *testing.T) {
@@ -403,6 +405,7 @@ func TestStreamEventToPayload_WarningCarriesStructuredFields(t *testing.T) {
 		ErrorCode:   -32603,
 		HTTPStatus:  500,
 		ErrorSource: "agent",
+		ErrorDetail: "Bad substitution: o.gaps.join",
 	})
 	m, ok := payload.(map[string]any)
 	assert.True(t, ok)
@@ -410,6 +413,21 @@ func TestStreamEventToPayload_WarningCarriesStructuredFields(t *testing.T) {
 	assert.Equal(t, -32603, m["error_code"])
 	assert.Equal(t, 500, m["http_status"])
 	assert.Equal(t, "agent", m["error_source"])
+	assert.Equal(t, "Bad substitution: o.gaps.join", m["error_detail"])
+}
+
+// The detail is optional: a warning without one must not gain an empty key,
+// which would render as a dangling ": " in the banner.
+func TestStreamEventToPayload_WarningOmitsEmptyDetail(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type:    "warning",
+		Content: "no detail",
+		Reason:  "request_failed",
+	})
+	m, ok := payload.(map[string]any)
+	require.True(t, ok)
+	_, hasDetail := m["error_detail"]
+	assert.False(t, hasDetail, "error_detail should be omitted when empty")
 }
 
 // --- acpStatePayload ---

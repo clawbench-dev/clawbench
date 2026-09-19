@@ -373,6 +373,7 @@ type StreamEvent struct {
 	ErrorCode      int                    // Structured error code (e.g. ACP JSON-RPC code -32603)
 	HTTPStatus     int                    // Upstream HTTP status when available (e.g. 500)
 	ErrorSource    string                 // "agent" | "clawbench" | "network"
+	ErrorDetail    string                 // Agent's own failure reason when the code alone is uninformative (e.g. CodeBuddy reports -32603 for every internal error); may be empty
 	Meta           *Metadata              // Metadata (Type=metadata)
 	Error          string                 // Error message (Type=error)
 	Tool           *ToolCall              // Tool call info (Type=tool_use, Type=tool_result)

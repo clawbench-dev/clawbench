@@ -2858,6 +2858,32 @@ describe('ws_error / ws_warning structured error fields', () => {
     expect(sm.blocks[0].error_source).toBe('agent')
   })
 
+  // error_detail is what makes a placeholder code (-32603) actionable; if the
+  // reducer drops it the banner silently regresses to the bare code.
+  it('ws_warning carries the agent-reported error_detail', () => {
+    let s: any[] = [{ role: 'assistant', id: 1, content: '', blocks: [], streaming: true }]
+    s = chatMessageReducer(s, {
+      type: 'ws_warning',
+      text: 'AI request refused by the agent',
+      reason: 'refused',
+      errorCode: -32603,
+      errorSource: 'agent',
+      errorDetail: 'Bad substitution: o.gaps.join',
+    })
+    expect(s[0].blocks[0].error_detail).toBe('Bad substitution: o.gaps.join')
+  })
+
+  it('ws_error carries the agent-reported error_detail', () => {
+    let s: any[] = [{ role: 'assistant', id: 1, content: '', blocks: [], streaming: true }]
+    s = chatMessageReducer(s, {
+      type: 'ws_error',
+      text: 'ACP error -32603: Internal error',
+      reason: 'backend_exit',
+      errorDetail: 'Bad substitution: x',
+    })
+    expect(s[0].blocks[0].error_detail).toBe('Bad substitution: x')
+  })
+
   it('ws_error without structured fields stays compatible', () => {
     let s: any[] = [{ role: 'assistant', id: 1, content: '', blocks: [], streaming: true }]
     s = chatMessageReducer(s, { type: 'ws_error', text: 'oops', reason: 'timeout' })
@@ -2866,6 +2892,7 @@ describe('ws_error / ws_warning structured error fields', () => {
     expect(sm.blocks[0].error_code).toBeUndefined()
     expect(sm.blocks[0].http_status).toBeUndefined()
     expect(sm.blocks[0].error_source).toBeUndefined()
+    expect(sm.blocks[0].error_detail).toBeUndefined()
   })
 })
 

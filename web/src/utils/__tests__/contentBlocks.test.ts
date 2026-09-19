@@ -173,6 +173,40 @@ describe('getWarningText', () => {
     const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.refused' ? 'AI request refused' : key
     expect(getWarningText({ reason: 'refused', text: 'AI request refused by the agent', http_status: 500 }, tFound)).toBe('AI request refused [HTTP 500]')
   })
+
+  // The whole point of error_detail: -32603 is a placeholder CodeBuddy emits
+  // for every internal failure, so the localized label alone tells the user
+  // nothing. The agent's own reason must reach the banner, with the code still
+  // visible after it.
+  it('appends the agent-reported detail after the refused label', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.refused' ? 'AI request refused' : key
+    expect(getWarningText({
+      reason: 'refused',
+      text: 'AI request refused by the agent (model unavailable or upstream error)',
+      error_code: -32603,
+      error_source: 'agent',
+      error_detail: 'Bad substitution: o.gaps.join',
+    }, tFound)).toBe('AI request refused: Bad substitution: o.gaps.join [code -32603]')
+  })
+
+  it('puts the detail before the HTTP status suffix', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.refused' ? 'AI request refused' : key
+    expect(getWarningText({ reason: 'refused', error_detail: 'upstream exploded', http_status: 502 }, tFound))
+      .toBe('AI request refused: upstream exploded [HTTP 502]')
+  })
+
+  // Other reasons append block.text themselves; a detail must not be added on
+  // top of it or the banner shows two different explanations.
+  it('does not double up detail for request_failed', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.request_failed' ? 'AI request failed' : key
+    expect(getWarningText({ reason: 'request_failed', text: 'Internal error', error_detail: 'should not appear' }, tFound))
+      .toBe('AI request failed: Internal error')
+  })
+
+  it('appends detail to the fallback text when the reason is unknown', () => {
+    expect(getWarningText({ reason: 'unknown_reason', text: 'raw text', error_detail: 'cause', error_code: -1 }, t))
+      .toBe('raw text: cause [code -1]')
+  })
 })
 
 // ── formatErrorCode ──
