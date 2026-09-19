@@ -13,7 +13,7 @@ func TestDeriveChanges_NilPrevEmitsOpened(t *testing.T) {
 	// `opened`. (The caller suppresses this on a repo's first-ever sync, which
 	// is what prevents replaying history — DeriveChanges itself must not, or
 	// items created after the baseline would never be reported.)
-	changes := DeriveChanges(nil, ItemState{State: "open", Author: "alice"}, 1)
+	changes := DeriveChanges(nil, ItemState{State: "open", Author: "alice"}, 1, time.Time{})
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventOpened, changes[0].Type)
 	assert.Equal(t, 1, changes[0].Number)
@@ -22,20 +22,87 @@ func TestDeriveChanges_NilPrevEmitsOpened(t *testing.T) {
 
 func TestDeriveChanges_NilPrevMergedItemReportsMerged(t *testing.T) {
 	// A PR already merged when first seen reports the terminal state, not opened.
-	changes := DeriveChanges(nil, ItemState{State: "merged", Merged: true}, 2)
+	changes := DeriveChanges(nil, ItemState{State: "merged", Merged: true}, 2, time.Time{})
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventMerged, changes[0].Type)
 }
 
 func TestDeriveChanges_NilPrevClosedItemReportsClosed(t *testing.T) {
-	changes := DeriveChanges(nil, ItemState{State: "closed"}, 3)
+	changes := DeriveChanges(nil, ItemState{State: "closed"}, 3, time.Time{})
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventClosed, changes[0].Type)
+}
+
+// --- windowStart gating (issue: full-history backfill on first sync) ---
+
+func TestDeriveChanges_NilPrevCreatedBeforeWindowIsSilent(t *testing.T) {
+	// The item pre-exists the queried window: it surfaced only because it was
+	// updated. Its earlier state was never observed, so reporting `closed`
+	// would claim a transition that may have happened years ago.
+	window := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	old := window.Add(-3 * 365 * 24 * time.Hour)
+
+	changes := DeriveChanges(nil, ItemState{
+		State: "closed", CreatedAt: old, Author: "alice",
+	}, 42, window)
+	assert.Empty(t, changes, "a pre-existing item must be baselined silently")
+}
+
+func TestDeriveChanges_NilPrevCreatedInsideWindowReports(t *testing.T) {
+	// Created after the window opened → genuinely new since the baseline.
+	window := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	created := window.Add(time.Minute)
+
+	changes := DeriveChanges(nil, ItemState{
+		State: "open", CreatedAt: created, Author: "alice",
+	}, 7, window)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventOpened, changes[0].Type)
+	assert.Equal(t, "alice", changes[0].Actor)
+}
+
+func TestDeriveChanges_NilPrevCreatedExactlyAtWindowIsReported(t *testing.T) {
+	// The boundary is inclusive: `since` is inclusive upstream, so an item
+	// created exactly at the window start is inside it.
+	window := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	changes := DeriveChanges(nil, ItemState{
+		State: "open", CreatedAt: window,
+	}, 8, window)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventOpened, changes[0].Type)
+}
+
+func TestDeriveChanges_NilPrevUnknownCreatedAtIsReported(t *testing.T) {
+	// A provider that does not report createdAt must not have its events
+	// silently dropped; the zero value counts as new.
+	window := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	changes := DeriveChanges(nil, ItemState{State: "open"}, 9, window)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventOpened, changes[0].Type)
+}
+
+func TestDeriveChanges_NilPrevZeroWindowIsReported(t *testing.T) {
+	// No window restriction (full fetch) keeps the pre-window semantics.
+	old := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+	changes := DeriveChanges(nil, ItemState{State: "open", CreatedAt: old}, 10, time.Time{})
+	require.Len(t, changes, 1)
+}
+
+func TestDeriveChanges_PrevPresentIgnoresWindow(t *testing.T) {
+	// Once an item is in the snapshot, the window is irrelevant: the diff is
+	// authoritative regardless of how old the item is.
+	prev := &Snapshot{State: "open"}
+	window := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	changes := DeriveChanges(prev, ItemState{
+		State: "closed", CreatedAt: window.Add(-10 * 365 * 24 * time.Hour),
+	}, 11, window)
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventClosed, changes[0].Type)
 }
 
 func TestDeriveChanges_Closed(t *testing.T) {
 	prev := &Snapshot{State: "open"}
-	changes := DeriveChanges(prev, ItemState{State: "closed"}, 7)
+	changes := DeriveChanges(prev, ItemState{State: "closed"}, 7, time.Time{})
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventClosed, changes[0].Type)
 	assert.Equal(t, 7, changes[0].Number)
@@ -45,7 +112,7 @@ func TestDeriveChanges_Closed(t *testing.T) {
 
 func TestDeriveChanges_Merged(t *testing.T) {
 	prev := &Snapshot{State: "open"}
-	changes := DeriveChanges(prev, ItemState{State: "merged", Merged: true}, 3)
+	changes := DeriveChanges(prev, ItemState{State: "merged", Merged: true}, 3, time.Time{})
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventMerged, changes[0].Type)
 }
@@ -54,14 +121,14 @@ func TestDeriveChanges_MergedFromClosedStillEmitsMerged(t *testing.T) {
 	// GitHub reports merged PRs as state=closed with merged=true. Moving from a
 	// genuinely-closed snapshot to merged must emit merged, not closed.
 	prev := &Snapshot{State: "closed", Merged: false}
-	changes := DeriveChanges(prev, ItemState{State: "closed", Merged: true}, 4)
+	changes := DeriveChanges(prev, ItemState{State: "closed", Merged: true}, 4, time.Time{})
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventMerged, changes[0].Type)
 }
 
 func TestDeriveChanges_Reopened(t *testing.T) {
 	prev := &Snapshot{State: "closed"}
-	changes := DeriveChanges(prev, ItemState{State: "open"}, 5)
+	changes := DeriveChanges(prev, ItemState{State: "open"}, 5, time.Time{})
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventReopened, changes[0].Type)
 }
@@ -70,20 +137,20 @@ func TestDeriveChanges_ClosedThenReopenedThenMergedCollapsesToMerged(t *testing.
 	// A whole closed→reopened→merged cycle inside one interval must not emit a
 	// stale "closed". The terminal state wins.
 	prev := &Snapshot{State: "open"}
-	changes := DeriveChanges(prev, ItemState{State: "merged", Merged: true}, 6)
+	changes := DeriveChanges(prev, ItemState{State: "merged", Merged: true}, 6, time.Time{})
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventMerged, changes[0].Type, "terminal state must win over intermediate ones")
 }
 
 func TestDeriveChanges_NoChangeEmitsNothing(t *testing.T) {
 	prev := &Snapshot{State: "open", LastCommentID: 10}
-	changes := DeriveChanges(prev, ItemState{State: "open", LatestCommentID: 10}, 1)
+	changes := DeriveChanges(prev, ItemState{State: "open", LatestCommentID: 10}, 1, time.Time{})
 	assert.Empty(t, changes)
 }
 
 func TestDeriveChanges_NewComment(t *testing.T) {
 	prev := &Snapshot{State: "open", LastCommentID: 10}
-	changes := DeriveChanges(prev, ItemState{State: "open", LatestCommentID: 11}, 2)
+	changes := DeriveChanges(prev, ItemState{State: "open", LatestCommentID: 11}, 2, time.Time{})
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventCommented, changes[0].Type)
 	assert.Equal(t, int64(11), changes[0].CommentID)
@@ -98,7 +165,7 @@ func TestDeriveChanges_EditedCommentDetectedByUpdatedAt(t *testing.T) {
 		State:                  "open",
 		LatestCommentID:        10,
 		LatestCommentUpdatedAt: base.Add(time.Hour),
-	}, 3)
+	}, 3, time.Time{})
 	require.Len(t, changes, 1)
 	assert.Equal(t, EventCommented, changes[0].Type)
 }
@@ -110,13 +177,13 @@ func TestDeriveChanges_StaleCommentUpdatedAtEmitsNothing(t *testing.T) {
 		State:                  "open",
 		LatestCommentID:        10,
 		LatestCommentUpdatedAt: base.Add(-time.Hour), // older, not newer
-	}, 4)
+	}, 4, time.Time{})
 	assert.Empty(t, changes)
 }
 
 func TestDeriveChanges_StateAndCommentTogether(t *testing.T) {
 	prev := &Snapshot{State: "open", LastCommentID: 1}
-	changes := DeriveChanges(prev, ItemState{State: "closed", LatestCommentID: 2}, 9)
+	changes := DeriveChanges(prev, ItemState{State: "closed", LatestCommentID: 2}, 9, time.Time{})
 	require.Len(t, changes, 2, "both a state change and a comment must be reported")
 	types := []EventType{changes[0].Type, changes[1].Type}
 	assert.Contains(t, types, EventClosed)

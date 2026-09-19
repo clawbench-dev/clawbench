@@ -77,6 +77,111 @@ func issue(state string, updated time.Time) forge.Item {
 	}
 }
 
+// issueCreated is issue() with an explicit creation time, needed by the
+// window-gating tests.
+func issueCreated(state string, created, updated time.Time) forge.Item {
+	it := issue(state, updated)
+	it.CreatedAt = created
+	return it
+}
+
+// TestForgeSyncer_FirstSyncQueriesBoundedWindow is the regression guard for the
+// unbounded first sync: `since` must never be the zero time, or a large
+// repository is walked from page 1 until GitHub rejects offset pagination past
+// 10k items (HTTP 422) — the pass then fails, the watermark never advances, and
+// every subsequent tick repeats the whole walk, exhausting the API quota.
+func TestForgeSyncer_FirstSyncQueriesBoundedWindow(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
+		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("open", time.Now().UTC())}}},
+	}}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, &fakeSink{})
+
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+
+	require.NotEmpty(t, provider.calls, "the first sync must query the provider")
+	for _, c := range provider.calls {
+		assert.False(t, c.Since.IsZero(),
+			"first sync must bound the window (type=%s page=%d); a zero Since means a full-history walk", c.Type, c.Page)
+	}
+}
+
+// TestForgeSyncer_FirstSyncBaselinesPreExistingItemSilently pins the other half
+// of the bounded window: an old item that surfaces on the first sync (it was
+// updated recently, but created long ago) must be recorded without emitting a
+// transition derived from a state nobody observed.
+func TestForgeSyncer_FirstSyncBaselinesPreExistingItemSilently(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	now := time.Now().UTC()
+	old := now.Add(-3 * 365 * 24 * time.Hour)
+
+	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
+		forge.ItemTypeIssue: {1: {Items: []forge.Item{issueCreated("closed", old, now)}}},
+	}}
+	sink := &fakeSink{}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+	assert.Empty(t, sink.events, "a pre-existing item must not emit a derived transition")
+
+	got, err := service.GetForgeItemSnapshot(testRepoKey(), "issue", 1)
+	require.NoError(t, err)
+	require.NotNil(t, got, "the item must still be snapshotted as the baseline")
+	assert.Equal(t, "closed", got.State)
+}
+
+// TestForgeSyncer_LaterSyncReportsItemCreatedAfterWindow is the complement:
+// once the baseline exists, an item created after the window really is new and
+// must be reported.
+func TestForgeSyncer_LaterSyncReportsItemCreatedAfterWindow(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	sink := &fakeSink{}
+	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{}}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+	binding := testBinding()
+
+	// First pass establishes the baseline (no items).
+	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
+	require.Empty(t, sink.events)
+
+	// A brand-new issue appears, created after the baseline window.
+	created := time.Now().UTC().Add(time.Minute)
+	provider.pages[forge.ItemTypeIssue] = map[int]forge.ListResult{
+		1: {Items: []forge.Item{issueCreated("open", created, created)}},
+	}
+	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
+
+	require.Len(t, sink.events, 1)
+	assert.Equal(t, forge.EventOpened, sink.events[0].Type)
+	assert.Equal(t, 1, sink.events[0].Number)
+}
+
+// TestForgeSyncer_LaterSyncIgnoresOldItemFirstSeen covers the case that used to
+// produce a false positive: an item created long before the window, first
+// observed on a LATER pass (e.g. it was just updated). Deriving from its
+// current state alone would claim it just closed.
+func TestForgeSyncer_LaterSyncIgnoresOldItemFirstSeen(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	sink := &fakeSink{}
+	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{}}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+	binding := testBinding()
+
+	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
+
+	now := time.Now().UTC()
+	old := now.Add(-3 * 365 * 24 * time.Hour)
+	provider.pages[forge.ItemTypeIssue] = map[int]forge.ListResult{
+		1: {Items: []forge.Item{issueCreated("closed", old, now)}},
+	}
+	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
+
+	assert.Empty(t, sink.events, "an old item first seen later must not report a transition")
+	got, err := service.GetForgeItemSnapshot(testRepoKey(), "issue", 1)
+	require.NoError(t, err)
+	require.NotNil(t, got, "it must be baselined so the next pass can diff it")
+}
+
 func TestForgeSyncer_FirstSyncEstablishesBaselineWithoutEvents(t *testing.T) {
 	setupTestDBForForgeSync(t)
 	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
