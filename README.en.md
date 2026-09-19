@@ -71,6 +71,12 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 |-------------|-------------|-------------|------------|
 | ![Image Viewer](docs/screenshots/image-viewer.png) | ![Video Player](docs/screenshots/video-player.png) | ![Audio Player](docs/screenshots/audio-player.png) | ![PDF Preview](docs/screenshots/pdf-preview.png) |
 
+### Office Documents & Open API Preview
+
+| Word Document | Open API Preview | Excel Spreadsheet | PPT Slides |
+|---------------|------------------|-------------------|------------|
+| ![Word Document](docs/screenshots/word-preview.png) | ![Open API Preview](docs/screenshots/openapi-preview.png) | ![Excel Spreadsheet](docs/screenshots/excel-preview-2.png) | ![PPT Slides](docs/screenshots/ppt-preview.png) |
+
 ### SSH Tunnel & Web Terminal
 
 | Port Forwarding | Interactive Terminal | Key/Symbol Configuration |
@@ -136,7 +142,7 @@ To view the auto-generated password:
 docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/.clawbench/auto-password
 ```
 
-> A random 8-character hex password is auto-generated on first startup and printed to the console in a bordered box. Save it securely.
+> A random 32-character hex password (128-bit entropy) is auto-generated on first startup and printed to the console in a bordered box. Save it securely.
 
 Once deployed, access `http://server-ip:20000` from your phone app or any browser:
 
@@ -171,6 +177,13 @@ clawbench
 - Context menu: rename, delete, copy, cut, paste, new file/folder, download, open as project
 - **Multi-Select Operations**: Toggle multi-select mode from toolbar, batch copy/cut/delete; mobile long-press triggers context menu
 - File upload (all file types supported, configurable size and count)
+- **Folder Upload**: Drag-and-drop a folder to upload while preserving the nested directory structure (including empty directories); a folder picker is also supported
+- **Directory Tree Download**: Download an entire directory to your machine via the File System Access API, preserving the full directory structure
+- **Directory Jump**: A toolbar locate button lets you type a path and jump straight to that directory
+- **Drag-and-Drop Move**: Drag files/directories onto a target directory inside the file manager
+- **Paste Upload**: `Ctrl+V` pastes a clipboard image and uploads it to the current directory
+- **Sorting**: Sort by name/time/type/size, ascending or descending
+- **Keyboard Shortcuts**: `Ctrl+C/X/V` clipboard operations, `Delete` to remove, `F2` to rename, `Ctrl+N` for a new file, `Alt+Up` for the parent directory, `Ctrl+R` to refresh, `Ctrl+Shift+H` to toggle hidden files, `Ctrl+1`/`Ctrl+2` to switch list/grid view
 - Toggle hidden file visibility
 - **Document search exclusion**: Office documents are excluded from file content search to improve performance (same as PDF)
 - **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
@@ -305,6 +318,7 @@ clawbench
 - **Issue & PR/MR Browsing**: Type and state filters (Open/Closed/All), a "mine" filter (assigned to me / created by me / awaiting my review, identity resolved from the token), server-side search, and infinite scroll. The detail view shows the body plus a comment timeline through the same Markdown pipeline used by chat (path jumps, code-link preview, double-click copy & quote)
 - **Repository Binding**: Auto-detects and binds from the project's git remotes (official hosts bind automatically, self-hosted instances need host confirmation), with a manual URL fallback. The binding travels with the project. Self-hosted instances work over **both http and https** (a scheme entered with the credentials is remembered and used; a bare host falls back to https) — the host stays the identity key, so the same instance reached either way is still one repository
 - **Change Awareness & Unread**: A background poller detects repository changes and drives the tab's unread badge. Six event classes (opened / closed / merged / reopened / commented / CI finished) each have their own notification toggle; the unread count is independent of those toggles. Unread counts **items, not events** — three comments on one issue are one unread, and you can mark a single item read or clear the whole repo
+- **Activity Tab**: Aggregates every item and switches between unread / read / all (unread by default), with per-row read markers and an event-reason caption such as "new comment". Without a read view, opening a row only greys it out locally and it vanishes on the next load — leaving no way to revisit what you already read.
 - **CI Run Browsing & PR Cross-Links**: The CI finished event comes with a pipelines list and detail view (status filter defaulting to **all** — it is a run history, so hiding successes by default makes the tab look empty; run title, branch, commit, duration) so a failed run can be inspected without leaving the app. Titles come from the *run* (commit message / manual run name), not the workflow name — otherwise ten runs would all be titled "CI". Both directions of the pipeline↔PR link are provided: a run's detail links to its pull request, and a PR's detail expands to show that change's pipeline runs (loaded on demand, answering "did this change pass CI?" — the path you take while reviewing)
 - **Event-Triggered Tasks**: A task can use "trigger: event" and subscribe to `issue.opened`, `pr.merged`, `pipeline_done`, etc. When an event arrives the AI task fires automatically with a read-only event-context block prepended to the prompt (repo, number, title, URL, author, comment body — conditionally rendered per event type), and the execution record deep-links back to the source issue/PR. Includes a global pause switch and suppression of self-authored events (so the AI writing back to a repo can't trigger itself). Pipeline events are deliberately exempt from that suppression — a failed CI run caused by the AI's own push is exactly the case you want the repair task to handle, so the actor is passed through as an `ACTOR_IS_SELF` flag and the prompt decides
 - **Quote to Chat**: The detail view's quote button stages the issue/PR as a URL attachment (chip shows `owner/repo#123`); select extra text if you like, then let the AI analyze it. The body also supports double-click copy and selection-to-quote
@@ -344,6 +358,7 @@ clawbench
 - SSH password management, server dialog
 - WebView connection protection: WebView hidden during connection attempts to prevent browser error page flash
 - **Unified Hardware Back**: Android physical/predictive back is delegated to the JS layer and routed through the app's unified back state machine (close overlay → exit edit → file history → jump origin → parent dir); nothing to go back to triggers a double-back-to-exit hint (second press within 2s exits)
+- Terminal volume-key mapping: volume keys act as arrow keys while the terminal is open
 - **Self-Update**: One-click version check, binary download, and service restart from the Web UI; disconnect recovery with polling fallback; version skip option. Downloads are verified against the npm registry's ECDSA signature (trust anchored on npmjs keys, independent of whichever mirror served the metadata) and the declared integrity hash — a hash **mismatch blocks** the upgrade, while anything merely *unverifiable* (missing signature, keys unreachable, no integrity field) proceeds only after you confirm, and the server re-checks that reason fingerprint so a stale confirmation can't be reused
 - **Android Version Mismatch Detection**: before the WebView loads, the native layer compares the APK version with the server version reported by `/api/health`; when the APK is older it shows a blocking native dialog offering APK download or a force-skip (never remembered, so it re-prompts each launch)
 - **Floating Status Window**: System-level overlay capsule (Android 8.0+ `TYPE_APPLICATION_OVERLAY`) that shows real-time session stats (running / pending-approval / unread counts) via the background WebSocket channel. **Only appears when there's something to show** — an active session, a pending approval, unread messages or a running task; it hides once everything clears rather than leaving an idle capsule on screen. Draggable with edge-snapping and position persistence; tap expands a grouped session-list panel (per-project headers with name+path, status dots + unread badges) to jump straight into a session. Toggle + `SYSTEM_ALERT_WINDOW` permission flow in Settings
