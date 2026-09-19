@@ -296,6 +296,35 @@ describe('GitHistoryDrawer — mount and close', () => {
     // The sheet must not sit over the file manager it just revealed.
     expect(wrapper.emitted('close')).toBeTruthy()
   })
+
+  it('closes the sheet synchronously, before the reveal awaits', async () => {
+    // The reveal tears down the file overlay (making room for the manager),
+    // which unmounts this sheet. If the close were deferred — e.g. left to the
+    // sheet's own 250ms animation timer — Vue would drop the emit on the
+    // unmounted instance and `open` would stay true, popping the sheet back open
+    // over the restored file on Back. So the host close must precede the reveal.
+    let releaseReveal: () => void = () => {}
+    mockRevealInFileManager.mockImplementationOnce(
+      () => new Promise<void>(resolve => { releaseReveal = resolve })
+    )
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.selectedSHA = 'abc123'
+    vm.drillToFile({ path: 'src/main.ts', type: 'M', staged: false })
+    await flushPromises()
+
+    // Not awaited: the reveal promise is deliberately still pending here.
+    void vm.onRevealFile('src/main.ts')
+    await flushPromises()
+
+    expect(mockRevealInFileManager).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('close')).toBeTruthy()
+
+    releaseReveal()
+    await flushPromises()
+  })
 })
 
 describe('GitHistoryDrawer — loading states', () => {

@@ -879,6 +879,7 @@ export function useFilePathAnnotation() {
         stripCodeString,
         openFilePath,
         navToFileInManager,
+        revealInFileManager,
         clearVerifiedCache,
     }
 }
@@ -1021,6 +1022,26 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
 }
 
 /**
+ * Ask the backend what a path is. Returns 'none' when it does not exist — or
+ * when the check itself failed, matching navToFileInManager's best-effort
+ * behavior (a failed check must not silently pass as "exists").
+ */
+async function fetchPathType(targetPath: string): Promise<'file' | 'dir' | 'none'> {
+    try {
+        const resp = await fetch('/api/file/batch-exists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: [targetPath] }),
+        })
+        if (resp.ok) {
+            const data = await resp.json() as { results: Record<string, string> }
+            return (data.results?.[targetPath] as 'file' | 'dir' | 'none') || 'none'
+        }
+    } catch { /* best-effort — treat as missing */ }
+    return 'none'
+}
+
+/**
  * Reveal a path in the file manager *through the navigation coordinator*, so the
  * jump records a return origin and Back returns to the calling surface.
  *
@@ -1034,15 +1055,46 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
  * Dispatches the same `open-directory-from-context` event the chat annotation
  * flow uses, so both end up in the same back-navigation stack. The parent
  * directory is the jump target and the path itself is highlighted inside it.
+ *
+ * The path is verified first, like openFilePath does for chat annotations. This
+ * matters most for git history, which lists HISTORICAL commits: a file deleted
+ * or renamed since is routine, and without the check the jump would land in the
+ * parent directory and silently highlight nothing (the file manager retries for
+ * 15s, then gives up with no explanation).
+ *
+ * Returns false when the path could not be revealed (missing or external), so a
+ * caller can tell a no-op from a real jump.
  */
-export function revealInFileManager(resolvedPath: string, source?: NavigationSurface): void {
+export async function revealInFileManager(resolvedPath: string, source?: NavigationSurface): Promise<boolean> {
     const parsed = parseFileUri(resolvedPath)
     let targetPath = parsed.path
-    if (!targetPath) return
+    if (!targetPath) return false
+
+    // Normalize Windows backslashes and relativize an absolute in-project path,
+    // so the prefix match and the /api/dir listing below agree on the form.
     targetPath = normalizeSlashes(targetPath)
+    targetPath = toProjectRelative(targetPath, store.state.projectRoot)
+
+    // /api/dir only browses inside the project root, so an external path cannot
+    // be revealed — report it instead of failing later as a dir-load error.
+    const isExternal = isAbsolutePath(targetPath)
+
+    const pathType = await fetchPathType(targetPath)
+    if (pathType === 'none') {
+        const { useToast } = await import('@/composables/useToast')
+        useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
+        return false
+    }
+    if (isExternal) {
+        const { useToast } = await import('@/composables/useToast')
+        useToast().show(gt('file.toast.externalPathNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
+        return false
+    }
+
     window.dispatchEvent(new CustomEvent('open-directory-from-context', {
         detail: { path: dirName(targetPath), revealPath: targetPath, source },
     }))
+    return true
 }
 
 /**

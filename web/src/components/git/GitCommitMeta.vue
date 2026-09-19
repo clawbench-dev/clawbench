@@ -12,6 +12,7 @@
           class="diff-meta-open-btn"
           type="button"
           :title="t('git.commitMeta.openFile')"
+          :aria-label="t('git.commitMeta.openFile')"
           @click.stop="emit('open-file', filePath)"
           v-html="FILE_OPEN_ICON_SVG"
         ></button>
@@ -27,6 +28,7 @@
           class="diff-meta-open-btn"
           type="button"
           :title="t('git.commitMeta.revealInManager')"
+          :aria-label="t('git.commitMeta.revealInManager')"
           @click.stop="emit('reveal-file', filePath)"
           v-html="FILE_OPEN_ICON_SVG"
         ></button>
@@ -213,6 +215,13 @@ function formatDate(dateStr) {
 
 .diff-meta-open-btn svg {
   display: block;
+}
+
+/* Keyboard users reach these buttons via Tab; without a focus ring the
+   focused control is invisible (matches the repo's .code-preview-btn). */
+.diff-meta-open-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -1px;
 }
 
 @media (hover: hover) {

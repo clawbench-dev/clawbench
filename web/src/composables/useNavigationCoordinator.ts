@@ -492,10 +492,13 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         setActivePane(PANE_LEFT)
       }
       switchTab('browse', true)
-      // Reveal the requested entry now that the listing is on screen. The file
-      // manager retries internally until the entry renders, so no extra delay is
-      // needed here; `revealPath` may be the directory itself (open-directory
-      // from a directory annotation), which highlights its own row.
+      // Reveal the requested entry now that the listing is on screen. This must
+      // come after the await above: the file manager registers its
+      // highlight-file-item listener in onMounted, so dispatching earlier (while
+      // the browse panel is still mounting) would lose the event. The handler
+      // retries internally until the entry renders, so no extra delay is needed
+      // here; `revealPath` may be the directory itself (open-directory from a
+      // directory annotation), which highlights its own row.
       if (revealPath) {
         window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: revealPath } }))
       }

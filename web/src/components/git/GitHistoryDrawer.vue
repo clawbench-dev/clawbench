@@ -201,12 +201,18 @@ function onOpenFile(path) {
  * Reveal the file in the file manager. The sheet lives inside the file view, so
  * `source: 'file'` makes the coordinator suspend this file visit as a directory
  * excursion — Back then restores the file the user was viewing instead of
- * walking up the directory tree. The sheet closes so it does not sit over the
- * manager.
+ * walking up the directory tree.
+ *
+ * The host close is emitted synchronously, before the reveal. The reveal closes
+ * the file overlay to make room for the manager, which unmounts this sheet — so
+ * a deferred close (the sheet's own 250ms animation timer) is dropped before it
+ * fires and `open` stays true, making the sheet pop back open over the restored
+ * file when the user presses Back. Closing first makes `open` false while the
+ * component is still mounted, whatever the reveal goes on to do.
  */
-function onRevealFile(path) {
-  bottomSheetRef.value?.close()
-  revealInFileManager(path, 'file')
+async function onRevealFile(path) {
+  emit('close')
+  await revealInFileManager(path, 'file')
 }
 
 // ─── Shared git-history logic ───────────────────────────────────────────────

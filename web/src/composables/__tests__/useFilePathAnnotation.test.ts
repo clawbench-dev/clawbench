@@ -2155,72 +2155,101 @@ describe('openFilePath', () => {
   })
 
   // --- revealInFileManager ---
-  // The origin-recording counterpart of navToFileInManager. It must dispatch the
-  // shared directory-jump event (parent dir as target, the path itself as the
-  // entry to highlight) so the coordinator records a return origin.
+  // The origin-recording counterpart of navToFileInManager. It must verify the
+  // path, then dispatch the shared directory-jump event (parent dir as target,
+  // the path itself as the entry to highlight) so the coordinator records a
+  // return origin.
   describe('revealInFileManager', () => {
-    it('dispatches open-directory-from-context targeting the parent dir with the entry highlighted', () => {
-      const mockDispatchEvent = vi.fn()
-      const origDispatch = window.dispatchEvent
-      window.dispatchEvent = mockDispatchEvent
+    let dispatched: CustomEvent[]
+    let origDispatch: typeof window.dispatchEvent
 
-      revealInFileManager('docs/spec/core/chat-flow.md', 'history')
-
-      expect(mockDispatchEvent).toHaveBeenCalledTimes(1)
-      expect(mockDispatchEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'open-directory-from-context',
-          detail: { path: 'docs/spec/core', revealPath: 'docs/spec/core/chat-flow.md', source: 'history' },
-        })
-      )
-
-      window.dispatchEvent = origDispatch
+    beforeEach(() => {
+      dispatched = []
+      origDispatch = window.dispatchEvent
+      window.dispatchEvent = ((ev: Event) => {
+        dispatched.push(ev as CustomEvent)
+        return true
+      }) as typeof window.dispatchEvent
     })
 
-    it('targets the project root for a root-level file (empty parent dir)', () => {
-      const mockDispatchEvent = vi.fn()
-      const origDispatch = window.dispatchEvent
-      window.dispatchEvent = mockDispatchEvent
-
-      revealInFileManager('README.md', 'file')
-
-      expect(mockDispatchEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'open-directory-from-context',
-          detail: { path: '', revealPath: 'README.md', source: 'file' },
-        })
-      )
-
+    afterEach(() => {
       window.dispatchEvent = origDispatch
+      vi.unstubAllGlobals()
     })
 
-    it('normalizes Windows separators so the parent dir resolves', () => {
-      const mockDispatchEvent = vi.fn()
-      const origDispatch = window.dispatchEvent
-      window.dispatchEvent = mockDispatchEvent
+    /** Serve a batch-exists response reporting `type` for any requested path. */
+    function stubExists(type: 'file' | 'dir' | 'none') {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ results: { 'docs/spec/core/chat-flow.md': type, 'README.md': type, 'web/src/foo.ts': type } }),
+      }))
+    }
 
-      revealInFileManager('web\\src\\foo.ts', 'history')
+    it('dispatches open-directory-from-context targeting the parent dir with the entry highlighted', async () => {
+      stubExists('file')
+      const ok = await revealInFileManager('docs/spec/core/chat-flow.md', 'history')
 
-      expect(mockDispatchEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'open-directory-from-context',
-          detail: { path: 'web/src', revealPath: 'web/src/foo.ts', source: 'history' },
-        })
-      )
-
-      window.dispatchEvent = origDispatch
+      expect(ok).toBe(true)
+      const jumps = dispatched.filter(ev => ev.type === 'open-directory-from-context')
+      expect(jumps).toHaveLength(1)
+      expect(jumps[0].detail).toEqual({
+        path: 'docs/spec/core',
+        revealPath: 'docs/spec/core/chat-flow.md',
+        source: 'history',
+      })
     })
 
-    it('dispatches nothing for an empty path', () => {
-      const mockDispatchEvent = vi.fn()
-      const origDispatch = window.dispatchEvent
-      window.dispatchEvent = mockDispatchEvent
+    it('targets the project root for a root-level file (empty parent dir)', async () => {
+      stubExists('file')
+      const ok = await revealInFileManager('README.md', 'file')
 
-      revealInFileManager('')
+      expect(ok).toBe(true)
+      const jumps = dispatched.filter(ev => ev.type === 'open-directory-from-context')
+      expect(jumps[0].detail).toEqual({ path: '', revealPath: 'README.md', source: 'file' })
+    })
 
-      expect(mockDispatchEvent).not.toHaveBeenCalled()
+    it('normalizes Windows separators so the parent dir resolves', async () => {
+      // The batch-exists response is keyed on the normalized path, so a match
+      // proves normalization happened before the request.
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ results: { 'web/src/foo.ts': 'file' } }),
+      }))
 
-      window.dispatchEvent = origDispatch
+      const ok = await revealInFileManager('web\\src\\foo.ts', 'history')
+
+      expect(ok).toBe(true)
+      const jumps = dispatched.filter(ev => ev.type === 'open-directory-from-context')
+      expect(jumps[0].detail).toEqual({ path: 'web/src', revealPath: 'web/src/foo.ts', source: 'history' })
+    })
+
+    it('reports a missing path instead of jumping (git history lists historical commits)', async () => {
+      stubExists('none')
+      const ok = await revealInFileManager('docs/spec/core/chat-flow.md', 'history')
+
+      // Without this check the jump would land in the parent directory and
+      // silently highlight nothing for 15s.
+      expect(ok).toBe(false)
+      expect(dispatched.filter(ev => ev.type === 'open-directory-from-context')).toHaveLength(0)
+    })
+
+    it('refuses an external path (the file manager cannot browse outside the project)', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ results: { '/etc/hosts': 'file' } }),
+      }))
+
+      const ok = await revealInFileManager('/etc/hosts', 'history')
+
+      expect(ok).toBe(false)
+      expect(dispatched.filter(ev => ev.type === 'open-directory-from-context')).toHaveLength(0)
+    })
+
+    it('dispatches nothing for an empty path', async () => {
+      const ok = await revealInFileManager('')
+
+      expect(ok).toBe(false)
+      expect(dispatched).toHaveLength(0)
     })
   })
 

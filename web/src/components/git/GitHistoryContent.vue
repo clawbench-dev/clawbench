@@ -227,7 +227,7 @@ function onOpenFile(path) {
  * rather than walking up the directory tree.
  */
 function onRevealFile(path) {
-  revealInFileManager(path, 'history')
+  void revealInFileManager(path, 'history')
 }
 
 // ─── Shared git-history logic ───────────────────────────────────────────────
