@@ -1,14 +1,14 @@
 import { marked, katex, DOMPurify } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
-import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
-import { annotateCodeBlockHeaders, annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
+import { injectTableRowAttrsIn } from '@/utils/tableRowExpand.ts'
+import { annotateCodeBlockHeadersIn, annotateTableBlockHeadersIn } from '@/composables/useCodeBlockHeader.ts'
 import { rewriteImageUrls, markInlineSvgs, convertAudioLinks, convertVideoLinks, getThumbWidth } from '@/utils/chatRenderUtils.ts'
-import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
+import { annotateMediaBlocksIn } from '@/utils/mediaBlockFactory.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
-import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
-import { annotateCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
-import { annotateWorktreePaths } from '@/composables/useWorktreeAnnotation.ts'
-import { annotateLocalhostUrls } from '@/composables/useLocalhostAnnotation.ts'
+import { annotateFilePathsIn } from '@/composables/useFilePathAnnotation.ts'
+import { annotateCommitHashesIn } from '@/composables/useCommitHashAnnotation.ts'
+import { annotateWorktreePathsIn } from '@/composables/useWorktreeAnnotation.ts'
+import { annotateLocalhostUrlsIn } from '@/composables/useLocalhostAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { resetHeadingIds } from '@/utils/markedConfig.ts'
 
@@ -297,14 +297,32 @@ export function renderMarkdown(
                    .replace(/<\/table>/g, '</table></div>')
     }
 
-    // 6. Inject table row attrs
-    html = injectTableRowAttrs(html)
-
-    // 7. Code block headers (language label + copy/wrap buttons)
-    html = annotateCodeBlockHeaders(html)
-
-    // 8. Table block headers (label + copy/wrap buttons)
-    html = annotateTableBlockHeaders(html)
+    // ── Shared-Document annotation ──
+    //
+    // Steps 6-8 and the path-annotation steps in 9 used to each parse the whole
+    // HTML, mutate, and re-serialize (`body.innerHTML`) independently. Chained,
+    // that was 5 parse+serialize round trips over identical markup — the
+    // dominant main-thread cost in a Chrome trace of a heavy session (the path
+    // annotators alone were ~70% of samples, producing multi-second 100%-busy
+    // spans that froze the UI).
+    //
+    // They only differ in what they look for, so they now share a Document and
+    // we serialize once per phase. Two phases are required, not one: the
+    // enhancement steps in between (rewriteImageUrls / convertAudioLinks /
+    // convertVideoLinks / markInlineSvgs) are regex operations over the HTML
+    // STRING, so the markup must be serialized for them to run. Their order
+    // relative to the DOM steps is load-bearing and is preserved exactly.
+    //
+    // 6-8 run for every render (including streaming): table row ids, then code
+    // and table block headers. Order matters — table headers require the
+    // table-wrap divs from step 5, and row attrs from step 6.
+    {
+        const doc = new DOMParser().parseFromString(html, 'text/html')
+        injectTableRowAttrsIn(doc)
+        annotateCodeBlockHeadersIn(doc)
+        annotateTableBlockHeadersIn(doc)
+        html = doc.body.innerHTML
+    }
 
     // 9. Chat enhancements (all skipped during streaming)
     if (!skipEnhancements) {
@@ -316,20 +334,28 @@ export function renderMarkdown(
         html = convertAudioLinks(html, projectRoot)
         html = convertVideoLinks(html, projectRoot)
 
-        // Annotate worktree paths BEFORE file paths — prevents file-path regex from
-        // partially matching worktree directory paths
-        const { html: worktreeHtml } = annotateWorktreePaths(html, { projectRoot })
-        html = worktreeHtml
+        // Second shared phase: the four path/URL annotators over ONE Document.
+        //
+        // Order is preserved exactly as before: worktree BEFORE file paths, so
+        // the file-path regex cannot partially match a worktree directory path.
+        const annotateDoc = new DOMParser().parseFromString(html, 'text/html')
 
-        const { html: annotatedHtml, detectedPaths: paths } = annotateFilePaths(html, { projectRoot, homeDir })
-        html = annotatedHtml
+        // The worktree step's own detected list is intentionally discarded —
+        // the string version discarded it too. It is NOT recoverable from
+        // annotateFilePaths: that step explicitly skips anything already marked
+        // `chat-worktree-path` (see useFilePathAnnotation Step 1 / the text-node
+        // walker), so these paths are annotated but never reported as detected.
+        annotateWorktreePathsIn(annotateDoc, { projectRoot })
+
+        const paths = annotateFilePathsIn(annotateDoc, { projectRoot, homeDir })
         detectedPaths = paths
 
-        const { html: commitAnnotatedHtml, detectedSHAs: shas } = annotateCommitHashes(html)
-        html = commitAnnotatedHtml
+        const shas = annotateCommitHashesIn(annotateDoc)
         detectedSHAs = shas
 
-        html = annotateLocalhostUrls(html)
+        annotateLocalhostUrlsIn(annotateDoc)
+
+        html = annotateDoc.body.innerHTML
 
         // MUST run after all <a href>-anchored regex steps (audio/video links,
         // path/commit/localhost annotations). Marking inline <svg> (no new
@@ -341,7 +367,14 @@ export function renderMarkdown(
         // bordered block figure with a header bar (same factory as file
         // previews). Mermaid is still a <pre> code block at this stage and is
         // armed separately by mermaid.ts after DOM rendering. Idempotent.
-        html = annotateMediaBlocks(html)
+        //
+        // Runs as its own phase: markInlineSvgs above is a regex over the HTML
+        // string, so the markup has to be serialized before this DOM step.
+        {
+            const mediaDoc = new DOMParser().parseFromString(html, 'text/html')
+            annotateMediaBlocksIn(mediaDoc)
+            html = mediaDoc.body.innerHTML
+        }
     }
 
     return { html, detectedPaths, detectedSHAs }

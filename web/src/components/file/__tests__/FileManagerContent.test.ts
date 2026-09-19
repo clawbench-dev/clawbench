@@ -250,13 +250,19 @@ vi.mock('@/composables/useFileRefresh', () => ({
   isRefreshing: mockIsRefreshing,
 }))
 
+// Hoisted so the vi.mock factory below can close over it.
+const mockThumbable = vi.hoisted(() => ({ value: false }))
+
 vi.mock('@/utils/fileManager', () => ({
   buildThumbUrl: (dir: string, name: string) => `/api/file/thumb?path=${dir}/${name}`,
   isImage: (e: any) => /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(e.name || ''),
   isAudio: (e: any) => /\.(mp3|wav|ogg)$/i.test(e.name || ''),
   isVideo: (e: any) => /\.(mp4|mov)$/i.test(e.name || ''),
-  isThumbable: () => false,
-  isThumbableExt: () => false,
+  // Controllable so the thumbnail lazy-mount tests can exercise the real
+  // render path. Defaults to false, which is what the pre-existing tests
+  // assume (no <img> is expected anywhere in this suite).
+  isThumbable: (e: any) => mockThumbable.value && /\.(png|jpg|jpeg|gif)$/i.test(e?.name || ''),
+  isThumbableExt: (path: string) => mockThumbable.value && /\.(png|jpg|jpeg|gif)$/i.test(path || ''),
   formatSize: (s: number) => {
     if (s >= 1024) return `${(s / 1024).toFixed(1)} KB`
     return `${s} B`
@@ -906,6 +912,36 @@ describe('FileManagerContent — handleItemClick', () => {
 
     expect(wrapper.emitted('navigateDir')).toBeFalsy()
   })
+
+  it('PC: closing the viewed file keeps the row highlighted', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    // Open a file: the click highlights it and the parent starts the viewer.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    await wrapper.setProps({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
+
+    // Close the viewer: the parent nulls currentFile. The highlight the user
+    // just had must survive — closing a file does not deselect it.
+    await wrapper.setProps({ currentFile: null })
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
+    const row = wrapper.find('.file-item[data-path="test.ts"]')
+    expect(row.classes()).toContain('active')
+  })
+
+  it('an external selection (chat annotation) still pushes the highlight in', async () => {
+    const wrapper = mountContent()
+    expect(wrapper.vm._getSelectedPath()).toBe('')
+
+    await wrapper.setProps({ currentFile: { path: 'readme.md', name: 'readme.md' } })
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
+    expect(wrapper.find('.file-item[data-path="readme.md"]').classes()).toContain('active')
+  })
 })
 
 // ── Preview mode (single-click quick preview) ──
@@ -1430,7 +1466,8 @@ describe('FileManagerContent — resident search', () => {
     ]
     const wrapper = mountContent()
     await nextTick()
-    await wrapper.find('.file-item').trigger('contextmenu')
+    // Right-click the name zone — that is the entry's hit zone.
+    await wrapper.find('.file-item .file-name').trigger('contextmenu')
     expect(wrapper.find('.context-menu').exists()).toBe(true)
     expect(wrapper.vm.ctxMenu.entry.path).toBe('cmd/main.go')
   })
@@ -1631,7 +1668,7 @@ describe('FileManagerContent — hidden files', () => {
 describe('FileManagerContent — context menu', () => {
   it('opens context menu on right-click', async () => {
     const wrapper = mountContent()
-    const fileItem = wrapper.find('.file-item:not(.dir-item)')
+    const fileItem = wrapper.find('.file-item:not(.dir-item) .file-name')
     await fileItem.trigger('contextmenu')
     await nextTick()
 
@@ -1682,8 +1719,10 @@ describe('FileManagerContent — context menu', () => {
     // The overlay covers the viewport; elementFromPoint resolves the element
     // beneath the cursor. Mock a DIFFERENT file than the one the old menu was
     // open on, so the assertion proves the menu re-opens for the new file.
+    // It must land on the name zone — that is the entry's hit zone.
     const readmeItem = wrapper.findAll('.file-item:not(.dir-item)')[1]
-    const elementFromPoint = vi.fn(() => readmeItem.element)
+    const readmeName = readmeItem.find('.file-name').element
+    const elementFromPoint = vi.fn(() => readmeName)
     const orig = document.elementFromPoint
     document.elementFromPoint = elementFromPoint as typeof document.elementFromPoint
     try {
@@ -1773,6 +1812,177 @@ describe('FileManagerContent — context menu', () => {
     const items = wrapper.findAll('.context-menu-item')
     const copyPathItem = items.find(el => el.text().includes('拷贝路径'))
     expect(copyPathItem).toBeTruthy()
+  })
+})
+
+// ── Context menu hit zone (Windows Explorer-like) ──
+//
+// Only the icon and the name are the entry's hit zone. Right-clicking the
+// padding around a row, the size/date meta column or the info-column strip
+// outside the name falls through to the empty-area menu (paste / new file /
+// new folder / terminal), exactly like Explorer's details view. The name label
+// spans the whole info column, so the blank stretch beside a short name is
+// still part of the entry — that mirrors Explorer's Name column.
+
+describe('FileManagerContent — context menu hit zone', () => {
+  /** Build the real row DOM and dispatch a right-click on `inner`. */
+  async function rightClickInside(wrapper: ReturnType<typeof mountContent>, inner: (row: HTMLElement) => HTMLElement | null) {
+    const row = wrapper.find('.file-item:not(.dir-item)').element as HTMLElement
+    const target = inner(row)
+    expect(target).toBeTruthy()
+    const e = { clientX: 10, clientY: 20, target }
+    await wrapper.vm.handleCtxMenu(e)
+    await nextTick()
+  }
+
+  it('opens the entry menu when right-clicking the file name', async () => {
+    const wrapper = mountContent()
+    await rightClickInside(wrapper, row => row.querySelector('.file-name'))
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('test.ts')
+  })
+
+  it('opens the entry menu when right-clicking the file icon', async () => {
+    const wrapper = mountContent()
+    await rightClickInside(wrapper, row => row.querySelector('.file-icon-wrap'))
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('test.ts')
+  })
+
+  it('opens the entry menu when right-clicking a descendant of the icon zone', async () => {
+    // The icon zone is matched by ancestor, so whatever the icon component
+    // renders inside it (img / svg / badge) is part of the entry.
+    const wrapper = mountContent()
+    await rightClickInside(wrapper, row => {
+      const wrap = row.querySelector('.file-icon-wrap')!
+      const child = document.createElement('span')
+      child.className = 'injected-icon-child'
+      wrap.appendChild(child)
+      return child as HTMLElement
+    })
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('test.ts')
+  })
+
+  it('falls back to the empty-area menu when right-clicking the row padding', async () => {
+    const wrapper = mountContent()
+    // The row element itself is the padding / gap area around the name zone.
+    await rightClickInside(wrapper, row => row)
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+  })
+
+  it('falls back to the empty-area menu when right-clicking the size/date meta', async () => {
+    const wrapper = mountContent()
+    await rightClickInside(wrapper, row => row.querySelector('.file-meta'))
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+  })
+
+  it('falls back to the empty-area menu in the info column gap outside the name', async () => {
+    // The name label spans the full remaining width (so the blank stretch
+    // beside a short name stays part of the entry, like Explorer's name
+    // column), but the info column is taller than one text line — the strip
+    // outside the label is background.
+    const wrapper = mountContent()
+    await rightClickInside(wrapper, row => row.querySelector('.file-info'))
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+  })
+
+  it('treats the parent-dir line of a search hit as outside the name zone', async () => {
+    // Search results have no "current directory", so an outside-zone
+    // right-click cannot show the empty-area menu — it dismisses instead of
+    // opening an entry menu for the row it happens to sit on.
+    searchState.query = 'main'
+    searchState.recursive = true
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [], parentDir: 'cmd' },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    const row = wrapper.find('.file-item').element as HTMLElement
+    const target = row.querySelector('.file-parent-dir')
+    expect(target).toBeTruthy()
+    await wrapper.vm.handleCtxMenu({ clientX: 10, clientY: 20, target })
+    await nextTick()
+    expect(wrapper.vm.ctxMenu.visible).toBe(false)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+  })
+
+  it('grid: opens the entry menu on the tile name', async () => {
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    const tile = wrapper.find('.grid-item[data-path="test.ts"]').element as HTMLElement
+    await wrapper.vm.handleCtxMenu({ clientX: 10, clientY: 20, target: tile.querySelector('.grid-name') })
+    await nextTick()
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('test.ts')
+  })
+
+  it('grid: falls back to the empty-area menu on the tile padding', async () => {
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    const tile = wrapper.find('.grid-item[data-path="test.ts"]').element as HTMLElement
+    await wrapper.vm.handleCtxMenu({ clientX: 10, clientY: 20, target: tile })
+    await nextTick()
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+  })
+
+  it('resolves the entry through the ctx-overlay via elementFromPoint on the name zone', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = null
+    await nextTick()
+
+    const row = wrapper.find('.file-item[data-path="readme.md"]').element as HTMLElement
+    const nameEl = row.querySelector('.file-name') as HTMLElement
+    const orig = document.elementFromPoint
+    document.elementFromPoint = vi.fn(() => nameEl) as typeof document.elementFromPoint
+    try {
+      const overlay = wrapper.find('.ctx-overlay')
+      expect(overlay.exists()).toBe(true)
+      await overlay.trigger('contextmenu', { clientX: 50, clientY: 60 })
+      await nextTick()
+      expect(wrapper.vm.ctxMenu.entry?.path).toBe('readme.md')
+    } finally {
+      document.elementFromPoint = orig
+    }
+  })
+
+  it('falls back to the empty-area menu through the overlay when the hit is outside the name zone', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+
+    // elementFromPoint lands on the meta column of a row — not a name zone.
+    const row = wrapper.find('.file-item:not(.dir-item)').element as HTMLElement
+    const metaEl = row.querySelector('.file-meta') as HTMLElement
+    const orig = document.elementFromPoint
+    document.elementFromPoint = vi.fn(() => metaEl) as typeof document.elementFromPoint
+    try {
+      const overlay = wrapper.find('.ctx-overlay')
+      await overlay.trigger('contextmenu', { clientX: 50, clientY: 60 })
+      await nextTick()
+      expect(wrapper.vm.ctxMenu.visible).toBe(true)
+      expect(wrapper.vm.ctxMenu.entry).toBeNull()
+    } finally {
+      document.elementFromPoint = orig
+    }
+  })
+
+  it('long-press on a row still opens the entry menu regardless of the hit element', async () => {
+    // Long-press is bound per row, so the whole row is the gesture target —
+    // the name-zone rule applies to the mouse right-click path only.
+    const wrapper = mountContent()
+    const entry = { type: 'file', name: 'test.ts' }
+    await wrapper.vm.onLongPress(entry, { touches: [{ clientX: 100, clientY: 200 }] })
+    await nextTick()
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('test.ts')
   })
 })
 
@@ -3753,7 +3963,7 @@ describe('FileManagerContent — grid view', () => {
     const wrapper = mountContent()
     wrapper.vm._setViewMode('grid')
     await nextTick()
-    const fileItem = wrapper.find('.grid-item[data-path="test.ts"]')
+    const fileItem = wrapper.find('.grid-item[data-path="test.ts"] .grid-name')
     await fileItem.trigger('contextmenu')
     await nextTick()
 
@@ -5081,5 +5291,123 @@ describe('FileManagerContent — gitignored entries', () => {
       expect(row.classes()).not.toContain('git-ignored')
       expect(row.attributes('title')).toBeUndefined()
     })
+  })
+})
+
+// ── Thumbnail lazy mounting ─────────────────────────────────────────────────
+// Entering a directory used to mount one <img> (and therefore one
+// /api/file/thumb decode request) per image in the same tick. `loading="lazy"`
+// did not prevent it — the element still existed and the browser fetched the
+// whole initial viewport immediately. A folder of dozens of images saturated
+// the server's CPU (measured: 32 parallel decodes → 638% CPU, and the DB-free
+// /api/dir slowed 16ms → 72ms).
+//
+// Thumbnails are now mounted only once their row is observed as visible. These
+// tests pin that gate: nothing renders before the observer fires, and the image
+// appears afterwards without needing a prop change.
+describe('thumbnail lazy mounting', () => {
+  const imageEntries = [
+    { name: 'a.png', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
+    { name: 'b.jpg', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
+    { name: 'c.gif', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
+  ]
+
+  // The mock installed in test-setup records instances and exposes triggerAll.
+  const observerInstances = () => {
+    const Ctor = globalThis.IntersectionObserver as unknown as {
+      instances?: Array<{ triggerAll: () => void; elements: Set<Element> }>
+    }
+    return Ctor.instances ?? []
+  }
+
+  beforeEach(() => {
+    const Ctor = globalThis.IntersectionObserver as unknown as { instances?: unknown[] }
+    Ctor.instances = []
+    // Enable the thumbnail path for this block only; the rest of the suite
+    // assumes isThumbable is false so no <img> ever renders.
+    mockThumbable.value = true
+  })
+
+  afterEach(() => {
+    mockThumbable.value = false
+  })
+
+  it('does not mount any thumbnail before its row is visible', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+
+    // Every image entry still renders (as an icon placeholder) — the lazy gate
+    // must not drop rows, only defer their <img>.
+    expect(wrapper.findAll('.file-item')).toHaveLength(3)
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(0)
+  })
+
+  it('mounts the thumbnail once the row is reported visible', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(0)
+
+    // Simulate the rows scrolling into view.
+    observerInstances().forEach(o => o.triggerAll())
+    await nextTick()
+
+    const thumbs = wrapper.findAll('img.file-thumb')
+    expect(thumbs).toHaveLength(3)
+    expect(thumbs[0].attributes('src')).toContain('/api/file/thumb')
+    // Thumbnails must not request SVG/WebP etc. — only decodable formats.
+    expect(thumbs.map(t => t.attributes('src')).join(' ')).not.toContain('.md')
+  })
+
+  it('renders only the entries reported visible, not the whole directory', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+
+    // Report just the first row as visible.
+    const obs = observerInstances()[0]
+    const first = [...obs.elements][0]
+    expect(first).toBeTruthy()
+    const Ctor = globalThis.IntersectionObserver as unknown as {
+      instances: Array<{ callback: (e: unknown[], o: unknown) => void }>
+    }
+    Ctor.instances[0].callback(
+      [{ target: first, isIntersecting: true, intersectionRatio: 1 }],
+      Ctor.instances[0],
+    )
+    await nextTick()
+
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(1)
+  })
+
+  it('ignores non-intersecting observations', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+
+    const obs = observerInstances()[0]
+    const first = [...obs.elements][0]
+    const Ctor = globalThis.IntersectionObserver as unknown as {
+      instances: Array<{ callback: (e: unknown[], o: unknown) => void }>
+    }
+    Ctor.instances[0].callback(
+      [{ target: first, isIntersecting: false, intersectionRatio: 0 }],
+      Ctor.instances[0],
+    )
+    await nextTick()
+
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(0)
+  })
+
+  it('re-gates thumbnails after changing directory', async () => {
+    const wrapper = mountContent({ entries: imageEntries })
+    await nextTick()
+    observerInstances().forEach(o => o.triggerAll())
+    await nextTick()
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(3)
+
+    // Switching directories is a different listing; the previous visibility
+    // must not carry over or the new folder's images would all load at once.
+    await wrapper.setProps({ currentDir: 'other', entries: imageEntries })
+    await nextTick()
+
+    expect(wrapper.findAll('img.file-thumb')).toHaveLength(0)
   })
 })

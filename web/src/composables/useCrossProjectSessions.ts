@@ -95,46 +95,98 @@ function toSession(raw: Record<string, unknown>): CrossProjectSession {
 }
 
 /**
- * Fetch the overview and rebuild `groups`:
+ * Fetch the overview once and rebuild `groups`:
  * - exclude the current project (its sessions already show in the main list)
  * - group order: project path ascending, case-insensitive
  * - within a group: updatedAt descending (most recent activity first)
+ *
+ * `projectRoot`/`homeDir` are read AFTER the await on purpose: whichever
+ * project is current when the response lands is the one to exclude. That also
+ * means a response that was already in flight when the project changed is still
+ * correctly filtered, so the caller does not need to discard it.
  */
-export async function refresh(): Promise<void> {
-  loading.value = true
-  try {
-    const resp = await fetch('/api/ai/sessions/overview')
-    if (!resp.ok) throw new Error(`overview HTTP ${resp.status}`)
-    const data = await resp.json()
-    const rawProjects: Array<Record<string, unknown>> = data.projects || []
-    const currentProject = store.state.projectRoot
-    const homeDir = store.state.homeDir || ''
+async function fetchOverview(): Promise<void> {
+  const resp = await fetch('/api/ai/sessions/overview')
+  if (!resp.ok) throw new Error(`overview HTTP ${resp.status}`)
+  const data = await resp.json()
+  const rawProjects: Array<Record<string, unknown>> = data.projects || []
+  const currentProject = store.state.projectRoot
+  const homeDir = store.state.homeDir || ''
 
-    const next: CrossProjectGroup[] = []
-    for (const p of rawProjects) {
-      const name = String(p.name ?? '')
-      if (!name || name === currentProject) continue
-      const rawSessions: Array<Record<string, unknown>> = (p.sessions as Array<Record<string, unknown>>) || []
-      if (rawSessions.length === 0) continue
-      const sessions = rawSessions.map(toSession)
-      sessions.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
-      next.push({
-        name,
-        displayName: baseName(name),
-        displayPath: abbreviatePath(name, homeDir),
-        sessions,
-      })
-    }
-    next.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
-
-    groups.value = next
-    loaded.value = true
-  } catch (err) {
-    // Keep the previous snapshot — a transient failure must not blank the tab.
-    appLog.e(TAG, 'failed to load cross-project overview', err)
-  } finally {
-    loading.value = false
+  const next: CrossProjectGroup[] = []
+  for (const p of rawProjects) {
+    const name = String(p.name ?? '')
+    if (!name || name === currentProject) continue
+    const rawSessions: Array<Record<string, unknown>> = (p.sessions as Array<Record<string, unknown>>) || []
+    if (rawSessions.length === 0) continue
+    const sessions = rawSessions.map(toSession)
+    sessions.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
+    next.push({
+      name,
+      displayName: baseName(name),
+      displayPath: abbreviatePath(name, homeDir),
+      sessions,
+    })
   }
+  next.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+
+  groups.value = next
+  loaded.value = true
+}
+
+/**
+ * The in-flight refresh, if any, plus whether another pass was requested while
+ * it ran.
+ *
+ * Three independent triggers feed this composable — a `sessionListVersion`
+ * bump, a `projectRoot` change, and WS `session_update` events — and a single
+ * project switch fires several of them at once. Without coalescing each one
+ * started its own fetch: a measured project switch issued `/api/ai/sessions/
+ * overview` five times, four of them redundant.
+ *
+ * Concurrent callers now share one request. A caller that arrives mid-flight
+ * sets `rerunRequested` instead of racing a second request, so an update that
+ * lands during a fetch is still picked up — N concurrent triggers cost at most
+ * two requests (the in-flight one plus one trailing pass), not N.
+ */
+let inFlightRefresh: Promise<void> | null = null
+let rerunRequested = false
+
+/**
+ * Refresh the cross-project overview, coalescing concurrent callers.
+ *
+ * Never rejects: a transient failure keeps the previous snapshot (see below)
+ * and is logged, so callers need not guard.
+ */
+export function refresh(): Promise<void> {
+  if (inFlightRefresh) {
+    // Already fetching. Its response will be filtered against the project that
+    // is current when it lands, but data may have changed since it started —
+    // so ask for one trailing pass rather than issuing a parallel request.
+    rerunRequested = true
+    return inFlightRefresh
+  }
+
+  inFlightRefresh = (async () => {
+    try {
+      do {
+        rerunRequested = false
+        loading.value = true
+        try {
+          await fetchOverview()
+        } catch (err) {
+          // Keep the previous snapshot — a transient failure must not blank the tab.
+          appLog.e(TAG, 'failed to load cross-project overview', err)
+        } finally {
+          loading.value = false
+        }
+      } while (rerunRequested)
+    } finally {
+      inFlightRefresh = null
+    }
+  })()
+
+  return inFlightRefresh
 }
 
 /** Debounced refresh so bursty WS events (running→completed etc.) coalesce. */
@@ -148,9 +200,15 @@ export function scheduleRefresh(): void {
 
 // ── Module top-level side effects (see design note above) ──
 // Re-fetch when the session list version bumps (create/archive/read/completion)
-// and when the current project changes (the excluded project flips).
-watch(() => store.state.sessionListVersion, () => { refresh() })
-watch(() => store.state.projectRoot, () => { refresh() })
+// or the current project changes (the excluded project flips).
+//
+// Both signals fire from the same project switch, and Vue batches a watcher
+// whose sources change together — so watching them as one array yields a single
+// refresh where two separate watchers produced two concurrent requests.
+watch(
+  [() => store.state.sessionListVersion, () => store.state.projectRoot],
+  () => { refresh() },
+)
 
 // WS session lifecycle events are broadcast globally (not project-scoped), so
 // this also covers activity happening in other projects.
@@ -166,6 +224,11 @@ refresh()
 /** @internal Reset all state — for tests only. */
 export function resetCrossProjectSessionsForTest(): void {
   if (reloadDebounce) { clearTimeout(reloadDebounce); reloadDebounce = null }
+  // Drop the coalescing state too: a test that leaves a request "in flight"
+  // would otherwise make the next test's refresh() join a stale promise and
+  // never issue its own fetch.
+  inFlightRefresh = null
+  rerunRequested = false
   groups.value = []
   loaded.value = false
   loading.value = false

@@ -8,7 +8,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [聊天流程](core/chat-flow.md) | 用户发消息到 AI 回复的完整链路：handler → 唯一 turn 实现 → AI 后端 → WebSocket StreamHub → 前端；含 ACP 权限审批、交互式提问卡（`<ask-question>` → AskUserQuestion 工具调用，单选可取消，答案状态跨重渲染持久化）、/cb-* 内置命令注入、请求构造唯一实现（直发与排队路径一致）、文件附件行范围、自动摘要（AI 失败降级结论文本）、分叉上下文按优先级压缩（保留全部用户消息）、thinking 惰性加载、子智能体内容分组（按 `_meta` 父工具调用 id 折叠进父 Agent 卡片）、工具调用耗时、消息元信息区在气泡外（用户消息同样支持复制/详情）、会话重置（卡死会话一键重启进程保留上下文）、消息回溯 Rewind（原址截断会话历史并重启 AI 会话，同时清空计划面板）、完成弹窗（后台完成时 Android 通知风格卡片，可追问/标记已读/跳转，详见[完成通知弹窗](features/completion-popup.md)）、未读自动清除、错误码透传与展示、取消耗时与 finalize 阶段计时、滚动保持机制、按项目恢复上次会话、输入草稿与会话快照恢复、DB 持久化消息队列（drain loop 原子出队 + 出队熔断 + 兜底回收器）、ACP `_meta` Token/成本明细（最新完整快照合并，供[用量统计](features/usage-stats.md)聚合）展示 |
+| [聊天流程](core/chat-flow.md) | 用户发消息到 AI 回复的完整链路：handler → 唯一 turn 实现 → AI 后端 → WebSocket StreamHub → 前端；含 ACP 权限审批、交互式提问卡（`<clawbench-ask-question>` → AskUserQuestion 工具调用，单选可取消，答案状态跨重渲染持久化）、/cb-* 内置命令注入、请求构造唯一实现（直发与排队路径一致）、文件附件行范围、自动摘要（AI 失败降级结论文本）、分叉上下文按优先级压缩（保留全部用户消息）、thinking 惰性加载、子智能体内容分组（按 `_meta` 父工具调用 id 折叠进父 Agent 卡片）、工具调用耗时、消息元信息区在气泡外（用户消息同样支持复制/详情）、会话重置（卡死会话一键重启进程保留上下文）、消息回溯 Rewind（原址截断会话历史并重启 AI 会话，同时清空计划面板）、完成弹窗（后台完成时 Android 通知风格卡片，可追问/标记已读/跳转，详见[完成通知弹窗](features/completion-popup.md)）、未读自动清除、错误码透传与展示、取消耗时与 finalize 阶段计时、滚动保持机制、按项目恢复上次会话、输入草稿与会话快照恢复、DB 持久化消息队列（drain loop 原子出队 + 出队熔断 + 兜底回收器）、ACP `_meta` Token/成本明细（最新完整快照合并，供[用量统计](features/usage-stats.md)聚合）展示 |
 | [AI 后端抽象](core/ai-backend.md) | 双传输后端（CLI shell-out + ACP stdio）、流式事件累加（AccumulateBlock + 回放检测 + 连续 thinking 合并 + AskQuestion 转换）、ACP 状态提取（mode/thinking/model）、ACP 崩溃诊断、acpStdoutFilter 协议修复（含 SessionModelState 提取）、ACP context_state 持久化、ACP 会话恢复重试与 NewSessionFallback、thinking 惰性加载、CodeWhale 字段重映射、Grok Build 双传输（ACP + streaming-json CLI）、ZCode ACP 桥接（zcode-acp-server）、共享规则模板、连接管理（AgentID/BackendID 无锁防死锁、用户取消保护存活连接、ensureAliveWithSession 使用 ResumeSession）、LoadSession 异步回放、ListSessions 磁盘扫描回退、EnsureAlive、CodeBuddy MCP 配置注入、CodeBuddy Plugin Skills 竞态修复、ACP `_meta` 扩展元信息解析（per-agent 归一化 → chat_metadata）、子智能体父工具调用归属（`_meta` parentToolCallId / parentToolUseId → ParentToolCallID） |
 | [流式传输体系](core/streaming.md) | 单一 WebSocket StreamHub（含断线 ≤10s 缓冲重放、≤50 条上限、>120s 清理订阅）+ 旁注小 SSE/WS 通道；含前端重连状态同步、subscribeOnly 模式、replay_done 事件、投递可观测（`/api/ws/delivery-stats`）、关键事件等待/高频增量丢弃的双层分级、前端有界缓冲回放 |
 | [会话生命周期](core/session-lifecycle.md) | 聊天会话的创建、执行、排队、取消、归档（软删除）、物理删除（Destroy）、续接对话（标题时间戳前缀 + 锁定）、分叉（含 beforeMessageId、可选 Agent）、会话标题派生（transcript 双候选提取）、设置即时持久化、会话标签、过期归档自动清理、Codex 项目级历史会话发现（磁盘扫描 + ACP 合并）、单一 owner runner（运行态与可取消性同源）、唯一 turn 实现与队列兜底回收、优雅退出（WaitStreamsDrained + GracefulStopAll 等待流落库再回收进程） |
@@ -36,7 +36,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [推送通知](features/push-notifications.md) | WebSocket 实时推送、通知音效开关（防止蓝牙耳机中断）、权限待审推送、离线事件持久化与游标拉取、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊 + 会话交互命令） |
 | [完成通知弹窗](features/completion-popup.md) | 后台完成时 Android 通知风格卡片：摘要全文展示、快捷输入框追问、标记已读、成功确认气泡、外部项目 Footer 区隔、防误触关闭、排队依次展示 |
 | [智能体用量统计](features/usage-stats.md) | 按项目聚合 `chat_metadata` 用量行（独立台账，不随会话删除丢失）的数据统计：用量总览环形图 + 缓存命中下钻、按指标拆分的图表（bar/pie/trend 可切换）、24h/7d/30d/自定义时间窗与 model/backend/agent 筛选、费用两位小数统一、移动端纵向堆叠；数据统计页签另含代码存量/代码增量双子页（见 [Git 管理](features/git-management.md)） |
-| [系统资源监控](features/system-resources.md) | gopsutil 采集 CPU/内存/磁盘/网络/负载、500ms 采样缓存、可见性感知轮询、WS 断线时显示连接状态 |
+| [系统资源监控](features/system-resources.md) | gopsutil 采集 CPU/内存/磁盘/网络/负载、500ms 采样缓存、WS 按订阅需求推送（`metrics_preference` 声明速率）、可见性感知、WS 断线时显示连接状态 |
 
 ### infra/ — 基础设施
 
@@ -52,7 +52,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [应用自升级](infra/self-upgrade.md) | 版本检查、安装目录可写预检、镜像 tarball URL 归一化、备份替换、进度推送、服务重启与断线轮询、容器内强制就地替换 |
 | [本地文件服务](infra/local-file-serving.md) | `/api/local-file/` 路径编码、媒体预览、下载与访问边界、目录树列表、批量文件存在检查、批量图片 Base64 |
 | [Docker 部署](infra/docker-deployment.md) | 单阶段运行时镜像、数据卷持久化、GHCR 双架构发布、容器内升级提示镜像优先 |
-| [系统资源监控](infra/system-resources.md) | CPU/内存/磁盘/磁盘 I/O/网络/系统负载实时采集、gopsutil 采样、500ms 缓存、前台/后台双速轮询、AppHeader 压力指示图标、WS 断线状态展示、Gauge 弹出面板 |
+| [系统资源监控](infra/system-resources.md) | CPU/内存/磁盘/磁盘 I/O/网络/系统负载实时采集、gopsutil 采样、500ms 缓存、MetricsPusher 按订阅需求推送（非缓冲投递）、前台/后台双速、AppHeader 压力指示图标、WS 断线状态展示、Gauge 弹出面板 |
 | [CLI 子命令](infra/cli-reference.md) | 仅剩 upgrade-replace（应用自升级内部机制）；业务子命令 task/rag 已移除，改由内置斜杠命令直调 HTTP API |
 | [Bugfix 工作流](infra/bugfix-workflow.md) | 自动化 bugfix 生命周期：扫描分类→worktree 隔离修复→测试验证→PR+CI→合并关闭 |
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref, computed } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import { useNavigationContext } from '../useNavigationContext'
 import { useFileNavStack, _resetForTesting as resetFileNavStack } from '../useFileNavStack'
 import { useDirectoryReturn, _resetForTesting as resetDirectoryReturn } from '../useDirectoryReturn'
@@ -488,6 +489,76 @@ describe('useNavigationCoordinator', () => {
       coord.handleOpenDirectoryFromEvent({ detail: {} } as any)
 
       expect(fakeStore.navigateToDir).not.toHaveBeenCalled()
+    })
+
+    it('reveals the requested entry after the directory loads (revealPath)', async () => {
+      const coord = createCoordinator()
+      const dispatched: CustomEvent[] = []
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = ((ev: Event) => {
+        dispatched.push(ev as CustomEvent)
+        return true
+      }) as typeof window.dispatchEvent
+
+      try {
+        coord.handleOpenDirectoryFromEvent({
+          detail: { path: 'docs/spec/core', revealPath: 'docs/spec/core/chat-flow.md', source: 'history' },
+        } as any)
+        await flushPromises()
+
+        expect(fakeStore.navigateToDir).toHaveBeenCalledWith('docs/spec/core')
+        const highlights = dispatched.filter(ev => ev.type === 'highlight-file-item')
+        expect(highlights).toHaveLength(1)
+        expect(highlights[0].detail).toEqual({ path: 'docs/spec/core/chat-flow.md' })
+      } finally {
+        window.dispatchEvent = origDispatch
+      }
+    })
+
+    it('dispatches no highlight when revealPath is absent (plain directory jump)', async () => {
+      const coord = createCoordinator()
+      const dispatched: CustomEvent[] = []
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = ((ev: Event) => {
+        dispatched.push(ev as CustomEvent)
+        return true
+      }) as typeof window.dispatchEvent
+
+      try {
+        coord.handleOpenDirectoryFromEvent({ detail: { path: 'src/docs', source: 'chat' } } as any)
+        await flushPromises()
+
+        // A plain directory jump must behave exactly as before — the reveal is
+        // additive and only fires when a revealPath was supplied.
+        expect(fakeStore.navigateToDir).toHaveBeenCalledWith('src/docs')
+        expect(dispatched.filter(ev => ev.type === 'highlight-file-item')).toHaveLength(0)
+      } finally {
+        window.dispatchEvent = origDispatch
+      }
+    })
+
+    it('does not highlight when the directory load fails', async () => {
+      const coord = createCoordinator()
+      fakeStore.navigateToDir.mockResolvedValueOnce(false)
+      const dispatched: CustomEvent[] = []
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = ((ev: Event) => {
+        dispatched.push(ev as CustomEvent)
+        return true
+      }) as typeof window.dispatchEvent
+
+      try {
+        coord.handleOpenDirectoryFromEvent({
+          detail: { path: 'gone/dir', revealPath: 'gone/dir/x.md', source: 'history' },
+        } as any)
+        await flushPromises()
+
+        // The jump was abandoned, so pointing the user at an entry in a
+        // directory that never loaded would be wrong.
+        expect(dispatched.filter(ev => ev.type === 'highlight-file-item')).toHaveLength(0)
+      } finally {
+        window.dispatchEvent = origDispatch
+      }
     })
 
     it('handles open file overlay with task and history sources', () => {

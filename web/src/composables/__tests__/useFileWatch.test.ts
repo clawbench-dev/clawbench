@@ -5,10 +5,14 @@ import { defineComponent, h, ref, nextTick } from 'vue'
 // Mock the store — the composable calls loadFiles / loadGitBranch on dir_change.
 const mockLoadFiles = vi.fn()
 const mockLoadGitBranch = vi.fn()
+// Mutable so tests can exercise the "project root not loaded yet" path.
+// Hoisted: vi.mock runs before module-scope declarations.
+const mockStoreState = vi.hoisted(() => ({ projectRoot: '/p' }))
 vi.mock('@/stores/app.ts', () => ({
   store: {
     loadFiles: (...args: unknown[]) => mockLoadFiles(...args),
     loadGitBranch: () => mockLoadGitBranch(),
+    state: mockStoreState,
   },
 }))
 
@@ -20,6 +24,33 @@ vi.mock('@/composables/useFileRefresh.ts', () => ({
   refreshCurrentFile: (...args: unknown[]) => mockRefreshCurrentFile(...args),
   wasRecentlySaved: (...args: unknown[]) => mockWasRecentlySaved(...args),
 }))
+
+// Media watch — the composable reads the on-screen image list and bumps a
+// version per changed path. The real module touches the DOM, so it is stubbed.
+// vi.mock is hoisted above every other statement (and above the vue import), so
+// the factory cannot close over module-scope bindings. It builds the ref itself
+// and publishes it on a hoisted container for the tests to drive.
+const mediaMocks = vi.hoisted(() => ({
+  bumpMediaVersion: vi.fn(() => true),
+  ensureMediaObserver: vi.fn(),
+  mediaPaths: null as { value: string[] } | null,
+}))
+const mockBumpMediaVersion = mediaMocks.bumpMediaVersion
+const mockEnsureMediaObserver = mediaMocks.ensureMediaObserver
+vi.mock('@/composables/useMediaWatch.ts', async () => {
+  const { ref } = await import('vue')
+  mediaMocks.mediaPaths = ref<string[]>([])
+  return {
+    bumpMediaVersion: (...args: unknown[]) => mediaMocks.bumpMediaVersion(...args),
+    ensureMediaObserver: () => mediaMocks.ensureMediaObserver(),
+    mediaPaths: mediaMocks.mediaPaths,
+    setMediaProjectRoot: () => {},
+  }
+})
+/** The ref the composable watches, created by the mock factory above. */
+function mockMediaPaths(): { value: string[] } {
+  return mediaMocks.mediaPaths as { value: string[] }
+}
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -125,6 +156,10 @@ describe('useFileWatch', () => {
     mockRefreshCurrentFile.mockReset()
     mockWasRecentlySaved.mockReset()
     mockWasRecentlySaved.mockReturnValue(false)
+    mockBumpMediaVersion.mockReset()
+    mockBumpMediaVersion.mockReturnValue(true)
+    mockEnsureMediaObserver.mockReset()
+    mockMediaPaths().value = []
     originalWebSocket = globalThis.WebSocket
     globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket
     vi.useFakeTimers()
@@ -182,7 +217,7 @@ describe('useFileWatch', () => {
     connectAndHandshake(ws)
 
     const frames = sentFrames(ws)
-    expect(frames).toContainEqual({ type: 'watch', dir: 'lib', file: 'lib/b.ts' })
+    expect(frames).toContainEqual({ type: 'watch', dir: 'lib', file: 'lib/b.ts', files: [] })
     wrapper.unmount()
   })
 
@@ -289,7 +324,98 @@ describe('useFileWatch', () => {
     currentDir.value = 'lib'
     await nextTick()
 
-    expect(sentFrames(ws)).toContainEqual({ type: 'watch', dir: 'lib', file: '' })
+    expect(sentFrames(ws)).toContainEqual({ type: 'watch', dir: 'lib', file: '', files: [] })
+    wrapper.unmount()
+  })
+
+  // ── Media watching ──────────────────────────────────────────────────────
+
+  it('registers on-screen media paths in the watch frame', () => {
+    const { wrapper } = setupWatch({ dir: 'src' })
+    const ws = latestWs()
+    connectAndHandshake(ws)
+    ws.sentMessages = []
+
+    mockMediaPaths().value = ['assets/a.png', 'assets/b.png']
+    return nextTick().then(() => {
+      expect(sentFrames(ws)).toContainEqual({
+        type: 'watch',
+        dir: 'src',
+        file: '',
+        files: ['assets/a.png', 'assets/b.png'],
+      })
+      wrapper.unmount()
+    })
+  })
+
+  it('connects when media is on screen even with no file manager open', async () => {
+    // The chat column can render local images with the file panel closed.
+    mockMediaPaths().value = ['assets/a.png']
+    const { wrapper } = setupWatch({ open: false })
+    await nextTick()
+
+    expect(mockWsInstances).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('bumps the media version on file_change for a non-open file', () => {
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    const ws = latestWs()
+    connectAndHandshake(ws)
+
+    ws.receive({ type: 'file_change', path: '/p/assets/diagram.png' })
+
+    expect(mockBumpMediaVersion).toHaveBeenCalledWith('/p/assets/diagram.png')
+    // A sibling image changing must NOT refresh the open file's content.
+    expect(mockRefreshCurrentFile).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('refreshes the open file when the change names it', () => {
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    const ws = latestWs()
+    connectAndHandshake(ws)
+
+    ws.receive({ type: 'file_change', path: '/p/src/a.ts' })
+
+    expect(mockBumpMediaVersion).toHaveBeenCalledWith('/p/src/a.ts')
+    expect(mockRefreshCurrentFile).toHaveBeenCalledWith({ clearOnError: true, loadDir: true })
+    wrapper.unmount()
+  })
+
+  it('refreshes when the project root is unknown (cannot rule out a match)', () => {
+    // With no root, an absolute event path cannot be related to a relative
+    // currentFile.path. Refreshing is the safe choice: a needless refresh only
+    // flashes, while skipping one reintroduces the missed-update bug.
+    const savedRoot = mockStoreState.projectRoot
+    mockStoreState.projectRoot = ''
+    const { wrapper } = setupWatch({ dir: 'src', file: 'a.ts' })
+    const ws = latestWs()
+    connectAndHandshake(ws)
+
+    ws.receive({ type: 'file_change', path: '/p/src/a.ts' })
+
+    expect(mockRefreshCurrentFile).toHaveBeenCalledWith({ clearOnError: true, loadDir: true })
+    mockStoreState.projectRoot = savedRoot
+    wrapper.unmount()
+  })
+
+  it('does not bump media when no path is present in the frame', () => {
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    const ws = latestWs()
+    connectAndHandshake(ws)
+
+    ws.receive({ type: 'file_change' })
+
+    expect(mockBumpMediaVersion).not.toHaveBeenCalled()
+    // No path means we cannot tell it apart from our own file — refresh it.
+    expect(mockRefreshCurrentFile).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('starts the media observer on mount', () => {
+    const { wrapper } = setupWatch()
+    expect(mockEnsureMediaObserver).toHaveBeenCalled()
     wrapper.unmount()
   })
 

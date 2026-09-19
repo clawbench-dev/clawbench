@@ -100,7 +100,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// turn's stream, carrying the PREVIOUS turn's requestId. Without this,
 		// the stale text is appended to the new message's first text block and
 		// its stale _meta pollutes the message-level metadata.requestId (both
-		// observed in production: a replayed ask-question block surfaced in the
+		// observed in production: a replayed clawbench-ask-question block surfaced in the
 		// wrong assistant message). Drop such chunks here.
 		//
 		// Deliberately scoped to CodeBuddy text chunks only:
@@ -195,9 +195,8 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// checklist. Placed before the debouncer because the debouncer's terminal
 		// path breaks out of the switch, and the bridge only fires for completed
 		// task-tool results (all other updates no-op). Runs on the notification
-		// goroutine; the lock-safe pattern matches the update.Plan branch below
-		// (task tools never fire inside a LoadSession/ResumeSession RPC window,
-		// so SetCachedPlanState's c.mu acquisition cannot deadlock here).
+		// goroutine, so it may only touch state guarded by a leaf lock:
+		// SetCachedPlanState uses stateMu, never c.mu (see ACPConn.stateMu).
 		if backendID == "codebuddy" && conn != nil && isCodeBuddyBackend(conn.agent) {
 			bridgeCodeBuddyPlanFromToolUpdate(ch, conn, *tcu)
 		}

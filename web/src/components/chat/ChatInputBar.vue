@@ -2119,13 +2119,16 @@ defineExpose({
     z-index: 1;
 }
 
-/* Running session indicator — refined sweep light with accent color blend */
-/* Stacks with .has-unread: sweep light (::before) + unread dot (::after) coexist */
+/* Running session indicator — a sweep of light travelling across the button.
+ * Deliberately not the session list's bottom band: this is a chip on the input
+ * bar rather than a full-width list row, so a sweep reads well here without
+ * the flooding problem that ruled it out for the rows (see --running-sweep in
+ * variables.css).
+ * Stacks with .has-unread: sweep (::before) + unread dot (::after) coexist. */
 .chat-action-btn.has-running {
     position: relative;
     overflow: hidden;
     color: var(--accent-color, #0066cc);
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
 }
 
 .chat-action-btn.has-running:active {
@@ -2140,12 +2143,7 @@ defineExpose({
     left: -60%;
     width: 60%;
     height: 100%;
-    background: linear-gradient(
-        90deg,
-        transparent,
-        color-mix(in srgb, var(--accent-color, #0066cc) 14%, transparent),
-        transparent
-    );
+    background: linear-gradient(90deg, transparent, var(--running-sweep), transparent);
     animation: sweep-light 2s ease-in-out infinite;
     pointer-events: none;
     z-index: 0;

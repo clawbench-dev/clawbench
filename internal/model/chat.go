@@ -94,13 +94,13 @@ type SummaryTool struct {
 	Output string         `json:"output,omitempty"`
 }
 
-// AskQuestionOption is a single option in an ask-question card.
+// AskQuestionOption is a single option in a clawbench-ask-question card.
 type AskQuestionOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
 }
 
-// AskQuestionCard is a single question item in an <ask-question> block,
+// AskQuestionCard is a single question item in an <clawbench-ask-question> block,
 // shaped to match the frontend AskItem used by renderAskUserQuestion
 // (web/src/utils/xmlParser.ts). A frontend caller renders it via
 // formatToolInput({ questions: summaryCards.askQuestions }, 'AskUserQuestion').
@@ -136,6 +136,7 @@ type SummaryWarning struct {
 	ErrorCode   int    `json:"error_code,omitempty"`   // structured error code (e.g. ACP JSON-RPC -32603)
 	HTTPStatus  int    `json:"http_status,omitempty"`  // upstream HTTP status when available (e.g. 500)
 	ErrorSource string `json:"error_source,omitempty"` // "agent" | "clawbench" | "network"
+	ErrorDetail string `json:"error_detail,omitempty"` // agent's own failure reason when the code alone is uninformative (e.g. CodeBuddy reports -32603 for every internal error)
 }
 
 // UnmarshalJSON accepts both the current object format
@@ -162,7 +163,7 @@ func (s *SummaryFileChanges) UnmarshalJSON(data []byte) error {
 // SummaryCards holds the structured card metadata persisted alongside the
 // reading summary text. Tools are auto-expand tool_use blocks; TaskIDs are the
 // scheduled-task IDs referenced by <scheduled-task> tags; AskQuestions are
-// <ask-question> XML cards. Populated at summarization time and stored in the
+// <clawbench-ask-question> XML cards. Populated at summarization time and stored in the
 // summaries.summary_cards column.
 type SummaryCards struct {
 	Tools        []SummaryTool     `json:"tools,omitempty"`
@@ -275,6 +276,7 @@ type ContentBlock struct {
 	ErrorCode   int            `json:"error_code,omitempty"`   // structured error code (e.g. ACP JSON-RPC code -32603)
 	HTTPStatus  int            `json:"http_status,omitempty"`  // upstream HTTP status when available (e.g. 500)
 	ErrorSource string         `json:"error_source,omitempty"` // "agent" | "clawbench" | "network"
+	ErrorDetail string         `json:"error_detail,omitempty"` // agent's own failure reason when the code alone is uninformative (e.g. CodeBuddy reports -32603 for every internal error)
 	Name        string         `json:"name,omitempty"`         // tool name (tool_use)
 	ID          string         `json:"id,omitempty"`           // tool call ID (tool_use)
 	Input       map[string]any `json:"input"`                  // tool input (tool_use) — no omitempty: must serialize {} so frontend distinguishes "no data" from "empty input"

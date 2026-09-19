@@ -92,9 +92,9 @@ CodeBuddy 的 agent 侧把所有非标准请求都收敛到一个 `extMethod(met
 - agent 发来的 `_` 前缀 **request** → acp-go-sdk 回 `Method not found`
 - agent 发来的 `_` 前缀 **notification** → acp-go-sdk 静默忽略（`connection.go` 对 `_` 前缀的 `-32601` 直接 return）
 
-这也与 ClawBench 当前的 AskUserQuestion 策略一致：ClawBench 在系统提示词（`internal/model/agent.go`）中**显式禁止模型调用 `AskUserQuestion` 工具**，改用 `<ask-question>` XML 标签约定，由 `internal/ai/block_helpers.go` 的 `ConvertAskQuestionBlocks` 解析成卡片。同时 ClawBench 从未在 `initialize` 广告 `question: true`，CodeBuddy 也会把内置 `AskUserQuestion` 判定为不可用（`isEnabled` 返回 false，见 §4.1）——两条路径目前是"双重关闭"状态。
+这也与 ClawBench 当前的 AskUserQuestion 策略一致：ClawBench 在系统提示词（`internal/model/agent.go`）中**显式禁止模型调用 `AskUserQuestion` 工具**，改用 `<clawbench-ask-question>` 标签约定，由 `internal/ai/block_helpers.go` 的 `ConvertAskQuestionBlocks` 解析成卡片。同时 ClawBench 从未在 `initialize` 广告 `question: true`，CodeBuddy 也会把内置 `AskUserQuestion` 判定为不可用（`isEnabled` 返回 false，见 §4.1）——两条路径目前是"双重关闭"状态。
 
-> 该结论已有实证：`internal/ai/codebuddy_acp_ask_question_integration_test.go` 中的 `TestCodebuddyACP_AskUserQuestionTool_NotAvailable` 驱动真实 `codebuddy --acp`，确认 ACP 模式下暴露的工具列表里**没有** `AskUserQuestion`，agent 会明说没有该工具；对照组 `TestCodebuddyACP_AskQuestionXML_OverACP` 验证 `<ask-question>` XML 通道在 ACP 下正常工作。
+> 该结论已有实证：`internal/ai/codebuddy_acp_ask_question_integration_test.go` 中的 `TestCodebuddyACP_AskUserQuestionTool_NotAvailable` 驱动真实 `codebuddy --acp`，确认 ACP 模式下暴露的工具列表里**没有** `AskUserQuestion`，agent 会明说没有该工具；对照组 `TestCodebuddyACP_AskQuestionXML_OverACP` 验证 `<clawbench-ask-question>` 通道在 ACP 下正常工作。
 >
 > ⚠️ **后续实测更正（见 §9）**：当客户端广告 `clientCapabilities._meta["codebuddy.ai"].question = true` 后，CodeBuddy **会**暴露 `AskUserQuestion` 工具，但它仍以**普通工具调用**（`sessionUpdate:"tool_call"` + `toolName=AskUserQuestion` + PermissionApproval）的形式出现，**不是** `_codebuddy.ai/question` 扩展请求。即"广告 question=true"与"走扩展通道"是两件独立的事。
 
@@ -540,7 +540,7 @@ tools the model invoked this turn: [AskUserQuestion AskUserQuestion PermissionAp
 **HTTP ACP 网关**（`POST /api/v1/acp`）设置，stdio 会话不设。
 
 > **对 ClawBench 的含义**：档 1 中"用 `_codebuddy.ai/question` 替换
-> `<ask-question>` XML 约定"这条路**在 stdio 下走不通**，应放弃该设想，
+> `<clawbench-ask-question>` 约定"这条路**在 stdio 下走不通**，应放弃该设想，
 > 继续使用现有的 XML 约定。
 
 ### 9.6 P4 — 插入处可精确识别（"截断为两条"，已实现）
@@ -675,7 +675,7 @@ content events after boundary: 13
 | 裸 JSON-RPC 通道本身 | ✅ 已验证 | 是上面所有非 `_` 方法的前置设施 |
 | `user_message_chunk` 边界信号 | ✅ 可精确定位插入点 | 支持"截断为两条"，需新增事件类型 |
 | 读取非标准 `agentCapabilities` | ✅ 需读 raw wire | 接入时必须绕开 SDK typed struct |
-| `_codebuddy.ai/question` | ❌ stdio 下不触发 | **放弃**，保留 `<ask-question>` XML |
+| `_codebuddy.ai/question` | ❌ stdio 下不触发 | **放弃**，保留 `<clawbench-ask-question>` |
 | `_codebuddy.ai/*` 其它扩展 | ⚠️ 未逐一实测 | 路由机制已证明（收到 `command`），按需接入 |
 | Multitask | ✅ 走标准 config | 用 `set_config_option(configId:"multitask")` |
 

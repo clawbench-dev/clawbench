@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -273,8 +274,8 @@ func TestRefreshAgents_LoadsAgentsIntoMemory(t *testing.T) {
 	require.Contains(t, Agents, "mem")
 
 	agent := Agents["mem"]
-	assert.Contains(t, agent.SystemPrompt, "be terse", "custom prompt must be composed into the runtime prompt")
-	assert.Contains(t, agent.SystemPrompt, "User Interaction", "the shared prompt prefix must be present")
+	assert.Contains(t, agent.RuntimeSystemPrompt, "be terse", "custom prompt must be composed into the runtime prompt")
+	assert.Contains(t, agent.RuntimeSystemPrompt, "User Interaction", "the shared prompt prefix must be present")
 }
 
 func TestRefreshAgents_LoadsYamlAgents(t *testing.T) {
@@ -371,35 +372,41 @@ func TestLoadYamlAgents_MissingDirectoryIsNotAnError(t *testing.T) {
 // System prompt composition
 // ---------------------------------------------------------------------------
 
+// ComposeSystemPrompt must always apply the *current* shared prompt, so a
+// change to the built-in text takes effect on every load. The bug this guards
+// against: a composed prompt persisted by an older scheme was appended after the
+// fresh one and overrode it, making every built-in-prompt change a no-op on
+// existing installs.
 func TestComposeSystemPrompt(t *testing.T) {
-	tests := []struct {
-		name   string
-		common string
-		custom string
-		stored string
-		want   string
-	}{
-		{"common and custom", "COMMON", "custom", "", "COMMON\n\ncustom"},
-		{"common only", "COMMON", "", "", "COMMON"},
-		{"custom only", "", "custom", "", "custom"},
-		{"neither", "", "", "", ""},
-		{
-			name:   "legacy stored prompt survives an empty custom field",
-			common: "COMMON", custom: "", stored: "legacy text",
-			want: "legacy text",
-		},
-		{
-			name:   "custom field wins over the legacy stored prompt",
-			common: "COMMON", custom: "new", stored: "legacy text",
-			want: "COMMON\n\nnew",
-		},
-	}
+	common := BuildCommonPrompt()
+	require.NotEmpty(t, common)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, composeSystemPrompt(tt.common, tt.custom, tt.stored))
-		})
-	}
+	assert.Equal(t, common, ComposeSystemPrompt(""), "no custom text yields the shared prompt alone")
+	assert.Equal(t, common+"\n\nmy instructions", ComposeSystemPrompt("my instructions"))
+
+	// The shared prompt appears exactly once — no frozen copy can be appended.
+	assert.Equal(t, 1, strings.Count(ComposeSystemPrompt("my instructions"), common))
+
+	// The custom text is always present.
+	assert.Contains(t, ComposeSystemPrompt("my instructions"), "my instructions")
+}
+
+// The shared prompt is composed on every read, so changing the built-in prompt
+// takes effect immediately. The bug this guards against: a composed prompt
+// persisted by an older scheme was appended after the fresh one and overrode it,
+// which made every built-in prompt change a no-op on existing installs.
+func TestComposeSystemPrompt_SharedPromptIsAlwaysFresh(t *testing.T) {
+	commonPrompt := BuildCommonPrompt()
+	require.NotEmpty(t, commonPrompt)
+
+	// A user with no custom text gets exactly the current shared prompt.
+	assert.Equal(t, commonPrompt, ComposeSystemPrompt(""))
+
+	// A user with custom text gets the current shared prompt plus their text —
+	// never a previously stored composition.
+	got := ComposeSystemPrompt("my instructions")
+	assert.Contains(t, got, "my instructions")
+	assert.NotContains(t, got, "OLD-COMMON")
 }
 
 // ---------------------------------------------------------------------------

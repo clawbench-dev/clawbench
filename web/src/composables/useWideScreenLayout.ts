@@ -10,7 +10,13 @@ export const WIDE_SCREEN_MIN_WIDTH = 1024
 // alone can miss high-resolution tablets whose devicePixelRatio shrinks the CSS
 // viewport below 1024 (e.g. 2400 physical px at DPR 2.5 → 960 CSS px).
 export const WIDE_SCREEN_MIN_PHYSICAL_WIDTH = 1280
-export const WIDE_SCREEN_LEFT_TAB_KEY = 'clawbench-widescreen-left-tab'
+// The active left tab used to be persisted here under a single global key
+// ('clawbench-widescreen-left-tab'). That gave the tab no project dimension, so
+// switching to project B overwrote project A's tab and switching back restored
+// B's. Persistence now lives in composables/useProjectPanel.ts, keyed by project
+// root, and App.vue applies it after the workspace is restored. This module
+// deliberately keeps no storage for `leftTab` — a second writer here would race
+// the per-project one.
 export const WIDE_SCREEN_SPLIT_RATIO_KEY = 'clawbench-widescreen-split-ratio'
 export const WIDE_SCREEN_CHAT_COLLAPSED_KEY = 'clawbench-widescreen-chat-collapsed'
 /**
@@ -78,20 +84,9 @@ let resizeListener: (() => void) | null = null
 let mql: MediaQueryList | null = null
 let mqlChangeListener: (() => void) | null = null
 
-function readPersistedLeftTab(): DockTabId {
-  try {
-    const v = localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)
-    if (v && isDockTabId(v)) return v
-  } catch {
-    // localStorage may throw in restricted environments — fall through to default
-  }
-  return 'browse'
-}
-
 function initWideScreen() {
   if (initialized) return
   initialized = true
-  leftTab.value = readPersistedLeftTab()
   try {
     const stored = localStorage.getItem(WIDE_SCREEN_SPLIT_RATIO_KEY)
     if (stored !== null) {
@@ -199,6 +194,9 @@ export function registerWideScreenCallbacks(opts: { sideEffects?: (tab: DockTabI
  * Switch the wide-screen left column tab. Writes activeTab + side-effects via
  * callbacks; does NOT call onTabSwitch.
  *
+ * Does not persist: the tab is remembered per project by useProjectPanel.ts,
+ * driven from App.vue's watcher on the active panel tab.
+ *
  * Rejects unknown tabs loudly: a tab that the dock renders but that is not in
  * DOCK_TABS would otherwise be a silently dead button (the original forge bug
  * — click did nothing, with no state change, error or log). The whitelist is
@@ -214,11 +212,6 @@ export function switchLeftTab(tab: string) {
   if (leftTab.value === tab) return
   leftTab.value = tab
   leftCollapsed.value = false
-  try {
-    localStorage.setItem(WIDE_SCREEN_LEFT_TAB_KEY, tab)
-  } catch {
-    // ignore
-  }
   setActiveTab?.(tab)
   sideEffects?.(tab)
 }
@@ -226,11 +219,11 @@ export function switchLeftTab(tab: string) {
 /**
  * Q1A continuity rule: entering wide-screen mode adopts the current narrow-mode
  * tab as the left column tab when it is a non-chat tab; otherwise keeps the
- * persisted/default leftTab.
+ * current/default leftTab.
  */
-export function resolveLeftTabOnEnter(currentActiveTab: string, persistedLeftTab: string): DockTabId {
+export function resolveLeftTabOnEnter(currentActiveTab: string, currentLeftTab: string): DockTabId {
   if (currentActiveTab !== 'chat' && isDockTabId(currentActiveTab)) return currentActiveTab
-  return isDockTabId(persistedLeftTab) ? persistedLeftTab : 'browse'
+  return isDockTabId(currentLeftTab) ? currentLeftTab : 'browse'
 }
 
 /** Normalize + persist the split ratio (persistence owned here, not in SplitView). */

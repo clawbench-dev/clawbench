@@ -47,6 +47,7 @@ sequenceDiagram
     前端->>ws.Manager: {type:"permission_respond", session_id, decision}
     前端->>ws.Manager: {type:"ack", id}
     前端->>ws.Manager: {type:"pong"}
+    前端->>ws.Manager: {type:"metrics_preference", metrics_enabled, metrics_interval_ms}
 ```
 
 ### 投递分级：关键事件等待，高频增量丢弃
@@ -94,7 +95,8 @@ sequenceDiagram
   - 聊天内容事件：`ChatStreamData` 携带 `event_type`（`content`/`thinking`/`tool_use` 等子事件），通过 `StreamHub.EmitToSession` 推送
   - 系统事件信封：`{type:"event", event:"session_update"|"task_update"|"summary_update"}`，`summary_update` 事件携带 `SummaryCards` 结构化卡片元数据
   - 信号事件：`replay_done`（LoadSession 异步回放完成，空 payload）、`thinking_done`、`done`（均为空 payload）
-  - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong` 六种客户端消息
+  - 遥测事件：`system_resources`（系统资源指标，由 `MetricsPusher` 按订阅需求推送）。**不进回放缓冲**——1Hz 遥测会在一分钟内冲爆 50 条缓冲并挤掉聊天/任务事件，因此走独立的非缓冲投递路径，且队列满时丢弃而非断连
+  - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong`/`metrics_preference` 七种客户端消息。`metrics_preference` 声明是否订阅系统资源推送及速率（前台 1000ms / 后台 5000ms / 关闭），服务端仅在存在订阅者时采样，按最快请求速率推送；新连接会清空该偏好，客户端每次重连后重新声明
 - **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`。后端重放时给缓冲事件打 `Replayed` 标记（`replayed: true`），前端据此进入 `isReplayingEvents` 状态——补发的历史终态事件（如断线期间已完成的 `session_update`/`task_update`）不再被当作 live 事件处理，避免刷新后误弹历史完成通知/完成弹窗
 - **订阅超时清理**：客户端超过 120s 无活动即清理订阅，避免僵尸连接
 - **投递可观测**：`EmitToSession` 对无订阅者的会话不再静默丢弃——按原因（`no_subscribers` / `no_manager`）原子计数并通过 `GET /api/ws/delivery-stats` 暴露；日志按事件类型分级（关键事件 WARN、高频增量 DEBUG）且**每个 (原因, 类型) 只记一次**，量级交给计数、事实交给日志。此前"UI 卡在缺少终态事件"与"后端根本没发"在日志上完全无法区分

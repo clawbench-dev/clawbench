@@ -1,6 +1,7 @@
 // Global application state (singleton reactive store)
 import { reactive } from 'vue'
 import { apiGet, apiPost } from '@/utils/api'
+import { coalescedJson } from '@/utils/inflightGet.ts'
 import { appLog } from '@/utils/appLog'
 import { baseName, dirName, isAbsolutePath, normalizeSlashes, toProjectRelative } from '@/utils/path.ts'
 import { gt } from '@/composables/useLocale'
@@ -8,6 +9,7 @@ import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import { resetForgeBindingState } from '@/composables/useForgeBinding'
+import { clearMediaWatchState } from '@/composables/useMediaWatch.ts'
 
 const TAG = 'Store'
 
@@ -311,6 +313,12 @@ function resetProjectState(): void {
     state.projectName = ''
     state.rootPaths = []
     state.homeDir = ''
+    // Media versions are keyed by PROJECT-RELATIVE path, so they belong to the
+    // project being left behind — `assets/logo.png` in the new project must not
+    // inherit the old project's version, and the old project's paths must stop
+    // being reported to the file watcher. Covers every switch path (worktree
+    // jumps call setProject() directly without remounting the app subtree).
+    clearMediaWatchState()
     // The forge binding belongs to the project being left behind. Dropping it
     // here — rather than in App.vue's hotSwitchProject — covers every switch
     // path: worktree jumps (task exec detail, chat messages, git panel) call
@@ -352,8 +360,12 @@ function resetProjectState(): void {
 // =============================================
 
 async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: string; dirty: boolean; changeCount: number }> {
+    // Coalesced: fifteen call sites refresh the branch (project switch, stream
+    // end, file-watch events, panel mounts), and a single project switch fired
+    // three identical requests. Concurrent callers share one round-trip; a
+    // later caller still gets a fresh read, since the entry clears on settle.
     try {
-        const data = await apiGet<{ isGit: boolean; branch: string; head: string; dirty: boolean; changeCount: number }>('/api/git/branch')
+        const data = await coalescedJson<{ isGit: boolean; branch: string; head: string; dirty: boolean; changeCount: number }>('/api/git/branch')
         state.gitBranch = data.branch || ''
         state.gitHead = data.head || ''
         state.gitDirty = !!data.dirty

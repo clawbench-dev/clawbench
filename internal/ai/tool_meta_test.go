@@ -733,7 +733,10 @@ func TestExtractAskUserQuestionSummary(t *testing.T) {
 			name: "truncation of long header",
 			input: map[string]any{
 				"questions": []any{
-					map[string]any{"header": repeatStr("x", 300)},
+					// A header is only a label for a question; an entry with a
+					// header and nothing else is not a renderable question, so
+					// the payload carries question text too.
+					map[string]any{"header": repeatStr("x", 300), "question": "Q?"},
 				},
 			},
 			want: repeatStr("x", 200),

@@ -9,6 +9,10 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
+vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
+  FILE_OPEN_ICON_SVG: '<svg class="file-open-icon"></svg>',
+}))
+
 import GitCommitMeta from '@/components/git/GitCommitMeta.vue'
 
 function mountMeta(props: Record<string, unknown>) {
@@ -51,5 +55,69 @@ describe('GitCommitMeta — file path rows', () => {
     expect(wrapper.find('.diff-meta-file-name').exists()).toBe(false)
     expect(wrapper.find('.diff-meta-file-path').exists()).toBe(false)
     expect(wrapper.text()).toContain('SHA')
+  })
+})
+
+describe('GitCommitMeta — file annotations', () => {
+  const PATH = 'docs/spec/core/chat-flow.md'
+
+  function mountWithPath(filePath = PATH) {
+    return mountMeta({
+      commit: { sha: 'a313de64deadbeef', author: 'xulongzhe', date: new Date().toISOString(), msg: 'feat' },
+      filePath,
+    })
+  }
+
+  it('emits open-file with the path when the file-name row is clicked', async () => {
+    const wrapper = mountWithPath()
+    await wrapper.find('.diff-meta-file-name').trigger('click')
+    expect(wrapper.emitted('open-file')).toEqual([[PATH]])
+  })
+
+  it('emits reveal-file with the path when the path row is clicked', async () => {
+    const wrapper = mountWithPath()
+    await wrapper.find('.diff-meta-file-path').trigger('click')
+    expect(wrapper.emitted('reveal-file')).toEqual([[PATH]])
+    // The row must not open the file — that is the other row's action.
+    expect(wrapper.emitted('open-file')).toBeFalsy()
+  })
+
+  it('renders an explicit button per row, each wired to its own action', async () => {
+    const wrapper = mountWithPath()
+    const buttons = wrapper.findAll('.diff-meta-open-btn')
+    expect(buttons).toHaveLength(2)
+
+    // The buttons repeat the row actions so the affordance is discoverable
+    // without hovering the label.
+    await buttons[0].trigger('click')
+    expect(wrapper.emitted('open-file')).toEqual([[PATH]])
+    expect(wrapper.emitted('reveal-file')).toBeFalsy()
+
+    await buttons[1].trigger('click')
+    expect(wrapper.emitted('reveal-file')).toEqual([[PATH]])
+    // Neither action ran twice.
+    expect(wrapper.emitted('open-file')).toHaveLength(1)
+  })
+
+  it('renders an icon inside each button', () => {
+    const wrapper = mountWithPath()
+    expect(wrapper.findAll('.diff-meta-open-btn svg')).toHaveLength(2)
+  })
+
+  it('uses the same jump icon for both rows', () => {
+    const wrapper = mountWithPath()
+    const [fileIcon, pathIcon] = wrapper.findAll('.diff-meta-open-btn svg').map(s => s.html())
+    // Both rows jump somewhere, so they share the shared file-open glyph rather
+    // than one of them inventing a folder icon.
+    expect(fileIcon).toBe(pathIcon)
+    expect(fileIcon).toContain('file-open-icon')
+  })
+
+  it('does not render annotation rows without a file path', () => {
+    const wrapper = mountMeta({
+      commit: { sha: 'abc1234567', author: 'me', date: new Date().toISOString(), msg: 'fix' },
+    })
+    expect(wrapper.find('.diff-meta-annotation').exists()).toBe(false)
+    expect(wrapper.find('.diff-meta-open-btn').exists()).toBe(false)
   })
 })

@@ -19,15 +19,22 @@ import android.widget.TextView;
  * right-aligned button pair.
  *
  * <p>The web version is the reference: markup lives in
- * {@code res/layout/dialog_web_card.xml} and every color is derived at runtime
- * from the persisted theme palette ({@link FloatingThemeColors}) so the dialog
- * follows the user's theme exactly like the in-app UI does.
+ * {@code res/layout/dialog_web_card.xml} and every color is resolved at runtime
+ * from {@link ThemePalette} — the same table {@link MainActivity#applyThemeColors}
+ * uses for the status bar and splash backdrop — so the card always matches the
+ * background behind it.
  *
- * <p>Colors and the card background are built in code rather than as XML
- * drawables on purpose: a parallel set of theme-colored drawables would need
- * every one of the ~40 themes mirrored in XML, which is exactly the kind of
- * duplication that drifts. The palette is already persisted for the floating
- * window, so it is the single source of truth here too.
+ * <p>Colors are built in code rather than as XML drawables on purpose: a
+ * parallel set of theme-colored drawables would need every one of the ~40 themes
+ * mirrored in XML, which is exactly the kind of duplication that drifts.
+ *
+ * <p>Note this deliberately does <em>not</em> read
+ * {@link FloatingThemeColors}, which holds the palette the WebView pushes over
+ * the bridge. That palette is blank until the Vue app mounts — the login page
+ * calls the 1-arg {@code setTheme(theme)} overload, which clears the color
+ * slots — and this dialog is shown <em>before</em> the WebView loads. Reading it
+ * made the card silently fall back to github-dark, painting a dark card over a
+ * light splash backdrop.
  *
  * <p>Framework dialogs always draw their own panel and title strip, so
  * {@code Theme.ClawBench.WebDialog} makes the window transparent and this class
@@ -48,6 +55,14 @@ final class WebStyleDialog {
     private static final int ICON_CHIP_RADIUS_DP = 6;
     /** Web parity: .dlg-btn border-radius: 6px (--radius-sm). */
     private static final int BUTTON_RADIUS_DP = 6;
+    /**
+     * Web parity for the card's box-shadow
+     * ({@code 0 2px 10px rgba(0,0,0,.16), 0 14px 44px rgba(0,0,0,.3)}). Android
+     * has no multi-layer shadow, so this is the elevation whose ambient shadow
+     * reads closest to that pair; without it the flat card has no separation
+     * from the backdrop.
+     */
+    private static final int CARD_ELEVATION_DP = 12;
 
     /**
      * Resolved geometry/colors for one dialog instance. Kept as a value object
@@ -64,10 +79,11 @@ final class WebStyleDialog {
         final int cancelBg;
         final int buttonRadiusPx;
         final int cardWidthPx;
+        final int cardElevationPx;
 
         Style(int cardBg, int cardRadiusPx, int iconChipBg, int iconChipRadiusPx,
               int accent, int textPrimary, int textSecondary, int cancelBg,
-              int buttonRadiusPx, int cardWidthPx) {
+              int buttonRadiusPx, int cardWidthPx, int cardElevationPx) {
             this.cardBg = cardBg;
             this.cardRadiusPx = cardRadiusPx;
             this.iconChipBg = iconChipBg;
@@ -78,32 +94,30 @@ final class WebStyleDialog {
             this.cancelBg = cancelBg;
             this.buttonRadiusPx = buttonRadiusPx;
             this.cardWidthPx = cardWidthPx;
+            this.cardElevationPx = cardElevationPx;
         }
     }
 
     /**
-     * Build the style for a dialog on {@code context}, reading the persisted
-     * palette and the screen width. {@code screenWidthPx} is the full display
+     * Build the style for a dialog on {@code context}, resolving the persisted
+     * theme and the screen width. {@code screenWidthPx} is the full display
      * width; the card is capped at 320dp and shrunk to fit the 20dp side margins
      * (LinearLayout has no maxWidth, so this is resolved here).
      */
     static Style buildStyle(Context context, int screenWidthPx) {
-        int[] palette = FloatingThemeColors.get(context);
-        int bg = palette[0];
-        int text = palette[1];
-        int textSecondary = palette[2];
-        int accent = palette[3];
+        ThemePalette palette = ThemePalette.current(context);
         return new Style(
-                bg,
+                palette.bgSecondary,
                 dp(context, CARD_RADIUS_DP),
-                FloatingThemeColors.accentTint(accent),
+                FloatingThemeColors.accentTint(palette.accent),
                 dp(context, ICON_CHIP_RADIUS_DP),
-                accent,
-                text,
-                textSecondary,
-                FloatingThemeColors.tertiaryColor(bg, text),
+                palette.accent,
+                palette.textPrimary,
+                palette.textSecondary,
+                palette.bgTertiary,
                 dp(context, BUTTON_RADIUS_DP),
-                cardWidthPx(context, screenWidthPx));
+                cardWidthPx(context, screenWidthPx),
+                dp(context, CARD_ELEVATION_DP));
     }
 
     /**
@@ -147,10 +161,14 @@ final class WebStyleDialog {
         // mirrors the previous AlertDialog.setCancelable(false) behavior.
         dialog.setCancelable(false);
 
+        // Pin the window to the full display. The theme already sets
+        // windowIsFloating=false (see Theme.ClawBench.WebDialog) so the scrim
+        // covers the screen instead of a card-sized band; setting the layout
+        // explicitly keeps that true even if the flag regresses.
         Window window = dialog.getWindow();
         if (window != null) {
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
+                    ViewGroup.LayoutParams.MATCH_PARENT);
         }
 
         Style style = buildStyle(activity,
@@ -171,6 +189,9 @@ final class WebStyleDialog {
                       Runnable onConfirm, Runnable onCancel) {
         View card = content.findViewById(R.id.webDialogCard);
         card.setBackground(rounded(style.cardBg, style.cardRadiusPx));
+        // Elevation supplies the ambient shadow the web's box-shadow provides;
+        // without it the card reads as pasted onto the backdrop.
+        card.setElevation(style.cardElevationPx);
         ViewGroup.LayoutParams lp = card.getLayoutParams();
         if (lp != null) {
             lp.width = style.cardWidthPx;

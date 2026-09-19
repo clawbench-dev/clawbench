@@ -38,89 +38,37 @@ describe('restoreProjectWorkspace', () => {
     vi.restoreAllMocks()
   })
 
-  it('restores the saved file and re-activates the view tab when activateView: true is passed', async () => {
+  // Which panel to show is no longer this function's job — it is remembered per
+  // project (useProjectPanel.ts) and applied by the caller after restore. These
+  // tests therefore assert that restore ONLY populates state and never touches
+  // the active tab, on either call path.
+  it('restores the saved file into state without touching the active tab', async () => {
     localStorage.setItem(OPEN_FILE_PREFIX + PROJECT, 'web/src/App.vue')
     vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined)
     vi.spyOn(store, 'selectFile').mockResolvedValue(true)
-    const switchTab = vi.fn()
 
-    await restoreProjectWorkspace({ switchTab, activateView: true })
-
-    expect(store.selectFile).toHaveBeenCalledWith('web/src/App.vue')
-    expect(openFileMock).toHaveBeenCalledWith('web/src/App.vue')
-    // Project switch: the restored file must bring the file-view tab back
-    // (regression: after a project switch the file was restored to state but
-    // the viewer was not shown).
-    expect(switchTab).toHaveBeenCalledWith('view')
-  })
-
-  it('restores the saved file but stays on chat on cold start (no switchTab)', async () => {
-    localStorage.setItem(OPEN_FILE_PREFIX + PROJECT, 'web/src/App.vue')
-    vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined)
-    vi.spyOn(store, 'selectFile').mockResolvedValue(true)
-    const switchTab = vi.fn()
-
-    // Cold start: activateView defaults to false — the app must land on the
-    // chat tab even though a file was previously open (regression: startup
-    // jumped to the file-view tab).
-    await restoreProjectWorkspace({ switchTab })
+    await restoreProjectWorkspace()
 
     expect(store.selectFile).toHaveBeenCalledWith('web/src/App.vue')
     expect(openFileMock).toHaveBeenCalledWith('web/src/App.vue')
-    expect(switchTab).not.toHaveBeenCalled()
   })
 
-  it('project switch also stays on chat — file restored to state but view tab not activated', async () => {
-    localStorage.setItem(OPEN_FILE_PREFIX + PROJECT, 'web/src/App.vue')
+  it('does not open any file when no saved file exists', async () => {
     vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined)
-    vi.spyOn(store, 'selectFile').mockResolvedValue(true)
-    const switchTab = vi.fn()
 
-    // Project switch: hotSwitchProject passes activateView: false so the
-    // landing tab matches cold start — always chat (regression: switching
-    // projects jumped to the file-view tab whenever the project had a
-    // last-opened file).
-    await restoreProjectWorkspace({ switchTab, activateView: false })
-
-    expect(store.selectFile).toHaveBeenCalledWith('web/src/App.vue')
-    expect(openFileMock).toHaveBeenCalledWith('web/src/App.vue')
-    expect(switchTab).not.toHaveBeenCalled()
-  })
-
-  it('does not activate the view tab when no saved file exists', async () => {
-    vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined)
-    const switchTab = vi.fn()
-
-    await restoreProjectWorkspace({ switchTab })
+    await restoreProjectWorkspace()
 
     expect(openFileMock).not.toHaveBeenCalled()
-    expect(switchTab).not.toHaveBeenCalled()
   })
 
   it('clears a stale open-file record when the saved file can no longer be opened', async () => {
     localStorage.setItem(OPEN_FILE_PREFIX + PROJECT, 'web/src/App.vue')
     vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined)
     vi.spyOn(store, 'selectFile').mockResolvedValue(false)
-    const switchTab = vi.fn()
 
-    await restoreProjectWorkspace({ switchTab })
+    await restoreProjectWorkspace()
 
     expect(openFileMock).not.toHaveBeenCalled()
-    expect(switchTab).not.toHaveBeenCalled()
-    expect(localStorage.getItem(OPEN_FILE_PREFIX + PROJECT)).toBeNull()
-  })
-
-  it('does not switch to view when the saved file is stale even with activateView', async () => {
-    localStorage.setItem(OPEN_FILE_PREFIX + PROJECT, 'web/src/App.vue')
-    vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined)
-    vi.spyOn(store, 'selectFile').mockResolvedValue(false)
-    const switchTab = vi.fn()
-
-    // Project switch with activateView: the stale-file branch must still not
-    // call switchTab — only a successfully restored file may re-activate view.
-    await restoreProjectWorkspace({ switchTab, activateView: true })
-
-    expect(switchTab).not.toHaveBeenCalled()
     expect(localStorage.getItem(OPEN_FILE_PREFIX + PROJECT)).toBeNull()
   })
 
@@ -128,7 +76,7 @@ describe('restoreProjectWorkspace', () => {
     localStorage.setItem(BROWSE_DIR_PREFIX + PROJECT, 'web/src')
     const loadFiles = vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined)
 
-    await restoreProjectWorkspace({ switchTab: vi.fn() })
+    await restoreProjectWorkspace()
 
     expect(loadFiles).toHaveBeenCalledWith('web/src', true)
   })

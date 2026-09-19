@@ -1,15 +1,22 @@
 package com.clawbench.app;
 
+import android.app.Activity;
 import android.app.Application;
+import android.app.Dialog;
 import android.content.Context;
-import android.graphics.drawable.GradientDrawable;
+import android.content.res.TypedArray;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.ContextThemeWrapper;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.TextView;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
@@ -17,6 +24,7 @@ import org.robolectric.annotation.Config;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -141,24 +149,24 @@ public class WebStyleDialogTest {
     }
 
     // =====================================================
-    // buildStyle: colors come from the persisted theme palette
+    // buildStyle: colors come from the persisted theme ID
     // =====================================================
 
     @Test
-    public void buildStyle_usesPersistedPalette() {
-        // Simulate the WebView having pushed a dracula palette.
+    public void buildStyle_usesPersistedThemeId() {
+        // Simulate the app having persisted dracula. The dialog must resolve the
+        // real dracula values from the theme table, not a derived approximation.
         appContext.getSharedPreferences("clawbench_prefs", Context.MODE_PRIVATE).edit()
-                .putString("theme_bg", "#21222c")
-                .putString("theme_text", "#f8f8f2")
-                .putString("theme_text_secondary", "#6272a4")
-                .putString("theme_accent", "#bd93f9")
+                .putString("theme_base", "dracula")
                 .commit();
 
         WebStyleDialog.Style style = WebStyleDialog.buildStyle(appContext, dp(360));
 
-        assertEquals(0xFF21222C, style.cardBg);
-        assertEquals(0xFFF8F8F2, style.textPrimary);
-        assertEquals(0xFF6272A4, style.textSecondary);
+        assertEquals("card bg must be dracula --bg-secondary", 0xFF21222C, style.cardBg);
+        assertEquals("title text must be dracula --text-primary", 0xFFF8F8F2, style.textPrimary);
+        assertEquals("message text must be dracula --text-secondary", 0xFFB0B0C4, style.textSecondary);
+        assertEquals("cancel button must be the real dracula --bg-tertiary",
+                0xFF343746, style.cancelBg);
         assertEquals(0xFFBD93F9, style.accent);
         assertEquals("the title chip is the accent at 12% alpha",
                 FloatingThemeColors.accentTint(0xFFBD93F9), style.iconChipBg);
@@ -168,9 +176,65 @@ public class WebStyleDialogTest {
     public void buildStyle_withoutPersistedTheme_usesGithubDarkDefaults() {
         WebStyleDialog.Style style = WebStyleDialog.buildStyle(appContext, dp(360));
 
-        assertEquals(FloatingThemeColors.DEFAULT_BG, style.cardBg);
-        assertEquals(FloatingThemeColors.DEFAULT_TEXT, style.textPrimary);
-        assertEquals(FloatingThemeColors.DEFAULT_ACCENT, style.accent);
+        ThemePalette fallback = ThemePalette.forId(ThemePalette.DEFAULT_THEME_ID);
+        assertEquals(fallback.bgSecondary, style.cardBg);
+        assertEquals(fallback.textPrimary, style.textPrimary);
+        assertEquals(fallback.accent, style.accent);
+    }
+
+    @Test
+    public void buildStyle_unknownThemeId_fallsBackToGithubDark() {
+        appContext.getSharedPreferences("clawbench_prefs", Context.MODE_PRIVATE).edit()
+                .putString("theme_base", "no-such-theme")
+                .commit();
+
+        WebStyleDialog.Style style = WebStyleDialog.buildStyle(appContext, dp(360));
+
+        ThemePalette fallback = ThemePalette.forId(ThemePalette.DEFAULT_THEME_ID);
+        assertEquals(fallback.bgSecondary, style.cardBg);
+        assertEquals(fallback.textPrimary, style.textPrimary);
+    }
+
+    /**
+     * The regression this whole palette refactor exists for: on cold start the
+     * login page calls the 1-arg setTheme(theme) bridge overload, which blanks
+     * the FloatingThemeColors slots. The dialog must not read that palette — it
+     * used to, and fell back to github-dark, painting a dark card over a light
+     * splash backdrop.
+     */
+    @Test
+    public void buildStyle_ignoresBlankedFloatingPalette() {
+        // Light theme selected, but the bridge-blanked palette (all empty) is what
+        // FloatingThemeColors would read. This is the post-login-page state.
+        appContext.getSharedPreferences("clawbench_prefs", Context.MODE_PRIVATE).edit()
+                .putString("theme_base", "gruvbox-light")
+                .putString("theme_bg", "")
+                .putString("theme_text", "")
+                .putString("theme_text_secondary", "")
+                .putString("theme_accent", "")
+                .commit();
+
+        // Sanity: the floating palette really did degrade to github-dark here.
+        assertEquals("precondition: the blanked floating palette is github-dark",
+                0xFF161B22, FloatingThemeColors.get(appContext)[0]);
+
+        WebStyleDialog.Style style = WebStyleDialog.buildStyle(appContext, dp(360));
+
+        assertEquals("the card must follow gruvbox-light, not the blanked palette",
+                0xFFF2E5BC, style.cardBg);
+        assertEquals(0xFF3C3836, style.textPrimary);
+        assertTrue("a light theme must produce a light card", brightness(style.cardBg) > 128);
+    }
+
+    @Test
+    public void buildStyle_lightAndDarkThemes_differInCardBackground() {
+        WebStyleDialog.Style dark = styleForTheme("github-dark");
+        WebStyleDialog.Style light = styleForTheme("github-light");
+
+        assertTrue("dark theme card must be dark", brightness(dark.cardBg) < 128);
+        assertTrue("light theme card must be light", brightness(light.cardBg) > 128);
+        assertTrue("dark theme must use light text", brightness(dark.textPrimary) > 128);
+        assertTrue("light theme must use dark text", brightness(light.textPrimary) < 128);
     }
 
     @Test
@@ -183,29 +247,137 @@ public class WebStyleDialogTest {
         assertEquals(dp(6), style.buttonRadiusPx);
     }
 
+    @Test
+    public void buildStyle_cardHasElevation_forShadowSeparation() {
+        WebStyleDialog.Style style = WebStyleDialog.buildStyle(appContext, dp(360));
+
+        assertTrue("the card needs elevation to mirror the web's box-shadow",
+                style.cardElevationPx > 0);
+    }
+
+    // =====================================================
+    // Window theme: full-screen scrim
+    // =====================================================
+
+    /**
+     * The parent dialog theme sets windowIsFloating=true, which makes PhoneWindow
+     * force the window to WRAP_CONTENT — the scrim then covers only a card-sized
+     * band instead of the screen. The override must stay false so the window is
+     * full-screen like the web's `position:fixed; inset:0` overlay.
+     */
+    @Test
+    public void windowTheme_isNotFloating_soScrimCoversScreen() {
+        Context themed = new ContextThemeWrapper(appContext, R.style.Theme_ClawBench_WebDialog);
+        TypedArray a = themed.obtainStyledAttributes(
+                new int[]{android.R.attr.windowIsFloating});
+        try {
+            assertFalse("windowIsFloating must be false or the scrim is card-sized",
+                    a.getBoolean(0, true));
+        } finally {
+            a.recycle();
+        }
+    }
+
+    @Test
+    public void windowTheme_isTranslucentWithTransparentBackground() {
+        Context themed = new ContextThemeWrapper(appContext, R.style.Theme_ClawBench_WebDialog);
+        TypedArray a = themed.obtainStyledAttributes(
+                new int[]{android.R.attr.windowIsTranslucent, android.R.attr.windowBackground});
+        try {
+            assertTrue("the framework dialog panel must not be drawn",
+                    a.getBoolean(0, false));
+            assertNotNull("windowBackground must be transparent, not the dialog panel",
+                    a.getDrawable(1));
+        } finally {
+            a.recycle();
+        }
+    }
+
+    // =====================================================
+    // Card elevation is applied to the view
+    // =====================================================
+
+    @Test
+    public void apply_setsCardElevation() {
+        View content = inflate();
+        WebStyleDialog.Style style = WebStyleDialog.buildStyle(appContext, dp(360));
+
+        WebStyleDialog.apply(content, style, "t", "m", "ok", "no", null, null, null);
+
+        View card = content.findViewById(R.id.webDialogCard);
+        assertEquals("the card must carry the resolved elevation",
+                (float) style.cardElevationPx, card.getElevation(), 0.01f);
+    }
+
+    // =====================================================
+    // show(): the real window geometry
+    // =====================================================
+
+    /**
+     * End-to-end check of the scrim fix on a real (Robolectric) Activity: the
+     * dialog window must be full-screen, otherwise the #73000000 scrim only
+     * covers a card-sized band and the card stops reading as sitting on a dimmed
+     * backdrop.
+     *
+     * <p>Both halves of the fix are pinned here. The MATCH_PARENT attributes come
+     * from the explicit {@code setLayout} call, and the LAYOUT_IN_SCREEN /
+     * LAYOUT_INSET_DECOR flags only survive when the theme sets
+     * {@code windowIsFloating=false} — a floating window is forced to
+     * WRAP_CONTENT and drops those flags, which is what shrank the scrim.
+     */
+    @Test
+    public void show_windowIsFullScreen_soScrimCoversDisplay() {
+        Activity activity = Robolectric.buildActivity(Activity.class)
+                .setup().get();
+
+        Dialog dialog = WebStyleDialog.show(activity, "版本不一致", "正文",
+                "下载 APK", "强制跳过", null, null);
+        try {
+            assertNotNull("the dialog must be shown", dialog);
+            Window window = dialog.getWindow();
+            assertNotNull(window);
+
+            WindowManager.LayoutParams lp = window.getAttributes();
+            assertEquals("the scrim must span the full width",
+                    ViewGroup.LayoutParams.MATCH_PARENT, lp.width);
+            assertEquals("the scrim must span the full height",
+                    ViewGroup.LayoutParams.MATCH_PARENT, lp.height);
+            assertTrue("the window must be laid out in the screen, not as a floating box",
+                    (lp.flags & WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN) != 0);
+        } finally {
+            if (dialog != null && dialog.isShowing()) {
+                dialog.dismiss();
+            }
+        }
+    }
+
+    @Test
+    public void show_stylesTheRealDialogViews() {
+        Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
+        appContext.getSharedPreferences("clawbench_prefs", Context.MODE_PRIVATE).edit()
+                .putString("theme_base", "github-light")
+                .commit();
+
+        Dialog dialog = WebStyleDialog.show(activity, "版本不一致", "正文",
+                "下载 APK", "强制跳过", null, null);
+        try {
+            View content = dialog.getWindow().getDecorView();
+            View card = content.findViewById(R.id.webDialogCard);
+            assertNotNull("the card must be present in the shown window", card);
+            assertTrue("the shown card must carry the elevation",
+                    card.getElevation() > 0);
+            assertEquals("版本不一致",
+                    ((TextView) content.findViewById(R.id.webDialogTitle)).getText().toString());
+        } finally {
+            if (dialog != null && dialog.isShowing()) {
+                dialog.dismiss();
+            }
+        }
+    }
+
     // =====================================================
     // Theme-derived helper colors (FloatingThemeColors)
     // =====================================================
-
-    @Test
-    public void tertiaryColor_darkTheme_staysInBackgroundFamily() {
-        // github-dark: --bg-secondary #161b22 with --text-primary #c9d1d9.
-        int tertiary = FloatingThemeColors.tertiaryColor(0xFF161B22, 0xFFC9D1D9);
-
-        assertTrue("bg-tertiary must be lighter than bg-secondary on a dark theme",
-                brightness(tertiary) > brightness(0xFF161B22));
-        assertTrue("the nudge must stay subtle, not become a light gray",
-                brightness(tertiary) < brightness(0xFFC9D1D9));
-    }
-
-    @Test
-    public void tertiaryColor_lightTheme_darkens() {
-        // github-light: --bg-secondary #f8f9fa with --text-primary #212529.
-        int tertiary = FloatingThemeColors.tertiaryColor(0xFFF8F9FA, 0xFF212529);
-
-        assertTrue("bg-tertiary must be darker than bg-secondary on a light theme",
-                brightness(tertiary) < brightness(0xFFF8F9FA));
-    }
 
     @Test
     public void accentTint_keepsHueAndAppliesTwelvePercentAlpha() {
@@ -220,6 +392,13 @@ public class WebStyleDialogTest {
     // =====================================================
     // Helpers
     // =====================================================
+
+    private WebStyleDialog.Style styleForTheme(String themeId) {
+        appContext.getSharedPreferences("clawbench_prefs", Context.MODE_PRIVATE).edit()
+                .putString("theme_base", themeId)
+                .commit();
+        return WebStyleDialog.buildStyle(appContext, dp(360));
+    }
 
     private View inflate() {
         return LayoutInflater.from(appContext).inflate(R.layout.dialog_web_card, null);

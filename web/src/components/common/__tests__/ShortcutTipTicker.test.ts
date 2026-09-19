@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import ShortcutTipTicker from '../ShortcutTipTicker.vue'
 import type { ShortcutContext, ShortcutTipDef } from '@/config/shortcutTips'
 
@@ -114,5 +116,26 @@ describe('ShortcutTipTicker', () => {
     await wrapper.setProps({ tips: [TIPS[2]] })
     await nextTick()
     expect(wrapper.text()).toContain('c.recommend')
+  })
+})
+
+// The header ticker sits in the free space between the file capsule and the
+// theme toggle. jsdom cannot measure flex layout, so the centering contract is
+// pinned on the CSS itself: the container centers its content, and the viewport
+// must stay shrink-to-fit (a full-width viewport would make centering a no-op
+// and re-hug the capsule on the left).
+describe('ShortcutTipTicker centering contract', () => {
+  const src = readFileSync(resolve(__dirname, '../ShortcutTipTicker.vue'), 'utf8')
+
+  it('centers the tip within the container', () => {
+    expect(src).toMatch(/\.stt\s*\{[^}]*justify-content:\s*center;/)
+  })
+
+  it('lets the viewport shrink to fit instead of spanning the full width', () => {
+    expect(src).toMatch(/\.stt-viewport\s*\{[^}]*width:\s*fit-content;/)
+    expect(src).toMatch(/\.stt-viewport\s*\{[^}]*max-width:\s*100%;/)
+    // A bare `width: 100%` would make the viewport span the whole region and
+    // defeat the centering. (Lookbehind excludes `max-width`.)
+    expect(src).not.toMatch(/\.stt-viewport\s*\{[^}]*(?<![-\w])width:\s*100%;/)
   })
 })

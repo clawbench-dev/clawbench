@@ -50,12 +50,20 @@
       Web-style dialog window. Framework dialogs draw their own opaque panel and
       title strip, so this theme strips all of it: the window is transparent and
       the inflated dialog_web_card supplies the scrim + card. Layout geometry and
-      colors live in that layout (and are refined at runtime from the persisted
-      theme palette), matching web/src/components/common/DialogOverlay.vue.
+      colors live in that layout (and are resolved at runtime from the persisted
+      theme), matching web/src/components/common/DialogOverlay.vue.
+
+      windowIsFloating MUST stay false. The parent dialog theme sets it true,
+      which makes PhoneWindow force the window to WRAP_CONTENT — the #73000000
+      scrim then covers only a card-sized band instead of the whole screen, so
+      the card no longer reads as sitting on a dimmed backdrop. False makes the
+      window full-screen (matching the web's `position:fixed; inset:0` scrim).
+      The card is still centered by dialog_web_card's layout_gravity.
     -->
     <style name="Theme.ClawBench.WebDialog" parent="Theme.MaterialComponents.Dialog.Alert">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowIsFloating">false</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowMinWidthMajor">0%</item>

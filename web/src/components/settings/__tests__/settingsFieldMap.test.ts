@@ -403,19 +403,26 @@ describe('settingsFieldMap', () => {
 
   // ── Notification (push) panel ──
 
-  it('notification items are split into in-app and desktop/system sections', () => {
+  it('notification items are split into in-app, browser and desktop/system sections', () => {
     const items = categoryItems['notification'].filter(e => e.type === 'item').map(e => e.spec)
 
     const inApp = items.filter(i => i.sectionHeader === 'settings.items.inAppNotifySection')
     expect(inApp.map(i => i.key)).toEqual(['inAppNotification', 'notificationSound'])
 
+    const browser = items.filter(i => i.sectionHeader === 'settings.items.browserNotifySection')
+    expect(browser.map(i => i.key)).toEqual(['browserNotification'])
+
     const desktop = items.filter(i => i.sectionHeader === 'settings.items.desktopSystemSection')
     expect(desktop.map(i => i.key)).toEqual(['floatingStatusWindow', 'liveUpdate'])
 
-    // Every item must carry one of the two section headers, so no row can fall
+    // Every item must carry one of the three section headers, so no row can fall
     // into the header-less "其他" card at the bottom of the page.
-    expect(items.every(i => i.sectionHeader === 'settings.items.inAppNotifySection'
-      || i.sectionHeader === 'settings.items.desktopSystemSection')).toBe(true)
+    const known = new Set([
+      'settings.items.inAppNotifySection',
+      'settings.items.browserNotifySection',
+      'settings.items.desktopSystemSection',
+    ])
+    expect(items.every(i => known.has(i.sectionHeader!))).toBe(true)
   })
 
   it('inAppNotification is a local switch defaulting on', () => {
@@ -435,6 +442,21 @@ describe('settingsFieldMap', () => {
     const items = categoryItems['notification'].filter(e => e.type === 'item').map(e => e.spec)
     const desktop = items.filter(i => i.sectionHeader === 'settings.items.desktopSystemSection')
     expect(desktop.every(i => i.appOnly === true)).toBe(true)
+  })
+
+  it('browserNotification is a local switch that is NOT app-only', () => {
+    const item = categoryItems['notification']
+      .filter(e => e.type === 'item')
+      .map(e => e.spec)
+      .find(i => i.key === 'browserNotification')
+
+    expect(item).toBeDefined()
+    expect(item!.type).toBe('switch')
+    expect(item!.source).toBe('local')
+    // Must stay out of the app-only "桌面与系统" card: browser mode is exactly
+    // where this switch is needed, and that card is filtered out there.
+    expect(item!.appOnly).toBeFalsy()
+    expect(item!.sectionHeader).not.toBe('settings.items.desktopSystemSection')
   })
 
   it('notification panel has entrySelector with push_mode, dingtalk optionSubFields, and connectivityTest', () => {

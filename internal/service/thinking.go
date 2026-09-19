@@ -34,6 +34,99 @@ func generateThinkingID() string {
 	return "th_" + hex.EncodeToString(b)
 }
 
+// thinkingBatchChunkRows bounds how many rows go into a single INSERT. SQLite
+// caps a statement at 32766 bound variables; this INSERT binds 4 per row (seq is
+// a literal 0, not a parameter), so the hard ceiling is 8191 rows. 1000 keeps a
+// wide margin (4000 params) and bounds the size of the generated SQL string.
+const thinkingBatchChunkRows = 1000
+
+// ReplaceThinkingForMessage rewrites every thinking row of a message in ONE
+// transaction: it deletes all existing rows, then inserts the given records.
+//
+// This is the batch equivalent of DeleteThinkingByMessage followed by an
+// UpsertThinking per record. That sequence issued N+1 independent transactions
+// (one per record, each taking the global write lock and paying its own commit
+// fsync) and was NOT atomic — a crash between the delete and the inserts left
+// the message with no thinking rows at all while the content row still carried
+// slim think_id markers, losing the reasoning permanently. A single transaction
+// makes the rewrite all-or-nothing: a mid-way failure rolls back to the rows
+// that existed before, which the 500ms streaming flush already persisted.
+//
+// The delete is deliberately a full per-message delete rather than a diff:
+// MergeConsecutiveThinkingBlocks merges adjacent thinking blocks, which retires
+// some think_ids entirely — their rows must go, and only a full delete
+// guarantees that.
+//
+// Records with an empty think_id or empty text are skipped (they have nothing to
+// store), matching UpsertThinking. An empty record set is a no-op — the caller
+// only rewrites when there is something to store, so a message whose thinking
+// was entirely dropped keeps whatever the streaming flush already persisted.
+func ReplaceThinkingForMessage(messageID int64, sessionID string, records []ThinkingRecord) error {
+	if messageID <= 0 || len(records) == 0 {
+		return nil
+	}
+	tx, err := WriteBegin()
+	if err != nil {
+		return fmt.Errorf("ReplaceThinkingForMessage begin: %w", err)
+	}
+	defer writeMu.Unlock()
+	defer func() { _ = tx.Rollback() }()
+
+	ctx := context.Background()
+	if _, err := tx.ExecContext(ctx, "DELETE FROM chat_thinking WHERE message_id = ?", messageID); err != nil {
+		return fmt.Errorf("ReplaceThinkingForMessage delete: %w", err)
+	}
+
+	// Collapse duplicate think_ids to their last occurrence. The previous
+	// per-record shape (delete + insert, once per record) resolved a duplicate
+	// by last-wins, so a repeated think_id overwrote its own row instead of
+	// failing. A single multi-row INSERT would instead hit
+	// UNIQUE(think_id, message_id, seq) and abort the whole rewrite, so the
+	// dedupe is what preserves the old semantics under the batch.
+	deduped := make([]ThinkingRecord, 0, len(records))
+	seenAt := make(map[string]int, len(records))
+	for _, rec := range records {
+		if rec.ThinkID == "" || rec.Text == "" {
+			continue
+		}
+		if at, ok := seenAt[rec.ThinkID]; ok {
+			deduped[at] = rec
+			continue
+		}
+		seenAt[rec.ThinkID] = len(deduped)
+		deduped = append(deduped, rec)
+	}
+	records = deduped
+
+	// Chunked so a large message (thousands of blocks) stays under the SQLite
+	// bound-variable limit while remaining inside the single transaction.
+	for start := 0; start < len(records); start += thinkingBatchChunkRows {
+		end := start + thinkingBatchChunkRows
+		if end > len(records) {
+			end = len(records)
+		}
+		chunk := records[start:end]
+
+		query := "INSERT INTO chat_thinking (message_id, session_id, think_id, seq, text) VALUES "
+		args := make([]any, 0, len(chunk)*4)
+		for i, rec := range chunk {
+			if i > 0 {
+				query += ","
+			}
+			query += "(?, ?, ?, 0, ?)"
+			args = append(args, messageID, sessionID, rec.ThinkID, rec.Text)
+		}
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return fmt.Errorf("ReplaceThinkingForMessage insert: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ReplaceThinkingForMessage commit: %w", err)
+	}
+	return nil
+}
+
 // UpsertThinking stores the complete thinking text for a (think_id, message_id)
 // pair as a single seq=0 chunk. It deletes any prior chunks (streaming flushes
 // may have appended seq=0..n deltas) before inserting, so the stored text is
@@ -277,17 +370,21 @@ func persistThinkingToDB(content string, streamingMsgID int64, sessionID string)
 		return content
 	}
 	if len(records) > 0 {
-		if err := DeleteThinkingByMessage(streamingMsgID); err != nil {
-			slog.Warn("delete thinking for message failed", slog.Int64("msgID", streamingMsgID), slog.String("err", err.Error()))
-		}
-		failed := false
-		for _, rec := range records {
-			if err := UpsertThinking(streamingMsgID, sessionID, rec.ThinkID, rec.Text); err != nil {
-				failed = true
-				slog.Warn("upsert thinking failed", slog.String("thinkID", rec.ThinkID), slog.String("err", err.Error()))
-			}
-		}
-		if failed {
+		// One transaction for the whole rewrite (delete + all inserts). The
+		// previous delete-then-upsert-per-record shape issued N+1 transactions
+		// and was not atomic: a crash after the delete but before the inserts
+		// wiped the message's reasoning while the content row kept its slim
+		// think_id markers, so the frontend lazy-loaded nothing. A single
+		// transaction either replaces every row or leaves the streamed rows
+		// intact.
+		if err := ReplaceThinkingForMessage(streamingMsgID, sessionID, records); err != nil {
+			slog.Warn("replace thinking for message failed",
+				slog.Int64("msgID", streamingMsgID),
+				slog.Int("records", len(records)),
+				slog.String("err", err.Error()))
+			// Keep the unslimmed content: the rows were not rewritten, so the
+			// thinking text must stay reachable from the content row rather
+			// than being dropped on the floor.
 			return content
 		}
 	}

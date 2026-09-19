@@ -1,18 +1,15 @@
 package summarize
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
+
+	"clawbench/internal/askquestion"
 )
 
 // Pre-compiled regexes for StripMarkdown.
 var (
-	reCodeBlock = regexp.MustCompile("(?s)```.*?```")
-	// reAskQuestion matches <ask-question>...</ask-question> blocks.
-	// The inner content is XML with <item>, <question>, <option> etc. that must be
-	// preserved for TTS summarization.
-	reAskQuestion    = regexp.MustCompile(`(?s)<ask-question>\s*(.*?)\s*</ask-question>`)
+	reCodeBlock      = regexp.MustCompile("(?s)```.*?```")
 	reInlineCode     = regexp.MustCompile("`[^`]+`")
 	reBoldAsterisk   = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	reBoldUnderscore = regexp.MustCompile(`__([^_]+)__`)
@@ -55,12 +52,13 @@ func StripMarkdown(text string) string {
 	// and subsequent patterns can match the unescaped characters.
 	text = reBackslashEscape.ReplaceAllString(text, "$1")
 
-	// Phase 0.5: Preserve <ask-question> structured question content.
-	// These contain XML with questions/options that should be spoken aloud.
-	// Extract the content before code-block stripping removes it.
-	// Convert <ask-question><item>...</item></ask-question> into
-	// a plain-text summary of the questions and options.
-	text = reAskQuestion.ReplaceAllStringFunc(text, preserveAskQuestion)
+	// Phase 0.5: Preserve <clawbench-ask-question> structured question content.
+	// These contain questions/options that should be spoken aloud.
+	// Parsing is delegated to internal/askquestion, so TTS understands the same
+	// payloads the UI does (unclosed tags, option attributes, the plural
+	// <options> wrapper). An unparseable payload falls back to stripping its
+	// tags, so raw XML is never spoken.
+	text = replaceAskQuestions(text)
 
 	// Phase 1: Remove block-level elements
 	text = reCodeBlock.ReplaceAllString(text, "")
@@ -128,80 +126,36 @@ func stripInlineCode(text string) string {
 	})
 }
 
-// Pre-compiled regexes for XML ask-question parsing.
-var (
-	reItem     = regexp.MustCompile("(?s)<item>(.*?)</item>")
-	reHeader   = regexp.MustCompile("(?s)<header>(.*?)</header>")
-	reQuestion = regexp.MustCompile("(?s)<question>(.*?)</question>")
-	reOption   = regexp.MustCompile("(?s)<option>(.*?)</option>")
-	reLabel    = regexp.MustCompile("(?s)<label>(.*?)</label>")
-	reDesc     = regexp.MustCompile("(?s)<description>(.*?)</description>")
-)
-
-// preserveAskQuestion converts a <ask-question>...</ask-question> block
-// (whose content is XML with <item> child elements) into a plain-text summary
-// suitable for TTS. If the content cannot be parsed, the raw content is
-// returned as-is so that the summarizer can still see it.
-func preserveAskQuestion(match string) string {
-	sub := reAskQuestion.FindStringSubmatch(match)
-	if len(sub) < 2 {
-		return match
+// replaceAskQuestions converts every <clawbench-ask-question> block into spoken text.
+//
+// Parsing is delegated to internal/askquestion, so TTS understands the same
+// payloads the UI does (unclosed tags, option attributes, the plural <options>
+// wrapper). A parsed payload becomes a plain-language summary; an unparseable
+// one keeps its inner text with the tags stripped, so raw XML is never spoken.
+//
+// A tag inside a code block is not located here; the code-block phase of
+// StripMarkdown removes it wholesale.
+func replaceAskQuestions(text string) string {
+	matches := askquestion.Extract(text)
+	if len(matches) == 0 {
+		return text
 	}
-	content := strings.TrimSpace(sub[1])
-
-	items := reItem.FindAllStringSubmatch(content, -1)
-	if len(items) > 0 {
-		return preserveAskQuestionXML(items)
-	}
-	return stripXMLTags(content)
-}
-
-// preserveAskQuestionXML converts XML-format ask-question items into plain text for TTS.
-func preserveAskQuestionXML(items [][]string) string {
 	var b strings.Builder
-	for i, item := range items {
-		if i > 0 {
-			b.WriteString(" ")
+	prev := 0
+	for _, m := range matches {
+		if m.Start < prev || m.End > len(text) {
+			continue
 		}
-		itemContent := item[1]
-
-		qMatch := reQuestion.FindStringSubmatch(itemContent)
-		if len(qMatch) >= 2 {
-			b.WriteString(strings.TrimSpace(qMatch[1]))
+		b.WriteString(text[prev:m.Start])
+		if m.Parsed {
+			b.WriteString(askquestion.PlainText(m.Items))
+		} else {
+			b.WriteString(stripXMLTags(m.Raw))
 		}
-
-		hMatch := reHeader.FindStringSubmatch(itemContent)
-		if len(hMatch) >= 2 && strings.TrimSpace(hMatch[1]) != "" {
-			fmt.Fprintf(&b, " (%s)", strings.TrimSpace(hMatch[1]))
-		}
-
-		opts := reOption.FindAllStringSubmatch(itemContent, -1)
-		if len(opts) > 0 {
-			b.WriteString(": ")
-			formatXMLOptions(&b, opts)
-		}
+		prev = m.End
 	}
+	b.WriteString(text[prev:])
 	return b.String()
-}
-
-// formatXMLOptions writes XML option labels and descriptions to the builder.
-func formatXMLOptions(b *strings.Builder, opts [][]string) {
-	for j, opt := range opts {
-		if j > 0 {
-			b.WriteString(", ")
-		}
-		labelMatch := reLabel.FindStringSubmatch(opt[1])
-		descMatch := reDesc.FindStringSubmatch(opt[1])
-		if len(labelMatch) >= 2 {
-			b.WriteString(strings.TrimSpace(labelMatch[1]))
-		}
-		if len(descMatch) >= 2 {
-			desc := strings.TrimSpace(descMatch[1])
-			if desc != "" && (len(labelMatch) < 2 || desc != strings.TrimSpace(labelMatch[1])) {
-				fmt.Fprintf(b, " — %s", desc)
-			}
-		}
-	}
 }
 
 // stripXMLTags removes all XML/HTML tags from text.

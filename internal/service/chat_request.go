@@ -185,7 +185,7 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, mod
 		return "", "", "", effectiveThinkingEffort, effectiveMode
 	}
 
-	systemPrompt = agent.SystemPrompt
+	systemPrompt = agent.RuntimeSystemPrompt
 	// Replace {{PROJECT_PATH}} per-request with the actual project path from cookie
 	if projectPath != "" {
 		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)

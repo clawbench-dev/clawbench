@@ -705,10 +705,25 @@ function handleCopyMessage() {
     max-width: 100%;
     box-sizing: border-box;
     contain: style;
+    /* Skip layout/paint for messages scrolled out of view.
+       A heavy session holds hundreds of messages in the DOM (no virtual
+       scroller), and a Chrome trace of one showed a single 417ms Layout with
+       689/909 dirty objects — i.e. the whole document relaid out because one
+       message changed. `content-visibility: auto` lets the browser skip
+       offscreen subtrees entirely.
+       `contain-intrinsic-size: auto <h>` gives offscreen messages a remembered
+       (once-measured) height instead of a bare guess, which keeps scrollHeight
+       stable enough for the pin-to-bottom / prepend-restore logic in
+       ChatMessageList to keep working. It MUST stay: without it, offscreen
+       messages collapse to 0 height and `scrollTop = scrollHeight` overshoots.
+       NOTE: jsdom has no layout engine, so tests cannot observe the scroll
+       consequences of this rule — it needs real-device verification. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 240px;
 }
 
 /* ── Leaked form/XML control wrapping guard ──
-   A malformed <ask-question> payload (e.g. an <option> without a <question>)
+   A malformed <clawbench-ask-question> payload (e.g. an <option> without a <question>)
    fails isValidAskContent, so detectAskQuestion() reports not-found and the raw
    XML is NOT stripped — it falls through to markdown, where marked passes the
    tags through and DOMPurify keeps them. Those become REAL form elements in the

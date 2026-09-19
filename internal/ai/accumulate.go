@@ -175,6 +175,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 			ErrorCode:   event.ErrorCode,
 			HTTPStatus:  event.HTTPStatus,
 			ErrorSource: event.ErrorSource,
+			ErrorDetail: event.ErrorDetail,
 		})
 	case "error":
 		*blocks = append(*blocks, model.ContentBlock{
@@ -184,6 +185,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 			ErrorCode:   event.ErrorCode,
 			HTTPStatus:  event.HTTPStatus,
 			ErrorSource: event.ErrorSource,
+			ErrorDetail: event.ErrorDetail,
 		})
 	}
 }

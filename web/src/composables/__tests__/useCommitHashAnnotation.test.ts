@@ -564,6 +564,130 @@ describe('verifyCommitHashes', () => {
 
         vi.unstubAllGlobals()
     })
+
+    // ── Cache reuse & concurrent coalescing ──
+    //
+    // Several containers annotate the same SHAs in one render pass (chat text,
+    // tool detail, forge detail, task overview). Before this, every container
+    // fired its own request because the cache was written but never read.
+
+    it('serves a second call from cache without a new request', async () => {
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ results: { abc1234: { hash: 'abc1234' } } }),
+        })
+        vi.stubGlobal('fetch', mockFetch)
+
+        const first = document.createElement('div')
+        first.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
+        await verifyCommitHashes(['abc1234'], first)
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+
+        // A different container, same SHA — must reuse the cached result.
+        const second = document.createElement('div')
+        second.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
+        await verifyCommitHashes(['abc1234'], second)
+
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+        // ...and the DOM must still be upgraded for the second container.
+        expect(second.querySelectorAll('.chat-commit-hash')).toHaveLength(1)
+        expect(second.querySelectorAll('.chat-commit-open-btn')).toHaveLength(1)
+
+        vi.unstubAllGlobals()
+    })
+
+    it('caches non-commits so they are not re-asked on every render', async () => {
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ results: { deadbee: null } }),
+        })
+        vi.stubGlobal('fetch', mockFetch)
+
+        const first = document.createElement('div')
+        first.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="deadbee">deadbee</span>'
+        await verifyCommitHashes(['deadbee'], first)
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+
+        const second = document.createElement('div')
+        second.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="deadbee">deadbee</span>'
+        await verifyCommitHashes(['deadbee'], second)
+
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+        // Non-commit: the annotation is stripped, not upgraded.
+        expect(second.querySelectorAll('.chat-commit-hash')).toHaveLength(0)
+        expect(second.textContent).toContain('deadbee')
+
+        vi.unstubAllGlobals()
+    })
+
+    it('coalesces concurrent calls for the same SHA into one request', async () => {
+        let resolveFetch: (v: unknown) => void = () => {}
+        const mockFetch = vi.fn().mockReturnValue(new Promise((res) => { resolveFetch = res }))
+        vi.stubGlobal('fetch', mockFetch)
+
+        const a = document.createElement('div')
+        a.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
+        const b = document.createElement('div')
+        b.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
+
+        // Both in flight before either resolves — the overlap must not double-fetch.
+        const pa = verifyCommitHashes(['abc1234'], a)
+        const pb = verifyCommitHashes(['abc1234'], b)
+        resolveFetch({ ok: true, json: () => Promise.resolve({ results: { abc1234: { hash: 'abc1234' } } }) })
+        await Promise.all([pa, pb])
+
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+        // Both containers must end up verified.
+        expect(a.querySelectorAll('.chat-commit-hash')).toHaveLength(1)
+        expect(b.querySelectorAll('.chat-commit-hash')).toHaveLength(1)
+
+        vi.unstubAllGlobals()
+    })
+
+    it('requests only the SHAs the in-flight batch did not cover', async () => {
+        let resolveFirst: (v: unknown) => void = () => {}
+        const mockFetch = vi.fn()
+            .mockReturnValueOnce(new Promise((res) => { resolveFirst = res }))
+            .mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ results: { bbb2222: { hash: 'bbb2222' } } }),
+            })
+        vi.stubGlobal('fetch', mockFetch)
+
+        const a = document.createElement('div')
+        a.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="aaa1111">aaa1111</span>'
+        const pa = verifyCommitHashes(['aaa1111'], a)
+
+        // Second container wants a different SHA while the first is in flight.
+        const b = document.createElement('div')
+        b.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="bbb2222">bbb2222</span>'
+        const pb = verifyCommitHashes(['bbb2222'], b)
+
+        resolveFirst({ ok: true, json: () => Promise.resolve({ results: { aaa1111: { hash: 'aaa1111' } } }) })
+        await Promise.all([pa, pb])
+
+        // Two requests total: the original, then one covering only bbb2222 —
+        // aaa1111 must not be re-requested.
+        expect(mockFetch).toHaveBeenCalledTimes(2)
+        expect(mockFetch.mock.calls[1][1].body).toBe(JSON.stringify({ shas: ['bbb2222'] }))
+
+        vi.unstubAllGlobals()
+    })
+
+    it('leaves pending annotations untouched when the request fails', async () => {
+        const mockFetch = vi.fn().mockRejectedValue(new Error('network down'))
+        vi.stubGlobal('fetch', mockFetch)
+
+        const container = document.createElement('div')
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
+        await verifyCommitHashes(['abc1234'], container)
+
+        // A transient failure must not silently delete a hash that may be real.
+        expect(container.querySelectorAll('.chat-commit-hash-pending')).toHaveLength(1)
+        expect(container.querySelectorAll('.chat-commit-hash')).toHaveLength(0)
+
+        vi.unstubAllGlobals()
+    })
 })
 
 describe('getCachedCommitInfo and clearCommitHashCache', () => {

@@ -110,6 +110,30 @@
     --diff-del-accent: var(--color-red);
     --diff-mod-accent: var(--color-yellow);
 
+    /* ── Running-session indicator. The motif differs by surface, and the two
+       forms exist for measured reasons rather than taste.
+
+       `--running-line` — the session-list rows (local and cross-project). A
+       light band along the row's bottom edge: a 2px line with a short glow
+       bleeding upward.
+
+       Why the rows do not use a sweep: an earlier design tinted the whole row
+       and swept a wide band across it, and on dark themes that washed the row
+       milky. A dark theme's accent sits far above its row background (OKLab L
+       +0.50, vs −0.40 on a light one), so any alpha high enough to show the
+       band flooded the entire row, and the band then read as a grey smudge on
+       top of it. Confining the light to the bottom edge removes the trade-off
+       — it can carry real colour without touching the row's own background.
+
+       Both tokens are deliberately translucent: at full strength the band read
+       as a hard stripe and the button as a solid block, which was heavier than
+       a "this session is running" signal should be. These alphas keep the
+       accent's exact hue and saturation (never blended toward grey) while
+       landing at 1.44:1 worst case for the band and 1.30:1 for the sweep,
+       against 1.10:1 / 1.08:1 for the original fixed green. ── */
+    --running-line: color-mix(in srgb, var(--accent-color) 55%, transparent);
+    --running-sweep: color-mix(in srgb, var(--accent-color) 45%, transparent);
+
     /* ── Custom wallpaper (applied at runtime when a wallpaper is set) ──
        --wallpaper-url: url(...) of the active wallpaper, or `none`.
        --wallpaper-scrim: translucent overlay color on top of the wallpaper

@@ -43,11 +43,14 @@ vi.mock('@/utils/html', () => ({
 
 vi.mock('@/utils/tableRowExpand', () => ({
   injectTableRowAttrs: (html: string) => html,
+  injectTableRowAttrsIn: () => false,
 }))
 
 vi.mock('@/composables/useCodeBlockHeader', () => ({
   annotateCodeBlockHeaders: (html: string) => html,
   annotateTableBlockHeaders: (html: string) => html,
+  annotateCodeBlockHeadersIn: () => {},
+  annotateTableBlockHeadersIn: () => {},
 }))
 
 vi.mock('@/utils/chatRenderUtils', () => ({
@@ -62,6 +65,7 @@ vi.mock('@/utils/chatRenderUtils', () => ({
 
 vi.mock('@/utils/mediaBlockFactory', () => ({
   annotateMediaBlocks: (html: string) => html,
+  annotateMediaBlocksIn: () => {},
   armMermaidFigure: vi.fn(),
   IMAGE_VIEW_ICON_SVG: '<svg></svg>',
 }))
@@ -82,21 +86,25 @@ vi.mock('@/utils/attachSvg', () => ({
 
 vi.mock('@/composables/useFilePathAnnotation', () => ({
   annotateFilePaths: (html: string) => ({ html, detectedPaths: [] }),
+  annotateFilePathsIn: () => [],
   useFilePathAnnotation: () => ({ verifyFilePaths: vi.fn(), openFilePath: vi.fn() }),
 }))
 
 vi.mock('@/composables/useCommitHashAnnotation', () => ({
   annotateCommitHashes: (html: string) => ({ html, detectedSHAs: [] }),
+  annotateCommitHashesIn: () => [],
   useCommitHashAnnotation: () => ({ verifyCommitHashes: vi.fn() }),
 }))
 
 vi.mock('@/composables/useWorktreeAnnotation', () => ({
   annotateWorktreePaths: (html: string) => ({ html }),
+  annotateWorktreePathsIn: () => ({ detectedWorktreePaths: [], applied: false }),
   useWorktreeAnnotation: () => ({}),
 }))
 
 vi.mock('@/composables/useLocalhostAnnotation', () => ({
   annotateLocalhostUrls: (html: string) => html,
+  annotateLocalhostUrlsIn: () => false,
   useLocalhostAnnotation: () => ({}),
 }))
 

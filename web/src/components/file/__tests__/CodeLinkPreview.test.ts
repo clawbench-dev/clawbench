@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref, reactive, computed, nextTick, type Ref } from 'vue'
 import { createI18n } from 'vue-i18n'
@@ -18,6 +18,14 @@ vi.mock('@/utils/globals', () => ({
 // Mock useToast
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: vi.fn() }),
+}))
+
+// buildLocalFileUrl is mocked so the lightbox tests can pin the exact URL the
+// card hands to the Lightbox (the real builder's encoding rules are covered by
+// the download.ts unit tests). vi.mock is hoisted, so it must live at module
+// top level.
+vi.mock('@/utils/download', () => ({
+  buildLocalFileUrl: (p: string) => `/api/local-file/${p}`,
 }))
 
 // Mock fileType. Label is path-derived so the media meta-row test can assert
@@ -110,6 +118,7 @@ const i18n = createI18n({
           openFileShort: 'Full file',
           copyPath: 'Copy path',
           pathCopied: 'File path copied',
+          openLightbox: 'View image',
           revealInTree: 'Open Directory',
           toggleFullscreen: 'Full screen',
           exitFullscreen: 'Exit full screen',
@@ -173,7 +182,11 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   const isLargeFile = ref(false)
   const windowTruncated = ref(false)
   // Directory targets: the card lists the directory instead of slicing code.
-  const isDirTarget = ref(false)
+  // Adopt a caller-supplied ref (not just a later spread) so the derived media
+  // computeds below close over the SAME ref — otherwise `isDirTarget: ref(true)`
+  // would set the returned property while the computeds kept reading a private
+  // `false`, and a directory named `assets.png` would still look like an image.
+  const isDirTarget = (overrides.isDirTarget as Ref<boolean> | undefined) ?? ref(false)
   const dirEntries = ref<any[]>([])
   const dirLoading = ref(false)
   const dirError = ref(false)
@@ -209,11 +222,13 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   // (not just spread in later) so the computeds below close over it.
   const mediaKind = (overrides.mediaKind as Ref<'image' | 'video' | 'audio' | 'pdf' | null> | undefined)
     ?? ref<'image' | 'video' | 'audio' | 'pdf' | null>(null)
-  const isImageTarget = computed(() => mediaKind.value === 'image')
-  const isVideoTarget = computed(() => mediaKind.value === 'video')
-  const isAudioTarget = computed(() => mediaKind.value === 'audio')
-  const isPdfTarget = computed(() => mediaKind.value === 'pdf')
-  const isMediaTarget = computed(() => mediaKind.value !== null)
+  // Mirrors the real composable: every extension-based classification defers to
+  // the verified isDir flag, so a DIRECTORY named `assets.png` is not an image.
+  const isImageTarget = computed(() => mediaKind.value === 'image' && !isDirTarget.value)
+  const isVideoTarget = computed(() => mediaKind.value === 'video' && !isDirTarget.value)
+  const isAudioTarget = computed(() => mediaKind.value === 'audio' && !isDirTarget.value)
+  const isPdfTarget = computed(() => mediaKind.value === 'pdf' && !isDirTarget.value)
+  const isMediaTarget = computed(() => mediaKind.value !== null && !isDirTarget.value)
   const toggleRenderMode = vi.fn(() => {
     if (!canRenderMarkdown.value) return
     renderMode.value = renderMode.value === 'rendered' ? 'source' : 'rendered'
@@ -2421,6 +2436,188 @@ describe('CodeLinkPreview.vue — media/code target transitions', () => {
     await flushPromises()
     expect(wrapper.findComponent({ name: 'MediaPreviewBody' }).props('refreshNonce')).toBe(3)
     wrapper.unmount()
+  })
+})
+
+describe('CodeLinkPreview.vue — lightbox action for image targets', () => {
+  /** Every mount in this suite provides the shared Lightbox opener. */
+  const openLightbox = vi.fn()
+
+  // Each mount in this suite is tracked and torn down in afterEach: the card
+  // teleports to <body> and leaves document-level listeners behind otherwise,
+  // and a leaked card would be found by the next test's document-wide query.
+  const mounted: ReturnType<typeof mount>[] = []
+  afterEach(() => {
+    while (mounted.length > 0) mounted.pop()?.unmount()
+  })
+
+  function mountWithLightbox(
+    preview: ReturnType<typeof createMockPreviewController>,
+    extra: { docked?: boolean; attachToBody?: boolean } = {},
+  ) {
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview, docked: extra.docked ?? false },
+      global: {
+        plugins: [i18n],
+        provide: { openLightbox },
+      },
+      ...(extra.attachToBody ? { attachTo: document.body } : {}),
+    })
+    mounted.push(wrapper)
+    return wrapper
+  }
+
+  /** The Lightbox button is the only control whose title reads "View image". */
+  function findLightboxBtn(root: ParentNode): HTMLElement | null {
+    return Array.from(root.querySelectorAll('button'))
+      .find(b => (b.getAttribute('title') || '') === 'View image') ?? null
+  }
+
+  beforeEach(() => {
+    openLightbox.mockClear()
+    // Cards teleport to <body>; clear anything a previous suite left there so a
+    // document-wide query cannot match another test's card.
+    document.body.innerHTML = ''
+  })
+
+  it('opens the shared Lightbox with the local-file URL on the desktop card', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'assets/logo.png', anchorEl: document.createElement('span') }),
+      mediaKind: ref('image'),
+    })
+    const wrapper = mountWithLightbox(preview, { attachToBody: true })
+    await flushPromises()
+
+    const btn = findLightboxBtn(document)
+    expect(btn).not.toBeNull()
+    btn!.click()
+    await flushPromises()
+
+    expect(openLightbox).toHaveBeenCalledTimes(1)
+    // The third arg is the file path: the Lightbox resolves the filename,
+    // sibling navigation and Download target from it (a preview click never
+    // opens the file, so store.state.currentFile is unrelated).
+    expect(openLightbox).toHaveBeenCalledWith('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+  })
+
+  it('keeps the preview open so the Lightbox returns to it', async () => {
+    // The Lightbox is an overlay, not a replacement: closing the card here would
+    // also collapse the file manager's docked pane via the `closed` emit.
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'assets/logo.png', anchorEl: document.createElement('span') }),
+      mediaKind: ref('image'),
+    })
+    const wrapper = mountWithLightbox(preview, { attachToBody: true })
+    await flushPromises()
+
+    findLightboxBtn(document)!.click()
+    await flushPromises()
+
+    expect(preview.close).not.toHaveBeenCalled()
+    expect(wrapper.emitted('closed')).toBeUndefined()
+  })
+
+  it('offers the action for SVG targets (served as an image)', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'diagram.svg', anchorEl: document.createElement('span') }),
+      mediaKind: ref('image'),
+    })
+    const wrapper = mountWithLightbox(preview, { attachToBody: true })
+    await flushPromises()
+
+    expect(findLightboxBtn(document)).not.toBeNull()
+  })
+
+  it('offers the action in the mobile sheet footer too', async () => {
+    const preview = createMockPreviewController({
+      mode: ref('sheet'),
+      target: ref({ filePath: 'photo.png', anchorEl: document.createElement('span') }),
+      mediaKind: ref('image'),
+    })
+    const wrapper = mountWithLightbox(preview)
+    await flushPromises()
+
+    // The sheet teleports to <body>, like every BottomSheet.
+    const btn = findLightboxBtn(document)
+    expect(btn).not.toBeNull()
+    btn!.click()
+    await flushPromises()
+
+    expect(openLightbox).toHaveBeenCalledWith('/api/local-file/photo.png', '', 'photo.png')
+  })
+
+  it('offers the action in the docked pane', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'assets/logo.png', anchorEl: document.createElement('span') }),
+      mediaKind: ref('image'),
+    })
+    const wrapper = mountWithLightbox(preview, { docked: true })
+    await flushPromises()
+
+    const btn = findLightboxBtn(wrapper.element)
+    expect(btn).not.toBeNull()
+    btn!.click()
+    await flushPromises()
+
+    expect(openLightbox).toHaveBeenCalledWith('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+  })
+
+  it('hides the action for non-image media (video / audio / PDF)', async () => {
+    for (const kind of ['video', 'audio', 'pdf'] as const) {
+      const preview = createMockPreviewController({
+        target: ref({ filePath: `assets/clip.${kind}`, anchorEl: document.createElement('span') }),
+        mediaKind: ref(kind),
+      })
+      const wrapper = mountWithLightbox(preview, { attachToBody: true })
+      await flushPromises()
+
+      // The Lightbox renders images only, so offering it for these would be a
+      // dead control.
+      expect(findLightboxBtn(document), `${kind} must not offer the lightbox`).toBeNull()
+      }
+  })
+
+  it('hides the action for a directory target named like an image', async () => {
+    // getFileType is extension-based, so `assets.png` as a DIRECTORY looks like
+    // an image. The verified isDir flag wins — isImageTarget defers to it.
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'assets.png', anchorEl: document.createElement('span') }),
+      mediaKind: ref('image'),
+      isDirTarget: ref(true),
+    })
+    const wrapper = mountWithLightbox(preview, { attachToBody: true })
+    await flushPromises()
+
+    expect(findLightboxBtn(document)).toBeNull()
+  })
+
+  it('hides the action for a code target', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'src/main.ts', anchorEl: document.createElement('span') }),
+    })
+    const wrapper = mountWithLightbox(preview, { attachToBody: true })
+    await flushPromises()
+
+    expect(findLightboxBtn(document), 'a code target must not offer the lightbox').toBeNull()
+  })
+
+  it('stays inert when no Lightbox is provided (share-mode regression guard)', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'assets/logo.png', anchorEl: document.createElement('span') }),
+      mediaKind: ref('image'),
+    })
+    // No `openLightbox` in provide: the button must not throw when clicked.
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+
+    const btn = findLightboxBtn(document)
+    expect(btn).not.toBeNull()
+    expect(() => btn!.click()).not.toThrow()
   })
 })
 

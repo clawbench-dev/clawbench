@@ -11,6 +11,7 @@ import {
   clearVerifiedCache,
   openFilePath,
   navToFileInManager,
+  revealInFileManager,
 } from '@/composables/useFilePathAnnotation'
 
 // Mock escapeHtml from html utils
@@ -2153,8 +2154,106 @@ describe('openFilePath', () => {
     vi.doUnmock('@/composables/useToast')
   })
 
-  // --- navToFileInManager ---
+  // --- revealInFileManager ---
+  // The origin-recording counterpart of navToFileInManager. It must verify the
+  // path, then dispatch the shared directory-jump event (parent dir as target,
+  // the path itself as the entry to highlight) so the coordinator records a
+  // return origin.
+  describe('revealInFileManager', () => {
+    let dispatched: CustomEvent[]
+    let origDispatch: typeof window.dispatchEvent
 
+    beforeEach(() => {
+      dispatched = []
+      origDispatch = window.dispatchEvent
+      window.dispatchEvent = ((ev: Event) => {
+        dispatched.push(ev as CustomEvent)
+        return true
+      }) as typeof window.dispatchEvent
+    })
+
+    afterEach(() => {
+      window.dispatchEvent = origDispatch
+      vi.unstubAllGlobals()
+    })
+
+    /** Serve a batch-exists response reporting `type` for any requested path. */
+    function stubExists(type: 'file' | 'dir' | 'none') {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ results: { 'docs/spec/core/chat-flow.md': type, 'README.md': type, 'web/src/foo.ts': type } }),
+      }))
+    }
+
+    it('dispatches open-directory-from-context targeting the parent dir with the entry highlighted', async () => {
+      stubExists('file')
+      const ok = await revealInFileManager('docs/spec/core/chat-flow.md', 'history')
+
+      expect(ok).toBe(true)
+      const jumps = dispatched.filter(ev => ev.type === 'open-directory-from-context')
+      expect(jumps).toHaveLength(1)
+      expect(jumps[0].detail).toEqual({
+        path: 'docs/spec/core',
+        revealPath: 'docs/spec/core/chat-flow.md',
+        source: 'history',
+      })
+    })
+
+    it('targets the project root for a root-level file (empty parent dir)', async () => {
+      stubExists('file')
+      const ok = await revealInFileManager('README.md', 'file')
+
+      expect(ok).toBe(true)
+      const jumps = dispatched.filter(ev => ev.type === 'open-directory-from-context')
+      expect(jumps[0].detail).toEqual({ path: '', revealPath: 'README.md', source: 'file' })
+    })
+
+    it('normalizes Windows separators so the parent dir resolves', async () => {
+      // The batch-exists response is keyed on the normalized path, so a match
+      // proves normalization happened before the request.
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ results: { 'web/src/foo.ts': 'file' } }),
+      }))
+
+      const ok = await revealInFileManager('web\\src\\foo.ts', 'history')
+
+      expect(ok).toBe(true)
+      const jumps = dispatched.filter(ev => ev.type === 'open-directory-from-context')
+      expect(jumps[0].detail).toEqual({ path: 'web/src', revealPath: 'web/src/foo.ts', source: 'history' })
+    })
+
+    it('reports a missing path instead of jumping (git history lists historical commits)', async () => {
+      stubExists('none')
+      const ok = await revealInFileManager('docs/spec/core/chat-flow.md', 'history')
+
+      // Without this check the jump would land in the parent directory and
+      // silently highlight nothing for 15s.
+      expect(ok).toBe(false)
+      expect(dispatched.filter(ev => ev.type === 'open-directory-from-context')).toHaveLength(0)
+    })
+
+    it('refuses an external path (the file manager cannot browse outside the project)', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ results: { '/etc/hosts': 'file' } }),
+      }))
+
+      const ok = await revealInFileManager('/etc/hosts', 'history')
+
+      expect(ok).toBe(false)
+      expect(dispatched.filter(ev => ev.type === 'open-directory-from-context')).toHaveLength(0)
+    })
+
+    it('dispatches nothing for an empty path', async () => {
+      const ok = await revealInFileManager('')
+
+      expect(ok).toBe(false)
+      expect(dispatched).toHaveLength(0)
+    })
+  })
+
+  // --- navToFileInManager ---
   it('navToFileInManager: shows file-not-found toast when path does not exist', async () => {
     const mockFetch = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/missing.go': 'none' } }) })

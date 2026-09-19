@@ -1,6 +1,12 @@
 package common
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"clawbench/internal/model"
+)
 
 func TestShortSessionID(t *testing.T) {
 	tests := []struct {
@@ -123,6 +129,68 @@ func TestResolveShortSessionID(t *testing.T) {
 	})
 }
 
+// TestResolveTarget covers the branch that picks between an explicit
+// "@{shortID}" and the user's sticky session. The sticky path is what makes a
+// plain message (or a bare file) land in the right place, so each of its
+// failure modes must produce a distinct, user-actionable error rather than a
+// silent send into nowhere.
+func TestResolveTarget(t *testing.T) {
+	sessions := []SessionInfo{
+		{ID: "a1b2c3d4e5f60001", Title: "Running Session"},
+		{ID: "b1b2c3d4e5f60002", Title: "Sticky Session"},
+	}
+
+	t.Run("explicit short id wins over sticky", func(t *testing.T) {
+		m := &mockMessenger{sessions: sessions, running: map[string]bool{"a1b2c3d4e5f60001": true}}
+		id, title, err := ResolveTarget(m, Route{Kind: RouteToSession, ShortID: "a1b2c3d4"}, "b1b2c3d4e5f60002")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if id != "a1b2c3d4e5f60001" || title != "Running Session" {
+			t.Errorf("got (%q, %q), want the explicitly named session", id, title)
+		}
+	})
+
+	t.Run("sticky session is used when no short id", func(t *testing.T) {
+		m := &mockMessenger{sessions: sessions, running: map[string]bool{}}
+		id, title, err := ResolveTarget(m, Route{Kind: RouteToSession}, "b1b2c3d4e5f60002")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if id != "b1b2c3d4e5f60002" || title != "Sticky Session" {
+			t.Errorf("got (%q, %q), want the sticky session", id, title)
+		}
+	})
+
+	t.Run("no sticky target is an error", func(t *testing.T) {
+		m := &mockMessenger{sessions: sessions, running: map[string]bool{}}
+		_, _, err := ResolveTarget(m, Route{Kind: RouteToSession}, "")
+		if err == nil {
+			t.Fatal("expected an error when there is no target at all")
+		}
+	})
+
+	t.Run("nil messenger with a sticky target is an error", func(t *testing.T) {
+		_, _, err := ResolveTarget(nil, Route{Kind: RouteToSession}, "b1b2c3d4e5f60002")
+		if err == nil {
+			t.Fatal("expected an error when the session messenger is unavailable")
+		}
+	})
+
+	// A sticky ID pointing at a deleted/archived session must fail loudly: the
+	// user has to be told to pick again, not have the message vanish.
+	t.Run("sticky session no longer exists", func(t *testing.T) {
+		m := &mockMessenger{sessions: sessions, running: map[string]bool{}}
+		_, _, err := ResolveTarget(m, Route{Kind: RouteToSession}, "deadbeef00000000")
+		if err == nil {
+			t.Fatal("expected an error for an unavailable sticky session")
+		}
+		if !strings.Contains(err.Error(), "/ls") {
+			t.Errorf("error should point the user at /ls, got %v", err)
+		}
+	})
+}
+
 // mockMessenger implements SessionMessenger for testing.
 type mockMessenger struct {
 	sessions []SessionInfo
@@ -149,5 +217,15 @@ func (m *mockMessenger) ListRecentSessions(limit int) ([]SessionInfo, error) {
 	return m.sessions[:limit], nil
 }
 
-func (m *mockMessenger) IsSessionRunning(sessionID string) bool    { return m.running[sessionID] }
-func (m *mockMessenger) SendMessageToSession(string, string) error { return nil }
+func (m *mockMessenger) IsSessionRunning(sessionID string) bool { return m.running[sessionID] }
+
+func (m *mockMessenger) GetSessionInfo(sessionID string) (SessionInfo, error) {
+	for _, s := range m.sessions {
+		if s.ID == sessionID {
+			return s, nil
+		}
+	}
+	return SessionInfo{}, fmt.Errorf("session %s not found", sessionID)
+}
+
+func (m *mockMessenger) SendMessageToSession(string, string, []model.FileEntry) error { return nil }

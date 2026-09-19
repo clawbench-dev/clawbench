@@ -29,6 +29,50 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   } as unknown as typeof globalThis.ResizeObserver
 }
 
+// ── IntersectionObserver polyfill for jsdom ──
+// jsdom does not implement IntersectionObserver. FileManagerContent uses one to
+// mount thumbnails only once they scroll into view; without a polyfill its
+// `typeof IntersectionObserver === 'undefined'` guard would fail open and mount
+// every thumbnail, so the lazy-mount behaviour could not be tested at all.
+//
+// The polyfill reports nothing as intersecting on its own — it records the
+// observed elements and exposes a trigger so tests can decide what became
+// visible. That keeps the visibility decision under test control rather than
+// pretending everything is on screen.
+class MockIntersectionObserver {
+  static instances: MockIntersectionObserver[] = []
+  callback: IntersectionObserverCallback
+  elements = new Set<Element>()
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback
+    MockIntersectionObserver.instances.push(this)
+  }
+  observe(el: Element) {
+    this.elements.add(el)
+  }
+  unobserve(el: Element) {
+    this.elements.delete(el)
+  }
+  disconnect() {
+    this.elements.clear()
+  }
+  takeRecords() {
+    return []
+  }
+  /** Test helper: report every currently observed element as intersecting. */
+  triggerAll() {
+    const entries = [...this.elements].map(target => ({
+      target,
+      isIntersecting: true,
+      intersectionRatio: 1,
+    })) as unknown as IntersectionObserverEntry[]
+    if (entries.length) this.callback(entries, this as unknown as IntersectionObserver)
+  }
+}
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+  globalThis.IntersectionObserver = MockIntersectionObserver as unknown as typeof globalThis.IntersectionObserver
+}
+
 // ── Range measurement polyfill for jsdom ──
 // jsdom does not implement Range.prototype.getClientRects / getBoundingClientRect.
 // CodeMirror 6 calls these while measuring text, so without a stub its content

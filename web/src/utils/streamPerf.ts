@@ -10,10 +10,27 @@
  * full pipeline:
  *
  * - scheduled-task regex (module-level, reused across calls)
- * - ask-question detection (with early exit optimization)
+ * - ask-question detection (delegates to the canonical askQuestion module)
  * - task semantic comparison (for blockTasks watcher)
  * - static block cache (for non-streaming re-renders)
+ *
+ * The ask-question functions are thin adapters over `@/utils/askQuestion.ts`,
+ * which is the single implementation shared with the Go backend
+ * (`internal/askquestion`). They are kept here so existing call sites and
+ * tests keep working, but they no longer hold any parsing logic of their own —
+ * that divergence was the source of the silent content-loss defect.
  */
+
+import {
+  extractAskMatches,
+  parseItems,
+  stripAskMatches,
+  hasParsedMatches,
+  allMatchItems,
+  unparsedReasons,
+  type AskItem,
+  type AskMatch,
+} from '@/utils/askQuestion.ts'
 
 // ────────────────────────────────────────────────────────────
 // Module-level scheduled-task regex
@@ -48,125 +65,78 @@ export function stripScheduledTaskTags(text: string): string {
 }
 
 // ────────────────────────────────────────────────────────────
-// ask-question detection (with early exit)
+// ask-question detection (delegates to @/utils/askQuestion.ts)
 // ────────────────────────────────────────────────────────────
 
 /**
- * Validate that <ask-question> content looks like a real structured XML payload
- * (with <item> child elements carrying <question> and <option>).
- * Only called post-streaming.
+ * Validate that <clawbench-ask-question> content looks like a real structured payload.
+ *
+ * Now defined as "the payload actually parses", which is what makes detection
+ * and parsing impossible to disagree. The previous implementation did literal
+ * substring checks (`includes('<question>')`), so it accepted payloads the
+ * strict parser then rejected — and the caller stripped the tag anyway,
+ * deleting the question.
  */
 export function isValidAskContent(raw: string): boolean {
-  const probe = raw.trim()
-  // Check for <item> child elements with <question> and <option> inside
-  const itemMatches = probe.match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/g)
-  if (itemMatches) {
-    // At least one <item> must contain both <question> and <option> inside it
-    return itemMatches.some(item =>
-      item.includes('<question>') && item.includes('<option>')
-    )
-  }
-  // Also check for unclosed <item> tags (some models don't close them)
-  const openItemMatches = [...probe.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)(?=<item(?:\s[^>]*)?>|$)/g)]
-  if (openItemMatches.length > 0) {
-    return openItemMatches.some(m =>
-      m[1].includes('<question>') && m[1].includes('<option>')
-    )
-  }
-  return false
+  return parseAskItems(raw).length > 0
+}
+
+/** The canonical item shape (re-exported for callers that only need the type). */
+export type { AskItem }
+
+/** Parsed items for a payload — the single parse entry point. */
+function parseAskItems(raw: string): AskItem[] {
+  // Callers pass either a bare payload or a wrapped <clawbench-ask-question> block.
+  // The canonical module handles both, so try the wrapped form first (which
+  // also applies the code-context and span-bounding rules) and fall back to
+  // treating the whole string as the payload.
+  const fromMatches = allMatchItems(extractAskMatches(raw))
+  if (fromMatches.length > 0) return fromMatches
+  return parseItems(raw)
 }
 
 export interface AskQuestionResult {
+  /** True when at least one tag parsed into items. */
   found: boolean
-  /** Inner content between open/close tags (parsed by parseAskQuestionContent) */
-  content?: string
-  /** The full matched tag string (e.g. "<ask-question>...</ask-question>") — use with stripAskQuestionTag() */
-  fullTag?: string
-}
-
-// Regex for fenced code blocks and inline code — used to check if a
-// <ask-question> tag appears inside a code context (false positive).
-const RE_CODE_BLOCK = /```[\s\S]*?```/g
-const RE_INLINE_CODE = /`[^`]+`/g
-
-/**
- * Check if a character index in the original text falls inside a code context
- * (fenced code block ```...``` or inline backticks `...`).
- */
-function isInsideCodeContext(text: string, idx: number): boolean {
-  // Check fenced code blocks
-  RE_CODE_BLOCK.lastIndex = 0
-  let m
-  while ((m = RE_CODE_BLOCK.exec(text)) !== null) {
-    if (idx >= m.index && idx < m.index + m[0].length) return true
-  }
-  // Check inline code
-  RE_INLINE_CODE.lastIndex = 0
-  while ((m = RE_INLINE_CODE.exec(text)) !== null) {
-    if (idx >= m.index && idx < m.index + m[0].length) return true
-  }
-  return false
+  /** Items from every parsed tag, in document order. */
+  items: AskItem[]
+  /**
+   * Every located span, including unparseable ones. Callers must pass this to
+   * stripAskQuestionTag so unparseable spans are retained rather than deleted.
+   */
+  matches: AskMatch[]
+  /** Reason codes for spans that failed to parse (for logging). */
+  reasons: string[]
 }
 
 /**
- * Detect <ask-question> tags in text with early exit optimization.
- * Skips tags that appear inside fenced code blocks or inline backticks.
+ * Detect <clawbench-ask-question> tags in text.
+ * Skips tags that appear inside fenced code blocks or inline backticks, and
+ * returns every tag rather than only the last one.
  * Only called post-streaming.
  */
 export function detectAskQuestion(text: string): AskQuestionResult {
-  // Fast path: skip entire detection if tag substring not present
-  if (!text.includes('<ask-question')) {
-    return { found: false }
+  const matches = extractAskMatches(text)
+  return {
+    found: hasParsedMatches(matches),
+    items: allMatchItems(matches),
+    matches,
+    reasons: unparsedReasons(matches),
   }
-
-  // Find all <ask-question> open tags, skipping those inside code contexts
-  const allOpenTags = [...text.matchAll(/<ask-question\b[^>]*>/g)]
-  for (let j = allOpenTags.length - 1; j >= 0; j--) {
-    const tagIdx = allOpenTags[j].index!
-    if (isInsideCodeContext(text, tagIdx)) continue
-
-    const afterTag = text.slice(tagIdx)
-
-    const closedMatch = afterTag.match(/<ask-question\b[^>]*>([\s\S]*?)<\/ask-question>/)
-    if (closedMatch && isValidAskContent(closedMatch[1])) {
-      return { found: true, content: closedMatch[1], fullTag: closedMatch[0] }
-    }
-
-    // Match wrong/obfuscated close tags — some models emit non-standard closing tags
-    // (e.g. </｜｜DSML｜｜question> with fullwidth pipe chars). Use [^>]+ instead of
-    // \w+ to catch any character sequence that looks like a closing tag.
-    const wrongCloseMatch = afterTag.match(/<ask-question\b[^>]*>([\s\S]*?)<\/[^>]+>/)
-    if (wrongCloseMatch && isValidAskContent(wrongCloseMatch[1])) {
-      return { found: true, content: wrongCloseMatch[1], fullTag: wrongCloseMatch[0] }
-    }
-
-    const subMatch = afterTag.match(/<ask-question\b[^>]*>([\s\S]+)$/)
-    if (subMatch && isValidAskContent(subMatch[1])) {
-      return { found: true, content: subMatch[1], fullTag: subMatch[0] }
-    }
-  }
-
-  return { found: false }
 }
 
 /**
- * Remove the matched <ask-question> tag from text.
- * Uses `fullTag` from detectAskQuestion result for direct string replacement.
- * Fallback for unclosed tags where fullTag spans past code blocks:
- * strip code blocks, remove the tag, and return the remaining text.
+ * Replace every located <clawbench-ask-question> span with what should be shown in its
+ * place.
+ *
+ * Parsed spans are removed (the card renders them). Unparseable spans are
+ * replaced by their inner text, so a malformed payload degrades to readable
+ * Markdown rather than exposing raw tags. Nothing is discarded either way —
+ * `result.matches` carries the parse outcome and the fallback text.
  */
 export function stripAskQuestionTag(text: string, result: AskQuestionResult): string {
-  if (!result.found || !result.fullTag) return text
-  // Direct replacement — works when fullTag exists verbatim in text
-  // (closed tags, obfuscated close tags, and most unclosed tags)
-  const replaced = text.replace(result.fullTag, '')
-  if (replaced !== text) {
-    return replaced.trim()
-  }
-  // Fallback: fullTag spans past code blocks in original text (rare unclosed-tag case).
-  // Strip code blocks from text, remove fullTag from stripped, return remaining text.
-  const stripped = text.replace(RE_CODE_BLOCK, '')
-  return stripped.replace(result.fullTag, '').trim()
+  if (result.matches.length === 0) return text
+  return stripAskMatches(text, result.matches).trim()
 }
 
 // ────────────────────────────────────────────────────────────
@@ -203,6 +173,30 @@ export function taskChanged(oldTask: Record<string, unknown>, newTask: Record<st
  * Supports a "fast path" mode: when deferEnhancements is true,
  * blocks are initially cached with skipEnhancements=true and
  * scheduled for upgrade to the full pipeline via requestIdleCallback.
+ *
+ * Entries are keyed by message id (the DB row id, globally unique across
+ * sessions) plus a caller-supplied `scope`. The scope exists because the
+ * rendered HTML is NOT a pure function of the block text: it also depends on
+ * rendering inputs that the message id knows nothing about.
+ *
+ *   - `projectRoot`: the path annotators resolve every detected path relative
+ *     to it, so the same text renders different `data-file-path` values under a
+ *     different project (or worktree) root.
+ *   - `locale`: the annotators bake translated labels into the HTML
+ *     (`gt('chat.attach.openFile')`, `gt('common.copy')`, …), and the language
+ *     toggle is live — no page reload.
+ *
+ * Putting those inputs in the key (rather than only clearing the cache when
+ * they change) makes a stale hit impossible: a lookup under a new project root
+ * simply misses. It also makes the dependency explicit at the call site, where
+ * the value is read during render — which is what lets Vue re-run the render
+ * when it changes. Clearing alone does NOT re-render: a cache hit short-circuits
+ * `renderTextBlock`, so the render effect has no dependency on the input and
+ * the DOM would keep the old annotations until some unrelated re-render.
+ *
+ * Because the cache now outlives session switches, it needs a bound:
+ * `MAX_ENTRIES` caps how many rendered blocks are retained and evicts
+ * least-recently-used ones first.
  */
 export class StaticBlockCache {
   private cache = new Map<string, string>()
@@ -211,32 +205,69 @@ export class StaticBlockCache {
   private upgradeScheduled = false
   private upgradeFn: (() => void) | null = null
 
-  private makeKey(msgId: string | number, blockIdx: number, text: string): string {
+  /**
+   * Upper bound on retained entries. Each entry is one block's rendered HTML
+   * string; a long-lived cache over a big session can otherwise grow without
+   * limit. Map preserves insertion order, so the first key is the oldest —
+   * `get()` re-inserts on hit to keep that ordering LRU rather than FIFO.
+   */
+  private static readonly MAX_ENTRIES = 3000
+
+  private makeKey(msgId: string | number, blockIdx: number, text: string, scope: string): string {
     const prefix = text.length > 40 ? text.slice(0, 20) : ''
     const suffix = text.slice(-20)
-    return `${msgId}-${blockIdx}-${text.length}-${prefix}${suffix}`
+    // `scope` is last so the msgId/blockIdx/text part stays readable in a
+    // debugger. Empty scope keeps the historical key shape for callers that
+    // have no rendering inputs to distinguish (e.g. tests, TaskExecDetail).
+    const scopePart = scope ? `-${scope}` : ''
+    return `${msgId}-${blockIdx}-${text.length}-${prefix}${suffix}${scopePart}`
   }
 
-  get(msgId: string | number, blockIdx: number, text: string): string | undefined {
-    return this.cache.get(this.makeKey(msgId, blockIdx, text))
+  /** Drop oldest entries until the cache is back under the cap. */
+  private evictIfNeeded(): void {
+    while (this.cache.size > StaticBlockCache.MAX_ENTRIES) {
+      const oldest = this.cache.keys().next().value
+      if (oldest === undefined) break
+      this.cache.delete(oldest)
+      this.deferredKeys.delete(oldest)
+    }
   }
 
-  set(msgId: string | number, blockIdx: number, text: string, html: string, deferred = false): void {
-    const key = this.makeKey(msgId, blockIdx, text)
+  get(msgId: string | number, blockIdx: number, text: string, scope = ''): string | undefined {
+    const key = this.makeKey(msgId, blockIdx, text, scope)
+    const hit = this.cache.get(key)
+    if (hit === undefined) return undefined
+    // Refresh recency: delete + re-set moves the key to the end of the
+    // insertion order so eviction above is LRU, not FIFO.
+    this.cache.delete(key)
+    this.cache.set(key, hit)
+    return hit
+  }
+
+  set(msgId: string | number, blockIdx: number, text: string, html: string, deferred = false, scope = ''): void {
+    const key = this.makeKey(msgId, blockIdx, text, scope)
+    // Re-inserting an existing key must also refresh its recency.
+    this.cache.delete(key)
     this.cache.set(key, html)
     if (deferred) {
       this.deferredKeys.add(key)
     }
+    this.evictIfNeeded()
+  }
+
+  /** Number of retained entries (for tests / diagnostics). */
+  get size(): number {
+    return this.cache.size
   }
 
   /** Mark an entry as upgraded from deferred to full render */
-  markUpgraded(msgId: string | number, blockIdx: number, text: string): void {
-    this.deferredKeys.delete(this.makeKey(msgId, blockIdx, text))
+  markUpgraded(msgId: string | number, blockIdx: number, text: string, scope = ''): void {
+    this.deferredKeys.delete(this.makeKey(msgId, blockIdx, text, scope))
   }
 
   /** Check if an entry was rendered with deferred enhancements */
-  isDeferred(msgId: string | number, blockIdx: number, text: string): boolean {
-    return this.deferredKeys.has(this.makeKey(msgId, blockIdx, text))
+  isDeferred(msgId: string | number, blockIdx: number, text: string, scope = ''): boolean {
+    return this.deferredKeys.has(this.makeKey(msgId, blockIdx, text, scope))
   }
 
   /** Set the function to call when deferred entries need upgrading */

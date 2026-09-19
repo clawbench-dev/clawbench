@@ -41,7 +41,7 @@ flowchart LR
 - **抽屉式导航**：Session 抽屉（会话列表）、ACP Session 抽屉（ACP 模式/权限管理）、TOC 抽屉（文件目录）、搜索抽屉等。从侧面滑入，不占常驻空间——移动端屏幕有限，抽屉比常驻面板更节省空间
 - **会话列表是单一扁平列表**：项目面板内的会话不再分成「置顶 / 最近」两个分组（无分组头、无折叠、无分组计数），置顶会话仍排在最前（服务端 `pinned DESC` 排序不变），只在行的右上角加一个三角标记。跨项目面板按项目分组的结构保留不变。分组把同一份数据渲染成两个 `TransitionGroup` 与一套索引偏移计算，键盘导航还得补偿分组偏移——而用户要的只是"置顶的在上面"，一个标记就能表达
 - **模块级 Composable 单例**：多个 composable 使用模块级 `ref`，所有消费者共享同一份状态（如 `useToast`、`useSessionIdentity`、`useGlobalEvents`）。跨组件状态协调无需 provide/inject
-- **WebSocket 单通道**：所有实时推送走 `/api/ai/events/ws`。聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）由 `StreamHub.EmitToSession` 推送；系统事件（`session_update/task_update/summary_update`）通过 `ws.Manager` 广播。断线 ≤10s 自动缓冲重放（≤50 条），>120s 清理订阅（`internal/ws/manager.go`）。客户端通过 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong` 六种消息与后端交互
+- **WebSocket 单通道**：所有实时推送走 `/api/ai/events/ws`。聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）由 `StreamHub.EmitToSession` 推送；系统事件（`session_update/task_update/summary_update`）通过 `ws.Manager` 广播。断线 ≤10s 自动缓冲重放（≤50 条），>120s 清理订阅（`internal/ws/manager.go`）。客户端通过 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong`/`metrics_preference` 七种消息与后端交互
 
   旁注：还存在几条独立小通道用于专门场景——`GET /api/file/watch/ws`（WebSocket）、`GET /api/dir/search`（SSE）、`GET /api/tts/audio/ws`（WebSocket）——与聊天流无关
 - **ACP 会话管理**：`useAcpSession` 管理 ACP 模式切换、思考深度、斜杠命令、权限审批和计划进度。`AcpSessionDrawer` 展示 ACP 特有的会话状态，`PlanPanel` 显示计划步骤和进度。计划进度**不持久化**——只缓存在 ACP 连接对象上（无 plan 表，`context_state` 只含 mode/thinkingEffort/usage），因此会话回溯（rewind）销毁连接后无从还原：`rewindSession` 成功后显式 `clearPlanState()`，`onSessionEvent` 收到 `status="rewound"` 且属于当前会话时同样清空（覆盖未发起回溯的其他客户端）；清空早于 `loadHistory`，使 reload 自带的 planState 仍能生效
@@ -56,7 +56,7 @@ flowchart LR
 - **首次访问欢迎面板**：`WelcomeOverlay` 组件在用户首次访问时显示，展示后端检测状态与安装入口。不是 5 步分步向导——Agent 创建通过自动发现或 `AgentInstallDialog` 完成
 - **统一返回状态机**：`useNavigationStateMachine` + `useNavigationCoordinator` 收敛全局返回导航——两级分层栈（界面内文件历史 `useFileNavStack` + 跨界面 jump origin `useNavigationContext`）由状态机按确定性优先级裁决（顶层弹层 > 行内编辑 > Browse 瞬态层 > 界面内历史 > 跨界面来源 > 父目录）。`canHandleBack` 零副作用同步探测（满足 Android `onBackPressed` 事件同步消费），`navigateBack` 异步执行；`reason='close'` 严格限定为关闭动作。移动端文件查看内容区底部悬浮胶囊、桌面双栏顶栏导航簇、右缘滑动手势与 Android 物理返回键全部汇入同一状态机。详见[统一返回与跨界面导航](unified-back-navigation.md)
 - **Sticky Scroll**：`useCodeStickyScroll` 为 CodeMirror 代码浏览器提供 VS Code 风格的 sticky scroll，将外层作用域定义行钉顶显示（最多 5 行），点击可平滑滚动到定义位置。基于后端 tree-sitter 符号数据，解决长文件中上下文迷失的问题
-- **系统资源监控**：`useSystemResources` composable 周期轮询 `GET /api/system/resources` 获取 CPU、内存、磁盘、网络和负载指标，引用计数共享轮询定时器；`SystemResourcesPanel` 组件在 AppHeader 的 Gauge 图标弹出菜单中展示实时资源状态。页面可见时自动轮询，隐藏时暂停；WS 断线时隐藏资源数据，改为展示连接状态指示器（disconnected/reconnecting）。详见 [系统资源监控](../infra/system-resources.md)
+- **系统资源监控**：`useSystemResources` composable 通过 WS 接收 `system_resources` 推送获取 CPU、内存、磁盘、网络和负载指标，不再轮询 HTTP。它用引用计数把需求（前台 1000ms / 后台 5000ms / 无）通过 `metrics_preference` 消息声明给服务端，服务端仅在存在订阅者时采样；页面隐藏时声明关闭（App 模式下 socket 本身会断开，需求随之归零）。`useGlobalEvents.destroy()` 会清空 handler 数组，故重连时必须重新注册监听并重新声明。`SystemResourcesPanel` 组件在 AppHeader 的 Gauge 图标弹出菜单中展示实时资源状态；WS 断线时隐藏资源数据，改为展示连接状态指示器（disconnected/reconnecting）。详见 [系统资源监控](../infra/system-resources.md)
 - **消息聚类抽屉**：`useMessageClusters` composable 封装消息聚类计算 API（含 WS 进度监听），`MessageClustersDrawer` 展示聚类结果和进度条，聚类中的消息变体可直接一键添加为快捷发送
 - **键盘交互**：`DialogOverlay` 支持 Esc 关闭和 Enter 确认；`BottomSheet` 支持 Esc 关闭（焦点在输入框时跳过，避免干扰 IME/原生输入行为）。覆盖层自动聚焦以立即接收键盘事件
 - **Ctrl+Delete 快捷归档**：聊天 Tab 活跃时 `Ctrl+Delete`（Mac 上 `Cmd+Delete`）触发当前会话归档，桌面用户快速整理对话列表

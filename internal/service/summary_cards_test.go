@@ -13,7 +13,7 @@ func TestExtractSummaryCards(t *testing.T) {
 		{Type: "tool_use", Name: "Bash", ID: "t1", Input: map[string]any{"command": "ls"}},
 		{Type: "tool_use", Name: "AskUserQuestion", ID: "t2", Input: map[string]any{"question": "go?"}},
 		{Type: "tool_use", Name: "PermissionApproval", ID: "t3", Input: map[string]any{"toolName": "Bash"}, Done: true, Status: "error", Output: "Cancelled"},
-		{Type: "text", Text: "Answer <scheduled-task id=\"42\">x</scheduled-task> <ask-question><item><header>Q</header><question>continue?</question><option><label>Yes</label></option></item></ask-question>"},
+		{Type: "text", Text: "Answer <scheduled-task id=\"42\">x</scheduled-task> <clawbench-ask-question>\n**Q**\ncontinue?\n- Yes\n</clawbench-ask-question>"},
 	}
 	cards := extractSummaryCards(blocks)
 	// PermissionApproval is intentionally excluded: it is actionable-only and
@@ -80,7 +80,12 @@ func TestExtractSummaryCardsFileChanges(t *testing.T) {
 func TestExtractSummaryCardsAskQuestion(t *testing.T) {
 	blocks := []model.ContentBlock{{
 		Type: "text",
-		Text: `<ask-question><item><header>Setup</header><multi-select>true</multi-select><question>score < 5 ok?</question><option><label>Yes</label><description>confirm</description></option><option><label>No</label></option></item></ask-question>`,
+		Text: `<clawbench-ask-question>
+**Setup**
+score < 5 ok?
+- [ ] Yes — confirm
+- [ ] No
+</clawbench-ask-question>`,
 	}}
 	cards := extractSummaryCards(blocks)
 	if len(cards.AskQuestions) != 1 {
@@ -104,7 +109,18 @@ func TestExtractSummaryCardsAskQuestion(t *testing.T) {
 func TestExtractSummaryCardsAskQuestionPerItemHeader(t *testing.T) {
 	blocks := []model.ContentBlock{{
 		Type: "text",
-		Text: `<ask-question><item><header>First</header><question>q1?</question><option><label>A</label></option></item><item><header>Second</header><question>q2?</question><option><label>B</label></option></item></ask-question>`,
+		Text: `<clawbench-ask-question>
+**First**
+q1?
+- A
+- B
+</clawbench-ask-question>
+<clawbench-ask-question>
+**Second**
+q2?
+- C
+- D
+</clawbench-ask-question>`,
 	}}
 	cards := extractSummaryCards(blocks)
 	if len(cards.AskQuestions) != 2 {
@@ -118,10 +134,61 @@ func TestExtractSummaryCardsAskQuestionPerItemHeader(t *testing.T) {
 	}
 }
 
+// Several options in one question all reach the summary card.
+func TestExtractSummaryCardsAskQuestion_MultipleOptions(t *testing.T) {
+	blocks := []model.ContentBlock{{
+		Type: "text",
+		Text: `<clawbench-ask-question>
+**H**
+Q?
+- 停掉主实例 — kill 后重启
+- 先别删
+</clawbench-ask-question>`,
+	}}
+	cards := extractSummaryCards(blocks)
+	if len(cards.AskQuestions) != 1 {
+		t.Fatalf("expected 1 ask-question, got %+v", cards.AskQuestions)
+	}
+	opts := cards.AskQuestions[0].Options
+	if len(opts) != 2 || opts[0].Label != "停掉主实例" || opts[0].Description != "kill 后重启" {
+		t.Fatalf("unexpected options: %+v", opts)
+	}
+}
+
+// A payload that carries no question contributes no summary card; the text stays
+// in the block rather than being consumed.
+func TestExtractSummaryCardsAskQuestion_UnparseableProducesNoCard(t *testing.T) {
+	blocks := []model.ContentBlock{{
+		Type: "text",
+		Text: `<clawbench-ask-question>
+这里没有列表，只是一段说明。
+</clawbench-ask-question>`,
+	}}
+	cards := extractSummaryCards(blocks)
+	if len(cards.AskQuestions) != 0 {
+		t.Fatalf("expected no summary card for prose, got %+v", cards.AskQuestions)
+	}
+}
+
+// JSON is not a supported payload and is not recovered: no card is produced and
+// the text stays in the block so the malformed output is visible.
+func TestExtractSummaryCardsAskQuestion_JSONProducesNoCard(t *testing.T) {
+	blocks := []model.ContentBlock{{
+		Type: "text",
+		Text: `<clawbench-ask-question>
+{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}
+</clawbench-ask-question>`,
+	}}
+	cards := extractSummaryCards(blocks)
+	if len(cards.AskQuestions) != 0 {
+		t.Fatalf("JSON must not produce a card, got %+v", cards.AskQuestions)
+	}
+}
+
 func TestExtractSummaryCardsWarnings(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "warning", Text: "Server restarted, AI response interrupted", Reason: "restart"},
-		{Type: "error", Text: "AI backend exited", Reason: "backend_exit", ErrorCode: -32603, HTTPStatus: 500, ErrorSource: "agent"},
+		{Type: "error", Text: "AI backend exited", Reason: "backend_exit", ErrorCode: -32603, HTTPStatus: 500, ErrorSource: "agent", ErrorDetail: "Bad substitution: o.gaps.join"},
 		{Type: "text", Text: "ordinary answer"},
 		{Type: "tool_use", Name: "Bash", ID: "t1", Done: true, Status: "success"},
 	}
@@ -135,7 +202,7 @@ func TestExtractSummaryCardsWarnings(t *testing.T) {
 	if w0.Type != "warning" || w0.Text != "Server restarted, AI response interrupted" || w0.Reason != "restart" {
 		t.Fatalf("restart warning mismatch: %+v", w0)
 	}
-	if w0.ErrorCode != 0 || w0.HTTPStatus != 0 || w0.ErrorSource != "" {
+	if w0.ErrorCode != 0 || w0.HTTPStatus != 0 || w0.ErrorSource != "" || w0.ErrorDetail != "" {
 		t.Fatalf("restart warning should carry no structured error fields: %+v", w0)
 	}
 	// Error block (red banner with structured fields preserved).
@@ -145,6 +212,12 @@ func TestExtractSummaryCardsWarnings(t *testing.T) {
 	}
 	if w1.ErrorCode != -32603 || w1.HTTPStatus != 500 || w1.ErrorSource != "agent" {
 		t.Fatalf("error warning structured fields lost: %+v", w1)
+	}
+	// The agent-reported detail must survive the summary view, where the full
+	// content blocks are stripped — otherwise the banner loses its only
+	// actionable text.
+	if w1.ErrorDetail != "Bad substitution: o.gaps.join" {
+		t.Fatalf("error warning detail lost: %+v", w1)
 	}
 	// text/tool blocks must not be collected as warnings.
 }

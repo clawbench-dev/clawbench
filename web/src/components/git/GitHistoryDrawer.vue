@@ -58,7 +58,7 @@
           @click.stop="onFilesRefresh"
         />
       </div>
-      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" />
+      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" @open-file="onOpenFile" @reveal-file="onRevealFile" />
       <div class="drilldown-body">
         <div v-if="filesLoading" class="git-history-loading">
           <LoadingIndicator size="md" />
@@ -146,7 +146,7 @@
         />
       </div>
       <div class="drilldown-body">
-        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" />
+        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" @open-file="onOpenFile" @reveal-file="onRevealFile" />
         <GitDiffView
           :loading="diffState.loading"
           :empty="diffState.empty"
@@ -176,6 +176,7 @@ import { store } from '@/stores/app.ts'
 import { consumePendingCommitNavigation } from '@/composables/useCommitNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_OVERLAY } from '@/composables/useEdgeSwipeBack'
 import { useGitHistoryView } from '@/composables/useGitHistoryView'
+import { revealInFileManager } from '@/composables/useFilePathAnnotation.ts'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -194,6 +195,24 @@ const bottomSheetRef = ref(null)
 function onOpenFile(path) {
   emit('open-file', path)
   bottomSheetRef.value?.close()
+}
+
+/**
+ * Reveal the file in the file manager. The sheet lives inside the file view, so
+ * `source: 'file'` makes the coordinator suspend this file visit as a directory
+ * excursion — Back then restores the file the user was viewing instead of
+ * walking up the directory tree.
+ *
+ * The host close is emitted synchronously, before the reveal. The reveal closes
+ * the file overlay to make room for the manager, which unmounts this sheet — so
+ * a deferred close (the sheet's own 250ms animation timer) is dropped before it
+ * fires and `open` stays true, making the sheet pop back open over the restored
+ * file when the user presses Back. Closing first makes `open` false while the
+ * component is still mounted, whatever the reveal goes on to do.
+ */
+async function onRevealFile(path) {
+  emit('close')
+  await revealInFileManager(path, 'file')
 }
 
 // ─── Shared git-history logic ───────────────────────────────────────────────

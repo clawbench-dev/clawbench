@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -137,26 +139,66 @@ func scanDingTalkSessionInfos(rows *sql.Rows) []DingTalkSessionInfo {
 }
 
 // SendMessageToSessionFromDingTalk sends a message to a non-running session from DingTalk.
-func SendMessageToSessionFromDingTalk(sessionID, message string) error {
-	return sendMessageToSessionFromPush(sessionID, message)
+func SendMessageToSessionFromDingTalk(sessionID, message string, files []model.FileEntry) error {
+	return sendMessageToSessionFromPush(sessionID, message, files)
 }
 
 // SendMessageToSessionFromFeishu sends a message to a non-running session from Feishu.
-func SendMessageToSessionFromFeishu(sessionID, message string) error {
-	return sendMessageToSessionFromPush(sessionID, message)
+func SendMessageToSessionFromFeishu(sessionID, message string, files []model.FileEntry) error {
+	return sendMessageToSessionFromPush(sessionID, message, files)
+}
+
+// GetSessionInfoForPush returns session metadata for a push backend, or an
+// error when the session does not exist (or is archived).
+//
+// Push backends need ProjectPath to place a downloaded IM attachment in the
+// session's own .clawbench/uploads/ directory.
+func GetSessionInfoForPush(sessionID string) (DingTalkSessionInfo, error) {
+	info := GetSessionFullInfo(sessionID)
+	if info == nil {
+		return DingTalkSessionInfo{}, fmt.Errorf("session %s not found", sessionID)
+	}
+	return DingTalkSessionInfo{
+		ID:          sessionID,
+		Title:       info.Title,
+		ProjectPath: info.ProjectPath,
+		Backend:     info.Backend,
+		AgentID:     info.AgentID,
+		Model:       info.Model,
+	}, nil
 }
 
 // sendMessageToSessionFromPush is the shared implementation for sending a message
 // to a non-running session from any push backend (DingTalk, Feishu, etc.).
-func sendMessageToSessionFromPush(sessionID, message string) error {
+//
+// files are the message's attachments, already written to disk by the caller.
+// An empty message with files is valid: a bare file sent from IM carries no
+// text, and the execution engine injects the attachment path into the prompt.
+func sendMessageToSessionFromPush(sessionID, message string, files []model.FileEntry) error {
 	info := GetSessionFullInfo(sessionID)
 	if info == nil {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
+	// Mint the queue id here, before the enqueue, and thread it through BOTH
+	// the execution and the user_message event below.
+	//
+	// The queue id is the only anchor that ties the streaming reply to the
+	// question it answers: run_turn stores it on the streaming assistant row and
+	// streams it as stream_start.queue_id, and the client re-anchors the reply
+	// to the question bubble carrying the same queueId. Without it the client
+	// falls back to "newest user message", which at this point is still the
+	// PREVIOUS question — the user_message event is emitted after the
+	// (asynchronous) execution launch, so it has not arrived yet. The reply then
+	// sorts above its own question until a reload rebuilds from the DB.
+	//
+	// AddQueuedMessage would generate an equivalent id when given "", but it
+	// does so internally and never returns it, so the execution and the event
+	// would both lose the anchor.
+	queueID := newPushQueueID()
+
 	// Persist the message + start execution or signal the running drain loop.
-	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally, and
-	// may inject the message into the running turn instead of queueing it.
+	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally.
 	// msgID is the persisted DB id — used to emit a user_message event carrying
 	// the real id (not 0) for cross-device sync.
 	_, _, msgID, err := EnqueueAndMaybeStart(EnqueueStartConfig{
@@ -165,22 +207,42 @@ func sendMessageToSessionFromPush(sessionID, message string) error {
 		BackendName: info.Backend,
 		AgentID:     info.AgentID,
 		Message:     message,
+		Files:       files,
+		QueueID:     queueID,
 	})
 	if err != nil {
 		return err
 	}
 
 	// Emit user_message for cross-device sync. MessageID is the persisted DB id.
+	// Files ride along so a client that is watching this session renders the
+	// attachment bubble without a reload. QueueID lets that client anchor the
+	// streaming reply to this bubble.
 	ws.EmitToSession(sessionID, ai.StreamEvent{
 		Type: "user_message",
 		UserMessage: &ai.UserMessageData{
 			MessageID: msgID,
 			Content:   message,
+			Files:     files,
+			QueueID:   queueID,
 		},
 	})
 
 	return nil
 }
+
+// newPushQueueID mints a queue id for a message that arrives from an IM
+// backend, which (unlike the web client) has no queue id of its own.
+//
+// The format mirrors the fallback in AddQueuedMessage so ids from both paths
+// look alike; uniqueness comes from the timestamp plus a monotonic counter, not
+// from randomness, so a burst of messages cannot collide on a coarse clock.
+func newPushQueueID() string {
+	return fmt.Sprintf("q-%s-%d", time.Now().Format("20060102150405"), pushQueueSeq.Add(1))
+}
+
+// pushQueueSeq disambiguates push queue ids minted within the same second.
+var pushQueueSeq atomic.Int64
 
 // LaunchConfig configures a session execution launched from non-HTTP contexts.
 type LaunchConfig struct {

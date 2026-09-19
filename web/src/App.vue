@@ -548,6 +548,14 @@ import { useAndroidBackPress } from './composables/useAndroidBackPress'
 import { useDirectoryReturn } from './composables/useDirectoryReturn'
 import { store } from './stores/app.ts'
 import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
+import {
+  beginPanelSwitch,
+  endPanelSwitch,
+  isPanelSwitchInFlight,
+  loadProjectPanel,
+  resolvePanelTab,
+  saveProjectPanel,
+} from './composables/useProjectPanel.ts'
 import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
@@ -607,6 +615,29 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   if (previousProjectPath) {
     navigationByProject.set(previousProjectPath, navigation.snapshot())
   }
+  // Suppress panel persistence for the whole switch. setProject() below resets
+  // the store, which nulls `currentFile` and fires the "file closed → fall back
+  // to the file manager" watcher; without this guard that watcher would rewrite
+  // the left tab, and the panel-save watcher would write the OLD project's tab
+  // into the NEW project's key. Opened before setProject() so no reset-triggered
+  // write can slip through.
+  beginPanelSwitch()
+  // Release the suppression exactly once, on whichever comes first:
+  //   - the hand-off before Phase 7 (normal path), so the pending navigation's
+  //     landing panel is recorded as this project's panel; or
+  //   - the `finally` below (early return, thrown error, rejected await).
+  // The finally is what makes this leak-proof. Callers invoke hotSwitchProject
+  // fire-and-forget with a swallowing `.catch()`, so an exception raised anywhere
+  // between here and the hand-off would otherwise strand the flag at >= 1 and
+  // silently disable panel persistence for the rest of the session — no log, no
+  // error, and exactly the failure mode this feature exists to fix.
+  let panelSwitchReleased = false
+  const releasePanelSwitch = () => {
+    if (panelSwitchReleased) return
+    panelSwitchReleased = true
+    endPanelSwitch()
+  }
+  try {
   // ── Phase 1: Fade out ──
   switchingProject.value = true
   await nextTick()
@@ -620,7 +651,8 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   try {
     resolvedProjectPath = await store.setProject(newProjectPath)
   } catch (err) {
-    // Project doesn't exist — revert fade-out and show error
+    // Project doesn't exist — revert fade-out and show error.
+    // The panel-switch flag is released by the outer `finally`.
     switchingProject.value = false
     const msgKey = (err as Error & { msgKey?: string })?.msgKey
     if (msgKey === 'NotADirectory') {
@@ -685,24 +717,35 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
     loadSSHInfo(),
     loadTerminalStatus(),
   ])
-  // Workspace restore is awaited (separately from the fire-and-forget batch)
-  // because it may switch the active tab (activateView). Awaiting it here —
-  // BEFORE the Phase 7 pending-navigation switch — makes the final tab
-  // deterministic: without this, a deep-link navigation below could race with
-  // restore's switchTab('view') and the landing tab would depend on async
-  // completion order. When a pending navigation exists, restore must NOT
-  // re-activate the file-view tab at all, otherwise it would clobber the
-  // navigation target.
-  //
-  // activateView stays false even without pending navigation: switching
-  // projects must land on the chat tab just like cold start — the restored
-  // file loads into state (header badge shows it) but the user stays in chat.
-  // Previously the file-view tab was re-activated on project switch, which
-  // made the landing tab differ from cold start (regression: switching
-  // projects jumped away from chat whenever the project had a last-opened
-  // file). The user can still open the file by clicking the header badge.
-  await restoreProjectWorkspace({ activateView: false })
+  // Workspace restore is awaited so `currentFile` is populated BEFORE the
+  // remembered panel is applied — a remembered 'view' panel is only meaningful
+  // once the file it should display actually exists in state.
+  await restoreProjectWorkspace()
   if (isAppMode.value) syncToNative().catch(() => {})
+
+  // Apply this project's remembered panel. Ordering matters twice over:
+  //   - after restore, so `currentFile` is already set (see above);
+  //   - before releasePanelSwitch(), so the read sees THIS project's record and
+  //     not anything the switching watchers might have written.
+  // The write-back is explicit because the save watcher is still suppressed: it
+  // also normalizes the record (e.g. a remembered 'view' with no surviving file
+  // is stored back as 'browse', so the fallback does not have to be recomputed).
+  //
+  // Re-entrancy guard: a second switch can start and finish while this one is
+  // awaiting (the callers are not serialized), leaving the store on a different
+  // project. Applying this older switch's panel would drag the user to the wrong
+  // project's tab, and writing `currentPanelTab` would record the NEWER project's
+  // panel under this one's key. The latest completed switch owns the landing
+  // state, so this one stands down.
+  if (store.state.projectRoot === resolvedProjectPath) {
+    const rememberedPanel = loadProjectPanel(resolvedProjectPath)
+    applyPanelTab(resolvePanelTab(rememberedPanel, isWideScreen.value, !!store.state.currentFile))
+    saveProjectPanel(resolvedProjectPath, currentPanelTab.value)
+  }
+  // Re-enable panel persistence before Phase 7: a pending navigation switches to
+  // tasks or opens a session, and THAT landing panel is what the user should come
+  // back to the next time this project is opened.
+  releasePanelSwitch()
 
   // ── Phase 7: Handle cross-project pending navigation ──
   if (pendingTaskNav) {
@@ -737,6 +780,12 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
       isStillRelevant: () => store.state.projectRoot === resolvedProjectPath,
     })
   }
+  } finally {
+    // Backstop for every other exit: the setProject() failure return above, a
+    // thrown error, or a rejected await. Idempotent, so the normal path's
+    // earlier release is not double-counted.
+    releasePanelSwitch()
+  }
 }
 
 const activeTab = ref('chat')
@@ -748,6 +797,36 @@ const chatActive = computed(() => (isWideScreen.value ? 'chat' : activeTab.value
 const leftPanelActive = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
 const panelIsActive = (tabId: string) =>
   isWideScreen.value ? leftTab.value === tabId : activeTab.value === tabId
+
+// The panel the user is currently on, in the layout's own terms: the left column
+// tab on a wide screen, the single active tab on a narrow one. This is what
+// gets remembered per project (see useProjectPanel.ts).
+const currentPanelTab = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
+
+/**
+ * Show `tab` as the active panel, routing to whichever mechanism owns it:
+ * the wide-screen dock, or the narrow-mode tab. Both accept the same tab ids.
+ *
+ * Idempotent, but NOT side-effect-free: `switchLeftTab` early-returns when the
+ * tab is unchanged, which skips its registered `sideEffects` (reloading the file
+ * list / tasks). Restoring a panel therefore does not guarantee those reloads
+ * ran. That is fine only because every caller restores AFTER
+ * `restoreProjectWorkspace()`, which has already loaded the target directory —
+ * the reload would be a duplicate request. If the file-list load is ever moved
+ * out of that restore, restore the panel first and load explicitly instead of
+ * relying on this call.
+ */
+function applyPanelTab(tab: string) {
+  if (isWideScreen.value) switchLeftTab(tab)
+  else switchTab(tab)
+}
+
+// Remember which panel each project was last on, so switching back restores it.
+// Suppressed during a project switch — see beginPanelSwitch() in hotSwitchProject.
+watch(currentPanelTab, (tab) => {
+  if (isPanelSwitchInFlight()) return
+  saveProjectPanel(store.state.projectRoot, tab)
+})
 
 // Focus-aware keyboard gating: a panel's global shortcuts only fire when the
 // user is actually working in that pane (wide-screen) or that tab (narrow).
@@ -927,6 +1006,38 @@ function handleOpenTask(e: Event) {
   }
 }
 
+/** Payload of the `clawbench-open-forge` event (forge system notification tap). */
+interface OpenForgeDetail { projectPath?: string }
+
+/**
+ * Handle clawbench-open-forge — dispatched when a forge (GitHub/GitLab) system
+ * notification is clicked.
+ *
+ * The forge panel is project-scoped: it shows the repository bound to the
+ * ACTIVE project. A change in a repository bound by another project must
+ * therefore switch projects first, or the user lands on a panel that has no
+ * such row (and the notification looks like a lie). The panel has no item-level
+ * deep link, so the destination is the Issues & PRs tab either way.
+ */
+function handleOpenForge(e: Event) {
+  const detail = (e as CustomEvent<OpenForgeDetail>).detail
+  const projectPath = detail?.projectPath
+  if (!projectPath || projectPath === store.state.projectRoot) {
+    // Same project (or the event carried no attribution): nothing to switch.
+    switchTab('forge')
+    return
+  }
+  // hotSwitchProject resolves even when the target project is unusable — it
+  // toasts and returns early rather than rejecting — so the tab is opened after
+  // the attempt settles either way. That is also the right fallback: the user
+  // lands on the forge panel they can actually see, instead of nothing happening.
+  hotSwitchProject(projectPath)
+    .catch(() => {
+      appLog.w(TAG, 'clawbench-open-forge: project switch threw, opening current project')
+    })
+    .finally(() => switchTab('forge'))
+}
+
 // Register browse-scoped drawers with tab-drawer binding
 const detailsDrawer = useTabDrawer('view')
 const tocDrawer = useTabDrawer('view')
@@ -1094,15 +1205,12 @@ function closeOverlayAndSync() {
  * switch (hotSwitchProject) — keeps both paths in sync and avoids divergence.
  * If the saved file can no longer be opened (deleted/moved), its stale record
  * is cleared so it isn't retried and re-reported on every launch/switch.
+ *
+ * The landing panel is NOT decided here: it is remembered per project and
+ * applied by the caller afterwards (applyPanelTab), once `currentFile` exists.
  */
-async function restoreProjectWorkspace(opts: { activateView?: boolean } = {}) {
-  // activateView: on cold start (initializeApp) AND project switch
-  // (hotSwitchProject) the app must land on the chat tab — restoring the last
-  // opened file loads it into state but does NOT switch the user away from
-  // chat. Both paths stay consistent: no project switch re-activates the
-  // file-view tab anymore (regression: switching projects jumped to the file
-  // viewer whenever the project had a last-opened file).
-  return restoreProjectWorkspaceImpl({ switchTab, ...opts })
+async function restoreProjectWorkspace() {
+  return restoreProjectWorkspaceImpl()
 }
 
 const { isAppMode } = useAppMode()
@@ -1461,6 +1569,7 @@ function registerAppEventListeners() {
   window.addEventListener('attach-to-chat', playQuoteEmitAnimation)
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
+  window.addEventListener('clawbench-open-forge', handleOpenForge)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
       const resolved = (e as CustomEvent<string>).detail
@@ -1549,6 +1658,11 @@ async function initializeApp() {
   // Restore last browsed directory + last opened file (per-project), falling
   // back to the project root if the saved dir/file no longer exists.
   await restoreProjectWorkspace()
+  // Then restore the panel this project was last on. Done as state (not via a
+  // component ref) because the app subtree is not mounted yet — isAuthenticated
+  // only flips after this function resolves, so the dock/file manager do not
+  // exist here. `currentFile` is already populated by the restore above.
+  applyPanelTab(resolvePanelTab(loadProjectPanel(store.state.projectRoot), isWideScreen.value, !!store.state.currentFile))
   return true
 }
 
@@ -1694,7 +1808,12 @@ watch(() => currentFile.value, (file, prevFile) => {
     markdownViewMode.value = 'rendered'
     // When the open file is closed while the user is on the file-view tab,
     // fall back to the file manager tab automatically.
-    if (!file && prevFile) {
+    //
+    // Skipped during a project switch: resetProjectState() nulls `currentFile`
+    // on every switch, so this would fire unconditionally and rewrite the left
+    // tab to 'browse' — destroying the tab we are about to restore. The panel is
+    // restored from the target project's own record instead (issue #474).
+    if (!file && prevFile && !isPanelSwitchInFlight()) {
         const currentTab = isWideScreen.value ? leftTab.value : activeTab.value
         if (currentTab === 'view') switchTab('browse')
     }
@@ -1746,37 +1865,66 @@ async function handleNavigateDir(path: string) {
 // Overlay closing is expressed as (predicate, action) pairs so the back state
 // machine can *ask* whether an overlay would absorb the press without closing
 // it. Android needs that answer synchronously, before any navigation runs.
-const topmostOverlayClosers = [
+//
+// SCOPE RULE — these lists are ONLY for overlays that cannot handle back
+// themselves. Every BottomSheet (session drawer, agent selector, ACP sessions,
+// file search / history / details, TOC on narrow screens…) registers its own
+// priority handler in BottomSheet.vue, ranked by instance creation order so a
+// drawer created later (e.g. the agent selector, rendered after the session
+// drawer it nests inside) outranks the one beneath it. Listing a BottomSheet
+// here shadows that ranking: these lists are consulted first and close by array
+// position, not by which drawer is on top.
+//
+// That is exactly the "swipe once does nothing, swipe twice closes both" bug:
+// with the session drawer enumerated, the first swipe closed it while the agent
+// selector opened *inside* it stayed on screen (its scrim hid the session list,
+// so nothing appeared to happen), and the second swipe then closed the selector.
+//
+// LAYERING RULE — because the drawers now sit in the middle of the dispatch,
+// what is left is split by where it stacks relative to them, so the press
+// always lands on whatever is actually topmost:
+//   above  → drawn over every drawer (share modal, z-index 2500 vs 1000)
+//   middle → the registered drawers, dispatched by priority
+//   below  → in-flow panels inside a tab's content, which any open drawer covers
+// Closing a "below" panel while a drawer is on top is the same "nothing
+// happened" symptom, so those must be tried last.
+const overlayClosersAboveDrawers = [
   { open: () => shareLinkOpen.value, close: () => { shareLinkOpen.value = false } },
-  { open: () => detailsDrawer.effectiveOpen.value && fileNav.overlayOpen.value, close: () => detailsDrawer.close() },
-  { open: () => fileHistoryDrawer.effectiveOpen.value, close: () => fileHistoryDrawer.close() },
+]
+
+// In-flow panels inside the file view. They have no handler of their own, and
+// an open drawer's scrim covers them — so they are only reachable once no
+// drawer absorbed the press. The TOC dock is wide-screen-only: on narrow
+// screens the TOC is a BottomSheet (TocDrawer) and closes through its own
+// registration, so pairing the dock with isWideScreen selects that branch.
+const overlayClosersBelowDrawers = [
   { open: () => viewSearchActive.value, close: () => closeViewSearch() },
-  {
-    open: () => effectiveTocOpen.value,
-    close: () => {
-      if (tocDockPref.effectiveOpen.value) tocDockPref.close()
-      if (tocDrawer.effectiveOpen.value) tocDrawer.close()
-    },
-  },
-  { open: () => searchDrawer.effectiveOpen.value, close: () => searchDrawer.close() },
-  { open: () => sessionIdentity.sessionDrawer.effectiveOpen.value, close: () => sessionIdentity.sessionDrawer.close() },
-  { open: () => sessionSearchDrawer.effectiveOpen.value, close: () => sessionSearchDrawer.close() },
-  { open: () => acpSessionDrawer.effectiveOpen.value, close: () => acpSessionDrawer.close() },
+  { open: () => isWideScreen.value && effectiveTocOpen.value, close: () => tocDockPref.close() },
 ]
 
 function hasTopmostOverlay() {
-  if (topmostOverlayClosers.some((overlay) => overlay.open())) return true
-  return canNavigateBackOverlay()
+  if (overlayClosersAboveDrawers.some((overlay) => overlay.open())) return true
+  if (canNavigateBackOverlay()) return true
+  return overlayClosersBelowDrawers.some((overlay) => overlay.open())
 }
 
 function closeTopmostOverlay() {
-  for (const overlay of topmostOverlayClosers) {
+  for (const overlay of overlayClosersAboveDrawers) {
     if (overlay.open()) {
       overlay.close()
       return true
     }
   }
-  return handleBackNavigationOverlay()
+  // Registered drawers — ordered by open sequence, so the topmost wins. Must
+  // run before the "below" group: those panels are hidden behind a drawer.
+  if (handleBackNavigationOverlay()) return true
+  for (const overlay of overlayClosersBelowDrawers) {
+    if (overlay.open()) {
+      overlay.close()
+      return true
+    }
+  }
+  return false
 }
 
 navCoordinator = useNavigationCoordinator({
@@ -2522,7 +2670,10 @@ provide('hotSwitchProject', hotSwitchProject)
 // Lightbox — expose open/openMdImages/openSvg via ref and provide at App level
 // so TableRowModal (in <main> subtree, not Lightbox's subtree) can inject them
 const lightboxRef = ref<InstanceType<typeof Lightbox> | null>(null)
-provide('openLightbox', (url: string, svg?: string) => lightboxRef.value?.open(url, svg))
+// The optional third arg is the image's file path: callers whose image is not
+// the store's currently-opened file (file-manager quick preview) need it so the
+// filename, sibling navigation and Download target resolve correctly.
+provide('openLightbox', (url: string, svg?: string, filePath?: string) => lightboxRef.value?.open(url, svg, filePath))
 provide('openSvgLightbox', (svg: string) => lightboxRef.value?.openSvg(svg))
 provide('openMdImages', (imgs: string[], idx: number) => lightboxRef.value?.openMdImages(imgs, idx))
 
@@ -2896,6 +3047,7 @@ onUnmounted(() => {
     window.removeEventListener('attach-to-chat', playQuoteEmitAnimation)
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
+    window.removeEventListener('clawbench-open-forge', handleOpenForge)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
     stopFlushTimer()

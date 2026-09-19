@@ -178,6 +178,64 @@ func TestForgeDispatcher_PayloadCarriesItemIdentity(t *testing.T) {
 	assert.Equal(t, item.URL, it["url"], "the item URL must be present for deep-linking")
 }
 
+// TestForgeDispatcher_PayloadEventKeysAreSnakeCase pins the wire shape of the
+// `event` object. It is built by hand rather than by marshaling ForgeEvent
+// (which has no json tags) so the browser notification path can read the
+// transition and item identity by a documented name. A regression to struct
+// marshaling would emit "EventType" and silently break the notification text.
+func TestForgeDispatcher_PayloadEventKeysAreSnakeCase(t *testing.T) {
+	var payload map[string]any
+	d := service.NewForgeEventDispatcher(fullNotifyConfig, func(msg any) {
+		payload = msg.(map[string]any)
+	}, nil)
+
+	d.HandleChange(context.Background(), service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"},
+		testItem(), forge.Change{Type: forge.EventMerged, Number: 1})
+
+	require.NotNil(t, payload)
+	ev, ok := payload["event"].(map[string]any)
+	require.True(t, ok, "event must be a map, not a struct (struct marshaling is PascalCase)")
+	assert.Equal(t, "github", ev["platform"])
+	assert.Equal(t, "github.com", ev["host"])
+	assert.Equal(t, "acme", ev["owner"])
+	assert.Equal(t, "widgets", ev["repo"])
+	assert.Equal(t, "merged", ev["event_type"])
+	assert.Equal(t, 1, ev["number"])
+	// Internal bookkeeping must not reach the wire.
+	assert.NotContains(t, ev, "DedupeKey")
+	assert.NotContains(t, ev, "ItemKey")
+	assert.NotContains(t, ev, "EventType", "PascalCase key means the struct was marshaled directly")
+}
+
+// TestForgeDispatcher_PayloadCarriesProjectPath pins the field the frontend
+// needs to navigate to the right project. The unread badge and the forge panel
+// are project-scoped, so without it a notification clicked while another
+// project is active opens a panel where the row does not exist.
+func TestForgeDispatcher_PayloadCarriesProjectPath(t *testing.T) {
+	var payload map[string]any
+	d := service.NewForgeEventDispatcher(fullNotifyConfig, func(msg any) {
+		payload = msg.(map[string]any)
+	}, nil)
+
+	d.HandleChange(context.Background(), service.ForgeRepoRef{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ProjectPath: "/home/u/proj-b",
+	}, testItem(), forge.Change{Type: forge.EventClosed, Number: 1})
+
+	require.NotNil(t, payload)
+	ev := payload["event"].(map[string]any)
+	assert.Equal(t, "/home/u/proj-b", ev["project_path"])
+}
+
+// TestForgeRepoRef_KeyIgnoresProjectPath guards the debounce bucket identity:
+// the same repository bound by two projects must remain ONE bucket, otherwise
+// a burst affecting both bindings would be debounced twice independently.
+func TestForgeRepoRef_KeyIgnoresProjectPath(t *testing.T) {
+	a := service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b", ProjectPath: "/proj/one"}
+	b := service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b", ProjectPath: "/proj/two"}
+	assert.Equal(t, a.Key(), b.Key(), "project path must not split the repo identity")
+}
+
 func TestFormatForgeEventMessage(t *testing.T) {
 	event := service.ForgeEvent{
 		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",

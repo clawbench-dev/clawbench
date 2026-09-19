@@ -2,9 +2,9 @@ package ai
 
 import (
 	"log/slog"
-	"regexp"
 	"strings"
 
+	"clawbench/internal/askquestion"
 	"clawbench/internal/model"
 
 	"github.com/google/uuid"
@@ -23,7 +23,7 @@ func StringsContainsAnyBlock(blocks []model.ContentBlock, substr string) bool {
 // RemoveRejectedToolBlocks strips tool_use blocks that were rejected by the CLI
 // (Status=="error" and output contains "not found in agent cli"). These occur when
 // the AI model hallucinates tool names (e.g. "/commit" as a slash command, or
-// "AskUserQuestion" when <ask-question> XML tags are also emitted). The rejected
+// "AskUserQuestion" when <clawbench-ask-question> XML tags are also emitted). The rejected
 // tool_use block and its matching warning are confusing noise for the user.
 // Also removes warning blocks containing the "Tool <name> not found in agent cli" pattern.
 func RemoveRejectedToolBlocks(blocks []model.ContentBlock) []model.ContentBlock {
@@ -72,15 +72,26 @@ func RemoveRejectedToolBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 	return filtered
 }
 
-// ConvertAskQuestionBlocks detects <ask-question> tags in text ContentBlocks,
-// parses the XML content, and converts them into tool_use ContentBlocks with
-// name="AskUserQuestion". Tags are stripped from text; if no text remains the
-// block is replaced entirely, otherwise a new tool_use block is appended.
+// ConvertAskQuestionBlocks detects <clawbench-ask-question> tags in text ContentBlocks,
+// parses their payloads, and converts them into a single tool_use ContentBlock
+// with name="AskUserQuestion".
 //
-// Tolerates three closing-tag variants:
-//  1. Standard </ask-question>
-//  2. Non-standard closing tags (e.g. </user_query>, obfuscated tags)
-//  3. No closing tag at all (tag runs to end-of-text)
+// Parsing is delegated to internal/askquestion — the same implementation the
+// frontend mirrors (web/src/utils/askQuestion.ts) — so a payload is understood
+// identically on both sides.
+//
+// Two behaviors differ from the previous implementation, both deliberate:
+//
+//   - Every tag in a text block is converted, not just the last one. 27% of
+//     production text blocks contain two or more tags; previously all but the
+//     last leaked as raw XML.
+//   - All tags of one text block merge into ONE tool block. Emitting one per
+//     tag would create a random id and a DB row per tag, and the frontend
+//     merges ask cards anyway (shouldMergeAskCards), so a single block produces
+//     the same UI with less churn.
+//
+// An unparseable tag is left in the text block verbatim (never stripped): its
+// raw text is the only remaining copy of the question.
 //
 // Returns the updated blocks slice.
 func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock {
@@ -88,29 +99,11 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 	// Without this, modifying blocks[i].Text below would also modify
 	// the caller's slice (e.g. SessionExecutor.e.blocks) because
 	// Go slices share the underlying array. This caused a bug where
-	// buildResult's postProcessBlocks stripped <ask-question> tags
+	// buildResult's postProcessBlocks stripped <clawbench-ask-question> tags
 	// from e.blocks, then Finalize's postProcessBlocks couldn't
 	// detect the tags anymore — resulting in the AskUserQuestion
 	// tool_use block being lost from chat_history.content.
 	blocks = append([]model.ContentBlock(nil), blocks...)
-
-	// Pre-compiled regexes for the three matching strategies.
-	reStandard := regexp.MustCompile(`<ask-question\b[^>]*>([\s\S]*?)</ask-question>`)
-	reWrongClose := regexp.MustCompile(`<ask-question\b[^>]*>([\s\S]*?)</[^>]+>`)
-	reUnclosed := regexp.MustCompile(`<ask-question\b[^>]*>([\s\S]+)$`)
-
-	findAskMatch := func(text string) (string, int, int) {
-		for _, re := range []*regexp.Regexp{reStandard, reWrongClose, reUnclosed} {
-			matches := re.FindAllStringSubmatchIndex(text, -1)
-			for j := len(matches) - 1; j >= 0; j-- {
-				pair := matches[j]
-				if candidate := extractXMLCandidate(text[pair[2]:pair[3]]); candidate != "" {
-					return candidate, pair[0], pair[1]
-				}
-			}
-		}
-		return "", -1, -1
-	}
 
 	type conversion struct {
 		index     int
@@ -119,35 +112,36 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 	}
 	var conversions []conversion
 
-	for i, block := range blocks {
-		if block.Type != "text" || !strings.Contains(block.Text, "<ask-question") {
+	for i := range blocks {
+		block := &blocks[i]
+		if block.Type != "text" || !strings.Contains(block.Text, "<clawbench-ask-question") {
 			continue
 		}
 
-		xmlContent, tagStart, tagEnd := findAskMatch(block.Text)
-		if xmlContent == "" {
+		matches := askquestion.Extract(block.Text)
+		items := askquestion.AllItems(matches)
+		if len(items) == 0 {
+			// Nothing parsed. Strip the wrapper anyway so the payload degrades
+			// to readable Markdown instead of leaking raw tags into the
+			// conversation; Strip replaces each unparsed span with its inner
+			// text, so no content is lost.
+			if reasons := askquestion.UnparsedReasons(matches); len(reasons) > 0 {
+				slog.Warn(
+					"clawbench-ask-question payload unparseable, rendering as markdown",
+					slog.Any("reasons", reasons),
+				)
+				if clean := strings.TrimSpace(askquestion.Strip(block.Text, matches)); clean != strings.TrimSpace(block.Text) {
+					block.Text = clean
+				}
+			}
 			continue
 		}
 
-		input := parseAskQuestionXML(xmlContent)
-		if input == nil {
-			slog.Error("failed to parse ask-question XML content")
-			continue
-		}
-
-		questions, ok := input["questions"]
-		if !ok {
-			slog.Error("ask-question missing 'questions' field")
-			continue
-		}
-		questionsArr, ok := questions.([]map[string]any)
-		if !ok || len(questionsArr) == 0 {
-			slog.Error("ask-question 'questions' must be a non-empty array")
-			continue
-		}
-
-		cleanText := strings.TrimSpace(block.Text[:tagStart] + block.Text[tagEnd:])
-		conversions = append(conversions, conversion{index: i, input: input, cleanText: cleanText})
+		conversions = append(conversions, conversion{
+			index:     i,
+			input:     askquestion.ToInputMap(items),
+			cleanText: strings.TrimSpace(askquestion.Strip(block.Text, matches)),
+		})
 	}
 
 	for i := len(conversions) - 1; i >= 0; i-- {
@@ -173,93 +167,4 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 	// function returns — no need to call it here.
 
 	return blocks
-}
-
-// extractXMLCandidate checks if the content between <ask-question> tags contains
-// valid XML with <item> child elements.
-func extractXMLCandidate(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	if strings.Contains(trimmed, "<item>") || strings.Contains(trimmed, "<item ") {
-		if !strings.Contains(trimmed, "<question>") || !strings.Contains(trimmed, "<option>") {
-			return ""
-		}
-		return trimmed
-	}
-	return ""
-}
-
-// parseAskQuestionXML parses XML-format <ask-question> content into the
-// map[string]any format expected by ContentBlock.Input for "AskUserQuestion" tool.
-func parseAskQuestionXML(xmlContent string) map[string]any {
-	reItem := regexp.MustCompile(`(?s)<item>(.*?)</item>`)
-	reHeader := regexp.MustCompile(`(?s)<header>(.*?)</header>`)
-	reMultiSelect := regexp.MustCompile(`(?s)<multi-select>(.*?)</multi-select>`)
-	reQuestion := regexp.MustCompile(`(?s)<question>(.*?)</question>`)
-	reOption := regexp.MustCompile(`(?s)<option>(.*?)</option>`)
-	reLabel := regexp.MustCompile(`(?s)<label>(.*?)</label>`)
-	reDesc := regexp.MustCompile(`(?s)<description>(.*?)</description>`)
-
-	itemMatches := reItem.FindAllStringSubmatch(xmlContent, -1)
-	if len(itemMatches) == 0 {
-		return nil
-	}
-
-	var questions []map[string]any
-	for _, itemMatch := range itemMatches {
-		itemContent := itemMatch[1]
-
-		headerMatch := reHeader.FindStringSubmatch(itemContent)
-		header := ""
-		if headerMatch != nil {
-			header = strings.TrimSpace(headerMatch[1])
-		}
-
-		multiSelectMatch := reMultiSelect.FindStringSubmatch(itemContent)
-		multiSelect := false
-		if multiSelectMatch != nil {
-			multiSelect = strings.TrimSpace(multiSelectMatch[1]) == "true"
-		}
-
-		questionMatch := reQuestion.FindStringSubmatch(itemContent)
-		if questionMatch == nil {
-			continue
-		}
-		question := strings.TrimSpace(questionMatch[1])
-
-		optionMatches := reOption.FindAllStringSubmatch(itemContent, -1)
-		var options []map[string]any
-		for _, optMatch := range optionMatches {
-			optContent := optMatch[1]
-			labelMatch := reLabel.FindStringSubmatch(optContent)
-			if labelMatch == nil {
-				continue
-			}
-			opt := map[string]any{"label": strings.TrimSpace(labelMatch[1])}
-			descMatch := reDesc.FindStringSubmatch(optContent)
-			if descMatch != nil {
-				opt["description"] = strings.TrimSpace(descMatch[1])
-			}
-			options = append(options, opt)
-		}
-
-		if len(options) == 0 {
-			continue
-		}
-
-		questions = append(questions, map[string]any{
-			"header":      header,
-			"multiSelect": multiSelect,
-			"question":    question,
-			"options":     options,
-		})
-	}
-
-	if len(questions) == 0 {
-		return nil
-	}
-
-	return map[string]any{"questions": questions}
 }

@@ -78,6 +78,54 @@ func DeleteFeishuSubscriber(userID string) error {
 	return nil
 }
 
+// GetFeishuLastSessionID returns the session the user last addressed from
+// Feishu, or "" when none was recorded. This is the sticky target for messages
+// that carry no "@{shortID}" prefix.
+//
+// An empty result is a normal state (never addressed a session, or a database
+// from before the column existed) and the caller must fall back to the "/ls"
+// hint rather than pick a session on the user's behalf.
+func GetFeishuLastSessionID(userID string) (string, error) {
+	if dbRead == nil {
+		return "", nil
+	}
+	var sessionID string
+	err := dbRead.QueryRow(
+		`SELECT last_session_id FROM feishu_subscribers WHERE user_id = ?`, userID,
+	).Scan(&sessionID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return sessionID, nil
+}
+
+// SetFeishuLastSessionID records the user's sticky target. It is called only
+// after a message was successfully routed to that session, so a failed send
+// never moves the target.
+//
+// The row is expected to exist (UpsertSubscriber runs on every inbound
+// message); a missing row is reported as an error rather than silently
+// inserting a partial subscriber.
+func SetFeishuLastSessionID(userID, sessionID string) error {
+	if db == nil {
+		return nil
+	}
+	result, err := WriteExec(
+		`UPDATE feishu_subscribers SET last_session_id = ? WHERE user_id = ?`,
+		sessionID, userID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // MergeFeishuConfigSubscribers merges config.yaml static users into the DB.
 // Users from config are upserted with source='manual'. Users already in DB
 // with source='manual' but no longer in config are removed.

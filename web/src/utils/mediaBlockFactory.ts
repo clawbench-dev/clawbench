@@ -57,7 +57,8 @@ function stampLightboxImg(el: Element): void {
  * bare `svg.lightbox-svg` (marker class added by markInlineSvgs in the chat
  * pipeline; bare svg in file previews is left as-is, as before).
  * SVG elements still inside an interactive UI element injected by the pipeline
- * (a/button) are skipped — they are not content media.
+ * (a/button), or inside KaTeX-rendered markup, are skipped — they are not
+ * content media.
  *
  * Media are inline-flow in the marked output; lifting them to block requires:
  *   - media alone in a <p> → the <p> is replaced by the figure;
@@ -71,6 +72,19 @@ function stampLightboxImg(el: Element): void {
 export function annotateMediaBlocks(html: string): string {
     if (!html) return html
     const doc = new DOMParser().parseFromString(html, 'text/html')
+    annotateMediaBlocksIn(doc)
+    return doc.body.innerHTML
+}
+
+/**
+ * Lift every <img> / bare inline <svg> into the bordered block figure, mutating
+ * the given Document in place.
+ *
+ * Split out so the markdown pipeline can run several annotation steps over ONE
+ * parsed document instead of each step paying its own `parseFromString` +
+ * `body.innerHTML` round trip.
+ */
+export function annotateMediaBlocksIn(doc: Document): void {
 
     // Iterate a snapshot: each pass moves the element, so a live NodeList would skip.
     const media = Array.from(doc.querySelectorAll('img, svg.lightbox-svg'))
@@ -86,6 +100,12 @@ export function annotateMediaBlocks(html: string): string {
             continue
         }
         if (isSvg && el.closest('button')) continue // UI icon, not content
+        // KaTeX draws stretchy delimiters (\underbrace, \sqrt, \xrightarrow …)
+        // with its own internal <svg> glyph fragments. They are formula layout,
+        // not content media — lifting one into a block figure tears the formula
+        // apart and blows the message width out (issue #473). markInlineSvgs
+        // already declines to mark them; this is the authoritative guard.
+        if (isSvg && el.closest('.katex')) continue
 
         const isLocal = el.hasAttribute('data-attach-src')
         const shareMode = isShareMode()
@@ -192,8 +212,6 @@ export function annotateMediaBlocks(html: string): string {
             host.replaceWith(frag)
         }
     }
-
-    return doc.body.innerHTML
 }
 
 /**

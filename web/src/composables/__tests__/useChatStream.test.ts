@@ -3260,5 +3260,56 @@ describe('useChatStream', () => {
         .join('')
       expect(text.match(/held/g)?.length).toBe(1)
     })
+
+    it('push-sent message: reply stays below its question when stream_start races ahead of user_message', () => {
+      // Regression: a message sent from DingTalk/Feishu reaches the client as
+      // two independent WS events — stream_start (emitted by the async execution
+      // goroutine) and user_message (emitted after the launch call returns).
+      // stream_start can therefore arrive FIRST. Before the backend threaded a
+      // queue id through the push path, stream_start carried no answeredQueueId,
+      // so the placeholder fell back to "newest user message" — the PREVIOUS
+      // question — and the reply rendered above its own question until a reload.
+      const options = createOptions()
+      useChatStream(options)
+
+      // An older question already on screen.
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 100, content: 'older question',
+        blocks: [{ type: 'text', text: 'older question' }],
+      } })
+      // And its reply, already committed.
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'assistant', id: 101, content: 'older reply',
+        blocks: [{ type: 'text', text: 'older reply' }],
+      } })
+
+      // The push message's reply starts BEFORE the question bubble arrives.
+      simulateWsEvent('stream_start', { message_id: 202, queue_id: 'push-q-1' })
+      // Then the question bubble lands, carrying the same queue id.
+      simulateWsEvent('user_message', {
+        messageId: 200, content: 'from dingtalk', queueId: 'push-q-1',
+      })
+
+      const users = options.messages.value.filter((m: any) => m.role === 'user')
+      const question = users.find((m: any) => m.content === 'from dingtalk')
+      expect(question, 'the pushed question must render').toBeDefined()
+
+      const qIdx = options.messages.value.indexOf(question)
+      const reply = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.id === 202
+      )
+      expect(reply, 'the reply placeholder must render').toBeDefined()
+      const rIdx = options.messages.value.indexOf(reply)
+
+      const olderReplyIdx = options.messages.value.indexOf(
+        options.messages.value.find((m: any) => m.id === 101)
+      )
+
+      // Correct order is 100 (older q), 101 (older reply), 200 (new q), 202 (new reply).
+      expect(rIdx, 'the reply must sort BELOW its own question').toBeGreaterThan(qIdx)
+      // With the bug the reply anchored to the OLDER question (100) and sorted
+      // above the older reply (101) — this is the assertion that pins that.
+      expect(rIdx, 'the reply must sort BELOW the older reply').toBeGreaterThan(olderReplyIdx)
+    })
   })
 })

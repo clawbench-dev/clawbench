@@ -67,6 +67,16 @@ describe('codeLinkPreview utils', () => {
       expect(res.renderTruncated).toBe(false)
     })
 
+    it('does not flag a line annotation as out of range on an empty file', () => {
+      // A zero-byte file has no lines, so there is nothing for an annotation to
+      // be out of range OF. Reporting the notice here would tell the user their
+      // line reference is wrong when the file is simply blank.
+      const res = sliceCodeForPreview('', 5, 5)
+      expect(res.totalLines).toBe(0)
+      expect(res.lineOutOfRange).toBe(false)
+      expect(res.code).toBe('')
+    })
+
     it('slices with default 30 lines when no line range is given', () => {
       const res = sliceCodeForPreview(sampleCode)
       expect(res.startLine).toBe(1)

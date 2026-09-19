@@ -11,6 +11,7 @@ import {
   THUMB_DEFAULT_WIDTH,
   THUMB_MOBILE_WIDTH,
 } from '@/utils/chatRenderUtils.ts'
+import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
 
 // ─── rewriteImageUrls ────────────────────────────────────────────────────────
 
@@ -582,23 +583,14 @@ describe('convertVideoLinks', () => {
   })
 })
 
-// ─── parseAskQuestionContent (XML format) ────────────────────────────────────
+// ─── parseAskQuestionContent (native Markdown payload) ───────────────────────
 
 describe('parseAskQuestionContent', () => {
-  it('parses XML format with single item', () => {
-    const input = `<item>
-    <header>Approach</header>
-    <multi-select>false</multi-select>
-    <question>Which approach?</question>
-    <option>
-      <label>Option A</label>
-      <description>Fast</description>
-    </option>
-    <option>
-      <label>Option B</label>
-      <description>Safe</description>
-    </option>
-  </item>`
+  it('parses a native Markdown payload with header, question and options', () => {
+    const input = `**Approach**
+Which approach?
+- Option A — Fast
+- Option B — Safe`
     const result = parseAskQuestionContent(input)
     expect(result).not.toBeNull()
     expect(result!.questions).toHaveLength(1)
@@ -610,69 +602,63 @@ describe('parseAskQuestionContent', () => {
     expect(result!.questions[0].options[0].description).toBe('Fast')
   })
 
-  it('parses multiple items', () => {
-    const input = `<item>
-    <header>Q1</header>
-    <multi-select>false</multi-select>
-    <question>First?</question>
-    <option><label>A</label></option>
-  </item>
-  <item>
-    <header>Q2</header>
-    <multi-select>true</multi-select>
-    <question>Second?</question>
-    <option><label>B</label></option>
-  </item>`
+  it('parses a checkbox list as multi-select', () => {
+    const input = `**Pick**
+Choose several
+- [ ] A
+- [x] B`
     const result = parseAskQuestionContent(input)
     expect(result).not.toBeNull()
-    expect(result!.questions).toHaveLength(2)
-    expect(result!.questions[1].multiSelect).toBe(true)
+    expect(result!.questions).toHaveLength(1)
+    expect(result!.questions[0].multiSelect).toBe(true)
+    expect(result!.questions[0].options.map(o => o.label)).toEqual(['A', 'B'])
   })
 
   it('returns null for plain text', () => {
-    expect(parseAskQuestionContent('not xml at all')).toBeNull()
+    expect(parseAskQuestionContent('not a payload at all')).toBeNull()
   })
 
   it('returns null for empty string', () => {
     expect(parseAskQuestionContent('')).toBeNull()
   })
 
-  it('returns null for XML without item elements', () => {
+  it('returns null for markup with no list', () => {
     expect(parseAskQuestionContent('<something>else</something>')).toBeNull()
   })
 
   it('handles option without description', () => {
-    const input = `<item>
-    <header>Pick</header>
-    <multi-select>false</multi-select>
-    <question>Choose</question>
-    <option><label>Yes</label></option>
-  </item>`
+    const input = `**Pick**
+Choose
+- Yes`
     const result = parseAskQuestionContent(input)
     expect(result).not.toBeNull()
     expect(result!.questions[0].options[0].label).toBe('Yes')
     expect(result!.questions[0].options[0].description).toBeUndefined()
   })
 
-  it('returns null for item without question', () => {
-    const input = `<item>
-    <header>H</header>
-    <multi-select>false</multi-select>
-    <option><label>A</label></option>
-  </item>`
+  // A Markdown payload is a question when it carries a list, so an option list
+  // with no prose question text still presents a choice: the bold title stands
+  // in as the card's question. A payload with no list at all is not a card.
+  it('keeps an item with options but no question text', () => {
+    const input = `**H**
+- A`
+    const result = parseAskQuestionContent(input)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].options[0].label).toBe('A')
+    expect(result!.questions[0].question).toBe('')
+  })
+
+  it('returns null for a question with no list', () => {
+    const input = `**H**
+Q?`
     expect(parseAskQuestionContent(input)).toBeNull()
   })
 
-  it('returns null for item without options', () => {
-    const input = `<item>
-    <header>H</header>
-    <multi-select>false</multi-select>
-    <question>Q?</question>
-  </item>`
-    expect(parseAskQuestionContent(input)).toBeNull()
+  it('returns null for a payload with neither question nor options', () => {
+    expect(parseAskQuestionContent('**H**')).toBeNull()
   })
 
-  it('returns null for JSON content (only XML is supported)', () => {
+  it('returns null for a JSON payload (recovery was removed)', () => {
     const input = '{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"}]}]}'
     expect(parseAskQuestionContent(input)).toBeNull()
   })
@@ -807,6 +793,115 @@ describe('markInlineSvgs (alias wrapInlineSvgs)', () => {
     const result = wrapInlineSvgs(html)
     expect(result).toContain('class="lightbox-svg"')
     expect(result).toContain('data-x="a&gt;b"')
+  })
+
+  it('marks a katex-internal svg when a literal > in a quoted attr hides the ancestry', () => {
+    // The tag regex is `[^>]*`, so a LITERAL `>` inside a quoted attribute
+    // truncates the open tag and the walker misses the `.katex` ancestry on
+    // that element. This is a known limitation of the hand-rolled scanner:
+    // defense 2 in mediaBlockFactory (`closest('.katex')`) is what actually
+    // keeps the formula safe. Pinning the current behavior here means removing
+    // defense 2 cannot silently regress the end-to-end guarantee.
+    const html = '<div data-x="a>b" class="katex">'
+      + '<svg viewBox="0 0 1 1"><path d="M0 0"></path></svg>'
+      + '</div>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('class="lightbox-svg"')
+    // …and the DOM guard still refuses to lift it into a media figure.
+    expect(annotateMediaBlocks(result)).not.toContain('image-block-wrapper')
+  })
+
+  // ── KaTeX internal typography SVGs (issue #473) ──
+  //
+  // KaTeX draws stretchy delimiters (\underbrace, \overbrace, \sqrt,
+  // \xrightarrow, \vec …) with its OWN <svg> glyph fragments nested under
+  // `.katex` wrappers. They are part of the formula layout, not content media:
+  // marking one makes annotateMediaBlocks lift it into a block-level figure,
+  // which destroys the formula and blows the message width out.
+
+  it('does not mark a KaTeX stretchy-delimiter svg (katex-html ancestry)', () => {
+    // Shape of a real KaTeX \underbrace glyph (see katex.min.css .brace-left).
+    const html = '<span class="katex"><span class="katex-html"><span class="stretchy">'
+      + '<svg width="400em" height="0.548em" viewBox="0 0 400000 548"><path d="M0 0"></path></svg>'
+      + '</span></span></span>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toBe(html)
+    expect(result).not.toContain('lightbox-svg')
+  })
+
+  it('does not mark an svg inside katex-display (display-mode formula)', () => {
+    const html = '<span class="katex-display"><span class="katex"><span class="katex-html">'
+      + '<svg viewBox="0 0 400000 548"><path d="M0 0"></path></svg>'
+      + '</span></span></span>'
+    expect(wrapInlineSvgs(html)).toBe(html)
+  })
+
+  it('still marks a content svg that merely follows a formula', () => {
+    // The KaTeX ancestry must not leak past the closing tags: a bare svg after
+    // a formula is still content media and must get the marker.
+    const html = '<span class="katex"><span class="katex-html">x</span></span>'
+      + '<svg viewBox="0 0 10 10"><rect></rect></svg>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('class="lightbox-svg"')
+    expect(result.match(/class="lightbox-svg"/g)).toHaveLength(1)
+  })
+
+  it('does not treat an unrelated class containing "katex" as KaTeX markup', () => {
+    // `my-katex-widget` / `katexfoo` are not KaTeX (no boundary match).
+    for (const cls of ['my-katex-widget', 'katexfoo']) {
+      const html = `<div class="${cls}"><svg viewBox="0 0 10 10"><rect></rect></svg></div>`
+      expect(wrapInlineSvgs(html)).toContain('class="lightbox-svg"')
+    }
+  })
+
+  it('does not treat an AI-authored `katex-<word>` class as KaTeX markup', () => {
+    // The suffix set is an explicit allow-list, not a `-\w+` wildcard. A
+    // wrapper the AI happens to name `katex-widget` / `katex-diagram` is NOT
+    // KaTeX output, so its content svg must keep the media marker. (The DOM
+    // guard in mediaBlockFactory cannot rescue this: `closest('.katex')`
+    // matches only the exact `katex` token.)
+    for (const cls of ['katex-widget', 'katex-diagram', 'katex-box', 'katex-foo']) {
+      const html = `<div class="${cls}"><svg viewBox="0 0 10 10"><rect></rect></svg></div>`
+      expect(wrapInlineSvgs(html)).toContain('class="lightbox-svg"')
+    }
+  })
+
+  it('suppresses the svg for every class KaTeX actually stamps', () => {
+    // The allow-list must cover the real markers (katex.min.css + renderer):
+    // `katex`, `katex-display`, `katex-html`, `katex-mathml`, `katex-error`.
+    for (const cls of ['katex', 'katex-display', 'katex-html', 'katex-mathml', 'katex-error']) {
+      const html = `<div class="${cls}"><svg viewBox="0 0 10 10"><rect></rect></svg></div>`
+      expect(wrapInlineSvgs(html)).not.toContain('lightbox-svg')
+    }
+  })
+
+  it('ignores an attribute merely ending in "class" (data-class)', () => {
+    // `\bclass` would match inside `data-class` (`-` is a word boundary):
+    // it falsely flagged the element as KaTeX, and the inject path would have
+    // written `lightbox-svg` INTO the data-class value.
+    const flagged = '<div data-class="katex"><svg viewBox="0 0 10 10"><rect></rect></svg></div>'
+    expect(wrapInlineSvgs(flagged)).toContain('class="lightbox-svg"')
+
+    const injected = wrapInlineSvgs('<svg data-class="x" viewBox="0 0 1 1"><rect></rect></svg>')
+    expect(injected).toContain('class="lightbox-svg"')
+    expect(injected).toContain('data-class="x"')
+    expect(injected).not.toContain('data-class="x lightbox-svg"')
+  })
+
+  it('does not leak the KaTeX flag through a void element (img/br)', () => {
+    // Void elements have no closing tag. If one were pushed onto the tag stack
+    // it would never pop, permanently flagging the rest of the document as
+    // KaTeX — silently suppressing the marker on later content svgs.
+    const html = '<span class="katex"><span class="katex-html"><img src="x.png"><br></span></span>'
+      + '<svg viewBox="0 0 10 10"><rect></rect></svg>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('<svg viewBox="0 0 10 10" class="lightbox-svg">')
+  })
+
+  it('does not leak the KaTeX flag through a self-closing element', () => {
+    const html = '<span class="katex"><span class="katex-html"><rect/></span></span>'
+      + '<svg viewBox="0 0 10 10"><rect></rect></svg>'
+    expect(wrapInlineSvgs(html)).toContain('<svg viewBox="0 0 10 10" class="lightbox-svg">')
   })
 
   it('does not mark svg inside a button (pipeline-injected UI icon)', () => {

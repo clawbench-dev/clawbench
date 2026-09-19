@@ -35,6 +35,12 @@ describe('isSevereWarning', () => {
   it('returns false for parse_error', () => {
     expect(isSevereWarning({ reason: 'parse_error' })).toBe(false)
   })
+  // agent_init_timeout is an agent-side startup failure, not a mid-response
+  // interruption — it renders amber like backend_exit/agent_no_run rather than
+  // the red used for disconnect/timeout/panic.
+  it('returns false for agent_init_timeout', () => {
+    expect(isSevereWarning({ reason: 'agent_init_timeout' })).toBe(false)
+  })
   it('returns false for unknown reason', () => {
     expect(isSevereWarning({ reason: 'some_other' })).toBe(false)
   })
@@ -132,6 +138,27 @@ describe('getWarningText', () => {
       .toBe('The agent did not run this request — reset the session')
   })
 
+  // agent_init_timeout is a distinct reason from backend_exit: the agent
+  // process started but never reached protocol readiness, so the copy must
+  // point at startup rather than at the model/backend.
+  it('resolves agent_init_timeout to its own message, not the backend_exit fallback', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.agent_init_timeout'
+      ? 'The agent did not start in time (60s) — check whether it is installed and reachable'
+      : key
+    expect(getWarningText({ reason: 'agent_init_timeout', text: 'The agent did not start within 1m0s' }, tFound))
+      .toBe('The agent did not start in time (60s) — check whether it is installed and reachable')
+  })
+
+  it('does not append the raw backend detail for agent_init_timeout', () => {
+    // Unlike backend_exit/parse_error, the detail here is the SDK's JSON blob
+    // ("acp: agent ... : {\"code\":-32603,...}"), which is noise for the user.
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.agent_init_timeout'
+      ? 'The agent did not start in time (60s)'
+      : key
+    expect(getWarningText({ reason: 'agent_init_timeout', text: 'acp: agent "x": {"code":-32603}' }, tFound))
+      .toBe('The agent did not start in time (60s)')
+  })
+
   it('appends suffix to parse_error detail path', () => {
     const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.parse_error' ? 'Parse error' : key
     expect(getWarningText({ reason: 'parse_error', text: 'parse error: unexpected token', error_code: -32602 }, tFound)).toBe('Parse error: unexpected token [code -32602]')
@@ -145,6 +172,40 @@ describe('getWarningText', () => {
   it('renders refused reason with HTTP status suffix', () => {
     const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.refused' ? 'AI request refused' : key
     expect(getWarningText({ reason: 'refused', text: 'AI request refused by the agent', http_status: 500 }, tFound)).toBe('AI request refused [HTTP 500]')
+  })
+
+  // The whole point of error_detail: -32603 is a placeholder CodeBuddy emits
+  // for every internal failure, so the localized label alone tells the user
+  // nothing. The agent's own reason must reach the banner, with the code still
+  // visible after it.
+  it('appends the agent-reported detail after the refused label', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.refused' ? 'AI request refused' : key
+    expect(getWarningText({
+      reason: 'refused',
+      text: 'AI request refused by the agent (model unavailable or upstream error)',
+      error_code: -32603,
+      error_source: 'agent',
+      error_detail: 'Bad substitution: o.gaps.join',
+    }, tFound)).toBe('AI request refused: Bad substitution: o.gaps.join [code -32603]')
+  })
+
+  it('puts the detail before the HTTP status suffix', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.refused' ? 'AI request refused' : key
+    expect(getWarningText({ reason: 'refused', error_detail: 'upstream exploded', http_status: 502 }, tFound))
+      .toBe('AI request refused: upstream exploded [HTTP 502]')
+  })
+
+  // Other reasons append block.text themselves; a detail must not be added on
+  // top of it or the banner shows two different explanations.
+  it('does not double up detail for request_failed', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.request_failed' ? 'AI request failed' : key
+    expect(getWarningText({ reason: 'request_failed', text: 'Internal error', error_detail: 'should not appear' }, tFound))
+      .toBe('AI request failed: Internal error')
+  })
+
+  it('appends detail to the fallback text when the reason is unknown', () => {
+    expect(getWarningText({ reason: 'unknown_reason', text: 'raw text', error_detail: 'cause', error_code: -1 }, t))
+      .toBe('raw text: cause [code -1]')
   })
 })
 

@@ -24,15 +24,24 @@ type Agent struct {
 	PreferredMode           string       `json:"preferredMode"`           // user's preferred ACP mode; empty = use agent's default
 	PreferredModel          string       `json:"preferredModel"`          // user's preferred model; empty = use BaseModelID()
 	PreferredThinkingEffort string       `json:"preferredThinkingEffort"` // user's preferred thinking effort; empty = use ThinkingEffort
-	SystemPrompt            string       `json:"systemPrompt"`
+	// RuntimeSystemPrompt is the fully composed prompt (shared prefix + the
+	// user's own text). It is a RUNTIME-ONLY value: composed on every load by
+	// LoadAgentsIntoMemoryFromDB and never persisted.
+	//
+	// It is deliberately not a stored column. Persisting a composed prompt
+	// freezes whatever the shared prefix looked like at the time, so a later
+	// change to the built-in prompt is appended after that frozen copy and has
+	// no effect. Only CustomSystemPrompt is durable; this field is derived.
+	RuntimeSystemPrompt string `json:"-"`
 
 	// ACP configuration (only used when Transport != "cli")
 	Transport  string `json:"transport"`            // "cli" | "acp-stdio"; default depends on AcpCommand
 	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "kimi --acp"
 
-	// CustomSystemPrompt is the user-editable portion of the system prompt.
-	// At runtime, LoadAgentsIntoMemory composes: SystemPrompt = commonPrompt + customSystemPrompt.
-	// This separation ensures upgrades that change commonPrompt don't corrupt the stored prompt.
+	// CustomSystemPrompt is the user's own prompt text — the only prompt value
+	// that is persisted. At runtime LoadAgentsIntoMemoryFromDB composes
+	// RuntimeSystemPrompt = shared prompt + CustomSystemPrompt, so changing the
+	// built-in prompt always takes effect and can never corrupt stored text.
 	CustomSystemPrompt string `json:"customSystemPrompt"`
 
 	// ModelsAutoDetected indicates whether Models were filled by auto-discovery
@@ -157,30 +166,43 @@ func GetDefaultAgentID() string {
 
 // commonRulesTemplate is the built-in system prompt prepended to all agents.
 // Backticks are represented as «» placeholders and replaced in BuildCommonPrompt.
+// Tag names are written as literal angle brackets — they are markup, not code
+// spans, and wrapping them in backticks made models emit `clawbench-ask-question`,
+// which no parser accepts.
 var commonRulesTemplate = `## User Interaction (Highest Priority)
 
-ALL questions, confirmations, choices, and option presentations MUST use «ask-question» XML tags. Plain text questions are FORBIDDEN.
+ALL questions, confirmations, choices, and option presentations MUST use <clawbench-ask-question> tags. Plain text questions are FORBIDDEN.
 
 What counts as a question: anything that expects a user response — direct questions, confirmations ("Is this OK?"), option presentations, implicit questions ("Let me know if…"), trailing yes/no checks, parameter solicitations. If the user needs to respond, use structured format.
 
-Format (XML child elements only, no attributes, no JSON):
-«ask-question»
-  <item>
-    <header>Approach</header>
-    <multi-select>false</multi-select>
-    <question>Which approach do you prefer?</question>
-    <option>
-      <label>Option A</label>
-      <description>Fast but less safe</description>
-    </option>
-    <option>
-      <label>Option B</label>
-      <description>Safe but slower</description>
-    </option>
-  </item>
-«/ask-question»
+Format: ONE question per tag, with native Markdown inside. No attributes, no JSON.
 
-NEVER call the AskUserQuestion tool — it fails in headless CLI. Always use «ask-question» XML tags.
+Single choice — a plain list:
+<clawbench-ask-question>
+**Approach**
+Which approach do you prefer?
+- Option A — Fast but less safe
+- Option B — Safe but slower
+</clawbench-ask-question>
+
+Multiple choice — a checkbox list («[ ]»):
+<clawbench-ask-question>
+**Which features should I enable?**
+- [ ] Syntax highlighting
+- [ ] Word wrap
+</clawbench-ask-question>
+
+Rules:
+- One tag = one question. For several questions, emit several tags.
+- «**bold**» on its own line is the card title (optional).
+- Any other non-list line is the question text.
+- Each «- item» is an option; an option may carry a description after « — ».
+- A checkbox list («- [ ]») means multiple choice; a plain list means single choice.
+
+If the payload is malformed the tag is stripped and its text is rendered as
+Markdown, so ALWAYS keep the question readable as plain Markdown.
+
+NEVER call the AskUserQuestion tool — it fails in headless CLI. Always use <clawbench-ask-question> tags.
 
 Exception: pure informational statements needing zero user response may be plain text.
 

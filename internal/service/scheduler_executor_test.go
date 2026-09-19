@@ -195,11 +195,11 @@ func setupSchedulerForExecuteTask(t *testing.T) {
 	setupSchedulerExecDB(t)
 	model.Agents = map[string]*model.Agent{
 		"test-agent": {
-			ID:           "test-agent",
-			Name:         "Test Agent",
-			Backend:      "codebuddy",
-			SystemPrompt: "test prompt",
-			Command:      "echo hello",
+			ID:                  "test-agent",
+			Name:                "Test Agent",
+			Backend:             "codebuddy",
+			RuntimeSystemPrompt: "test prompt",
+			Command:             "echo hello",
 		},
 	}
 	t.Cleanup(func() {

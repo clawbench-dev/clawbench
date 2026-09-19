@@ -397,6 +397,9 @@ func errorPayload(event ai.StreamEvent) any {
 	if event.ErrorSource != "" {
 		payload["error_source"] = event.ErrorSource
 	}
+	if event.ErrorDetail != "" {
+		payload["error_detail"] = event.ErrorDetail
+	}
 	return payload
 }
 
@@ -413,6 +416,9 @@ func warningPayload(event ai.StreamEvent) any {
 	}
 	if event.ErrorSource != "" {
 		payload["error_source"] = event.ErrorSource
+	}
+	if event.ErrorDetail != "" {
+		payload["error_detail"] = event.ErrorDetail
 	}
 	return payload
 }

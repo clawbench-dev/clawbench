@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import Lightbox from '@/components/media/Lightbox.vue'
+import { bumpMediaVersion, resetMediaWatch, setMediaProjectRoot } from '@/composables/useMediaWatch.ts'
 
 // ── Mocks ──
 
@@ -307,6 +308,23 @@ describe('Lightbox', () => {
       expect(vm.lastTy).toBe(0)
     })
 
+    it('normalizes a dotted t= param without corrupting the path', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      // ImagePreview.mediaUrl emits `t=<timestamp>.<version>`. A digits-only
+      // strip left the ".0" glued to the filename, so the lightbox requested
+      // "b.png.0" and showed a broken image. The value must be treated as
+      // opaque, not as an integer.
+      vm.open('/api/local-file/a/b.png?t=1758000000000.0')
+      await nextTick()
+
+      const url = vm.currentUrl as string
+      expect(url).toMatch(/^\/api\/local-file\/a\/b\.png\?t=\d+$/)
+      expect(url).not.toContain('.png.0')
+      expect(url).not.toContain('.0?')
+    })
+
     it('normalizes a URL that already carries a t= param (file-manager source)', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
@@ -380,6 +398,61 @@ describe('Lightbox', () => {
   })
 
   // ── Wheel zoom respects fitScale ──
+
+  describe('media version cache-busting', () => {
+    beforeEach(() => {
+      resetMediaWatch()
+      setMediaProjectRoot('/project')
+    })
+
+    afterEach(() => {
+      resetMediaWatch()
+      setMediaProjectRoot('')
+    })
+
+    it('keeps the captured URL when the file has never changed', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/image.png')
+      await nextTick()
+
+      expect(vm.displayUrl).toContain('/api/local-file/image.png')
+    })
+
+    it('refreshes the displayed URL after the file is reported changed', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/image.png')
+      await nextTick()
+      const before = vm.displayUrl
+
+      // A background rewrite of the file being viewed.
+      bumpMediaVersion('image.png')
+      await nextTick()
+
+      expect(vm.displayUrl).not.toBe(before)
+      expect(vm.displayUrl).toContain('/api/local-file/image.png')
+      expect(vm.displayUrl).toContain('t=1')
+    })
+
+    it('does not accumulate t= params across repeated bumps', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/image.png')
+      await nextTick()
+
+      bumpMediaVersion('image.png')
+      await nextTick()
+      bumpMediaVersion('image.png')
+      await nextTick()
+
+      expect(vm.displayUrl.match(/t=/g)).toHaveLength(1)
+      expect(vm.displayUrl).toContain('t=2')
+    })
+  })
 
   describe('handleWheel', () => {
     it('resets pan when zooming below fitScale', () => {
@@ -796,6 +869,66 @@ describe('Lightbox', () => {
 
       vm.handleDownload()
       // Should not throw
+    })
+  })
+
+  // ── open with an explicit file path ──
+
+  describe('open with an explicit file path', () => {
+    // The file-manager quick preview opens an image WITHOUT opening it in the
+    // viewer, so store.state.currentFile still points at whatever was open
+    // before. The explicit path must win — otherwise the toolbar shows the
+    // wrong filename and Download targets the wrong file.
+    it('uses the explicit path for the filename instead of the store current file', async () => {
+      mockStoreState.currentFile = { path: '/project/unrelated.png', name: 'unrelated.png' }
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+      await nextTick()
+
+      expect(vm.currentFilePath).toBe('assets/logo.png')
+      expect(vm.currentFileName).toBe('logo.png')
+    })
+
+    it('falls back to the store current file when no path is given', async () => {
+      mockStoreState.currentFile = { path: '/project/image.png', name: 'image.png' }
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/project/image.png')
+      await nextTick()
+
+      expect(vm.currentFilePath).toBe('/project/image.png')
+      expect(vm.currentFileName).toBe('image.png')
+    })
+
+    it('builds sibling navigation from the explicit path', async () => {
+      mockStoreState.currentDir = '/project/assets'
+      _dirEntries = [
+        { name: 'logo.png', type: 'file' },
+        { name: 'banner.png', type: 'file' },
+      ]
+      mockStoreState.currentFile = { path: '/project/unrelated.png', name: 'unrelated.png' }
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+      await nextTick()
+
+      expect(vm.siblingFiles.map((e: any) => e.name)).toEqual(['logo.png', 'banner.png'])
+      expect(vm.currentIndex).toBe(0)
+    })
+
+    it('ignores the explicit path for SVG (no file identity)', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('', '<svg></svg>', 'assets/logo.png')
+      await nextTick()
+
+      expect(vm.currentFilePath).toBe('')
+      expect(vm.currentIndex).toBe(-1)
     })
   })
 

@@ -325,9 +325,24 @@ type ForgeRepoRef struct {
 	Host     string
 	Owner    string
 	Repo     string
+	// ProjectPath is the project binding this sync was triggered for. It is
+	// NOT part of the repository's identity (Key ignores it): the same repo
+	// bound by two projects is one polled unit, and only one of those bindings
+	// is carried here — the most recently updated one, since ListProjectForges
+	// orders by updated_at DESC and the poller keeps the first row per repo.
+	//
+	// It exists purely so a notification can navigate to a project that
+	// actually has this repository bound. The unread badge and the forge panel
+	// are project-scoped, so a notification without it would send the user to
+	// whichever project happens to be active, where the row does not exist.
+	ProjectPath string
 }
 
 // Key returns a stable identity string for the repository.
+//
+// Deliberately excludes ProjectPath: the key is used for per-repo debounce and
+// logging, and folding a project into it would split one repository into two
+// independent debounce buckets.
 func (r ForgeRepoRef) Key() string {
 	return r.Platform + "|" + r.Host + "|" + r.Owner + "/" + r.Repo
 }

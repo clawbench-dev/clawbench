@@ -23,12 +23,18 @@ type ServerMessage struct {
 
 // ClientMessage is a message sent from client to server.
 type ClientMessage struct {
-	Type       string `json:"type"`                   // "ack", "pong", "subscribe", "unsubscribe", "cancel", "permission_respond"
+	Type       string `json:"type"`                   // "ack", "pong", "subscribe", "unsubscribe", "cancel", "permission_respond", "metrics_preference"
 	ID         string `json:"id,omitempty"`           // ack target event ID
 	SessionID  string `json:"session_id,omitempty"`   // for subscribe/unsubscribe/cancel
 	ToolCallID string `json:"tool_call_id,omitempty"` // for permission_respond
 	OptionID   string `json:"option_id,omitempty"`    // for permission_respond
 	Cancelled  bool   `json:"cancelled,omitempty"`    // for permission_respond
+
+	// System-resource push preference (type "metrics_preference"). Absent
+	// metrics_enabled means disabled, so the disable form is just
+	// {"type":"metrics_preference","metrics_enabled":false}.
+	MetricsEnabled    bool `json:"metrics_enabled,omitempty"`
+	MetricsIntervalMs int  `json:"metrics_interval_ms,omitempty"`
 }
 
 // SessionUpdateData is the data payload for "session_update" events.

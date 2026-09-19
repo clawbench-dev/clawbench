@@ -1,38 +1,50 @@
 import { describe, it, expect, vi } from 'vitest'
 import { isValidAskContent, detectAskQuestion, stripAskQuestionTag, extractScheduledTaskIds, stripScheduledTaskTags, taskChanged, StaticBlockCache } from '../streamPerf'
 
+// The <clawbench-ask-question> payload is native Markdown: an optional bold
+// title line, the question text, then a bullet list of options
+// ("- Label — description"). A checkbox list ("- [ ] item") marks
+// multi-select. A payload with no list is not a question. Legacy XML and JSON
+// payloads are not parsed and degrade to visible text.
+
 describe('isValidAskContent', () => {
-  it('accepts XML with <item> containing <question> and <option>', () => {
-    const raw = '<item><header>Choice</header><multi-select>false</multi-select><question>Pick one</question><option><label>A</label><description>Fast</description></option></item>'
+  it('accepts a Markdown payload with a list', () => {
+    const raw = '**Choice**\nPick one\n- A — Fast'
     expect(isValidAskContent(raw)).toBe(true)
   })
 
-  it('accepts multiple <item> elements', () => {
-    const raw = '<item><header>H1</header><multi-select>false</multi-select><question>Q1</question><option><label>A</label></option></item><item><header>H2</header><multi-select>true</multi-select><question>Q2</question><option><label>B</label></option></item>'
+  it('accepts several clawbench-ask-question tags', () => {
+    const raw = '<clawbench-ask-question>**H1**\nQ1\n- A</clawbench-ask-question><clawbench-ask-question>**H2**\nQ2\n- B</clawbench-ask-question>'
     expect(isValidAskContent(raw)).toBe(true)
   })
 
-  it('accepts <item> with attributes', () => {
-    const raw = '<item type="single"><header>Choice</header><multi-select>false</multi-select><question>Pick one</question><option><label>A</label></option></item>'
+  it('rejects plain text (no list)', () => {
+    const raw = 'This is just text, not a question at all'
+    expect(isValidAskContent(raw)).toBe(false)
+  })
+
+  it('accepts a payload with options but no question text', () => {
+    const raw = '**Choice**\n- A'
     expect(isValidAskContent(raw)).toBe(true)
   })
 
-  it('rejects plain text (not XML)', () => {
-    const raw = 'This is just text, not XML at all'
+  it('rejects a payload with question text but no list', () => {
+    // A list is required: prose alone is not a card.
+    const raw = '**Choice**\nWhich?'
     expect(isValidAskContent(raw)).toBe(false)
   })
 
-  it('rejects XML without <question> tag', () => {
-    const raw = '<item><header>Choice</header><multi-select>false</multi-select><option><label>A</label></option></item>'
+  it('rejects a payload with a header but no list', () => {
+    const raw = '**Choice**'
     expect(isValidAskContent(raw)).toBe(false)
   })
 
-  it('rejects XML without <option> tag', () => {
-    const raw = '<item><header>Choice</header><multi-select>false</multi-select><question>Which?</question></item>'
+  it('rejects legacy <item> XML payloads', () => {
+    const raw = '<item><header>Choice</header><question>Pick one</question><option><label>A</label></option></item>'
     expect(isValidAskContent(raw)).toBe(false)
   })
 
-  it('rejects JSON content (only XML is supported)', () => {
+  it('rejects JSON payloads (no JSON recovery)', () => {
     const raw = '{"questions":[{"question":"Pick one","header":"Choice","options":[{"label":"A"}]}]}'
     expect(isValidAskContent(raw)).toBe(false)
   })
@@ -43,64 +55,77 @@ describe('isValidAskContent', () => {
 })
 
 describe('detectAskQuestion', () => {
-  it('detects <ask-question> with XML <item> content', () => {
-    const text = 'Some text before\n<ask-question><item><header>Choice</header><multi-select>false</multi-select><question>Which?</question><option><label>A</label><description>Fast</description></option></item></ask-question>'
+  it('detects <clawbench-ask-question> with Markdown content', () => {
+    const text = 'Some text before\n<clawbench-ask-question>**Choice**\nWhich?\n- A — Fast</clawbench-ask-question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.fullTag).toContain('<ask-question>')
-    expect(result.fullTag).toContain('</ask-question>')
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0].raw).toContain('<clawbench-ask-question>')
+    expect(result.matches[0].raw).toContain('</clawbench-ask-question>')
+    expect(result.items[0].question).toBe('Which?')
   })
 
-  it('detects <ask-question> with multiple <item> elements', () => {
-    const text = '工作区是干净的。\n\n<ask-question>\n<item><header>下一步</header><multi-select>false</multi-select><question>你想做什么？</question><option><label>推送到远程</label><description>推送提交</description></option><option><label>取消</label><description>不做任何操作</description></option></item>\n</ask-question>'
+  it('detects a tag carrying one question with several options', () => {
+    const text = '工作区是干净的。\n\n<clawbench-ask-question>\n**下一步**\n你想做什么？\n- 推送到远程 — 推送提交\n- 取消 — 不做任何操作\n</clawbench-ask-question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.fullTag).toContain('<ask-question>')
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].options).toHaveLength(2)
   })
 
-  it('returns found=false for text without <ask-question>', () => {
+  it('detects every tag when several are present', () => {
+    const one = '<clawbench-ask-question>**Q1**\n第一个?\n- A</clawbench-ask-question>'
+    const two = '<clawbench-ask-question>**Q2**\n第二个?\n- B</clawbench-ask-question>'
+    const result = detectAskQuestion(`${one}\n中间\n${two}`)
+    expect(result.found).toBe(true)
+    expect(result.items.map(i => i.header)).toEqual(['Q1', 'Q2'])
+  })
+
+  it('returns found=false for text without <clawbench-ask-question>', () => {
     const text = 'Just some regular text without any ask-question tags'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(false)
   })
 
-  it('detects <ask-question> with obfuscated closing tag (fullwidth pipe)', () => {
-    // Real case: model emits </｜｜DSML｜｜question> instead of </ask-question>
-    const text = '`gh` 已给出设备认证码。需要在浏览器中完成登录：\n\n<ask-question>\n<item><header>GitHub 认证</header><multi-select>false</multi-select><question>请打开 https://github.com/login/device 并输入代码完成登录。完成后告诉我。</question><option><label>已打开链接</label><description>我已在浏览器中完成认证，继续推送</description></option><option><label>我手动来</label><description>我自己执行 gh auth login -w 完成登录后手动推送</description></option></item>\n</｜｜DSML｜｜question>'
+  it('returns found=false for a non-standard closing tag', () => {
+    // Only </clawbench-ask-question> closes a payload. A model-obfuscated close
+    // is not tolerated: the span stays unparsed and renders as text.
+    const text = '`gh` 已给出设备认证码。需要在浏览器中完成登录：\n\n<clawbench-ask-question>\n**GitHub 认证**\n请打开 https://github.com/login/device 并输入代码完成登录。完成后告诉我。\n- 已打开链接 — 我已在浏览器中完成认证，继续推送\n</\uFF5C\uFF5CDSML\uFF5C\uFF5Cclawbench-ask-question>'
     const result = detectAskQuestion(text)
-    expect(result.found).toBe(true)
-    expect(result.fullTag).toBeDefined()
-    expect(result.content).toBeDefined()
-    expect(isValidAskContent(result.content!)).toBe(true)
+    expect(result.found).toBe(false)
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0].parsed).toBeNull()
   })
 
-  it('returns found=false when tag is present but content is not valid XML', () => {
-    const text = 'Forces structured <ask-question>random text without item tags</ask-question> for user interaction'
+  it('returns found=false when tag is present but content is not a question', () => {
+    const text = 'Forces structured <clawbench-ask-question>random text without a list</clawbench-ask-question> for user interaction'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(false)
   })
 
-  it('returns found=false for <ask-question> with JSON content (only XML is supported)', () => {
-    const text = 'Some text\n<ask-question>\n{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"A","description":"Fast"},{"label":"B","description":"Safe"}]}]}\n</ask-question>'
+  it('returns found=false for a JSON payload (no JSON recovery)', () => {
+    const text = 'Some text\n<clawbench-ask-question>\n{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"A","description":"Fast"},{"label":"B","description":"Safe"}]}]}\n</clawbench-ask-question>'
+    const result = detectAskQuestion(text)
+    expect(result.found).toBe(false)
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0].parsed).toBeNull()
+  })
+
+  it('returns found=false when <clawbench-ask-question> is mentioned without structured content', () => {
+    const text = 'The ask-question system uses <clawbench-ask-question> tags. The function detectAskQuestionInText checks for <clawbench-ask-question in block.text.'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(false)
   })
 
-  it('returns found=false when <ask-question> is mentioned without structured content', () => {
-    const text = 'The ask-question system uses <ask-question> tags. The function detectAskQuestionInText checks for <ask-question in block.text.'
+  it('returns found=false when the tag has only description text, no list', () => {
+    // Model discusses the tag format but doesn't actually emit a question.
+    const text = 'You can use `<clawbench-ask-question>` to present choices. Here is how the tag works: <clawbench-ask-question>Each question needs a header and a list of options</clawbench-ask-question>. That is all.'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(false)
   })
 
-  it('returns found=false when <ask-question> tag has only description text, no item/question/option', () => {
-    // Model discusses the tag format but doesn't actually emit a structured question
-    const text = 'You can use `<ask-question>` to present choices. Here is how the tag works: <ask-question>Each question needs item, question and option elements</ask-question>. That is all.'
-    const result = detectAskQuestion(text)
-    expect(result.found).toBe(false)
-  })
-
-  it('returns found=false when <ask-question> appears only inside a code block', () => {
-    const text = 'You can use the `<ask-question>` tag to present choices:\n\n```\n<ask-question>\n<item><header>Choice</header><question>Pick one</question><option><label>A</label></option></item>\n</ask-question>\n```\n\nThis creates an interactive card.'
+  it('returns found=false when <clawbench-ask-question> appears only inside a code block', () => {
+    const text = 'You can use the `<clawbench-ask-question>` tag to present choices:\n\n```\n<clawbench-ask-question>\n**Choice**\nPick one\n- A\n</clawbench-ask-question>\n```\n\nThis creates an interactive card.'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(false)
   })
@@ -108,13 +133,13 @@ describe('detectAskQuestion', () => {
 
 describe('stripAskQuestionTag', () => {
   it('removes the ask-question tag from text', () => {
-    const text = 'Before\n<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item></ask-question>\nAfter'
+    const text = 'Before\n<clawbench-ask-question>**H**\nQ?\n- A</clawbench-ask-question>\nAfter'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
     const stripped = stripAskQuestionTag(text, result)
     expect(stripped).toContain('Before')
     expect(stripped).toContain('After')
-    expect(stripped).not.toContain('<ask-question')
+    expect(stripped).not.toContain('<clawbench-ask-question')
   })
 
   it('returns original text when result is not found', () => {
@@ -124,18 +149,37 @@ describe('stripAskQuestionTag', () => {
   })
 
   it('handles ask-question tag at the start of text', () => {
-    const text = '<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item></ask-question>\nRemaining text'
+    const text = '<clawbench-ask-question>**H**\nQ?\n- A</clawbench-ask-question>\nRemaining text'
     const result = detectAskQuestion(text)
     const stripped = stripAskQuestionTag(text, result)
     expect(stripped).toBe('Remaining text')
   })
 
   it('handles ask-question tag at the end of text', () => {
-    const text = 'Some text before\n<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item></ask-question>'
+    const text = 'Some text before\n<clawbench-ask-question>**H**\nQ?\n- A</clawbench-ask-question>'
     const result = detectAskQuestion(text)
     const stripped = stripAskQuestionTag(text, result)
     expect(stripped).toContain('Some text before')
-    expect(stripped).not.toContain('<ask-question')
+    expect(stripped).not.toContain('<clawbench-ask-question')
+  })
+
+  it('degrades a JSON payload to its text instead of dropping it', () => {
+    const text = 'Before\n<clawbench-ask-question>{"questions":[{"question":"Pick one"}]}</clawbench-ask-question>\nAfter'
+    const result = detectAskQuestion(text)
+    expect(result.found).toBe(false)
+    const stripped = stripAskQuestionTag(text, result)
+    expect(stripped).toContain('{"questions":[{"question":"Pick one"}]}')
+    expect(stripped).not.toContain('<clawbench-ask-question')
+  })
+
+  it('degrades a legacy XML payload to its text instead of dropping it', () => {
+    const text = '<clawbench-ask-question><item><question>Q?</question><option><label>A</label></option></item></clawbench-ask-question>'
+    const result = detectAskQuestion(text)
+    expect(result.found).toBe(false)
+    const stripped = stripAskQuestionTag(text, result)
+    expect(stripped).toContain('<item>')
+    expect(stripped).toContain('<question>Q?</question>')
+    expect(stripped).not.toContain('<clawbench-ask-question')
   })
 })
 
@@ -270,6 +314,82 @@ describe('StaticBlockCache', () => {
     cache.clear()
     expect(cache.get('msg1', 0, 'a')).toBeUndefined()
     expect(cache.get('msg2', 0, 'b')).toBeUndefined()
+  })
+
+  // ── Bounded retention (LRU) ──
+  //
+  // The cache is deliberately NOT cleared on session/project switch (keys are
+  // globally-unique DB message ids), so it needs a bound. These tests pin the
+  // eviction policy: least-recently-USED, not simply oldest-inserted.
+
+  it('retains entries across a simulated session switch (no clear)', () => {
+    const cache = new StaticBlockCache()
+    cache.set('session-a-msg', 0, 'text', '<p>from session A</p>')
+
+    // A session switch no longer calls clear(); the old entry must survive.
+    cache.set('session-b-msg', 0, 'text', '<p>from session B</p>')
+
+    expect(cache.get('session-a-msg', 0, 'text')).toBe('<p>from session A</p>')
+    expect(cache.get('session-b-msg', 0, 'text')).toBe('<p>from session B</p>')
+  })
+
+  it('evicts least-recently-used entries once over the cap', () => {
+    const cache = new StaticBlockCache()
+    const MAX = 3000
+
+    for (let i = 0; i < MAX; i++) {
+      cache.set(`msg${i}`, 0, 'text', `<p>${i}</p>`)
+    }
+    expect(cache.size).toBe(MAX)
+
+    // Refresh msg0 so it becomes the most recently used.
+    expect(cache.get('msg0', 0, 'text')).toBe('<p>0</p>')
+
+    // One more insert pushes us over the cap.
+    cache.set('msg-overflow', 0, 'text', '<p>new</p>')
+    expect(cache.size).toBe(MAX)
+
+    // msg0 was touched, so it must survive; msg1 (next oldest) is evicted.
+    expect(cache.get('msg0', 0, 'text')).toBe('<p>0</p>')
+    expect(cache.get('msg1', 0, 'text')).toBeUndefined()
+    expect(cache.get('msg-overflow', 0, 'text')).toBe('<p>new</p>')
+  })
+
+  it('re-setting an existing key refreshes its recency and does not grow the cache', () => {
+    const cache = new StaticBlockCache()
+    const MAX = 3000
+
+    for (let i = 0; i < MAX; i++) {
+      cache.set(`msg${i}`, 0, 'text', `<p>${i}</p>`)
+    }
+
+    // Overwrite the oldest entry — same key, new value.
+    cache.set('msg0', 0, 'text', '<p>updated</p>')
+    expect(cache.size).toBe(MAX)
+
+    cache.set('msg-overflow', 0, 'text', '<p>new</p>')
+    expect(cache.size).toBe(MAX)
+
+    // msg0 was re-set (most recent), so msg1 is the eviction victim.
+    expect(cache.get('msg0', 0, 'text')).toBe('<p>updated</p>')
+    expect(cache.get('msg1', 0, 'text')).toBeUndefined()
+  })
+
+  it('eviction also drops the deferred flag for the evicted key', () => {
+    const cache = new StaticBlockCache()
+    const MAX = 3000
+
+    cache.set('oldest', 0, 'text', '<p>old</p>', true)
+    expect(cache.isDeferred('oldest', 0, 'text')).toBe(true)
+
+    for (let i = 0; i < MAX; i++) {
+      cache.set(`msg${i}`, 0, 'text', `<p>${i}</p>`)
+    }
+
+    // 'oldest' was evicted, so its deferred flag must be gone too — otherwise
+    // scheduleUpgrade would keep chasing a key that is no longer cached.
+    expect(cache.isDeferred('oldest', 0, 'text')).toBe(false)
+    expect(cache.deferredCount).toBe(0)
   })
 
   it('differentiates by msgId', () => {

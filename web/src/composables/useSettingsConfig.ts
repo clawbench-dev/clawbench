@@ -334,6 +334,11 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // in-app card itself — the alert sound and system/IM push have their own switches.
   inAppNotification: true,
   notificationSound: true,
+  // Desktop/system notifications from this browser (or the Electron shell).
+  // Independent of the server-side `push_mode`, which selects the MOBILE/IM
+  // channel: a user on DingTalk push still wants the tab to notify them when
+  // they are sitting at the desktop.
+  browserNotification: true,
   floatingStatusWindow: false,
   liveUpdate: true,
   fontMono: 'default',
@@ -506,12 +511,6 @@ export async function patchAgentField(agentId: string, field: string, value: str
     // name, specialty map to themselves
   }
   updateAgentField(agentId, fieldMap[field] || field, value)
-  // When custom_system_prompt changes, reload agents to get the server-composed
-  // systemPrompt (commonPrompt + customSystemPrompt) into the reactive store.
-  if (field === 'custom_system_prompt') {
-    const { loadAgents } = useAgents()
-    await loadAgents(true)
-  }
 }
 
 /** Read the preferred model ID for an agent from the server-side agent data. */

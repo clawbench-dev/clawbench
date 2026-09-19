@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { nextTick, reactive } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 
 // The state must be reactive: the composable watches store.state.projectRoot /
 // sessionListVersion at module top level, and Vue cannot track a plain object.
@@ -205,6 +206,85 @@ describe('useCrossProjectSessions', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // ── Request coalescing ──
+  //
+  // A project switch fires several triggers at once (projectRoot, and a
+  // sessionListVersion bump from the session reload). Before coalescing, each
+  // one issued its own /api/ai/sessions/overview — a measured switch sent it
+  // five times.
+  //
+  // The guarantee is a BOUND, not a single request: N concurrent callers cost
+  // at most two fetches — the one already in flight, plus one trailing pass so
+  // a change that arrived mid-flight is still reflected. Dropping the trailing
+  // pass would be cheaper but would silently miss a session update that landed
+  // during the fetch.
+  describe('request coalescing', () => {
+    it('bounds N concurrent callers to at most two requests', async () => {
+      let resolveFetch: (v: unknown) => void = () => {}
+      mockFetch.mockReturnValueOnce(new Promise((res) => { resolveFetch = res }))
+      mockFetch.mockResolvedValue(overviewPayload([]))
+
+      const a = refresh()
+      const b = refresh()
+      const c = refresh()
+      resolveFetch(overviewPayload([]))
+      await Promise.all([a, b, c])
+
+      // Not three — the in-flight request is shared.
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not stack trailing passes under a burst of triggers', async () => {
+      let resolveFetch: (v: unknown) => void = () => {}
+      mockFetch.mockReturnValueOnce(new Promise((res) => { resolveFetch = res }))
+      mockFetch.mockResolvedValue(overviewPayload([]))
+
+      const first = refresh()
+      for (let i = 0; i < 5; i++) refresh()
+      resolveFetch(overviewPayload([]))
+      await first
+
+      // One in-flight + one trailing pass, regardless of how many callers joined.
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('issues a single request when both switch signals fire together', async () => {
+      mockFetch.mockResolvedValue(overviewPayload([]))
+      await refresh()
+      const before = mockFetch.mock.calls.length
+
+      // A project switch bumps both the project and (via the session reload) the
+      // list version. Watching them as one source makes Vue run a single
+      // callback, so this must be exactly one refresh — not one per signal.
+      mockStore.state.projectRoot = '/proj/other'
+      mockStore.state.sessionListVersion++
+      // flushPromises, not nextTick: the coalescing loop awaits the fetch and
+      // may issue a trailing pass in a later microtask. Asserting too early
+      // would count the in-flight request only and pass even if a second
+      // refresh had been queued.
+      await flushPromises()
+
+      expect(mockFetch.mock.calls.length).toBe(before + 1)
+    })
+
+    it('still delivers a later trigger that arrives after the burst', async () => {
+      mockFetch.mockResolvedValue(overviewPayload([]))
+      await refresh()
+      const before = mockFetch.mock.calls.length
+
+      // Sequential (not overlapping) triggers must each get their own fetch —
+      // coalescing must not swallow them.
+      mockStore.state.projectRoot = '/proj/one'
+      await nextTick()
+      await nextTick()
+      mockStore.state.projectRoot = '/proj/two'
+      await nextTick()
+      await nextTick()
+
+      expect(mockFetch.mock.calls.length).toBe(before + 2)
+    })
   })
 
   describe('abbreviatePath', () => {

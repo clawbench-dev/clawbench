@@ -273,8 +273,8 @@
           :data-path="pathOf(entry)"
           :title="entryTitle(entry)"
         >
-          <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }">
-            <img v-if="entry.type !== 'dir' && isThumbLoaded(entry)" class="file-thumb" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
+          <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }" :ref="(el) => thumbObserve(el, entry)">
+            <img v-if="entry.type !== 'dir' && shouldMountThumb(entry)" class="file-thumb" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
             <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="28" class="file-icon" />
             <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
               <Link2 :size="12" />
@@ -347,8 +347,8 @@
         :data-path="pathOf(entry)"
         :title="entryTitle(entry)"
       >
-        <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }">
-          <img v-if="isThumbLoaded(entry)" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
+        <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }" :ref="(el) => thumbObserve(el, entry)">
+          <img v-if="shouldMountThumb(entry)" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
           <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="32" class="grid-icon" />
           <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
             <Link2 :size="12" />
@@ -542,6 +542,7 @@ import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes, baseName, dirName } from '@/utils/path'
 import { useDirPreview } from '@/composables/useDirPreview'
+import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
 import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft } from 'lucide-vue-next'
 import {
   buildThumbUrl,
@@ -1062,8 +1063,12 @@ function clearRangeAnchor() {
     rangeAnchorPath.value = ''
     rangeBaseSelection = new Set()
 }
-// Sync from external file selection (e.g. chat annotation, search)
-watch(() => props.currentFile?.path ?? '', p => { selectedPath.value = p })
+// Sync from external file selection (e.g. chat annotation, search).
+// Only push a real path in: closing the viewed file nulls `currentFile`, and
+// blanking the highlight then would drop the selection the user just had.
+// Directory changes clear `selectedPath` on their own (see the currentDir
+// watcher), so a null here never needs to clear it.
+watch(() => props.currentFile?.path ?? '', p => { if (p) selectedPath.value = p })
 
 // ── Thumbnail loading errors ──
 const thumbErrors = reactive(new Set())
@@ -1074,10 +1079,117 @@ function thumbUrlFor(entry) {
     // Search results carry a project-relative path already (parent directory
     // may differ per result), so build the thumb URL straight from the path.
     if (searchHasQuery.value) {
-        return `/api/file/thumb?path=${encodeURIComponent(entry.path)}&w=80`
+        return appendThumbVersion(`/api/file/thumb?path=${encodeURIComponent(entry.path)}&w=80`, entry.path)
     }
-    return buildThumbUrl(props.currentDir || '', entry.name)
+    return appendThumbVersion(buildThumbUrl(props.currentDir || '', entry.name), joinPath(props.currentDir || '', entry.name))
 }
+
+/**
+ * Append the shared media version so a thumbnail whose source image was
+ * rewritten in the background re-fetches instead of staying cached. The
+ * thumbnail endpoint revalidates on the source file's ETag, but the browser
+ * only revalidates when it makes a request at all — a versioned URL guarantees
+ * one. Version 0 (never changed) leaves the URL untouched.
+ */
+function appendThumbVersion(url, path) {
+    const v = mediaVersionFor(path)
+    if (!v) return url
+    return url + `&t=${v}`
+}
+
+/**
+ * Thumbnails are only mounted once their row scrolls into view.
+ *
+ * The list renders every entry in the directory at once, so entering a folder
+ * with dozens of images previously fired one /api/file/thumb request per image
+ * in the same tick. `loading="lazy"` does NOT prevent that: it defers the
+ * browser's own fetch but still creates the <img>, and for the whole initial
+ * viewport it fetches immediately — the request burst happens regardless.
+ * Each request decodes the full-resolution source and rescales it, so the
+ * fan-in saturated the server's CPU (measured: 32 parallel decodes → 638% CPU,
+ * with the DB-free /api/dir slowing 16ms → 72ms).
+ *
+ * Gating on actual visibility keeps the burst proportional to what the user can
+ * see. The FileIcon is the placeholder, so layout never shifts.
+ */
+const visibleThumbKeys = reactive(new Set())
+let thumbVisibilityObserver = null
+// Elements awaiting observation, keyed by thumb identity. Needed because a
+// list re-render can hand us a new element for a key we already saw.
+const pendingThumbEls = new Map()
+
+/**
+ * Lazily create the observer on first use rather than in onMounted.
+ *
+ * Template ref callbacks run BEFORE onMounted, so an onMounted-created observer
+ * does not exist yet when the first rows register — those rows would take the
+ * "no observer" fallback and mount their thumbnails eagerly, silently disabling
+ * the gate for the entire first screenful (exactly the burst this exists to
+ * prevent).
+ */
+function getThumbVisibilityObserver() {
+  if (thumbVisibilityObserver) return thumbVisibilityObserver
+  if (typeof IntersectionObserver === 'undefined') return null
+  thumbVisibilityObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue
+      const key = e.target.dataset.thumbKey
+      if (key) onThumbVisible(key)
+    }
+  }, {
+    // Start loading slightly before the row is on screen so scrolling stays
+    // ahead of the requests.
+    rootMargin: '200px 0px',
+  })
+  return thumbVisibilityObserver
+}
+
+function thumbObserve(el, entry) {
+    if (!el) return
+    const key = thumbKey(entry)
+    // Already known visible — the image is about to render; nothing to observe.
+    if (visibleThumbKeys.has(key)) return
+    const observer = getThumbVisibilityObserver()
+    if (!observer) {
+        // No IntersectionObserver (very old browser / jsdom without a polyfill):
+        // fail open so thumbnails still work, just without the batching win.
+        visibleThumbKeys.add(key)
+        return
+    }
+    // The observer callback only receives the element, so carry the identity on
+    // it. Set on every call because the same key can be rendered by a fresh
+    // element after a list re-render.
+    el.dataset.thumbKey = key
+    pendingThumbEls.set(key, el)
+    observer.observe(el)
+}
+
+function onThumbVisible(key) {
+    visibleThumbKeys.add(key)
+    const el = pendingThumbEls.get(key)
+    if (el) {
+        thumbVisibilityObserver?.unobserve(el)
+        pendingThumbEls.delete(key)
+    }
+}
+
+/**
+ * Reset visibility tracking when the directory (or the search result set)
+ * changes: keys are name/path-based, so without this a stale "visible" key
+ * could show a thumbnail for an entry the user has not scrolled to yet.
+ */
+function resetThumbVisibility() {
+    visibleThumbKeys.clear()
+    pendingThumbEls.clear()
+    // disconnect() drops all observations at once — cheaper and safer than
+    // unobserving each element, and the next render re-observes what it needs.
+    thumbVisibilityObserver?.disconnect()
+    // Drop the observer too: the next render recreates it lazily. Keeping it
+    // would work, but a fresh instance also clears any queued entries, which
+    // matters when the reset races a pending callback.
+    thumbVisibilityObserver = null
+}
+
 function onThumbError(entry) {
     thumbErrors.add(thumbKey(entry))
 }
@@ -1091,6 +1203,14 @@ function isThumbable(entry) {
 
 function isThumbLoaded(entry) {
     return isThumbable(entry) && !thumbErrors.has(thumbKey(entry))
+}
+
+/**
+ * Whether to actually mount the <img> for this entry: it must be a decodable
+ * image, must not have errored, and must have scrolled into view at least once.
+ */
+function shouldMountThumb(entry) {
+    return isThumbLoaded(entry) && visibleThumbKeys.has(thumbKey(entry))
 }
 function onSortSelect(field) {
   emit('toggleSort', field)
@@ -1172,6 +1292,7 @@ function exitSearch() {
     search.reset() // cancelSearch + clears query/results/total/truncated/searchBasePath
     selectedPath.value = ''
     thumbErrors.clear()
+    resetThumbVisibility()
 }
 
 /**
@@ -1253,8 +1374,14 @@ watch(() => search.state.query, () => {
 
 // Drop the stale arrow-key highlight whenever the result set is replaced, so
 // Enter never opens an entry that no longer belongs to the visible results.
+// The result set is also a different listing, so thumbnail visibility restarts:
+// keys are path/name based and would otherwise mark not-yet-scrolled results as
+// already visible.
 watch(() => search.state.results, () => {
-    if (search.state.query.trim()) selectedPath.value = ''
+    if (search.state.query.trim()) {
+        selectedPath.value = ''
+        resetThumbVisibility()
+    }
 })
 
 /**
@@ -1339,6 +1466,9 @@ onUnmounted(() => {
   window.removeEventListener('highlight-file-item', handleHighlightFileItem)
   if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
   if (pasteOverlayTimer) { clearTimeout(pasteOverlayTimer); pasteOverlayTimer = null }
+  thumbVisibilityObserver?.disconnect()
+  thumbVisibilityObserver = null
+  pendingThumbEls.clear()
 })
 
 // ── Unified display source: directory entries or live search results ──
@@ -1475,6 +1605,7 @@ watch(() => props.currentDir, () => {
     if (multiSelect.active) exitMultiSelect()
     clearRangeAnchor()
     thumbErrors.clear()
+    resetThumbVisibility()
     selectedPath.value = ''
 })
 
@@ -1550,12 +1681,33 @@ function onContainerLongPress(e) {
     nextTick(() => clampCtxMenu())
 }
 
+// ── Context menu hit zone (Windows Explorer-like) ──
+//
+// Only the icon and the name are the entry's hit zone. Right-clicking the
+// padding around a row, the size/date meta column or any other part of the row
+// falls through to the empty-area menu (paste / new file / new folder /
+// terminal), matching Explorer — where the background of the details view is
+// background even when a row occupies that pixel.
+//
+// The name label is `width: 100%` inside the info column, so the blank stretch
+// beside a short name is inside `.file-name` and therefore still part of the
+// entry; only the strip of the info column outside the label (and everything
+// else in the row) is background.
+const CTX_ENTRY_ZONE_SELECTOR = '.file-icon-wrap, .grid-thumb, .file-name, .grid-name'
+
+/** The row/tile under `el`, or null when `el` is not in the entry's hit zone. */
+function resolveCtxEntry(el) {
+    const zone = el?.closest?.(CTX_ENTRY_ZONE_SELECTOR)
+    if (!zone) return null
+    return zone.closest('.file-item, .grid-item') || null
+}
+
 function handleCtxMenu(e) {
     // When re-triggered from the ctx-overlay (second right-click while the menu
     // is open), e.target is the overlay itself. The overlay covers the whole
     // viewport, so elementFromPoint would return it — temporarily disable its
     // pointer events to reveal the element beneath the cursor.
-    let item = e.target?.closest?.('.file-item, .grid-item') || null
+    let item = resolveCtxEntry(e.target)
     const fromOverlay = !!e.target?.classList?.contains('ctx-overlay')
     if (!item && fromOverlay) {
         const overlay = e.target
@@ -1563,7 +1715,7 @@ function handleCtxMenu(e) {
         overlay.style.pointerEvents = 'none'
         try {
             const hit = document.elementFromPoint(e.clientX, e.clientY)
-            item = hit?.closest?.('.file-item, .grid-item') || null
+            item = resolveCtxEntry(hit)
         } finally {
             overlay.style.pointerEvents = prev
         }

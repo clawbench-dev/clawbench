@@ -21,6 +21,17 @@ import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 // Accessible from App.vue without instantiating useChatSession
 let _sessionsLoadPromise: Promise<void> | null = null
 
+/**
+ * Signature of the per-session unread/pending badges from the last completed
+ * load, used to decide whether `sessionListVersion` must be bumped.
+ *
+ * Rows render their own `unreadCount`/`pendingApproval`, so a change to either
+ * must refresh the list even when the aggregate unread count is unchanged
+ * (one session read while another becomes unread). `null` means "no completed
+ * load yet", which forces a bump on the first one.
+ */
+let _lastBadgeSignature: string | null = null
+
 export async function loadSessionsOnce(): Promise<void> {
   // Dedup: if a load is already in-flight, reuse its promise instead of
   // firing a duplicate request (e.g. App.vue + ChatPanelContent.vue
@@ -36,18 +47,42 @@ export async function loadSessionsOnce(): Promise<void> {
         const unreadCount = sessions.filter(s =>
           (s.unreadCount! > 0 || s.pendingApproval) && s.id !== identity.currentSessionId.value
         ).length
+        // Capture the previous values before writing, so we can tell whether
+        // anything actually changed.
+        const unreadChanged = store.state.chatUnreadCount !== unreadCount
         store.state.chatUnreadCount = unreadCount
         // Update session count for header indicator
+        let countChanged = false
         if (typeof data.totalCount === 'number') {
+          countChanged = store.state.sessionCount !== data.totalCount
           store.state.sessionCount = data.totalCount
         }
+        // Per-session unread/pending state is rendered on every row
+        // (SessionList's `.session-item-badge`), so a change there needs the
+        // list refreshed even when the AGGREGATE is unchanged — e.g. one
+        // session marked read while another becomes unread. Comparing only the
+        // total would leave those badges stale.
+        const badgeSignature = sessions
+          .map(s => `${s.id}:${s.unreadCount || 0}:${s.pendingApproval ? 1 : 0}`)
+          .join(',')
+        const badgesChanged = badgeSignature !== _lastBadgeSignature
+        _lastBadgeSignature = badgeSignature
         // Populate runningSessions set from API data (full authoritative list)
-        reconcileRunningSessions(sessions, true)
+        const runningChanged = reconcileRunningSessions(sessions, true)
         // Signal any mounted session list (drawer/sidebar) to refresh in real time.
         // loadSessionsOnce is the single funnel for read/complete/archive/delete
         // state refreshes, so bumping the version here keeps the list in sync
         // even for changes that don't emit a WS event (e.g. mark-as-read).
-        store.state.sessionListVersion++
+        //
+        // Bump ONLY when something changed. This runs several times per project
+        // switch (App.vue's background load, then ChatPanelContent's mount), and
+        // an unconditional bump made every call trigger a full refresh wave of
+        // the session list, the cross-project overview and the tag list —
+        // measured at three identical requests per endpoint per switch. A
+        // no-op reload must not schedule that work.
+        if (unreadChanged || countChanged || badgesChanged || runningChanged) {
+          store.state.sessionListVersion++
+        }
       }
     } catch { /* ignore */ }
     finally {
@@ -60,6 +95,7 @@ export async function loadSessionsOnce(): Promise<void> {
 /** Reset internal dedup state — called during SPA hot project switch. */
 export function resetChatSessionState(): void {
   _sessionsLoadPromise = null
+  _lastBadgeSignature = null
 }
 
 export interface UseChatSessionOptions {

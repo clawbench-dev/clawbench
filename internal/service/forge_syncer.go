@@ -73,7 +73,12 @@ func (s *ForgeSyncer) SyncRepo(ctx context.Context, pf ProjectForge) error {
 // SyncRepoWithOptions runs one incremental sync with explicit options.
 func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, opts SyncOptions) error {
 	repoKey := ForgeRepoKey{Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo}
-	repoRef := ForgeRepoRef{Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo}
+	repoRef := ForgeRepoRef{
+		Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo,
+		// Carried so notifications can navigate to a project that has this repo
+		// bound. Not part of the repo identity — see ForgeRepoRef.ProjectPath.
+		ProjectPath: pf.ProjectPath,
+	}
 	remote := forge.Remote{
 		Platform: forge.Platform(pf.Platform),
 		Host:     pf.Host,
@@ -93,8 +98,16 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 	firstSync := watermark.IsZero()
 
 	// Query from the watermark minus the overlap window so boundary items are
-	// not skipped. On a first sync this is the zero time (full fetch).
-	since := time.Time{}
+	// not skipped. On a first sync the baseline is "now", NOT the beginning of
+	// time: the snapshot exists only to diff one pass against the next, so
+	// backfilling a repository's entire history buys nothing and is not even
+	// possible for large repos — GitHub rejects offset pagination past 10k
+	// items, so a full fetch would abort mid-pagination, never advance the
+	// watermark, and re-walk every page on every tick.
+	//
+	// Pre-existing items that surface later (created before the baseline, first
+	// updated after it) are baselined silently — see DeriveChanges.
+	since := s.now().UTC().Add(-s.overlapWindow)
 	if !firstSync {
 		since = watermark.Add(-s.overlapWindow)
 	}
@@ -112,7 +125,7 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 	//
 	// Note the assignment (not `:=`): the outer `err` is reused below for the
 	// pipeline pass, so shadowing it here would hide that pass's error.
-	err = s.advanceWatermark(repoKey, watermark, maxUpdated, firstSync)
+	err = s.advanceWatermark(repoKey, watermark, maxUpdated)
 	if err != nil {
 		return err
 	}
@@ -293,7 +306,7 @@ func (s *ForgeSyncer) drainAllTypes(
 				if item.UpdatedAt.After(maxUpdated) {
 					maxUpdated = item.UpdatedAt
 				}
-				if err := s.processItem(ctx, provider, repoKey, repoRef, remote, typ, item, firstSync, opts); err != nil {
+				if err := s.processItem(ctx, provider, repoKey, repoRef, remote, typ, item, since, firstSync, opts); err != nil {
 					return time.Time{}, itemsSeen, err
 				}
 			}
@@ -310,25 +323,26 @@ func (s *ForgeSyncer) drainAllTypes(
 	return maxUpdated, itemsSeen, nil
 }
 
-// advanceWatermark moves the stored watermark forward, or initializes it on a
-// first sync that saw no items (so history is not re-fetched forever).
-func (s *ForgeSyncer) advanceWatermark(repoKey ForgeRepoKey, prev, maxUpdated time.Time, firstSync bool) error {
+// advanceWatermark moves the stored watermark forward. The caller only reaches
+// this after every page was consumed, so a mid-pagination failure leaves the
+// window intact for the next run.
+//
+// maxUpdated is seeded with the queried window start, so it is never zero and
+// always strictly after a zero prev — a first sync therefore initializes the
+// watermark here rather than through a separate "nothing seen" fallback.
+func (s *ForgeSyncer) advanceWatermark(repoKey ForgeRepoKey, prev, maxUpdated time.Time) error {
 	if !maxUpdated.IsZero() && maxUpdated.After(prev) {
 		if err := SetForgeSyncWatermark(repoKey, maxUpdated); err != nil {
 			return fmt.Errorf("advance watermark: %w", err)
-		}
-		return nil
-	}
-	if firstSync {
-		if err := SetForgeSyncWatermark(repoKey, s.now().UTC()); err != nil {
-			return fmt.Errorf("init watermark: %w", err)
 		}
 	}
 	return nil
 }
 
 // processItem compares one fetched item against its snapshot, persists the new
-// state, and dispatches any derived events.
+// state, and dispatches any derived events. windowStart is the `since` the
+// provider was queried with; it lets derivation tell a genuinely new item from
+// a pre-existing one that merely surfaced for the first time.
 func (s *ForgeSyncer) processItem(
 	ctx context.Context,
 	provider forge.Provider,
@@ -337,6 +351,7 @@ func (s *ForgeSyncer) processItem(
 	remote forge.Remote,
 	typ forge.ItemType,
 	item forge.Item,
+	windowStart time.Time,
 	firstSync bool,
 	opts SyncOptions,
 ) error {
@@ -358,14 +373,15 @@ func (s *ForgeSyncer) processItem(
 		LatestCommentAuthor:    cs.author,
 		LatestCommentBody:      cs.body,
 		Author:                 item.Author.Login,
+		CreatedAt:              item.CreatedAt,
 	}
 
-	// Derive events only when this is not the first sync. A nil prev on a later
-	// sync is a genuinely new item (opened/merged/closed since the baseline);
-	// on the first sync it would replay the whole history, so it is skipped.
+	// Derive events only when this is not the first sync. On the first sync the
+	// snapshot is being established, so nothing is dispatched; on every later
+	// pass DeriveChanges decides what is genuinely new (see its windowStart).
 	var changes []forge.Change
 	if !firstSync {
-		changes = forge.DeriveChanges(prevSnapshotOrNil(prev), cur, item.Number)
+		changes = forge.DeriveChanges(prevSnapshotOrNil(prev), cur, item.Number, windowStart)
 		// Comment events additionally require a baseline from a PREVIOUS pass.
 		// A state transition is still reported without one — it is derived from
 		// data this pass actually fetched — but comment activity cannot be,

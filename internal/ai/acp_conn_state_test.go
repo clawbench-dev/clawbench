@@ -1128,6 +1128,54 @@ func TestIsACPPeerDisconnected_CancelledContext(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// acpInitTimeoutError tests
+// ---------------------------------------------------------------------------
+
+func TestIsACPInitTimeout_TypedError(t *testing.T) {
+	err := &acpInitTimeoutError{agentID: "codebuddy", timeout: 60 * time.Second, cause: context.DeadlineExceeded}
+	assert.True(t, isACPInitTimeout(err))
+}
+
+func TestIsACPInitTimeout_OtherErrors(t *testing.T) {
+	assert.False(t, isACPInitTimeout(nil))
+	assert.False(t, isACPInitTimeout(context.DeadlineExceeded))
+	assert.False(t, isACPInitTimeout(fmt.Errorf("acp: initialize: boom")))
+}
+
+func TestACPInitTimeoutError_ReportsAgentAndBudget(t *testing.T) {
+	err := &acpInitTimeoutError{agentID: "codebuddy", timeout: 60 * time.Second, cause: context.DeadlineExceeded}
+	assert.Equal(t, "codebuddy", err.AgentID())
+	assert.Equal(t, 60*time.Second, err.Timeout())
+	assert.Contains(t, err.Error(), "codebuddy")
+	assert.Contains(t, err.Error(), "1m0s")
+}
+
+// TestIsACPPeerDisconnected_InitTimeoutIsNotRetryable is the regression guard
+// for the double-timeout bug: the SDK reports an Initialize deadline as
+// InternalError(-32603) whose data says "context deadline exceeded", which the
+// generic deadline heuristic classifies as a retryable disconnect. That made
+// ExecuteStream re-run the identical handshake and burn a second 60s before
+// reporting failure. An init timeout must therefore be excluded up front.
+func TestIsACPPeerDisconnected_InitTimeoutIsNotRetryable(t *testing.T) {
+	sdkCause := acp.NewInternalError(map[string]any{"error": "context deadline exceeded"})
+	// Sanity: the raw SDK error alone IS classified as retryable — that is
+	// exactly why the typed wrapper has to short-circuit.
+	require.True(t, isACPPeerDisconnected(sdkCause))
+
+	err := &acpInitTimeoutError{agentID: "codebuddy", timeout: 60 * time.Second, cause: sdkCause}
+	assert.False(t, isACPPeerDisconnected(err))
+}
+
+// TestIsACPPeerDisconnected_NonInitDeadlineStillRetryable ensures the
+// exclusion is scoped to Initialize: a deadline from LoadSession/ResumeSession
+// (also surfaced as the same SDK error shape) must stay retryable.
+func TestIsACPPeerDisconnected_NonInitDeadlineStillRetryable(t *testing.T) {
+	err := fmt.Errorf("acp: session/load: %w",
+		acp.NewInternalError(map[string]any{"error": "context deadline exceeded"}))
+	assert.True(t, isACPPeerDisconnected(err))
+}
+
+// ---------------------------------------------------------------------------
 // IsACPSlashCommand tests
 // ---------------------------------------------------------------------------
 

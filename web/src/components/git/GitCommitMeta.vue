@@ -3,11 +3,35 @@
     <template v-if="filePath">
       <div class="diff-meta-row">
         <span class="diff-meta-label">{{ t('git.commitMeta.file') }}</span>
-        <span class="diff-meta-value diff-meta-file-name">{{ fileName }}</span>
+        <span
+          class="diff-meta-value diff-meta-file-name diff-meta-annotation"
+          :title="t('git.commitMeta.openFile')"
+          @click="emit('open-file', filePath)"
+        >{{ fileName }}</span>
+        <button
+          class="diff-meta-open-btn"
+          type="button"
+          :title="t('git.commitMeta.openFile')"
+          :aria-label="t('git.commitMeta.openFile')"
+          @click.stop="emit('open-file', filePath)"
+          v-html="FILE_OPEN_ICON_SVG"
+        ></button>
       </div>
       <div class="diff-meta-row">
         <span class="diff-meta-label">{{ t('git.commitMeta.path') }}</span>
-        <span class="diff-meta-value diff-meta-file-path" :title="filePath">{{ filePath }}</span>
+        <span
+          class="diff-meta-value diff-meta-file-path diff-meta-annotation"
+          :title="t('git.commitMeta.revealInManager')"
+          @click="emit('reveal-file', filePath)"
+        >{{ filePath }}</span>
+        <button
+          class="diff-meta-open-btn"
+          type="button"
+          :title="t('git.commitMeta.revealInManager')"
+          :aria-label="t('git.commitMeta.revealInManager')"
+          @click.stop="emit('reveal-file', filePath)"
+          v-html="FILE_OPEN_ICON_SVG"
+        ></button>
       </div>
     </template>
     <template v-if="isWorkingTree">
@@ -42,6 +66,7 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyText } from '@/utils/clipboard.ts'
 import { baseName } from '@/utils/path.ts'
+import { FILE_OPEN_ICON_SVG } from '@/composables/useFilePathAnnotation.ts'
 const { t, locale } = useI18n()
 
 const props = defineProps({
@@ -49,6 +74,15 @@ const props = defineProps({
   isWorkingTree: Boolean,
   filePath: String,
 })
+
+// Both row actions are delegated to the host. The panel renders inside the
+// wide-screen history tab AND inside the mobile file-history bottom sheet, and
+// only the host knows which surface the jump originates from (history tab vs.
+// the file viewer's own stack) and how to record it as a return target.
+// Navigating from inside the panel would strand the destination with no origin,
+// so Back would walk up the directory tree instead of returning here. This
+// mirrors the breadcrumb's open-file emit, which both hosts already handle.
+const emit = defineEmits(['open-file', 'reveal-file'])
 
 const shaCopied = ref(false)
 
@@ -138,6 +172,63 @@ function formatDate(dateStr) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Clickable file annotations ──
+   The file name opens the file, the path reveals it in the file manager.
+   The label is the primary affordance; the trailing button repeats the same
+   action for users who expect an explicit control (matching the chat-side
+   .chat-file-open-btn convention). */
+.diff-meta-annotation {
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  padding: 1px var(--space-2);
+  margin-left: calc(var(--space-2) * -1);
+  transition: background var(--duration-base), color var(--duration-base);
+  min-width: 0;
+}
+
+@media (hover: hover) {
+  .diff-meta-annotation:hover {
+    background: color-mix(in srgb, var(--text-muted, #999) 15%, transparent);
+    color: var(--text-primary, #333);
+  }
+}
+
+.diff-meta-open-btn {
+  background: none;
+  border: none;
+  padding: var(--space-1);
+  cursor: pointer;
+  color: var(--text-muted, #999);
+  border-radius: var(--radius-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--duration-base), background var(--duration-base);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  vertical-align: baseline;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.diff-meta-open-btn svg {
+  display: block;
+}
+
+/* Keyboard users reach these buttons via Tab; without a focus ring the
+   focused control is invisible (matches the repo's .code-preview-btn). */
+.diff-meta-open-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -1px;
+}
+
+@media (hover: hover) {
+  .diff-meta-open-btn:hover {
+    color: var(--accent-color, #4a90d9);
+    background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 
 .diff-meta-file-path {

@@ -285,6 +285,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // settings and take effect immediately (no save button).
     { type: 'item', spec: { labelKey: 'settings.items.inAppNotification', descriptionKey: 'settings.items.inAppNotificationDesc', key: 'inAppNotification', type: 'switch', source: 'local', sectionHeader: 'settings.items.inAppNotifySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.notificationSound', descriptionKey: 'settings.items.notificationSoundDesc', key: 'notificationSound', type: 'switch', source: 'local', sectionHeader: 'settings.items.inAppNotifySection' } },
+    // Browser/system notifications. Deliberately NOT appOnly and deliberately
+    // its own section: the "桌面与系统" card below is app-only and disappears in
+    // browser mode, which is precisely where this switch matters most. It gates
+    // the Notification API path and is independent of the server-side push_mode
+    // (that one selects the mobile/IM channel).
+    { type: 'item', spec: { labelKey: 'settings.items.browserNotification', descriptionKey: 'settings.items.browserNotificationDesc', key: 'browserNotification', type: 'switch', source: 'local', sectionHeader: 'settings.items.browserNotifySection' } },
     // Out-of-app desktop/system surfaces (app-only, so the whole card disappears
     // in browser mode — the render list is filtered before cards are grouped).
     { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },

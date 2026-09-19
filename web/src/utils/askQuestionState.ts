@@ -53,7 +53,7 @@ const answers = new Map<string, AskAnswerState>()
  * re-aggregated differently in each (see the call sites in ContentBlocks.vue):
  *   - 'tool'    a single tool card showing one block's questions
  *   - 'msg'     the merged card holding every question of one message
- *   - 'text'    a text block carrying an <ask-question> tag (pre-Finalize)
+ *   - 'text'    a text block carrying an <clawbench-ask-question> tag (pre-Finalize)
  *   - 'summary' the summary-view merged card
  */
 export function askCardKey(sessionId: string, kind: string, id: string): string {

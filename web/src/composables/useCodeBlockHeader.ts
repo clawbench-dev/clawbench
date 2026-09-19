@@ -39,6 +39,18 @@ export function annotateCodeBlockHeaders(html: string): string {
     if (!html) return html
 
     const doc = new DOMParser().parseFromString(html, 'text/html')
+    annotateCodeBlockHeadersIn(doc)
+    return doc.body.innerHTML
+}
+
+/**
+ * Annotate code-block headers inside an already-parsed Document, in place.
+ *
+ * Split out so the markdown pipeline can run several annotation steps over ONE
+ * parsed document instead of each step paying its own `parseFromString` +
+ * `body.innerHTML` round trip.
+ */
+export function annotateCodeBlockHeadersIn(doc: Document): void {
 
     // Find all <pre> elements that contain a <code> child
     const pres = doc.querySelectorAll('pre')
@@ -109,8 +121,6 @@ export function annotateCodeBlockHeaders(html: string): string {
         wrapper.appendChild(header)
         wrapper.appendChild(pre)
     }
-
-    return doc.body.innerHTML
 }
 
 // ── Event delegation handler ────────────────────────────────────────────────
@@ -187,6 +197,18 @@ export function annotateTableBlockHeaders(html: string): string {
     if (!html) return html
 
     const doc = new DOMParser().parseFromString(html, 'text/html')
+    annotateTableBlockHeadersIn(doc)
+    return doc.body.innerHTML
+}
+
+/**
+ * Annotate table-block headers inside an already-parsed Document, in place.
+ *
+ * Split out so the markdown pipeline can run several annotation steps over ONE
+ * parsed document instead of each step paying its own `parseFromString` +
+ * `body.innerHTML` round trip.
+ */
+export function annotateTableBlockHeadersIn(doc: Document): void {
 
     const tableWraps = doc.querySelectorAll('.table-wrap')
     for (const tableWrap of tableWraps) {
@@ -270,8 +292,6 @@ export function annotateTableBlockHeaders(html: string): string {
         wrapper.appendChild(header)
         wrapper.appendChild(tableWrap)
     }
-
-    return doc.body.innerHTML
 }
 
 /**

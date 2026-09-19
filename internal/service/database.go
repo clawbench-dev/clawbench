@@ -298,7 +298,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// (e.g., RAG store which has its own *sql.DB on a separate database file).
 	// MaxOpenConns must be > 1 to avoid deadlocks when iterating rows (which holds
 	// a connection) and performing writes (which needs a separate connection) in the
-	// same loop — e.g., MigrateCustomSystemPrompt's SELECT + UPDATE pattern.
+	// same loop — e.g., the agent prompt migrations' SELECT + UPDATE pattern.
 	db.SetMaxOpenConns(2)
 
 	// Enable WAL mode for concurrent reads during writes
@@ -1247,6 +1247,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: drop the legacy agents.system_prompt column (see the function for why).
+	if err := migrateLegacyAgentPrompts(db); err != nil {
+		return err
+	}
+
 	// Migrate: drop deleted column from chat_history.
 	// Archival is handled at the session level (chat_sessions.archived),
 	// so chat_history.deleted is redundant. Removing it simplifies queries
@@ -1538,6 +1543,25 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasShareRoot == 0 {
 		if _, err := WriteExec("ALTER TABLE file_shares ADD COLUMN root TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add root column to file_shares: %w", err)
+		}
+	}
+
+	// Migrate: add last_session_id to the push subscriber tables. This is the
+	// sticky target for messages that carry no "@{shortID}" prefix — a plain
+	// text or a file/image sent from DingTalk/Feishu goes to the session the
+	// user last addressed. Pre-existing rows get '' and the handler falls back
+	// to the "/ls" hint rather than guessing a target.
+	for _, tbl := range []string{"dingtalk_subscribers", "feishu_subscribers"} {
+		var exists int
+		_ = db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='last_session_id'", tbl,
+		).Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec(fmt.Sprintf(
+				"ALTER TABLE %s ADD COLUMN last_session_id TEXT NOT NULL DEFAULT ''", tbl,
+			)); err != nil {
+				return fmt.Errorf("failed to add %s.last_session_id column: %w", tbl, err)
+			}
 		}
 	}
 
@@ -2023,6 +2047,56 @@ func MigrateTaskExecutionSummaries() {
 	}
 
 	slog.Info("task_execution summary migration complete", slog.Int("migrated", migrated), slog.Int("total", count))
+}
+
+// MigrateLegacyAgentPrompts drops the legacy agents.system_prompt column on the
+// package database. Exported for tests; InitDB uses migrateLegacyAgentPrompts so
+// it can act on the handle it is currently opening.
+func MigrateLegacyAgentPrompts() error {
+	return migrateLegacyAgentPrompts(db)
+}
+
+// migrateLegacyAgentPrompts drops the legacy agents.system_prompt column and
+// clears the prompt text it left behind in custom_system_prompt.
+//
+// That column used to hold the composed prompt (shared prefix + user text), and
+// the read path treated the stored string as the user's own prompt. The frozen
+// copy was appended after the freshly composed one, so it won — which made every
+// change to the built-in prompt a silent no-op on existing installs. An earlier
+// migration then copied that same stored text into custom_system_prompt, so
+// clearing only the dropped column would leave the stale copy injected from the
+// other one.
+//
+// The guard is deliberately broad: any row carrying a non-empty legacy
+// system_prompt has its custom_system_prompt cleared, because the stored value
+// cannot be reliably split back into "shared prefix" and "what the user wrote"
+// (recognizing old prefix versions is exactly what the previous migration got
+// wrong). Prompts configured under the old scheme are discarded rather than
+// guessed at. Only custom_system_prompt is authoritative now, and the shared
+// prompt is composed fresh on every read, so anything a user sets from here on
+// is unaffected.
+//
+// The outer guard is the column's existence, so this is a no-op once the column
+// is gone.
+func migrateLegacyAgentPrompts(d *sql.DB) error {
+	var hasLegacy int
+	if err := d.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='system_prompt'",
+	).Scan(&hasLegacy); err != nil {
+		return fmt.Errorf("check legacy system_prompt column: %w", err)
+	}
+	if hasLegacy == 0 {
+		return nil
+	}
+
+	if _, err := d.Exec("UPDATE agents SET custom_system_prompt = '' WHERE system_prompt != ''"); err != nil {
+		return fmt.Errorf("failed to clear legacy agent prompts: %w", err)
+	}
+	if _, err := d.Exec("ALTER TABLE agents DROP COLUMN system_prompt"); err != nil {
+		return fmt.Errorf("failed to drop system_prompt column from agents: %w", err)
+	}
+	slog.Info("dropped legacy agents.system_prompt column")
+	return nil
 }
 
 // MigrateToolCallsFromContent scans assistant messages that contain tool_use blocks

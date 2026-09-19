@@ -112,9 +112,21 @@ export function annotateCommitHashes(
 ): { html: string; detectedSHAs: string[] } {
     if (!html) return { html: '', detectedSHAs: [] }
 
-    const detectedSHAs: string[] = []
-
     const doc = new DOMParser().parseFromString(html, 'text/html')
+    const detectedSHAs = annotateCommitHashesIn(doc)
+    return { html: doc.body.innerHTML, detectedSHAs }
+}
+
+/**
+ * Annotate commit hashes inside an already-parsed Document, mutating it in place.
+ *
+ * Split out of `annotateCommitHashes` so the markdown pipeline can run several
+ * annotation steps over ONE parsed document instead of each step paying its own
+ * `parseFromString` + `body.innerHTML` round trip. Behaviour is identical to
+ * the string wrapper — that wrapper is now a thin parse/call/serialize shim.
+ */
+export function annotateCommitHashesIn(doc: Document): string[] {
+    const detectedSHAs: string[] = []
 
     // ── Step 1: <code> tags whose content is purely a commit hash ──
     // Only handles the case where the entire <code> content is a single hash.
@@ -200,7 +212,7 @@ export function annotateCommitHashes(
         }
     }
 
-    return { html: doc.body.innerHTML, detectedSHAs }
+    return detectedSHAs
 }
 
 // Cache of verified commit SHAs: sha -> commit info object (or null if not a commit)
@@ -218,6 +230,108 @@ function commitCacheSet(key: string, value: Record<string, unknown> | null): voi
 }
 
 /**
+ * The one in-flight verify-commits request, if any.
+ *
+ * Several independent containers annotate commit hashes during the same render
+ * pass (chat messages, tool details, forge detail, task overview) and their SHA
+ * sets overlap — a commit mentioned in both a tool card and the assistant text
+ * gets verified twice. Concurrent callers await this promise and then re-check
+ * the cache, so an overlapping SHA costs one round-trip instead of two.
+ */
+let inFlightVerification: Promise<void> | null = null
+
+/**
+ * Server-side cap on SHAs per request (`maxSHAs` in ServeGitVerifyCommits).
+ * Sending more would make the server silently ignore the excess, and we would
+ * then cache those SHAs as "not a commit" — permanently mislabelling real
+ * commits. Batches are therefore chunked to this size.
+ */
+const MAX_VERIFY_BATCH = 500
+
+/**
+ * Send one verify-commits request for `shas` and cache every result (unmatched
+ * SHAs as `null`). Publishes the request as `inFlightVerification` so concurrent
+ * callers can wait for it instead of sending their own.
+ *
+ * Only `resolvePending` calls this, and only after confirming nothing is in
+ * flight — so the caller is always the owner of the request it awaits, and may
+ * safely treat an absent cache entry as "not a commit".
+ *
+ * Rejects on transport or HTTP failure; the caller decides what to do.
+ */
+async function fetchVerification(shas: string[]): Promise<void> {
+    // The check-then-assign in `resolvePending` has no await between them, so
+    // only one request can ever be in flight — clearing unconditionally here is
+    // safe and avoids the promise having to reference itself.
+    const request = (async () => {
+        try {
+            const resp = await fetch('/api/git/verify-commits', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shas }),
+            })
+            if (!resp.ok) throw new Error(`verify-commits HTTP ${resp.status}`)
+            const data = await resp.json()
+            const results = new Map<string, Record<string, unknown> | null>(Object.entries(data.results || {}))
+            for (const sha of shas) commitCacheSet(sha, results.get(sha) ?? null)
+        } finally {
+            inFlightVerification = null
+        }
+    })()
+    inFlightVerification = request
+    return request
+}
+
+/** Apply a known result to the DOM: verified commit, or strip the annotation. */
+function applyVerification(sha: string, info: Record<string, unknown> | null, containerEl: HTMLElement): void {
+    if (info) {
+        upgradeToVerified(sha, containerEl)
+    } else {
+        removePendingAnnotations([sha], containerEl)
+    }
+}
+
+/**
+ * Drive `pending` to fully-resolved, applying each result to `containerEl`.
+ *
+ * Loops because a request we merely awaited (someone else's) covers an unknown
+ * subset of our SHAs: whatever it resolved is applied, the remainder is retried.
+ * A SHA is only ever applied from a cache entry that was actually written, so a
+ * request we did not send can never cause a wrong "not a commit".
+ */
+async function resolvePending(pending: string[], containerEl: HTMLElement): Promise<void> {
+    let remaining = pending
+    while (remaining.length > 0) {
+        // Let any in-flight request finish first — it may already cover some.
+        if (inFlightVerification) {
+            try {
+                await inFlightVerification
+            } catch {
+                return
+            }
+            for (const sha of remaining) {
+                const cached = verifiedCommitCache.get(sha)
+                if (cached !== undefined) applyVerification(sha, cached, containerEl)
+            }
+            remaining = remaining.filter((sha) => !verifiedCommitCache.has(sha))
+            continue
+        }
+
+        // Nothing in flight: we own the next request. Chunk to respect the cap.
+        const batch = remaining.slice(0, MAX_VERIFY_BATCH)
+        try {
+            await fetchVerification(batch)
+        } catch {
+            return
+        }
+        for (const sha of batch) {
+            applyVerification(sha, verifiedCommitCache.get(sha) ?? null, containerEl)
+        }
+        remaining = remaining.slice(batch.length)
+    }
+}
+
+/**
  * Check which commit SHAs are valid git commit objects.
  *
  * For valid SHAs: upgrades pending annotations to verified (changes class from
@@ -226,44 +340,30 @@ function commitCacheSet(key: string, value: Record<string, unknown> | null): voi
  *
  * For invalid SHAs: removes pending annotations entirely (unwraps span/code).
  *
- * On network error or non-ok response: also removes all pending annotations
- * for the requested SHAs (safer to remove than to leave unverified annotations
- * looking like real commits).
+ * On network error or non-ok response the pending annotations are left as-is
+ * (nothing is upgraded, nothing is removed) — a transient failure must not
+ * silently delete a hash that may well be a real commit.
  *
  * Also caches commit info for later use by navigateToCommit.
+ *
+ * Results already in `verifiedCommitCache` are applied without a request, and
+ * SHAs another container is already verifying are awaited rather than asked for
+ * again. Only the SHAs that remain uncovered are sent, in one batched request.
  */
 export async function verifyCommitHashes(shas: string[], containerEl: HTMLElement): Promise<void> {
     const unique = [...new Set(shas)]
     if (unique.length === 0) return
 
-    // Batch verify: send all SHAs in one request
-    let results: Map<string, Record<string, unknown> | null>
-    try {
-        const resp = await fetch('/api/git/verify-commits', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ shas: unique }),
-        })
-        if (!resp.ok) return
-        const data = await resp.json()
-        results = new Map(Object.entries(data.results || {}))
-        // Update cache — value is commit info object or null
-        for (const [sha, info] of results) {
-            commitCacheSet(sha, info)
-        }
-    } catch {
-        return
+    // Apply everything we already know, and collect the rest.
+    const unresolved: string[] = []
+    for (const sha of unique) {
+        const cached = verifiedCommitCache.get(sha)
+        if (cached !== undefined) applyVerification(sha, cached, containerEl)
+        else unresolved.push(sha)
     }
+    if (unresolved.length === 0) return
 
-    for (const [sha, info] of results) {
-        if (info) {
-            // Valid commit — upgrade pending annotation to verified
-            upgradeToVerified(sha, containerEl)
-        } else {
-            // Invalid commit — remove annotation entirely
-            removePendingAnnotations([sha], containerEl)
-        }
-    }
+    await resolvePending(unresolved, containerEl)
 }
 
 /**

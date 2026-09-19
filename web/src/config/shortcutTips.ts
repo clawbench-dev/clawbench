@@ -51,6 +51,8 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextRecommendEnable', actionKey: 'appHeader.shortcutTip.actionRecommendEnable' },
 
   // ── browse（文件管理器） ──
+  { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseNavigate', keys: ['↑', '↓', 'Home', 'End'], actionKey: 'appHeader.shortcutTip.actionBrowseNavigate' },
+  { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseOpen', keys: ['Enter'], actionKey: 'appHeader.shortcutTip.actionBrowseOpen' },
   { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseClipboard', keys: ['Ctrl+C', 'Ctrl+X', 'Ctrl+V'], actionKey: 'appHeader.shortcutTip.actionBrowseClipboard' },
   { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseDelete', keys: ['Delete', 'Shift+Delete'], actionKey: 'appHeader.shortcutTip.actionBrowseDelete' },
   { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseNew', keys: ['Ctrl+N', 'Ctrl+Shift+N'], actionKey: 'appHeader.shortcutTip.actionBrowseNew' },
@@ -59,6 +61,8 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
   { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseRefresh', keys: ['Ctrl+R', 'F5'], actionKey: 'appHeader.shortcutTip.actionBrowseRefresh' },
   { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseHidden', keys: ['Ctrl+Shift+H'], actionKey: 'appHeader.shortcutTip.actionBrowseHidden' },
   { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseMulti', keys: ['Ctrl+Shift+M', 'Ctrl+A'], actionKey: 'appHeader.shortcutTip.actionBrowseMulti' },
+  { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseToggleSelect', keys: ['Space'], actionKey: 'appHeader.shortcutTip.actionBrowseToggleSelect' },
+  { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseEscape', keys: ['Esc'], actionKey: 'appHeader.shortcutTip.actionBrowseEscape' },
   { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseView', keys: ['Ctrl+1', 'Ctrl+2'], actionKey: 'appHeader.shortcutTip.actionBrowseView' },
 
   // ── view（文件查看/编辑） ──
@@ -71,6 +75,7 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
   { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermInterrupt', keys: ['Ctrl+C'], actionKey: 'appHeader.shortcutTip.actionTermInterrupt' },
   { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermEof', keys: ['Ctrl+D'], actionKey: 'appHeader.shortcutTip.actionTermEof' },
   { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermClear', keys: ['Ctrl+L'], actionKey: 'appHeader.shortcutTip.actionTermClear' },
+  { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermSuspend', keys: ['Ctrl+Z'], actionKey: 'appHeader.shortcutTip.actionTermSuspend' },
 
   // ── history（Git 历史） ──
   { context: 'history', contextKey: 'appHeader.shortcutTip.contextHistoryNav', keys: ['↑', '↓', 'Enter'], actionKey: 'appHeader.shortcutTip.actionHistoryNav' },

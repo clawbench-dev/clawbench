@@ -43,6 +43,12 @@ const KIND_LABEL_KEYS: Record<string, string> = {
     // The pseudo-kind used for repository-targeted events in the form's
     // grouping. It is NOT a subscription prefix: the stored key stays bare.
     repo: 'task.form.eventKindRepo',
+    // The real item type a pipeline event carries (forge.ItemTypePipeline).
+    // It needs its own entry because the wire value is "pipeline", not "repo" —
+    // without this it fell through to the raw token and rendered an untranslated
+    // "pipeline" inside an otherwise localized title. Shares the repo label:
+    // both name the same thing (a repository-level pipeline run).
+    pipeline: 'task.form.eventKindRepo',
 }
 
 /** Split a stored subscription into clean, non-empty keys. */

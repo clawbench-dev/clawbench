@@ -4,7 +4,6 @@ package service
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -28,7 +27,6 @@ CREATE TABLE IF NOT EXISTS agents (
 	preferred_mode TEXT NOT NULL DEFAULT '',
 	preferred_model TEXT NOT NULL DEFAULT '',
 	preferred_thinking_effort TEXT NOT NULL DEFAULT '',
-	system_prompt TEXT NOT NULL DEFAULT '',
 	custom_system_prompt TEXT NOT NULL DEFAULT '',
 	models TEXT NOT NULL DEFAULT '[]',
 	models_auto_detected INTEGER NOT NULL DEFAULT 0,
@@ -54,7 +52,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		SELECT id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
-			system_prompt, custom_system_prompt, models, models_auto_detected,
+			custom_system_prompt, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve
 		FROM agents ORDER BY id
@@ -74,7 +72,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
 			&a.ThinkingEffort, &levelsJSON,
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
-			&a.SystemPrompt, &a.CustomSystemPrompt, &modelsJSON, &modelsAutoDetected,
+			&a.CustomSystemPrompt, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
 			&a.Transport, &a.AcpCommand, &autoApprove,
 		)
@@ -107,6 +105,10 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 	return agents, rows.Err()
 }
 
+// SaveAgent persists an agent. Only the user's own prompt text is durable: the
+// composed prompt (shared + custom) is built at read time and never stored.
+// Writing it here is what let a stale copy of the shared prompt outlive the
+// template it came from and override later changes.
 func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 	modelsJSON, err := json.Marshal(agent.Models)
 	if err != nil {
@@ -145,10 +147,10 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		INSERT INTO agents (id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
-			system_prompt, custom_system_prompt, models, models_auto_detected,
+			custom_system_prompt, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -159,7 +161,6 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			preferred_mode = excluded.preferred_mode,
 			preferred_model = excluded.preferred_model,
 			preferred_thinking_effort = excluded.preferred_thinking_effort,
-			system_prompt = excluded.system_prompt,
 			custom_system_prompt = excluded.custom_system_prompt,
 			models = excluded.models,
 			models_auto_detected = excluded.models_auto_detected,
@@ -171,7 +172,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 	`, agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), modelsAutoDetected,
+		agent.CustomSystemPrompt, string(modelsJSON), modelsAutoDetected,
 		sortOrder,
 		transport, agent.AcpCommand, autoApprove)
 	if err != nil {
@@ -253,8 +254,9 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		addSet("specialty", *patch.Specialty)
 	}
 	if patch.CustomSystemPrompt != nil {
+		// Only the user's own text is stored; the composed prompt is built at
+		// read time. Writing it here would freeze the shared prompt into the row.
 		addSet("custom_system_prompt", *patch.CustomSystemPrompt)
-		addSet("system_prompt", composedSystemPrompt(*patch.CustomSystemPrompt))
 	}
 	if patch.SortOrder != nil {
 		addSet("sort_order", *patch.SortOrder)
@@ -280,21 +282,6 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		return fmt.Errorf("patch agent %s: %w", id, err)
 	}
 	return nil
-}
-
-// composedSystemPrompt builds the effective system_prompt from the shared
-// common prompt plus an agent's custom prompt, mirroring the read path in
-// LoadAgentsIntoMemory.
-func composedSystemPrompt(custom string) string {
-	commonPrompt := model.BuildCommonPrompt()
-	switch {
-	case commonPrompt != "" && custom != "":
-		return commonPrompt + "\n\n" + custom
-	case commonPrompt != "":
-		return commonPrompt
-	default:
-		return custom
-	}
 }
 
 // LoadAgentsIntoMemory loads agents from the database into the global
@@ -343,79 +330,16 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		copy(clone.Models, source.Models)
 	}
 
-	// Compose SystemPrompt from common prompt + custom
-	commonPrompt := model.BuildCommonPrompt()
-	if commonPrompt != "" && clone.CustomSystemPrompt != "" {
-		clone.SystemPrompt = commonPrompt + "\n\n" + clone.CustomSystemPrompt
-	} else if commonPrompt != "" {
-		clone.SystemPrompt = commonPrompt
-	} else {
-		clone.SystemPrompt = clone.CustomSystemPrompt
-	}
-
+	// The composed prompt is not stored; SaveAgent persists the custom text and
+	// the shared prompt is composed at read time.
 	if err := SaveAgent(WriteDB(), clone); err != nil {
 		return nil, fmt.Errorf("save duplicated agent: %w", err)
 	}
 
+	// Compose the runtime prompt now. The clone goes straight into the live
+	// Agents map, and nothing recomposes it until the next reload, so leaving
+	// it empty would make the new agent run with no system prompt at all.
+	clone.RuntimeSystemPrompt = model.ComposeSystemPrompt(clone.CustomSystemPrompt)
+
 	return clone, nil
-}
-
-// MigrateCustomSystemPrompt backfills the custom_system_prompt column for agents
-// that have a system_prompt but an empty custom_system_prompt. It strips the
-// common prompt prefix from the stored system_prompt and stores the remainder
-// as custom_system_prompt.
-func MigrateCustomSystemPrompt() {
-	commonPrompt := model.BuildCommonPrompt()
-	if commonPrompt == "" {
-		return
-	}
-
-	rows, err := dbRead.Query("SELECT id, system_prompt, custom_system_prompt FROM agents WHERE custom_system_prompt = '' AND system_prompt != ''")
-	if err != nil {
-		slog.Error("migrate custom_system_prompt: query failed", "error", err)
-		return
-	}
-
-	// Collect all rows first to release the DB connection before executing UPDATEs.
-	// This avoids deadlocking with MaxOpenConns=1 (SQLite single-writer).
-	type migRow struct {
-		id           string
-		systemPrompt string
-	}
-	var toMigrate []migRow
-	for rows.Next() {
-		var id, systemPrompt, customPrompt string
-		if err := rows.Scan(&id, &systemPrompt, &customPrompt); err != nil {
-			slog.Warn("migrate custom_system_prompt: scan failed", "error", err)
-			continue
-		}
-		toMigrate = append(toMigrate, migRow{id: id, systemPrompt: systemPrompt})
-	}
-	if err := rows.Err(); err != nil {
-		slog.Warn("migrate custom_system_prompt: row iteration error", "error", err)
-	}
-	//nolint:sqlclosecheck // must close before UPDATE loop to release DB connection early
-	if err := rows.Close(); err != nil {
-		slog.Warn("migrate custom_system_prompt: close rows failed", "error", err)
-	}
-
-	migrated := 0
-	for _, row := range toMigrate {
-		// Strip common prompt prefix
-		custom := row.systemPrompt
-		if strings.HasPrefix(row.systemPrompt, commonPrompt+"\n\n") {
-			custom = strings.TrimPrefix(row.systemPrompt, commonPrompt+"\n\n")
-		} else if row.systemPrompt == commonPrompt {
-			custom = ""
-		}
-
-		if _, err := WriteExec("UPDATE agents SET custom_system_prompt = ? WHERE id = ?", custom, row.id); err != nil {
-			slog.Warn("migrate custom_system_prompt: update failed", "agent", row.id, "error", err)
-			continue
-		}
-		migrated++
-	}
-	if migrated > 0 {
-		slog.Info("migrated custom_system_prompt", slog.Int("count", migrated))
-	}
 }

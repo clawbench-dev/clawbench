@@ -24,43 +24,74 @@ const iconUrlCache = new Map<string, string>()
 // Pending loads: iconName → Promise<string | undefined> (dedup concurrent loads)
 const iconUrlPending = new Map<string, Promise<string | undefined>>()
 
-// Generate manifest once at module init
-const manifest = generateManifest()
-
-// Build lookup maps from manifest data
-const extMap = new Map<string, string>()
-const fileNameMap = new Map<string, string>()
-const folderNameMap = new Map<string, string>()
-const folderNameOpenMap = new Map<string, string>()
-
-for (const [ext, iconName] of Object.entries(manifest.fileExtensions || {})) {
-  extMap.set(ext.toLowerCase(), iconName)
+/**
+ * Lookup maps built from the material-icon-theme manifest.
+ *
+ * Built LAZILY, not at module init. `generateManifest()` walks the whole
+ * icon-theme dataset (1378 file extensions + 2131 file names + 1250 icon
+ * definitions) and measured ~370ms — a synchronous main-thread long task.
+ * This module is pulled in by a lazily-loaded chunk that also contains the
+ * markdown annotators, so running it at module init blocked the main thread
+ * for most of a second right after that chunk evaluated (Chrome trace:
+ * 727ms `v8.evaluateModule`).
+ *
+ * Nothing here is needed until an icon is actually resolved, so we defer the
+ * whole construction to the first call. `manifestMaps` is the memoized
+ * result; the `??=` keeps it idempotent.
+ */
+interface ManifestMaps {
+  extMap: Map<string, string>
+  fileNameMap: Map<string, string>
+  folderNameMap: Map<string, string>
+  folderNameOpenMap: Map<string, string>
+  defaultFileIcon: string
+  defaultFolderIcon: string
+  defaultFolderOpenIcon: string
 }
 
-for (const [name, iconName] of Object.entries(manifest.fileNames || {})) {
-  fileNameMap.set(name.toLowerCase(), iconName)
-}
+let manifestMaps: ManifestMaps | null = null
 
-for (const [name, iconName] of Object.entries(manifest.folderNames || {})) {
-  folderNameMap.set(name.toLowerCase(), iconName)
-}
+function getManifestMaps(): ManifestMaps {
+  if (manifestMaps) return manifestMaps
 
-for (const [name, iconName] of Object.entries(manifest.folderNamesExpanded || {})) {
-  folderNameOpenMap.set(name.toLowerCase(), iconName)
-}
+  const manifest = generateManifest()
 
-/** Default file icon name */
-const DEFAULT_FILE_ICON = manifest.file || 'file'
-/** Default folder icon name */
-const DEFAULT_FOLDER_ICON = manifest.folder || 'folder'
-/** Default open folder icon name */
-const DEFAULT_FOLDER_OPEN_ICON = manifest.folderExpanded || 'folder-open'
+  const extMap = new Map<string, string>()
+  const fileNameMap = new Map<string, string>()
+  const folderNameMap = new Map<string, string>()
+  const folderNameOpenMap = new Map<string, string>()
+
+  for (const [ext, iconName] of Object.entries(manifest.fileExtensions || {})) {
+    extMap.set(ext.toLowerCase(), iconName)
+  }
+  for (const [name, iconName] of Object.entries(manifest.fileNames || {})) {
+    fileNameMap.set(name.toLowerCase(), iconName)
+  }
+  for (const [name, iconName] of Object.entries(manifest.folderNames || {})) {
+    folderNameMap.set(name.toLowerCase(), iconName)
+  }
+  for (const [name, iconName] of Object.entries(manifest.folderNamesExpanded || {})) {
+    folderNameOpenMap.set(name.toLowerCase(), iconName)
+  }
+
+  manifestMaps = {
+    extMap,
+    fileNameMap,
+    folderNameMap,
+    folderNameOpenMap,
+    defaultFileIcon: manifest.file || 'file',
+    defaultFolderIcon: manifest.folder || 'folder',
+    defaultFolderOpenIcon: manifest.folderExpanded || 'folder-open',
+  }
+  return manifestMaps
+}
 
 /**
  * Resolve the icon name for a file path.
  * Checks: exact file name → file extension → fallback.
  */
 export function getFileIconName(path: string): string {
+  const { fileNameMap, extMap, defaultFileIcon } = getManifestMaps()
   const parts = path.replace(/\\/g, '/').split('/')
   const baseName = parts[parts.length - 1]
 
@@ -87,7 +118,7 @@ export function getFileIconName(path: string): string {
     }
   }
 
-  return DEFAULT_FILE_ICON
+  return defaultFileIcon
 }
 
 /**
@@ -96,10 +127,11 @@ export function getFileIconName(path: string): string {
  * @param open Whether the folder is expanded
  */
 export function getFolderIconName(name: string, open = false): string {
+  const { folderNameMap, folderNameOpenMap, defaultFolderIcon, defaultFolderOpenIcon } = getManifestMaps()
   const map = open ? folderNameOpenMap : folderNameMap
   const hit = map.get(name.toLowerCase())
   if (hit) return hit
-  return open ? DEFAULT_FOLDER_OPEN_ICON : DEFAULT_FOLDER_ICON
+  return open ? defaultFolderOpenIcon : defaultFolderIcon
 }
 
 /**
@@ -155,8 +187,9 @@ async function checkIconExists(url: string): Promise<boolean> {
  * Falls back to the default file icon URL.
  */
 export async function getFileIconUrl(path: string): Promise<string> {
+  const { defaultFileIcon } = getManifestMaps()
   const iconName = getFileIconName(path)
-  return (await getIconUrl(iconName)) || (await getIconUrl(DEFAULT_FILE_ICON)) || ''
+  return (await getIconUrl(iconName)) || (await getIconUrl(defaultFileIcon)) || ''
 }
 
 /**
@@ -164,6 +197,7 @@ export async function getFileIconUrl(path: string): Promise<string> {
  * Falls back to the default folder icon URL.
  */
 export async function getFolderIconUrl(name: string, open = false): Promise<string> {
+  const { defaultFolderIcon, defaultFolderOpenIcon } = getManifestMaps()
   const iconName = getFolderIconName(name, open)
-  return (await getIconUrl(iconName)) || (await getIconUrl(open ? DEFAULT_FOLDER_OPEN_ICON : DEFAULT_FOLDER_ICON)) || ''
+  return (await getIconUrl(iconName)) || (await getIconUrl(open ? defaultFolderOpenIcon : defaultFolderIcon)) || ''
 }

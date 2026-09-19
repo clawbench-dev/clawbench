@@ -16,10 +16,18 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-const { mockGitFetch, mockNavigateToCommit, mockHandleDrillBackToCommits } = vi.hoisted(() => ({
+const { mockGitFetch, mockNavigateToCommit, mockHandleDrillBackToCommits, mockRevealInFileManager } = vi.hoisted(() => ({
   mockGitFetch: vi.fn(),
   mockNavigateToCommit: vi.fn(),
   mockHandleDrillBackToCommits: vi.fn(),
+  mockRevealInFileManager: vi.fn(),
+}))
+
+// Spy on the origin-recording reveal helper: the host's job is to call it with
+// the right source. The helper's own event contract is covered in
+// useFilePathAnnotation.test.ts.
+vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
+  revealInFileManager: mockRevealInFileManager,
 }))
 
 vi.mock('@/utils/gitApi', () => ({
@@ -127,8 +135,12 @@ vi.mock('@/components/git/GitCommitList.vue', () => ({
 vi.mock('@/components/git/GitCommitMeta.vue', () => ({
   default: defineComponent({
     name: 'GitCommitMeta',
-    props: ['commit', 'isWorkingTree'],
-    template: '<div class="git-commit-meta-stub" />',
+    props: ['commit', 'isWorkingTree', 'filePath'],
+    emits: ['open-file', 'reveal-file'],
+    template: '<div class="git-commit-meta-stub">'
+      + '<button class="meta-open-file" @click="$emit(\'open-file\', filePath)" />'
+      + '<button class="meta-reveal-file" @click="$emit(\'reveal-file\', filePath)" />'
+      + '</div>',
   }),
 }))
 
@@ -242,6 +254,76 @@ describe('GitHistoryDrawer — mount and close', () => {
     const vm = wrapper.vm as any
     vm.onOpenFile('src/main.ts')
     expect(wrapper.emitted('open-file')?.[0]).toEqual(['src/main.ts'])
+  })
+
+  it('forwards the meta panel open-file event and closes the sheet', async () => {
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    // The file rows only render in the diff view, where the meta panel is
+    // handed the selected file path.
+    vm.selectedSHA = 'abc123'
+    vm.drillToFile({ path: 'src/main.ts', type: 'M', staged: false })
+    await flushPromises()
+
+    const metaBtn = wrapper.find('.git-commit-meta-stub .meta-open-file')
+    expect(metaBtn.exists()).toBe(true)
+    await metaBtn.trigger('click')
+
+    expect(wrapper.emitted('open-file')).toEqual([['src/main.ts']])
+    // Opening a file from the sheet must dismiss it, otherwise the viewer is
+    // pushed behind an open overlay.
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('reveals via the origin-recording jump with source=file and closes the sheet', async () => {
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.selectedSHA = 'abc123'
+    vm.drillToFile({ path: 'src/main.ts', type: 'M', staged: false })
+    await flushPromises()
+
+    const metaBtn = wrapper.find('.git-commit-meta-stub .meta-reveal-file')
+    expect(metaBtn.exists()).toBe(true)
+    await metaBtn.trigger('click')
+
+    // This sheet lives inside the file view, so source 'file' makes the
+    // coordinator suspend the file visit as a directory excursion: Back then
+    // restores the viewed file instead of walking up the directory tree.
+    expect(mockRevealInFileManager).toHaveBeenCalledTimes(1)
+    expect(mockRevealInFileManager).toHaveBeenCalledWith('src/main.ts', 'file')
+    // The sheet must not sit over the file manager it just revealed.
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('closes the sheet synchronously, before the reveal awaits', async () => {
+    // The reveal tears down the file overlay (making room for the manager),
+    // which unmounts this sheet. If the close were deferred — e.g. left to the
+    // sheet's own 250ms animation timer — Vue would drop the emit on the
+    // unmounted instance and `open` would stay true, popping the sheet back open
+    // over the restored file on Back. So the host close must precede the reveal.
+    let releaseReveal: () => void = () => {}
+    mockRevealInFileManager.mockImplementationOnce(
+      () => new Promise<void>(resolve => { releaseReveal = resolve })
+    )
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.selectedSHA = 'abc123'
+    vm.drillToFile({ path: 'src/main.ts', type: 'M', staged: false })
+    await flushPromises()
+
+    // Not awaited: the reveal promise is deliberately still pending here.
+    void vm.onRevealFile('src/main.ts')
+    await flushPromises()
+
+    expect(mockRevealInFileManager).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('close')).toBeTruthy()
+
+    releaseReveal()
+    await flushPromises()
   })
 })
 

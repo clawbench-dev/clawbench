@@ -47,7 +47,6 @@ interface AgentRecord {
   acpCommand?: string
   acpAvailableModes?: Array<{ id: string; name: string }>
   transport?: string
-  systemPrompt?: string
   customSystemPrompt?: string
   canRefreshModels?: boolean
   supportsCLI?: boolean

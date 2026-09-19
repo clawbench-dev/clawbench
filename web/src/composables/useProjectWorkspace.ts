@@ -5,39 +5,25 @@
 // both initializeApp (cold start) and hotSwitchProject (SPA project switch),
 // keeping the two paths from diverging.
 //
-// When a saved file is restored and the caller passes activateView: true,
-// switchTab('view') re-activates the file-view tab. This was originally used on
-// project switch to bring the restored file's viewer back into view.
-//
-// Both cold start AND project switch now pass activateView: false (or omit it):
-// the file is restored to state (the header badge shows it) but the app stays
-// on the chat tab, keeping the landing tab consistent across both paths. The
-// user opens the restored file explicitly (header badge / file manager), just
-// like on cold start.
+// Which PANEL to show is deliberately NOT decided here. It used to be, via an
+// `activateView` option that switched to the file-view tab — but the two callers
+// wanted opposite things, and neither answer was right:
+//   - Cold start passed false, because activating the viewer made startup jump
+//     away from chat whenever the project had a last-opened file (commit
+//     e1bb5fb55).
+//   - Project switch passed true, because without it the restored file stayed in
+//     state (header badge only) and the viewer was never brought back.
+// The panel is now remembered PER PROJECT (composables/useProjectPanel.ts) and
+// applied by the caller AFTER this function returns, so the landing panel is a
+// property of the project rather than of the code path that reached it.
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
 import { store, loadBrowseDir, loadOpenFile, clearStaleOpenFile } from '@/stores/app'
 
-export interface RestoreWorkspaceOptions {
-  /**
-   * Activate a tab, e.g. 'view'. Injected by the caller (App.vue) so the logic is testable.
-   * Only called when `activateView` is true.
-   */
-  switchTab: (tab: string) => void
-  /**
-   * Whether restoring the last opened file should also activate the file-view
-   * tab. Defaults to false. Both cold start and project switch keep this false
-   * so the app always lands on the chat tab — the file is restored to state
-   * (header badge) but the view tab is not auto-activated.
-   */
-  activateView?: boolean
-}
-
-export async function restoreProjectWorkspace(opts: RestoreWorkspaceOptions): Promise<void> {
+export async function restoreProjectWorkspace(): Promise<void> {
   const fileNav = useFileNavStack()
   const toast = useToast()
-  const { switchTab, activateView = false } = opts
 
   // Restore last browsed directory, falling back to the project root if the
   // saved directory no longer exists.
@@ -54,15 +40,13 @@ export async function restoreProjectWorkspace(opts: RestoreWorkspaceOptions): Pr
     }
   }
 
-  // Restore last opened file (per-project).
+  // Restore last opened file (per-project). Opening it populates `currentFile`,
+  // which is what makes a remembered 'view' panel safe to apply afterwards.
   const savedFile = loadOpenFile()
   if (savedFile) {
     const ok = await store.selectFile(savedFile)
     if (ok) {
       fileNav.openFile(savedFile)
-      // On cold start the app must land on the chat tab; only re-activate the
-      // file-view tab when the user is switching projects explicitly.
-      if (activateView) switchTab('view')
     } else {
       // File no longer exists — clear the stale record to avoid repeated failures.
       clearStaleOpenFile()

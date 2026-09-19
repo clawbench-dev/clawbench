@@ -15,6 +15,25 @@ vi.mock('@/composables/useLocale', () => ({
     gt: (key: string) => key, // Return key itself for test assertions
 }))
 
+// NOTE: forgeEventLabels is deliberately NOT mocked. An earlier version mocked
+// eventKindLabel/unreadReasonLabel to echo their inputs, which made the title
+// assertions structurally clean but blind to a real defect: "pipeline" had no
+// KIND_LABEL_KEYS entry and rendered as the raw English token in a Chinese
+// title. The mock accepted anything, so the test passed. Assert against the
+// real helpers and the real i18n keys.
+//
+// STORAGE_KEY is part of the module's public surface — useSettingsConfig reads
+// it at import time — so the mock must expose it alongside the default export.
+vi.mock('@/i18n', () => ({
+    STORAGE_KEY: 'clawbench-locale',
+    default: {
+        global: {
+            t: (key: string) => key,
+            locale: { value: 'zh' },
+        },
+    },
+}))
+
 // Mock the native bridge — the Web frontend must keep the Android device cursor
 // in sync with the in-memory cursor so background push doesn't re-deliver
 // terminal events the user already saw in the foreground.
@@ -995,6 +1014,227 @@ describe('useGlobalEvents', () => {
                 expect.objectContaining({ type: 'clawbench-open-task' })
             )
             dispatchSpy.mockRestore()
+        })
+    })
+
+    // ── forge_event browser notification ──
+    //
+    // Forge changes used to update the dock badge only; the IM robots were the
+    // sole out-of-app surface. These pin the browser/system path.
+    describe('browser notification for forge_event', () => {
+        function forgeEventData(overrides: Record<string, unknown> = {}) {
+            return {
+                event: {
+                    platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets',
+                    item_type: 'pr', number: 42, event_type: 'merged',
+                },
+                item: {
+                    type: 'pr', number: 42, title: 'Fix the thing',
+                    url: 'https://github.com/acme/widgets/pull/42',
+                },
+                ...overrides,
+            }
+        }
+
+        it('shows a notification composed from repo, kind, number and reason', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: forgeEventData() })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            // Real helpers + real i18n keys (the i18n mock echoes keys), so a
+            // missing KIND_LABEL_KEYS entry surfaces as a raw token here.
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'acme/widgets · task.form.eventKindPr #42 · forge.overview.reason.merged',
+                expect.objectContaining({
+                    body: 'Fix the thing',
+                    tag: expect.stringContaining('clawbench-forge_event-widgets'),
+                })
+            )
+        })
+
+        it('omits the item number for a pipeline (a "#0" reads as a broken reference)', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'forge_event',
+                data: {
+                    event: {
+                        platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets',
+                        item_type: 'pipeline', number: 0, event_type: 'pipeline_done',
+                    },
+                    item: { type: 'pipeline', number: 0, title: 'CI', url: 'https://github.com/acme/widgets/actions/runs/7' },
+                },
+            })
+
+            const title = mockShowBrowserNotification.mock.calls[0][0]
+            // "pipeline" must resolve to the repository-pipeline label, not leak
+            // the raw wire token into a localized title.
+            expect(title).toBe('acme/widgets · task.form.eventKindRepo · forge.overview.reason.pipeline_done')
+            expect(title).not.toContain('#0')
+            expect(title).not.toContain('pipeline ·')
+        })
+
+        it('falls back to the reason when the item carries no title', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'forge_event',
+                data: {
+                    event: { owner: 'acme', repo: 'widgets', item_type: 'issue', number: 1, event_type: 'commented' },
+                    item: { type: 'issue', number: 1, url: 'https://github.com/acme/widgets/issues/1' },
+                },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'acme/widgets · task.form.eventKindIssue #1 · forge.overview.reason.commented',
+                expect.objectContaining({ body: 'forge.overview.reason.commented' })
+            )
+        })
+
+        it('does not notify when the event identity is missing', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: {} })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('notification onClick dispatches clawbench-open-forge with the project path', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'forge_event',
+                data: forgeEventData({
+                    event: {
+                        platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets',
+                        item_type: 'pr', number: 42, event_type: 'merged',
+                        project_path: '/home/u/proj-b',
+                    },
+                }),
+            })
+
+            const onClick = mockShowBrowserNotification.mock.calls[0][1].onClick
+            expect(onClick).toBeDefined()
+            onClick()
+
+            // The panel is project-scoped, so the destination project must travel
+            // with the event — without it the click opens the ACTIVE project's
+            // panel, where this repository's row does not exist.
+            expect(dispatchSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: 'clawbench-open-forge',
+                    detail: { projectPath: '/home/u/proj-b' },
+                })
+            )
+            dispatchSpy.mockRestore()
+        })
+
+        it('dispatches clawbench-open-forge with an undefined project path when unattributed', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+            const ws = connectAndGetWs()
+            // forgeEventData() has no project_path on the event.
+            ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: forgeEventData() })
+
+            mockShowBrowserNotification.mock.calls[0][1].onClick()
+
+            // The listener falls back to the current project when it is absent.
+            expect(dispatchSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: 'clawbench-open-forge',
+                    detail: { projectPath: undefined },
+                })
+            )
+            dispatchSpy.mockRestore()
+        })
+
+        it('does not notify for a replayed forge_event (caught-up history)', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'forge_event',
+                replayed: true,
+                data: forgeEventData(),
+            })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+    })
+
+    // ── push_mode is not a gate ──
+    //
+    // The system-notification decision belongs to the local `browserNotification`
+    // setting (checked inside showBrowserNotification) and page focus. Gating it
+    // here on the server-side push_mode made the switch unreachable for anyone
+    // who had picked DingTalk/飞书, and silenced the desktop tab of users whose
+    // push_mode was changed for their phone.
+    describe('browser notification is independent of push_mode', () => {
+        it('still notifies when push_mode is dingtalk', async () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const settings = await import('@/composables/useSettingsConfig')
+            settings.serverConfig.value = { push_mode: 'dingtalk' }
+
+            try {
+                const ws = connectAndGetWs()
+                ws.receive({
+                    type: 'event',
+                    id: nextId(),
+                    event: 'session_update',
+                    data: { session_id: 's1', status: 'completed', response_preview: 'Done!' },
+                })
+
+                expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            } finally {
+                settings.serverConfig.value = {}
+            }
+        })
+
+        it('still notifies when push_mode is disabled', async () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const settings = await import('@/composables/useSettingsConfig')
+            settings.serverConfig.value = { push_mode: 'disabled' }
+
+            try {
+                const ws = connectAndGetWs()
+                ws.receive({
+                    type: 'event',
+                    id: nextId(),
+                    event: 'task_update',
+                    data: { task_id: '5', status: 'completed', response_preview: 'ok' },
+                })
+
+                expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            } finally {
+                settings.serverConfig.value = {}
+            }
         })
     })
 

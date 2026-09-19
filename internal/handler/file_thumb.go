@@ -2,14 +2,19 @@ package handler
 
 import (
 	"bytes"
+	"container/list"
+	"context"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/image/draw"
@@ -27,7 +32,171 @@ const (
 	thumbMaxWidth     = 1600             // hi-DPI displays upscale an 800px thumb → blurry; allow larger
 	thumbMaxFileSize  = 50 * 1024 * 1024 // 50 MB
 	thumbJPEGQuality  = 85
+
+	// thumbCacheMaxEntries / thumbCacheMaxBytes bound the decoded-thumbnail
+	// cache. Both ceilings are enforced so a directory of many small images
+	// cannot blow up memory via entry count, nor a few large ones via bytes.
+	thumbCacheMaxEntries = 512
+	thumbCacheMaxBytes   = 32 * 1024 * 1024 // 32 MB
 )
+
+// thumbMaxConcurrent caps how many image decodes run at once.
+//
+// Decoding is CPU-bound (full-resolution decode + CatmullRom rescale), so an
+// unbounded fan-in — e.g. a file-manager directory holding dozens of images,
+// which mounts every thumbnail in one tick — saturates every core and starves
+// unrelated endpoints. Measured before this cap: 32 concurrent decodes drove
+// the process to 638% CPU and pushed the (DB-free) /api/dir from 16ms to 72ms.
+//
+// The ceiling is min(4, NumCPU): a quarter of a large machine, but never more
+// than the core count on a small one. It is a var so tests can pin it to 1 and
+// observe the serialization.
+var thumbMaxConcurrent = min(4, runtime.NumCPU())
+
+// thumbDecodeSem bounds concurrent decodes.
+var thumbDecodeSem = make(chan struct{}, thumbMaxConcurrent)
+
+// resetThumbSemForTesting swaps in a semaphore with the given ceiling so a test
+// can make the bound deterministic rather than depending on the package default.
+func resetThumbSemForTesting(n int) {
+	thumbDecodeSem = make(chan struct{}, n)
+}
+
+// ─── Thumbnail cache ─────────────────────────────────────────────────────────
+
+// thumbCacheKey identifies a cached thumbnail. It deliberately includes the
+// source file's size and mtime: rewriting an image (even to the same
+// dimensions) changes at least one of them, producing a different key, so a
+// stale entry can never be served after the source changes. That makes
+// invalidation automatic and immediate — no watcher or TTL required.
+type thumbCacheKey struct {
+	path  string
+	size  int64
+	mtime int64
+	width int
+}
+
+type thumbCacheEntry struct {
+	key thumbCacheKey
+	jpg []byte
+}
+
+// thumbCache is a bounded LRU of encoded thumbnails. Keys carry the source
+// mtime/size, so entries for a superseded file version simply become
+// unreachable and age out; nothing has to invalidate them explicitly.
+type thumbCache struct {
+	mu      sync.Mutex
+	entries map[thumbCacheKey]*list.Element
+	order   *list.List // front = most recently used
+	bytes   int
+}
+
+func newThumbCache() *thumbCache {
+	return &thumbCache{
+		entries: make(map[thumbCacheKey]*list.Element),
+		order:   list.New(),
+	}
+}
+
+var thumbCacheStore = newThumbCache()
+
+func (c *thumbCache) get(key thumbCacheKey) ([]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.entries[key]
+	if !ok {
+		return nil, false
+	}
+	c.order.MoveToFront(el)
+	entry, ok := el.Value.(*thumbCacheEntry)
+	if !ok {
+		return nil, false
+	}
+	return entry.jpg, true
+}
+
+func (c *thumbCache) put(key thumbCacheKey, jpg []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.entries[key]; ok {
+		c.order.MoveToFront(el)
+		entry, ok := el.Value.(*thumbCacheEntry)
+		if !ok {
+			return
+		}
+		c.bytes += len(jpg) - len(entry.jpg)
+		entry.jpg = jpg
+	} else {
+		el := c.order.PushFront(&thumbCacheEntry{key: key, jpg: jpg})
+		c.entries[key] = el
+		c.bytes += len(jpg)
+	}
+	for c.order.Len() > thumbCacheMaxEntries || c.bytes > thumbCacheMaxBytes {
+		oldest := c.order.Back()
+		if oldest == nil {
+			break
+		}
+		c.order.Remove(oldest)
+		entry, ok := oldest.Value.(*thumbCacheEntry)
+		if !ok {
+			continue
+		}
+		delete(c.entries, entry.key)
+		c.bytes -= len(entry.jpg)
+	}
+}
+
+// resetThumbCacheForTesting clears the process-wide cache. Only tests use it.
+func resetThumbCacheForTesting() {
+	thumbCacheStore = newThumbCache()
+}
+
+// acquireThumbSlot blocks until a decode slot is free or ctx is done. Returns
+// false when the client went away while waiting, so the caller can bail without
+// doing the work.
+func acquireThumbSlot(ctx context.Context) bool {
+	select {
+	case thumbDecodeSem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func releaseThumbSlot() {
+	<-thumbDecodeSem
+}
+
+// thumbDecodeTracker observes real decode work so tests can prove two
+// properties that are otherwise invisible from the outside: that a cache hit
+// skips decoding, and that the semaphore actually bounds concurrency. Costs two
+// atomic ops per decode.
+var thumbDecodeTracker struct {
+	decodes  atomic.Int64
+	inFlight atomic.Int64
+	maxSeen  atomic.Int64
+}
+
+func trackDecodeStart() {
+	thumbDecodeTracker.decodes.Add(1)
+	cur := thumbDecodeTracker.inFlight.Add(1)
+	for {
+		seen := thumbDecodeTracker.maxSeen.Load()
+		if cur <= seen || thumbDecodeTracker.maxSeen.CompareAndSwap(seen, cur) {
+			break
+		}
+	}
+}
+
+func trackDecodeEnd() {
+	thumbDecodeTracker.inFlight.Add(-1)
+}
+
+func resetThumbDecodeTracker() {
+	thumbDecodeTracker.decodes.Store(0)
+	thumbDecodeTracker.inFlight.Store(0)
+	thumbDecodeTracker.maxSeen.Store(0)
+}
 
 // thumbDecodeExts lists extensions that Go's image.Decode can handle
 // (standard library: png, jpeg, gif). BMP and TIFF require golang.org/x/image.
@@ -91,7 +260,9 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 		}
 	}
 
-	// Parse width parameter
+	// Parse width parameter. Done before the cache lookup because the target
+	// width is part of the cache key — the same source image yields a different
+	// thumbnail per width.
 	widthStr := r.URL.Query().Get("w")
 	targetWidth := thumbDefaultWidth
 	if widthStr != "" {
@@ -99,6 +270,33 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 			targetWidth = clampInt(w, thumbMinWidth, thumbMaxWidth)
 		}
 	}
+
+	// Serve a cached thumbnail when the source file is byte-for-byte the same
+	// version we last decoded. The key carries mtime+size, so an updated image
+	// misses the cache and is re-decoded immediately — the same property the
+	// ETag above relies on, applied to the encoded body.
+	cacheKey := thumbCacheKey{
+		path:  absPath,
+		size:  info.Size(),
+		mtime: modTime.UnixNano(),
+		width: targetWidth,
+	}
+	if cached, ok := thumbCacheStore.get(cacheKey); ok {
+		writeThumbResponse(w, cached, etag, lastMod)
+		return
+	}
+
+	// Bound concurrent decodes: a directory of images mounts every thumbnail in
+	// one tick, and unbounded parallel decode+rescale saturates all cores,
+	// stalling unrelated endpoints (see thumbMaxConcurrent).
+	if !acquireThumbSlot(r.Context()) {
+		// Client went away while queued — nothing to send.
+		return
+	}
+	defer releaseThumbSlot()
+
+	trackDecodeStart()
+	defer trackDecodeEnd()
 
 	// Open and decode
 	f, err := os.Open(absPath)
@@ -143,14 +341,24 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 		model.WriteError(w, model.Internal(fmt.Errorf("jpeg encode: %w", err)))
 		return
 	}
+
+	jpg := buf.Bytes()
+	thumbCacheStore.put(cacheKey, jpg)
+	writeThumbResponse(w, jpg, etag, lastMod)
+}
+
+// writeThumbResponse emits a thumbnail body with its validators and caching
+// headers. Shared by the cache-hit and freshly-encoded paths so the two can
+// never drift.
+func writeThumbResponse(w http.ResponseWriter, jpg []byte, etag string, lastMod time.Time) {
 	w.Header().Set("Content-Type", "image/jpeg")
-	// no-cache: always revalidate against the source file (via ETag/Last-Modified)
-	// before reusing a cached thumbnail, so file changes reflect immediately.
+	// no-cache: the browser must revalidate against the source file's ETag
+	// before reusing a thumbnail, so an updated image shows immediately.
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Last-Modified", lastMod.Format(http.TimeFormat))
 	w.Header().Set("ETag", etag)
-	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
-	_, _ = buf.WriteTo(w)
+	w.Header().Set("Content-Length", strconv.Itoa(len(jpg)))
+	_, _ = w.Write(jpg)
 }
 
 // scaleImage resizes an image to the target dimensions using high-quality

@@ -400,7 +400,18 @@ func (c *ACPConn) ScheduleCommandsReEmit(ch chan<- StreamEvent, delay time.Durat
 // Deadline-exceeded errors from the ACP SDK are InternalError (-32603) with
 // "context deadline exceeded" in the data — they indicate the agent process
 // is unresponsive and should be treated the same as a disconnect for retry purposes.
+//
+// Exception: an Initialize timeout (acpInitTimeoutError) is NOT retryable and
+// returns false. See the check at the top of the function.
 func isACPPeerDisconnected(err error) bool {
+	// An Initialize timeout is NOT a disconnect: the process never reached
+	// readiness, and re-running the handshake would just repeat the same
+	// 60s wait. Checked first because the wrapped SDK error's message
+	// contains "context deadline exceeded", which the string heuristics
+	// below would otherwise match. See acpInitTimeoutError.
+	if isACPInitTimeout(err) {
+		return false
+	}
 	// Direct context.DeadlineExceeded (not wrapped in RequestError)
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true

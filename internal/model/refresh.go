@@ -387,12 +387,12 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
-		system_prompt, custom_system_prompt, models, models_auto_detected, sort_order,
+		custom_system_prompt, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
+		agent.CustomSystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
 		transport, agent.AcpCommand, autoApprove)
 	return err
 }
@@ -409,7 +409,6 @@ type yamlAgent struct {
 	PreferredMode           string       `yaml:"preferred_mode"`
 	PreferredModel          string       `yaml:"preferred_model"`
 	PreferredThinkingEffort string       `yaml:"preferred_thinking_effort"`
-	SystemPrompt            string       `yaml:"system_prompt"`
 	CustomSystemPrompt      string       `yaml:"custom_system_prompt"`
 	Transport               string       `yaml:"transport"`
 	AcpCommand              string       `yaml:"acp_command"`
@@ -474,7 +473,6 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) []string {
 			PreferredMode:           ya.PreferredMode,
 			PreferredModel:          ya.PreferredModel,
 			PreferredThinkingEffort: ya.PreferredThinkingEffort,
-			SystemPrompt:            ya.SystemPrompt,
 			CustomSystemPrompt:      ya.CustomSystemPrompt,
 			Transport:               ya.Transport,
 			AcpCommand:              ya.AcpCommand,
@@ -507,7 +505,6 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 	}
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
 
-	commonPrompt := BuildCommonPrompt()
 	newAgentsMap := make(map[string]*Agent, len(agents))
 
 	for _, agent := range agents {
@@ -519,7 +516,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		}
 		agent.SupportsCLI = BackendSupportsCLI(agent.Backend)
 		agent.SupportsMidTurn = BackendSupportsMidTurn(agent.Backend)
-		agent.SystemPrompt = composeSystemPrompt(commonPrompt, agent.CustomSystemPrompt, agent.SystemPrompt)
+		agent.RuntimeSystemPrompt = ComposeSystemPrompt(agent.CustomSystemPrompt)
 		newAgentsMap[agent.ID] = agent
 	}
 
@@ -528,21 +525,20 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 	return nil
 }
 
-// composeSystemPrompt builds the runtime prompt from the shared prefix and the
+// ComposeSystemPrompt builds the runtime prompt from the shared prefix and the
 // user-editable portion.
 //
-// The stored SystemPrompt is used as a fallback when CustomSystemPrompt is empty
-// but SystemPrompt is not: legacy records predate the split, and treating an
-// empty CustomSystemPrompt as "no custom prompt" would silently discard the
-// user's text on upgrade.
-func composeSystemPrompt(commonPrompt, customPrompt, storedPrompt string) string {
+// The stored prompt column is deliberately ignored. It used to hold a composed
+// prompt from an earlier scheme, which meant a frozen copy of the shared prompt
+// was appended after the freshly composed one and silently overrode it. Only
+// custom_system_prompt holds user text now, and the shared prefix is always
+// applied here, so a change to the built-in prompt takes effect on every read.
+func ComposeSystemPrompt(customPrompt string) string {
+	commonPrompt := BuildCommonPrompt()
 	switch {
 	case commonPrompt != "" && customPrompt != "":
 		return commonPrompt + "\n\n" + customPrompt
 	case commonPrompt != "":
-		if storedPrompt != "" {
-			return storedPrompt
-		}
 		return commonPrompt
 	default:
 		return customPrompt
@@ -554,7 +550,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 	rows, err := db.Query(`SELECT id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
-		system_prompt, custom_system_prompt, models, models_auto_detected, sort_order,
+		custom_system_prompt, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve
 		FROM agents ORDER BY id`)
 	if err != nil {
@@ -571,7 +567,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
-			&agent.SystemPrompt, &agent.CustomSystemPrompt, &modelsJSON, &autoDetected,
+			&agent.CustomSystemPrompt, &modelsJSON, &autoDetected,
 			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove); err != nil {
 			return nil, err
 		}

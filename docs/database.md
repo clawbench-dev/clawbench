@@ -177,7 +177,6 @@ UNIQUE：`(message_id)`
 | preferred_mode | TEXT | NOT NULL | `''` | 首选模式 |
 | preferred_model | TEXT | NOT NULL | `''` | 首选模型 |
 | preferred_thinking_effort | TEXT | NOT NULL | `''` | 首选思考力度 |
-| system_prompt | TEXT | NOT NULL | `''` | 系统提示词 |
 | custom_system_prompt | TEXT | NOT NULL | `''` | 用户自定义提示词 |
 | models | TEXT | NOT NULL | `'[]'` | 可用模型列表 JSON |
 | models_auto_detected | INTEGER | NOT NULL | `0` | 自动检测模型标记 |
@@ -514,7 +513,6 @@ erDiagram
         TEXT preferred_mode
         TEXT preferred_model
         TEXT preferred_thinking_effort
-        TEXT system_prompt
         TEXT custom_system_prompt
         TEXT models
         INTEGER models_auto_detected

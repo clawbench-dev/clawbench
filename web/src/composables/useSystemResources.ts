@@ -1,5 +1,5 @@
-import { ref, onUnmounted } from 'vue'
-import { appLog } from '@/utils/appLog'
+import { ref, watch, onUnmounted } from 'vue'
+import { useGlobalEvents } from '@/composables/useGlobalEvents'
 
 export interface CPUInfo {
   percent: number
@@ -44,14 +44,13 @@ export interface SystemResources {
   errors?: string[]
 }
 
-const POLL_INTERVAL = 1000 // 1s — fastest rate needed (CPU, network)
-const BACKGROUND_POLL_INTERVAL = 5000 // 5s — background polling when menu is closed
+/** Foreground rate: the resources panel is open. */
+const FOREGROUND_INTERVAL_MS = 1000
+/** Background rate: tab visible but the panel is closed. */
+const BACKGROUND_INTERVAL_MS = 5000
 
 let activeCount = 0
 let backgroundCount = 0
-let currentInterval = 0
-let timer: ReturnType<typeof setInterval> | null = null
-let initTimeout: ReturnType<typeof setTimeout> | null = null
 
 const resources = ref<SystemResources>({
   cpu: { percent: 0, core_count: 0 },
@@ -62,140 +61,113 @@ const resources = ref<SystemResources>({
   load: { load1: 0, load5: 0, load15: 0 },
 })
 
-async function fetchResources() {
-  try {
-    const resp = await fetch('/api/system/resources')
-    if (!resp.ok) return
-    const data: SystemResources = await resp.json()
-    resources.value = data
-  } catch (e) {
-    appLog.w('SystemResources', 'fetch failed', e)
-  }
+// useGlobalEvents exposes module-level singletons, so calling it at module
+// scope is safe (it registers no lifecycle hooks).
+const { connected, onEvent, sendWsMessage } = useGlobalEvents()
+
+/**
+ * What the server should push right now. A hidden tab needs no data at all —
+ * this preserves the polling version's "hidden = stopped" semantics.
+ */
+function currentRate(): { enabled: boolean; intervalMs: number } {
+  if (document.hidden) return { enabled: false, intervalMs: 0 }
+  if (activeCount > 0) return { enabled: true, intervalMs: FOREGROUND_INTERVAL_MS }
+  if (backgroundCount > 0) return { enabled: true, intervalMs: BACKGROUND_INTERVAL_MS }
+  return { enabled: false, intervalMs: 0 }
 }
 
-function getCurrentInterval() {
-  // If any foreground consumer is active, use fast interval; otherwise background
-  return activeCount > 0 ? POLL_INTERVAL : BACKGROUND_POLL_INTERVAL
+// Last rate actually sent, so refcount churn does not spam the socket.
+let lastDeclared: { enabled: boolean; intervalMs: number } | null = null
+let unsubscribe: (() => void) | null = null
+
+function declareRate() {
+  // send() drops silently when the socket is not open. Bailing here (instead of
+  // recording the intent) is what lets the reconnect watcher re-declare it.
+  if (!connected.value) return
+
+  const want = currentRate()
+  if (lastDeclared && lastDeclared.enabled === want.enabled && lastDeclared.intervalMs === want.intervalMs) {
+    return
+  }
+
+  sendWsMessage(
+    want.enabled
+      ? { type: 'metrics_preference', metrics_enabled: true, metrics_interval_ms: want.intervalMs }
+      : { type: 'metrics_preference', metrics_enabled: false },
+  )
+  lastDeclared = want
+}
+
+function onMetricsEvent(event: string, data: unknown) {
+  if (event !== 'system_resources') return
+  if (!data) return
+  resources.value = data as SystemResources
+}
+
+// Re-register on every (re)connect. A one-time module-level guard is NOT enough
+// here: useGlobalEvents.destroy() clears the shared handler array on project
+// switch / logout, and unlike frp_status there is no fallback fetch to recover
+// — the panel would simply freeze forever.
+//
+// immediate: true matters even though the socket is normally still closed at
+// module-eval time. Without it the watcher only fires on a later transition, so
+// if this module were ever imported after the socket was already up (lazy
+// chunk, late import), no handler would be registered and the panel would never
+// receive a frame. The immediate call is a cheap no-op while disconnected.
+watch(connected, (isConnected) => {
+  if (!isConnected) return
+  unsubscribe?.() // no-op if the array was already wiped
+  unsubscribe = onEvent(onMetricsEvent)
+  // The server clears the preference on every new connection (it cannot know
+  // the new connection's intent), so re-declare unconditionally.
+  lastDeclared = null
+  declareRate()
+}, { immediate: true })
+
+// Pause/resume with tab visibility. In browser mode the socket stays open, so
+// the explicit disable message is what stops server-side sampling; in App mode
+// useGlobalEvents disconnects the socket, which drops demand server-side
+// (a disconnected client contributes none).
+function onVisibilityChange() {
+  declareRate()
+}
+
+let visibilityListenerAttached = false
+
+function attachVisibilityListener() {
+  if (visibilityListenerAttached) return
+  visibilityListenerAttached = true
+  document.addEventListener('visibilitychange', onVisibilityChange)
+}
+
+function detachVisibilityListener() {
+  if (!visibilityListenerAttached) return
+  visibilityListenerAttached = false
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 }
 
 function startPolling() {
   activeCount++
-  // If this is the first consumer overall, start the timer
-  if (activeCount + backgroundCount > 1) {
-    // Already running — but interval may need to change (background → foreground)
-    if (timer) {
-      const desiredInterval = getCurrentInterval()
-      if (desiredInterval !== currentInterval) {
-        clearInterval(timer)
-        timer = setInterval(fetchResources, desiredInterval)
-        currentInterval = desiredInterval
-      }
-    }
-    return
-  }
-
-  // Register visibility handler on first consumer
-  document.addEventListener('visibilitychange', onVisibilityChange)
-
-  // Initial fetch — two calls: first initializes CPU/network sampler,
-  // second returns actual calculated rates
-  fetchResources().then(() => {
-    // Short delay before second fetch to allow CPU/network interval sampling
-    initTimeout = setTimeout(() => fetchResources(), 200)
-  })
-
-  currentInterval = POLL_INTERVAL
-  timer = setInterval(fetchResources, POLL_INTERVAL)
+  attachVisibilityListener()
+  declareRate()
 }
 
 function stopPolling() {
   activeCount = Math.max(0, activeCount - 1)
-  // If still has consumers, maybe adjust interval
-  if (activeCount + backgroundCount > 0) {
-    if (timer) {
-      const desiredInterval = getCurrentInterval()
-      if (desiredInterval !== currentInterval) {
-        clearInterval(timer)
-        timer = setInterval(fetchResources, desiredInterval)
-        currentInterval = desiredInterval
-      }
-    }
-    return
-  }
-
-  // No consumers left — stop completely
-  if (timer) {
-    clearInterval(timer)
-    timer = null
-    currentInterval = 0
-  }
-  if (initTimeout) {
-    clearTimeout(initTimeout)
-    initTimeout = null
-  }
-  document.removeEventListener('visibilitychange', onVisibilityChange)
+  if (activeCount + backgroundCount === 0) detachVisibilityListener()
+  declareRate()
 }
 
 function startBackgroundPolling() {
   backgroundCount++
-  // If this is the first consumer overall, start the timer
-  if (activeCount + backgroundCount > 1) {
-    // Already running — background polling uses same or slower interval
-    return
-  }
-
-  document.addEventListener('visibilitychange', onVisibilityChange)
-
-  fetchResources().then(() => {
-    initTimeout = setTimeout(() => fetchResources(), 200)
-  })
-
-  currentInterval = BACKGROUND_POLL_INTERVAL
-  timer = setInterval(fetchResources, BACKGROUND_POLL_INTERVAL)
+  attachVisibilityListener()
+  declareRate()
 }
 
 function stopBackgroundPolling() {
   backgroundCount = Math.max(0, backgroundCount - 1)
-  if (activeCount + backgroundCount > 0) {
-    // Adjust interval if needed (e.g. foreground stopped, only background remains)
-    if (timer) {
-      const desiredInterval = getCurrentInterval()
-      if (desiredInterval !== currentInterval) {
-        clearInterval(timer)
-        timer = setInterval(fetchResources, desiredInterval)
-        currentInterval = desiredInterval
-      }
-    }
-    return
-  }
-
-  if (timer) {
-    clearInterval(timer)
-    timer = null
-    currentInterval = 0
-  }
-  if (initTimeout) {
-    clearTimeout(initTimeout)
-    initTimeout = null
-  }
-  document.removeEventListener('visibilitychange', onVisibilityChange)
-}
-
-// Pause polling when tab is hidden, resume when visible
-function onVisibilityChange() {
-  if (document.hidden) {
-    if (timer) {
-      clearInterval(timer)
-      timer = null
-    }
-    if (initTimeout) {
-      clearTimeout(initTimeout)
-      initTimeout = null
-    }
-  } else if (activeCount + backgroundCount > 0 && !timer) {
-    fetchResources()
-    timer = setInterval(fetchResources, getCurrentInterval())
-  }
+  if (activeCount + backgroundCount === 0) detachVisibilityListener()
+  declareRate()
 }
 
 export function useSystemResources() {

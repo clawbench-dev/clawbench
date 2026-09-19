@@ -88,6 +88,27 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(tool_id, message_id)
 		);
+		-- Push subscriber tables. last_session_id is the sticky push target;
+		-- it is declared here so these tests exercise the real column rather
+		-- than a stub that could drift from the production schema.
+		CREATE TABLE IF NOT EXISTS dingtalk_subscribers (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id         TEXT NOT NULL UNIQUE,
+			conversation_id TEXT NOT NULL DEFAULT '',
+			user_name       TEXT NOT NULL DEFAULT '',
+			source          TEXT NOT NULL DEFAULT 'stream',
+			last_session_id TEXT NOT NULL DEFAULT '',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS feishu_subscribers (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id         TEXT NOT NULL UNIQUE,
+			chat_id         TEXT NOT NULL DEFAULT '',
+			user_name       TEXT NOT NULL DEFAULT '',
+			source          TEXT NOT NULL DEFAULT 'stream',
+			last_session_id TEXT NOT NULL DEFAULT '',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	require.NoError(t, err)
 
@@ -100,7 +121,7 @@ func TestSendMessageToSessionFromDingTalk_NotFound(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	err := SendMessageToSessionFromDingTalk("nonexistent-session", "hello")
+	err := SendMessageToSessionFromDingTalk("nonexistent-session", "hello", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
@@ -386,12 +407,12 @@ func TestBuildChatRequest_AgentWithAllFields(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
 		"test-agent": {
-			ID:             "test-agent",
-			SystemPrompt:   "You are at {{PROJECT_PATH}}",
-			Command:        "/usr/bin/test-cli",
-			ThinkingEffort: "high",
-			PreferredMode:  "code",
-			Models:         []model.AgentModel{{ID: "model-1", Default: true}},
+			ID:                  "test-agent",
+			RuntimeSystemPrompt: "You are at {{PROJECT_PATH}}",
+			Command:             "/usr/bin/test-cli",
+			ThinkingEffort:      "high",
+			PreferredMode:       "code",
+			Models:              []model.AgentModel{{ID: "model-1", Default: true}},
 		},
 	})
 
@@ -408,7 +429,7 @@ func TestBuildChatRequest_ModelOverridePrecedence(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", Models: []model.AgentModel{{ID: "default-model", Default: true}}},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", Models: []model.AgentModel{{ID: "default-model", Default: true}}},
 	})
 
 	req := BuildChatRequest("hi", "sess-model-override", "", "claude", "test-agent", "custom-model", "", "", "", "", false)
@@ -420,7 +441,7 @@ func TestBuildChatRequest_NoOverride_NoDefaultModel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", Models: []model.AgentModel{}},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", Models: []model.AgentModel{}},
 	})
 
 	req := BuildChatRequest("hi", "sess-no-model", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -432,7 +453,7 @@ func TestBuildChatRequest_ProjectPathReplacement(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "Work on {{PROJECT_PATH}} and {{PROJECT_PATH}} again"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "Work on {{PROJECT_PATH}} and {{PROJECT_PATH}} again"},
 	})
 
 	req := BuildChatRequest("hi", "sess-path-repl", "/my/path", "claude", "test-agent", "", "", "", "", "/my/path", false)
@@ -444,7 +465,7 @@ func TestBuildChatRequest_EmptyProjectPath_NoReplacement(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "Work on {{PROJECT_PATH}}"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "Work on {{PROJECT_PATH}}"},
 	})
 
 	req := BuildChatRequest("hi", "sess-empty-path", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -456,7 +477,7 @@ func TestBuildChatRequest_ThinkingEffortOverridePrecedence(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", ThinkingEffort: "low"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", ThinkingEffort: "low"},
 	})
 
 	req := BuildChatRequest("hi", "sess-effort-override", "", "claude", "test-agent", "", "high", "", "", "", false)
@@ -468,7 +489,7 @@ func TestBuildChatRequest_ThinkingEffortFromAgent(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", ThinkingEffort: "low", PreferredThinkingEffort: "medium"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", ThinkingEffort: "low", PreferredThinkingEffort: "medium"},
 	})
 
 	req := BuildChatRequest("hi", "sess-effort-agent", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -480,7 +501,7 @@ func TestBuildChatRequest_ModeOverridePrecedence(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", PreferredMode: "code"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", PreferredMode: "code"},
 	})
 
 	req := BuildChatRequest("hi", "sess-mode-override", "", "claude", "test-agent", "", "", "plan", "", "", false)
@@ -492,7 +513,7 @@ func TestBuildChatRequest_ModeFromAgent(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", PreferredMode: "code"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", PreferredMode: "code"},
 	})
 
 	req := BuildChatRequest("hi", "sess-mode-agent", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -504,7 +525,7 @@ func TestBuildChatRequest_NoCommand(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello"},
 	})
 
 	req := BuildChatRequest("hi", "sess-no-command", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -517,7 +538,7 @@ func TestBuildChatRequest_DefaultModelFromPreferredModel(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
 		"test-agent": {
-			ID: "test-agent", SystemPrompt: "hello",
+			ID: "test-agent", RuntimeSystemPrompt: "hello",
 			PreferredModel: "preferred-model",
 			Models:         []model.AgentModel{{ID: "default-model", Default: true}},
 		},
@@ -537,7 +558,7 @@ func TestBuildChatRequest_DefaultModelFromPreferredModel(t *testing.T) {
 func TestBuildChatRequest_TransportOverrideACPStdio(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", RuntimeSystemPrompt: "s"}})
 
 	req := BuildChatRequest("hi", "sess-acp-override", "", "claude", "any-agent", "", "", "", "acp-stdio", "", false)
 
@@ -547,7 +568,7 @@ func TestBuildChatRequest_TransportOverrideACPStdio(t *testing.T) {
 func TestBuildChatRequest_TransportOverrideCLI(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", RuntimeSystemPrompt: "s"}})
 
 	// No assistant history → resume stays false, so the id is kept regardless.
 	req := BuildChatRequest("hi", "sess-cli-override", "", "claude", "any-agent", "", "", "", "cli", "", false)
@@ -558,7 +579,7 @@ func TestBuildChatRequest_TransportOverrideCLI(t *testing.T) {
 func TestBuildChatRequest_NoOverride_AgentWithACPTransport(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", SystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
 
 	req := BuildChatRequest("hi", "sess-acp-agent", "", "claude", "acp-agent", "", "", "", "", "", false)
 
@@ -568,7 +589,7 @@ func TestBuildChatRequest_NoOverride_AgentWithACPTransport(t *testing.T) {
 func TestBuildChatRequest_NoOverride_AgentWithCLITransport(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"cli-agent": {ID: "cli-agent", SystemPrompt: "s", Transport: "cli"}})
+	withAgents(t, map[string]*model.Agent{"cli-agent": {ID: "cli-agent", RuntimeSystemPrompt: "s", Transport: "cli"}})
 
 	req := BuildChatRequest("hi", "sess-cli-agent", "", "claude", "cli-agent", "", "", "", "", "", false)
 
@@ -588,7 +609,7 @@ func TestBuildChatRequest_NoOverride_UnknownAgent(t *testing.T) {
 func TestBuildChatRequest_OverrideTakesPrecedenceOverAgent(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", SystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
 
 	// Explicit "cli" must win over the agent's acp-stdio transport.
 	req := BuildChatRequest("hi", "sess-override-wins", "", "claude", "acp-agent", "", "", "", "cli", "", false)
@@ -601,7 +622,7 @@ func TestBuildChatRequest_OverrideTakesPrecedenceOverAgent(t *testing.T) {
 func TestBuildChatRequest_NewSession_NoResume(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"a": {ID: "a", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"a": {ID: "a", RuntimeSystemPrompt: "s"}})
 
 	req := BuildChatRequest("hi", "new-session", "", "claude", "a", "", "", "", "", "", false)
 
@@ -613,7 +634,7 @@ func TestBuildChatRequest_NewSession_NoResume(t *testing.T) {
 func TestBuildChatRequest_ResumeWithExternalID_NonACP(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"a": {ID: "a", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"a": {ID: "a", RuntimeSystemPrompt: "s"}})
 
 	sessionID := "sess-resume-1"
 	_, err := WriteExec(
@@ -637,7 +658,7 @@ func TestBuildChatRequest_ResumeWithExternalID_NonACP(t *testing.T) {
 func TestBuildChatRequest_ResumeWithoutExternalID_Fork(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"a": {ID: "a", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"a": {ID: "a", RuntimeSystemPrompt: "s"}})
 
 	sessionID := "sess-fork-1"
 	_, err := WriteExec(
@@ -671,7 +692,7 @@ func TestBuildChatRequest_ResumeWithoutExternalID_Fork(t *testing.T) {
 func TestBuildChatRequest_ResumeACPWithForkContext(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", SystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
 
 	sessionID := "sess-acp-fork"
 	_, err := WriteExec(
@@ -700,7 +721,7 @@ func TestBuildChatRequest_ResumeACPWithForkContext(t *testing.T) {
 func TestBuildChatRequest_ResumeACPWithExternalID(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", SystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
 
 	sessionID := "sess-acp-ext"
 	_, err := WriteExec(
@@ -734,9 +755,9 @@ func TestBuildChatRequest_EmptyAgentID_UsesDefault(t *testing.T) {
 	origDefaultID := model.DefaultAgentID
 	model.Agents = map[string]*model.Agent{
 		"default-agent": {
-			ID:           "default-agent",
-			SystemPrompt: "default prompt",
-			Models:       []model.AgentModel{{ID: "default-model", Default: true}},
+			ID:                  "default-agent",
+			RuntimeSystemPrompt: "default prompt",
+			Models:              []model.AgentModel{{ID: "default-model", Default: true}},
 		},
 	}
 	model.AgentList = []*model.Agent{{ID: "default-agent"}}
@@ -780,9 +801,9 @@ func TestBuildChatRequest_WithModelOverride(t *testing.T) {
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{
 		"test-agent": {
-			ID:           "test-agent",
-			SystemPrompt: "hello",
-			Models:       []model.AgentModel{{ID: "default-model", Default: true}},
+			ID:                  "test-agent",
+			RuntimeSystemPrompt: "hello",
+			Models:              []model.AgentModel{{ID: "default-model", Default: true}},
 		},
 	}
 	defer func() { model.Agents = origAgents }()
@@ -816,9 +837,9 @@ func TestBuildChatRequest_AgentWithCommand(t *testing.T) {
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{
 		"cmd-agent": {
-			ID:           "cmd-agent",
-			SystemPrompt: "prompt",
-			Command:      "/usr/local/bin/special-cli",
+			ID:                  "cmd-agent",
+			RuntimeSystemPrompt: "prompt",
+			Command:             "/usr/local/bin/special-cli",
 		},
 	}
 	defer func() { model.Agents = origAgents }()
@@ -834,8 +855,8 @@ func TestBuildChatRequest_AgentWithProjectPathReplacement(t *testing.T) {
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{
 		"path-agent": {
-			ID:           "path-agent",
-			SystemPrompt: "You are working in {{PROJECT_PATH}}",
+			ID:                  "path-agent",
+			RuntimeSystemPrompt: "You are working in {{PROJECT_PATH}}",
 		},
 	}
 	defer func() { model.Agents = origAgents }()
@@ -1313,7 +1334,7 @@ func TestSendMessageToSessionFromDingTalk_SessionExists_QueuedMessage(t *testing
 	SetSessionRunning(sessionID, true, false)
 	defer SetSessionRunning(sessionID, false, true)
 
-	err = SendMessageToSessionFromDingTalk(sessionID, "hello from dingtalk")
+	err = SendMessageToSessionFromDingTalk(sessionID, "hello from dingtalk", nil)
 
 	// The call should succeed (session was found and message was queued)
 	assert.NoError(t, err)
@@ -1435,7 +1456,7 @@ func TestSendMessageToSessionFromDingTalk_LaunchPath(t *testing.T) {
 
 	// Session is not running → TrySetSessionRunning should succeed
 	// and LaunchSessionExecution will be called
-	err = SendMessageToSessionFromDingTalk(sessionID, "launch message")
+	err = SendMessageToSessionFromDingTalk(sessionID, "launch message", nil)
 	// The launch will fail because there's no real backend, but the function
 	// should not return an error for the launch itself
 	assert.NoError(t, err)
@@ -1713,7 +1734,7 @@ func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *test
 		ClearQueuedMessages(sessionID)
 	}()
 
-	err = SendMessageToSessionFromDingTalk(sessionID, "queued from dingtalk")
+	err = SendMessageToSessionFromDingTalk(sessionID, "queued from dingtalk", nil)
 	assert.NoError(t, err)
 
 	// Verify message IS persisted to DB with queued=1 (enqueue-path now persists).
@@ -1797,7 +1818,7 @@ func TestSendMessageToSessionFromDingTalk_AddChatMessageFails(t *testing.T) {
 	// Drop chat_history to cause AddChatMessage to fail
 	_, _ = db.Exec("DROP TABLE chat_history")
 
-	err = SendMessageToSessionFromDingTalk(sessionID, "this will fail")
+	err = SendMessageToSessionFromDingTalk(sessionID, "this will fail", nil)
 	assert.Error(t, err, "should return error when message persistence fails")
 
 	// Session should no longer be running (rollback)
@@ -2444,7 +2465,7 @@ func TestSendMessageToSessionFromFeishu_NotFound(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	err := SendMessageToSessionFromFeishu("nonexistent-session", "hello")
+	err := SendMessageToSessionFromFeishu("nonexistent-session", "hello", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
@@ -2472,7 +2493,7 @@ func TestSendMessageToSessionFromFeishu_AlreadyRunning_EnqueuesMessage(t *testin
 		ClearQueuedMessages(sessionID)
 	}()
 
-	err = SendMessageToSessionFromFeishu(sessionID, "hello from feishu")
+	err = SendMessageToSessionFromFeishu(sessionID, "hello from feishu", nil)
 	assert.NoError(t, err)
 
 	// Verify message is persisted and queued in DB.
@@ -2494,7 +2515,7 @@ func TestSendMessageToSessionFromFeishu_LaunchPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Session is not running → TrySetSessionRunning should succeed
-	err = SendMessageToSessionFromFeishu(sessionID, "launch from feishu")
+	err = SendMessageToSessionFromFeishu(sessionID, "launch from feishu", nil)
 	assert.NoError(t, err)
 
 	// Wait briefly for the goroutine to start, then clean up
@@ -2516,7 +2537,7 @@ func TestSendMessageToSessionFromFeishu_AddChatMessageFails(t *testing.T) {
 	// Drop chat_history to cause AddChatMessage to fail
 	_, _ = db.Exec("DROP TABLE chat_history")
 
-	err = SendMessageToSessionFromFeishu(sessionID, "this will fail")
+	err = SendMessageToSessionFromFeishu(sessionID, "this will fail", nil)
 	assert.Error(t, err, "should return error when message persistence fails")
 }
 
@@ -2584,4 +2605,209 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&qid)
 	assert.NoError(t, err, "assistant reply row should exist")
 	assert.Equal(t, "pending-2", qid, "drain reply must record the consumed message's queue_id")
+}
+
+// ============================================================================
+// Push attachment + sticky session
+// ============================================================================
+
+// TestSendMessageToSessionFromDingTalk_WithFilesPersistsAttachments verifies a
+// bare attachment message (empty text) is persisted with its files, which is
+// what a file/image sent from IM produces.
+func TestSendMessageToSessionFromDingTalk_WithFilesPersistsAttachments(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "dt-attach-1"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	SetSessionRunning(sessionID, true, false)
+	defer SetSessionRunning(sessionID, false, true)
+
+	files := []model.FileEntry{{Path: ".clawbench/uploads/report.pdf"}}
+	err = SendMessageToSessionFromDingTalk(sessionID, "", files)
+	require.NoError(t, err)
+
+	var content, filesJSON string
+	require.NoError(t, dbRead.QueryRow(
+		"SELECT content, files FROM chat_history WHERE session_id = ? AND role = 'user'", sessionID,
+	).Scan(&content, &filesJSON))
+
+	assert.Equal(t, "", content, "an attachment-only message has empty text")
+	assert.Contains(t, filesJSON, ".clawbench/uploads/report.pdf",
+		"the attachment path must be persisted so the drain loop can re-inject it")
+}
+
+// TestGetSessionInfoForPush covers the lookup push backends use to resolve a
+// project path for downloading an attachment.
+func TestGetSessionInfoForPush(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "dt-info-1"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj/info', 'claude', 'Info Session', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	t.Run("existing session", func(t *testing.T) {
+		info, err := GetSessionInfoForPush(sessionID)
+		require.NoError(t, err)
+		assert.Equal(t, sessionID, info.ID)
+		assert.Equal(t, "/proj/info", info.ProjectPath)
+		assert.Equal(t, "Info Session", info.Title)
+	})
+
+	t.Run("missing session returns an error", func(t *testing.T) {
+		_, err := GetSessionInfoForPush("does-not-exist")
+		assert.Error(t, err, "a missing session must not resolve to an empty info")
+	})
+}
+
+// TestDingTalkLastSessionID_RoundTrip verifies the sticky target persists and
+// reads back, and that an unknown user reads as empty rather than erroring.
+func TestDingTalkLastSessionID_RoundTrip(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	require.NoError(t, UpsertDingTalkSubscriber("u-sticky", "conv-1", "Nick", "stream"))
+
+	t.Run("unset reads as empty", func(t *testing.T) {
+		got, err := GetDingTalkLastSessionID("u-sticky")
+		require.NoError(t, err)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("round trip", func(t *testing.T) {
+		require.NoError(t, SetDingTalkLastSessionID("u-sticky", "sess-abc"))
+		got, err := GetDingTalkLastSessionID("u-sticky")
+		require.NoError(t, err)
+		assert.Equal(t, "sess-abc", got)
+	})
+
+	t.Run("unknown user reads as empty", func(t *testing.T) {
+		got, err := GetDingTalkLastSessionID("nobody")
+		require.NoError(t, err)
+		assert.Equal(t, "", got, "an unknown subscriber must read as empty, not error")
+	})
+
+	t.Run("setting for an unknown user errors", func(t *testing.T) {
+		err := SetDingTalkLastSessionID("nobody", "sess-x")
+		assert.Error(t, err, "the row is expected to exist (upsert runs on every message)")
+	})
+}
+
+// TestFeishuLastSessionID_RoundTrip mirrors the DingTalk sticky-target test for
+// the Feishu subscriber table, which has its own column and accessors.
+func TestFeishuLastSessionID_RoundTrip(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	require.NoError(t, UpsertFeishuSubscriber("ou-sticky", "chat-1", "Nick", "stream"))
+
+	got, err := GetFeishuLastSessionID("ou-sticky")
+	require.NoError(t, err)
+	assert.Equal(t, "", got, "unset must read as empty")
+
+	require.NoError(t, SetFeishuLastSessionID("ou-sticky", "sess-xyz"))
+	got, err = GetFeishuLastSessionID("ou-sticky")
+	require.NoError(t, err)
+	assert.Equal(t, "sess-xyz", got)
+}
+
+// ============================================================================
+// Push queue-id anchoring (reply ordering)
+// ============================================================================
+
+// TestSendMessageToSessionFromPush_CarriesQueueID is the regression guard for
+// the "reply appears above its own question" bug.
+//
+// The queue id is the only anchor tying a streaming reply to the question it
+// answers: run_turn stores it on the streaming assistant row and streams it as
+// stream_start.queue_id, and the client re-anchors the reply to the question
+// bubble carrying the same queueId. The push path used to pass no queue id, so
+// the client fell back to "newest user message" — and because the execution is
+// launched asynchronously BEFORE the user_message event is emitted, that
+// fallback anchored the reply to the PREVIOUS question. The reply then rendered
+// above its own question until a reload rebuilt the order from the DB.
+//
+// The test asserts the anchor exists on both sides: the user row carries the
+// queue id, and the emitted user_message event advertises the same value.
+func TestSendMessageToSessionFromPush_CarriesQueueID(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "dt-qid-1"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-qid", "")
+	// chat_stream events are session-scoped: without this the hub has no
+	// subscriber for the session and drops the event instead of buffering it.
+	mgr.StreamHub().Subscribe("test-client-qid", sessionID)
+
+	// Mark running so no execution is launched: this test is about the event and
+	// the persisted row, not about running a backend.
+	SetSessionRunning(sessionID, true, false)
+	defer SetSessionRunning(sessionID, false, true)
+
+	require.NoError(t, SendMessageToSessionFromDingTalk(sessionID, "hello from dingtalk", nil))
+
+	// The persisted user row must carry a queue id — that is what the drain loop
+	// reads back to anchor its own stream_start.
+	var rowQueueID string
+	require.NoError(t, dbRead.QueryRow(
+		"SELECT queue_id FROM chat_history WHERE session_id = ? AND role = 'user'", sessionID,
+	).Scan(&rowQueueID))
+	assert.NotEmpty(t, rowQueueID, "the persisted user row must carry a queue id")
+
+	// The emitted user_message must advertise the same queue id so the client can
+	// anchor the reply to this bubble.
+	var eventQueueID string
+	for _, m := range sub.GetBufferedEvents() {
+		if m.Event != "chat_stream" {
+			continue
+		}
+		csd, ok := m.Data.(ws.ChatStreamData)
+		if !ok || csd.EventType != "user_message" {
+			continue
+		}
+		payload, ok := csd.Payload.(map[string]any)
+		if !ok {
+			continue
+		}
+		if v, ok := payload["queueId"].(string); ok {
+			eventQueueID = v
+		}
+	}
+	require.NotEmpty(t, eventQueueID, "user_message must carry the queue id")
+	assert.Equal(t, rowQueueID, eventQueueID,
+		"the event's queue id must match the persisted row so the reply anchors to this question")
+}
+
+// TestNewPushQueueID_UniqueWithinSecond verifies ids minted in a tight burst do
+// not collide, which a timestamp-only id would.
+func TestNewPushQueueID_UniqueWithinSecond(t *testing.T) {
+	const n = 200
+	seen := make(map[string]bool, n)
+	for range n {
+		id := newPushQueueID()
+		require.NotEmpty(t, id)
+		if seen[id] {
+			t.Fatalf("duplicate push queue id %q", id)
+		}
+		seen[id] = true
+	}
 }

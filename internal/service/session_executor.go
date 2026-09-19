@@ -637,14 +637,14 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 }
 
 // postProcessBlocks applies finalize post-processing on blocks:
-// ask-question conversion, rejected-tool removal, thinking-block merging.
+// clawbench-ask-question conversion, rejected-tool removal, thinking-block merging.
 // Shared by buildResult and Finalize to prevent divergence.
 // NOTE: persistAskToolCalls must be called separately after Finalize
 // uses postProcessBlocks, to avoid double-persisting from buildResult.
 func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Ask-question detection (interactive mode only)
 	if e.cfg.Mode == ModeInteractive {
-		if ai.StringsContainsAnyBlock(blocks, "<ask-question") {
+		if ai.StringsContainsAnyBlock(blocks, "<clawbench-ask-question") {
 			blocks = ai.ConvertAskQuestionBlocks(blocks)
 		}
 	}
@@ -1439,7 +1439,7 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// buildResult runs postProcessBlocks on a local copy of e.blocks,
 	// but Finalize uses e.blocks directly (for drained events) — so the
 	// conversion must be applied here too, otherwise DB stores the original
-	// unconverted blocks and the frontend renders ask-question as plain text
+	// unconverted blocks and the frontend renders clawbench-ask-question as plain text
 	// instead of an interactive card.
 	donePost := ft.phase("post_process")
 	blocks = e.postProcessBlocks(blocks)

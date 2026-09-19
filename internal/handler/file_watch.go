@@ -27,8 +27,16 @@ const (
 	watchReadIdleTimeout = 10 * time.Minute
 
 	// maxWatchClients caps concurrent file-watch connections. The service layer
-	// has no cap of its own, and each connection holds up to two inotify
-	// watches, so the ceiling is enforced here (mirrors ws.maxSubscriptions).
+	// has no cap of its own, so the ceiling is enforced here (mirrors
+	// ws.maxSubscriptions).
+	//
+	// Watch accounting: each connection holds one watch on the browsed
+	// directory, one on the open file's parent, and one per distinct parent
+	// directory of its registered media paths (capped per client at
+	// service.MaxMediaWatchPaths). Watches are refcounted across connections, so
+	// the process-wide total is bounded by the number of DISTINCT directories
+	// referenced — at most maxWatchClients*(2+MaxMediaWatchPaths) in the worst
+	// case, but far fewer in practice since clients share the same tree.
 	maxWatchClients = 20
 
 	// watchMsgWatch re-targets the connection's watched dir/file.
@@ -55,6 +63,10 @@ type fileWatchMessage struct {
 	Type string `json:"type"`
 	Dir  string `json:"dir"`
 	File string `json:"file"`
+	// Files are additional project-relative paths whose content changes should
+	// be reported as file_change — the images a preview is currently rendering.
+	// Optional and additive: older clients simply omit it.
+	Files []string `json:"files"`
 }
 
 // fileWatchServerMsg is a server → client control message. Event frames are
@@ -103,6 +115,40 @@ func resolveWatchPaths(projectPath, dirRel, fileRel string) (dirAbs, fileAbs str
 	return dirAbs, fileAbs, true
 }
 
+// resolveWatchMediaPaths resolves the client's extra media-file watch targets
+// against the project root. Paths that are invalid or escape the project are
+// dropped rather than failing the whole frame: a single stale image reference
+// must not break the file watcher for the open file.
+//
+// The list is capped at service.MaxMediaWatchPaths; each distinct parent
+// directory costs one inotify watch, so an unbounded list would let one client
+// exhaust the process-wide limit.
+func resolveWatchMediaPaths(projectPath string, rels []string) []string {
+	if len(rels) == 0 {
+		return nil
+	}
+	if len(rels) > service.MaxMediaWatchPaths {
+		rels = rels[:service.MaxMediaWatchPaths]
+	}
+	out := make([]string, 0, len(rels))
+	seen := make(map[string]struct{}, len(rels))
+	for _, rel := range rels {
+		if rel == "" {
+			continue
+		}
+		abs, ok := model.ValidatePath(projectPath, rel)
+		if !ok {
+			continue
+		}
+		if _, dup := seen[abs]; dup {
+			continue
+		}
+		seen[abs] = struct{}{}
+		out = append(out, abs)
+	}
+	return out
+}
+
 // FileWatchWS handles GET /api/file/watch/ws — WebSocket stream of file system
 // change notifications. Auth is handled by middleware.Auth before this function
 // is called.
@@ -115,12 +161,19 @@ func resolveWatchPaths(projectPath, dirRel, fileRel string) (dirAbs, fileAbs str
 // Protocol:
 //   - Query params dir/file set the initial watch target. They are resolved and
 //     validated BEFORE the upgrade so path-traversal still yields HTTP 403.
-//   - Client sends: {"type":"watch","dir":"<rel>","file":"<rel>"} to re-target,
-//     and {"type":"pong"} in reply to a server ping.
+//   - Client sends: {"type":"watch","dir":"<rel>","file":"<rel>",
+//     "files":["<rel>",…]} to re-target, and {"type":"pong"} in reply to a
+//     server ping. `files` lists extra files whose content changes must be
+//     reported (the images a preview currently renders); invalid entries are
+//     dropped individually rather than rejecting the frame.
 //   - Server sends: {"type":"connected","clientId":"..."} once, then
 //     {"type":"dir_change"|"file_change","path":"..."} events,
 //     {"type":"ping"} every watchPingInterval, and {"type":"error",...} for a
 //     rejected control message (which never closes the socket).
+//
+// The open file and the media files are watched through their PARENT
+// DIRECTORIES, not as direct file watches: an atomic save (write temp + rename)
+// replaces the inode, which silently kills a direct file watch.
 func FileWatchWS(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -281,7 +334,7 @@ func readWatchWSMessages(
 				}
 				continue
 			}
-			fw.UpdateWatch(clientID, dirAbs, fileAbs)
+			fw.UpdateWatch(clientID, dirAbs, fileAbs, resolveWatchMediaPaths(projectPath, msg.Files)...)
 		default:
 			slog.Warn("file watch ws: unknown client message type", slog.String("clientId", clientID), slog.String("type", msg.Type))
 		}

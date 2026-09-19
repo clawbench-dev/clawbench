@@ -122,7 +122,7 @@ func TestResolveAgentConfig_DefaultAgent(t *testing.T) {
 
 	model.DefaultAgentID = "test-agent"
 	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Backend: "claude", Models: []model.AgentModel{{ID: "sonnet", Name: "Sonnet", Default: true}}, SystemPrompt: "be helpful", Command: "claude"},
+		"test-agent": {ID: "test-agent", Backend: "claude", Models: []model.AgentModel{{ID: "sonnet", Name: "Sonnet", Default: true}}, RuntimeSystemPrompt: "be helpful", Command: "claude"},
 	}
 
 	backend, agentModel, sysPrompt, cmd, ok := resolveAgentConfig("")
@@ -138,7 +138,7 @@ func TestResolveAgentConfig_SpecificAgent(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	model.Agents = map[string]*model.Agent{
-		"coder": {ID: "coder", Backend: "codebuddy", Models: []model.AgentModel{{ID: "glm-5.1", Name: "GLM 5.1", Default: true}}, SystemPrompt: "code", Command: "cb"},
+		"coder": {ID: "coder", Backend: "codebuddy", Models: []model.AgentModel{{ID: "glm-5.1", Name: "GLM 5.1", Default: true}}, RuntimeSystemPrompt: "code", Command: "cb"},
 	}
 
 	backend, agentModel, _, _, ok := resolveAgentConfig("coder")

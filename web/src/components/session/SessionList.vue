@@ -168,7 +168,8 @@ import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useS
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
-import { apiGet, apiPatch } from '@/utils/api.ts'
+import { apiPatch } from '@/utils/api.ts'
+import { coalescedJson } from '@/utils/inflightGet.ts'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -293,8 +294,10 @@ async function fetchSessionsUpTo(minCount) {
   for (;;) {
     let url = `/api/ai/sessions?limit=${limit}${buildTagQuery()}`
     if (cursor) url += buildCursorQuery(cursor)
-    const resp = await fetch(url)
-    const data = await resp.json()
+    // Coalesced: this component is mounted twice (pinned sidebar + mobile
+    // drawer), and both reload on the same signals, so without this each page
+    // is fetched twice for identical data.
+    const data = await coalescedJson(url)
     const list = data.sessions || []
     accumulated.push(...list)
     serverHasMore = !!data.hasMore
@@ -349,7 +352,9 @@ function buildTagQuery() {
 async function loadFilterTags() {
   let tags
   try {
-    const res = await apiGet('/api/ai/session/tags?inUse=1')
+    // Coalesced: both SessionList instances (sidebar + drawer) load tags on
+    // mount and on every sessionListVersion bump.
+    const res = await coalescedJson('/api/ai/session/tags?inUse=1')
     tags = res.tags || []
   } catch (err) {
     // Keep the previous chips on failure. Treating an error as "no tags" would
@@ -798,32 +803,29 @@ onUnmounted(() => {
   box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
 }
 
+/* Running row: the signal is a light band along the bottom edge — a 2px line
+   with a soft glow bleeding upward from it. No full-row fill: an earlier
+   design tinted the whole row, and on dark themes the accent sits far above
+   the row background, so any usable alpha washed the row milky and the band
+   on top of it read as a grey smudge. Confining the light to the bottom edge
+   removes that trade-off — it carries real colour without touching the row's
+   own background (1.44:1 worst case across all 36 themes, vs 1.10:1 for the
+   original fixed green).
+   The glow is what gives it presence; without it a bare 2px line reads as a
+   hairline and is easy to miss while scanning. */
 .session-row.running {
-  background-color: rgba(34, 197, 94, 0.05);
   overflow: hidden;
 }
 
-.session-row.running::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -60%;
-  width: 60%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(34, 197, 94, 0.14), transparent);
-  animation: scan-bg 2s ease-in-out infinite;
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* Bottom guide line — dimmed green, sweeps in sync with the full-row light (same
-   keyframes/duration/easing so both bands move together). */
+/* The band sits on the row's bottom edge. Sweeps in sync with the
+   cross-project rows and the chat input button (same keyframes/duration/
+   easing) so the motif reads as one. */
 .session-running-line {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  height: 1px;
+  height: 14px;
   overflow: hidden;
   pointer-events: none;
   z-index: 1;
@@ -836,15 +838,17 @@ onUnmounted(() => {
   left: -60%;
   width: 60%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(34, 197, 94, 0.5), transparent);
+  /* Solid 2px at the very bottom, then a fast falloff so the glow stays a
+     halo around the line rather than a wash up the row. A plain linear ramp
+     to 14px spread the light too thinly and lost the crisp edge. */
+  -webkit-mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
+  mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
+  background: linear-gradient(90deg, transparent, var(--running-line), transparent);
   animation: scan-bg 2s ease-in-out infinite;
 }
 
-/* Running + selected: keep the green fill in the background-color slot so the
-   active tint (background-image) stays layered on top. */
-.session-row.active.running {
-  background-color: rgba(34, 197, 94, 0.05);
-}
+/* Hover must still work on a running row — there is no fill to preserve now,
+   so the plain hover rule below covers it. */
 
 @media (hover: hover) {
   .session-row:hover {
@@ -1111,21 +1115,7 @@ onUnmounted(() => {
 }
 
 .cross-session-row.running {
-  background: rgba(34, 197, 94, 0.05);
   overflow: hidden;
-}
-
-.cross-session-row.running::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -60%;
-  width: 60%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(34, 197, 94, 0.14), transparent);
-  animation: scan-bg 2s ease-in-out infinite;
-  pointer-events: none;
-  z-index: 0;
 }
 
 .cross-session-item {

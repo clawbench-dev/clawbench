@@ -27,6 +27,15 @@ export interface ContentBlock {
   duration_ms?: number
   _key?: string
   reason?: string
+  error_code?: number
+  http_status?: number
+  error_source?: string
+  /**
+   * The agent's own failure reason when the structured code alone is
+   * uninformative — CodeBuddy reports -32603 for every internal failure and
+   * puts the real cause here (e.g. "Bad substitution: o.gaps.join").
+   */
+  error_detail?: string
   /**
    * Parent Agent tool-call id when this block was produced by a sub-agent
    * spawned by that Agent call; empty/undefined for top-level content. Used to
@@ -181,6 +190,7 @@ export interface ErrorEventData {
   error_code?: number
   http_status?: number
   error_source?: string
+  error_detail?: string
 }
 
 /**
@@ -237,6 +247,7 @@ export interface SummaryCards {
     error_code?: number
     http_status?: number
     error_source?: string
+    error_detail?: string
   }>
 }
 
@@ -814,7 +825,7 @@ export type ChatMessageAction =
   | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; queued?: boolean; backend?: string } }
   | { type: 'ws_queue_drain'; queueId: string; text: string; files: FileEntry[]; dbMessageId?: number; backend?: string }
   | { type: 'ws_queue_cancel'; queueIds: string[] }
-  | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string }
+  | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
   | { type: 'stream_finalize' }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
   | { type: 'ws_content'; text: string; parentToolCallId?: string }
@@ -824,7 +835,7 @@ export type ChatMessageAction =
   | { type: 'ws_tool_use'; data: ToolUseEventData }
   | { type: 'ws_tool_result'; data: ToolUseEventData }
   | { type: 'ws_metadata'; metadata: Record<string, unknown> }
-  | { type: 'ws_warning'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string }
+  | { type: 'ws_warning'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
   // ── DB rebuild (loadHistory) ──
   // `sessionRunning` lets the rebuild distinguish a stale snapshot (fetched
   // before the backend committed the streaming row) from real convergence —
@@ -1480,7 +1491,11 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         if (m.role !== 'user') return false
         if (msgId > 0 && m.id === msgId) return true
         if (remoteQueueId && (m.id === remoteQueueId || m.queueId === remoteQueueId)) return true
-        if (m.content === userContent && !m.pending && !m._remote) return true
+        // Content is only a dedup key when it actually identifies the message.
+        // An attachment-only message (a file/image sent from IM) has content "",
+        // so matching on it would collapse every such message into the first
+        // one and silently drop files sent from another device.
+        if (userContent !== '' && m.content === userContent && !m.pending && !m._remote) return true
         return false
       })
       if (alreadyExists) return state
@@ -1547,6 +1562,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       if (action.errorCode) errorBlock.error_code = action.errorCode
       if (action.httpStatus) errorBlock.http_status = action.httpStatus
       if (action.errorSource) errorBlock.error_source = action.errorSource
+      if (action.errorDetail) errorBlock.error_detail = action.errorDetail
       const sm = state.find((m) => m.role === 'assistant' && m.streaming)
       if (sm) {
         sm.blocks = [errorBlock]
@@ -1657,6 +1673,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       if (action.errorCode) warningBlock.error_code = action.errorCode
       if (action.httpStatus) warningBlock.http_status = action.httpStatus
       if (action.errorSource) warningBlock.error_source = action.errorSource
+      if (action.errorDetail) warningBlock.error_detail = action.errorDetail
       sm.blocks!.push(warningBlock)
       return state
     }

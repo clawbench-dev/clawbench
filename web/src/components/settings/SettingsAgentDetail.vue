@@ -50,7 +50,6 @@ import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
-import { apiGet } from '@/utils/api'
 import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{
@@ -66,8 +65,6 @@ const toast = useToast()
 const dialog = useDialog()
 const { loadAgents, getAgent, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP } = useAgents()
 const activeKey = ref<string | null>(null)
-const commonPrompt = ref('')
-const commonPromptLoaded = ref(false)
 const copying = ref(false)
 
 onMounted(async () => {
@@ -78,19 +75,6 @@ onMounted(async () => {
   // be missing when this agent isn't the current session's agent.
   await populateACPStateFromCache(props.agentId)
 })
-
-// Lazy-load common prompt (only needed for system prompt editing)
-async function loadCommonPrompt() {
-  if (commonPromptLoaded.value) return
-  try {
-    const res = await apiGet<{ commonPrompt: string }>('/api/agents/common-prompt')
-    commonPrompt.value = res.commonPrompt || ''
-    commonPromptLoaded.value = true
-  } catch {
-    // Non-critical — system prompt editing will still work with raw value
-    commonPromptLoaded.value = true
-  }
-}
 
 const agent = computed(() => getAgent(props.agentId))
 
@@ -315,13 +299,9 @@ function getItemValue(item: AgentItem): unknown {
     case 'specialty':
       return a.specialty || ''
     case 'custom_system_prompt':
-      // Return customSystemPrompt if available, otherwise strip common prompt from systemPrompt
-      if (a.customSystemPrompt !== undefined) return a.customSystemPrompt
-      if (commonPrompt.value && a.systemPrompt?.startsWith(commonPrompt.value + '\n\n')) {
-        return a.systemPrompt.substring(commonPrompt.value.length + 2)
-      }
-      if (commonPrompt.value && a.systemPrompt === commonPrompt.value) return ''
-      return a.systemPrompt || ''
+      // The user's own text is the only prompt value stored; the shared prefix is
+      // composed at runtime and never round-trips through the client.
+      return a.customSystemPrompt || ''
     case 'backend':
       return a.backend || ''
     case 'command':
@@ -348,11 +328,6 @@ async function handleUpdate(item: AgentItem, value: unknown) {
 
   if (!item.patchField) return
 
-  // Lazy-load common prompt before editing system prompt
-  if (item.key === 'custom_system_prompt') {
-    await loadCommonPrompt()
-  }
-
   try {
     await patchAgentField(props.agentId, item.patchField, value as string | number | boolean | null)
     // When changing transport, clear preferred thinking effort if it's no longer valid
@@ -378,10 +353,6 @@ async function handleUpdate(item: AgentItem, value: unknown) {
 function handleEditToggle(key: string, open: boolean) {
   if (open) {
     activeKey.value = key
-    // Lazy-load common prompt when opening system prompt editor
-    if (key === 'custom_system_prompt') {
-      loadCommonPrompt()
-    }
   } else if (activeKey.value === key) {
     activeKey.value = null
   }

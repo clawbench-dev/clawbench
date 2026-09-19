@@ -139,6 +139,16 @@ const (
 	// distinction (StopReason has no "skipped" value and PromptResponse carries no
 	// content field), so it is inferred from the zero-usage + zero-content pair.
 	ReasonAgentNoRun = "agent_no_run"
+	// ReasonAgentInitTimeout means the agent process was spawned but never
+	// answered the ACP Initialize handshake within its budget, so no session
+	// (and no model call) was ever established.
+	//
+	// Distinct from ReasonAgentNoRun (which requires a completed turn) and from
+	// ReasonBackendExit (a generic crash/exit): this failure happens strictly
+	// before the protocol is up — npx still downloading, machine starved, or the
+	// agent blocked on the network. It is deliberately not retried, since the
+	// identical handshake would just time out again.
+	ReasonAgentInitTimeout = "agent_init_timeout"
 )
 
 // SelectOptionDef describes a single selectable option (e.g., mode, thinking effort level).
@@ -363,6 +373,7 @@ type StreamEvent struct {
 	ErrorCode      int                    // Structured error code (e.g. ACP JSON-RPC code -32603)
 	HTTPStatus     int                    // Upstream HTTP status when available (e.g. 500)
 	ErrorSource    string                 // "agent" | "clawbench" | "network"
+	ErrorDetail    string                 // Agent's own failure reason when the code alone is uninformative (e.g. CodeBuddy reports -32603 for every internal error); may be empty
 	Meta           *Metadata              // Metadata (Type=metadata)
 	Error          string                 // Error message (Type=error)
 	Tool           *ToolCall              // Tool call info (Type=tool_use, Type=tool_result)

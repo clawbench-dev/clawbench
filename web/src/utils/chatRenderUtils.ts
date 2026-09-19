@@ -101,6 +101,12 @@ export function isThumbExtension(path: string): boolean {
   return THUMB_EXTENSIONS.some(ext => lower.endsWith(ext))
 }
 
+/** HTML void elements — no closing tag, so they must never enter the tag stack. */
+const VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr',
+])
+
 /**
  * Mark bare inline <svg> elements (returned directly by the AI, not rendered
  * from markdown image syntax) with the `lightbox-svg` marker class so the
@@ -117,13 +123,21 @@ export function isThumbExtension(path: string): boolean {
  * SVGs already inside an interactive UI element injected by the pipeline
  * (e.g. the lucide icon inside a .chat-file-open-btn button) are skipped —
  * they are not content images and must not get a lightbox affordance.
+ *
+ * SVGs inside KaTeX-rendered markup are skipped too. KaTeX draws stretchy
+ * delimiters (\underbrace, \overbrace, \sqrt, \xrightarrow, \vec …) with its
+ * OWN internal <svg> glyph fragments. Those are part of the formula's layout,
+ * not content media: marking one makes annotateMediaBlocks lift it into a
+ * block-level figure, which tears the formula apart (issue #473).
  */
 export function markInlineSvgs(html: string): string {
   const result: string[] = []
   const tagRe = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/g
   let lastIndex = 0
   let match: RegExpExecArray | null
-  const tagStack: string[] = []
+  // Stack entries carry the class-derived KaTeX flag alongside the tag name so
+  // the ancestry checks below need no second pass over the markup.
+  const tagStack: Array<{ name: string; katex: boolean }> = []
 
   while ((match = tagRe.exec(html))) {
     const tag = match[0]
@@ -132,7 +146,7 @@ export function markInlineSvgs(html: string): string {
     if (name === 'svg') {
       if (tag.startsWith('</')) {
         // Closing svg — the matching open (if any) was pushed as 'svg'.
-        if (tagStack[tagStack.length - 1] === 'svg') tagStack.pop()
+        if (tagStack[tagStack.length - 1]?.name === 'svg') tagStack.pop()
         continue
       }
       // Opening svg
@@ -140,12 +154,15 @@ export function markInlineSvgs(html: string): string {
       const openTag = tag
 
       // Skip content inside interactive UI elements injected by the pipeline.
-      const inInteractive = tagStack.some(t => t === 'button' || t === 'a')
+      const inInteractive = tagStack.some(t => t.name === 'button' || t.name === 'a')
+
+      // Skip KaTeX typography (see the doc comment above).
+      const inKatex = tagStack.some(t => t.katex)
 
       // Idempotency: skip SVGs already carrying the lightbox-svg marker class.
-      const alreadyMarked = /\bclass\s*=\s*("|')[^"']*\blightbox-svg\b[^"']*\1/i.test(openTag)
+      const alreadyMarked = /(?:^|\s)class\s*=\s*("|')[^"']*\blightbox-svg\b[^"']*\1/i.test(openTag)
 
-      if (alreadyMarked || inInteractive) {
+      if (alreadyMarked || inInteractive || inKatex) {
         // Treat this svg as a balanced unit: skip its full span untouched.
         const depth = countSvgDepth(html, openIndex + openTag.length)
         if (depth >= 0) {
@@ -156,7 +173,7 @@ export function markInlineSvgs(html: string): string {
           continue
         }
         // Unbalanced svg — leave as-is
-        tagStack.push('svg')
+        tagStack.push({ name: 'svg', katex: false })
         continue
       }
 
@@ -165,9 +182,10 @@ export function markInlineSvgs(html: string): string {
       if (closeEnd >= 0) {
         const innerHtml = html.slice(openIndex + openTag.length, closeEnd - '</svg>'.length)
         // Add the lightbox-svg marker class, preserving any existing class.
-        // Handles both single- and double-quoted class attributes.
-        const tagged = /(\bclass\s*=\s*("|')[^"']*)\2/i.test(openTag)
-          ? openTag.replace(/(\bclass\s*=\s*("|')[^"']*)\2/i, '$1 lightbox-svg$2')
+        // Handles both single- and double-quoted class attributes. `(?:^|\s)`
+        // (not `\b`) keeps `data-class="…"` from being treated as the class.
+        const tagged = /((?:^|\s)class\s*=\s*("|')[^"']*)\2/i.test(openTag)
+          ? openTag.replace(/((?:^|\s)class\s*=\s*("|')[^"']*)\2/i, '$1 lightbox-svg$2')
           : openTag.replace(/\/?>$/, ' class="lightbox-svg">')
 
         result.push(html.slice(lastIndex, openIndex))
@@ -178,15 +196,30 @@ export function markInlineSvgs(html: string): string {
       }
 
       // Unbalanced — treat as normal element for stack tracking
-      tagStack.push('svg')
+      tagStack.push({ name: 'svg', katex: false })
       continue
     }
 
-    // Track non-svg tags for the interactive-container heuristic.
+    // Track non-svg tags for the interactive-container / KaTeX-ancestry
+    // heuristics. A tag counts as KaTeX when its class carries one of the
+    // markers KaTeX actually stamps — `katex`, `katex-display`, `katex-html`,
+    // `katex-mathml` and `katex-error` — and every internal glyph svg lives
+    // under one of them. The suffix set is an explicit allow-list, NOT a
+    // `-\w+` wildcard: an AI-authored wrapper like `class="katex-widget"` is
+    // not KaTeX markup, and its content svg must keep the media marker.
     if (tag.startsWith('</')) {
-      if (tagStack[tagStack.length - 1] === name) tagStack.pop()
-    } else if (!/\/>$/.test(tag)) {
-      tagStack.push(name)
+      if (tagStack[tagStack.length - 1]?.name === name) tagStack.pop()
+    } else if (!/\/>$/.test(tag) && !VOID_TAGS.has(name)) {
+      // Void elements (img/br/…) have no closing tag: pushing one would leave a
+      // stale entry that never pops, leaking its flags onto every later element
+      // — e.g. a <br> inside .katex would suppress the marker on a genuine
+      // content svg further down the document.
+      // `(?:^|\s)class` (not `\bclass`) so an attribute merely *ending* in
+      // "class" — e.g. `data-class="katex"` — is not mistaken for the class.
+      const cls = tag.match(/(?:^|\s)class\s*=\s*("([^"]*)"|'([^']*)')/i)
+      const classAttr = cls ? (cls[2] ?? cls[3] ?? '') : ''
+      const katex = /(^|\s)katex(-display|-html|-mathml|-error)?(\s|$)/.test(classAttr)
+      tagStack.push({ name, katex })
     }
   }
 
@@ -277,9 +310,11 @@ export function convertVideoLinks(html: string, projectRoot?: string): string {
 }
 
 /**
- * Parse ask-question content from XML or JSON format.
- * Tries XML first, falls back to JSON if XML fails.
- * Returns null if parsing fails or no valid questions found.
+ * Parse ask-question content from XML format.
+ *
+ * Delegates to the canonical parser (`@/utils/askQuestion.ts`). Returns null if
+ * parsing fails or no valid questions were found. The content may include the
+ * <clawbench-ask-question> wrapper or be a bare payload.
  */
 export function parseAskQuestionContent(rawContent: string): { questions: Array<Record<string, unknown>> } | null {
   return parseAskQuestionXML(rawContent) as { questions: Array<Record<string, unknown>> } | null

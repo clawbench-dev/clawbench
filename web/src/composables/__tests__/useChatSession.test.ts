@@ -46,6 +46,7 @@ const { mockState, resetMockState } = vi.hoisted(() => {
     chatPageSize: 20,
     sessionMaxCount: 10,
     sessionCount: 0,
+    sessionListVersion: 0,
   }
   function resetMockState() {
     mockState.runningSessions.clear()
@@ -56,6 +57,7 @@ const { mockState, resetMockState } = vi.hoisted(() => {
     mockState.chatPageSize = 20
     mockState.sessionMaxCount = 10
     mockState.sessionCount = 0
+    mockState.sessionListVersion = 0
   }
   return { mockState, resetMockState }
 })
@@ -1674,6 +1676,88 @@ describe('loadSessionsOnce', () => {
 
     const { loadSessionsOnce } = await import('@/composables/useChatSession')
     await expect(loadSessionsOnce()).resolves.toBeUndefined()
+  })
+
+  // ── sessionListVersion bump gating ──
+  //
+  // loadSessionsOnce runs several times per project switch (App.vue's
+  // background load, then ChatPanelContent's mount). An unconditional bump made
+  // each call trigger a full refresh wave — the session list, the cross-project
+  // overview and the tag list all re-fetched identical data. The bump is now
+  // conditional, so these pin both directions: a no-op must NOT bump, and any
+  // real change MUST.
+
+  const respondWith = (sessions: unknown[], totalCount?: number) => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions, ...(totalCount === undefined ? {} : { totalCount }) }),
+    })
+  }
+
+  it('does not bump sessionListVersion when nothing changed', async () => {
+    const payload = [{ id: 's1', running: false, unreadCount: 0 }]
+    respondWith(payload, 1)
+
+    const { loadSessionsOnce } = await import('@/composables/useChatSession')
+    await loadSessionsOnce()
+    const afterFirst = mockState.sessionListVersion
+
+    // Identical payload — the second call must not schedule another wave.
+    respondWith(payload, 1)
+    await loadSessionsOnce()
+
+    expect(mockState.sessionListVersion).toBe(afterFirst)
+  })
+
+  it('bumps when a session becomes running', async () => {
+    respondWith([{ id: 's1', running: false }], 1)
+    const { loadSessionsOnce } = await import('@/composables/useChatSession')
+    await loadSessionsOnce()
+    const before = mockState.sessionListVersion
+
+    respondWith([{ id: 's1', running: true }], 1)
+    await loadSessionsOnce()
+
+    expect(mockState.sessionListVersion).toBeGreaterThan(before)
+  })
+
+  it('bumps when a per-session unread badge changes even if the total is unchanged', async () => {
+    // s1 unread, s2 read. Aggregate (excluding current) = 1.
+    respondWith([{ id: 's1', unreadCount: 1 }, { id: 's2', unreadCount: 0 }], 2)
+    const { loadSessionsOnce } = await import('@/composables/useChatSession')
+    await loadSessionsOnce()
+    const before = mockState.sessionListVersion
+
+    // Now s1 is read and s2 is unread: the aggregate is still 1, but the rows
+    // render different badges — the list must refresh.
+    respondWith([{ id: 's1', unreadCount: 0 }, { id: 's2', unreadCount: 1 }], 2)
+    await loadSessionsOnce()
+
+    expect(mockState.sessionListVersion).toBeGreaterThan(before)
+  })
+
+  it('bumps when a session gains pendingApproval', async () => {
+    respondWith([{ id: 's1', pendingApproval: false }], 1)
+    const { loadSessionsOnce } = await import('@/composables/useChatSession')
+    await loadSessionsOnce()
+    const before = mockState.sessionListVersion
+
+    respondWith([{ id: 's1', pendingApproval: true }], 1)
+    await loadSessionsOnce()
+
+    expect(mockState.sessionListVersion).toBeGreaterThan(before)
+  })
+
+  it('bumps when the session count changes', async () => {
+    respondWith([{ id: 's1' }], 1)
+    const { loadSessionsOnce } = await import('@/composables/useChatSession')
+    await loadSessionsOnce()
+    const before = mockState.sessionListVersion
+
+    respondWith([{ id: 's1' }, { id: 's2' }], 2)
+    await loadSessionsOnce()
+
+    expect(mockState.sessionListVersion).toBeGreaterThan(before)
   })
 
   it('increments runningSessionsVersion after populating', async () => {

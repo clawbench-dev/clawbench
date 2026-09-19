@@ -35,6 +35,15 @@ type ClientSubscription struct {
 	writerStarted bool            // writer goroutine started for the current connection
 	writerConn    *websocket.Conn // connection the current writer was started for (identity check)
 	writerStopped chan struct{}   // closed when the writer goroutine exits
+
+	// System-resource push preference, declared by the client via a
+	// "metrics_preference" message. Only meaningful while conn != nil — a
+	// disconnected subscription contributes no demand (see MetricsDemand), so
+	// these are not cleared on disconnect. Reset on Subscribe: a fresh
+	// connection's intent is unknown, and a stale `true` would keep the
+	// sampler running for a client that never re-declares.
+	metricsEnabled    bool
+	metricsIntervalMs int // requested push interval in ms; 0 when disabled
 }
 
 // maxSubscriptions limits the number of concurrent WS subscriptions to prevent
@@ -64,6 +73,14 @@ const maxBufferedEvents = 50
 // staleTimeout is the duration after which a disconnected subscription
 // is cleaned up.
 const staleTimeout = 120 * time.Second
+
+// System-resource push rate bounds. A client declares its preferred interval;
+// the server clamps it so a client cannot request an absurdly fast sampler.
+const (
+	defaultMetricsIntervalMs = 1000  // foreground default
+	minMetricsIntervalMs     = 1000  // fastest allowed
+	maxMetricsIntervalMs     = 60000 // slowest allowed
+)
 
 // writeMessage serializes a WebSocket write under writeMu with a timeout.
 // It is the single write path used by both the event broadcast and the ping
@@ -163,6 +180,13 @@ func (m *Manager) Subscribe(conn *websocket.Conn, writeMu *sync.Mutex, clientID,
 	sub.writeMu = writeMu
 	sub.locale = locale
 	sub.lastActive = time.Now()
+	// A fresh connection's intent is unknown, so clear any system-resource push
+	// preference left by the previous connection. Preserving it would let a
+	// stale `enabled` keep the metrics sampler running for a client that never
+	// re-declares. The client re-declares after every reconnect (it watches
+	// `connected`), so the cost is at most one interval of no data.
+	sub.metricsEnabled = false
+	sub.metricsIntervalMs = 0
 	// NOTE: eventBuffer is deliberately NOT cleared here. It holds the events
 	// buffered while this subscription was disconnected (or the rolling tail of
 	// events sent before a replace) and EventsHandler replays them via
@@ -248,6 +272,31 @@ func (m *Manager) disconnectClient(clientID string, conn *websocket.Conn) bool {
 	return true
 }
 
+// deliveryOptions parameterizes the shared single-subscription delivery core.
+// It exists because telemetry ("stale immediately" data) must NOT behave like
+// ordered, stateful events.
+type deliveryOptions struct {
+	// buffer controls whether the message enters the reconnect replay buffer
+	// (maxBufferedEvents). Telemetry must be false: at 1Hz it would evict real
+	// chat/task events from the 50-entry buffer within a minute.
+	buffer bool
+	// closeOnOverflow forces a reconnect when the async send queue is full or
+	// stopped. Correct for ordered events (a dropped `done` corrupts the
+	// rendered message), catastrophic for telemetry (it would tear down the
+	// whole chat connection over one lost metric frame).
+	closeOnOverflow bool
+	// metricsWatcherOnly restricts delivery to connected clients that declared
+	// interest via a "metrics_preference" message.
+	metricsWatcherOnly bool
+}
+
+var (
+	// replayableDelivery is the semantics every ordered event family uses.
+	replayableDelivery = deliveryOptions{buffer: true, closeOnOverflow: true}
+	// telemetryDelivery is for high-frequency, droppable, non-replayable data.
+	telemetryDelivery = deliveryOptions{buffer: false, closeOnOverflow: false, metricsWatcherOnly: true}
+)
+
 // SendToClient sends a ServerMessage to a specific client by clientID.
 // If the client is connected, sends via WS. If disconnected, buffers for replay.
 func (m *Manager) SendToClient(clientID string, msg ServerMessage) {
@@ -272,58 +321,111 @@ func (m *Manager) BroadcastEvent(msg ServerMessage) {
 	}
 }
 
-// broadcastToSubscription handles event delivery for a single subscription.
+// BroadcastToMetricsWatchers delivers a non-buffered, droppable telemetry event
+// to every CONNECTED client that declared system-resource interest. It returns
+// how many clients accepted the frame.
+//
+// Deliberately NOT a BroadcastEvent variant: a metric frame must never enter the
+// reconnect replay buffer, and a full send queue must never close the connection
+// (that would abort in-flight chat streaming to recover one stale sample).
+func (m *Manager) BroadcastToMetricsWatchers(msg ServerMessage) int {
+	m.mu.Lock()
+	keys := make([]string, 0, len(m.subscriptions))
+	for k := range m.subscriptions {
+		keys = append(keys, k)
+	}
+	m.mu.Unlock()
+
+	delivered := 0
+	for _, key := range keys {
+		if m.deliverToSubscription(key, msg, telemetryDelivery) {
+			delivered++
+		}
+	}
+	return delivered
+}
+
+// broadcastToSubscription handles event delivery for a single subscription
+// using the replayable-event semantics.
 func (m *Manager) broadcastToSubscription(key string, msg ServerMessage) {
+	m.deliverToSubscription(key, msg, replayableDelivery)
+}
+
+// deliverToSubscription is the single delivery path. It reports whether the
+// frame was handed to the connection's async writer.
+//
+// Lock order: m.mu is acquired and released BEFORE sub.mu is taken; never hold
+// m.mu while holding sub.mu.
+func (m *Manager) deliverToSubscription(key string, msg ServerMessage, opts deliveryOptions) bool {
 	m.mu.Lock()
 	sub, ok := m.subscriptions[key]
 	m.mu.Unlock()
 	if !ok {
-		return
+		return false
 	}
 
 	sub.mu.Lock()
 	conn := sub.conn
 	writeMu := sub.writeMu
 
-	if conn != nil && writeMu != nil {
-		// Client is connected — marshal once and enqueue for the async writer.
-		// The synchronous conn.Write path is gone: a slow client could hold
-		// sub.mu for up to wsWriteTimeout, stalling the entire session event
-		// loop and allowing the ACP stream channel to fill and drop events.
-		data, err := json.Marshal(msg)
-		if err != nil {
-			slog.Error("ws: marshal event", "error", err, "client_id", key)
-			sub.mu.Unlock()
-			return
-		}
-		needClose := false
-		if !sub.enqueueSendLocked(data) {
-			// Queue full or writer stopped. Force a reconnect so the client
-			// reloads a consistent snapshot; dropping mid-stream events would
-			// corrupt the rendered message far worse than a reconnect.
-			slog.Warn("ws: send queue full or stopped, closing connection for reconnect",
-				"client_id", key, "queue_cap", maxAsyncQueue)
-			needClose = true
-		}
-		// Buffer event for reconnect replay (even on enqueue failure, so it isn't lost)
-		sub.bufferEvent(msg)
+	// Telemetry only goes to clients that asked for it. A disconnected client
+	// (conn == nil) has no demand, so it is skipped rather than buffered.
+	if opts.metricsWatcherOnly && (conn == nil || writeMu == nil || !sub.metricsEnabled) {
 		sub.mu.Unlock()
+		return false
+	}
 
-		// Close outside the lock: CloseNow is non-blocking today, but keeping
-		// connection teardown out of sub.mu avoids reintroducing a stall if it
-		// ever performs a close handshake.
-		if needClose {
-			_ = conn.CloseNow()
+	if conn == nil || writeMu == nil {
+		// Client is disconnected — buffer within the replay window, if enabled.
+		if opts.buffer && (sub.bufferStart.IsZero() || time.Since(sub.bufferStart) < disconnectedBufferWindow) {
+			sub.bufferEvent(msg)
 		}
-		return
+		sub.mu.Unlock()
+		return false
 	}
 
-	// Client is disconnected — check buffer window
-	if sub.bufferStart.IsZero() || time.Since(sub.bufferStart) < disconnectedBufferWindow {
-		sub.bufferEvent(msg)
-	}
-
+	delivered, needClose := sub.enqueueForDelivery(key, msg, opts)
 	sub.mu.Unlock()
+
+	// Close outside the lock: CloseNow is non-blocking today, but keeping
+	// connection teardown out of sub.mu avoids reintroducing a stall if it
+	// ever performs a close handshake.
+	if needClose {
+		_ = conn.CloseNow()
+	}
+	return delivered
+}
+
+// enqueueForDelivery marshals and enqueues one frame on a connected
+// subscription, applying the buffering and overflow policies from opts. It
+// returns whether the frame was accepted and whether the connection must be
+// closed for the client to reconnect. Must be called with sub.mu held.
+func (s *ClientSubscription) enqueueForDelivery(key string, msg ServerMessage, opts deliveryOptions) (delivered, needClose bool) {
+	// Marshal once and enqueue for the async writer. The synchronous conn.Write
+	// path is gone: a slow client could hold sub.mu for up to wsWriteTimeout,
+	// stalling the entire session event loop and allowing the ACP stream channel
+	// to fill and drop events.
+	data, err := json.Marshal(msg)
+	if err != nil {
+		slog.Error("ws: marshal event", "error", err, "client_id", key)
+		return false, false
+	}
+
+	delivered = s.enqueueSendLocked(data)
+	if !delivered && opts.closeOnOverflow {
+		// Queue full or writer stopped. Force a reconnect so the client reloads
+		// a consistent snapshot; dropping mid-stream events would corrupt the
+		// rendered message far worse than a reconnect.
+		slog.Warn("ws: send queue full or stopped, closing connection for reconnect",
+			"client_id", key, "queue_cap", maxAsyncQueue)
+		needClose = true
+	}
+
+	// Buffer event for reconnect replay (even on enqueue failure, so it isn't lost)
+	if opts.buffer {
+		s.bufferEvent(msg)
+	}
+	return delivered, needClose
 }
 
 // enqueueSendLocked enqueues a marshaled message for the async writer.
@@ -490,6 +592,77 @@ func (m *Manager) HasConnectedClients() bool {
 		}
 	}
 	return false
+}
+
+// SetClientMetricsPreference records whether clientID wants system-resource
+// pushes and at what interval. enabled=false clears the preference. Returns
+// false when clientID has no subscription.
+//
+// conn is the caller's own connection. It is used as an identity guard: when a
+// client reconnects, Subscribe installs the new connection and resets the
+// preference, but the OLD connection's read loop may still be mid-dispatch and
+// would otherwise write its stale declaration onto the NEW connection's
+// subscription — keeping the sampler running for a declaration that came from a
+// dead socket. Mirrors the identity checks in DisconnectClientIfCurrent and
+// StopWriter.
+//
+// Lock order: m.mu → sub.mu (the only allowed direction).
+func (m *Manager) SetClientMetricsPreference(clientID string, conn *websocket.Conn, enabled bool, intervalMs int) bool {
+	intervalMs = normalizeMetricsInterval(enabled, intervalMs)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sub, ok := m.subscriptions[clientID]
+	if !ok {
+		return false
+	}
+	sub.mu.Lock()
+	defer sub.mu.Unlock()
+	if sub.conn != conn {
+		// A newer connection replaced this one — the declaration is stale.
+		return false
+	}
+	sub.metricsEnabled = enabled
+	sub.metricsIntervalMs = intervalMs
+	return true
+}
+
+// MetricsDemand reports whether any CONNECTED client wants system-resource
+// pushes, and the fastest interval requested. count == 0 means "stop sampling".
+// minIntervalMs is meaningful only when count > 0.
+//
+// A disconnected subscription is skipped even if it still carries an enabled
+// preference: disconnectClient nulls conn but preserves the entry for reconnect
+// replay, and a departed client must not keep the sampler running.
+func (m *Manager) MetricsDemand() (count int, minIntervalMs int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sub := range m.subscriptions {
+		sub.mu.Lock()
+		if sub.conn != nil && sub.metricsEnabled && sub.metricsIntervalMs > 0 {
+			count++
+			if minIntervalMs == 0 || sub.metricsIntervalMs < minIntervalMs {
+				minIntervalMs = sub.metricsIntervalMs
+			}
+		}
+		sub.mu.Unlock()
+	}
+	return count, minIntervalMs
+}
+
+// normalizeMetricsInterval clamps a client-requested push interval so a client
+// cannot ask the server for an absurdly fast sampler.
+func normalizeMetricsInterval(enabled bool, intervalMs int) int {
+	if !enabled {
+		return 0
+	}
+	if intervalMs < minMetricsIntervalMs {
+		return defaultMetricsIntervalMs
+	}
+	if intervalMs > maxMetricsIntervalMs {
+		return maxMetricsIntervalMs
+	}
+	return intervalMs
 }
 
 // CleanupStale removes stale subscriptions:

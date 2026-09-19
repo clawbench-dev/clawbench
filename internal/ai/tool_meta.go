@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"clawbench/internal/askquestion"
 )
 
 const maxSummaryLen = 200
@@ -218,24 +220,16 @@ var summaryPriorityFields = []summaryField{
 }
 
 // extractAskUserQuestionSummary extracts summary from AskUserQuestion input.
+// The input is normalized first so a malformed shape (flat question+options, an
+// items wrapper) still yields a usable summary instead of an empty strip.
 func extractAskUserQuestionSummary(input map[string]any) string {
-	questions, ok := input["questions"]
-	if !ok {
-		return ""
-	}
-	qSlice, ok := questions.([]any)
-	if !ok || len(qSlice) == 0 {
-		return ""
-	}
-	first, ok := qSlice[0].(map[string]any)
-	if !ok {
-		return ""
-	}
-	if header, _ := first["header"].(string); header != "" {
-		return truncateStr(header)
-	}
-	if question, _ := first["question"].(string); question != "" {
-		return truncateStr(question)
+	for _, item := range askquestion.NormalizeInput(input) {
+		if item.Header != "" {
+			return truncateStr(item.Header)
+		}
+		if item.Question != "" {
+			return truncateStr(item.Question)
+		}
 	}
 	return ""
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/push/common"
 )
 
@@ -259,7 +260,16 @@ func (m *mockSessionMessengerWithErr) IsSessionRunning(sessionID string) bool {
 	return false
 }
 
-func (m *mockSessionMessengerWithErr) SendMessageToSession(sessionID, message string) error {
+func (m *mockSessionMessengerWithErr) GetSessionInfo(sessionID string) (common.SessionInfo, error) {
+	for _, s := range m.allSessions {
+		if s.ID == sessionID {
+			return s, nil
+		}
+	}
+	return common.SessionInfo{}, fmt.Errorf("session %s not found", sessionID)
+}
+
+func (m *mockSessionMessengerWithErr) SendMessageToSession(sessionID, message string, files []model.FileEntry) error {
 	return nil
 }
 
@@ -269,7 +279,7 @@ type mockSessionMessenger struct {
 	allSessions     []common.SessionInfo
 	sendErr         error
 	listErr         error
-	SendMessageFn   func(sid, msg string) error
+	SendMessageFn   func(sid, msg string, files []model.FileEntry) error
 }
 
 func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
@@ -303,9 +313,19 @@ func (m *mockSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return false
 }
 
-func (m *mockSessionMessenger) SendMessageToSession(sessionID, message string) error {
+func (m *mockSessionMessenger) SendMessageToSession(sessionID, message string, files []model.FileEntry) error {
 	if m.SendMessageFn != nil {
-		return m.SendMessageFn(sessionID, message)
+		return m.SendMessageFn(sessionID, message, files)
 	}
 	return m.sendErr
+}
+
+// GetSessionInfo returns metadata for a session in allSessions.
+func (m *mockSessionMessenger) GetSessionInfo(sessionID string) (common.SessionInfo, error) {
+	for _, s := range m.allSessions {
+		if s.ID == sessionID {
+			return s, nil
+		}
+	}
+	return common.SessionInfo{}, fmt.Errorf("session %s not found", sessionID)
 }

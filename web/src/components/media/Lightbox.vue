@@ -28,11 +28,11 @@
         @animationend="slideDirection = ''"
       >
         <img
-          v-if="currentUrl && !currentSvg"
+          v-if="displayUrl && !currentSvg"
           v-show="!imageLoading"
           ref="imgRef"
-          :key="currentUrl"
-          :src="currentUrl"
+          :key="displayUrl"
+          :src="displayUrl"
           :style="imgStyle"
           draggable="false"
           @mousedown.prevent
@@ -69,6 +69,7 @@ import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { extractImageName } from '@/utils/lightbox.ts'
+import { mediaPathFromUrl, mediaVersionFor, stripVersionParam, withVersionParam } from '@/composables/useMediaWatch.ts'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 let unregisterBack = null
@@ -327,13 +328,32 @@ function fullImgSrc(img) {
  * Sources may already carry a ?t= timestamp (e.g. ImagePreview.mediaUrl,
  * MarkdownPreview.fixLocalImagePaths), so appending another t= directly would
  * accumulate params and produce malformed URLs on refresh.
+ *
+ * Delegates to the shared stripper so there is exactly one implementation: a
+ * local digits-only copy here silently corrupted the dotted `t=<ts>.<version>`
+ * form the image viewer emits (`a.png?t=1.0` → `a.png.0`, a 404).
  */
 function normalizeUrl(url) {
-    return url
-        .replace(/[?&]t=\d+/g, '')
-        .replace(/[?&]+$/g, '')
-        .replace(/\?&/g, '?')
+    return stripVersionParam(url)
 }
+
+/**
+ * The URL actually handed to the <img>. Folds in the shared media version so a
+ * background rewrite of the file being viewed refreshes the lightbox too —
+ * without it, navigating back to the image (or any re-render) would restore the
+ * stale `?t=` captured when the lightbox was opened.
+ *
+ * The version is deterministic rather than a fresh timestamp: a timestamp would
+ * make every recomputation a cache miss and reload the image. Version 0 (never
+ * changed) keeps the URL captured at open time.
+ */
+const displayUrl = computed(() => {
+    if (!currentUrl.value) return ''
+    const path = mediaPathFromUrl(currentUrl.value)
+    if (!path) return currentUrl.value
+    const v = mediaVersionFor(path)
+    return v ? withVersionParam(currentUrl.value, v) : currentUrl.value
+})
 
 /** Append a cache-buster `t=` param, honoring an existing query string —
  *  blindly joining with `?` corrupts URLs that already carry params
@@ -373,7 +393,16 @@ function navigateMdImage(newIdx, direction) {
     }
 }
 
-function open(url, svg = '') {
+/**
+ * Open the Lightbox.
+ *
+ * `filePath` is optional and only needed by callers whose image is NOT the
+ * store's currently-opened file (e.g. a file-manager quick preview): the
+ * filename, the directory-sibling navigation and the Download action all
+ * resolve from it. When omitted, the store's current file is used, which is
+ * what the file viewer's own header button relies on.
+ */
+function open(url, svg = '', filePath = '') {
     currentUrl.value = svg ? '' : withCacheBuster(normalizeUrl(url))
     currentSvg.value = svg
     lightboxVisible.value = true
@@ -397,10 +426,12 @@ function open(url, svg = '') {
     mdImages.value = []
     mdCurrentIndex.value = -1
 
-    // Build navigation from store's current file
-    if (!svg && store.state.currentFile?.path) {
-        currentFilePath.value = store.state.currentFile.path
-        buildSiblingList(store.state.currentFile.path)
+    // Build navigation from the explicit path, falling back to the store's
+    // current file (the file-viewer path, where the file IS open).
+    const navPath = filePath || store.state.currentFile?.path || ''
+    if (!svg && navPath) {
+        currentFilePath.value = navPath
+        buildSiblingList(navPath)
     } else {
         currentFilePath.value = ''
         siblingFiles.value = []

@@ -72,6 +72,108 @@ func ResetAdvertiseTerminalForTest() {
 	advertiseTerminalOverride = nil
 }
 
+// advertiseReadTextFileCapability returns whether ClawBench should advertise
+// the fs.readTextFile client capability for the given agent in ACP Initialize.
+//
+// Background: when fs.readTextFile is advertised, CodeBuddy's ToolManager
+// REPLACES its native Read tool with a text-only proxy. In
+// `tryAcpIntercept` (dist-server/codebuddy.js):
+//
+//	case L3.READ: if (acpInterceptor.isSupportRead()) return acpInterceptor.callRead(...)
+//
+// and `isSupportRead()` is exactly `clientCapabilities.fs.readTextFile`. The
+// proxy calls the client's fs/read_text_file and line-numbers the returned
+// string. Since ACP's ReadTextFileResponse carries just `{content: string}`,
+// an image read through the proxy reaches the model as mojibake text (the PNG
+// signature shows up as U+FFFD + "PNG"), not as an image — even though
+// CodeBuddy's native ReadTool has an isImageFile → readImageFile branch that
+// converts the file into an image_url payload, which
+// AcpUtils.convertToolResultValueToAcp then turns into an ACP image block.
+// (That branch is not the only image producer in the bundle — attachment
+// references go through createImageContent — but it is the only one reachable
+// from a Read tool call, which is what this capability gates.)
+//
+// Hiding the capability makes CodeBuddy fall back to its native ReadTool.
+// Note this reroutes EVERY CodeBuddy Read, not just images, so the native
+// tool's constraints now apply to text reads too: binary files are rejected
+// outright ("Cannot display content of binary file"), whole-file reads are
+// capped at 256KB / 20k output tokens, and reads go through CodeBuddy's own
+// permission pipeline. The proxied read had none of those limits. These are
+// accepted as the cost of correct image handling — and they match what plain
+// `codebuddy` CLI (no ACP client, no capability) already did.
+//
+// fs.writeTextFile is deliberately left advertised: Write/Edit/MultiEdit are
+// gated on it, and their callEdit path calls the client's readTextFile directly
+// (not through isSupportRead), so edits still round-trip through ClawBench's
+// fs handlers. Note the read-side guard that is given up (isPathAllowed) was
+// already near-vacuous in production: RootPaths is ["/"] on Unix, so it only
+// enforced "the path is absolute".
+//
+// Other agents (Claude, Codex, ...) do not swap their Read tool this way, so
+// the capability stays advertised for them.
+//
+// Tests can override via SetAdvertiseReadTextFileForTest (the override takes
+// precedence over the per-agent default).
+
+var advertiseReadTextFileOverride *bool
+
+// advertiseReadTextFileCapability returns the current fs.readTextFile value.
+func advertiseReadTextFileCapability(agent *model.Agent) bool {
+	if advertiseReadTextFileOverride != nil {
+		return *advertiseReadTextFileOverride
+	}
+	if agent != nil && isCodeBuddyBackend(agent) {
+		return false
+	}
+	return true
+}
+
+// SetAdvertiseReadTextFileForTest overrides the fs.readTextFile capability for
+// tests. Production code must not use this.
+func SetAdvertiseReadTextFileForTest(enabled bool) {
+	advertiseReadTextFileOverride = &enabled
+}
+
+// ResetAdvertiseReadTextFileForTest clears the test override.
+// Production code must not use this.
+func ResetAdvertiseReadTextFileForTest() {
+	advertiseReadTextFileOverride = nil
+}
+
+// fileSystemCapabilities builds the fs client capability pair advertised in
+// Initialize. fs.readTextFile is gated per-agent (see
+// advertiseReadTextFileCapability) while fs.writeTextFile stays advertised:
+// CodeBuddy's Write/Edit/MultiEdit are gated on it, and their callEdit path
+// reads through the client directly rather than via isSupportRead, so writes
+// keep flowing through ClawBench's fs handlers even after the read capability
+// is hidden.
+func fileSystemCapabilities(agent *model.Agent) acp.FileSystemCapabilities {
+	return acp.FileSystemCapabilities{
+		ReadTextFile:  advertiseReadTextFileCapability(agent),
+		WriteTextFile: true,
+	}
+}
+
+// buildInitializeRequest assembles the Initialize request ClawBench sends when
+// spawning an agent. Extracted from spawnLocked so the advertised client
+// capabilities can be asserted in a unit test: the per-agent capability
+// decisions only take effect if they actually reach this request, and without
+// this seam the wiring has no non-integration coverage (integration tests are
+// build-tagged and never run in CI).
+func buildInitializeRequest(agent *model.Agent) acp.InitializeRequest {
+	return acp.InitializeRequest{
+		ProtocolVersion: acp.ProtocolVersionNumber,
+		ClientCapabilities: acp.ClientCapabilities{
+			Fs:       fileSystemCapabilities(agent),
+			Terminal: advertiseTerminalCapability(agent),
+		},
+		ClientInfo: &acp.Implementation{
+			Name:    "clawbench",
+			Version: "1.0.0",
+		},
+	}
+}
+
 // EnsureAlive ensures the connection has a live agent process and initialized
 // ACP connection, but does NOT create/resume a session. Used by ListSessions
 // which needs an alive connection but no session.
@@ -245,7 +347,11 @@ type cachedConfigSnapshot struct {
 }
 
 // snapshotCachedConfig captures current session-level config values before a respawn.
+// Takes stateMu, not c.mu: the caller (ensureAliveWithSession) already holds c.mu,
+// and stateMu is a leaf lock so acquiring it there is safe.
 func (c *ACPConn) snapshotCachedConfig() cachedConfigSnapshot {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return cachedConfigSnapshot{
 		mode:   c.currentModeID,
 		model:  c.currentModelID,
@@ -459,8 +565,29 @@ func (c *ACPConn) killProcessLocked() {
 
 // spawnLocked spawns the agent process and initializes the connection (must hold c.mu).
 //
-//nolint:gocyclo // complex spawn logic with multiple sequential setup steps
-func (c *ACPConn) spawnLocked(ctx context.Context) error {
+// On failure the connection is left in a clean, explicitly-dead state via
+// markSpawnFailedLocked (see the deferred cleanup below) so a later
+// ensureAliveWithSession cannot mistake it for a reusable connection.
+//
+//nolint:gocyclo,gocognit // complex spawn logic with multiple sequential setup steps; the failure-cleanup defer is part of that sequence
+func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
+	// A failed spawn must not leave the connection looking alive. The
+	// assignments that would normally clear this state (c.cmd/c.conn/c.client/
+	// c.alive/c.startedAt) all sit AFTER Initialize succeeds, so without this
+	// defer every early return below would leave the PREVIOUS connection's
+	// fields in place — while the kill-old-process step above had already
+	// cleared c.cmd. Because isAliveLocked() skips its process probe when c.cmd
+	// is nil, such a connection reported alive if its Done() had not fired yet,
+	// and the next ensureAliveWithSession reused it instead of respawning.
+	//
+	// A defer (rather than cleanup at each return site) keeps this true for
+	// future early returns added to this function.
+	defer func() {
+		if err != nil {
+			c.markSpawnFailedLocked()
+		}
+	}()
+
 	// Kill any existing process first
 	if c.cmd != nil && c.cmd.Process != nil {
 		killStart := time.Now()
@@ -590,7 +717,17 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	stdinWriter := &lockedWriter{dst: stdinPipe}
 
 	conn := acp.NewClientSideConnection(client, stdinWriter, stdoutFilter)
-	conn.SetLogger(slog.Default())
+	// Deliberately NOT calling conn.SetLogger here. The SDK's SetLogger writes
+	// c.logger without synchronization (connection.go:125) while receive() —
+	// started by NewClientSideConnection above — reads it via loggerOrDefault()
+	// (connection.go:128). Setting it after construction is therefore a data
+	// race that `go test -race ./internal/ai` reports intermittently, failing
+	// whichever unrelated test happens to be running.
+	//
+	// The call is also redundant: loggerOrDefault() falls back to
+	// slog.Default(), which is exactly what was being passed. Production sets
+	// slog.Default once at startup (cmd/server/main.go), before any connection
+	// exists, so SDK diagnostics still reach the same handler.
 
 	// Raw side channel: lets backends call private methods the SDK rejects
 	// (e.g. CodeBuddy's session/steer). Responses are demuxed from the filter's
@@ -598,27 +735,28 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	rawRPC := newACPRawRPC(stdinWriter, conn.Done())
 	stdoutFilter.SetRawSink(rawRPC)
 
-	initCtx, initCancel := context.WithTimeout(ctx, 60*time.Second)
+	initCtx, initCancel := context.WithTimeout(ctx, acpInitializeTimeout)
 	defer initCancel()
 
 	initStart := time.Now()
-	initResp, err := conn.Initialize(initCtx, acp.InitializeRequest{
-		ProtocolVersion: acp.ProtocolVersionNumber,
-		ClientCapabilities: acp.ClientCapabilities{
-			Fs: acp.FileSystemCapabilities{
-				ReadTextFile:  true,
-				WriteTextFile: true,
-			},
-			Terminal: advertiseTerminalCapability(c.agent),
-		},
-		ClientInfo: &acp.Implementation{
-			Name:    "clawbench",
-			Version: "1.0.0",
-		},
-	})
+	initResp, err := conn.Initialize(initCtx, buildInitializeRequest(c.agent))
 	if err != nil {
 		stdoutFilter.Close()
 		_ = cmd.Process.Kill()
+		// Distinguish "the agent never came up" from a generic handshake error.
+		// The SDK renders the deadline as InternalError(-32603) with
+		// "context deadline exceeded" in its data, which isACPPeerDisconnected
+		// would otherwise classify as a retryable disconnect — retrying the
+		// same handshake just burns a second full timeout.
+		if initCtx.Err() == context.DeadlineExceeded {
+			agentID := ""
+			if c.agent != nil {
+				agentID = c.agent.ID
+			}
+			slog.Warn("acp conn: agent initialize timed out, not retryable",
+				"agent_id", agentID, "clawbench_sid", c.clawbenchSID, "timeout", acpInitializeTimeout)
+			return &acpInitTimeoutError{agentID: agentID, timeout: acpInitializeTimeout, cause: err}
+		}
 		return fmt.Errorf("acp: initialize: %w", err)
 	}
 

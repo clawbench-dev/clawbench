@@ -792,9 +792,13 @@ func TestSessionExecutor_Run_ReceivedTerminalOnError(t *testing.T) {
 // --- Finalize tests ---
 
 func TestSessionExecutor_Finalize_AskQuestionConversion_Interactive(t *testing.T) {
-	// Interactive mode should detect <ask-question> tags and convert them
+	// Interactive mode should detect <clawbench-ask-question> tags and convert them
 	events := []ai.StreamEvent{
-		{Type: "content", Content: `<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label><description>D</description></option></item></ask-question>`},
+		{Type: "content", Content: `<clawbench-ask-question>
+**H**
+Q?
+- A — D
+</clawbench-ask-question>`},
 		{Type: "done"},
 	}
 	result := runExecutorWithEventsFinalize(t, events, ModeInteractive)
@@ -813,9 +817,13 @@ func TestSessionExecutor_Finalize_AskQuestionConversion_Interactive(t *testing.T
 }
 
 func TestSessionExecutor_Finalize_NoAskQuestionConversion_Scheduled(t *testing.T) {
-	// Scheduled mode should NOT convert <ask-question> tags
+	// Scheduled mode should NOT convert <clawbench-ask-question> tags
 	events := []ai.StreamEvent{
-		{Type: "content", Content: `<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label><description>D</description></option></item></ask-question>`},
+		{Type: "content", Content: `<clawbench-ask-question>
+**H**
+Q?
+- A — D
+</clawbench-ask-question>`},
 		{Type: "done"},
 	}
 	result := runExecutorWithEventsFinalize(t, events, ModeScheduled)
@@ -1762,10 +1770,14 @@ func TestSessionExecutor_BuildResult_AskUserQuestionToolCallPersisted(t *testing
 		StreamingMessageID: streamingMsgID,
 	}
 
-	// Emit content with <ask-question> tag — ConvertAskQuestionBlocks will
+	// Emit content with <clawbench-ask-question> tag — ConvertAskQuestionBlocks will
 	// create a tool_use block with ID prefix "ask-"
 	events := []ai.StreamEvent{
-		{Type: "content", Content: `<ask-question><item><question>Which approach?</question><option><label>A</label></option><option><label>B</label></option></item></ask-question>`},
+		{Type: "content", Content: `<clawbench-ask-question>
+Which approach?
+- A
+- B
+</clawbench-ask-question>`},
 		{Type: "done"},
 	}
 	ch := make(chan ai.StreamEvent, len(events))
@@ -1850,7 +1862,10 @@ func TestSessionExecutor_BuildResult_AskUserQuestionContentJSONIncludesInput(t *
 	}
 
 	events := []ai.StreamEvent{
-		{Type: "content", Content: `<ask-question><item><question>Pick one</question><option><label>X</label></option></item></ask-question>`},
+		{Type: "content", Content: `<clawbench-ask-question>
+Pick one
+- X
+</clawbench-ask-question>`},
 		{Type: "done"},
 	}
 	ch := make(chan ai.StreamEvent, len(events))
@@ -2100,7 +2115,7 @@ func TestSessionExecutor_Finalize_ConvertAskQuestionBlocks(t *testing.T) {
 	// Regression test: Finalize must apply ConvertAskQuestionBlocks on e.blocks
 	// before writing to DB. Previously, buildResult applied the conversion on a
 	// local copy but Finalize used the original e.blocks, so DB stored
-	// unconverted <ask-question> text blocks instead of tool_use blocks.
+	// unconverted <clawbench-ask-question> text blocks instead of tool_use blocks.
 	setupExecutorDB(t)
 	agentID := "askq-test-agent"
 	model.Agents = map[string]*model.Agent{
@@ -2125,9 +2140,13 @@ func TestSessionExecutor_Finalize_ConvertAskQuestionBlocks(t *testing.T) {
 	}
 	executor := NewSessionExecutor(ctx, cfg)
 
-	// Simulate accumulated blocks containing <ask-question> text
+	// Simulate accumulated blocks containing <clawbench-ask-question> text
 	executor.blocks = []model.ContentBlock{
-		{Type: "text", Text: `<ask-question><item><header>Choice</header><multi-select>false</multi-select><question>Which one?</question><option><label>A</label><description>First</description></option></item></ask-question>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+**Choice**
+Which one?
+- A — First
+</clawbench-ask-question>`},
 	}
 
 	result := RunResult{
@@ -2139,7 +2158,7 @@ func TestSessionExecutor_Finalize_ConvertAskQuestionBlocks(t *testing.T) {
 	finalized := executor.Finalize(result, nil)
 
 	// Verify: finalized blocks should contain a tool_use AskUserQuestion block,
-	// not the original text block with <ask-question> tags.
+	// not the original text block with <clawbench-ask-question> tags.
 	foundAskTool := false
 	for _, b := range finalized.Blocks {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
@@ -2149,8 +2168,8 @@ func TestSessionExecutor_Finalize_ConvertAskQuestionBlocks(t *testing.T) {
 			}
 			break
 		}
-		if b.Type == "text" && strings.Contains(b.Text, "<ask-question") {
-			t.Fatal("text block should not contain <ask-question> after Finalize — conversion should have run")
+		if b.Type == "text" && strings.Contains(b.Text, "<clawbench-ask-question") {
+			t.Fatal("text block should not contain <clawbench-ask-question> after Finalize — conversion should have run")
 		}
 	}
 	if !foundAskTool {
@@ -2163,8 +2182,8 @@ func TestSessionExecutor_Finalize_ConvertAskQuestionBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read finalized message from DB: %v", err)
 	}
-	if strings.Contains(content, "<ask-question") {
-		t.Fatal("DB content should not contain <ask-question> — ConvertAskQuestionBlocks should have been applied")
+	if strings.Contains(content, "<clawbench-ask-question") {
+		t.Fatal("DB content should not contain <clawbench-ask-question> — ConvertAskQuestionBlocks should have been applied")
 	}
 	if !strings.Contains(content, "AskUserQuestion") {
 		t.Fatal("DB content should contain AskUserQuestion tool_use block")

@@ -544,6 +544,79 @@ func TestSchema_CompletedAtMigration_Idempotent(t *testing.T) {
 	assert.True(t, columns["completed_at"], "completed_at must survive repeated migrations")
 }
 
+// TestSchema_PushSubscribersLastSessionID verifies the additive migration that
+// backs the sticky push target: a message sent from DingTalk/Feishu without an
+// "@{shortID}" prefix goes to the session the user last addressed, which is
+// recorded per subscriber.
+//
+// The migration is exercised the only way that proves anything: build the
+// current schema, drop the column to simulate a database created before it
+// existed, then run InitDB again and assert the column comes back. Hand-writing
+// the ALTER here would pass even if the production migration were deleted.
+func TestSchema_PushSubscribersLastSessionID(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir, model.DataDir = tmpDir, filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	origDB, origDBRead := UnsafeDBForTest(), dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	tables := []string{"dingtalk_subscribers", "feishu_subscribers"}
+
+	// Phase 1: build the current schema, then drop last_session_id from both
+	// subscriber tables to simulate a pre-migration database.
+	require.NoError(t, InitDB())
+	CloseDB()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	for _, tbl := range tables {
+		_, err = raw.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN last_session_id", tbl))
+		require.NoError(t, err, "dropping %s.last_session_id must be possible (no index may reference it)", tbl)
+	}
+	raw.Close()
+
+	// Phase 2: InitDB re-adds the column to both tables.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	for _, tbl := range tables {
+		cols := getTableColumns(t, UnsafeDBForTest(), tbl)
+		assert.Contains(t, cols, "last_session_id",
+			"%s must regain last_session_id (the sticky push target)", tbl)
+	}
+
+	// A pre-existing row must default to '' so the handler falls back to the
+	// "/ls" hint instead of targeting an arbitrary session.
+	require.NoError(t, UpsertDingTalkSubscriber("u-legacy", "conv-1", "Legacy", "stream"))
+	got, err := GetDingTalkLastSessionID("u-legacy")
+	require.NoError(t, err)
+	assert.Equal(t, "", got, "a subscriber with no recorded target must read as empty")
+}
+
+// TestSchema_PushSubscribersLastSessionID_Idempotent verifies running InitDB
+// twice does not fail on the already-present column.
+func TestSchema_PushSubscribersLastSessionID_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir, model.DataDir = tmpDir, filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	origDB, origDBRead := UnsafeDBForTest(), dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, InitDB())
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	for _, tbl := range []string{"dingtalk_subscribers", "feishu_subscribers"} {
+		cols := getTableColumns(t, UnsafeDBForTest(), tbl)
+		assert.True(t, cols["last_session_id"],
+			"%s.last_session_id must survive repeated migrations", tbl)
+	}
+}
+
 func TestSchema_TaskExecutionsColumns(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir

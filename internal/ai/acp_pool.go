@@ -125,6 +125,54 @@ func looksLikeAgentNoRun(stopReason string, outputEvents int64, inputTokens, out
 }
 
 // ---------------------------------------------------------------------------
+// acpInitTimeoutError — typed error for an agent that never answered Initialize
+// ---------------------------------------------------------------------------
+
+// acpInitTimeoutError indicates the agent process was started but did not answer
+// the ACP Initialize handshake within acpInitializeTimeout. The process exists
+// yet never reached protocol readiness — typically because npx is still
+// downloading packages, the machine is starved, or the agent is blocked on a
+// network call.
+//
+// Why this needs its own type: the SDK reports the deadline as InternalError
+// (-32603) whose data carries "context deadline exceeded", which
+// isACPPeerDisconnected classifies as a retryable disconnect. For Initialize
+// that classification is wrong twice over:
+//   - retrying repeats the SAME handshake and burns a second full timeout, so
+//     the user waits 2×60s for a failure that was already decided;
+//   - the UI falls back to the generic "AI backend exited abnormally", which
+//     points at the model/backend rather than at a startup problem.
+//
+// Not retryable: ExecuteStream surfaces it immediately with
+// ReasonAgentInitTimeout so the user sees an actionable "agent failed to start"
+// message and can retry deliberately.
+//
+// Deliberately does NOT implement Unwrap. Unwrapping would expose the SDK's
+// *RequestError to errors.As, and acpErrorDetails would then stamp a
+// meaningless "[-32603]" code onto a timeout that has no JSON-RPC meaning.
+type acpInitTimeoutError struct {
+	agentID string
+	timeout time.Duration
+	cause   error
+}
+
+func (e *acpInitTimeoutError) Error() string {
+	return fmt.Sprintf("acp: agent %q did not initialize within %s: %v", e.agentID, e.timeout, e.cause)
+}
+
+// AgentID returns the agent that failed to initialize.
+func (e *acpInitTimeoutError) AgentID() string { return e.agentID }
+
+// Timeout returns the handshake budget that was exhausted.
+func (e *acpInitTimeoutError) Timeout() time.Duration { return e.timeout }
+
+// isACPInitTimeout reports whether the error is an agent Initialize timeout.
+func isACPInitTimeout(err error) bool {
+	var e *acpInitTimeoutError
+	return errors.As(err, &e)
+}
+
+// ---------------------------------------------------------------------------
 // ACPConnManager — singleton managing one ACP connection per ClawBench session
 // ---------------------------------------------------------------------------
 
@@ -167,6 +215,16 @@ const (
 var (
 	globalManager     *ACPConnManager
 	globalManagerOnce sync.Once
+
+	// acpInitializeTimeout bounds the ACP Initialize handshake (spawn → ready).
+	// A healthy agent answers in ~1s, but the first launch of an npx-based
+	// agent may spend far longer downloading packages, so the budget is
+	// generous. Exceeding it is treated as a startup failure and is NOT
+	// retried: see acpInitTimeoutError.
+	//
+	// A var (not a const) so tests can shrink it instead of waiting 60s; same
+	// pattern as crashDiagWaitTimeout and loadWaitTimeout.
+	acpInitializeTimeout = 60 * time.Second
 )
 
 // GetACPConnManager returns the singleton connection manager.
@@ -671,20 +729,20 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 		return ACPCachedState{}
 	}
 
-	if !conn.mu.TryLock() {
-		return ACPCachedState{}
-	}
+	// Snapshot under stateMu (a leaf lock, so this cannot block on an in-flight
+	// RPC the way c.mu can).
+	conn.stateMu.Lock()
 	currentModeID := conn.currentModeID
 	currentThinkingEffortID := conn.currentThinkingEffortID
 	currentModelID := conn.currentModelID
 	planState := conn.cachedPlanState
 	usageState := conn.cachedUsageState
+	conn.stateMu.Unlock()
 	replayPending := conn.loadSessionActive.Load()
 	agentID := ""
 	if conn.agent != nil {
 		agentID = conn.agent.ID
 	}
-	conn.mu.Unlock()
 
 	if agentID == "" {
 		return ACPCachedState{}
@@ -754,14 +812,16 @@ func (m *ACPConnManager) GetCurrentModelIDByAgentID(agentID string) string {
 	defer m.mu.Unlock()
 
 	for key, conn := range m.conns {
-		conn.mu.Lock()
 		matched := (conn.agent != nil && conn.agent.ID == agentID) || key == agentID
-		if matched && conn.currentModelID != "" {
-			modelID := conn.currentModelID
-			conn.mu.Unlock()
+		if !matched {
+			continue
+		}
+		conn.stateMu.Lock()
+		modelID := conn.currentModelID
+		conn.stateMu.Unlock()
+		if modelID != "" {
 			return modelID
 		}
-		conn.mu.Unlock()
 	}
 	return ""
 }
@@ -907,7 +967,24 @@ type ACPConn struct {
 	// chain. A blocked notification chain would deadlock RPC calls like
 	// NewSession, which wait for queued notifications to be processed
 	// (see waitNotificationsUpTo in the ACP SDK).
+	//
+	// This tracks CONNECTION LIVENESS only (any notification counts) and
+	// feeds the idle sweep via lastActivityNano. The stall watchdog must NOT
+	// use it — see lastModelProgress.
 	lastSessionUpdate atomic.Int64
+
+	// lastModelProgress is the UnixNano timestamp of the most recent
+	// MODEL-DRIVEN activity for the running prompt: agent text, thinking, or
+	// a tool call/update. The stall watchdog compares against this, not
+	// lastSessionUpdate, because agents also emit housekeeping notifications
+	// that keep arriving while the model produces nothing at all — CodeBuddy
+	// re-emits AvailableCommandsUpdate every ~8 minutes when its plugin
+	// registry refreshes (and CurrentMode/ConfigOption/Usage updates are
+	// similar). Keying the watchdog off lastSessionUpdate made it blind to a
+	// hung turn: that 8-minute heartbeat always landed inside the 30-minute
+	// window, so a prompt stuck on an upstream empty-stream never got killed.
+	// Updated atomically for the same lock-free reason as lastSessionUpdate.
+	lastModelProgress atomic.Int64
 
 	// toolInFlight is true while the agent is executing a tool call (a
 	// tool_use was emitted but no tool_result yet). A no-progress stall
@@ -941,7 +1018,26 @@ type ACPConn struct {
 	// and permanently hang the session (see the idle-sweep vs. new-prompt race).
 	procMu sync.Mutex
 
-	// cached state — populated from NewSession/ResumeSession responses
+	// stateMu guards the cached session state below. It is a LEAF lock: never
+	// held across an RPC, and never held while acquiring c.mu.
+	//
+	// Why not c.mu: these fields are written by the SDK's notification
+	// goroutine (mapACPSessionUpdate → SetCachedPlanState / SetCachedUsageState /
+	// SetCachedModelListState / HasCurrentChanged / UpdateCachedCurrent). RPC
+	// methods like NewSession/ResumeSession hold c.mu while waiting for queued
+	// notifications to drain (SDK waitNotificationsUpTo), so taking c.mu from a
+	// notification callback deadlocks: the RPC waits for notifications, the
+	// notification waits for c.mu. The agent keeps emitting the whole time, the
+	// SDK's bounded queue (1024) overflows, and the SDK kills the connection —
+	// surfacing as "peer disconnected before response" while the process is
+	// still alive (observed 2026-09-17, notification queue overflow).
+	//
+	// Lock order: c.mu → stateMu is allowed (RPC paths snapshot state);
+	// stateMu → c.mu is forbidden.
+	stateMu sync.Mutex
+
+	// cached state — populated from NewSession/ResumeSession responses.
+	// Guarded by stateMu, NOT c.mu (see stateMu).
 	currentModeID           string
 	currentThinkingEffortID string
 	currentModelID          string
@@ -953,7 +1049,7 @@ type ACPConn struct {
 	// The legacy fields (currentModeID, currentThinkingEffortID, currentModelID)
 	// are kept for backward compatibility and are the canonical source of truth
 	// for those well-known categories. This map is used for any additional
-	// categories and as a unified access pattern.
+	// categories and as a unified access pattern. Guarded by stateMu.
 	currentSelections map[string]string
 
 	// lastSetConfig tracks the last values successfully sent to the agent via
@@ -1131,6 +1227,16 @@ func (c *ACPConn) TouchSessionUpdate() {
 	c.lastSessionUpdate.Store(time.Now().UnixNano())
 }
 
+// TouchModelProgress records the current time as the connection's most recent
+// model-driven activity (agent text, thinking, or a tool call/update). The
+// stall watchdog uses this instead of TouchSessionUpdate so housekeeping
+// notifications (AvailableCommandsUpdate and friends) cannot mask a turn in
+// which the model has stopped producing anything. Lock-free for the same
+// reason as TouchSessionUpdate.
+func (c *ACPConn) TouchModelProgress() {
+	c.lastModelProgress.Store(time.Now().UnixNano())
+}
+
 // lastActivityNano returns the later of lastUsed and lastSessionUpdate as a
 // UnixNano timestamp, representing the last time the connection did any work
 // (either an explicit use or an incoming SessionUpdate from an async workflow).
@@ -1183,8 +1289,21 @@ func (c *ACPConn) TurnOutputEvents() int64 {
 }
 
 // isStalled reports whether the running prompt has made no progress for the
-// given window. Progress is defined as any incoming SessionUpdate OR an
-// in-flight tool call. A zero window disables the check.
+// given window. Progress is defined as MODEL-DRIVEN activity (agent text,
+// thinking, or a tool call/update) OR an in-flight tool call. A zero window
+// disables the check.
+//
+// Deliberately NOT keyed off lastSessionUpdate: housekeeping notifications
+// (AvailableCommandsUpdate, CurrentModeUpdate, UsageUpdate, ...) keep arriving
+// while the model is producing nothing, so using the any-notification
+// timestamp would let a hung turn run forever. See lastModelProgress.
+//
+// Legitimate long pauses stay protected by toolInFlight rather than by the
+// heartbeat. The important one is a permission request awaiting user approval:
+// the underlying tool's ToolCall is emitted before RequestPermission blocks
+// and its ToolCallUpdate only arrives after the user answers, so the tool is
+// in flight for the whole wait and this returns false no matter how long the
+// user takes.
 func (c *ACPConn) isStalled(timeout time.Duration) bool {
 	if timeout <= 0 {
 		return false
@@ -1192,7 +1311,7 @@ func (c *ACPConn) isStalled(timeout time.Duration) bool {
 	if c.toolInFlight.Load() {
 		return false
 	}
-	last := c.lastSessionUpdate.Load()
+	last := c.lastModelProgress.Load()
 	if last == 0 {
 		last = c.lastUsed.UnixNano()
 	}
@@ -1448,43 +1567,43 @@ func (c *ACPConn) SetLoadSessionActiveForTest(v bool) {
 
 // GetCurrentModeID returns the session's current mode ID.
 func (c *ACPConn) GetCurrentModeID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentModeID
 }
 
 // SetCurrentModeID sets the session's current mode ID.
 func (c *ACPConn) SetCurrentModeID(modeID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentModeID = modeID
 }
 
 // GetCurrentThinkingEffortID returns the session's current thinking effort ID.
 func (c *ACPConn) GetCurrentThinkingEffortID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentThinkingEffortID
 }
 
 // SetCurrentThinkingEffortID sets the session's current thinking effort ID.
 func (c *ACPConn) SetCurrentThinkingEffortID(effortID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentThinkingEffortID = effortID
 }
 
 // GetCurrentModelID returns the session's current model ID.
 func (c *ACPConn) GetCurrentModelID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentModelID
 }
 
 // SetCurrentModelID sets the session's current model ID.
 func (c *ACPConn) SetCurrentModelID(modelID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentModelID = modelID
 }
 
@@ -1499,9 +1618,10 @@ func (c *ACPConn) SetCurrentModelID(modelID string) {
 // For well-known categories ("mode", "thought_level", "model"), this delegates
 // to the existing legacy field for backward compatibility. For other categories,
 // it uses the currentSelections map.
+// Called from the SDK notification goroutine — uses stateMu, never c.mu.
 func (c *ACPConn) UpdateCachedCurrent(category, value string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	switch category {
 	case "mode":
 		c.currentModeID = value
@@ -1521,8 +1641,8 @@ func (c *ACPConn) UpdateCachedCurrent(category, value string) {
 // For well-known categories, it reads from the legacy field. For other categories,
 // it reads from the currentSelections map.
 func (c *ACPConn) GetCurrentSelection(category string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	switch category {
 	case "mode":
 		return c.currentModeID
@@ -1540,9 +1660,10 @@ func (c *ACPConn) GetCurrentSelection(category string) string {
 
 // HasCurrentChanged checks if the given value differs from the session's current
 // selection for the specified category.
+// Called from the SDK notification goroutine — uses stateMu, never c.mu.
 func (c *ACPConn) HasCurrentChanged(category, value string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	var current string
 	switch category {
 	case "mode":
@@ -1560,30 +1681,33 @@ func (c *ACPConn) HasCurrentChanged(category, value string) bool {
 }
 
 // SetCachedPlanState caches the plan state from a plan_update event.
+// Called from the SDK notification goroutine — uses stateMu, never c.mu
+// (see ACPConn.stateMu for why c.mu would deadlock).
 func (c *ACPConn) SetCachedPlanState(state *PlanState) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.cachedPlanState = state
 }
 
 // GetCachedPlanState returns the cached plan state.
 func (c *ACPConn) GetCachedPlanState() *PlanState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.cachedPlanState
 }
 
 // SetCachedUsageState caches the usage state from a usage_update event.
+// Called from the SDK notification goroutine — uses stateMu, never c.mu.
 func (c *ACPConn) SetCachedUsageState(state *UsageState) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.cachedUsageState = state
 }
 
 // GetCachedUsageState returns the cached usage state.
 func (c *ACPConn) GetCachedUsageState() *UsageState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.cachedUsageState
 }
 
@@ -1833,20 +1957,20 @@ func (c *ACPConn) resetLastSetConfig() {
 }
 
 func (c *ACPConn) UpdateCachedCurrentModel(modelID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentModelID = modelID
 }
 
 func (c *ACPConn) UpdateCachedCurrentMode(modeID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentModeID = modeID
 }
 
 func (c *ACPConn) UpdateCachedCurrentThinkingEffort(effortID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.currentThinkingEffortID = effortID
 }
 
@@ -1880,13 +2004,10 @@ func (c *ACPConn) SetCachedModeState(state *ModeState) {
 	if state == nil {
 		return
 	}
-	c.mu.Lock()
+	agentID := c.AgentID()
+	c.stateMu.Lock()
 	c.currentModeID = state.CurrentModeID
-	agentID := ""
-	if c.agent != nil {
-		agentID = c.agent.ID
-	}
-	c.mu.Unlock()
+	c.stateMu.Unlock()
 	if agentID != "" && len(state.AvailableModes) > 0 {
 		GetAgentCapabilityRegistry().UpdateModes(agentID, state.AvailableModes)
 	}
@@ -1897,22 +2018,17 @@ func (c *ACPConn) SetCachedConfigState(state *ConfigOptionState) {
 	if state == nil {
 		return
 	}
-	c.mu.Lock()
-	agentID := ""
-	if c.agent != nil {
-		agentID = c.agent.ID
-	}
-	c.mu.Unlock()
+	agentID := c.AgentID()
 	if agentID != "" {
 		GetAgentCapabilityRegistry().UpdateConfigState(agentID, state)
 		if !GetAgentCapabilityRegistry().HasAvailableModes(agentID) {
 			if derived := modeStateFromConfigState(state); derived != nil && len(derived.AvailableModes) > 0 {
 				GetAgentCapabilityRegistry().UpdateModes(agentID, derived.AvailableModes)
-				c.mu.Lock()
+				c.stateMu.Lock()
 				if c.currentModeID == "" {
 					c.currentModeID = derived.CurrentModeID
 				}
-				c.mu.Unlock()
+				c.stateMu.Unlock()
 			}
 		}
 	}
@@ -1924,13 +2040,10 @@ func (c *ACPConn) SetCachedThinkingEffortState(state *ThinkingEffortState) {
 	if state == nil {
 		return
 	}
-	c.mu.Lock()
+	agentID := c.AgentID()
+	c.stateMu.Lock()
 	c.currentThinkingEffortID = state.CurrentID
-	agentID := ""
-	if c.agent != nil {
-		agentID = c.agent.ID
-	}
-	c.mu.Unlock()
+	c.stateMu.Unlock()
 	if agentID != "" && len(state.AvailableLevels) > 0 {
 		GetAgentCapabilityRegistry().UpdateThinkingEfforts(agentID, state.AvailableLevels)
 	}
@@ -1942,13 +2055,10 @@ func (c *ACPConn) SetCachedModelListState(state *ModelListState) {
 	if state == nil {
 		return
 	}
-	c.mu.Lock()
+	agentID := c.AgentID()
+	c.stateMu.Lock()
 	c.currentModelID = state.CurrentModelID
-	agentID := ""
-	if c.agent != nil {
-		agentID = c.agent.ID
-	}
-	c.mu.Unlock()
+	c.stateMu.Unlock()
 	if agentID != "" && len(state.Models) > 0 {
 		GetAgentCapabilityRegistry().UpdateModels(agentID, state.Models)
 	}
@@ -1967,15 +2077,15 @@ func (c *ACPConn) HasNewAvailableModes(newModes []ModeDef) bool {
 
 // HasCurrentModeChanged checks if the given modeId differs from the session's current mode.
 func (c *ACPConn) HasCurrentModeChanged(modeID string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentModeID != modeID
 }
 
 // HasCurrentThinkingEffortChanged checks if the given effortId differs from the session's current thinking effort.
 func (c *ACPConn) HasCurrentThinkingEffortChanged(effortID string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	return c.currentThinkingEffortID != effortID
 }
 
@@ -2091,6 +2201,37 @@ func (c *ACPConn) killAndMarkDeadLocked() {
 	// Intentionally preserve c.acpSID — ensureAliveWithSession needs it
 	// to recover the session via LoadSession/ResumeSession after respawn.
 	c.resetLastSetConfig()
+}
+
+// markSpawnFailedLocked records that a spawn attempt failed, leaving the
+// connection unusable. Must be called with c.mu held, after any partially
+// created process/filter has been reaped.
+//
+// Why this must exist: spawnLocked assigns c.cmd/c.conn/c.client/c.alive/
+// c.startedAt only AFTER a successful Initialize. Without this cleanup a failed
+// spawn left the PREVIOUS connection's fields in place while c.cmd had already
+// been cleared by the kill-old-process step. isAliveLocked() skips the process
+// probe when c.cmd is nil, so a stale connection whose Done() had not yet fired
+// (the documented "orphaned grandchild holds the stdout write end" case) was
+// reported ALIVE — and the next ensureAliveWithSession took its early-return
+// branch, reusing a connection that could never serve a prompt.
+//
+// c.acpSID is deliberately preserved (same as killAndMarkDeadLocked) so the
+// next attempt can still recover the session via ResumeSession. startedAt is
+// zeroed rather than left stale: crash diagnostics derive uptime from it, and a
+// stale value reports the previous process's lifetime for a process that never
+// started.
+func (c *ACPConn) markSpawnFailedLocked() {
+	c.cmd = nil
+	c.conn = nil
+	c.client = nil
+	// Drop the I/O handles too: they belong to the process that just failed to
+	// come up. A stale stdin/rawRPC would otherwise point at a dead pipe.
+	c.stdoutFilter = nil
+	c.stdin = nil
+	c.rawRPC = nil
+	c.alive = false
+	c.startedAt = time.Time{}
 }
 
 // close kills the agent process and marks the connection as dead.

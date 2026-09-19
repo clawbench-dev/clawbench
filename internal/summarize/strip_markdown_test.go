@@ -257,24 +257,15 @@ func TestConstants(t *testing.T) {
 
 // --- Ask-question preservation tests ---
 
-func TestStripMarkdown_AskQuestion_PlainXML(t *testing.T) {
+func TestStripMarkdown_AskQuestion_SingleSelect(t *testing.T) {
 	input := `Some text before.
 
-<ask-question>
-  <item>
-    <header>Approach</header>
-    <multi-select>false</multi-select>
-    <question>Which approach do you prefer?</question>
-    <option>
-      <label>Option A</label>
-      <description>Fast but less safe</description>
-    </option>
-    <option>
-      <label>Option B</label>
-      <description>Safe but slower</description>
-    </option>
-  </item>
-</ask-question>
+<clawbench-ask-question>
+**Approach**
+Which approach do you prefer?
+- Option A — Fast but less safe
+- Option B — Safe but slower
+</clawbench-ask-question>
 
 Some text after.`
 	result := StripMarkdown(input)
@@ -283,30 +274,21 @@ Some text after.`
 	assert.Contains(t, result, "Option B")
 	assert.Contains(t, result, "Fast but less safe")
 	assert.Contains(t, result, "Safe but slower")
-	assert.NotContains(t, result, "<ask-question>")
-	assert.NotContains(t, result, "</ask-question>")
+	assert.NotContains(t, result, "<clawbench-ask-question>")
+	assert.NotContains(t, result, "</clawbench-ask-question>")
 	assert.Contains(t, result, "Some text before")
 	assert.Contains(t, result, "Some text after")
 }
 
-func TestStripMarkdown_AskQuestion_XMLElements(t *testing.T) {
+func TestStripMarkdown_AskQuestion_MultiSelect(t *testing.T) {
 	input := `Here is a question:
 
-<ask-question>
-  <item>
-    <header>Method</header>
-    <multi-select>false</multi-select>
-    <question>Which caching method?</question>
-    <option>
-      <label>Redis</label>
-      <description>In-memory cache</description>
-    </option>
-    <option>
-      <label>SQLite</label>
-      <description>File-based storage</description>
-    </option>
-  </item>
-</ask-question>
+<clawbench-ask-question>
+**Method**
+Which caching method?
+- [ ] Redis — In-memory cache
+- [ ] SQLite — File-based storage
+</clawbench-ask-question>
 
 Continue here.`
 	result := StripMarkdown(input)
@@ -315,26 +297,13 @@ Continue here.`
 	assert.Contains(t, result, "SQLite")
 	assert.Contains(t, result, "In-memory cache")
 	assert.Contains(t, result, "File-based storage")
-	assert.NotContains(t, result, "<ask-question>")
+	assert.NotContains(t, result, "<clawbench-ask-question>")
 }
 
-func TestStripMarkdown_AskQuestion_MultipleItems(t *testing.T) {
-	input := `<ask-question>
-  <item>
-    <header>DB</header>
-    <question>Which database?</question>
-    <option><label>PostgreSQL</label><description>Relational</description></option>
-    <option><label>MongoDB</label><description>Document</description></option>
-    <multi-select>false</multi-select>
-  </item>
-  <item>
-    <header>Deploy</header>
-    <question>Deploy where?</question>
-    <option><label>AWS</label><description>Cloud</description></option>
-    <option><label>On-prem</label><description>Self-hosted</description></option>
-    <multi-select>true</multi-select>
-  </item>
-</ask-question>`
+// Several tags are several questions.
+func TestStripMarkdown_AskQuestion_MultipleTags(t *testing.T) {
+	input := "<clawbench-ask-question>\n**DB**\nWhich database?\n- PostgreSQL — Relational\n- MongoDB — Document\n</clawbench-ask-question>\n" +
+		"<clawbench-ask-question>\n**Deploy**\nDeploy where?\n- AWS — Cloud\n- On-prem — Self-hosted\n</clawbench-ask-question>"
 	result := StripMarkdown(input)
 	assert.Contains(t, result, "Which database")
 	assert.Contains(t, result, "PostgreSQL")
@@ -345,32 +314,24 @@ func TestStripMarkdown_AskQuestion_MultipleItems(t *testing.T) {
 }
 
 func TestStripMarkdown_AskQuestion_OptionsNoDescription(t *testing.T) {
-	input := `<ask-question>
-  <item>
-    <header>Confirm</header>
-    <multi-select>false</multi-select>
-    <question>Proceed?</question>
-    <option><label>Yes</label></option>
-    <option><label>No</label></option>
-  </item>
-</ask-question>`
+	input := "<clawbench-ask-question>\n**Confirm**\nProceed?\n- Yes\n- No\n</clawbench-ask-question>"
 	result := StripMarkdown(input)
 	assert.Contains(t, result, "Proceed")
 	assert.Contains(t, result, "Yes")
 	assert.Contains(t, result, "No")
 }
 
-func TestStripMarkdown_AskQuestion_InvalidXML(t *testing.T) {
-	input := `<ask-question>
-not valid xml content
-</ask-question>`
+// A payload with no list is not a question; the wrapper is stripped and the
+// text is kept so nothing is lost.
+func TestStripMarkdown_AskQuestion_ProseDegrades(t *testing.T) {
+	input := "<clawbench-ask-question>\nnot a valid question payload\n</clawbench-ask-question>"
 	result := StripMarkdown(input)
-	// No <item> elements found — should fall back to stripped text
-	assert.Contains(t, result, "not valid xml content")
+	assert.Contains(t, result, "not a valid question payload")
+	assert.NotContains(t, result, "<clawbench-ask-question>")
 }
 
 func TestStripMarkdown_AskQuestion_RegularCodeBlockUnaffected(t *testing.T) {
-	input := "Normal code:\n```go\nfmt.Println(\"hello\")\n```\n<ask-question>\n  <item>\n    <header>Go</header>\n    <question>Use Go?</question>\n    <option><label>Yes</label><description>Go ahead</description></option>\n    <multi-select>false</multi-select>\n  </item>\n</ask-question>"
+	input := "Normal code:\n```go\nfmt.Println(\"hello\")\n```\n<clawbench-ask-question>\n**Go**\nUse Go?\n- Yes — Go ahead\n</clawbench-ask-question>"
 	result := StripMarkdown(input)
 	// Regular code block should still be removed
 	assert.NotContains(t, result, "fmt.Println")
@@ -379,22 +340,22 @@ func TestStripMarkdown_AskQuestion_RegularCodeBlockUnaffected(t *testing.T) {
 	assert.Contains(t, result, "Yes")
 }
 
+// JSON is not a supported payload and is not recovered; the tag is stripped and
+// the raw text remains so the malformed output is visible.
 func TestStripMarkdown_AskQuestion_JSONContentStripped(t *testing.T) {
-	input := `<ask-question>
-{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"}]}]}
-</ask-question>`
+	input := "<clawbench-ask-question>\n{\"questions\":[{\"question\":\"Which approach?\",\"options\":[{\"label\":\"Option A\"}]}]}\n</clawbench-ask-question>"
 	result := StripMarkdown(input)
-	// JSON is no longer parsed; the tag is stripped and the raw text remains.
-	assert.NotContains(t, result, "<ask-question>")
-	assert.NotContains(t, result, "</ask-question>")
+	assert.NotContains(t, result, "<clawbench-ask-question>")
+	assert.NotContains(t, result, "</clawbench-ask-question>")
 	assert.Contains(t, result, "Which approach?")
 }
 
-func TestStripMarkdown_AskQuestion_InvalidContent(t *testing.T) {
-	input := `<ask-question>
-{not valid json}
-</ask-question>`
+// An unparseable payload must never be read as raw markup: the tag is stripped
+// and only the inner text survives.
+func TestStripMarkdown_AskQuestion_UnparseableNeverSpeaksTags(t *testing.T) {
+	input := "<clawbench-ask-question>\n{\"questions\":[{\"question\":\"你最喜欢哪种水果？\"}]}\n</clawbench-ask-question>"
 	result := StripMarkdown(input)
-	// Should fall back to stripped text
-	assert.Contains(t, result, "not valid json")
+	assert.NotContains(t, result, "<clawbench-ask-question>")
+	assert.NotContains(t, result, "</clawbench-ask-question>")
+	assert.Contains(t, result, "你最喜欢哪种水果")
 }
