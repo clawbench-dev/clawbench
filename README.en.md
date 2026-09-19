@@ -340,7 +340,7 @@ clawbench
 - **Three-Mode Gesture System**: Browse (default, touch scroll), Gesture (Termius-style swipe→arrow keys, hold-to-repeat, double-tap→Tab, pinch-to-zoom), Selection (drag-to-select text + floating copy bar)
 - **Virtual Key Toolbar**: Color-coded key groups (modifiers, shortcuts, navigation, arrows, actions), three-state modifier toggle
 - **Key/Symbol Configuration**: Full-screen configuration drawer with keys and symbols dual tabs; supports tap-to-add, drag-to-reorder, gesture mode auto-hides certain keys; configuration persisted to database
-- **Symbol Bar**: Expandable symbol input row with 19 high-frequency terminal symbols, smart sorting using exponential decay (balances frequency and recency)
+- **Symbol Bar**: Expandable symbol input row with 19 high-frequency terminal symbols, with a transition animation
 - **Selected Text Auto-Copy**: Selected terminal text automatically copied to clipboard with toast feedback
 - **Quick Commands**: CRUD management of common commands with drag reorder, hidden flag, auto-execute (auto-run on every connect/reconnect)
 - **Android Volume Keys**: Volume up/down remapped to arrow keys when terminal is open in the app
