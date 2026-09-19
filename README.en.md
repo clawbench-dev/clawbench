@@ -19,79 +19,11 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
 - **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
 
+📖 **User Guides** (Chinese): [Desktop](docs/user-guid/user-guid.md) · [Mobile](docs/user-guid/user-guid-mobile.md)
+
 <p align="center">
   <img src="assets/architecture.en.svg" alt="ClawBench Deployment Architecture" width="640">
 </p>
-
----
-
-## Screenshots
-
-### Login & Navigation
-
-| Login | Home | Select Project | Settings Panel |
-|-------|------|----------------|----------------|
-| ![Login](docs/screenshots/login.png) | ![Home](docs/screenshots/home.png) | ![Select Project](docs/screenshots/project-select.png) | ![Settings Panel](docs/screenshots/settings-panel.png) |
-
-### File Browsing & Code Editing
-
-| File Browser | Search & Filter | Code Editor | Quote & Ask |
-|-------------|----------------|-------------|-------------|
-| ![File Browser](docs/screenshots/file-browser.png) | ![Search & Filter](docs/screenshots/file-search.png) | ![Code Editor](docs/screenshots/code-editor.png) | ![Quote & Ask](docs/screenshots/quote-question.png) |
-
-### Markdown & Document Preview
-
-| Markdown Render | LaTeX Formulas | Mermaid Diagrams | Table of Contents |
-|-----------------|----------------|------------------|-------------------|
-| ![Markdown Render](docs/screenshots/markdown-preview.png) | ![LaTeX Formulas](docs/screenshots/latex-formula.png) | ![Mermaid Diagrams](docs/screenshots/mermaid-diagram.png) | ![Table of Contents](docs/screenshots/toc-drawer.png) |
-
-### AI Agents
-
-| Agent Selection | AI Conversation | ACP Permission | RAG Search | Session Manager |
-|-----------------|-----------------|----------------|------------|-----------------|
-| ![Agent Selection](docs/screenshots/agent-selector.png) | ![AI Conversation](docs/screenshots/chat-interface.png) | ![ACP Permission](docs/screenshots/acp-permission.png) | ![RAG Search](docs/screenshots/rag-search.png) | ![Session Manager](docs/screenshots/session-manager.png) |
-
-| Recommended Reply |
-|------------------------------|
-| ![Recommended Reply](docs/screenshots/conversation-recommendation.png) |
-
-| Tasks | Create Task | Task Card |
-|-----------------|-------------|-----------|
-| ![Tasks](docs/screenshots/scheduled-tasks.png) | ![Create Task](docs/screenshots/task-create.png) | ![Task Card](docs/screenshots/schedule-proposal.png) |
-
-### Git Integration
-
-| Commit History & Branch Graph | Branch Management | Commit Detail | Comparison Report |
-|-------------------------------|-------------------|---------------|-------------------|
-| ![Commit History & Branch Graph](docs/screenshots/git-history.png) | ![Branch Management](docs/screenshots/git-branches.png) | ![Commit Detail](docs/screenshots/git-commit-detail.png) | ![Comparison Report](docs/screenshots/git-comparison-report.png) |
-
-### Media Preview
-
-| Image Viewer | Video Player | Audio Player | PDF Preview |
-|-------------|-------------|-------------|------------|
-| ![Image Viewer](docs/screenshots/image-viewer.png) | ![Video Player](docs/screenshots/video-player.png) | ![Audio Player](docs/screenshots/audio-player.png) | ![PDF Preview](docs/screenshots/pdf-preview.png) |
-
-### Office Documents & Open API Preview
-
-| Word Document | Open API Preview | Excel Spreadsheet | PPT Slides |
-|---------------|------------------|-------------------|------------|
-| ![Word Document](docs/screenshots/word-preview.png) | ![Open API Preview](docs/screenshots/openapi-preview.png) | ![Excel Spreadsheet](docs/screenshots/excel-preview-2.png) | ![PPT Slides](docs/screenshots/ppt-preview.png) |
-
-### SSH Tunnel & Web Terminal
-
-| Port Forwarding | Interactive Terminal | Key/Symbol Configuration |
-|----------------|---------------------|-------------------------|
-| ![Port Mapping](docs/screenshots/port-forwarding.png) | ![Interactive Terminal](docs/screenshots/terminal.png) | ![Key/Symbol Configuration](docs/screenshots/terminal-key-config.png) |
-
-### System Resource Monitor
-
-| System Monitor |
-|----------------|
-| ![System Monitor](docs/screenshots/system-monitor.png) |
-
-- Real-time monitoring of server CPU, memory, disk, and network usage
-- Header panel display with WebSocket push updates
-- Auto-switches to connection status indicator (disconnected/reconnecting) when WS is down, replacing the resource panel
 
 ---
 

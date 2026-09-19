@@ -39,6 +39,9 @@
 - [17. 多项目与 Worktree](#17-多项目与-worktree)
 - [18. 常见问题](#18-常见问题)
 
+**附录**
+- [附录：界面截图总览](#附录界面截图总览)
+
 ---
 
 # 第一部分：快速上手
@@ -95,7 +98,7 @@ ClawBench 的一切操作（会话、文件、Git、任务）都绑定在某个*
 
 手机屏幕窄，Dock 放不下全部页签时，多出来的会收进「更多」按钮：
 
-![溢出菜单示意](screenshots-mobile/m-14-settings-index.png)
+![溢出菜单示意](screenshots-mobile/m-49-overflow-menu.png)
 
 点「更多」弹出菜单，选择要去的页签。当前激活的页签如果在溢出菜单里，按钮会高亮。
 
@@ -447,9 +450,7 @@ PDF 分页渲染，支持缩放与翻页：
 
 ![终端按键栏](screenshots-mobile/m-13-term-keybar.png)
 
-终端支持完整的交互式 shell——上图是执行 `ls -la` 与 `git log --oneline -5` 后的实际输出：
-
-![终端执行命令](screenshots-mobile/m-12-term-keys.png)
+终端支持完整的交互式 shell——上图即为执行 `ls -la` 与 `git log --oneline -5` 后的实际输出。
 
 
 ### 9.2 手势
@@ -512,8 +513,6 @@ Diff 抽屉用红绿标出增删行，支持左右滑动查看长行。
 - **执行详情**：查看历史执行的输出、耗时、状态
 
 任务完成后会有通知（应用内卡片 / 系统通知 / IM 推送，取决于设置）。
-
-![任务列表](screenshots-mobile/m-31-scheduled-tasks.png)
 
 点「新建任务」填写表单（名称 / 执行 Agent / 触发方式 / 频率 / Cron / 提示词）：
 
@@ -736,6 +735,79 @@ Android 用户还会看到 **下载 APK** 的入口（仅 Android UA）。装 AP
 **Q：文件分享链接安全吗？**
 
 链接本身就是凭证——任何拿到的人都能只读访问，直到你关闭分享。不要把敏感文件的链接发到公开场合。
+
+---
+
+## 附录：界面截图总览
+
+> 本节把各功能界面集中罗列，便于快速了解全貌；逐项的操作说明见正文对应章节。
+
+### 登录与导航
+
+| 登录 | 首页 | 选择项目 | 设置面板 |
+|------|------|----------|----------|
+| ![登录](../screenshots/login.png) | ![首页](../screenshots/home.png) | ![选择项目](../screenshots/project-select.png) | ![设置面板](../screenshots/settings-panel.png) |
+
+### 文件浏览与代码编辑
+
+| 文件浏览 | 搜索过滤 | 代码编辑器 | 引用提问 |
+|----------|----------|------------|----------|
+| ![文件浏览](../screenshots/file-browser.png) | ![搜索过滤](../screenshots/file-search.png) | ![代码编辑器](../screenshots/code-editor.png) | ![引用提问](../screenshots/quote-question.png) |
+
+### Markdown 与文档预览
+
+| Markdown 渲染 | LaTeX 公式 | Mermaid 图表 | 目录导航 |
+|---------------|------------|-------------|----------|
+| ![Markdown 渲染](../screenshots/markdown-preview.png) | ![LaTeX 公式](../screenshots/latex-formula.png) | ![Mermaid 图表](../screenshots/mermaid-diagram.png) | ![目录导航](../screenshots/toc-drawer.png) |
+
+
+### AI 智能体
+
+| 智能体选择 | AI 对话 | ACP 权限审批 | RAG 检索 | 会话管理 |
+|------------|---------|-------------|----------|----------|
+| ![智能体选择](../screenshots/agent-selector.png) | ![AI 对话](../screenshots/chat-interface.png) | ![ACP 权限审批](../screenshots/acp-permission.png) | ![RAG 检索](../screenshots/rag-search.png) | ![会话管理](../screenshots/session-manager.png) |
+
+| 推荐回复 |
+|----------|
+| ![推荐回复](../screenshots/conversation-recommendation.png) |
+
+| 任务 | 创建任务 | 任务卡片 |
+|----------|----------|----------|
+| ![任务](../screenshots/scheduled-tasks.png) | ![创建任务](../screenshots/task-create.png) | ![任务卡片](../screenshots/schedule-proposal.png) |
+
+### Git 集成
+
+| 提交历史与分支图 | 分支管理 | 提交详情 | 比较报告 |
+|------------------|----------|----------|----------|
+| ![提交历史与分支图](../screenshots/git-history.png) | ![分支管理](../screenshots/git-branches.png) | ![提交详情](../screenshots/git-commit-detail.png) | ![比较报告](../screenshots/git-comparison-report.png) |
+
+### 媒体预览
+
+| 图片查看 | 视频播放 | 音频播放 | PDF 预览 |
+|----------|----------|----------|----------|
+| ![图片查看](../screenshots/image-viewer.png) | ![视频播放](../screenshots/video-player.png) | ![音频播放](../screenshots/audio-player.png) | ![PDF 预览](../screenshots/pdf-preview.png) |
+
+### Office 文档与 Open API 预览
+
+| Word 文档 | Open API 预览 | Excel 表格 | PPT 幻灯片 |
+|-----------|---------------|------------|------------|
+| ![Word 文档](../screenshots/word-preview.png) | ![Open API 预览](../screenshots/openapi-preview.png) | ![Excel 表格](../screenshots/excel-preview-2.png) | ![PPT 幻灯片](../screenshots/ppt-preview.png) |
+
+### SSH 隧道与 Web 终端
+
+| 端口映射 | 交互式终端 | 按键/符号配置 |
+|---------|-----------|--------------|
+| ![端口映射](../screenshots/port-forwarding.png) | ![交互式终端](../screenshots/terminal.png) | ![按键配置](../screenshots/terminal-key-config.png) |
+
+### 系统资源监控
+
+| 系统监控 |
+|----------|
+| ![系统监控](../screenshots/system-monitor.png) |
+
+- 实时监控服务器 CPU、内存、磁盘、网络使用情况
+- 应用头部面板展示，WebSocket 推送更新
+- WS 断线/重连时自动切换为连接状态提示（断开/重连中），替代系统资源面板
 
 ---
 
