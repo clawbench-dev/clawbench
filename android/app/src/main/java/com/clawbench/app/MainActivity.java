@@ -366,166 +366,20 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * Apply theme-based colors to native UI elements: status bar, navigation bar,
-     * and the splash overlay. Reads the persisted theme ID and maps it to native
-     * colors. Called on create and whenever setTheme() is invoked from the WebView.
+     * and the splash overlay. Reads the persisted theme ID and resolves it through
+     * {@link ThemePalette}, which is the single native source of truth for theme
+     * colors — the version-mismatch dialog reads the same table, so the two can no
+     * longer disagree on cold start. Called on create and whenever setTheme() is
+     * invoked from the WebView.
      */
     private void applyThemeColors() {
-        String theme = prefs.getString(KEY_THEME, "github-dark");
-
-        // Map theme ID to native colors (bg-primary, bg-secondary, text-primary, text-muted, text-hint)
-        // Values extracted from variables.css — each theme's --bg-primary, --bg-secondary, --text-primary, etc.
-        int bgPrimary, bgSecondary, textPrimary, textMuted, textHint;
-        boolean isLight;
-        switch (theme) {
-            case "one-light":
-                bgPrimary = 0xFFFAFAFA; bgSecondary = 0xFFF0F0F0;
-                textPrimary = 0xFF383A42; textMuted = 0xFFA0A1A7; textHint = 0xFFA0A1A7;
-                isLight = true; break;
-            case "ayu-light":
-                bgPrimary = 0xFFFAFAFA; bgSecondary = 0xFFF3F3F3;
-                textPrimary = 0xFF5C6166; textMuted = 0xFFA0A5AA; textHint = 0xFFA0A5AA;
-                isLight = true; break;
-            case "everforest-light":
-                bgPrimary = 0xFFFDF6E3; bgSecondary = 0xFFF2E9D0;
-                textPrimary = 0xFF5C6A72; textMuted = 0xFF939F91; textHint = 0xFF939F91;
-                isLight = true; break;
-            case "nord-light":
-                bgPrimary = 0xFFECEFF4; bgSecondary = 0xFFE5E9F0;
-                textPrimary = 0xFF2E3440; textMuted = 0xFF8A93A5; textHint = 0xFF8A93A5;
-                isLight = true; break;
-            case "light-modern":
-                bgPrimary = 0xFFFAFAFA; bgSecondary = 0xFFF3F3F3;
-                textPrimary = 0xFF1A1A1A; textMuted = 0xFF717175; textHint = 0xFF717175;
-                isLight = true; break;
-            case "light-plus":
-                bgPrimary = 0xFFFFFFFF; bgSecondary = 0xFFF5F5F5;
-                textPrimary = 0xFF000000; textMuted = 0xFF6F6F6F; textHint = 0xFF6F6F6F;
-                isLight = true; break;
-            case "quiet-light":
-                bgPrimary = 0xFFF5F5F5; bgSecondary = 0xFFECECEC;
-                textPrimary = 0xFF333333; textMuted = 0xFF767676; textHint = 0xFF767676;
-                isLight = true; break;
-            case "vitesse-light":
-                bgPrimary = 0xFFFFFFFF; bgSecondary = 0xFFF6F6F4;
-                textPrimary = 0xFF393A34; textMuted = 0xFF999999; textHint = 0xFF999999;
-                isLight = true; break;
-            case "bluloco-light":
-                bgPrimary = 0xFFF7F9FC; bgSecondary = 0xFFEDF1F7;
-                textPrimary = 0xFF292D3E; textMuted = 0xFF718096; textHint = 0xFF718096;
-                isLight = true; break;
-            case "material-lighter":
-                bgPrimary = 0xFFFAFAFA; bgSecondary = 0xFFF0F0F0;
-                textPrimary = 0xFF212121; textMuted = 0xFF9E9E9E; textHint = 0xFF9E9E9E;
-                isLight = true; break;
-            case "alabaster":
-                bgPrimary = 0xFFF7F7F7; bgSecondary = 0xFFEEEEEE;
-                textPrimary = 0xFF272727; textMuted = 0xFF777777; textHint = 0xFF777777;
-                isLight = true; break;
-            case "github-light":
-                bgPrimary = 0xFFFFFFFF; bgSecondary = 0xFFF8F9FA;
-                textPrimary = 0xFF212529; textMuted = 0xFF6C757D; textHint = 0xFF6C757D;
-                isLight = true; break;
-            case "github-dark":
-                bgPrimary = 0xFF0D1117; bgSecondary = 0xFF161B22;
-                textPrimary = 0xFFC9D1D9; textMuted = 0xFF6E7681; textHint = 0xFF6E7681;
-                isLight = false; break;
-            case "one-dark-pro":
-                bgPrimary = 0xFF282C34; bgSecondary = 0xFF21252B;
-                textPrimary = 0xFFABB2BF; textMuted = 0xFF8C93A1; textHint = 0xFF8C93A1;
-                isLight = false; break;
-            case "catppuccin-mocha":
-                bgPrimary = 0xFF1E1E2E; bgSecondary = 0xFF181825;
-                textPrimary = 0xFFCDD6F4; textMuted = 0xFF6C7086; textHint = 0xFF6C7086;
-                isLight = false; break;
-            case "catppuccin-latte":
-                bgPrimary = 0xFFEFF1F5; bgSecondary = 0xFFE6E9EF;
-                textPrimary = 0xFF4C4F69; textMuted = 0xFF8C8FA1; textHint = 0xFF8C8FA1;
-                isLight = true; break;
-            case "dracula":
-                bgPrimary = 0xFF282A36; bgSecondary = 0xFF21222C;
-                textPrimary = 0xFFF8F8F2; textMuted = 0xFF6272A4; textHint = 0xFF6272A4;
-                isLight = false; break;
-            case "nord":
-                bgPrimary = 0xFF171E27; bgSecondary = 0xFF202833;
-                textPrimary = 0xFFE6ECF4; textMuted = 0xFF7F8FA5; textHint = 0xFF7F8FA5;
-                isLight = false; break;
-            case "tokyo-night":
-                bgPrimary = 0xFF1A1B26; bgSecondary = 0xFF16161E;
-                textPrimary = 0xFFC0CAF5; textMuted = 0xFF7F87AF; textHint = 0xFF7F87AF;
-                isLight = false; break;
-            case "dark-plus":
-                bgPrimary = 0xFF1E1E1E; bgSecondary = 0xFF252526;
-                textPrimary = 0xFFD4D4D4; textMuted = 0xFF8C8C8C; textHint = 0xFF8C8C8C;
-                isLight = false; break;
-            case "bluloco-dark":
-                bgPrimary = 0xFF1D212C; bgSecondary = 0xFF242936;
-                textPrimary = 0xFFE2E8F0; textMuted = 0xFF94A3B8; textHint = 0xFF94A3B8;
-                isLight = false; break;
-            case "material-darker":
-                bgPrimary = 0xFF212121; bgSecondary = 0xFF282828;
-                textPrimary = 0xFFEEFFFF; textMuted = 0xFF92A6A7; textHint = 0xFF92A6A7;
-                isLight = false; break;
-            case "monokai":
-                bgPrimary = 0xFF272822; bgSecondary = 0xFF2E2F29;
-                textPrimary = 0xFFF8F8F2; textMuted = 0xFFA6A68E; textHint = 0xFFA6A68E;
-                isLight = false; break;
-            case "solarized-dark":
-                bgPrimary = 0xFF002B36; bgSecondary = 0xFF0A3541;
-                textPrimary = 0xFFA0B0B4; textMuted = 0xFF677F86; textHint = 0xFF677F86;
-                isLight = false; break;
-            case "solarized-deep":
-                bgPrimary = 0xFF0C141D; bgSecondary = 0xFF15212B;
-                textPrimary = 0xFFDCE5EC; textMuted = 0xFF7D8EA0; textHint = 0xFF7D8EA0;
-                isLight = false; break;
-            case "solarized-light":
-                bgPrimary = 0xFFFDF6E3; bgSecondary = 0xFFEEE8D5;
-                textPrimary = 0xFF657B83; textMuted = 0xFF93A1A1; textHint = 0xFF93A1A1;
-                isLight = true; break;
-            case "gruvbox-dark":
-                bgPrimary = 0xFF282828; bgSecondary = 0xFF1D2021;
-                textPrimary = 0xFFEBDBB2; textMuted = 0xFF9D9188; textHint = 0xFF9D9188;
-                isLight = false; break;
-            case "gruvbox-light":
-                bgPrimary = 0xFFFBF1C7; bgSecondary = 0xFFF2E5BC;
-                textPrimary = 0xFF3C3836; textMuted = 0xFF928374; textHint = 0xFF928374;
-                isLight = true; break;
-            case "high-contrast-dark":
-                bgPrimary = 0xFF000000; bgSecondary = 0xFF0A0A0A;
-                textPrimary = 0xFFFFFFFF; textMuted = 0xFFA0A0A0; textHint = 0xFFA0A0A0;
-                isLight = false; break;
-            case "high-contrast-light":
-                bgPrimary = 0xFFFFFFFF; bgSecondary = 0xFFF5F5F5;
-                textPrimary = 0xFF000000; textMuted = 0xFF444444; textHint = 0xFF444444;
-                isLight = true; break;
-            case "night-owl":
-                bgPrimary = 0xFF011627; bgSecondary = 0xFF001122;
-                textPrimary = 0xFFD6DEEB; textMuted = 0xFF5F7E97; textHint = 0xFF5F7E97;
-                isLight = false; break;
-            case "ayu-dark":
-                bgPrimary = 0xFF0A0E14; bgSecondary = 0xFF0D1017;
-                textPrimary = 0xFFB3B1AD; textMuted = 0xFF626A73; textHint = 0xFF626A73;
-                isLight = false; break;
-            case "vitesse-dark":
-                bgPrimary = 0xFF121212; bgSecondary = 0xFF181818;
-                textPrimary = 0xFFDBD7CA; textMuted = 0xFF758575; textHint = 0xFF758575;
-                isLight = false; break;
-            case "rose-pine":
-                bgPrimary = 0xFF191724; bgSecondary = 0xFF1F1D2E;
-                textPrimary = 0xFFE0DEF4; textMuted = 0xFF6E6A86; textHint = 0xFF6E6A86;
-                isLight = false; break;
-            case "everforest-dark":
-                bgPrimary = 0xFF1E2326; bgSecondary = 0xFF22282B;
-                textPrimary = 0xFFD3C6AA; textMuted = 0xFF859289; textHint = 0xFF859289;
-                isLight = false; break;
-            case "kanagawa":
-                bgPrimary = 0xFF1F1F28; bgSecondary = 0xFF16161D;
-                textPrimary = 0xFFDCD7BA; textMuted = 0xFF727169; textHint = 0xFF727169;
-                isLight = false; break;
-            default:
-                bgPrimary = 0xFF0D1117; bgSecondary = 0xFF161B22;
-                textPrimary = 0xFFC9D1D9; textMuted = 0xFF6E7681; textHint = 0xFF6E7681;
-                isLight = false; break;
-        }
+        ThemePalette palette = ThemePalette.current(this);
+        int bgPrimary = palette.bgPrimary;
+        int bgSecondary = palette.bgSecondary;
+        int textPrimary = palette.textPrimary;
+        int textMuted = palette.textMuted;
+        int textHint = palette.textHint;
+        boolean isLight = palette.light;
 
         // Status bar and navigation bar colors
         getWindow().setStatusBarColor(bgSecondary);
