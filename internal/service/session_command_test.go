@@ -2719,3 +2719,95 @@ func TestFeishuLastSessionID_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sess-xyz", got)
 }
+
+// ============================================================================
+// Push queue-id anchoring (reply ordering)
+// ============================================================================
+
+// TestSendMessageToSessionFromPush_CarriesQueueID is the regression guard for
+// the "reply appears above its own question" bug.
+//
+// The queue id is the only anchor tying a streaming reply to the question it
+// answers: run_turn stores it on the streaming assistant row and streams it as
+// stream_start.queue_id, and the client re-anchors the reply to the question
+// bubble carrying the same queueId. The push path used to pass no queue id, so
+// the client fell back to "newest user message" — and because the execution is
+// launched asynchronously BEFORE the user_message event is emitted, that
+// fallback anchored the reply to the PREVIOUS question. The reply then rendered
+// above its own question until a reload rebuilt the order from the DB.
+//
+// The test asserts the anchor exists on both sides: the user row carries the
+// queue id, and the emitted user_message event advertises the same value.
+func TestSendMessageToSessionFromPush_CarriesQueueID(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "dt-qid-1"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-qid", "")
+	// chat_stream events are session-scoped: without this the hub has no
+	// subscriber for the session and drops the event instead of buffering it.
+	mgr.StreamHub().Subscribe("test-client-qid", sessionID)
+
+	// Mark running so no execution is launched: this test is about the event and
+	// the persisted row, not about running a backend.
+	SetSessionRunning(sessionID, true, false)
+	defer SetSessionRunning(sessionID, false, true)
+
+	require.NoError(t, SendMessageToSessionFromDingTalk(sessionID, "hello from dingtalk", nil))
+
+	// The persisted user row must carry a queue id — that is what the drain loop
+	// reads back to anchor its own stream_start.
+	var rowQueueID string
+	require.NoError(t, dbRead.QueryRow(
+		"SELECT queue_id FROM chat_history WHERE session_id = ? AND role = 'user'", sessionID,
+	).Scan(&rowQueueID))
+	assert.NotEmpty(t, rowQueueID, "the persisted user row must carry a queue id")
+
+	// The emitted user_message must advertise the same queue id so the client can
+	// anchor the reply to this bubble.
+	var eventQueueID string
+	for _, m := range sub.GetBufferedEvents() {
+		if m.Event != "chat_stream" {
+			continue
+		}
+		csd, ok := m.Data.(ws.ChatStreamData)
+		if !ok || csd.EventType != "user_message" {
+			continue
+		}
+		payload, ok := csd.Payload.(map[string]any)
+		if !ok {
+			continue
+		}
+		if v, ok := payload["queueId"].(string); ok {
+			eventQueueID = v
+		}
+	}
+	require.NotEmpty(t, eventQueueID, "user_message must carry the queue id")
+	assert.Equal(t, rowQueueID, eventQueueID,
+		"the event's queue id must match the persisted row so the reply anchors to this question")
+}
+
+// TestNewPushQueueID_UniqueWithinSecond verifies ids minted in a tight burst do
+// not collide, which a timestamp-only id would.
+func TestNewPushQueueID_UniqueWithinSecond(t *testing.T) {
+	const n = 200
+	seen := make(map[string]bool, n)
+	for range n {
+		id := newPushQueueID()
+		require.NotEmpty(t, id)
+		if seen[id] {
+			t.Fatalf("duplicate push queue id %q", id)
+		}
+		seen[id] = true
+	}
+}

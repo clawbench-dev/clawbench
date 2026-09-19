@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -178,9 +180,25 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
+	// Mint the queue id here, before the enqueue, and thread it through BOTH
+	// the execution and the user_message event below.
+	//
+	// The queue id is the only anchor that ties the streaming reply to the
+	// question it answers: run_turn stores it on the streaming assistant row and
+	// streams it as stream_start.queue_id, and the client re-anchors the reply
+	// to the question bubble carrying the same queueId. Without it the client
+	// falls back to "newest user message", which at this point is still the
+	// PREVIOUS question — the user_message event is emitted after the
+	// (asynchronous) execution launch, so it has not arrived yet. The reply then
+	// sorts above its own question until a reload rebuilds from the DB.
+	//
+	// AddQueuedMessage would generate an equivalent id when given "", but it
+	// does so internally and never returns it, so the execution and the event
+	// would both lose the anchor.
+	queueID := newPushQueueID()
+
 	// Persist the message + start execution or signal the running drain loop.
-	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally, and
-	// may inject the message into the running turn instead of queueing it.
+	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally.
 	// msgID is the persisted DB id — used to emit a user_message event carrying
 	// the real id (not 0) for cross-device sync.
 	_, _, msgID, err := EnqueueAndMaybeStart(EnqueueStartConfig{
@@ -190,6 +208,7 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 		AgentID:     info.AgentID,
 		Message:     message,
 		Files:       files,
+		QueueID:     queueID,
 	})
 	if err != nil {
 		return err
@@ -197,18 +216,33 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 
 	// Emit user_message for cross-device sync. MessageID is the persisted DB id.
 	// Files ride along so a client that is watching this session renders the
-	// attachment bubble without a reload.
+	// attachment bubble without a reload. QueueID lets that client anchor the
+	// streaming reply to this bubble.
 	ws.EmitToSession(sessionID, ai.StreamEvent{
 		Type: "user_message",
 		UserMessage: &ai.UserMessageData{
 			MessageID: msgID,
 			Content:   message,
 			Files:     files,
+			QueueID:   queueID,
 		},
 	})
 
 	return nil
 }
+
+// newPushQueueID mints a queue id for a message that arrives from an IM
+// backend, which (unlike the web client) has no queue id of its own.
+//
+// The format mirrors the fallback in AddQueuedMessage so ids from both paths
+// look alike; uniqueness comes from the timestamp plus a monotonic counter, not
+// from randomness, so a burst of messages cannot collide on a coarse clock.
+func newPushQueueID() string {
+	return fmt.Sprintf("q-%s-%d", time.Now().Format("20060102150405"), pushQueueSeq.Add(1))
+}
+
+// pushQueueSeq disambiguates push queue ids minted within the same second.
+var pushQueueSeq atomic.Int64
 
 // LaunchConfig configures a session execution launched from non-HTTP contexts.
 type LaunchConfig struct {

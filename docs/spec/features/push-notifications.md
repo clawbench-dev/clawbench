@@ -177,3 +177,7 @@ sequenceDiagram
 - 提示注入复用 `model.ApplyAttachmentPrefixes`（`internal/model/attachment_prompt.go`），与网页上传同一条路径。`content=""` 的纯附件消息是合法的——会话标题由 `titleFromFileEntries` 兜底
 
 **回调必须立即 ack**：钉钉与飞书都会重投未及时确认的事件，而下载需要两次网络往返。因此媒体下载在 goroutine 中执行，处理函数立刻返回；下载完成后再通过会话 webhook（钉钉）或消息 API（飞书）回复结果。
+
+**push 发送必须自带 queueID（回复顺序）**：IM 发送没有网页端那样的前端 `queueId`，`sendMessageToSessionFromPush` 因此自己生成一个（`newPushQueueID`）并同时传给执行与 `user_message` 事件。这个 id 是**唯一能把回复锚定到它回答的那个问题**的键：`run_turn` 把它写进 streaming 助手行的 `queue_id` 并经 `stream_start.queue_id` 下发，前端据此把回复重锚到同 `queueId` 的问题气泡上。
+
+缺了它前端会退化为「锚到最新一条用户消息」，而 `stream_start` 由**异步**执行 goroutine 发出、`user_message` 在 `LaunchSessionExecution` 返回后才发，因此 `stream_start` 常常先到——此时「最新用户消息」还是**上一个**问题，回复就排到了自己问题的上方（刷新后 DB 重建才恢复）。
