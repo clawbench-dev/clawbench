@@ -670,8 +670,14 @@ im = Image.open(raw).convert('RGB').resize((585, 1266), Image.LANCZOS)
 im.save(out, optimize=True)
 uniq = len(im.getcolors(maxcolors=200000) or [])
 if os.path.getsize(out) > 300*1024 and uniq < 60000:   # UI 截图
-    im.quantize(colors=256, method=Image.MEDIANCUT).save(out, optimize=True)
+    im.quantize(colors=256, method=Image.FASTOCTREE).save(out, optimize=True)
 ```
+
+> **⚠️ 必须用 FASTOCTREE，不能用 MEDIANCUT（实测踩过，交付了 12 张灰图）。**
+> `MEDIANCUT` 按「面积」分配调色板，**小面积高饱和色块会被直接牺牲**：
+> 顶栏 22px 的 logo（占画面 <0.2%）橙色实测 **33% → 0%**，整块变灰；
+> 文件类型图标、Dock 激活态同理会掉色。`FASTOCTREE` 同等压缩率下保留它们（33% → 37%）。
+> **交付前必须量化验收**（见下），不能只看「像不像手机 App」。
 
 
 实测：`uniq≈22000–35000`（UI）会量化；`uniq≈48701`（含照片）跳过。
@@ -856,6 +862,8 @@ if Image.open(raw).size != (1170, 2532):   # CSS 390×844 × DPR 3
 | 引用平衡 | `comm` 双向比对文档引用 ↔ 目录实文件 |
 | 卡片残留 | 像素判据（见 §二）；移动端卡片几何与桌面不同，**不能照搬 x=300/979**，以 `ov.card` 为准 |
 | 占位图 | 用文字图注，不写 `![]()`（避免 404） |
+| **颜色未失真** | 顶栏 logo 区域（`(10,10)-(54,54)`）橙色像素占比 **≥12%**（正确值 ≈33%）。量化失误会掉到 **0%**，且肉眼只看缩略图很难发现——必须量化断言 |
+| 无近重复 | 除真机图外，两两 aHash 距离 >6（曾有 3 张同屏图被当成「Dock / 对话 / 输入栏」三个不同章节交付） |
 
 ### 命名与目录约定
 
