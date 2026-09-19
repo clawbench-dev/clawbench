@@ -24,6 +24,7 @@ func setupFileWatcher(t *testing.T) *FileWatcher {
 		watcher:         w,
 		clients:         make(map[string]*watchClient),
 		done:            make(chan struct{}),
+		watchedDirs:     make(map[string]int),
 		debounceTimers:  make(map[string]*time.Timer),
 		debouncePending: make(map[string]WatchEvent),
 	}
@@ -647,56 +648,237 @@ func TestDebounce_DifferentEventTypesNotCoalesced(t *testing.T) {
 	assert.True(t, types["file_change"])
 }
 
-// ---------- isPathWatchedByOthers ----------
+// ---------- watchedDirs refcounting ----------
 
-func TestIsPathWatchedByOthers_True(t *testing.T) {
+// The open file is watched through its PARENT DIRECTORY so an atomic save
+// (write temp + rename, which replaces the inode) keeps working. This pins the
+// directory that gets registered.
+func TestUpdateWatch_FileWatchUsesParentDirectory(t *testing.T) {
+	fw := setupFileWatcher(t)
+	fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "open.txt")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
+
+	fw.UpdateWatch("c1", "", file)
+
+	fw.mu.Lock()
+	_, watchedParent := fw.clients["c1"].watchedDirs[dir]
+	_, watchedFile := fw.clients["c1"].watchedDirs[file]
+	fw.mu.Unlock()
+
+	assert.True(t, watchedParent, "the open file's parent directory must be watched")
+	assert.False(t, watchedFile, "the file itself must not be watched directly")
+}
+
+// Re-targeting from one open file to another inside the SAME directory must not
+// drop and re-add the shared directory watch (that would briefly lose events).
+func TestUpdateWatch_SharedDirKeepsSingleReference(t *testing.T) {
+	fw := setupFileWatcher(t)
+	fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	file1 := filepath.Join(dir, "a.txt")
+	file2 := filepath.Join(dir, "b.txt")
+	require.NoError(t, os.WriteFile(file1, []byte("a"), 0o644))
+	require.NoError(t, os.WriteFile(file2, []byte("b"), 0o644))
+
+	fw.UpdateWatch("c1", dir, file1)
+	fw.UpdateWatch("c1", dir, file2)
+
+	fw.mu.Lock()
+	refs := fw.watchedDirs[dir]
+	fw.mu.Unlock()
+
+	assert.Equal(t, 1, refs, "a directory shared by the browse target and the open file must hold exactly one reference")
+}
+
+func TestUpdateWatch_ReleasesDroppedDirectory(t *testing.T) {
+	fw := setupFileWatcher(t)
+	fw.RegisterClient("c1")
+
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+
+	fw.UpdateWatch("c1", dir1, "")
+	fw.UpdateWatch("c1", dir2, "")
+
+	fw.mu.Lock()
+	_, stillWatched := fw.watchedDirs[dir1]
+	refs2 := fw.watchedDirs[dir2]
+	fw.mu.Unlock()
+
+	assert.False(t, stillWatched, "the abandoned directory must be released")
+	assert.Equal(t, 1, refs2, "the new directory must be watched")
+}
+
+func TestUnregisterClient_ReleasesWatchedDirs(t *testing.T) {
+	fw := setupFileWatcher(t)
+	fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	fw.UpdateWatch("c1", dir, "")
+
+	fw.UnregisterClient("c1")
+
+	fw.mu.Lock()
+	_, stillWatched := fw.watchedDirs[dir]
+	fw.mu.Unlock()
+	assert.False(t, stillWatched, "unregistering must release the directory reference")
+}
+
+func TestUnregisterClient_SharedDirRefcount(t *testing.T) {
 	fw := setupFileWatcher(t)
 	fw.RegisterClient("c1")
 	fw.RegisterClient("c2")
-	fw.UpdateWatch("c1", "/dir1", "/file1")
-	fw.UpdateWatch("c2", "/dir1", "/file2")
+
+	dir := t.TempDir()
+	fw.UpdateWatch("c1", dir, "")
+	fw.UpdateWatch("c2", dir, "")
+
+	fw.UnregisterClient("c1")
 
 	fw.mu.Lock()
-	result := fw.isPathWatchedByOthers("c1", "/dir1")
+	refs := fw.watchedDirs[dir]
 	fw.mu.Unlock()
-	assert.True(t, result, "c2 watches /dir1 as dirPath")
+	assert.Equal(t, 1, refs, "the shared directory must stay watched for the remaining client")
+
+	fw.UnregisterClient("c2")
+
+	fw.mu.Lock()
+	_, stillWatched := fw.watchedDirs[dir]
+	fw.mu.Unlock()
+	assert.False(t, stillWatched, "the last release must drop the directory watch")
 }
 
-func TestIsPathWatchedByOthers_False(t *testing.T) {
+// ---------- media paths ----------
+
+func TestUpdateWatch_MediaPathsWatchParentDirs(t *testing.T) {
 	fw := setupFileWatcher(t)
 	fw.RegisterClient("c1")
-	fw.RegisterClient("c2")
-	fw.UpdateWatch("c1", "/dir1", "/file1")
-	fw.UpdateWatch("c2", "/dir2", "/file2")
+
+	imgDir := t.TempDir()
+	img := filepath.Join(imgDir, "diagram.png")
+	require.NoError(t, os.WriteFile(img, []byte("x"), 0o644))
+
+	fw.UpdateWatch("c1", "", "", img)
 
 	fw.mu.Lock()
-	result := fw.isPathWatchedByOthers("c1", "/dir1")
+	_, watched := fw.watchedDirs[imgDir]
+	_, tracked := fw.clients["c1"].mediaPaths[img]
 	fw.mu.Unlock()
-	assert.False(t, result, "no other client watches /dir1")
+
+	assert.True(t, watched, "the media file's parent directory must be watched")
+	assert.True(t, tracked, "the media file must be tracked for event matching")
 }
 
-func TestIsPathWatchedByOthers_FilePathMatch(t *testing.T) {
+// A change to a registered media file must produce file_change even when it is
+// not the open file — that is the whole point of the feature.
+func TestHandleFsEvent_MediaFileChange(t *testing.T) {
 	fw := setupFileWatcher(t)
-	fw.RegisterClient("c1")
-	fw.RegisterClient("c2")
-	fw.UpdateWatch("c1", "/dir1", "/shared.txt")
-	fw.UpdateWatch("c2", "/dir2", "/shared.txt")
+	ch := fw.RegisterClient("c1")
 
-	fw.mu.Lock()
-	result := fw.isPathWatchedByOthers("c1", "/shared.txt")
-	fw.mu.Unlock()
-	assert.True(t, result, "c2 watches /shared.txt as filePath")
+	imgDir := t.TempDir()
+	img := filepath.Join(imgDir, "diagram.png")
+	require.NoError(t, os.WriteFile(img, []byte("v1"), 0o644))
+
+	fw.UpdateWatch("c1", "", "", img)
+
+	fw.handleFsEvent(fsnotify.Event{Name: img, Op: fsnotify.Write})
+
+	events := collectEvents(ch, 1, 500*time.Millisecond)
+	require.Len(t, events, 1)
+	assert.Equal(t, "file_change", events[0].Type)
+	assert.Equal(t, img, events[0].Path)
 }
 
-func TestIsPathWatchedByOthers_NoOthers(t *testing.T) {
+// An atomic replace (write temp + rename onto the target) surfaces as Create on
+// the destination path. It must still be reported.
+func TestHandleFsEvent_MediaFileAtomicReplace(t *testing.T) {
 	fw := setupFileWatcher(t)
-	fw.RegisterClient("c1")
-	fw.UpdateWatch("c1", "/dir1", "")
+	ch := fw.RegisterClient("c1")
 
-	fw.mu.Lock()
-	result := fw.isPathWatchedByOthers("c1", "/dir1")
-	fw.mu.Unlock()
-	assert.False(t, result, "no other clients")
+	imgDir := t.TempDir()
+	img := filepath.Join(imgDir, "diagram.png")
+	require.NoError(t, os.WriteFile(img, []byte("v1"), 0o644))
+
+	fw.UpdateWatch("c1", "", "", img)
+
+	fw.handleFsEvent(fsnotify.Event{Name: img, Op: fsnotify.Create})
+
+	events := collectEvents(ch, 1, 500*time.Millisecond)
+	require.Len(t, events, 1)
+	assert.Equal(t, "file_change", events[0].Type)
+}
+
+// Two different media files changing inside one debounce window must each get
+// their own event — the debounce key is per path, not per event type.
+func TestHandleFsEvent_TwoMediaFilesGetSeparateEvents(t *testing.T) {
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	imgA := filepath.Join(dir, "a.png")
+	imgB := filepath.Join(dir, "b.png")
+	require.NoError(t, os.WriteFile(imgA, []byte("a"), 0o644))
+	require.NoError(t, os.WriteFile(imgB, []byte("b"), 0o644))
+
+	fw.UpdateWatch("c1", "", "", imgA, imgB)
+
+	fw.handleFsEvent(fsnotify.Event{Name: imgA, Op: fsnotify.Write})
+	fw.handleFsEvent(fsnotify.Event{Name: imgB, Op: fsnotify.Write})
+
+	events := collectEvents(ch, 2, 1*time.Second)
+	require.Len(t, events, 2, "each changed media file must produce its own event")
+
+	paths := map[string]bool{}
+	for _, e := range events {
+		assert.Equal(t, "file_change", e.Type)
+		paths[e.Path] = true
+	}
+	assert.True(t, paths[imgA])
+	assert.True(t, paths[imgB])
+}
+
+// A sibling file inside a media file's directory that was never registered must
+// NOT produce an event — only the registered paths matter.
+func TestHandleFsEvent_UnregisteredSiblingInMediaDirIgnored(t *testing.T) {
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	img := filepath.Join(dir, "watched.png")
+	other := filepath.Join(dir, "other.png")
+	require.NoError(t, os.WriteFile(img, []byte("a"), 0o644))
+	require.NoError(t, os.WriteFile(other, []byte("b"), 0o644))
+
+	fw.UpdateWatch("c1", "", "", img)
+
+	fw.handleFsEvent(fsnotify.Event{Name: other, Op: fsnotify.Write})
+
+	events := collectEvents(ch, 1, 300*time.Millisecond)
+	assert.Empty(t, events, "an unregistered sibling must not trigger an event")
+}
+
+// A media directory must not drive dir_change — the parent watches exist only
+// to observe the registered files, and refreshing the listing for them would be
+// noise.
+func TestHandleFsEvent_MediaDirDoesNotTriggerDirChange(t *testing.T) {
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	img := filepath.Join(dir, "diagram.png")
+	require.NoError(t, os.WriteFile(img, []byte("a"), 0o644))
+
+	fw.UpdateWatch("c1", "", "", img)
+
+	// Create an unrelated child in the media directory.
+	fw.handleFsEvent(fsnotify.Event{Name: filepath.Join(dir, "new.txt"), Op: fsnotify.Create})
+
+	events := collectEvents(ch, 1, 300*time.Millisecond)
+	assert.Empty(t, events, "a media parent directory must not emit dir_change")
 }
 
 // ---------- cancelClientTimers ----------

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -528,6 +529,128 @@ func TestFileWatchWS_ConnectionLimit(t *testing.T) {
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 	}
+}
+
+// ---------- resolveWatchMediaPaths ----------
+
+func TestResolveWatchMediaPaths(t *testing.T) {
+	project := t.TempDir()
+
+	t.Run("empty input yields nil", func(t *testing.T) {
+		assert.Nil(t, resolveWatchMediaPaths(project, nil))
+		assert.Nil(t, resolveWatchMediaPaths(project, []string{}))
+	})
+
+	t.Run("relative paths resolve under the project", func(t *testing.T) {
+		got := resolveWatchMediaPaths(project, []string{"assets/a.png", "docs/b.png"})
+		assert.Equal(t, []string{
+			filepath.Join(project, "assets", "a.png"),
+			filepath.Join(project, "docs", "b.png"),
+		}, got)
+	})
+
+	t.Run("escaping paths are dropped individually", func(t *testing.T) {
+		got := resolveWatchMediaPaths(project, []string{"../../../etc/passwd", "assets/ok.png"})
+		assert.Equal(t, []string{filepath.Join(project, "assets", "ok.png")}, got,
+			"one bad entry must not discard the valid ones")
+	})
+
+	t.Run("empty entries are skipped", func(t *testing.T) {
+		got := resolveWatchMediaPaths(project, []string{"", "assets/a.png", ""})
+		assert.Equal(t, []string{filepath.Join(project, "assets", "a.png")}, got)
+	})
+
+	t.Run("duplicates collapse", func(t *testing.T) {
+		got := resolveWatchMediaPaths(project, []string{"assets/a.png", "assets/a.png"})
+		assert.Equal(t, []string{filepath.Join(project, "assets", "a.png")}, got)
+	})
+
+	t.Run("list is capped", func(t *testing.T) {
+		rels := make([]string, service.MaxMediaWatchPaths+25)
+		for i := range rels {
+			rels[i] = fmt.Sprintf("assets/img-%d.png", i)
+		}
+		got := resolveWatchMediaPaths(project, rels)
+		assert.Len(t, got, service.MaxMediaWatchPaths)
+	})
+}
+
+// ---------- FileWatchWS: media watch frames ----------
+
+// Registering media files over the control channel must arm the watcher for
+// them: rewriting one then produces a file_change even though it is not the
+// open file.
+func TestFileWatchWS_MediaFilesReportChanges(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	require.NoError(t, service.InitFileWatcher())
+	defer service.StopFileWatcher()
+
+	assetsDir := filepath.Join(env.ProjectDir, "assets")
+	require.NoError(t, os.MkdirAll(assetsDir, 0o755))
+	img := filepath.Join(assetsDir, "diagram.png")
+	require.NoError(t, os.WriteFile(img, []byte("v1"), 0o644))
+
+	// Watch only the root dir; the image lives in a subdirectory that is not the
+	// browsed directory, so nothing but the media registration can catch it.
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
+
+	sendWatchMessage(t, conn, fileWatchMessage{
+		Type:  watchMsgWatch,
+		Dir:   ".",
+		Files: []string{"assets/diagram.png"},
+	})
+	// Let the server apply the watch before touching the file.
+	time.Sleep(300 * time.Millisecond)
+
+	require.NoError(t, os.WriteFile(img, []byte("v2"), 0o644))
+
+	data := waitForWatchEventType(t, conn, "file_change")
+	var payload struct {
+		Type string `json:"type"`
+		Path string `json:"path"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, "file_change", payload.Type)
+	assert.Contains(t, payload.Path, "diagram.png")
+}
+
+// A media path escaping the project root must be dropped without rejecting the
+// frame — the rest of the watch (including the open file) must stay armed.
+func TestFileWatchWS_MediaPathTraversalDroppedNotFatal(t *testing.T) {
+	env, server, cleanup := setupFileWatchWSTest(t)
+	defer cleanup()
+
+	require.NoError(t, service.InitFileWatcher())
+	defer service.StopFileWatcher()
+
+	watched := filepath.Join(env.ProjectDir, "watched.txt")
+	require.NoError(t, os.WriteFile(watched, []byte("v1"), 0o644))
+
+	conn := dialFileWatchWS(t, server.URL, env.ProjectDir, "?dir=")
+	defer conn.CloseNow()
+	readWatchFrame(t, conn) // connected
+
+	sendWatchMessage(t, conn, fileWatchMessage{
+		Type:  watchMsgWatch,
+		Dir:   ".",
+		File:  "watched.txt",
+		Files: []string{"../../../etc/passwd"},
+	})
+	time.Sleep(300 * time.Millisecond)
+
+	// The frame was accepted (no error frame) and the open file is still watched.
+	require.NoError(t, os.WriteFile(watched, []byte("v2"), 0o644))
+
+	data := waitForWatchEventType(t, conn, "file_change")
+	var payload struct {
+		Path string `json:"path"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Contains(t, payload.Path, "watched.txt")
 }
 
 // ---------- resolveWatchPaths ----------

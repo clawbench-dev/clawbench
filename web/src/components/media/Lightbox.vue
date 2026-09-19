@@ -28,11 +28,11 @@
         @animationend="slideDirection = ''"
       >
         <img
-          v-if="currentUrl && !currentSvg"
+          v-if="displayUrl && !currentSvg"
           v-show="!imageLoading"
           ref="imgRef"
-          :key="currentUrl"
-          :src="currentUrl"
+          :key="displayUrl"
+          :src="displayUrl"
           :style="imgStyle"
           draggable="false"
           @mousedown.prevent
@@ -69,6 +69,7 @@ import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { extractImageName } from '@/utils/lightbox.ts'
+import { mediaPathFromUrl, mediaVersionFor, withVersionParam } from '@/composables/useMediaWatch.ts'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 let unregisterBack = null
@@ -334,6 +335,24 @@ function normalizeUrl(url) {
         .replace(/[?&]+$/g, '')
         .replace(/\?&/g, '?')
 }
+
+/**
+ * The URL actually handed to the <img>. Folds in the shared media version so a
+ * background rewrite of the file being viewed refreshes the lightbox too —
+ * without it, navigating back to the image (or any re-render) would restore the
+ * stale `?t=` captured when the lightbox was opened.
+ *
+ * The version is deterministic rather than a fresh timestamp: a timestamp would
+ * make every recomputation a cache miss and reload the image. Version 0 (never
+ * changed) keeps the URL captured at open time.
+ */
+const displayUrl = computed(() => {
+    if (!currentUrl.value) return ''
+    const path = mediaPathFromUrl(currentUrl.value)
+    if (!path) return currentUrl.value
+    const v = mediaVersionFor(path)
+    return v ? withVersionParam(currentUrl.value, v) : currentUrl.value
+})
 
 /** Append a cache-buster `t=` param, honoring an existing query string —
  *  blindly joining with `?` corrupts URLs that already carry params

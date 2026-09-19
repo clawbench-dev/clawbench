@@ -101,6 +101,7 @@ import { AlertTriangle, ExternalLink, FolderOpen, Link2, X } from 'lucide-vue-ne
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { buildThumbUrl, isThumbable } from '@/utils/fileManager'
+import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
 import type { DirPreviewEntry } from '@/composables/useDirPreview'
 
 const props = defineProps<{
@@ -154,7 +155,12 @@ function thumbKey(entry: DirPreviewEntry): string {
 }
 
 function thumbUrlFor(entry: DirPreviewEntry): string {
-  return buildThumbUrl(props.dirPath || '', entry.name)
+  const url = buildThumbUrl(props.dirPath || '', entry.name)
+  // Append the shared media version so a thumbnail whose source image was
+  // rewritten in the background re-fetches rather than staying cached. Version
+  // 0 (never changed) leaves the URL untouched.
+  const v = mediaVersionFor(thumbKey(entry))
+  return v ? `${url}&t=${v}` : url
 }
 
 function onThumbError(entry: DirPreviewEntry) {

@@ -26,13 +26,14 @@
 
 <script setup>
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { buildLocalFileUrl } from '@/utils/download.ts'
 import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import { mediaVersionFor, trackMediaPath } from '@/composables/useMediaWatch.ts'
 
 const props = defineProps({
     file: Object,
@@ -43,9 +44,23 @@ const props = defineProps({
 // (Server-side Cache-Control: no-store handles browser caching; this handles Vue DOM reuse.)
 const mediaTimestamp = ref(Date.now())
 watch(() => props.file, () => { mediaTimestamp.value = Date.now() })
+
+// A background rewrite of the same path bumps the shared media version. Reading
+// it here keeps the URL fresh across re-renders; useMediaWatch also patches the
+// live <img> so the change shows even without a re-render.
+const mediaVersion = computed(() => mediaVersionFor(props.file?.path || ''))
+
+// Watch the displayed image file even if the element has not mounted yet.
+let untrackMedia = null
+watch(() => props.file?.path, (path) => {
+    untrackMedia?.()
+    untrackMedia = path ? trackMediaPath(path) : null
+}, { immediate: true })
+onUnmounted(() => { untrackMedia?.() })
+
 const mediaUrl = computed(() => {
     const base = buildLocalFileUrl(props.file.path)
-    return base + (base.includes('?') ? '&' : '?') + `t=${mediaTimestamp.value}`
+    return base + (base.includes('?') ? '&' : '?') + `t=${mediaTimestamp.value}.${mediaVersion.value}`
   }
 )
 

@@ -2239,9 +2239,15 @@ paths:
       description: |
         fsnotify 驱动的 WebSocket 流，用于自动刷新。OpenAPI 不建模事件流。
         查询参数 `dir`/`file` 设置初始监听目标，在协议升级前校验（路径穿越返回 403）。
-        升级后客户端可发送 `{"type":"watch","dir":"...","file":"..."}` 重新指定目标，
-        并以 `{"type":"pong"}` 回应服务端的 `{"type":"ping"}`。
+        升级后客户端可发送 `{"type":"watch","dir":"...","file":"...","files":["..."]}`
+        重新指定目标，并以 `{"type":"pong"}` 回应服务端的 `{"type":"ping"}`。
         服务端推送 `connected` / `dir_change` / `file_change` / `ping` / `error` 帧。
+
+        `files` 是额外的项目相对路径列表（当前预览中渲染的图片），其内容变化同样以
+        `file_change` 上报——Markdown 源文件本身没变时，预览里的图片被后台重写也能刷新。
+        非法或越界的条目会被逐条丢弃而非整帧拒绝，最多接受 200 条。
+        打开的文件与 `files` 中的文件都通过其**父目录**监听（原子保存是写临时文件再
+        rename，会替换 inode，直接监听文件会失效）。
       operationId: fileWatchWS
       parameters:
         - name: dir

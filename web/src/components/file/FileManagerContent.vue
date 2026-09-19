@@ -542,6 +542,7 @@ import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes, baseName, dirName } from '@/utils/path'
 import { useDirPreview } from '@/composables/useDirPreview'
+import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
 import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft } from 'lucide-vue-next'
 import {
   buildThumbUrl,
@@ -1078,9 +1079,22 @@ function thumbUrlFor(entry) {
     // Search results carry a project-relative path already (parent directory
     // may differ per result), so build the thumb URL straight from the path.
     if (searchHasQuery.value) {
-        return `/api/file/thumb?path=${encodeURIComponent(entry.path)}&w=80`
+        return appendThumbVersion(`/api/file/thumb?path=${encodeURIComponent(entry.path)}&w=80`, entry.path)
     }
-    return buildThumbUrl(props.currentDir || '', entry.name)
+    return appendThumbVersion(buildThumbUrl(props.currentDir || '', entry.name), joinPath(props.currentDir || '', entry.name))
+}
+
+/**
+ * Append the shared media version so a thumbnail whose source image was
+ * rewritten in the background re-fetches instead of staying cached. The
+ * thumbnail endpoint revalidates on the source file's ETag, but the browser
+ * only revalidates when it makes a request at all — a versioned URL guarantees
+ * one. Version 0 (never changed) leaves the URL untouched.
+ */
+function appendThumbVersion(url, path) {
+    const v = mediaVersionFor(path)
+    if (!v) return url
+    return url + `&t=${v}`
 }
 function onThumbError(entry) {
     thumbErrors.add(thumbKey(entry))

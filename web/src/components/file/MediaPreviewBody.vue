@@ -56,13 +56,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, defineAsyncComponent } from 'vue'
+import { computed, ref, watch, onUnmounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileX, Music } from 'lucide-vue-next'
 import { buildLocalFileUrl } from '@/utils/download.ts'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import { mediaVersionFor, trackMediaPath } from '@/composables/useMediaWatch.ts'
 
 // pdf.js is heavy (~500KB) and only pulled in when a PDF is actually previewed.
 const PdfPreview = defineAsyncComponent(
@@ -101,11 +102,26 @@ watch(() => [props.path, props.refreshNonce], () => {
   loadFailed.value = false
 })
 
+// A background rewrite of the SAME path (the AI redrawing this image) bumps the
+// shared version. Reading it here keeps the URL correct across re-renders; the
+// composable additionally patches the live element so a no-re-render surface
+// still refreshes.
+const mediaVersion = computed(() => mediaVersionFor(props.path))
+
+// Keep the file watched even when its element is not in the DOM yet (async
+// media mount), so a change arriving early is not missed.
+let untrackMedia: (() => void) | null = null
+watch(() => props.path, (path) => {
+  untrackMedia?.()
+  untrackMedia = path ? trackMediaPath(path) : null
+}, { immediate: true })
+onUnmounted(() => { untrackMedia?.() })
+
 // Raw bytes come from /api/local-file/ (correct MIME, inline, no 10 MiB cap),
 // not /api/file — which is JSON and reports raster images as binary.
 const mediaUrl = computed(() => {
   const base = buildLocalFileUrl(props.path)
-  return base + (base.includes('?') ? '&' : '?') + `t=${mediaTimestamp.value}`
+  return base + (base.includes('?') ? '&' : '?') + `t=${mediaTimestamp.value}.${mediaVersion.value}`
 })
 
 const loadFailed = ref(false)
