@@ -7,8 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -171,7 +169,11 @@ func runCodebuddyImageReadProbe(t *testing.T, ctx context.Context, caps acp.Clie
 	base := NewClawBenchACPClient()
 	client := &imageReadProbeClient{ClawBenchACPClient: base}
 	conn := acp.NewClientSideConnection(client, recIn, recOut)
-	conn.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// Deliberately NOT calling conn.SetLogger: the SDK writes c.logger without
+	// synchronization while receive() reads it, so setting it after
+	// construction is a data race that `-race` reports intermittently. See the
+	// matching note in acp_conn_lifecycle.go spawnLocked. Diagnostics fall back
+	// to slog.Default().
 
 	initCtx, initCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer initCancel()
@@ -193,12 +195,30 @@ func runCodebuddyImageReadProbe(t *testing.T, ctx context.Context, caps acp.Clie
 	}
 
 	streamCh := make(chan StreamEvent, 512)
-	base.RegisterSession(string(newResp.SessionId), streamCh)
-	// Drain the stream so the prompt never blocks on a full channel.
+	sessionID := string(newResp.SessionId)
+	base.RegisterSession(sessionID, streamCh)
+	// Drain the stream so the prompt never blocks on a full channel. The
+	// goroutine stops via a signal rather than by closing streamCh: the ACP
+	// client may still hold the channel and forward events after
+	// UnregisterSession, and a send on a closed channel panics. Production
+	// never closes these channels either.
+	drainStop := make(chan struct{})
+	drainDone := make(chan struct{})
 	go func() {
-		for range streamCh {
+		defer close(drainDone)
+		for {
+			select {
+			case <-streamCh:
+			case <-drainStop:
+				return
+			}
 		}
 	}()
+	t.Cleanup(func() {
+		base.UnregisterSession(sessionID)
+		close(drainStop)
+		<-drainDone
+	})
 
 	prompt := fmt.Sprintf("请使用 Read 工具读取这个图片文件：%s\n"+
 		"必须使用 Read 工具（不要用 Bash、cat 或其它方式），然后告诉我这张图片的内容。", imagePath)
@@ -393,6 +413,10 @@ func TestCodebuddyACP_ImageRead_ProxiedAsText(t *testing.T) {
 
 // codebuddyImageReadACPAgent returns a CodeBuddy ACP agent for the end-to-end
 // production-path test.
+//
+// Models is inert metadata here: ExecuteStream is called without req.Model, so
+// CodeBuddy falls back to its own configured default model. The entry is kept
+// only because the other CodeBuddy ACP test agents carry one.
 func codebuddyImageReadACPAgent() *model.Agent {
 	return &model.Agent{
 		ID:         "codebuddy-acp-image-read-test",
@@ -400,17 +424,54 @@ func codebuddyImageReadACPAgent() *model.Agent {
 		Backend:    "codebuddy",
 		Transport:  "acp-stdio",
 		AcpCommand: "codebuddy --acp",
-		Models:     []model.AgentModel{{ID: "deepseek-v4-flash", Name: "deepseek-v4-flash", Default: true}},
+		Models:     []model.AgentModel{{ID: "glm-4-plus", Name: "glm-4-plus", Default: true}},
 	}
 }
 
-// TestCodebuddyACP_ImageRead_ProductionPath_NoMojibake 端到端验证修复：
+// runProductionImageRead drives one full turn through the production ACPBackend
+// and returns the Read tool-result outputs for that turn.
+func runProductionImageRead(t *testing.T, backend *ACPBackend, sessionID, imagePath string) []string {
+	t.Helper()
+
+	ctx, cancel := contextWithTimeout(t, 300*time.Second)
+	defer cancel()
+
+	ch, err := backend.ExecuteStream(ctx, ChatRequest{
+		Prompt: fmt.Sprintf("请使用 Read 工具读取这个图片文件：%s\n"+
+			"必须使用 Read 工具（不要用 Bash、cat 或其它方式），然后告诉我这张图片的内容。", imagePath),
+		SessionID: sessionID,
+		WorkDir:   acpTestWorkDir(),
+	})
+	require.NoError(t, err)
+
+	events := collectACPEvents(t, ch, 240*time.Second)
+
+	var readOutputs []string
+	for _, e := range events {
+		if e.Type != "tool_result" || e.Tool == nil || e.Tool.Name != "Read" {
+			continue
+		}
+		t.Logf("Read tool_result: status=%q output(first 200)=%q",
+			e.Tool.Status, truncate(e.Tool.Output, 200))
+		readOutputs = append(readOutputs, e.Tool.Output)
+	}
+	return readOutputs
+}
+
+// TestCodebuddyACP_ImageRead_ProductionPath 端到端验证修复：
 // 走生产 ACPBackend 路径（而非探针手工构造的能力位），确认 CodeBuddy 会话里
-// Read 图片后，工具结果**不再**出现「PNG 魔数被当文本」的乱码特征。
+// Read 图片时，工具结果携带的是图片内容而不是「PNG 魔数被当文本」的乱码。
 //
 // 这是修复的回归守卫：若有人把 fs.readTextFile 改回对所有 backend 广告，
-// 本测试会因 PNG 魔数重新出现在 Read 文本里而失败。
-func TestCodebuddyACP_ImageRead_ProductionPath_NoMojibake(t *testing.T) {
+// Read 会重新走文本代理，本测试会因出现 U+FFFD+"PNG" 而失败。
+//
+// 注意本测试是**双向**断言：既要求出现图片载荷，也要求不出现乱码。只断言
+// 「没有乱码」是不够的 —— Read 直接报错或返回空同样满足那个条件。
+//
+// 模型是否调用 Read 由模型决定，故用有限重试吸收偶发不配合；重试后仍未调用
+// 则**失败而非跳过**（integration 测试不在 CI 中运行，skip 会让这个守卫永远
+// 静默通过）。
+func TestCodebuddyACP_ImageRead_ProductionPath(t *testing.T) {
 	requireWireProbeCodebuddyACP(t)
 
 	origRoots := model.RootPaths
@@ -427,47 +488,44 @@ func TestCodebuddyACP_ImageRead_ProductionPath_NoMojibake(t *testing.T) {
 	backend, err := NewACPBackend(agent)
 	require.NoError(t, err)
 
-	sessionID := acpSessionID()
-	t.Cleanup(func() { env.closeConn(t, sessionID) })
-
-	ctx, cancel := contextWithTimeout(t, 300*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt: fmt.Sprintf("请使用 Read 工具读取这个图片文件：%s\n"+
-			"必须使用 Read 工具（不要用 Bash、cat 或其它方式），然后告诉我这张图片的内容。", imagePath),
-		SessionID: sessionID,
-		WorkDir:   acpTestWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectACPEvents(t, ch, 240*time.Second)
-
-	// Concatenate every tool_result output for the Read tool. A proxied
-	// (text) read leaves the PNG signature in this text; the native image
-	// path never does.
+	const attempts = 3
 	var readOutputs []string
-	for _, e := range events {
-		if e.Type != "tool_result" || e.Tool == nil || e.Tool.Name != "Read" {
-			continue
+	for attempt := 1; attempt <= attempts; attempt++ {
+		// A fresh session per attempt: a retry that reuses the previous session
+		// would let the model answer from conversation history instead of
+		// calling Read again.
+		sessionID := acpSessionID()
+		readOutputs = runProductionImageRead(t, backend, sessionID, imagePath)
+		env.closeConn(t, sessionID)
+		if len(readOutputs) > 0 {
+			break
 		}
-		t.Logf("Read tool_result: status=%q output(first 200)=%q",
-			e.Tool.Status, truncate(e.Tool.Output, 200))
-		readOutputs = append(readOutputs, e.Tool.Output)
+		t.Logf("attempt %d/%d: CodeBuddy did not invoke the Read tool; retrying", attempt, attempts)
 	}
 
-	if len(readOutputs) == 0 {
-		t.Skipf("CodeBuddy did not invoke the Read tool this run; cannot assert on the "+
-			"image path (fixture=%s). Re-run or check the model's tool use.", imagePath)
-	}
+	require.NotEmpty(t, readOutputs,
+		"CodeBuddy never invoked the Read tool in %d attempts (fixture=%s). This guard "+
+			"cannot conclude anything, so it fails rather than skipping — a silent skip "+
+			"would leave the image-Read regression unguarded forever.", attempts, imagePath)
 
 	joined := strings.Join(readOutputs, "\n")
+
+	// Negative: no binary-as-text corruption.
 	require.False(t, strings.Contains(joined, "\uFFFD") && strings.Contains(joined, "PNG"),
 		"REGRESSION: the Read tool result contains the PNG signature decoded as text "+
 			"(U+FFFD + \"PNG\"), meaning image Reads are again being proxied through the "+
 			"text-only fs/read_text_file path. fs.readTextFile must stay hidden for "+
 			"CodeBuddy. Output: %q", truncate(joined, 300))
 
-	t.Logf("CONFIRMED: production ACPBackend path no longer proxies image Reads as text "+
-		"(read_results=%d)", len(readOutputs))
+	// Positive: the image actually arrived. On the native path CodeBuddy's Read
+	// returns the image_url payload, which ClawBench surfaces in the tool
+	// result — so a broken-but-quiet Read cannot satisfy this test.
+	require.True(t, strings.Contains(joined, "image_url") && strings.Contains(joined, "data:image/"),
+		"expected the Read tool result to carry the image payload (image_url with a "+
+			"data: URI). A Read that returned an error or empty output would pass the "+
+			"mojibake check alone, so this assertion is required to prove the image "+
+			"reached the model. Output: %q", truncate(joined, 300))
+
+	t.Logf("CONFIRMED: production ACPBackend path delivers the image payload and no "+
+		"longer proxies image Reads as text (read_results=%d)", len(readOutputs))
 }

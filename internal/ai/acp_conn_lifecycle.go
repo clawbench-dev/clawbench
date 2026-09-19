@@ -83,19 +83,33 @@ func ResetAdvertiseTerminalForTest() {
 //
 // and `isSupportRead()` is exactly `clientCapabilities.fs.readTextFile`. The
 // proxy calls the client's fs/read_text_file and line-numbers the returned
-// string; the native ReadTool — whose isImageFile → readImageFile branch is the
-// ONLY path that produces an image content block — never runs. Since ACP's
-// ReadTextFileResponse carries just `{content: string}`, an image read through
-// the proxy reaches the model as mojibake text (the PNG signature shows up as
-// U+FFFD + "PNG"), not as an image. Hiding the capability makes CodeBuddy fall
-// back to its native ReadTool, which emits a proper ACP image block.
+// string. Since ACP's ReadTextFileResponse carries just `{content: string}`,
+// an image read through the proxy reaches the model as mojibake text (the PNG
+// signature shows up as U+FFFD + "PNG"), not as an image — even though
+// CodeBuddy's native ReadTool has an isImageFile → readImageFile branch that
+// converts the file into an image_url payload, which
+// AcpUtils.convertToolResultValueToAcp then turns into an ACP image block.
+// (That branch is not the only image producer in the bundle — attachment
+// references go through createImageContent — but it is the only one reachable
+// from a Read tool call, which is what this capability gates.)
+//
+// Hiding the capability makes CodeBuddy fall back to its native ReadTool.
+// Note this reroutes EVERY CodeBuddy Read, not just images, so the native
+// tool's constraints now apply to text reads too: binary files are rejected
+// outright ("Cannot display content of binary file"), whole-file reads are
+// capped at 256KB / 20k output tokens, and reads go through CodeBuddy's own
+// permission pipeline. The proxied read had none of those limits. These are
+// accepted as the cost of correct image handling — and they match what plain
+// `codebuddy` CLI (no ACP client, no capability) already did.
 //
 // fs.writeTextFile is deliberately left advertised: Write/Edit/MultiEdit are
 // gated on it, and their callEdit path calls the client's readTextFile directly
-// (not through isSupportRead), so keeping it preserves ClawBench's path
-// allowlist for edits while letting image Reads work.
+// (not through isSupportRead), so edits still round-trip through ClawBench's
+// fs handlers. Note the read-side guard that is given up (isPathAllowed) was
+// already near-vacuous in production: RootPaths is ["/"] on Unix, so it only
+// enforced "the path is absolute".
 //
-// Other agents (Claude, OpenCode, ...) do not swap their Read tool this way, so
+// Other agents (Claude, Codex, ...) do not swap their Read tool this way, so
 // the capability stays advertised for them.
 //
 // Tests can override via SetAdvertiseReadTextFileForTest (the override takes
@@ -131,12 +145,32 @@ func ResetAdvertiseReadTextFileForTest() {
 // advertiseReadTextFileCapability) while fs.writeTextFile stays advertised:
 // CodeBuddy's Write/Edit/MultiEdit are gated on it, and their callEdit path
 // reads through the client directly rather than via isSupportRead, so writes
-// keep flowing through ClawBench's path allowlist even after the read
-// capability is hidden.
+// keep flowing through ClawBench's fs handlers even after the read capability
+// is hidden.
 func fileSystemCapabilities(agent *model.Agent) acp.FileSystemCapabilities {
 	return acp.FileSystemCapabilities{
 		ReadTextFile:  advertiseReadTextFileCapability(agent),
 		WriteTextFile: true,
+	}
+}
+
+// buildInitializeRequest assembles the Initialize request ClawBench sends when
+// spawning an agent. Extracted from spawnLocked so the advertised client
+// capabilities can be asserted in a unit test: the per-agent capability
+// decisions only take effect if they actually reach this request, and without
+// this seam the wiring has no non-integration coverage (integration tests are
+// build-tagged and never run in CI).
+func buildInitializeRequest(agent *model.Agent) acp.InitializeRequest {
+	return acp.InitializeRequest{
+		ProtocolVersion: acp.ProtocolVersionNumber,
+		ClientCapabilities: acp.ClientCapabilities{
+			Fs:       fileSystemCapabilities(agent),
+			Terminal: advertiseTerminalCapability(agent),
+		},
+		ClientInfo: &acp.Implementation{
+			Name:    "clawbench",
+			Version: "1.0.0",
+		},
 	}
 }
 
@@ -705,17 +739,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	defer initCancel()
 
 	initStart := time.Now()
-	initResp, err := conn.Initialize(initCtx, acp.InitializeRequest{
-		ProtocolVersion: acp.ProtocolVersionNumber,
-		ClientCapabilities: acp.ClientCapabilities{
-			Fs:       fileSystemCapabilities(c.agent),
-			Terminal: advertiseTerminalCapability(c.agent),
-		},
-		ClientInfo: &acp.Implementation{
-			Name:    "clawbench",
-			Version: "1.0.0",
-		},
-	})
+	initResp, err := conn.Initialize(initCtx, buildInitializeRequest(c.agent))
 	if err != nil {
 		stdoutFilter.Close()
 		_ = cmd.Process.Kill()
