@@ -14,11 +14,19 @@ func PlainText(items []Item) string {
 		if i > 0 {
 			b.WriteString(" ")
 		}
-		b.WriteString(it.Question)
-		if it.Header != "" {
-			b.WriteString(" (")
+		// In the Markdown format the bold title is often the whole question
+		// ("**Which features?**" with only a checkbox list below), so the
+		// header leads when there is no separate question text. Otherwise it
+		// is a parenthetical label after the question.
+		if it.Question == "" && it.Header != "" {
 			b.WriteString(it.Header)
-			b.WriteString(")")
+		} else {
+			b.WriteString(it.Question)
+			if it.Header != "" {
+				b.WriteString(" (")
+				b.WriteString(it.Header)
+				b.WriteString(")")
+			}
 		}
 		if len(it.Options) > 0 {
 			b.WriteString(": ")
@@ -64,5 +72,5 @@ func ToInputMap(items []Item) map[string]any {
 			"options":     opts,
 		})
 	}
-	return map[string]any{"questions": questions}
+	return map[string]any{KeyQuestions: questions}
 }

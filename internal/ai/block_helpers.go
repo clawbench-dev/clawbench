@@ -121,11 +121,18 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 		matches := askquestion.Extract(block.Text)
 		items := askquestion.AllItems(matches)
 		if len(items) == 0 {
+			// Nothing parsed. Strip the wrapper anyway so the payload degrades
+			// to readable Markdown instead of leaking raw tags into the
+			// conversation; Strip replaces each unparsed span with its inner
+			// text, so no content is lost.
 			if reasons := askquestion.UnparsedReasons(matches); len(reasons) > 0 {
 				slog.Warn(
-					"retaining unparseable ask-question payload",
+					"ask-question payload unparseable, rendering as markdown",
 					slog.Any("reasons", reasons),
 				)
+				if clean := strings.TrimSpace(askquestion.Strip(block.Text, matches)); clean != strings.TrimSpace(block.Text) {
+					block.Text = clean
+				}
 			}
 			continue
 		}

@@ -65,16 +65,27 @@ func TestExtract_MultipleTagsAllConverted(t *testing.T) {
 // An unparseable payload must be retained verbatim: deleting it is the silent
 // content-loss defect.
 func TestExtract_UnparseableIsRetained(t *testing.T) {
-	text := "前言\n<ask-question>\n{\"questions\":[{\"question\":\"你最喜欢哪种水果？\"}]}\n</ask-question>\n后记"
+	// A payload that is neither Markdown-with-a-list nor recoverable JSON.
+	text := "前言\n<ask-question>\n这里没有列表也没有 JSON，只是一段说明。\n</ask-question>\n后记"
 	ms := Extract(text)
 	if len(ms) != 1 {
 		t.Fatalf("expected 1 match, got %d", len(ms))
 	}
 	if ms[0].Parsed {
-		t.Fatal("JSON payload must not parse (support was removed deliberately)")
+		t.Fatal("prose with no list must not become a card")
 	}
-	if got := Strip(text, ms); got != text {
-		t.Errorf("unparseable payload must be retained verbatim\n got: %q\nwant: %q", got, text)
+	// New contract: the wrapper is stripped and the inner text is shown, so the
+	// payload degrades to readable prose instead of exposing raw markup. The
+	// question text itself must still be present — that is the no-loss rule.
+	got := Strip(text, ms)
+	if strings.Contains(got, "<ask-question") {
+		t.Errorf("the wrapper must be stripped, got %q", got)
+	}
+	if !strings.Contains(got, "这里没有列表也没有 JSON") {
+		t.Errorf("the payload text must survive, got %q", got)
+	}
+	if !strings.Contains(got, "前言") || !strings.Contains(got, "后记") {
+		t.Errorf("surrounding text must be untouched, got %q", got)
 	}
 }
 
@@ -304,5 +315,32 @@ func TestCloseTagName(t *testing.T) {
 		if got := closeTagName(in); got != want {
 			t.Errorf("closeTagName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// In the Markdown format the bold title often IS the question (only a checkbox
+// list follows), so it must lead rather than render as an empty "(): ...".
+func TestPlainText_HeaderOnlyQuestion(t *testing.T) {
+	got := PlainText([]Item{{
+		Header:      "需要启用哪些",
+		MultiSelect: true,
+		Options:     []Option{{Label: "语法高亮"}, {Label: "自动换行"}},
+	}})
+	want := "需要启用哪些: 语法高亮, 自动换行"
+	if got != want {
+		t.Errorf("PlainText = %q, want %q", got, want)
+	}
+}
+
+// With separate question text the header stays a parenthetical label.
+func TestPlainText_HeaderAsLabel(t *testing.T) {
+	got := PlainText([]Item{{
+		Header:   "方案选择",
+		Question: "你更倾向哪种？",
+		Options:  []Option{{Label: "方案 A"}},
+	}})
+	want := "你更倾向哪种？ (方案选择): 方案 A"
+	if got != want {
+		t.Errorf("PlainText = %q, want %q", got, want)
 	}
 }

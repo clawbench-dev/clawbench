@@ -191,8 +191,85 @@ describe('parseItems', () => {
     expect(got[0].options[0].label).toBe('&epsilon; &forall;')
   })
 
-  it('rejects a JSON payload (support deliberately removed)', () => {
-    expect(parseItems('{"questions":[{"question":"Q?"}]}')).toEqual([])
+  it('recovers a JSON payload instead of discarding it', () => {
+    // JSON is not the documented format, but recovering it beats discarding a
+    // readable question. If recovery fails the payload renders as Markdown.
+    const got = parseItems('{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}')
+    expect(got).toHaveLength(1)
+    expect(got[0].question).toBe('Q?')
+    expect(got[0].options).toEqual([{ label: 'A' }])
+  })
+
+  it('recovers JSON containing unescaped quotes in a value', () => {
+    const got = parseItems('{"questions":[{"question":"可以被"临时分裂"多久？","options":[{"label":"数秒"}]}]}')
+    expect(got).toHaveLength(1)
+    expect(got[0].question).toBe('可以被"临时分裂"多久？')
+  })
+
+  // --- Format robustness: the markers models actually emit ---
+
+  it('accepts marker variants beyond CommonMark', () => {
+    const cases: Array<[string, string[]]> = [
+      ['no space after dash', ['-甲', '-乙']],
+      ['fullwidth hyphen', ['－ 甲', '－ 乙']],
+      ['plus bullet', ['+ 甲', '+ 乙']],
+      ['cjk ordinal dot', ['1、甲', '2、乙']],
+      ['cjk numeral', ['一、甲', '二、乙']],
+      ['paren ordered', ['1) 甲', '2) 乙']],
+    ]
+    for (const [name, lines] of cases) {
+      const got = parseItems(`Q?\n${lines.join('\n')}`)
+      expect(got, name).toHaveLength(1)
+      expect(got[0].options.map(o => o.label), name).toEqual(['甲', '乙'])
+    }
+  })
+
+  it('does not mistake prose for a list', () => {
+    for (const input of ['温度是 -5 度', 'Q?\n---', 'Q?\n1.5 倍速', 'Q?\n**重点**', 'Q?\n*斜体*']) {
+      expect(parseItems(input), input).toEqual([])
+    }
+  })
+
+  it('accepts checkbox variants beyond ASCII brackets', () => {
+    for (const input of [
+      'Q?\n- [ ] 甲\n- [ ] 乙',
+      'Q?\n- [x] 甲\n- [X] 乙',
+      'Q?\n- ［ ］ 甲\n- ［ ］ 乙',
+      'Q?\n- 【 】 甲\n- 【 】 乙',
+      'Q?\n- []甲\n- []乙',
+    ]) {
+      const got = parseItems(input)
+      expect(got, input).toHaveLength(1)
+      expect(got[0].multiSelect, input).toBe(true)
+    }
+  })
+
+  it('accepts heading variants beyond a bold line', () => {
+    for (const input of [
+      '# 方案选择\nQ?\n- 甲\n- 乙',
+      '### 方案选择\nQ?\n- 甲\n- 乙',
+      '__方案选择__\nQ?\n- 甲\n- 乙',
+      '**方案选择**\nQ?\n- 甲\n- 乙',
+    ]) {
+      const got = parseItems(input)
+      expect(got, input).toHaveLength(1)
+      expect(got[0].header, input).toBe('方案选择')
+    }
+  })
+
+  it('splits a description on an en dash too', () => {
+    const got = parseItems('Q?\n- 甲 \u2013 说明')
+    expect(got[0].options[0]).toEqual({ label: '甲', description: '说明' })
+  })
+
+  it('recovers JSON with unescaped quotes and rejects JSON without a question', () => {
+    const recovered = parseItems('{"questions":[{"question":"可以被"临时分裂"多久？","options":[{"label":"数秒"}]}]}')
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0].question).toBe('可以被"临时分裂"多久？')
+
+    for (const input of ['{"taskId":""}', '{"questions":[]}', '{not valid json at all']) {
+      expect(parseItems(input), input).toEqual([])
+    }
   })
 
   it('rejects prose', () => {
@@ -259,12 +336,19 @@ describe('extractAskMatches', () => {
     expect(stripped).not.toContain('<ask-question')
   })
 
-  it('retains an unparseable payload verbatim', () => {
-    const text = '前言\n<ask-question>\n{"questions":[{"question":"Q?"}]}\n</ask-question>\n后记'
+  it('unparseable payload keeps its text but loses the wrapper', () => {
+    // New contract: the wrapper is stripped and the inner text is shown, so the
+    // payload degrades to readable prose instead of exposing raw markup. The
+    // text itself must still be present — that is the no-loss rule.
+    const text = '前言\n<ask-question>\n这里没有列表也没有 JSON，只是一段说明。\n</ask-question>\n后记'
     const ms = extractAskMatches(text)
     expect(ms).toHaveLength(1)
     expect(ms[0].parsed).toBeNull()
-    expect(stripAskMatches(text, ms)).toBe(text)
+    const stripped = stripAskMatches(text, ms)
+    expect(stripped).not.toContain('<ask-question')
+    expect(stripped).toContain('这里没有列表也没有 JSON')
+    expect(stripped).toContain('前言')
+    expect(stripped).toContain('后记')
   })
 
   it('ignores a tag inside a fenced code block', () => {

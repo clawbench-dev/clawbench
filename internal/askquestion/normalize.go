@@ -8,7 +8,7 @@ import (
 // Canonical key groups. Keys are matched after canonicalKey, so a model may
 // spell them `multi-select`, `multi_select`, `multiSelect`, or `multiselect`.
 var (
-	questionArrayKeys = []string{"questions", "items", "parameters"}
+	questionArrayKeys = []string{KeyQuestions, "items", "parameters"}
 	wrapperKeys       = []string{"params", "parameters", "data", "input", "args"}
 	questionKeys      = []string{"question", "message", "title", "text", "prompt"}
 	optionKeys        = []string{"options", "choices", "answers", "values"}

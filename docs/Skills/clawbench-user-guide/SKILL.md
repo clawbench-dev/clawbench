@@ -1,6 +1,6 @@
 ---
 name: clawbench-user-guide
-description: 为 ClawBench 生成桌面端图文使用说明 / 用户手册配图。涵盖 720p 降采样截图参数（2560×1440 视口 + zoom=2 再 LANCZOS 降到 1280×720）、浮层抑制与自检（三个 fixed 浮层的 offsetParent 判据失效陷阱）、演示数据搭建与还原、按模块的取景清单与 DOM 选择器、三段式文档结构。触发词：使用说明、用户手册、user guide、图文说明、功能说明文档、手册配图、文档配图。
+description: 为 ClawBench 生成桌面端与移动端图文使用说明 / 用户手册配图。桌面端：720p 降采样截图参数（2560×1440 视口 + zoom=2 再 LANCZOS 降到 1280×720）、左栏 441px 构图约束、浮层抑制与自检（三个 fixed 浮层的 offsetParent 判据失效陷阱）、完成通知卡片必须 reload 清除、演示数据搭建与还原、按模块的取景清单与 DOM 选择器、三段式文档结构。移动端：CDP 设备模拟（zoom 方案对移动端完全无效）、390×844@3 竖屏参数与 585×1266 后处理、底部 Dock 与全屏 TabPanel 布局事实、手势阈值速查、Android App 模式 bridge stub 注入（必须 dispose）、移动端验收判据。触发词：使用说明、用户手册、user guide、图文说明、功能说明文档、手册配图、文档配图、移动端文档、手机端说明、竖屏截图。
 allowed-tools: Bash(playwright-cli:*), Bash(curl:*), Bash(python3:*)
 ---
 
@@ -538,3 +538,227 @@ await page.evaluate(async () => {
 30. **终端 Dock 页签会因状态未加载而缺席** —— `isTerminalDisabled` 来自 `/api/terminal/status` 的异步结果；页面长期未刷新时该页签不渲染。**reload 后即正常出现**。实测终端按钮有 3 个同名 `button[title="快捷指令"]`。
 31. **主题必须显式钉成 `github-dark`**（新 profile 默认 `auto` → 跟随系统亮色，整片白底）。见 §一。
 32. **交付前检查图片唯一性** —— `md5sum *.png | awk '{print $1}' | sort | uniq -d`。第二版发现 `annot-04-filepath-jump.png` 与 `share-01-dialog-initial.png` **md5 完全相同**（既有错配：前者应为「文件路径跳转后的查看器」，实际却是分享弹窗），已重截修正。**"文件数对得上"不代表内容对**。
+
+---
+
+## 二十一、移动端截图参数（CDP 设备模拟）
+
+**这是第三版最重要的发现：桌面端的 zoom 超采样对移动端完全无效。**
+
+### 为什么 zoom 方案在移动端失效
+
+移动端/桌面端的判定依据是 **CSS 视口宽度**（`useWideScreenLayout.ts:8` 的 `WIDE_SCREEN_MIN_WIDTH = 1024`）：
+
+```js
+// web/src/composables/useWideScreenLayout.ts:50
+export function computeIsWideScreen(cssWidth, screenWidth, screenHeight, dpr) {
+  const physicalWidth = cssWidth * (dpr || 1)
+  return cssWidth >= WIDE_SCREEN_MIN_WIDTH
+    || (physicalWidth >= WIDE_SCREEN_MIN_PHYSICAL_WIDTH && screenWidth > screenHeight)
+}
+```
+
+实测：`documentElement.style.zoom = '3'` 之后 `window.innerWidth` **仍是 1170**（≥1024）→ 布局依然判宽屏（`wideScreen:true, bottomDock:false`）。zoom 只改变渲染尺寸，不改变 CSS 视口。
+
+### 正确方案：CDP `Emulation.setDeviceMetricsOverride`
+
+```js
+await page.setViewportSize({ width: 1170, height: 2532 });   // 兜底，必须在 CDP 之前
+const cdp = await page.context().newCDPSession(page);
+await cdp.send('Emulation.setDeviceMetricsOverride', {
+  width: 390, height: 844, deviceScaleFactor: 3, mobile: true,
+});
+await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+await cdp.send('Emulation.setUserAgentOverride', { userAgent: ANDROID_UA });
+```
+
+实测生效：`innerWidth:390, dpr:3, wideScreen:false, bottomDock:true, wideDock:false`，截图原生 **1170×2532**。
+
+| 项 | 值 |
+|---|---|
+| CSS 视口 | **390 × 844**（iPhone 14 逻辑尺寸） |
+| DPR | **3** |
+| 截图原生尺寸 | 1170 × 2532 |
+| 后处理 | LANCZOS 降到 **585 × 1266**（原生的一半） |
+| 单图体积 | 约 140–290 KB（量化后） |
+
+### 三个必须注意的顺序问题（都实测踩过）
+
+1. **`setViewportSize` 必须在 `setDeviceMetricsOverride` 之前**。反了的话 viewport 会覆盖 CDP 的 CSS 视口，`innerWidth` 变回 1170。
+2. **`reload` 会重置 CDP override**。若 setup 需要 reload，必须在 reload **之后**重新应用 CDP。实测踩过：reload 前应用 → `innerWidth:1170`。
+3. **UA 必须覆盖**。不覆盖则 `isPC` 仍为 true（`usePlatformDetect.ts:55` 的 `isPC = !isAppMode && !AndroidUA && !iOSUA && !iPadOSUA`），文件管理器单击行为、终端音量键等移动端分支不会生效。
+
+### 图片压缩：自适应量化
+
+UI 截图颜色少，**256 色量化近乎无损**（实测边缘能量仅降 2.6%），能把 556KB 压到 252KB。但照片类图会明显劣化，故按唯一色数自适应：
+
+```python
+im = Image.open(raw).convert('RGB').resize((585, 1266), Image.LANCZOS)
+im.save(out, optimize=True)
+uniq = len(im.getcolors(maxcolors=200000) or [])
+if os.path.getsize(out) > 300*1024 and uniq < 60000:   # UI 截图
+    im.quantize(colors=256, method=Image.MEDIANCUT).save(out, optimize=True)
+```
+
+实测：`uniq≈22000–35000`（UI）会量化；`uniq≈48701`（含照片）跳过。
+
+### 工具：`/tmp/uidesc/capm.sh`
+
+```
+./capm.sh <输出名> [setup] [等待ms] [模式=web|app] [设备=phone|phone-l|tablet]
+```
+
+沿用 cap3.sh 的「单次 run-code + 内置重试 + 产出侧 `[NEEDS REVIEW]` 防线」，第 0 步替换为上述 CDP 调用。`recapm.sh` 提供 `dock` / `setcat` 两个批次函数。
+
+---
+
+## 二十二、移动端断点与布局事实
+
+### 两个反直觉点（文档必须写准，否则误导用户）
+
+1. **窄屏主面板是占满全屏的 `TabPanel`，不是 BottomSheet。**
+   `TabPanel.vue:61` 是 `position:absolute; inset:0`。`SplitView :enabled="isWideScreen"`（`App.vue:73`）在窄屏下让 `.split-view:not(.split-view--active) > *` 变 `display:contents`（`SplitView.vue:159-162`），左右列回到普通流；左列 `v-show="isWideScreen || activeTab !== 'chat'"`（`App.vue:80`）、右列 `v-show="isWideScreen || activeTab === 'chat'"`（`App.vue:241`）互斥切换。
+   **BottomSheet 只用于二级抽屉**（会话搜索/附件/TOC/工具详情/按键配置等 34 处）。
+
+2. **`chat` 不在 `DOCK_TABS` 注册表。**
+   `dockTabs.ts:35` 是 `DockTabId = Exclude<TabId, 'chat'>`；`chat` 是 `App.vue:368` **硬编码的底部 Dock 首项**。宽屏下它反而是 `.wide-dock-bottom` 的独立开关（`App.vue:64-68`）。所以窄屏与宽屏**不是同一份完整注册表**，只有二级项共享 `DOCK_TABS`。
+
+### 底部 Dock 顺序与角标
+
+顺序（`App.vue:368-410`）：**会话 → 文件管理器 → 文件 → 项目历史 → 溢出项 → 更多**
+
+| 页签 | 角标来源 |
+|---|---|
+| 会话 | `chatUnreadCount` |
+| 项目历史 | `gitWorkingTreeChangeCount` |
+| 议题与合并请求 | `forgeUnreadCount` |
+| 任务 | `taskUnreadCount` |
+| 终端 | `terminalSessionCount` |
+| 端口映射 | `portForwardEnabledCount` |
+| 更多 | 聚合剩余（`overflowBadgeCount`） |
+
+溢出由 `useDockOverflow` 按 ResizeObserver 动态决定（按钮 34px + 间距 12px，主项 4 个）；剩 1 项内联，>1 项收进 Teleport 弹菜单。
+
+> **截图注意**：「设置」页签常被收进「更多」溢出菜单。`recapm.sh` 的 `dock`/`setcat` 已内置「找不到就展开更多」的兜底，否则会返回 `dock not found: 设置`。
+
+### BottomSheet 的两种形态
+
+| 窄屏 | 宽屏 |
+|---|---|
+| overlay `align-items:flex-end`，panel 底部弹出、顶部圆角（`BottomSheet.vue:192-217`） | `bs-wide-auto` → 居中卡片（`modal-card.css:11-30`），隐藏拖拽手柄（`:390`） |
+
+拖拽手柄 `.bs-handle` 32×4px（`:287`）；整个 `.bs-header` 可点击关闭（`:21`）。
+
+---
+
+## 二十三、移动端专有交互的截图要点
+
+### 手势阈值（源码实测值）
+
+| 手势 | 阈值 | 作用 | 源码 |
+|---|---|---|---|
+| 边缘滑动返回 | 右缘 **20px** 内起滑、**≥50px**、**<400ms**、纵≤横×0.75 | 返回（web 派发 back-press；app 交给原生） | `useEdgeSwipeBack.ts:14-17` |
+| 会话左右滑动 | **≥80px**、**<500ms**、横>纵×0.75 | 左=下一会话，右=上一会话 | `useSwipeSession.ts:118-119` |
+| 输入框历史滑动 | 横 **≥60px**、<400ms，**仅 textarea 未聚焦** | 左=更旧，右=更新 | `ChatInputBar.vue:1209-1253` |
+| 终端单指滑动 | ≥30px | 方向键 | `useTerminalGestures.ts:104` |
+| 终端长按方向 | 500ms 后每 150ms 重复 | 连续方向键 | 同上 `:107-108` |
+| 终端双击 | <300ms、位移<10px | `Tab` | 同上 `:109-110` |
+| 终端双指捏合 | 距离变化 ≥10px | 字号 | 同上 `:106` |
+| 终端双指竖滑 | 中心 ≥30px 同向 | `PageUp`/`PageDown` | 同上 `:105` |
+| 通用长按 | **450ms**、位移<10px | 右键菜单 | `directives/longPress.ts:19-20` |
+| 语音输入 | **长按发送键 500ms** | 录音（无独立麦克风按钮） | `ChatInputBar.vue:695-724` |
+
+### 几个容易拍错/写错的点
+
+1. **会话滑动默认关闭** —— 需在设置里开 `swipeSession`。文档里必须写明，否则用户以为坏了。
+2. **语音输入没有独立麦克风按钮** —— 是**长按发送键**。拍图时拍不到「麦克风图标」，别硬找。
+3. **文件管理器「点选中→再点进入」仅在开启预览模式时成立**（`FileManagerContent.vue:2002-2048`）。未开预览模式时单击不进入。
+4. **消息操作条 `.chat-meta-bar` 在触屏常显**（`ChatMessageItem.vue:87-140`），不是 hover-only，也不是长按。桌面端才是悬停出现。
+5. **软键盘**：`useChatKeyboard.ts:59-66` 用 `visualViewport` 算高度（iOS WKWebView 无 adjustResize），`App.vue` 用 `.chat-keyboard-open{bottom:高度}` 上推。Android adjustResize 由原生处理。
+6. **文件管理器的 `data-path` 是相对当前目录的名字**（如 `test`），不是完整路径。逐级导航的匹配逻辑要按 `split('/').pop()` 比。
+7. **窄屏下双击进目录不可靠** —— 用「点选中→再点」两次单击；且两次点击之间列表可能重渲染，需**每次重新查询元素**。更稳的做法是用面包屑逐级返回 + 工具栏的「预览模式」。
+8. **斜杠补全菜单（`.completion-item`）在模拟环境难以触发** —— `parseSlashQuery` 依赖 caret 位置，直接设 `value` 不更新 caret；即便 `setSelectionRange` 后 `caret` 正确，菜单仍可能因 `isTextareaFocused` 门控不显示。**建议改用「附件抽屉」等按钮触发的浮层**，或把斜杠命令写进正文用文字讲清。
+
+---
+
+## 二十四、Android App 模式模拟（bridge stub）
+
+### 判定机制
+
+- `useAppMode.ts:13-27`：`isNativeApp()` 为真且是顶层 frame 时，`isAppMode = true` 并给 `<html>` 加 `data-app-mode` 属性。
+- `usePlatformDetect.ts:55`：`isPC = !isAppMode && !AndroidUA && !iOSUA && !iPadOSUA` → **App 模式与手机浏览器都是 `!isPC`**，但能力不同。
+
+### stub 注入法（已实测可用）
+
+```js
+const stub = await page.addInitScript({ content: `
+  (() => {
+    const noop = () => {}; const p = (v) => Promise.resolve(v);
+    window.ClawBenchNative = {
+      isNativeApp: () => true, getAppVersion: () => '1.0.0', getPlatform: () => 'android',
+      getServerList: () => p([]), getPassword: () => p(''), getServerUrl: () => p(location.origin),
+      setKeepScreenOn: noop, setVolumeKeyMode: noop, setNativePushEnabled: noop,
+      setFloatingStatusEnabled: noop, setLiveUpdateEnabled: noop, requestFloatingPermission: noop,
+      shareText: noop, shareFile: noop, shareFiles: noop, downloadUrl: noop, downloadBlob: noop,
+      openUrl: noop, reloadApp: noop, log: noop, logBatch: noop, onBackPressed: noop, __stub: true,
+    };
+  })();
+`});
+```
+
+实测：`data-app-mode` 属性出现，**appOnly 设置卡片渲染出来**（「桌面悬浮状态窗」「灵动岛」可见）。
+
+> **必须 dispose！** `addInitScript` 注册在 **context** 上、跨导航持久生效。不销毁会让**后续所有 web 模式截图被污染成 App 模式**（实测踩过：m-02 一度 `appMode:true`）。`addInitScript` 返回 `Disposable`：
+> ```js
+> await stub.dispose();
+> ```
+> 若已泄漏，只能 `playwright-cli close` 后重开浏览器。
+
+### appOnly 字段清单
+
+| 设置项 | key | 位置 |
+|---|---|---|
+| 桌面悬浮状态窗 | `floatingStatusWindow` | `settingsFieldMap.ts:296` |
+| 灵动岛 | `liveUpdate` | `settingsFieldMap.ts:297` |
+| 重配服务器 | `reconfigureServer` | `settingsFieldMap.ts:262`（调试分类） |
+
+渲染门控：`SettingsCategory.vue:204` 的 `if (entry.spec.appOnly && !isAppMode.value) continue`。
+
+### 不可浏览器渲染的部分
+
+**悬浮状态窗与灵动岛是 Android 原生层渲染**（`FloatingStatusView` / `LiveUpdateManager`），浏览器模拟无法产出 —— 只能拍设置页的开关卡片作为代理图，真机图需用户提供。文档里用**文字图注**说明，不要写 `![]()` 引用（否则链接 404）。
+
+---
+
+## 二十五、移动端验收判据
+
+### 每张图必须断言（capm.sh 已内置）
+
+```js
+{
+  innerW: 390,           // CDP 生效；≠390 说明 override 被覆盖
+  wideScreen: false,     // 必须是移动端布局
+  bottomDock: true,      // 底部 Dock 可见
+  wideDock: false,       // 宽屏左侧 dock 不可见
+  appMode: <按需>,        // app 模式应为 true
+  card: false,           // 无完成通知卡片
+}
+```
+
+`ov.wideScreen === true` 或 `ov.bottomDock === false` 时打 `[NEEDS REVIEW]`。
+
+### 全量验收清单
+
+| 项 | 命令/判据 |
+|---|---|
+| 尺寸一致 | 全部 `585×1266` |
+| 唯一性 | `md5sum *.png \| awk '{print $1}' \| sort \| uniq -d` 为空 |
+| 引用平衡 | `comm` 双向比对文档引用 ↔ 目录实文件 |
+| 卡片残留 | 像素判据（见 §二）；移动端卡片几何与桌面不同，**不能照搬 x=300/979**，以 `ov.card` 为准 |
+| 占位图 | 用文字图注，不写 `![]()`（避免 404） |
+
+### 命名与目录约定
+
+- 文档：`docs/user-guid/user-guid-mobile.md`
+- 截图：`docs/user-guid/screenshots-mobile/`（与桌面 `screenshots/` 平级隔离，避免混入桌面引用校验）
+- 命名：`m-NN-name.png`（`m-` 前缀 + 两位序号 + 语义名）

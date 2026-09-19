@@ -73,16 +73,29 @@ describe('renderTextBlock — ask-question', () => {
     expect(html).toContain('后记')
   })
 
-  it('retains an unparseable payload instead of deleting it', () => {
-    // The core defect: a JSON payload is deliberately unsupported, so parsing
-    // fails. The old code stripped the tag anyway and the question vanished.
+  it('recovers a JSON payload into a card', () => {
+    // JSON is not the documented format, but recovering it beats discarding a
+    // readable question.
     const r = setup()
-    const text = '前言\n<ask-question>\n{"questions":[{"question":"你最喜欢哪种水果？"}]}\n</ask-question>\n后记'
+    const text = '前言\n<ask-question>\n{"questions":[{"question":"你最喜欢哪种水果？","options":[{"label":"苹果"}]}]}\n</ask-question>\n后记'
+    const html = r.renderTextBlock(text, 'm1', 0)
+
+    const stored = r.blockAskQuestions['m1-0'] as { questions: Array<{ question: string }> }
+    expect(stored.questions[0].question).toBe('你最喜欢哪种水果？')
+    expect(html).not.toContain('<ask-question')
+  })
+
+  it('degrades an unparseable payload to markdown instead of deleting it', () => {
+    // The core defect: on a parse failure the old code stripped the tag anyway
+    // and the question vanished. Now the wrapper is stripped but the text is
+    // kept, so it renders as ordinary Markdown.
+    const r = setup()
+    const text = '前言\n<ask-question>\n这里没有列表也没有 JSON，只是一段说明。\n</ask-question>\n后记'
     const html = r.renderTextBlock(text, 'm1', 0)
 
     expect(r.blockAskQuestions['m1-0']).toBeUndefined()
-    // The raw payload must still be visible.
-    expect(html).toContain('你最喜欢哪种水果？')
+    expect(html).not.toContain('<ask-question')
+    expect(html).toContain('这里没有列表也没有 JSON')
     expect(html).toContain('前言')
     expect(html).toContain('后记')
   })

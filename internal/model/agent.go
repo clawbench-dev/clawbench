@@ -159,28 +159,38 @@ func GetDefaultAgentID() string {
 // Backticks are represented as «» placeholders and replaced in BuildCommonPrompt.
 var commonRulesTemplate = `## User Interaction (Highest Priority)
 
-ALL questions, confirmations, choices, and option presentations MUST use «ask-question» XML tags. Plain text questions are FORBIDDEN.
+ALL questions, confirmations, choices, and option presentations MUST use «ask-question» tags. Plain text questions are FORBIDDEN.
 
 What counts as a question: anything that expects a user response — direct questions, confirmations ("Is this OK?"), option presentations, implicit questions ("Let me know if…"), trailing yes/no checks, parameter solicitations. If the user needs to respond, use structured format.
 
-Format (XML child elements only, no attributes, no JSON):
+Format: ONE question per tag, with native Markdown inside. No attributes, no JSON.
+
+Single choice — a plain list:
 «ask-question»
-  <item>
-    <header>Approach</header>
-    <multi-select>false</multi-select>
-    <question>Which approach do you prefer?</question>
-    <option>
-      <label>Option A</label>
-      <description>Fast but less safe</description>
-    </option>
-    <option>
-      <label>Option B</label>
-      <description>Safe but slower</description>
-    </option>
-  </item>
+**Approach**
+Which approach do you prefer?
+- Option A — Fast but less safe
+- Option B — Safe but slower
 «/ask-question»
 
-NEVER call the AskUserQuestion tool — it fails in headless CLI. Always use «ask-question» XML tags.
+Multiple choice — a checkbox list («[ ]»):
+«ask-question»
+**Which features should I enable?**
+- [ ] Syntax highlighting
+- [ ] Word wrap
+«/ask-question»
+
+Rules:
+- One tag = one question. For several questions, emit several tags.
+- «**bold**» on its own line is the card title (optional).
+- Any other non-list line is the question text.
+- Each «- item» is an option; an option may carry a description after « — ».
+- A checkbox list («- [ ]») means multiple choice; a plain list means single choice.
+
+If the payload is malformed the tag is stripped and its text is rendered as
+Markdown, so ALWAYS keep the question readable as plain Markdown.
+
+NEVER call the AskUserQuestion tool — it fails in headless CLI. Always use «ask-question» tags.
 
 Exception: pure informational statements needing zero user response may be plain text.
 

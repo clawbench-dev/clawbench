@@ -453,13 +453,27 @@
       "wantStripped": "分析如下\n\n\n<details>\n<summary>更多</summary>\n正文内容必须保留\n</details>"
     },
     {
-      "name": "unparseable payload is retained not stripped",
-      "text": "前言\n<ask-question>\n{\"questions\":[{\"question\":\"你最喜欢哪种水果？\"}]}\n</ask-question>\n后记",
+      "name": "json payload is recovered into a card",
+      "text": "前言\n<ask-question>\n{\"questions\":[{\"question\":\"你最喜欢哪种水果？\",\"options\":[{\"label\":\"苹果\",\"description\":\"脆甜多汁\"}]}]}\n</ask-question>\n后记",
       "wantParsed": [
-        false
+        true
       ],
-      "wantItems": [],
-      "wantStripped": "前言\n<ask-question>\n{\"questions\":[{\"question\":\"你最喜欢哪种水果？\"}]}\n</ask-question>\n后记"
+      "wantItems": [
+        [
+          {
+            "header": "",
+            "multiSelect": false,
+            "question": "你最喜欢哪种水果？",
+            "options": [
+              {
+                "label": "苹果",
+                "description": "脆甜多汁"
+              }
+            ]
+          }
+        ]
+      ],
+      "wantStripped": "前言\n\n后记"
     },
     {
       "name": "two tags both convert",
@@ -670,6 +684,168 @@
         ]
       ],
       "wantStripped": "<ask-question>这个标签的用法。\n\n"
+    },
+    {
+      "name": "markdown single select",
+      "text": "前言\n<ask-question>\n**方案选择**\n你更倾向哪种实现方式？\n- 方案 A — 快但不够安全\n- 方案 B — 安全但慢\n</ask-question>\n后记",
+      "wantParsed": [
+        true
+      ],
+      "wantItems": [
+        [
+          {
+            "header": "方案选择",
+            "multiSelect": false,
+            "question": "你更倾向哪种实现方式？",
+            "options": [
+              {
+                "label": "方案 A",
+                "description": "快但不够安全"
+              },
+              {
+                "label": "方案 B",
+                "description": "安全但慢"
+              }
+            ]
+          }
+        ]
+      ],
+      "wantStripped": "前言\n\n后记"
+    },
+    {
+      "name": "markdown multi select",
+      "text": "<ask-question>\n**需要启用哪些**\n- [ ] 语法高亮\n- [ ] 自动换行\n</ask-question>",
+      "wantParsed": [
+        true
+      ],
+      "wantItems": [
+        [
+          {
+            "header": "需要启用哪些",
+            "multiSelect": true,
+            "question": "",
+            "options": [
+              {
+                "label": "语法高亮"
+              },
+              {
+                "label": "自动换行"
+              }
+            ]
+          }
+        ]
+      ],
+      "wantStripped": ""
+    },
+    {
+      "name": "markdown no header no descriptions",
+      "text": "<ask-question>\n你选哪个？\n- 甲\n- 乙\n</ask-question>",
+      "wantParsed": [
+        true
+      ],
+      "wantItems": [
+        [
+          {
+            "header": "",
+            "multiSelect": false,
+            "question": "你选哪个？",
+            "options": [
+              {
+                "label": "甲"
+              },
+              {
+                "label": "乙"
+              }
+            ]
+          }
+        ]
+      ],
+      "wantStripped": ""
+    },
+    {
+      "name": "markdown prose without a list is not a card",
+      "text": "说明：<ask-question>Each question needs a list</ask-question> 结束。",
+      "wantParsed": [
+        false
+      ],
+      "wantItems": [
+        []
+      ],
+      "wantStripped": "说明：Each question needs a list 结束。"
+    },
+    {
+      "name": "markdown two tags are two questions",
+      "text": "<ask-question>\n**Q1**\n- 甲\n- 乙\n</ask-question>\n<ask-question>\n**Q2**\n- 丙\n- 丁\n</ask-question>",
+      "wantParsed": [
+        true,
+        true
+      ],
+      "wantItems": [
+        [
+          {
+            "header": "Q1",
+            "multiSelect": false,
+            "question": "",
+            "options": [
+              {
+                "label": "甲"
+              },
+              {
+                "label": "乙"
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "header": "Q2",
+            "multiSelect": false,
+            "question": "",
+            "options": [
+              {
+                "label": "丙"
+              },
+              {
+                "label": "丁"
+              }
+            ]
+          }
+        ]
+      ],
+      "wantStripped": "\n"
+    },
+    {
+      "name": "prose payload degrades to markdown",
+      "text": "前言\n<ask-question>\n这里没有列表也没有 JSON，只是一段说明。\n</ask-question>\n后记",
+      "wantParsed": [
+        false
+      ],
+      "wantItems": [
+        []
+      ],
+      "wantStripped": "前言\n这里没有列表也没有 JSON，只是一段说明。\n后记"
+    },
+    {
+      "name": "json with unescaped quotes is recovered",
+      "text": "<ask-question>\n{\"questions\":[{\"question\":\"可以被\"临时分裂\"多久？\",\"options\":[{\"label\":\"数秒\"}]}]}\n</ask-question>",
+      "wantParsed": [
+        true
+      ],
+      "wantItems": [
+        [
+          {
+            "header": "",
+            "multiSelect": false,
+            "question": "可以被\"临时分裂\"多久？",
+            "options": [
+              {
+                "label": "数秒"
+              }
+            ]
+          }
+        ]
+      ],
+      "wantStripped": ""
     }
   ]
 }

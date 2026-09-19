@@ -45,6 +45,10 @@ type ItemState struct {
 	LatestCommentBody   string
 	// Author is the item creator, used to attribute an `opened` event.
 	Author string
+	// CreatedAt is when the item was created upstream. It distinguishes a
+	// genuinely new item from a pre-existing one that merely surfaced for the
+	// first time — see DeriveChanges. Zero when the provider does not report it.
+	CreatedAt time.Time
 }
 
 // Change is a derived event ready to be persisted and dispatched.
@@ -92,9 +96,16 @@ type Change struct {
 // and returns the events to dispatch. The item number is stamped onto each
 // returned change.
 //
-// A nil prev means the item was not in the snapshot. The caller is responsible
-// for not calling this on a repo's first-ever sync (which would replay the whole
-// history); on any later sync a nil prev is a genuinely new item.
+// A nil prev means the item was not in the snapshot. Whether that is worth
+// reporting depends on WHEN the item was created relative to the queried
+// window, which is what windowStart carries:
+//   - created inside the window → genuinely new since the baseline, report it;
+//   - created before the window → pre-existing, surfaced only because it was
+//     updated. Its prior state was never observed, so any transition inferred
+//     from its current state alone would be a guess (an issue closed in 2020
+//     would look like it just closed). Record it and stay silent.
+//
+// The caller must pass the same window start it gave the provider as `since`.
 //
 // The derivation is deliberately conservative:
 //   - When several transitions occur within one polling interval, only the most
@@ -102,8 +113,11 @@ type Change struct {
 //     closed→reopened→merged sequence yields one "merged" rather than noise.
 //   - A comment is detected when either its id increases OR an existing
 //     comment's updated_at moves forward (an edit keeps the id).
-func DeriveChanges(prev *Snapshot, cur ItemState, number int) []Change {
+func DeriveChanges(prev *Snapshot, cur ItemState, number int, windowStart time.Time) []Change {
 	if prev == nil {
+		if !isNewWithinWindow(cur.CreatedAt, windowStart) {
+			return nil
+		}
 		// New item since the baseline. Emit the terminal state so a freshly
 		// opened (or already-merged) item is reported exactly once.
 		c, ok := deriveNewItemChange(cur)
@@ -132,6 +146,23 @@ func DeriveChanges(prev *Snapshot, cur ItemState, number int) []Change {
 		changes[i].Number = number
 	}
 	return changes
+}
+
+// isNewWithinWindow reports whether an item created at createdAt counts as new
+// relative to the queried window start.
+//
+// An unknown createdAt (zero — a provider that does not report it, or a test
+// that does not set it) is treated as new: staying silent on an unknown item
+// would silently drop events for such providers, whereas reporting a
+// pre-existing item at worst emits one spurious event per item, once.
+//
+// An unknown windowStart (zero — no window restriction was applied, i.e. a
+// full fetch) also counts as new, preserving the pre-window semantics.
+func isNewWithinWindow(createdAt, windowStart time.Time) bool {
+	if createdAt.IsZero() || windowStart.IsZero() {
+		return true
+	}
+	return !createdAt.Before(windowStart)
 }
 
 // deriveNewItemChange classifies an item seen for the first time since the

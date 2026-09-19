@@ -53,6 +53,16 @@ export interface AskMatch {
   parsed: AskItem[] | null
   /** Why an unparsed span was left alone. */
   reason?: string
+  /**
+   * Text to show in place of an unparsed span: the payload with its
+   * ask-question wrapper removed, so it renders as ordinary Markdown. Set only
+   * when `parsed` is null, and never empty for a non-empty span.
+   *
+   * Showing the inner text (rather than the raw tag) means a parse failure
+   * degrades to readable prose instead of exposing markup. No content is lost
+   * either way — the fallback contains everything the span held.
+   */
+  fallback?: string
 }
 
 /** Reason codes for an unparsed span (mirrors the Go constants). */
@@ -284,16 +294,51 @@ const RE_PLURAL_OPTION = /<\/?options\s*>/gi
 const RE_ENTITY = /^[a-zA-Z0-9#x]+;/
 
 /**
- * Understand the (possibly repaired) inner payload of an <ask-question> block.
- * Returns [] when nothing renderable was found — callers must then retain the
- * raw text.
+ * Understand the inner payload of an <ask-question> block. Returns [] when
+ * nothing renderable was found.
+ *
+ * The current format is native Markdown (see parseMarkdownItems). The legacy
+ * XML shape is still accepted so historical conversations keep rendering their
+ * cards — without it, every old card would degrade to visible markup.
+ *
+ * Ordering: a payload containing legacy child elements is parsed as XML only.
+ * Running the Markdown parser over XML would "succeed" by treating the tags as
+ * question text and produce a garbage card, so the shape is detected first
+ * rather than relying on the parsers to disagree.
  *
  * A JSON payload is intentionally not accepted: JSON support was removed on
  * purpose (commit d189374e1).
  */
 export function parseItems(inner: string): AskItem[] {
   if (inner.trim() === '') return []
-  if (looksLikeJson(inner)) return []
+  if (looksLikeJson(inner)) {
+    // JSON is not the documented format, but models still emit it. Recovery is
+    // attempted because the alternative is discarding a readable question; if
+    // it fails the payload renders as Markdown instead.
+    return recoverJsonItems(inner)
+  }
+  if (looksLikeLegacyXml(inner)) return parseXmlItems(inner)
+  const md = parseMarkdownItems(inner)
+  if (md.length > 0) return md
+  // Not obviously XML, but a malformed payload may still carry XML children.
+  return parseXmlItems(inner)
+}
+
+/**
+ * Whether the payload carries any legacy child element. Only these names are
+ * checked: a question that merely mentions a tag in prose must still be parsed
+ * as Markdown.
+ */
+function looksLikeLegacyXml(s: string): boolean {
+  const lower = s.toLowerCase()
+  return [
+    '<item', '<option', '<question', '<header', '<label',
+    '<description', '<multi-select', '<multi_select', '<options',
+  ].some(name => lower.includes(name))
+}
+
+/** The legacy XML parser. */
+function parseXmlItems(inner: string): AskItem[] {
   // <options> is a plural wrapper some models emit around the real <option>
   // elements; drop the wrapper so the option scan sees its children.
   const normalized = inner.replace(RE_PLURAL_OPTION, '')
@@ -305,9 +350,341 @@ export function parseItems(inner: string): AskItem[] {
   return repaired === normalized ? [] : scanItems(repaired)
 }
 
+// ────────────────────────────────────────────────────────────
+// Native Markdown payload
+// ────────────────────────────────────────────────────────────
+
+const RE_MD_FENCE = /^\s*```/
+const RE_MD_BOLD = /\*\*(.+?)\*\*/g
+const RE_MD_ITALIC = /\*([^*\n]+)\*/g
+const RE_ATX_HEADING = /^#{1,6}\s+(.*?)\s*#*$/
+const RE_BOLD_LINE = /^(?:\*\*(.+?)\*\*|__(.+?)__)$/
+/**
+ * An ordered-list marker: 1. / 1) / 1、 and the CJK numerals (一、二、…). The
+ * trailing content is captured separately so the "must be followed by a space"
+ * rule can differ per marker.
+ */
+const RE_ORDERED_MARKER = /^(\d+[.)、]|[一二三四五六七八九十]+[、.)])(.*)$/
+/**
+ * A checkbox at the start of a list item's content. Models emit ASCII,
+ * fullwidth and CJK brackets, with or without inner spacing, and with or
+ * without a check mark.
+ */
+const RE_CHECKBOX = /^(?:\[\s*[xX]?\s*\]|［\s*[xX]?\s*］|【\s*[xX]?\s*】)\s*(.*)$/
+
+/** U+3000, which models use as a fullwidth space. */
+const IDEOGRAPHIC_SPACE = '\u3000'
+const TRIM_SET = ` \t\r\n${IDEOGRAPHIC_SPACE}`
+
+/** Remove leading/trailing ASCII whitespace and the ideographic space. */
+function trimListSpace(s: string): string {
+  let start = 0
+  let end = s.length
+  while (start < end && TRIM_SET.includes(s[start])) start++
+  while (end > start && TRIM_SET.includes(s[end - 1])) end--
+  return s.slice(start, end)
+}
+
+/**
+ * Return the content of a list item when `line` starts with a list marker.
+ *
+ * Beyond CommonMark's "-", "*", "+" and "1.", this accepts the forms models
+ * actually emit: the fullwidth hyphen, CJK ordinal dots (1、), CJK numerals
+ * (一、), and a bullet with no following space (-甲). Those relaxations are
+ * guarded so ordinary prose is not mistaken for a list:
+ *
+ *   - "*" must be followed by a space, so "**bold**" and "*italic*" are not
+ *     list items;
+ *   - "-"/"+"/"－" must not be followed by a digit or hyphen, so "-5" and "---"
+ *     are not list items;
+ *   - "1."/"1)" must be followed by a space, so "1.5" is not a list item.
+ */
+function splitListMarker(line: string): { content: string; found: boolean } {
+  const trimmed = line.replace(new RegExp(`^[ \t${IDEOGRAPHIC_SPACE}]+`), '')
+  if (trimmed === '') return { content: '', found: false }
+
+  const first = trimmed[0]
+  if (first === '-' || first === '+' || first === '*' || first === '－') {
+    const rest = trimmed.slice(1)
+    if (first === '*') {
+      if (!rest.startsWith(' ') && !rest.startsWith('\t')) return { content: '', found: false }
+    } else if (rest !== '' && (/\d/.test(rest[0]) || rest[0] === '-')) {
+      return { content: '', found: false }
+    }
+    return { content: trimListSpace(rest), found: true }
+  }
+
+  const m = RE_ORDERED_MARKER.exec(trimmed)
+  if (m) {
+    const marker = m[1]
+    const rest = m[2]
+    if ((marker.endsWith('.') || marker.endsWith(')')) &&
+        !rest.startsWith(' ') && !rest.startsWith('\t')) {
+      return { content: '', found: false }
+    }
+    return { content: trimListSpace(rest), found: true }
+  }
+  return { content: '', found: false }
+}
+
+/** Return the header text when the whole line is an ATX heading or is bold. */
+function markdownHeader(line: string): string | null {
+  const trimmed = trimListSpace(line)
+  const atx = RE_ATX_HEADING.exec(trimmed)
+  if (atx) return cleanInline(atx[1])
+  const bold = RE_BOLD_LINE.exec(trimmed)
+  if (bold) {
+    if (bold[1]) return cleanInline(bold[1])
+    if (bold[2]) return cleanInline(bold[2])
+  }
+  return null
+}
+
+/**
+ * Parse a Markdown payload. At most one item is returned: the format defines
+ * one question per tag, and multiple questions are written as multiple tags.
+ */
+function parseMarkdownItems(inner: string): AskItem[] {
+  let header = ''
+  const qLines: string[] = []
+  const options: AskOption[] = []
+  let multi = false
+  let inFence = false
+
+  for (const raw of inner.split('\n')) {
+    const line = raw.replace(/[ \t\r]+$/, '')
+
+    // A fenced block is content, not structure: keep every line verbatim as
+    // question text so nothing inside it is mistaken for an option.
+    if (RE_MD_FENCE.test(line)) {
+      inFence = !inFence
+      qLines.push(line)
+      continue
+    }
+    if (inFence) {
+      qLines.push(line)
+      continue
+    }
+
+    // A header line is never a list item, so it is checked first. The title
+    // must precede the options; a bold line among the options is an option
+    // label, which splitListMarker already handles.
+    const h = markdownHeader(line)
+    if (h !== null) {
+      if (header === '' && options.length === 0) header = h
+      else qLines.push(h)
+      continue
+    }
+
+    const marker = splitListMarker(line)
+    if (marker.found) {
+      const cb = RE_CHECKBOX.exec(marker.content)
+      if (cb) {
+        multi = true
+        const opt = markdownOption(cb[1])
+        if (opt) options.push(opt)
+        continue
+      }
+      const opt = markdownOption(marker.content)
+      if (opt) options.push(opt)
+      continue
+    }
+
+    const t = trimListSpace(line)
+    if (t !== '') qLines.push(t)
+  }
+
+  const question = cleanInline(qLines.join(' '))
+  // A Markdown payload is a question only when it carries a list. Prose with no
+  // list is not a card: the assistant discusses the tag format in ordinary
+  // sentences, and turning every such mention into a card would be noise. This
+  // is also what gives "parse failure" a precise meaning — the caller then
+  // strips the wrapper and renders the text as Markdown.
+  if (options.length === 0) return []
+  return [{ header, multiSelect: multi, question, options }]
+}
+
+/**
+ * Read one list entry. The label and description are separated by an em dash
+ * (the documented form) or a spaced hyphen.
+ */
+function markdownOption(s: string): AskOption | null {
+  const { label: rawLabel, desc: rawDesc } = splitMarkdownOption(s.trim())
+  const label = cleanInline(rawLabel)
+  let desc = cleanInline(rawDesc)
+  if (label === '') return null
+  // A description identical to the label adds nothing to the card.
+  if (desc === label) desc = ''
+  return desc === '' ? { label } : { label, description: desc }
+}
+
+/** Split an option on its first separator, preferring the em dash. */
+function splitMarkdownOption(s: string): { label: string; desc: string } {
+  for (const sep of ['\u2014', '\u2013', ' - ']) {
+    const i = s.indexOf(sep)
+    if (i >= 0) return { label: s.slice(0, i), desc: s.slice(i + sep.length) }
+  }
+  return { label: s, desc: '' }
+}
+
+/**
+ * Remove inline Markdown emphasis markers and decode entities. The card renders
+ * plain text, so `**bold**` must not display its asterisks.
+ */
+function cleanInline(s: string): string {
+  const stripped = s
+    .replace(RE_MD_BOLD, '$1')
+    .replace(RE_MD_ITALIC, '$1')
+    .replace(/`/g, '')
+  // Entity decoding last, matching the Go mirror's cleanInline.
+  return unescapeEntities(stripped).replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Remove the ask-question wrapper and its legacy child elements, leaving
+ * everything else — including unknown tags and all text — untouched.
+ *
+ * This is what a failed parse degrades to: the wrapper disappears and the
+ * content falls through to the Markdown renderer. It never discards content,
+ * so the failure mode is "renders as plain text", not "question vanishes".
+ */
+const RE_ASK_WRAPPER_TAGS =
+  /<\/?(?:ask-question|item|header|question|option|options|label|description|multi[_-]?select)\b[^>]*>/gi
+
+export function stripAskTags(s: string): string {
+  return s.replace(RE_ASK_WRAPPER_TAGS, '')
+}
+
 function looksLikeJson(s: string): boolean {
   const t = s.trim().replace(/^`+/, '').trim()
   return t.startsWith('{') || t.startsWith('[')
+}
+
+// ────────────────────────────────────────────────────────────
+// Tolerant JSON recovery
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Attempt to read a JSON payload as items.
+ *
+ * The documented format is Markdown; this exists only so that a model that
+ * still emits JSON does not lose its question. Both the object shape
+ * ({"questions":[...]}) and a bare array ([{...}]) are accepted, and the
+ * unescaped-quote repair is applied when the strict parse fails.
+ */
+function recoverJsonItems(inner: string): AskItem[] {
+  const trimmed = inner.trim()
+  if (trimmed === '') return []
+
+  if (trimmed[0] === '[') {
+    const arr = parseTolerantJsonArray(trimmed)
+    if (arr === null) return []
+    return normalizeAskInput({ questions: arr })
+  }
+
+  const obj = parseTolerantJson(trimmed)
+  if (obj === null) return []
+  return normalizeAskInput(obj)
+}
+
+/** Decode a JSON object, repairing unescaped quotes inside string values. */
+function parseTolerantJson(s: string): Record<string, unknown> | null {
+  const t = s.trim()
+  if (!t.startsWith('{')) return null
+  try {
+    const parsed: unknown = JSON.parse(t)
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    // fall through to the repair path
+  }
+  const repaired = repairUnescapedQuotes(t)
+  if (repaired === null) return null
+  try {
+    const parsed: unknown = JSON.parse(repaired)
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/** Decode a JSON array, applying the same quote repair. */
+function parseTolerantJsonArray(s: string): unknown[] | null {
+  const t = s.trim()
+  if (!t.startsWith('[')) return null
+  try {
+    const parsed: unknown = JSON.parse(t)
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    // fall through to the repair path
+  }
+  const repaired = repairUnescapedQuotes(t)
+  if (repaired === null) return null
+  try {
+    const parsed: unknown = JSON.parse(repaired)
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Re-escape double quotes that appear inside a JSON string value.
+ *
+ * A quote is treated as a *closing* quote only when the next non-space
+ * character is structural for the enclosing context (`:`, `,`, `}`, `]`).
+ * Anything else is interior text and is escaped. This is enough for the real
+ * payloads, which contain typographic quotes inside values, without attempting
+ * to be a general JSON repairer.
+ *
+ * Returns null when no repair was needed (so the caller does not retry an
+ * identical parse).
+ */
+function repairUnescapedQuotes(s: string): string | null {
+  let out = ''
+  let inString = false
+  let changed = false
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (!inString) {
+      out += c
+      if (c === '"') inString = true
+      continue
+    }
+    if (c === '\\') {
+      out += c
+      if (i + 1 < s.length) {
+        i++
+        out += s[i]
+      }
+      continue
+    }
+    if (c === '"') {
+      if (closesString(s, i)) {
+        out += c
+        inString = false
+      } else {
+        out += '\\"'
+        changed = true
+      }
+      continue
+    }
+    out += c
+  }
+  return changed ? out : null
+}
+
+/**
+ * Whether the quote at s[i] ends the string it is in: true when what follows is
+ * structural (a colon, comma, or closing brace/bracket), skipping whitespace.
+ */
+function closesString(s: string, i: number): boolean {
+  for (let j = i + 1; j < s.length; j++) {
+    const c = s[j]
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') continue
+    return c === ':' || c === ',' || c === '}' || c === ']'
+  }
+  return true
 }
 
 /**
@@ -570,13 +947,27 @@ function locate(text: string, openStart: number, openEnd: number): AskMatch {
     }
   }
   const end = bound.spanEnd > openStart ? bound.spanEnd : openEnd
+  const raw = text.slice(openStart, end)
   return {
     start: openStart,
     end,
-    raw: text.slice(openStart, end),
+    raw,
     parsed: null,
     reason: bound.reason,
+    fallback: fallbackText(raw),
   }
+}
+
+/**
+ * Render an unparsed span as plain text: the ask-question wrapper and its legacy
+ * child elements are removed, everything else is kept.
+ *
+ * If stripping the wrapper would leave nothing (an empty tag), the raw span is
+ * returned unchanged — an empty fallback would silently erase the span.
+ */
+function fallbackText(raw: string): string {
+  const stripped = stripAskTags(raw).trim()
+  return stripped === '' ? raw : stripped
 }
 
 interface Bound { innerEnd: number; spanEnd: number; reason: string }
@@ -699,23 +1090,36 @@ function isGapNoise(r: string): boolean {
 }
 
 /**
- * Remove every successfully parsed span and leave the rest byte-for-byte
- * intact.
+ * Replace every located span with what should be shown in its place.
  *
- * Unparseable spans are deliberately NOT removed: their `raw` is the only
- * remaining copy of the question. Spans are removed from the end backwards so
- * earlier offsets stay valid.
+ * - A parsed span is removed entirely (the card renders it).
+ * - An unparsed span is replaced by its `fallback`: the payload with the
+ *   ask-question wrapper removed, so it renders as ordinary Markdown instead of
+ *   exposing raw markup.
+ *
+ * No content is ever discarded. An unparsed span's fallback holds everything
+ * the span contained, so the failure mode is "renders as plain text" — never
+ * the silent loss this module exists to prevent.
  */
 export function stripAskMatches(text: string, matches: AskMatch[]): string {
   if (matches.length === 0) return text
-  const parsed = matches
-    .filter(m => m.parsed !== null && m.start >= 0 && m.end <= text.length && m.end > m.start)
+  const applicable = matches
+    .filter(m => m.start >= 0 && m.end <= text.length && m.end > m.start)
     .sort((a, b) => a.start - b.start)
   let out = ''
   let prev = 0
-  for (const m of parsed) {
+  for (const m of applicable) {
     if (m.start < prev) continue
     out += text.slice(prev, m.start)
+    if (m.parsed !== null) {
+      // The card renders it; nothing goes into the text stream.
+    } else if (m.fallback) {
+      out += m.fallback
+    } else {
+      // Defensive: a fallback is always set for an unparsed span, but an empty
+      // one would erase content, so keep the raw text.
+      out += m.raw
+    }
     prev = m.end
   }
   return out + text.slice(prev)
@@ -752,8 +1156,13 @@ export function unparsedReasons(matches: AskMatch[]): string[] {
 export function askItemsToPlainText(items: AskItem[]): string {
   return items
     .map(it => {
+      // In the Markdown format the bold title is often the whole question
+      // ("**Which features?**" with only a checkbox list below), so the header
+      // leads when there is no separate question text. Otherwise it is a
+      // parenthetical label after the question.
       let s = it.question
-      if (it.header) s += ` (${it.header})`
+      if (!it.question && it.header) s = it.header
+      else if (it.header) s += ` (${it.header})`
       if (it.options.length > 0) {
         s += ': ' + it.options
           .map(o => (o.description && o.description !== o.label)

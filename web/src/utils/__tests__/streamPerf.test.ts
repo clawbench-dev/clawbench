@@ -40,9 +40,9 @@ describe('isValidAskContent', () => {
     expect(isValidAskContent(raw)).toBe(false)
   })
 
-  it('rejects JSON content (only XML is supported)', () => {
+  it('recovers JSON content rather than rejecting it', () => {
     const raw = '{"questions":[{"question":"Pick one","header":"Choice","options":[{"label":"A"}]}]}'
-    expect(isValidAskContent(raw)).toBe(false)
+    expect(isValidAskContent(raw)).toBe(true)
   })
 
   it('rejects empty string', () => {
@@ -100,10 +100,12 @@ describe('detectAskQuestion', () => {
     expect(result.found).toBe(false)
   })
 
-  it('returns found=false for <ask-question> with JSON content (only XML is supported)', () => {
+  it('recovers <ask-question> with JSON content', () => {
     const text = 'Some text\n<ask-question>\n{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"A","description":"Fast"},{"label":"B","description":"Safe"}]}]}\n</ask-question>'
     const result = detectAskQuestion(text)
-    expect(result.found).toBe(false)
+    expect(result.found).toBe(true)
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].header).toBe('Approach')
   })
 
   it('returns found=false when <ask-question> is mentioned without structured content', () => {

@@ -270,13 +270,13 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
         blockAskQuestions[askKey] = { questions: askResult.items }
       } else {
         // A previously-parsed block whose payload now fails must not keep a
-        // stale card alongside the retained raw text.
+        // stale card alongside the degraded text.
         delete blockAskQuestions[askKey]
-        appLog.w('AskQuestion', `unparseable payload retained: ${askResult.reasons.join(',')}`)
+        appLog.w('AskQuestion', `payload unparseable, rendering as markdown: ${askResult.reasons.join(',')}`)
       }
-      // Remove only the parsed spans. Unparseable tags are deliberately kept:
-      // their raw text is the only remaining copy of the question, and
-      // deleting it was the silent content-loss defect.
+      // Parsed spans are removed (the card renders them); unparsed spans are
+      // replaced by their inner text, so a malformed payload degrades to
+      // readable Markdown instead of exposing raw tags. Nothing is discarded.
       const cleanText = stripScheduledTaskTags(stripAskQuestionTag(text, askResult))
       return cleanText ? renderMarkdown(cleanText, { skipEnhancements: deferEnhancements }) : ''
     }
