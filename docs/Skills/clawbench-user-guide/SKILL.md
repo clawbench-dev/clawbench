@@ -948,3 +948,37 @@ await p.waitForTimeout(4000);   // 等输出渲染
    const j = await r.json();
    localStorage.setItem('clawbench-upgrade-skip', j.latest_version);
    ```
+
+### 移动端补充截图（第二批，8 张）
+
+| 文件 | 内容 | 触发方式 |
+|---|---|---|
+| m-42-session-tag-dialog | 设置标签弹窗 | 会话 `contextmenu` → 点「设置标签」 |
+| m-43-session-menu | 会话长按菜单（置顶/重命名/设置标签/归档） | `.session-row` 派发 `contextmenu` |
+| m-44-file-menu | 文件长按菜单（9 项） | **命中区必须用 `.file-name`**，否则落空白区菜单（4 项） |
+| m-45-file-multiselect | 多选模式（已选 N 项 + 批量栏） | 点 `button[title="多选"]`，再点条目 |
+| m-46-slash-commands | 斜杠命令菜单（104 项） | **真实键盘** `page.keyboard.type('/')`，不能用 evaluate 设值 |
+| m-47-tool-detail | 工具调用详情抽屉 | 点 `[class*=tool-call]` 卡片 |
+| m-48-term-gesture-help | 终端操作帮助（手势说明） | 终端内 `button[title="终端操作帮助"]` |
+
+**拍不到的（需真机/真实环境）**：
+
+| 内容 | 原因 |
+|---|---|
+| 语音输入录音态 | `useVoiceInput.start()` 需要真实 `getUserMedia`，无头浏览器无音频设备 |
+| PWA 安装提示 | `beforeinstallprompt` 在自动化环境不触发 |
+| 悬浮窗权限弹窗 | Android 系统级对话框 |
+| APK 安装器 | 系统 PackageInstaller |
+| 系统分享面板 | Android ShareSheet |
+| 音量键 / 返回键 | 硬件按键 |
+
+**本轮新增的两个踩坑**：
+
+1. **斜杠命令菜单必须用真实键盘**。之前用 `evaluate` 设 `textarea.value` + 派发 `input`
+   事件始终不触发（`items:0`）；改用 `page.keyboard.type('/', { delay: 120 })` 立即成功
+   （104 个候选项）。原因：`parseSlashQuery` 依赖 caret 与 `isTextareaFocused`，
+   只有真实键盘事件才会同步更新这两者。
+
+2. **语音输入的长按用的是 `pointerdown`/`pointerup`**（`ChatInputBar.vue:703-723`），
+   不是 touch 事件，且条件为 `!hasInputContent.value`（空输入时）。
+   但即使触发成功，`start()` 仍会因无麦克风而报错——**这张只能真机拍**。
