@@ -510,7 +510,7 @@ func TestScheduler_ExecuteTask_BroadcastsStreamStart(t *testing.T) {
 	setupSchedulerExecDB(t)
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test Agent", Backend: "test-sched-stream-start", SystemPrompt: "test prompt"},
+		"test-agent": {ID: "test-agent", Name: "Test Agent", Backend: "test-sched-stream-start", RuntimeSystemPrompt: "test prompt"},
 	}
 	defer func() { model.Agents = origAgents }()
 

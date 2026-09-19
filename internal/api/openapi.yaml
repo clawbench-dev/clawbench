@@ -2941,7 +2941,7 @@ paths:
       tags: [Agents]
       summary: agent 子资源
       description: |
-        GET 子路径：`/api/agents/{id}/common-prompt`、`/api/agents/{id}/acp-sessions`。
+        GET 子路径：`/api/agents/{id}/acp-sessions`。
         （`/api/agents/{id}/refresh-models` 与 `/api/agents/rescan` 只接受 POST。）
       operationId: agentSubGet
       parameters:

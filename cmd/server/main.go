@@ -912,10 +912,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// persist, and reload memory. It replaces five separate steps that each
 	// re-queried the database and re-ran the same discovery probes.
 	//
-	// 1a. Migrate custom_system_prompt first so the prompt composition in the
-	// reload works correctly on a first startup with legacy system_prompt data.
-	service.MigrateCustomSystemPrompt()
-
 	if _, err := model.RefreshAgents(service.WriteDB(), model.RefreshOptions{
 		ConfigDir: filepath.Dir(configPath),
 	}); err != nil {

@@ -893,7 +893,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// so they never appear in a scheduled execution's context. ScheduledExecution
 	// is still set below, but it only controls backend session handling (pi's
 	// --no-session) — it is NOT a handler-level guard.
-	systemPrompt := agent.SystemPrompt
+	systemPrompt := agent.RuntimeSystemPrompt
 	// Replace {{PROJECT_PATH}} per-request with the actual project path for this task
 	if projectPath != "" {
 		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)

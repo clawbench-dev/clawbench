@@ -298,7 +298,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// (e.g., RAG store which has its own *sql.DB on a separate database file).
 	// MaxOpenConns must be > 1 to avoid deadlocks when iterating rows (which holds
 	// a connection) and performing writes (which needs a separate connection) in the
-	// same loop — e.g., MigrateCustomSystemPrompt's SELECT + UPDATE pattern.
+	// same loop — e.g., the agent prompt migrations' SELECT + UPDATE pattern.
 	db.SetMaxOpenConns(2)
 
 	// Enable WAL mode for concurrent reads during writes
@@ -1247,6 +1247,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: drop the legacy agents.system_prompt column (see the function for why).
+	if err := migrateLegacyAgentPrompts(db); err != nil {
+		return err
+	}
+
 	// Migrate: drop deleted column from chat_history.
 	// Archival is handled at the session level (chat_sessions.archived),
 	// so chat_history.deleted is redundant. Removing it simplifies queries
@@ -2042,6 +2047,48 @@ func MigrateTaskExecutionSummaries() {
 	}
 
 	slog.Info("task_execution summary migration complete", slog.Int("migrated", migrated), slog.Int("total", count))
+}
+
+// MigrateLegacyAgentPrompts drops the legacy agents.system_prompt column on the
+// package database. Exported for tests; InitDB uses migrateLegacyAgentPrompts so
+// it can act on the handle it is currently opening.
+func MigrateLegacyAgentPrompts() error {
+	return migrateLegacyAgentPrompts(db)
+}
+
+// migrateLegacyAgentPrompts drops the legacy agents.system_prompt column and
+// discards the prompt text it left behind in custom_system_prompt.
+//
+// That column used to hold the composed prompt (shared prefix + user text), and
+// the read path treated the stored string as the user's own prompt. The frozen
+// copy was appended after the freshly composed one, so it won — which made every
+// change to the built-in prompt a silent no-op on existing installs. A later
+// migration then copied the same composed text into custom_system_prompt, so it
+// has to be cleared as well; otherwise the stale copy would simply be injected
+// from the other column.
+//
+// Only custom_system_prompt holds user text now, and the prompt is composed on
+// every read. The guard is the column's existence, so this is a no-op once the
+// column is gone.
+func migrateLegacyAgentPrompts(d *sql.DB) error {
+	var hasLegacy int
+	if err := d.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='system_prompt'",
+	).Scan(&hasLegacy); err != nil {
+		return fmt.Errorf("check legacy system_prompt column: %w", err)
+	}
+	if hasLegacy == 0 {
+		return nil
+	}
+
+	if _, err := d.Exec("UPDATE agents SET custom_system_prompt = '' WHERE system_prompt != ''"); err != nil {
+		return fmt.Errorf("failed to clear legacy agent prompts: %w", err)
+	}
+	if _, err := d.Exec("ALTER TABLE agents DROP COLUMN system_prompt"); err != nil {
+		return fmt.Errorf("failed to drop system_prompt column from agents: %w", err)
+	}
+	slog.Info("dropped legacy agents.system_prompt column")
+	return nil
 }
 
 // MigrateToolCallsFromContent scans assistant messages that contain tool_use blocks

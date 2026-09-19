@@ -511,12 +511,6 @@ export async function patchAgentField(agentId: string, field: string, value: str
     // name, specialty map to themselves
   }
   updateAgentField(agentId, fieldMap[field] || field, value)
-  // When custom_system_prompt changes, reload agents to get the server-composed
-  // systemPrompt (commonPrompt + customSystemPrompt) into the reactive store.
-  if (field === 'custom_system_prompt') {
-    const { loadAgents } = useAgents()
-    await loadAgents(true)
-  }
 }
 
 /** Read the preferred model ID for an agent from the server-side agent data. */

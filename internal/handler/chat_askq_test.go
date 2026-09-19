@@ -8,7 +8,9 @@ import (
 	"clawbench/internal/model"
 )
 
-func TestConvertAskQuestionBlocks_JSONContentNotConverted(t *testing.T) {
+// JSON is not the documented format, but recovering it beats discarding a
+// readable question.
+func TestConvertAskQuestionBlocks_JSONContentIsRecovered(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: "Here is my analysis.\n\n<ask-question>\n{\"questions\":[{\"header\":\"Approach\",\"multiSelect\":false,\"question\":\"Which approach?\",\"options\":[{\"label\":\"Option A\",\"description\":\"Fast\"}]}]}\n</ask-question>"},
 	}
@@ -17,9 +19,14 @@ func TestConvertAskQuestionBlocks_JSONContentNotConverted(t *testing.T) {
 
 	for _, b := range result {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
-			t.Fatalf("expected no AskUserQuestion block for JSON content, got: %+v", result)
+			qs, _ := b.Input["questions"].([]map[string]any)
+			if len(qs) != 1 || qs[0]["question"] != "Which approach?" {
+				t.Fatalf("unexpected recovered questions: %+v", qs)
+			}
+			return
 		}
 	}
+	t.Fatalf("expected the JSON payload to be recovered, got: %+v", result)
 }
 
 func TestConvertAskQuestionBlocks_WrongCloseTag_StripsTagFromText(t *testing.T) {

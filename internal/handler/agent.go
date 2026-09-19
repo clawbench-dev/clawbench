@@ -61,10 +61,6 @@ func prepareInstallCmd(installCmd string) string {
 // ServeAgentSubRoutes handles /api/agents/* sub-routes (e.g. /api/agents/{id}/refresh-models).
 func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if strings.HasSuffix(path, "/common-prompt") && r.Method == http.MethodGet {
-		ServeAgentCommonPrompt(w, r)
-		return
-	}
 	if strings.HasSuffix(path, "/refresh-models") && r.Method == http.MethodPost {
 		ServeAgentRefreshModels(w, r)
 		return
@@ -78,16 +74,6 @@ func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
-}
-
-// ServeAgentCommonPrompt handles GET /api/agents/common-prompt — returns the
-// built-in common prompt that is prepended to all agents' system prompts.
-// The frontend uses this to strip the common prefix when displaying the
-// user-editable custom system prompt in the settings panel.
-func ServeAgentCommonPrompt(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"commonPrompt": model.BuildCommonPrompt(),
-	})
 }
 
 // ServeAgents returns the list of configured AI agents.
@@ -590,15 +576,10 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	}
 	if ap.CustomSystemPrompt != nil {
 		agent.CustomSystemPrompt = *ap.CustomSystemPrompt
-		// Recompose SystemPrompt
-		commonPrompt := model.BuildCommonPrompt()
-		if commonPrompt != "" && agent.CustomSystemPrompt != "" {
-			agent.SystemPrompt = commonPrompt + "\n\n" + agent.CustomSystemPrompt
-		} else if commonPrompt != "" {
-			agent.SystemPrompt = commonPrompt
-		} else {
-			agent.SystemPrompt = agent.CustomSystemPrompt
-		}
+		// Keep the in-memory runtime prompt in step with the new text. The
+		// stored value is CustomSystemPrompt; this composition is derived and
+		// is redone from scratch on the next load.
+		agent.RuntimeSystemPrompt = model.ComposeSystemPrompt(agent.CustomSystemPrompt)
 	}
 	if ap.SortOrder != nil {
 		agent.SortOrder = *ap.SortOrder

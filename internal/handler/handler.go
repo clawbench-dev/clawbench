@@ -212,7 +212,7 @@ func resolveAgentConfig(agentID string) (string, string, string, string, bool) {
 	if !found {
 		return "", "", "", "", false
 	}
-	return agent.Backend, agent.DefaultModelID(), agent.SystemPrompt, agent.Command, true
+	return agent.Backend, agent.DefaultModelID(), agent.RuntimeSystemPrompt, agent.Command, true
 }
 
 // requireSessionID extracts session ID from query param or cookie.

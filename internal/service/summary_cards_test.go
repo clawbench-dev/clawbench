@@ -152,16 +152,29 @@ func TestExtractSummaryCardsAskQuestion_UnclosedOption(t *testing.T) {
 	}
 }
 
-// An unparseable payload contributes no summary card; the raw text stays in the
-// block (the caller retains it) rather than being consumed.
+// A payload that carries no question contributes no summary card; the text stays
+// in the block rather than being consumed.
 func TestExtractSummaryCardsAskQuestion_UnparseableProducesNoCard(t *testing.T) {
 	blocks := []model.ContentBlock{{
 		Type: "text",
-		Text: `<ask-question>{"questions":[{"question":"Q?"}]}</ask-question>`,
+		Text: `<ask-question>这里没有列表也没有 JSON，只是一段说明。</ask-question>`,
 	}}
 	cards := extractSummaryCards(blocks)
 	if len(cards.AskQuestions) != 0 {
-		t.Fatalf("expected no summary card for a JSON payload, got %+v", cards.AskQuestions)
+		t.Fatalf("expected no summary card for prose, got %+v", cards.AskQuestions)
+	}
+}
+
+// A JSON payload is not the documented format, but it is recovered into a card
+// rather than discarded.
+func TestExtractSummaryCardsAskQuestion_JSONIsRecovered(t *testing.T) {
+	blocks := []model.ContentBlock{{
+		Type: "text",
+		Text: `<ask-question>{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}</ask-question>`,
+	}}
+	cards := extractSummaryCards(blocks)
+	if len(cards.AskQuestions) != 1 || cards.AskQuestions[0].Question != "Q?" {
+		t.Fatalf("expected the JSON payload to be recovered, got %+v", cards.AskQuestions)
 	}
 }
 

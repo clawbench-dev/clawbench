@@ -1300,8 +1300,6 @@ func TestServeAgentSubRoutes(t *testing.T) {
 		method     string
 		wantStatus int
 	}{
-		{name: "common-prompt GET", path: "/api/agents/common-prompt", method: http.MethodGet, wantStatus: http.StatusOK},
-		{name: "common-prompt POST not found", path: "/api/agents/common-prompt", method: http.MethodPost, wantStatus: http.StatusNotFound},
 		{name: "refresh-models POST", path: "/api/agents/test-agent/refresh-models", method: http.MethodPost, wantStatus: http.StatusNotFound},
 		{name: "acp-sessions GET", path: "/api/agents/test-agent/acp-sessions", method: http.MethodGet, wantStatus: http.StatusNotFound},
 		{name: "unknown sub-route", path: "/api/agents/test-agent/unknown", method: http.MethodGet, wantStatus: http.StatusNotFound},
@@ -1315,22 +1313,6 @@ func TestServeAgentSubRoutes(t *testing.T) {
 			assert.Equal(t, tc.wantStatus, w.Code)
 		})
 	}
-}
-
-func TestServeAgentCommonPrompt(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/agents/common-prompt", http.NoBody)
-	w := httptest.NewRecorder()
-	ServeAgentCommonPrompt(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp, "commonPrompt")
-	// commonPrompt should be a string (may be empty)
-	_, ok := resp["commonPrompt"].(string)
-	assert.True(t, ok, "commonPrompt should be a string")
 }
 
 // ── Extended PATCH field tests ──

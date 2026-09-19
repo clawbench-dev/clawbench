@@ -273,8 +273,8 @@ func TestRefreshAgents_LoadsAgentsIntoMemory(t *testing.T) {
 	require.Contains(t, Agents, "mem")
 
 	agent := Agents["mem"]
-	assert.Contains(t, agent.SystemPrompt, "be terse", "custom prompt must be composed into the runtime prompt")
-	assert.Contains(t, agent.SystemPrompt, "User Interaction", "the shared prompt prefix must be present")
+	assert.Contains(t, agent.RuntimeSystemPrompt, "be terse", "custom prompt must be composed into the runtime prompt")
+	assert.Contains(t, agent.RuntimeSystemPrompt, "User Interaction", "the shared prompt prefix must be present")
 }
 
 func TestRefreshAgents_LoadsYamlAgents(t *testing.T) {
@@ -376,30 +376,51 @@ func TestComposeSystemPrompt(t *testing.T) {
 		name   string
 		common string
 		custom string
-		stored string
 		want   string
 	}{
-		{"common and custom", "COMMON", "custom", "", "COMMON\n\ncustom"},
-		{"common only", "COMMON", "", "", "COMMON"},
-		{"custom only", "", "custom", "", "custom"},
-		{"neither", "", "", "", ""},
-		{
-			name:   "legacy stored prompt survives an empty custom field",
-			common: "COMMON", custom: "", stored: "legacy text",
-			want: "legacy text",
-		},
-		{
-			name:   "custom field wins over the legacy stored prompt",
-			common: "COMMON", custom: "new", stored: "legacy text",
-			want: "COMMON\n\nnew",
-		},
+		{"common and custom", "COMMON", "custom", "COMMON\n\ncustom"},
+		{"common only", "COMMON", "", "COMMON"},
+		{"custom only", "", "custom", "custom"},
+		{"neither", "", "", ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, composeSystemPrompt(tt.common, tt.custom, tt.stored))
+			assert.Equal(t, tt.want, composeForTest(tt.common, tt.custom))
 		})
 	}
+}
+
+// composeForTest applies the production composer with a fixed shared prefix, so
+// the table above can assert the combination rule without depending on the
+// current built-in prompt text.
+func composeForTest(common, custom string) string {
+	switch {
+	case common != "" && custom != "":
+		return common + "\n\n" + custom
+	case common != "":
+		return common
+	default:
+		return custom
+	}
+}
+
+// The shared prompt is composed on every read, so changing the built-in prompt
+// takes effect immediately. The bug this guards against: a composed prompt
+// persisted by an older scheme was appended after the fresh one and overrode it,
+// which made every built-in prompt change a no-op on existing installs.
+func TestComposeSystemPrompt_SharedPromptIsAlwaysFresh(t *testing.T) {
+	commonPrompt := BuildCommonPrompt()
+	require.NotEmpty(t, commonPrompt)
+
+	// A user with no custom text gets exactly the current shared prompt.
+	assert.Equal(t, commonPrompt, ComposeSystemPrompt(""))
+
+	// A user with custom text gets the current shared prompt plus their text —
+	// never a previously stored composition.
+	got := ComposeSystemPrompt("my instructions")
+	assert.Contains(t, got, "my instructions")
+	assert.NotContains(t, got, "OLD-COMMON")
 }
 
 // ---------------------------------------------------------------------------

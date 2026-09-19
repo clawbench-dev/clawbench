@@ -24,15 +24,24 @@ type Agent struct {
 	PreferredMode           string       `json:"preferredMode"`           // user's preferred ACP mode; empty = use agent's default
 	PreferredModel          string       `json:"preferredModel"`          // user's preferred model; empty = use BaseModelID()
 	PreferredThinkingEffort string       `json:"preferredThinkingEffort"` // user's preferred thinking effort; empty = use ThinkingEffort
-	SystemPrompt            string       `json:"systemPrompt"`
+	// RuntimeSystemPrompt is the fully composed prompt (shared prefix + the
+	// user's own text). It is a RUNTIME-ONLY value: composed on every load by
+	// LoadAgentsIntoMemoryFromDB and never persisted.
+	//
+	// It is deliberately not a stored column. Persisting a composed prompt
+	// freezes whatever the shared prefix looked like at the time, so a later
+	// change to the built-in prompt is appended after that frozen copy and has
+	// no effect. Only CustomSystemPrompt is durable; this field is derived.
+	RuntimeSystemPrompt string `json:"-"`
 
 	// ACP configuration (only used when Transport != "cli")
 	Transport  string `json:"transport"`            // "cli" | "acp-stdio"; default depends on AcpCommand
 	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "kimi --acp"
 
-	// CustomSystemPrompt is the user-editable portion of the system prompt.
-	// At runtime, LoadAgentsIntoMemory composes: SystemPrompt = commonPrompt + customSystemPrompt.
-	// This separation ensures upgrades that change commonPrompt don't corrupt the stored prompt.
+	// CustomSystemPrompt is the user's own prompt text — the only prompt value
+	// that is persisted. At runtime LoadAgentsIntoMemoryFromDB composes
+	// RuntimeSystemPrompt = shared prompt + CustomSystemPrompt, so changing the
+	// built-in prompt always takes effect and can never corrupt stored text.
 	CustomSystemPrompt string `json:"customSystemPrompt"`
 
 	// ModelsAutoDetected indicates whether Models were filled by auto-discovery

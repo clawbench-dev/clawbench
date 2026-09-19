@@ -407,12 +407,12 @@ func TestBuildChatRequest_AgentWithAllFields(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
 		"test-agent": {
-			ID:             "test-agent",
-			SystemPrompt:   "You are at {{PROJECT_PATH}}",
-			Command:        "/usr/bin/test-cli",
-			ThinkingEffort: "high",
-			PreferredMode:  "code",
-			Models:         []model.AgentModel{{ID: "model-1", Default: true}},
+			ID:                  "test-agent",
+			RuntimeSystemPrompt: "You are at {{PROJECT_PATH}}",
+			Command:             "/usr/bin/test-cli",
+			ThinkingEffort:      "high",
+			PreferredMode:       "code",
+			Models:              []model.AgentModel{{ID: "model-1", Default: true}},
 		},
 	})
 
@@ -429,7 +429,7 @@ func TestBuildChatRequest_ModelOverridePrecedence(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", Models: []model.AgentModel{{ID: "default-model", Default: true}}},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", Models: []model.AgentModel{{ID: "default-model", Default: true}}},
 	})
 
 	req := BuildChatRequest("hi", "sess-model-override", "", "claude", "test-agent", "custom-model", "", "", "", "", false)
@@ -441,7 +441,7 @@ func TestBuildChatRequest_NoOverride_NoDefaultModel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", Models: []model.AgentModel{}},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", Models: []model.AgentModel{}},
 	})
 
 	req := BuildChatRequest("hi", "sess-no-model", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -453,7 +453,7 @@ func TestBuildChatRequest_ProjectPathReplacement(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "Work on {{PROJECT_PATH}} and {{PROJECT_PATH}} again"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "Work on {{PROJECT_PATH}} and {{PROJECT_PATH}} again"},
 	})
 
 	req := BuildChatRequest("hi", "sess-path-repl", "/my/path", "claude", "test-agent", "", "", "", "", "/my/path", false)
@@ -465,7 +465,7 @@ func TestBuildChatRequest_EmptyProjectPath_NoReplacement(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "Work on {{PROJECT_PATH}}"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "Work on {{PROJECT_PATH}}"},
 	})
 
 	req := BuildChatRequest("hi", "sess-empty-path", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -477,7 +477,7 @@ func TestBuildChatRequest_ThinkingEffortOverridePrecedence(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", ThinkingEffort: "low"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", ThinkingEffort: "low"},
 	})
 
 	req := BuildChatRequest("hi", "sess-effort-override", "", "claude", "test-agent", "", "high", "", "", "", false)
@@ -489,7 +489,7 @@ func TestBuildChatRequest_ThinkingEffortFromAgent(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", ThinkingEffort: "low", PreferredThinkingEffort: "medium"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", ThinkingEffort: "low", PreferredThinkingEffort: "medium"},
 	})
 
 	req := BuildChatRequest("hi", "sess-effort-agent", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -501,7 +501,7 @@ func TestBuildChatRequest_ModeOverridePrecedence(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", PreferredMode: "code"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", PreferredMode: "code"},
 	})
 
 	req := BuildChatRequest("hi", "sess-mode-override", "", "claude", "test-agent", "", "", "plan", "", "", false)
@@ -513,7 +513,7 @@ func TestBuildChatRequest_ModeFromAgent(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello", PreferredMode: "code"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", PreferredMode: "code"},
 	})
 
 	req := BuildChatRequest("hi", "sess-mode-agent", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -525,7 +525,7 @@ func TestBuildChatRequest_NoCommand(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", SystemPrompt: "hello"},
+		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello"},
 	})
 
 	req := BuildChatRequest("hi", "sess-no-command", "", "claude", "test-agent", "", "", "", "", "", false)
@@ -538,7 +538,7 @@ func TestBuildChatRequest_DefaultModelFromPreferredModel(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{
 		"test-agent": {
-			ID: "test-agent", SystemPrompt: "hello",
+			ID: "test-agent", RuntimeSystemPrompt: "hello",
 			PreferredModel: "preferred-model",
 			Models:         []model.AgentModel{{ID: "default-model", Default: true}},
 		},
@@ -558,7 +558,7 @@ func TestBuildChatRequest_DefaultModelFromPreferredModel(t *testing.T) {
 func TestBuildChatRequest_TransportOverrideACPStdio(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", RuntimeSystemPrompt: "s"}})
 
 	req := BuildChatRequest("hi", "sess-acp-override", "", "claude", "any-agent", "", "", "", "acp-stdio", "", false)
 
@@ -568,7 +568,7 @@ func TestBuildChatRequest_TransportOverrideACPStdio(t *testing.T) {
 func TestBuildChatRequest_TransportOverrideCLI(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", RuntimeSystemPrompt: "s"}})
 
 	// No assistant history → resume stays false, so the id is kept regardless.
 	req := BuildChatRequest("hi", "sess-cli-override", "", "claude", "any-agent", "", "", "", "cli", "", false)
@@ -579,7 +579,7 @@ func TestBuildChatRequest_TransportOverrideCLI(t *testing.T) {
 func TestBuildChatRequest_NoOverride_AgentWithACPTransport(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", SystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
 
 	req := BuildChatRequest("hi", "sess-acp-agent", "", "claude", "acp-agent", "", "", "", "", "", false)
 
@@ -589,7 +589,7 @@ func TestBuildChatRequest_NoOverride_AgentWithACPTransport(t *testing.T) {
 func TestBuildChatRequest_NoOverride_AgentWithCLITransport(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"cli-agent": {ID: "cli-agent", SystemPrompt: "s", Transport: "cli"}})
+	withAgents(t, map[string]*model.Agent{"cli-agent": {ID: "cli-agent", RuntimeSystemPrompt: "s", Transport: "cli"}})
 
 	req := BuildChatRequest("hi", "sess-cli-agent", "", "claude", "cli-agent", "", "", "", "", "", false)
 
@@ -609,7 +609,7 @@ func TestBuildChatRequest_NoOverride_UnknownAgent(t *testing.T) {
 func TestBuildChatRequest_OverrideTakesPrecedenceOverAgent(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", SystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
 
 	// Explicit "cli" must win over the agent's acp-stdio transport.
 	req := BuildChatRequest("hi", "sess-override-wins", "", "claude", "acp-agent", "", "", "", "cli", "", false)
@@ -622,7 +622,7 @@ func TestBuildChatRequest_OverrideTakesPrecedenceOverAgent(t *testing.T) {
 func TestBuildChatRequest_NewSession_NoResume(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"a": {ID: "a", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"a": {ID: "a", RuntimeSystemPrompt: "s"}})
 
 	req := BuildChatRequest("hi", "new-session", "", "claude", "a", "", "", "", "", "", false)
 
@@ -634,7 +634,7 @@ func TestBuildChatRequest_NewSession_NoResume(t *testing.T) {
 func TestBuildChatRequest_ResumeWithExternalID_NonACP(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"a": {ID: "a", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"a": {ID: "a", RuntimeSystemPrompt: "s"}})
 
 	sessionID := "sess-resume-1"
 	_, err := WriteExec(
@@ -658,7 +658,7 @@ func TestBuildChatRequest_ResumeWithExternalID_NonACP(t *testing.T) {
 func TestBuildChatRequest_ResumeWithoutExternalID_Fork(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"a": {ID: "a", SystemPrompt: "s"}})
+	withAgents(t, map[string]*model.Agent{"a": {ID: "a", RuntimeSystemPrompt: "s"}})
 
 	sessionID := "sess-fork-1"
 	_, err := WriteExec(
@@ -692,7 +692,7 @@ func TestBuildChatRequest_ResumeWithoutExternalID_Fork(t *testing.T) {
 func TestBuildChatRequest_ResumeACPWithForkContext(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", SystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
 
 	sessionID := "sess-acp-fork"
 	_, err := WriteExec(
@@ -721,7 +721,7 @@ func TestBuildChatRequest_ResumeACPWithForkContext(t *testing.T) {
 func TestBuildChatRequest_ResumeACPWithExternalID(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", SystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
 
 	sessionID := "sess-acp-ext"
 	_, err := WriteExec(
@@ -755,9 +755,9 @@ func TestBuildChatRequest_EmptyAgentID_UsesDefault(t *testing.T) {
 	origDefaultID := model.DefaultAgentID
 	model.Agents = map[string]*model.Agent{
 		"default-agent": {
-			ID:           "default-agent",
-			SystemPrompt: "default prompt",
-			Models:       []model.AgentModel{{ID: "default-model", Default: true}},
+			ID:                  "default-agent",
+			RuntimeSystemPrompt: "default prompt",
+			Models:              []model.AgentModel{{ID: "default-model", Default: true}},
 		},
 	}
 	model.AgentList = []*model.Agent{{ID: "default-agent"}}
@@ -801,9 +801,9 @@ func TestBuildChatRequest_WithModelOverride(t *testing.T) {
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{
 		"test-agent": {
-			ID:           "test-agent",
-			SystemPrompt: "hello",
-			Models:       []model.AgentModel{{ID: "default-model", Default: true}},
+			ID:                  "test-agent",
+			RuntimeSystemPrompt: "hello",
+			Models:              []model.AgentModel{{ID: "default-model", Default: true}},
 		},
 	}
 	defer func() { model.Agents = origAgents }()
@@ -837,9 +837,9 @@ func TestBuildChatRequest_AgentWithCommand(t *testing.T) {
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{
 		"cmd-agent": {
-			ID:           "cmd-agent",
-			SystemPrompt: "prompt",
-			Command:      "/usr/local/bin/special-cli",
+			ID:                  "cmd-agent",
+			RuntimeSystemPrompt: "prompt",
+			Command:             "/usr/local/bin/special-cli",
 		},
 	}
 	defer func() { model.Agents = origAgents }()
@@ -855,8 +855,8 @@ func TestBuildChatRequest_AgentWithProjectPathReplacement(t *testing.T) {
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{
 		"path-agent": {
-			ID:           "path-agent",
-			SystemPrompt: "You are working in {{PROJECT_PATH}}",
+			ID:                  "path-agent",
+			RuntimeSystemPrompt: "You are working in {{PROJECT_PATH}}",
 		},
 	}
 	defer func() { model.Agents = origAgents }()

@@ -3,6 +3,7 @@ package service_test
 import (
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -20,38 +21,8 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
 
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS agents (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			icon TEXT NOT NULL DEFAULT '',
-			specialty TEXT NOT NULL DEFAULT '',
-			backend TEXT NOT NULL,
-			command TEXT NOT NULL DEFAULT '',
-			thinking_effort TEXT NOT NULL DEFAULT '',
-			thinking_effort_levels TEXT NOT NULL DEFAULT '[]',
-			preferred_mode TEXT NOT NULL DEFAULT '',
-			preferred_model TEXT NOT NULL DEFAULT '',
-			preferred_thinking_effort TEXT NOT NULL DEFAULT '',
-			system_prompt TEXT NOT NULL DEFAULT '',
-			custom_system_prompt TEXT NOT NULL DEFAULT '',
-			models TEXT NOT NULL DEFAULT '[]',
-			models_auto_detected INTEGER NOT NULL DEFAULT 0,
-			sort_order INTEGER NOT NULL DEFAULT 0,
-			transport TEXT NOT NULL DEFAULT 'cli',
-			acp_command TEXT NOT NULL DEFAULT '',
-			acp_available_modes TEXT NOT NULL DEFAULT '[]',
-			acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
-			acp_available_commands TEXT NOT NULL DEFAULT '[]',
-			acp_available_models TEXT NOT NULL DEFAULT '[]',
-			acp_config_options TEXT NOT NULL DEFAULT '',
-			auto_approve INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE INDEX IF NOT EXISTS idx_agents_backend ON agents(backend);
-		CREATE INDEX IF NOT EXISTS idx_agents_sort ON agents(sort_order);
-	`)
+	// Use the production DDL so the fixture cannot drift from the real schema.
+	_, err = db.Exec(service.AgentDDL)
 	require.NoError(t, err)
 
 	// Save and replace global DB
@@ -314,7 +285,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 	expectedColumns := map[string]bool{
 		"id": true, "name": true, "icon": true, "specialty": true, "backend": true,
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
-		"preferred_mode": true, "preferred_model": true, "preferred_thinking_effort": true, "system_prompt": true,
+		"preferred_mode": true, "preferred_model": true, "preferred_thinking_effort": true,
 		"custom_system_prompt": true,
 		"models":               true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
@@ -381,7 +352,7 @@ func TestSaveAgent_ModelsWithSpecialChars(t *testing.T) {
 		Models: []model.AgentModel{
 			{ID: "anthropic/claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Default: true},
 		},
-		SystemPrompt: "You are a helpful assistant.\nWith newlines and \"quotes\".",
+		CustomSystemPrompt: "You are a helpful assistant.\nWith newlines and \"quotes\".",
 	}
 	err := service.SaveAgent(db, agent)
 	require.NoError(t, err)
@@ -391,7 +362,7 @@ func TestSaveAgent_ModelsWithSpecialChars(t *testing.T) {
 	require.Len(t, agents, 1)
 	assert.Equal(t, "anthropic/claude-sonnet-4-6", agents[0].Models[0].ID)
 	assert.Equal(t, "Claude Sonnet 4.6", agents[0].Models[0].Name)
-	assert.Contains(t, agents[0].SystemPrompt, "newlines and \"quotes\"")
+	assert.Contains(t, agents[0].CustomSystemPrompt, "newlines and \"quotes\"")
 }
 
 func TestSaveAgent_WithTransport(t *testing.T) {
@@ -558,12 +529,16 @@ func TestPatchAgentFields_CustomSystemPrompt(t *testing.T) {
 	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
+	// LoadAgentsFromDB is a raw read: only the user's text is stored.
 	assert.Equal(t, custom, agents[0].CustomSystemPrompt)
-	// system_prompt should be composed: commonPrompt + customSystemPrompt
+	assert.Empty(t, agents[0].RuntimeSystemPrompt, "the composed prompt is never persisted")
+
+	// Composition happens when agents are loaded into memory, using the current
+	// shared prompt — so a change to the built-in prompt always takes effect.
+	require.NoError(t, service.LoadAgentsIntoMemory())
 	commonPrompt := model.BuildCommonPrompt()
-	if commonPrompt != "" {
-		assert.Equal(t, commonPrompt+"\n\n"+custom, agents[0].SystemPrompt)
-	}
+	require.NotEmpty(t, commonPrompt)
+	assert.Equal(t, commonPrompt+"\n\n"+custom, model.Agents["pi"].RuntimeSystemPrompt)
 }
 
 func TestPatchAgentFields_SortOrder(t *testing.T) {
@@ -610,78 +585,56 @@ func TestPatchAgentFields_NilFieldsSkipped(t *testing.T) {
 	assert.Equal(t, "Pi", agents[0].Name)
 }
 
-// ── MigrateCustomSystemPrompt tests ──
+// ── Prompt storage tests ──
 
-func TestMigrateCustomSystemPrompt(t *testing.T) {
+// The composed prompt is never persisted; only the user's own text is durable.
+func TestSaveAgent_DoesNotPersistComposedPrompt(t *testing.T) {
 	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "pi", Name: "Pi", Backend: "pi",
+		CustomSystemPrompt: "my own instructions",
+	}))
 
-	commonPrompt := model.BuildCommonPrompt()
-	require.NotEmpty(t, commonPrompt, "common prompt should not be empty for migration test")
+	// The legacy column is gone entirely.
+	var columns int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='system_prompt'",
+	).Scan(&columns))
+	assert.Zero(t, columns, "the composed-prompt column must not exist")
 
-	// Insert agent with system_prompt = commonPrompt + custom, but empty custom_system_prompt
-	custom := "You are a helpful assistant."
-	fullPrompt := commonPrompt + "\n\n" + custom
-	agent := &model.Agent{
-		ID:                 "pi",
-		Name:               "Pi",
-		Backend:            "pi",
-		SystemPrompt:       fullPrompt,
-		CustomSystemPrompt: "", // not yet migrated
-	}
-	require.NoError(t, service.SaveAgent(db, agent))
-
-	// Run migration
-	service.MigrateCustomSystemPrompt()
-
-	// Verify custom_system_prompt was backfilled
+	// Only the user's text is stored.
 	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
-	assert.Equal(t, custom, agents[0].CustomSystemPrompt)
+	assert.Equal(t, "my own instructions", agents[0].CustomSystemPrompt)
 }
 
-func TestMigrateCustomSystemPrompt_CommonOnly(t *testing.T) {
+// Loading composes the runtime prompt from the *current* shared prompt, so a
+// change to the built-in prompt always takes effect. This is the regression the
+// dropped column used to cause.
+func TestLoadAgentsIntoMemory_ComposesFromCurrentSharedPrompt(t *testing.T) {
 	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "pi", Name: "Pi", Backend: "pi",
+		CustomSystemPrompt: "my own instructions",
+	}))
+	require.NoError(t, service.LoadAgentsIntoMemory())
 
 	commonPrompt := model.BuildCommonPrompt()
-	// Insert agent with system_prompt = commonPrompt only (no custom portion)
-	agent := &model.Agent{
-		ID:                 "pi",
-		Name:               "Pi",
-		Backend:            "pi",
-		SystemPrompt:       commonPrompt,
-		CustomSystemPrompt: "",
-	}
-	require.NoError(t, service.SaveAgent(db, agent))
+	require.NotEmpty(t, commonPrompt)
+	assert.Equal(t, commonPrompt+"\n\nmy own instructions", model.Agents["pi"].RuntimeSystemPrompt)
 
-	service.MigrateCustomSystemPrompt()
-
-	agents, err := service.LoadAgentsFromDB()
-	require.NoError(t, err)
-	require.Len(t, agents, 1)
-	assert.Equal(t, "", agents[0].CustomSystemPrompt)
+	// The shared prompt appears exactly once — no frozen copy can be appended.
+	assert.Equal(t, 1, strings.Count(model.Agents["pi"].RuntimeSystemPrompt, commonPrompt))
 }
 
-func TestMigrateCustomSystemPrompt_AlreadyMigrated(t *testing.T) {
+// With no custom text the runtime prompt is exactly the shared prompt.
+func TestLoadAgentsIntoMemory_NoCustomPrompt(t *testing.T) {
 	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
+	require.NoError(t, service.LoadAgentsIntoMemory())
 
-	// Insert agent that already has custom_system_prompt set
-	custom := "Already done"
-	agent := &model.Agent{
-		ID:                 "pi",
-		Name:               "Pi",
-		Backend:            "pi",
-		SystemPrompt:       "some prompt",
-		CustomSystemPrompt: custom,
-	}
-	require.NoError(t, service.SaveAgent(db, agent))
-
-	service.MigrateCustomSystemPrompt()
-
-	agents, err := service.LoadAgentsFromDB()
-	require.NoError(t, err)
-	require.Len(t, agents, 1)
-	assert.Equal(t, custom, agents[0].CustomSystemPrompt) // unchanged
+	assert.Equal(t, model.BuildCommonPrompt(), model.Agents["pi"].RuntimeSystemPrompt)
 }
 
 func TestDuplicateAgent_NotFound(t *testing.T) {
@@ -747,4 +700,48 @@ func TestLoadAgentsIntoMemory(t *testing.T) {
 	// Verify they're in model.Agents
 	assert.Contains(t, model.Agents, "test-1")
 	assert.Contains(t, model.Agents, "test-2")
+}
+
+// End-to-end: a database created by the old scheme (composed prompt stored in
+// system_prompt, and copied into custom_system_prompt) is migrated so that the
+// shared prompt is injected exactly once and always from the current template.
+// This is the regression the whole change exists to prevent.
+func TestLegacyPromptMigration_EndToEnd(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Recreate the legacy shape: the column exists and holds the composed
+	// prompt, duplicated into custom_system_prompt by the old migration.
+	_, err := db.Exec("ALTER TABLE agents ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''")
+	require.NoError(t, err)
+	oldCommon := "## User Interaction (Highest Priority)\n\nOLD XML FORMAT\n<multi-select>false</multi-select>"
+	_, err = db.Exec(
+		`INSERT INTO agents (id, name, backend, system_prompt, custom_system_prompt) VALUES (?, ?, ?, ?, ?)`,
+		"pi", "Pi", "pi", oldCommon, oldCommon,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, service.MigrateLegacyAgentPrompts())
+	require.NoError(t, service.LoadAgentsIntoMemory())
+
+	// The legacy column is gone.
+	var columns int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='system_prompt'",
+	).Scan(&columns))
+	assert.Zero(t, columns)
+
+	// The stale copy is gone and the current shared prompt is used exactly once.
+	got := model.Agents["pi"].RuntimeSystemPrompt
+	assert.Equal(t, 1, strings.Count(got, "## User Interaction (Highest Priority)"),
+		"the shared prompt must appear exactly once")
+	assert.Contains(t, got, "ONE question per tag", "the current shared prompt must be used")
+	assert.NotContains(t, got, "OLD XML FORMAT", "the stale copy must be gone")
+
+	// Idempotent: running again changes nothing.
+	require.NoError(t, service.MigrateLegacyAgentPrompts())
+	var columnsAfter int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='system_prompt'",
+	).Scan(&columnsAfter))
+	assert.Zero(t, columnsAfter)
 }
