@@ -115,3 +115,73 @@ func TestAdvertiseTerminalCapability_TestOverrideWins(t *testing.T) {
 		t.Error("test override true should force Terminal advertised even for CodeBuddy")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// advertiseReadTextFileCapability — CodeBuddy image-Read compatibility
+// ---------------------------------------------------------------------------
+
+func TestAdvertiseReadTextFileCapability_CodeBuddyHidden(t *testing.T) {
+	ResetAdvertiseReadTextFileForTest()
+	defer ResetAdvertiseReadTextFileForTest()
+
+	agent := &model.Agent{ID: "cb-agent", Backend: "codebuddy"}
+	if got := advertiseReadTextFileCapability(agent); got {
+		t.Error("advertiseReadTextFileCapability(codebuddy) = true, want false (CodeBuddy must be forced onto its native ReadTool so image Reads emit an image block instead of proxied mojibake text)")
+	}
+}
+
+func TestAdvertiseReadTextFileCapability_OtherBackendsAdvertised(t *testing.T) {
+	ResetAdvertiseReadTextFileForTest()
+	defer ResetAdvertiseReadTextFileForTest()
+
+	for _, backend := range []string{"claude", "opencode", "kimi", "codex", "qoder", "copilot"} {
+		agent := &model.Agent{ID: backend + "-agent", Backend: backend}
+		if got := advertiseReadTextFileCapability(agent); !got {
+			t.Errorf("advertiseReadTextFileCapability(%q) = false, want true (only CodeBuddy swaps its Read tool on this capability)", backend)
+		}
+	}
+}
+
+func TestAdvertiseReadTextFileCapability_NilAgentAdvertised(t *testing.T) {
+	ResetAdvertiseReadTextFileForTest()
+	defer ResetAdvertiseReadTextFileForTest()
+
+	if got := advertiseReadTextFileCapability(nil); !got {
+		t.Error("advertiseReadTextFileCapability(nil) = false, want true (default should advertise)")
+	}
+}
+
+func TestAdvertiseReadTextFileCapability_TestOverrideWins(t *testing.T) {
+	SetAdvertiseReadTextFileForTest(true)
+	defer ResetAdvertiseReadTextFileForTest()
+
+	codebuddy := &model.Agent{ID: "cb-agent", Backend: "codebuddy"}
+	if got := advertiseReadTextFileCapability(codebuddy); !got {
+		t.Error("test override true should force fs.readTextFile advertised even for CodeBuddy")
+	}
+}
+
+func TestFileSystemCapabilities_ReadHiddenWriteKept(t *testing.T) {
+	// Regression guard: the fix must hide ONLY fs.readTextFile. CodeBuddy gates
+	// Write/Edit/MultiEdit on fs.writeTextFile, and their callEdit path reads
+	// the file through the client directly (not via isSupportRead), so hiding
+	// the read capability must not also hide writes — otherwise edits would
+	// stop flowing through ClawBench's path allowlist.
+	ResetAdvertiseReadTextFileForTest()
+	defer ResetAdvertiseReadTextFileForTest()
+
+	codebuddy := &model.Agent{ID: "cb-agent", Backend: "codebuddy"}
+	got := fileSystemCapabilities(codebuddy)
+	if got.ReadTextFile {
+		t.Error("fs.readTextFile must be hidden for CodeBuddy (native ReadTool must handle image Reads)")
+	}
+	if !got.WriteTextFile {
+		t.Error("fs.writeTextFile must stay advertised so Write/Edit keep using ClawBench's fs allowlist")
+	}
+
+	// Other backends keep both.
+	claude := fileSystemCapabilities(&model.Agent{ID: "claude-agent", Backend: "claude"})
+	if !claude.ReadTextFile || !claude.WriteTextFile {
+		t.Errorf("other backends must keep both fs capabilities, got %+v", claude)
+	}
+}

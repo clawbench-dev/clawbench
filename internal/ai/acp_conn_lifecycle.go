@@ -72,6 +72,74 @@ func ResetAdvertiseTerminalForTest() {
 	advertiseTerminalOverride = nil
 }
 
+// advertiseReadTextFileCapability returns whether ClawBench should advertise
+// the fs.readTextFile client capability for the given agent in ACP Initialize.
+//
+// Background: when fs.readTextFile is advertised, CodeBuddy's ToolManager
+// REPLACES its native Read tool with a text-only proxy. In
+// `tryAcpIntercept` (dist-server/codebuddy.js):
+//
+//	case L3.READ: if (acpInterceptor.isSupportRead()) return acpInterceptor.callRead(...)
+//
+// and `isSupportRead()` is exactly `clientCapabilities.fs.readTextFile`. The
+// proxy calls the client's fs/read_text_file and line-numbers the returned
+// string; the native ReadTool — whose isImageFile → readImageFile branch is the
+// ONLY path that produces an image content block — never runs. Since ACP's
+// ReadTextFileResponse carries just `{content: string}`, an image read through
+// the proxy reaches the model as mojibake text (the PNG signature shows up as
+// U+FFFD + "PNG"), not as an image. Hiding the capability makes CodeBuddy fall
+// back to its native ReadTool, which emits a proper ACP image block.
+//
+// fs.writeTextFile is deliberately left advertised: Write/Edit/MultiEdit are
+// gated on it, and their callEdit path calls the client's readTextFile directly
+// (not through isSupportRead), so keeping it preserves ClawBench's path
+// allowlist for edits while letting image Reads work.
+//
+// Other agents (Claude, OpenCode, ...) do not swap their Read tool this way, so
+// the capability stays advertised for them.
+//
+// Tests can override via SetAdvertiseReadTextFileForTest (the override takes
+// precedence over the per-agent default).
+
+var advertiseReadTextFileOverride *bool
+
+// advertiseReadTextFileCapability returns the current fs.readTextFile value.
+func advertiseReadTextFileCapability(agent *model.Agent) bool {
+	if advertiseReadTextFileOverride != nil {
+		return *advertiseReadTextFileOverride
+	}
+	if agent != nil && isCodeBuddyBackend(agent) {
+		return false
+	}
+	return true
+}
+
+// SetAdvertiseReadTextFileForTest overrides the fs.readTextFile capability for
+// tests. Production code must not use this.
+func SetAdvertiseReadTextFileForTest(enabled bool) {
+	advertiseReadTextFileOverride = &enabled
+}
+
+// ResetAdvertiseReadTextFileForTest clears the test override.
+// Production code must not use this.
+func ResetAdvertiseReadTextFileForTest() {
+	advertiseReadTextFileOverride = nil
+}
+
+// fileSystemCapabilities builds the fs client capability pair advertised in
+// Initialize. fs.readTextFile is gated per-agent (see
+// advertiseReadTextFileCapability) while fs.writeTextFile stays advertised:
+// CodeBuddy's Write/Edit/MultiEdit are gated on it, and their callEdit path
+// reads through the client directly rather than via isSupportRead, so writes
+// keep flowing through ClawBench's path allowlist even after the read
+// capability is hidden.
+func fileSystemCapabilities(agent *model.Agent) acp.FileSystemCapabilities {
+	return acp.FileSystemCapabilities{
+		ReadTextFile:  advertiseReadTextFileCapability(agent),
+		WriteTextFile: true,
+	}
+}
+
 // EnsureAlive ensures the connection has a live agent process and initialized
 // ACP connection, but does NOT create/resume a session. Used by ListSessions
 // which needs an alive connection but no session.
@@ -640,10 +708,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	initResp, err := conn.Initialize(initCtx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
-			Fs: acp.FileSystemCapabilities{
-				ReadTextFile:  true,
-				WriteTextFile: true,
-			},
+			Fs:       fileSystemCapabilities(c.agent),
 			Terminal: advertiseTerminalCapability(c.agent),
 		},
 		ClientInfo: &acp.Implementation{
