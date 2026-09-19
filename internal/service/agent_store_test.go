@@ -745,3 +745,59 @@ func TestLegacyPromptMigration_EndToEnd(t *testing.T) {
 	).Scan(&columnsAfter))
 	assert.Zero(t, columnsAfter)
 }
+
+// A duplicated agent goes straight into the live Agents map, so its runtime
+// prompt must be composed immediately — nothing recomposes it until the next
+// reload. Left empty, the clone would run with no system prompt at all.
+func TestDuplicateAgent_ComposesRuntimePrompt(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "pi", Name: "Pi", Backend: "pi", CustomSystemPrompt: "be terse",
+	}))
+	require.NoError(t, service.LoadAgentsIntoMemory())
+
+	clone, err := service.DuplicateAgent("pi", "Pi Copy")
+	require.NoError(t, err)
+
+	commonPrompt := model.BuildCommonPrompt()
+	require.NotEmpty(t, commonPrompt)
+	assert.Equal(t, commonPrompt+"\n\nbe terse", clone.RuntimeSystemPrompt)
+}
+
+// Prompts configured under the old scheme are discarded, not guessed at: the
+// stored text cannot be reliably split back into "shared prefix" and "what the
+// user wrote" (recognizing old prefix versions is exactly what the previous
+// migration got wrong). This test pins that decision so it stays deliberate.
+func TestLegacyPromptMigration_DiscardsOldSchemePrompts(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// A row whose legacy column holds text that is NOT our shared prompt — the
+	// shape a YAML-authored prompt produced. It is still discarded, because the
+	// migration cannot tell it apart from a stale composed prompt.
+	_, err := db.Exec("ALTER TABLE agents ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''")
+	require.NoError(t, err)
+	raw := "Always answer in French and never use bullet points."
+	_, err = db.Exec(
+		`INSERT INTO agents (id, name, backend, system_prompt, custom_system_prompt) VALUES (?, ?, ?, ?, ?)`,
+		"pi", "Pi", "pi", raw, raw,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, service.MigrateLegacyAgentPrompts())
+
+	var custom string
+	require.NoError(t, db.QueryRow(
+		"SELECT custom_system_prompt FROM agents WHERE id='pi'",
+	).Scan(&custom))
+	assert.Empty(t, custom, "old-scheme prompts are discarded rather than guessed at")
+
+	// A prompt set after the migration is untouched.
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "pi2", Name: "Pi2", Backend: "pi", CustomSystemPrompt: "keep me",
+	}))
+	require.NoError(t, service.MigrateLegacyAgentPrompts())
+	require.NoError(t, db.QueryRow(
+		"SELECT custom_system_prompt FROM agents WHERE id='pi2'",
+	).Scan(&custom))
+	assert.Equal(t, "keep me", custom)
+}

@@ -8,7 +8,7 @@ ClawBench 支持零配置启动：安装 CLI 工具后直接运行 `./clawbench`
 
 ```mermaid
 flowchart TD
-    A[服务启动 main.go] --> B[service.MigrateCustomSystemPrompt<br/>迁移 system_prompt → custom_system_prompt]
+    A[服务启动 main.go] --> B[InitDB 迁移<br/>丢弃旧的拼接提示词列]
     B --> C[model.RefreshAgents<br/>单次调用完成全部工作]
     C --> C1[1. 探测 PATH 中的 CLI<br/>插入新 agent + 同步 acp_command/transport]
     C1 --> C2[2. 加载 config/agents/*.yaml]
@@ -20,7 +20,7 @@ flowchart TD
 `RefreshAgents`（`internal/model/refresh.go`）是**唯一**的发现入口，启动与
 `POST /api/agents/rescan` 都调用它。它取代了原先的五步串行流程
 （`SyncDiscoverAgentsDB` → `LoadYamlAgents` → `SyncDiscoverModels` →
-`MigrateCustomSystemPrompt` → `MergeDiscoveredDataDB` → `AsyncRefreshModelCache`）：
+`MergeDiscoveredDataDB` → `AsyncRefreshModelCache`）：
 那套流程每一步都各自查库、各自重载内存，同一批发现探测在一次启动中跑两遍，
 且"加载 agent 到内存并组装 prompt"有两份独立实现。
 

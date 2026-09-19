@@ -2057,19 +2057,27 @@ func MigrateLegacyAgentPrompts() error {
 }
 
 // migrateLegacyAgentPrompts drops the legacy agents.system_prompt column and
-// discards the prompt text it left behind in custom_system_prompt.
+// clears the prompt text it left behind in custom_system_prompt.
 //
 // That column used to hold the composed prompt (shared prefix + user text), and
 // the read path treated the stored string as the user's own prompt. The frozen
 // copy was appended after the freshly composed one, so it won — which made every
-// change to the built-in prompt a silent no-op on existing installs. A later
-// migration then copied the same composed text into custom_system_prompt, so it
-// has to be cleared as well; otherwise the stale copy would simply be injected
-// from the other column.
+// change to the built-in prompt a silent no-op on existing installs. An earlier
+// migration then copied that same stored text into custom_system_prompt, so
+// clearing only the dropped column would leave the stale copy injected from the
+// other one.
 //
-// Only custom_system_prompt holds user text now, and the prompt is composed on
-// every read. The guard is the column's existence, so this is a no-op once the
-// column is gone.
+// The guard is deliberately broad: any row carrying a non-empty legacy
+// system_prompt has its custom_system_prompt cleared, because the stored value
+// cannot be reliably split back into "shared prefix" and "what the user wrote"
+// (recognizing old prefix versions is exactly what the previous migration got
+// wrong). Prompts configured under the old scheme are discarded rather than
+// guessed at. Only custom_system_prompt is authoritative now, and the shared
+// prompt is composed fresh on every read, so anything a user sets from here on
+// is unaffected.
+//
+// The outer guard is the column's existence, so this is a no-op once the column
+// is gone.
 func migrateLegacyAgentPrompts(d *sql.DB) error {
 	var hasLegacy int
 	if err := d.QueryRow(

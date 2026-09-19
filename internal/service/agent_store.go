@@ -336,5 +336,10 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		return nil, fmt.Errorf("save duplicated agent: %w", err)
 	}
 
+	// Compose the runtime prompt now. The clone goes straight into the live
+	// Agents map, and nothing recomposes it until the next reload, so leaving
+	// it empty would make the new agent run with no system prompt at all.
+	clone.RuntimeSystemPrompt = model.ComposeSystemPrompt(clone.CustomSystemPrompt)
+
 	return clone, nil
 }

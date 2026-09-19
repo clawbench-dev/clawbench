@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -371,38 +372,23 @@ func TestLoadYamlAgents_MissingDirectoryIsNotAnError(t *testing.T) {
 // System prompt composition
 // ---------------------------------------------------------------------------
 
+// ComposeSystemPrompt must always apply the *current* shared prompt, so a
+// change to the built-in text takes effect on every load. The bug this guards
+// against: a composed prompt persisted by an older scheme was appended after the
+// fresh one and overrode it, making every built-in-prompt change a no-op on
+// existing installs.
 func TestComposeSystemPrompt(t *testing.T) {
-	tests := []struct {
-		name   string
-		common string
-		custom string
-		want   string
-	}{
-		{"common and custom", "COMMON", "custom", "COMMON\n\ncustom"},
-		{"common only", "COMMON", "", "COMMON"},
-		{"custom only", "", "custom", "custom"},
-		{"neither", "", "", ""},
-	}
+	common := BuildCommonPrompt()
+	require.NotEmpty(t, common)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, composeForTest(tt.common, tt.custom))
-		})
-	}
-}
+	assert.Equal(t, common, ComposeSystemPrompt(""), "no custom text yields the shared prompt alone")
+	assert.Equal(t, common+"\n\nmy instructions", ComposeSystemPrompt("my instructions"))
 
-// composeForTest applies the production composer with a fixed shared prefix, so
-// the table above can assert the combination rule without depending on the
-// current built-in prompt text.
-func composeForTest(common, custom string) string {
-	switch {
-	case common != "" && custom != "":
-		return common + "\n\n" + custom
-	case common != "":
-		return common
-	default:
-		return custom
-	}
+	// The shared prompt appears exactly once — no frozen copy can be appended.
+	assert.Equal(t, 1, strings.Count(ComposeSystemPrompt("my instructions"), common))
+
+	// The custom text is always present.
+	assert.Contains(t, ComposeSystemPrompt("my instructions"), "my instructions")
 }
 
 // The shared prompt is composed on every read, so changing the built-in prompt

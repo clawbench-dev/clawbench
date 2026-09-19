@@ -1,11 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 
-const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockApiGet, mockToastShow, mockDeleteAgent, mockDefaultAgentId, mockPopulateACPStateFromCache } = vi.hoisted(() => ({
+const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDefaultAgentId, mockPopulateACPStateFromCache } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockPatchAgentField: vi.fn().mockResolvedValue(undefined),
-  mockApiGet: vi.fn().mockResolvedValue({ commonPrompt: '' }),
   mockToastShow: vi.fn(),
   mockDeleteAgent: vi.fn().mockResolvedValue(undefined),
   mockDefaultAgentId: { value: 'other-agent' },
@@ -67,10 +66,6 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
 }))
 
-vi.mock('@/utils/api', () => ({
-  apiGet: mockApiGet,
-}))
-
 const mockDialogConfirm = vi.fn().mockResolvedValue(false)
 vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: mockDialogConfirm }),
@@ -88,7 +83,6 @@ const baseAgent = {
   models: [{ id: 'model-1', name: 'Model 1', default: true }],
   preferredModel: 'model-1',
   customSystemPrompt: '',
-  systemPrompt: '',
   acpCommand: '',
   canRefreshModels: true,
   thinkingEffortLevels: [],
