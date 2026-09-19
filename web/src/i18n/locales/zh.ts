@@ -2843,4 +2843,10 @@ export default {
     fileDeleted: '文件已删除',
     confirmRevoke: '确定取消「{name}」的分享？链接将立即失效。',
   },
+  singleTab: {
+    title: '已在另一个标签页打开',
+    description: 'ClawBench 正在此浏览器的另一个标签页中运行。为避免两个标签页争抢同一个连接，同一时间只能有一个标签页处于活动状态。',
+    hint: '请关闭另一个标签页，然后重新加载本页。',
+    reload: '重新加载',
+  },
 } as const

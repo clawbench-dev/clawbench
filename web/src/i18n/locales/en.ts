@@ -2840,4 +2840,10 @@ export default {
     fileDeleted: 'File deleted',
     confirmRevoke: 'Revoke the share of "{name}"? The link will stop working immediately.',
   },
+  singleTab: {
+    title: 'Already open in another tab',
+    description: 'ClawBench is running in another tab of this browser. To avoid two tabs competing over the same connection, only one tab can be active at a time.',
+    hint: 'Close the other tab, then reload this page.',
+    reload: 'Reload',
+  },
 } as const
