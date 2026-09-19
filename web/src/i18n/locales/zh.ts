@@ -1666,6 +1666,8 @@ export default {
       path: '路径',
       clickToCopy: '点击复制',
       copied: ' 已复制',
+      openFile: '打开文件',
+      revealInManager: '在文件管理器中定位',
     },
     commitList: {
       loadingAll: '加载全部…',

@@ -1663,6 +1663,8 @@ export default {
       path: 'Path',
       clickToCopy: 'Click to copy',
       copied: ' Copied',
+      openFile: 'Open file',
+      revealInManager: 'Reveal in file manager',
     },
     commitList: {
       loadingAll: 'Loading all…',

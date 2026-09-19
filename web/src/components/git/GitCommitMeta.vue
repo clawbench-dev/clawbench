@@ -3,11 +3,33 @@
     <template v-if="filePath">
       <div class="diff-meta-row">
         <span class="diff-meta-label">{{ t('git.commitMeta.file') }}</span>
-        <span class="diff-meta-value diff-meta-file-name">{{ fileName }}</span>
+        <span
+          class="diff-meta-value diff-meta-file-name diff-meta-annotation"
+          :title="t('git.commitMeta.openFile')"
+          @click="emit('open-file', filePath)"
+        >{{ fileName }}</span>
+        <button
+          class="diff-meta-open-btn"
+          type="button"
+          :title="t('git.commitMeta.openFile')"
+          @click.stop="emit('open-file', filePath)"
+          v-html="FILE_OPEN_ICON_SVG"
+        ></button>
       </div>
       <div class="diff-meta-row">
         <span class="diff-meta-label">{{ t('git.commitMeta.path') }}</span>
-        <span class="diff-meta-value diff-meta-file-path" :title="filePath">{{ filePath }}</span>
+        <span
+          class="diff-meta-value diff-meta-file-path diff-meta-annotation"
+          :title="t('git.commitMeta.revealInManager')"
+          @click="revealInManager"
+        >{{ filePath }}</span>
+        <button
+          class="diff-meta-open-btn"
+          type="button"
+          :title="t('git.commitMeta.revealInManager')"
+          @click.stop="revealInManager"
+          v-html="DIRECTORY_OPEN_ICON_SVG"
+        ></button>
       </div>
     </template>
     <template v-if="isWorkingTree">
@@ -42,6 +64,10 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyText } from '@/utils/clipboard.ts'
 import { baseName } from '@/utils/path.ts'
+import {
+  navToFileInManager,
+  FILE_OPEN_ICON_SVG,
+} from '@/composables/useFilePathAnnotation.ts'
 const { t, locale } = useI18n()
 
 const props = defineProps({
@@ -50,6 +76,14 @@ const props = defineProps({
   filePath: String,
 })
 
+// Opening the file is delegated to the host: the same panel is rendered inside
+// the wide-screen history tab and inside the mobile file-history bottom sheet,
+// and only the host knows which surface the jump originates from (history tab
+// vs. the file viewer's own stack). Hardcoding an origin here would send the
+// mobile case back to the wrong place. This mirrors the breadcrumb's open-file
+// emit, which both hosts already handle.
+const emit = defineEmits(['open-file'])
+
 const shaCopied = ref(false)
 
 // Show file name only when the path is available — the meta row renders
@@ -57,6 +91,22 @@ const shaCopied = ref(false)
 const fileName = computed(() => {
   return props.filePath ? baseName(props.filePath) : ''
 })
+
+// Folder glyph for the "reveal in file manager" button, matching the icon
+// family of the shared file-open annotation (same 12px stroke viewBox).
+const DIRECTORY_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>'
+
+/**
+ * Reveal the file in the file manager: navigate to its directory and highlight
+ * it there. Unlike opening the file, this needs no host involvement — the
+ * primitive dismisses whatever overlay is up and switches to the browse tab on
+ * its own, so it behaves identically from the history tab and from the mobile
+ * file-history sheet.
+ */
+function revealInManager() {
+  if (!props.filePath) return
+  void navToFileInManager(props.filePath)
+}
 
 function copySHA() {
   if (!props.commit?.sha) return
@@ -138,6 +188,56 @@ function formatDate(dateStr) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Clickable file annotations ──
+   The file name opens the file, the path reveals it in the file manager.
+   The label is the primary affordance; the trailing button repeats the same
+   action for users who expect an explicit control (matching the chat-side
+   .chat-file-open-btn convention). */
+.diff-meta-annotation {
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  padding: 1px var(--space-2);
+  margin-left: calc(var(--space-2) * -1);
+  transition: background var(--duration-base), color var(--duration-base);
+  min-width: 0;
+}
+
+@media (hover: hover) {
+  .diff-meta-annotation:hover {
+    background: color-mix(in srgb, var(--text-muted, #999) 15%, transparent);
+    color: var(--text-primary, #333);
+  }
+}
+
+.diff-meta-open-btn {
+  background: none;
+  border: none;
+  padding: var(--space-1);
+  cursor: pointer;
+  color: var(--text-muted, #999);
+  border-radius: var(--radius-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--duration-base), background var(--duration-base);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  vertical-align: baseline;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.diff-meta-open-btn svg {
+  display: block;
+}
+
+@media (hover: hover) {
+  .diff-meta-open-btn:hover {
+    color: var(--accent-color, #4a90d9);
+    background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 
 .diff-meta-file-path {

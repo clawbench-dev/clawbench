@@ -62,7 +62,11 @@ vi.mock('@/components/git/GitManageContent.vue', () => ({
   default: { template: '<div class="manage-stub"><slot /></div>' },
 }))
 vi.mock('@/components/git/GitCommitMeta.vue', () => ({
-  default: { template: '<div class="commit-meta-stub" />' },
+  default: {
+    props: ['commit', 'isWorkingTree', 'filePath'],
+    emits: ['open-file'],
+    template: '<div class="commit-meta-stub"><button class="meta-open-file" @click="$emit(\'open-file\', filePath)" /></div>',
+  },
 }))
 vi.mock('@/components/git/GitDiffView.vue', () => ({
   default: { template: '<div class="diff-view-stub" />' },
@@ -393,6 +397,35 @@ describe('GitHistoryContent — files view refresh button', () => {
     release(null)
     await flushPromises()
     expect(wrapper.find('.drilldown-header .drilldown-refresh-btn').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
+
+// The commit-meta panel delegates "open file" to its host, because the same
+// panel also renders inside the mobile file-history sheet (where the origin is
+// the file-viewer stack, not the history tab). The host must therefore forward
+// the panel's open-file event rather than letting the panel navigate itself.
+describe('GitHistoryContent — commit meta file annotation', () => {
+  it('forwards the meta panel open-file event to the host open-file emit', async () => {
+    routeGitFetch({ wt: [{ path: 'a.ts', type: 'M', staged: false }] })
+    const wrapper = mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
+    })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    // The file rows only render in the diff view, where the meta panel is
+    // handed the selected file path.
+    vm.onCommitSelect({ sha: 'HEAD', isWT: true })
+    await flushPromises()
+    vm.drillToFile({ path: 'a.ts', type: 'M', staged: false })
+    await flushPromises()
+
+    const metaBtn = wrapper.find('.commit-meta-stub .meta-open-file')
+    expect(metaBtn.exists()).toBe(true)
+    await metaBtn.trigger('click')
+
+    expect(wrapper.emitted('open-file')).toEqual([['a.ts']])
     wrapper.unmount()
   })
 })

@@ -58,7 +58,7 @@
           @click.stop="onFilesRefresh"
         />
       </div>
-      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" />
+      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" @open-file="onOpenFile" />
       <div class="drilldown-body">
         <div v-if="filesLoading" class="git-history-loading">
           <LoadingIndicator size="md" />
@@ -146,7 +146,7 @@
         />
       </div>
       <div class="drilldown-body">
-        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" />
+        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" @open-file="onOpenFile" />
         <GitDiffView
           :loading="diffState.loading"
           :empty="diffState.empty"
