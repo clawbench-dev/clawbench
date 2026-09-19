@@ -67,7 +67,7 @@ npm test                                              # Vitest 前端测试
 | `internal/gitignore/` | 判定「git 是否会跟踪该路径」：go-git 模式引擎 + 来自 index 的三条规则（已跟踪文件/含已跟踪文件的目录永不忽略、祖先被排除则整体忽略、自身最后一条匹配）。文件管理器灰显与 cloc 排除共用；按真实 `git check-ignore` 差分验证 |
 | `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；会话运行态收敛在 `session_runner.go`（单一 owner runner，运行态与可取消性同源），AI 回合编排唯一实现 `run_turn.go`，请求构造唯一实现 `chat_request.go`，队列兜底回收 `queue_reaper.go`；最近项目分组（`recent_project_groups.go` + `repo_layout.go`，纯文件系统识别主仓库/工作树/子目录）；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）、桌面端升级检查（`desktop_upgrade.go`）等后台 worker |
 | `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；15 个后端子包；CLI/ACP 均支持无进度看门狗；`compact_detect.go` 识别各后端上下文压缩信号（压缩后下一轮重注入系统提示）；ACP 连接缓存状态用 leaf lock `stateMu`（绝不在 RPC 期间持有），避免通知回调与在飞 RPC 互相等待致通知队列溢出杀连接 |
-| `internal/askquestion/` | `<ask-question>` 载荷解析的**唯一** Go 实现（叶子包，不 import 任何 internal 包）；与前端 `web/src/utils/askQuestion.ts` 互为镜像，由 `testdata/parity_corpus.json` 双向固化。契约：检测即解析、不可解析一律原样保留（绝不剥离） |
+| `internal/askquestion/` | `<clawbench-ask-question>` 载荷解析的**唯一** Go 实现（叶子包，不 import 任何 internal 包）；与前端 `web/src/utils/askQuestion.ts` 互为镜像，由 `testdata/parity_corpus.json` 双向固化。契约：检测即解析；不可解析时剥离标签、把标签内文字作为 Fallback 交给 Markdown 渲染（`Match.Fallback`），**绝不丢内容**。旧 XML 子元素格式与标签内 JSON 已不再解析 |
 | `internal/model/` | 数据模型、后端注册表、模型发现（`ModelSource` 注册表 + 单一合并点 `ResolveModels`）、27 个 LLM Provider |
 | `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
 | `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类（ClusterWorker） |
@@ -85,7 +85,7 @@ npm test                                              # Vitest 前端测试
 
 ### 前端（Vue 3 + TypeScript）
 
-源码根：`web/src/`。无 Vue Router，基于抽屉的单页布局。单一 `reactive()` store (`stores/app.ts`)。
+源码根：`web/src/`。无 Vue Router，基于抽屉的单页布局。单一 `reactive()` store (`stores/app.ts`)。**同一时刻只允许一个标签页跑应用**（`useSingleTab.ts` 用 `BroadcastChannel` 选举，第二标签页只显示阻塞屏、不挂载应用）：服务端按 `localStorage` 里的 `client_id` 键控 WS 订阅槽，同源所有标签页共用同一个 id，两个标签页会互相顶掉 socket 并各自重连，实测 17 分钟 1402 次 subscribe、约 2900 请求/分钟。新增全局唯一资源的消费者前先确认是否也受此约束。
 
 Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System）。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
 
