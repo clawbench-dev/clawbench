@@ -45,9 +45,37 @@ describe('main.ts single-tab gate', () => {
     expect(src).toContain('if (!ownsTab)')
   })
 
+  it('auto-reloads a blocked tab when the owner releases (no manual refresh)', () => {
+    // Without this the blocked screen stayed put until the user refreshed by
+    // hand, which read as "it takes a while before I can use it".
+    const cbAt = src.indexOf('whenOwnerReleases')
+    expect(cbAt).toBeGreaterThan(-1)
+    const body = src.slice(cbAt, cbAt + 400)
+    expect(body).toMatch(/location\.reload\(\)/)
+  })
+
+  it('re-validates ownership when restored from the back/forward cache', () => {
+    // A frozen tab observes none of the ownership traffic, so it must
+    // re-evaluate on pageshow — otherwise it can sit on a stale verdict.
+    expect(src).toContain('pageshow')
+    expect(src).toMatch(/e\.persisted/)
+    // Both branches need it: the blocked tab may now be free, the owner may
+    // have lost the slot to another tab.
+    const pageshowCount = (src.match(/addEventListener\('pageshow'/g) ?? []).length
+    expect(pageshowCount).toBe(2)
+  })
+
+  it('keeps the slot when entering the back/forward cache', () => {
+    // pagehide with persisted=true is a bfcache entry, not a real unload;
+    // releasing there would let a waiting tab steal the slot from a tab the
+    // user can still restore.
+    expect(src).toMatch(/pagehide[\s\S]{0,80}persisted/)
+  })
+
   it('releases ownership on page unload so a waiting tab can take over', () => {
     expect(src).toContain('guard.release()')
     expect(src).toContain('pagehide')
+    expect(src).toContain('beforeunload')
   })
 
   it('fails open when the guard throws, so the app never hard-blocks on an error', () => {

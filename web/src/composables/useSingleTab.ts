@@ -32,8 +32,11 @@
  *      stands down (shows the blocked screen).
  *   3. An owner that hears `claim` re-announces `taken`, so a claim racing a
  *      closing owner still resolves to whoever actually holds it.
- *   4. On unload an owner broadcasts `release`; a blocked tab then re-claims,
- *      so reloading the primary tab hands ownership to the waiting one.
+ *   4. On unload an owner broadcasts `release`; a blocked tab then reloads to
+ *      take over, so closing the primary tab hands ownership to the waiting one.
+ *   5. A tab restored from the back/forward cache re-runs acquire(), because a
+ *      frozen tab cannot observe `release`/`claim` messages and may have lost
+ *      (or gained) ownership while it was suspended.
  *
  * The claim window is short (CLAIM_TIMEOUT_MS). If no owner answers, the
  * claimant assumes it is the only tab and proceeds — a lost race then resolves
@@ -45,11 +48,16 @@
 const CHANNEL_NAME = 'clawbench-single-tab-v1'
 
 /**
- * How long a claiming tab waits for an existing owner to object. Long enough to
- * cross a BroadcastChannel round-trip and a busy main thread; short enough that
- * the normal single-tab startup is not visibly delayed.
+ * How long a claiming tab waits for an existing owner to object.
+ *
+ * This delay is paid on EVERY page load, including the common single-tab case,
+ * so it is kept small. A BroadcastChannel round-trip is sub-millisecond on the
+ * same machine; the margin is for a busy main thread, not for network latency.
+ * Measured: a lone tab's acquire() cost ~405ms at 400ms and ~155ms at 150ms.
+ * Being too aggressive is self-correcting — a missed objection means two tabs
+ * briefly both think they own it, which the next reload resolves.
  */
-export const CLAIM_TIMEOUT_MS = 400
+export const CLAIM_TIMEOUT_MS = 150
 
 type GuardMessage = { type: 'claim' | 'taken' | 'release'; tabId: string }
 
@@ -64,6 +72,11 @@ export interface SingleTabGuard {
   /**
    * Resolves true when this tab may run the app, false when another tab already
    * owns it. Never rejects.
+   *
+   * Safe to call again on the same instance: a tab restored from the
+   * back/forward cache re-runs this because it was frozen and may have missed
+   * ownership changes. Re-entry re-evaluates from scratch and updates the
+   * internal ownership flag.
    */
   acquire(): Promise<boolean>
   /** Release ownership so a waiting tab can take over. Idempotent. */
@@ -72,9 +85,11 @@ export interface SingleTabGuard {
   dispose(): void
   /**
    * Register a callback fired when the current owner releases. A blocked tab
-   * uses this to claim ownership without requiring a manual reload.
+   * uses this to reload and take over, so no manual refresh is needed.
    */
   whenOwnerReleases(cb: () => void): void
+  /** Test-only: the live BroadcastChannel, to assert it is reused on re-entry. */
+  __channelForTesting(): unknown
 }
 
 function randomTabId(): string {
@@ -158,14 +173,20 @@ export function createSingleTabGuard(options: SingleTabGuardOptions = {}): Singl
   async function acquire(): Promise<boolean> {
     if (guardNotApplicable()) return true
 
-    channel = openChannel()
+    // Reuse an existing channel on re-entry (a tab restored from the
+    // back/forward cache re-acquires). Opening a second one would leave the
+    // first subscribed, so `taken`/`release` could arrive twice.
+    if (!channel) channel = openChannel()
     if (!channel) {
       // No BroadcastChannel: cannot arbitrate. Allow the app rather than
       // blocking every user of an old browser.
       return true
     }
 
+    // Re-entry must start from a clean verdict, otherwise a previous `taken`
+    // would keep this tab blocked forever even after the owner went away.
     contestedBy = null
+    owns = false
     post({ type: 'claim', tabId })
 
     // Give an existing owner a chance to object before claiming ownership.
@@ -204,5 +225,10 @@ export function createSingleTabGuard(options: SingleTabGuardOptions = {}): Singl
     onOwnerReleased = cb
   }
 
-  return { acquire, release, dispose, whenOwnerReleases }
+  /** Test-only: expose the channel so tests can assert it is not re-created. */
+  function __channelForTesting() {
+    return channel
+  }
+
+  return { acquire, release, dispose, whenOwnerReleases, __channelForTesting }
 }

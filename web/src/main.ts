@@ -47,24 +47,59 @@ async function bootstrap() {
   if (!ownsTab) {
     // Render only the blocking screen. This intentionally mounts a minimal app
     // with no store, no router and no global event listeners, so the tab is
-    // completely inert until the user reloads.
+    // completely inert until it takes over.
     appLog.w('SingleTab', 'another tab owns the app — showing blocked screen')
     const blocked = createApp(SingleTabBlocked)
     blocked.use(i18n)
     blocked.mount('#app')
-    // Ownership can still be handed over (the other tab closed or reloaded);
-    // take it so a reload is not strictly required, but never auto-swap the
-    // screen out from under the user — the button is the explicit action.
+
+    // The owner went away (closed, reloaded, navigated off): reload so this tab
+    // can mount the app. Without this the screen stayed put and the user had to
+    // refresh by hand, which read as "it takes a while to become usable".
     guard.whenOwnerReleases(() => {
-      appLog.i('SingleTab', 'owner released ownership; reload to take over')
+      appLog.i('SingleTab', 'owner released ownership — reloading to take over')
+      window.location.reload()
     })
+
+    // Restored from the back/forward cache: the tab was frozen, so it observed
+    // none of the ownership traffic while suspended. Re-evaluate; if the slot
+    // is free now, reload into the app.
+    window.addEventListener('pageshow', (e) => {
+      if (!e.persisted) return
+      void guard.acquire().then((canTakeOver) => {
+        if (canTakeOver) {
+          appLog.i('SingleTab', 'slot free after bfcache restore — reloading to take over')
+          window.location.reload()
+        }
+      })
+    })
+
     window.addEventListener('pagehide', () => guard.dispose(), { once: true })
     return
   }
 
-  // This tab owns the app: hand ownership to a waiting tab on unload.
-  window.addEventListener('pagehide', () => guard.release(), { once: true })
-  window.addEventListener('beforeunload', () => guard.release(), { once: true })
+  // This tab owns the app. Release only on a real unload: `pagehide` with
+  // persisted=true means the tab is entering the back/forward cache and may be
+  // restored, so it keeps the slot. A frozen tab cannot answer claims, so a
+  // waiting tab still takes over by timeout — keeping the slot here cannot
+  // deadlock anyone.
+  window.addEventListener('pagehide', (e) => {
+    if (!e.persisted) guard.release()
+  })
+  window.addEventListener('beforeunload', () => guard.release())
+
+  // Restored from the back/forward cache: another tab may have taken the slot
+  // while this one was frozen. Re-validate and fall back to the blocked screen
+  // (via a reload, which re-runs the gate) if we lost it.
+  window.addEventListener('pageshow', (e) => {
+    if (!e.persisted) return
+    void guard.acquire().then((stillOwns) => {
+      if (!stillOwns) {
+        appLog.w('SingleTab', 'ownership was taken while frozen — reloading')
+        window.location.reload()
+      }
+    })
+  })
 
   const app = createApp(App)
   app.use(i18n)

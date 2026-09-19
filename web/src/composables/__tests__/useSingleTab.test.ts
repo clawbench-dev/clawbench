@@ -60,9 +60,35 @@ describe('createSingleTabGuard', () => {
     // delivered back to the channel and must be ignored by tab id.
     const a = makeGuard('tab-a', 200)
     expect(await a.acquire()).toBe(true)
-    // Re-acquiring in the same instance is not a supported flow, but it must
-    // not deadlock or throw.
     expect(await a.acquire()).toBe(true)
+  })
+
+  it('re-acquire clears a previous objection (bfcache restore after owner left)', async () => {
+    // A tab restored from the back/forward cache re-runs acquire(). It must
+    // start from a clean verdict: a `taken` observed before the owner went away
+    // must not keep it blocked forever.
+    const a = makeGuard('tab-a')
+    expect(await a.acquire()).toBe(true)
+
+    const b = makeGuard('tab-b')
+    expect(await b.acquire()).toBe(false)
+
+    // Owner goes away.
+    a.release()
+    await new Promise(r => setTimeout(r, 80))
+
+    // b re-acquires (simulating pageshow) → must now win.
+    expect(await b.acquire()).toBe(true)
+  })
+
+  it('re-acquire reuses the channel instead of leaking a second one', async () => {
+    // Opening a second BroadcastChannel would leave the first subscribed, so
+    // release/taken could be delivered twice.
+    const b = makeGuard('tab-b')
+    expect(await b.acquire()).toBe(true)
+    const first = b.__channelForTesting()
+    expect(await b.acquire()).toBe(true)
+    expect(b.__channelForTesting()).toBe(first)
   })
 
   it('notifies a blocked tab when the owner releases', async () => {
