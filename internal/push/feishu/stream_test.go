@@ -789,9 +789,8 @@ func TestOnMessageReceive_FileWithNoStickyTarget(t *testing.T) {
 	}
 }
 
-// fileEvent builds a p2p file/image event carrying the given msg_type and
-// content JSON.
-func fileEvent(msgType, content string) *larkim.P2MessageReceiveV1 {
+// fileEvent builds a p2p file event carrying the given content JSON.
+func fileEvent(content string) *larkim.P2MessageReceiveV1 {
 	chatType := "p2p"
 	senderType := "user"
 	return &larkim.P2MessageReceiveV1{
@@ -800,7 +799,7 @@ func fileEvent(msgType, content string) *larkim.P2MessageReceiveV1 {
 				ChatType:    &chatType,
 				ChatId:      strPtr("chat1"),
 				MessageId:   strPtr("om_msg_1"),
-				MessageType: strPtr(msgType),
+				MessageType: strPtr("file"),
 				Content:     strPtr(content),
 			},
 			Sender: &larkim.EventSender{
@@ -872,7 +871,7 @@ func TestOnMessageReceive_FileWithUnavailableStickySession(t *testing.T) {
 		return nil
 	}
 
-	_ = mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"a.txt"}`))
+	_ = mgr.onMessageReceive(context.TODO(), fileEvent(`{"file_key":"file_abc","file_name":"a.txt"}`))
 
 	got := waitForReplyText(t, reply)
 	if sent {
@@ -894,7 +893,7 @@ func TestOnMessageReceive_FileWithNoMessenger(t *testing.T) {
 	mgr.cachedExp = time.Now().Add(2 * time.Hour)
 	sessionMessenger = nil
 
-	if err := mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"a.txt"}`)); err != nil {
+	if err := mgr.onMessageReceive(context.TODO(), fileEvent(`{"file_key":"file_abc","file_name":"a.txt"}`)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -931,7 +930,7 @@ func TestOnMessageReceive_FileDownloadFailure(t *testing.T) {
 		return nil
 	}
 
-	_ = mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"a.txt"}`))
+	_ = mgr.onMessageReceive(context.TODO(), fileEvent(`{"file_key":"file_abc","file_name":"a.txt"}`))
 
 	got := waitForReplyText(t, reply)
 	if sent {
@@ -964,7 +963,7 @@ func TestOnMessageReceive_FileTooLarge(t *testing.T) {
 		return nil
 	}
 
-	_ = mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"big.bin"}`))
+	_ = mgr.onMessageReceive(context.TODO(), fileEvent(`{"file_key":"file_abc","file_name":"big.bin"}`))
 
 	got := waitForReplyText(t, reply)
 	if sent {
@@ -991,7 +990,7 @@ func TestOnMessageReceive_FileSendFailure(t *testing.T) {
 		return fmt.Errorf("session busy")
 	}
 
-	_ = mgr.onMessageReceive(context.TODO(), fileEvent("file", `{"file_key":"file_abc","file_name":"a.txt"}`))
+	_ = mgr.onMessageReceive(context.TODO(), fileEvent(`{"file_key":"file_abc","file_name":"a.txt"}`))
 
 	got := waitForReplyText(t, reply)
 	if !strings.Contains(got, "发送文件失败") {

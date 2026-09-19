@@ -322,13 +322,13 @@ func TestResolveDownloadURL_EmptyURLIsError(t *testing.T) {
 	}
 }
 
-// resolveURLServer points dingtalkMessageFileURL at a stub that replies with
-// the given status and body, so each error branch of resolveDownloadURLOnce
-// can be driven directly.
-func resolveURLServer(t *testing.T, status int, body string) *Manager {
+// resolveURLServer points dingtalkMessageFileURL at a stub that replies 200
+// with the given body, so each error branch of resolveDownloadURLOnce can be
+// driven directly. DingTalk signals failure in the body (not the status), so
+// the interesting cases all ride on a 200 response.
+func resolveURLServer(t *testing.T, body string) *Manager {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
@@ -344,7 +344,7 @@ func resolveURLServer(t *testing.T, status int, body string) *Manager {
 // proxy or HTML error page must surface as an error rather than being read as
 // an empty (and therefore silently ignored) download URL.
 func TestResolveDownloadURL_NonJSONBodyIsError(t *testing.T) {
-	mgr := resolveURLServer(t, http.StatusOK, "<html>gateway error</html>")
+	mgr := resolveURLServer(t, "<html>gateway error</html>")
 
 	_, err := mgr.resolveDownloadURL(context.Background(), "code")
 	if err == nil {
@@ -359,8 +359,7 @@ func TestResolveDownloadURL_NonJSONBodyIsError(t *testing.T) {
 // with its message — DingTalk returns HTTP 200 with a code field on failure, so
 // trusting the status alone would read the failure as a success.
 func TestResolveDownloadURL_APIErrorCode(t *testing.T) {
-	mgr := resolveURLServer(t, http.StatusOK,
-		`{"code":"InvalidParameter","message":"downloadCode invalid"}`)
+	mgr := resolveURLServer(t, `{"code":"InvalidParameter","message":"downloadCode invalid"}`)
 
 	_, err := mgr.resolveDownloadURL(context.Background(), "code")
 	if err == nil {
@@ -374,8 +373,7 @@ func TestResolveDownloadURL_APIErrorCode(t *testing.T) {
 // TestResolveDownloadURL_CodeZeroIsSuccess pins that "0" means success: the
 // documented sentinel must not be treated as an error code.
 func TestResolveDownloadURL_CodeZeroIsSuccess(t *testing.T) {
-	mgr := resolveURLServer(t, http.StatusOK,
-		`{"code":"0","downloadUrl":"http://example.invalid/blob"}`)
+	mgr := resolveURLServer(t, `{"code":"0","downloadUrl":"http://example.invalid/blob"}`)
 
 	url, err := mgr.resolveDownloadURL(context.Background(), "code")
 	if err != nil {
@@ -465,7 +463,7 @@ func TestDownloadMedia_NoProjectPathIsRejected(t *testing.T) {
 // TestResolveDownloadURLOnce_EmptyURLIsError covers the "no downloadUrl in a
 // successful response" branch directly.
 func TestResolveDownloadURLOnce_EmptyURLIsError(t *testing.T) {
-	mgr := resolveURLServer(t, http.StatusOK, `{"code":"0"}`)
+	mgr := resolveURLServer(t, `{"code":"0"}`)
 
 	_, err := mgr.resolveDownloadURLOnce(context.Background(), "code")
 	if err == nil {
