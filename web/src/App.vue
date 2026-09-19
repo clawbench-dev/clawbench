@@ -1865,37 +1865,66 @@ async function handleNavigateDir(path: string) {
 // Overlay closing is expressed as (predicate, action) pairs so the back state
 // machine can *ask* whether an overlay would absorb the press without closing
 // it. Android needs that answer synchronously, before any navigation runs.
-const topmostOverlayClosers = [
+//
+// SCOPE RULE — these lists are ONLY for overlays that cannot handle back
+// themselves. Every BottomSheet (session drawer, agent selector, ACP sessions,
+// file search / history / details, TOC on narrow screens…) registers its own
+// priority handler in BottomSheet.vue, ranked by instance creation order so a
+// drawer created later (e.g. the agent selector, rendered after the session
+// drawer it nests inside) outranks the one beneath it. Listing a BottomSheet
+// here shadows that ranking: these lists are consulted first and close by array
+// position, not by which drawer is on top.
+//
+// That is exactly the "swipe once does nothing, swipe twice closes both" bug:
+// with the session drawer enumerated, the first swipe closed it while the agent
+// selector opened *inside* it stayed on screen (its scrim hid the session list,
+// so nothing appeared to happen), and the second swipe then closed the selector.
+//
+// LAYERING RULE — because the drawers now sit in the middle of the dispatch,
+// what is left is split by where it stacks relative to them, so the press
+// always lands on whatever is actually topmost:
+//   above  → drawn over every drawer (share modal, z-index 2500 vs 1000)
+//   middle → the registered drawers, dispatched by priority
+//   below  → in-flow panels inside a tab's content, which any open drawer covers
+// Closing a "below" panel while a drawer is on top is the same "nothing
+// happened" symptom, so those must be tried last.
+const overlayClosersAboveDrawers = [
   { open: () => shareLinkOpen.value, close: () => { shareLinkOpen.value = false } },
-  { open: () => detailsDrawer.effectiveOpen.value && fileNav.overlayOpen.value, close: () => detailsDrawer.close() },
-  { open: () => fileHistoryDrawer.effectiveOpen.value, close: () => fileHistoryDrawer.close() },
+]
+
+// In-flow panels inside the file view. They have no handler of their own, and
+// an open drawer's scrim covers them — so they are only reachable once no
+// drawer absorbed the press. The TOC dock is wide-screen-only: on narrow
+// screens the TOC is a BottomSheet (TocDrawer) and closes through its own
+// registration, so pairing the dock with isWideScreen selects that branch.
+const overlayClosersBelowDrawers = [
   { open: () => viewSearchActive.value, close: () => closeViewSearch() },
-  {
-    open: () => effectiveTocOpen.value,
-    close: () => {
-      if (tocDockPref.effectiveOpen.value) tocDockPref.close()
-      if (tocDrawer.effectiveOpen.value) tocDrawer.close()
-    },
-  },
-  { open: () => searchDrawer.effectiveOpen.value, close: () => searchDrawer.close() },
-  { open: () => sessionIdentity.sessionDrawer.effectiveOpen.value, close: () => sessionIdentity.sessionDrawer.close() },
-  { open: () => sessionSearchDrawer.effectiveOpen.value, close: () => sessionSearchDrawer.close() },
-  { open: () => acpSessionDrawer.effectiveOpen.value, close: () => acpSessionDrawer.close() },
+  { open: () => isWideScreen.value && effectiveTocOpen.value, close: () => tocDockPref.close() },
 ]
 
 function hasTopmostOverlay() {
-  if (topmostOverlayClosers.some((overlay) => overlay.open())) return true
-  return canNavigateBackOverlay()
+  if (overlayClosersAboveDrawers.some((overlay) => overlay.open())) return true
+  if (canNavigateBackOverlay()) return true
+  return overlayClosersBelowDrawers.some((overlay) => overlay.open())
 }
 
 function closeTopmostOverlay() {
-  for (const overlay of topmostOverlayClosers) {
+  for (const overlay of overlayClosersAboveDrawers) {
     if (overlay.open()) {
       overlay.close()
       return true
     }
   }
-  return handleBackNavigationOverlay()
+  // Registered drawers — ordered by open sequence, so the topmost wins. Must
+  // run before the "below" group: those panels are hidden behind a drawer.
+  if (handleBackNavigationOverlay()) return true
+  for (const overlay of overlayClosersBelowDrawers) {
+    if (overlay.open()) {
+      overlay.close()
+      return true
+    }
+  }
+  return false
 }
 
 navCoordinator = useNavigationCoordinator({
