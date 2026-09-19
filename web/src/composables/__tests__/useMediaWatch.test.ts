@@ -9,6 +9,7 @@ vi.mock('@/utils/appLog', () => ({
 import {
   mediaVersionFor,
   withVersionParam,
+  stripVersionParam,
   mediaPathFromUrl,
   mediaPathFromImg,
   patchImagesForPath,
@@ -17,6 +18,7 @@ import {
   syncMediaPathsFromDom,
   trackMediaPath,
   ensureMediaObserver,
+  clearMediaWatchState,
   resetMediaWatch,
   setMediaProjectRoot,
   mutationTouchesMedia,
@@ -40,6 +42,47 @@ afterEach(() => {
   setMediaProjectRoot('')
 })
 
+describe('stripVersionParam', () => {
+  it('strips a plain integer buster', () => {
+    expect(stripVersionParam('/api/local-file/a.png?t=100')).toBe('/api/local-file/a.png')
+  })
+
+  it('strips the dotted <ts>.<version> form the image viewer emits', () => {
+    // Regression: a digits-only pattern left the ".0" behind, turning the
+    // filename into "a.png.0" and 404ing every lightbox open.
+    expect(stripVersionParam('/api/local-file/a.png?t=1758000000000.0')).toBe(
+      '/api/local-file/a.png'
+    )
+  })
+
+  it('strips a buster that is not the last param, keeping the others', () => {
+    expect(stripVersionParam('/api/file/thumb?t=1&w=200')).toBe('/api/file/thumb?w=200')
+    expect(stripVersionParam('/api/file/thumb?w=200&t=1&h=5')).toBe('/api/file/thumb?w=200&h=5')
+  })
+
+  it('handles a dotted buster followed by another param', () => {
+    expect(stripVersionParam('/api/file/thumb?path=a.png&t=1.0&w=200')).toBe(
+      '/api/file/thumb?path=a.png&w=200'
+    )
+  })
+
+  it('leaves a clean URL untouched', () => {
+    expect(stripVersionParam('/api/local-file/a.png')).toBe('/api/local-file/a.png')
+    expect(stripVersionParam('/api/share/tok/local?path=%2Fx.png')).toBe(
+      '/api/share/tok/local?path=%2Fx.png'
+    )
+  })
+
+  it('returns empty input unchanged', () => {
+    expect(stripVersionParam('')).toBe('')
+  })
+
+  it('does not confuse an unrelated param ending in t', () => {
+    expect(stripVersionParam('/api/x?path=a.png')).toBe('/api/x?path=a.png')
+    expect(stripVersionParam('/api/x?tfoo=1')).toBe('/api/x?tfoo=1')
+  })
+})
+
 describe('withVersionParam', () => {
   it('appends t= when no query string exists', () => {
     expect(withVersionParam('/api/local-file/a.png', 3)).toBe('/api/local-file/a.png?t=3')
@@ -55,6 +98,12 @@ describe('withVersionParam', () => {
     expect(withVersionParam('/api/local-file/a.png?t=1', 2)).toBe('/api/local-file/a.png?t=2')
     expect(withVersionParam('/api/file/thumb?path=a.png&t=1&w=200', 2)).toBe(
       '/api/file/thumb?path=a.png&w=200&t=2'
+    )
+  })
+
+  it('replaces the dotted form without corrupting the path', () => {
+    expect(withVersionParam('/api/local-file/a.png?t=1758000000000.0', 2)).toBe(
+      '/api/local-file/a.png?t=2'
     )
   })
 
@@ -459,6 +508,62 @@ describe('ensureMediaObserver', () => {
       expect(records.length).toBeGreaterThan(0)
       expect(records.every((r) => !mutationTouchesMedia(r))).toBe(true)
     })
+  })
+})
+
+describe('clearMediaWatchState', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    resetMediaWatch()
+    setMediaProjectRoot('/proj')
+  })
+
+  afterEach(() => {
+    resetMediaWatch()
+    setMediaProjectRoot('')
+  })
+
+  it('drops versions from the previous project', () => {
+    bumpMediaVersion('assets/logo.png')
+    expect(mediaVersionFor('assets/logo.png')).toBe(1)
+
+    clearMediaWatchState()
+
+    expect(mediaVersionFor('assets/logo.png')).toBe(0)
+  })
+
+  it('rescans immediately so the new project images are reported without a mutation', () => {
+    appendImg({ src: '/api/local-file/assets/a.png' })
+    _syncMediaPathsForTesting()
+    expect(mediaPaths.value).toEqual(['assets/a.png'])
+
+    // Simulate the DOM being swapped for the new project's content.
+    document.body.innerHTML = ''
+    appendImg({ src: '/api/local-file/other/b.png' })
+
+    clearMediaWatchState()
+
+    expect(mediaPaths.value).toEqual(['other/b.png'])
+  })
+
+  it('drops component-tracked paths from the previous project', () => {
+    trackMediaPath('assets/old.png')
+    expect(mediaPaths.value).toContain('assets/old.png')
+
+    clearMediaWatchState()
+
+    expect(mediaPaths.value).not.toContain('assets/old.png')
+  })
+
+  it('keeps the observer alive so later images are still discovered', async () => {
+    ensureMediaObserver()
+    clearMediaWatchState()
+
+    appendImg({ src: '/api/local-file/assets/late.png' })
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+    await Promise.resolve()
+
+    expect(mediaPaths.value).toEqual(['assets/late.png'])
   })
 })
 

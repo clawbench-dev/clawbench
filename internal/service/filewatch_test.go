@@ -672,8 +672,13 @@ func TestUpdateWatch_FileWatchUsesParentDirectory(t *testing.T) {
 	assert.False(t, watchedFile, "the file itself must not be watched directly")
 }
 
-// Re-targeting from one open file to another inside the SAME directory must not
-// drop and re-add the shared directory watch (that would briefly lose events).
+// Re-targeting from one open file to another inside the SAME directory must
+// keep exactly one reference to that directory.
+//
+// Note on scope: this asserts the refcount does not accumulate. It does NOT
+// prove the watch is never briefly dropped, because `UpdateWatch` deliberately
+// re-issues `Add` on a still-held directory (see rearmDirLocked) and the
+// resulting drop/re-add window is not observable from the final state.
 func TestUpdateWatch_SharedDirKeepsSingleReference(t *testing.T) {
 	fw := setupFileWatcher(t)
 	fw.RegisterClient("c1")
@@ -711,6 +716,62 @@ func TestUpdateWatch_ReleasesDroppedDirectory(t *testing.T) {
 
 	assert.False(t, stillWatched, "the abandoned directory must be released")
 	assert.Equal(t, 1, refs2, "the new directory must be watched")
+}
+
+// Re-targeting onto a directory the client already holds must NOT leak a
+// reference. The refcount has to stay at exactly 1 however many times the same
+// target is re-asserted, or the watch would never be released.
+func TestUpdateWatch_RetargetSameDirDoesNotLeakRefs(t *testing.T) {
+	fw := setupFileWatcher(t)
+	fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	for range 5 {
+		fw.UpdateWatch("c1", dir, "")
+	}
+
+	fw.mu.Lock()
+	refs := fw.watchedDirs[dir]
+	fw.mu.Unlock()
+	assert.Equal(t, 1, refs, "re-asserting the same target must not accumulate references")
+
+	// And a single unregister must fully release it.
+	fw.UnregisterClient("c1")
+	fw.mu.Lock()
+	_, stillWatched := fw.watchedDirs[dir]
+	fw.mu.Unlock()
+	assert.False(t, stillWatched, "one unregister must release the single reference")
+}
+
+// A directory that is deleted and recreated while watched: inotify silently
+// drops the watch (IN_DELETE_SELF), so re-targeting must re-arm it. Pinned by
+// asserting a subsequent write is still delivered.
+func TestUpdateWatch_RearmsWatchAfterDirRecreated(t *testing.T) {
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+
+	dir := filepath.Join(t.TempDir(), "assets")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	img := filepath.Join(dir, "diagram.png")
+	require.NoError(t, os.WriteFile(img, []byte("v1"), 0o644))
+
+	fw.UpdateWatch("c1", "", "", img)
+	time.Sleep(100 * time.Millisecond)
+
+	// Delete and recreate the directory: the watch on it is now gone.
+	require.NoError(t, os.RemoveAll(dir))
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	time.Sleep(100 * time.Millisecond)
+
+	// Re-targeting must re-establish the watch.
+	fw.UpdateWatch("c1", "", "", img)
+	time.Sleep(200 * time.Millisecond)
+
+	require.NoError(t, os.WriteFile(img, []byte("v2"), 0o644))
+
+	events := collectEvents(ch, 1, 2*time.Second)
+	require.Len(t, events, 1, "the re-armed watch must deliver the change")
+	assert.Equal(t, "file_change", events[0].Type)
 }
 
 func TestUnregisterClient_ReleasesWatchedDirs(t *testing.T) {

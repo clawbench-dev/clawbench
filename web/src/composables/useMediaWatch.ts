@@ -88,10 +88,31 @@ export function mediaVersionFor(path: string): number {
   return mediaVersions.value[normalizePath(path)] ?? 0
 }
 
+/**
+ * Remove any existing `t=` cache-buster and tidy the separators it leaves
+ * behind, so a new one can be appended anywhere in the query string.
+ *
+ * The value is treated as OPAQUE — callers emit several shapes
+ * (`<timestamp>`, and `<timestamp>.<version>` from the image viewer), so a
+ * digits-only pattern would silently mangle the dotted form into the path
+ * (e.g. `a.png?t=1.0` → `a.png.0`, a 404). Matches up to the next `&`.
+ *
+ * This is the single implementation: the lightbox used to carry its own
+ * digits-only copy, which is exactly how the dotted form broke it.
+ */
+export function stripVersionParam(url: string): string {
+  if (!url) return url
+  return url
+    .replace(/([?&])t=[^&]*/g, '$1')
+    .replace(/\?&+/g, '?')
+    .replace(/&{2,}/g, '&')
+    .replace(/[?&]+$/, '')
+}
+
 /** Append (or replace) a `t=` cache-buster on a URL. */
 export function withVersionParam(url: string, version: number): string {
   if (!url) return url
-  const stripped = url.replace(/[?&]t=[^&]*/g, '').replace(/[?&]+$/, '')
+  const stripped = stripVersionParam(url)
   const sep = stripped.includes('?') ? '&' : '?'
   return `${stripped}${sep}t=${version}`
 }
@@ -347,7 +368,26 @@ export function mutationTouchesMedia(m: MutationRecord): boolean {
   return false
 }
 
-/** Tear the observer down (project switch / app teardown). */
+/**
+ * Drop all discovered paths and recorded versions, keeping the observer
+ * attached. Called on project switch: the version map is keyed by
+ * project-relative paths, so a path like `assets/logo.png` in the new project
+ * would otherwise inherit the old project's version (a harmless but pointless
+ * cache-bust), and paths from the old project would keep being reported to the
+ * watcher until the next scan.
+ *
+ * The DOM is rescanned immediately so the new project's images are picked up
+ * without waiting for a mutation.
+ */
+export function clearMediaWatchState(): void {
+  domPaths.clear()
+  componentRefCounts.clear()
+  mediaVersions.value = {}
+  mediaPaths.value = []
+  syncMediaPathsFromDom()
+}
+
+/** Tear the observer down and clear all state (tests / app teardown). */
 export function resetMediaWatch(): void {
   observer?.disconnect()
   observer = null

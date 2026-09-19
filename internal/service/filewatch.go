@@ -162,25 +162,42 @@ func (fw *FileWatcher) UnregisterClient(clientID string) {
 	client.watchedDirs = nil
 }
 
-// acquireDirLocked adds a refcounted fsnotify watch on dir. It reports whether
-// the directory is now held, so callers can record only real acquisitions — a
-// failed Add (e.g. the directory does not exist yet) must stay retryable on the
-// next UpdateWatch instead of being remembered as watched.
+// acquireDirLocked takes a new reference to dir and ensures fsnotify is
+// watching it. It reports whether the directory is now held, so callers record
+// only real acquisitions — a failed Add (e.g. the directory does not exist yet)
+// stays retryable on the next UpdateWatch instead of being remembered as
+// watched.
 // Must be called with fw.mu held.
 func (fw *FileWatcher) acquireDirLocked(dir string) bool {
 	if dir == "" {
 		return false
 	}
-	if fw.watchedDirs[dir] > 0 {
-		fw.watchedDirs[dir]++
-		return true
-	}
 	if err := fw.watcher.Add(dir); err != nil {
 		slog.Debug("failed to watch directory", slog.String("path", dir), slog.String("err", err.Error()))
 		return false
 	}
-	fw.watchedDirs[dir] = 1
+	fw.watchedDirs[dir]++
 	return true
+}
+
+// rearmDirLocked re-issues the fsnotify Add for a directory this client already
+// holds, WITHOUT changing the refcount.
+//
+// inotify silently drops a watch when the watched directory is deleted or moved
+// (IN_DELETE_SELF / IN_MOVE_SELF), and fsnotify prunes its own bookkeeping
+// without telling us — so the refcount can claim a watch that no longer exists.
+// Re-adding is idempotent (inotify returns the same descriptor via IN_MASK_ADD),
+// so re-targeting doubles as a repair. A failure is logged, not fatal: the
+// reference is retained because the client still wants the path, and the next
+// re-target retries.
+// Must be called with fw.mu held.
+func (fw *FileWatcher) rearmDirLocked(dir string) {
+	if dir == "" {
+		return
+	}
+	if err := fw.watcher.Add(dir); err != nil {
+		slog.Debug("failed to re-arm directory watch", slog.String("path", dir), slog.String("err", err.Error()))
+	}
 }
 
 // releaseDirLocked drops one reference to dir, removing the fsnotify watch when
@@ -261,7 +278,10 @@ func (fw *FileWatcher) UpdateWatch(clientID, dirPath, filePath string, mediaPath
 	held := make(map[string]struct{}, len(newWatched))
 	for dir := range newWatched {
 		if _, already := oldWatched[dir]; already {
-			// Still held from the previous target — carry the reference over.
+			// Still held from the previous target: keep the reference and
+			// re-issue the fsnotify Add so a watch inotify silently dropped
+			// (directory deleted/recreated) is repaired.
+			fw.rearmDirLocked(dir)
 			held[dir] = struct{}{}
 			continue
 		}
@@ -333,7 +353,9 @@ func (fw *FileWatcher) handleFsEvent(event fsnotify.Event) { //nolint:gocyclo //
 
 		// Match a content change on the open file or on any registered media
 		// file FIRST: Write/Create/Rename mean content changed; Remove means the
-		// file was deleted (viewer should close / preview should drop it).
+		// file was deleted. Both are reported as file_change — the client
+		// decides what to do (the viewer closes the open file; a deleted image
+		// is left to the browser's own error handling).
 		//
 		// These paths are matched by exact path even though the underlying
 		// fsnotify watch is on their parent directory — fsnotify reports the

@@ -308,6 +308,23 @@ describe('Lightbox', () => {
       expect(vm.lastTy).toBe(0)
     })
 
+    it('normalizes a dotted t= param without corrupting the path', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      // ImagePreview.mediaUrl emits `t=<timestamp>.<version>`. A digits-only
+      // strip left the ".0" glued to the filename, so the lightbox requested
+      // "b.png.0" and showed a broken image. The value must be treated as
+      // opaque, not as an integer.
+      vm.open('/api/local-file/a/b.png?t=1758000000000.0')
+      await nextTick()
+
+      const url = vm.currentUrl as string
+      expect(url).toMatch(/^\/api\/local-file\/a\/b\.png\?t=\d+$/)
+      expect(url).not.toContain('.png.0')
+      expect(url).not.toContain('.0?')
+    })
+
     it('normalizes a URL that already carries a t= param (file-manager source)', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any

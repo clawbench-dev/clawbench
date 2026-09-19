@@ -69,7 +69,7 @@ import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { extractImageName } from '@/utils/lightbox.ts'
-import { mediaPathFromUrl, mediaVersionFor, withVersionParam } from '@/composables/useMediaWatch.ts'
+import { mediaPathFromUrl, mediaVersionFor, stripVersionParam, withVersionParam } from '@/composables/useMediaWatch.ts'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 let unregisterBack = null
@@ -328,12 +328,13 @@ function fullImgSrc(img) {
  * Sources may already carry a ?t= timestamp (e.g. ImagePreview.mediaUrl,
  * MarkdownPreview.fixLocalImagePaths), so appending another t= directly would
  * accumulate params and produce malformed URLs on refresh.
+ *
+ * Delegates to the shared stripper so there is exactly one implementation: a
+ * local digits-only copy here silently corrupted the dotted `t=<ts>.<version>`
+ * form the image viewer emits (`a.png?t=1.0` → `a.png.0`, a 404).
  */
 function normalizeUrl(url) {
-    return url
-        .replace(/[?&]t=\d+/g, '')
-        .replace(/[?&]+$/g, '')
-        .replace(/\?&/g, '?')
+    return stripVersionParam(url)
 }
 
 /**

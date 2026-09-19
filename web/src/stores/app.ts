@@ -9,6 +9,7 @@ import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import { resetForgeBindingState } from '@/composables/useForgeBinding'
+import { clearMediaWatchState } from '@/composables/useMediaWatch.ts'
 
 const TAG = 'Store'
 
@@ -312,6 +313,12 @@ function resetProjectState(): void {
     state.projectName = ''
     state.rootPaths = []
     state.homeDir = ''
+    // Media versions are keyed by PROJECT-RELATIVE path, so they belong to the
+    // project being left behind — `assets/logo.png` in the new project must not
+    // inherit the old project's version, and the old project's paths must stop
+    // being reported to the file watcher. Covers every switch path (worktree
+    // jumps call setProject() directly without remounting the app subtree).
+    clearMediaWatchState()
     // The forge binding belongs to the project being left behind. Dropping it
     // here — rather than in App.vue's hotSwitchProject — covers every switch
     // path: worktree jumps (task exec detail, chat messages, git panel) call

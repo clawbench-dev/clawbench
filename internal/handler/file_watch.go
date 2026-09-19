@@ -27,8 +27,16 @@ const (
 	watchReadIdleTimeout = 10 * time.Minute
 
 	// maxWatchClients caps concurrent file-watch connections. The service layer
-	// has no cap of its own, and each connection holds up to two inotify
-	// watches, so the ceiling is enforced here (mirrors ws.maxSubscriptions).
+	// has no cap of its own, so the ceiling is enforced here (mirrors
+	// ws.maxSubscriptions).
+	//
+	// Watch accounting: each connection holds one watch on the browsed
+	// directory, one on the open file's parent, and one per distinct parent
+	// directory of its registered media paths (capped per client at
+	// service.MaxMediaWatchPaths). Watches are refcounted across connections, so
+	// the process-wide total is bounded by the number of DISTINCT directories
+	// referenced — at most maxWatchClients*(2+MaxMediaWatchPaths) in the worst
+	// case, but far fewer in practice since clients share the same tree.
 	maxWatchClients = 20
 
 	// watchMsgWatch re-targets the connection's watched dir/file.
