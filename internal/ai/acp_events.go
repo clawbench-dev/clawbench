@@ -100,7 +100,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// turn's stream, carrying the PREVIOUS turn's requestId. Without this,
 		// the stale text is appended to the new message's first text block and
 		// its stale _meta pollutes the message-level metadata.requestId (both
-		// observed in production: a replayed ask-question block surfaced in the
+		// observed in production: a replayed clawbench-ask-question block surfaced in the
 		// wrong assistant message). Drop such chunks here.
 		//
 		// Deliberately scoped to CodeBuddy text chunks only:

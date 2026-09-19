@@ -179,16 +179,6 @@ func TestNormalizeInput_RealMalformedShapes(t *testing.T) {
 			want: []Item{{Question: "存量统计展示在哪里？", Options: []Option{}}},
 		},
 		{
-			name: "raw xml string payload",
-			raw: map[string]any{
-				"ask": `<item><header>触发范围</header><question>覆盖范围？</question><option><label>全局</label><description>一处改动全局生效</description></option></item>`,
-			},
-			want: []Item{{
-				Header: "触发范围", Question: "覆盖范围？",
-				Options: []Option{{Label: "全局", Description: "一处改动全局生效"}},
-			}},
-		},
-		{
 			name: "extra unknown keys ignored",
 			raw: map[string]any{
 				"questions": []any{map[string]any{

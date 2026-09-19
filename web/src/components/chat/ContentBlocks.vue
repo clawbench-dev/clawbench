@@ -90,7 +90,7 @@
           @select="$emit('task-card-click', tid)"
         />
       </template>
-      <!-- Ask-question card. Sources: summaryCards.askQuestions (<ask-question> XML
+      <!-- Ask-question card. Sources: summaryCards.askQuestions (<clawbench-ask-question>
            cards, already aggregated into one array) and AskUserQuestion tool cards
            whose input carries questions. When more than one source exists they are
            merged into this single card so every question is answered with one submit. -->
@@ -316,7 +316,7 @@
           @select="$emit('task-card-click', blockTasks[sKey].taskId)"
         />
       </template>
-      <!-- Ask question card (from <ask-question> XML tag in text) — must come before generic text block.
+      <!-- Ask question card (from <clawbench-ask-question> tag in text) — must come before generic text block.
            detectAskQuestionInText triggers renderTextBlock which fills blockAskQuestions;
            the card UI only renders when blockAskQuestions[key] has data. -->
       <template v-else-if="block.type === 'text' && (blockAskQuestions[blockTaskKey(bi)] || detectAskQuestionInText(block))">
@@ -649,18 +649,18 @@ function blockTaskKey(bi: number) {
   return blockTaskKeyUtil(props.msgId, absIdx(bi))
 }
 
-// Quick check if block text contains <ask-question> tag — used in v-else-if condition
-// to enter the ask-question branch (which triggers renderTextBlock to fill blockAskQuestions).
+// Quick check if block text contains the tag — used in v-else-if condition
+// to enter the clawbench-ask-question branch (which triggers renderTextBlock to fill blockAskQuestions).
 // The actual card UI is gated by blockAskQuestions[key] being truthy, so false positives
 // from this simple check are harmless — they just trigger a renderTextBlock call that
 // won't populate blockAskQuestions if the content isn't a real structured question.
 function detectAskQuestionInText(block: any) {
-  return block.text && block.text.includes('<ask-question')
+  return block.text && block.text.includes('<clawbench-ask-question')
 }
 
 // ── Multi ask-card merging ──
 // One assistant message can carry several question cards (e.g. two
-// AskUserQuestion tool calls, or a tool call plus a text <ask-question> tag).
+// AskUserQuestion tool calls, or a tool call plus a text <clawbench-ask-question> tag).
 // Rendered separately, each card has its own Submit that fires a message
 // immediately — answering one leaves the others stranded with no way to reply.
 // When a message has MORE THAN ONE answerable ask card we render a single merged
@@ -681,7 +681,7 @@ function askQuestionsOfBlock(bi: number, block: any): Array<Record<string, unkno
 }
 
 /** True when this block's ask card is actually rendered by the template branch
- *  chain. A text block carrying BOTH a <scheduled-task> and an <ask-question>
+ *  chain. A text block carrying BOTH a <scheduled-task> and a <clawbench-ask-question>
  *  tag hits the scheduled-task branch first, so its ask card never renders — it
  *  must not host the merged card. AskUserQuestion tool blocks always render. */
 function rendersAskCard(bi: number, block: any): boolean {
@@ -747,7 +747,7 @@ function isMergedAskAnchor(bi: number): boolean {
 /**
  * Pending spinner for an ask card. The merged card stays pending while ANY
  * contributing tool_use ask block is still awaiting an answer (text-mode
- * <ask-question> cards are already resolved when they render, so they never keep
+ * <clawbench-ask-question> cards are already resolved when they render, so they never keep
  * it pending). Every other card mirrors its own showAskPending — a malformed or
  * still-loading ask block keeps its own spinner/notice instead of inheriting the
  * merged card's state.
@@ -786,7 +786,7 @@ const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [
 const summaryWarnings = computed(() => props.summaryCards?.warnings || [])
 
 // Summary mode has no content blocks, so its ask cards come from two places:
-// summaryCards.askQuestions (<ask-question> XML cards) and summaryCards.tools
+// summaryCards.askQuestions (<clawbench-ask-question> cards) and summaryCards.tools
 // entries whose input carries a questions array (AskUserQuestion tool calls).
 // When a message has more than one such card, merge them into ONE card so the
 // user can answer every question with a single submit (mirrors block mode).

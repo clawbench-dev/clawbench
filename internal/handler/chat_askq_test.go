@@ -8,33 +8,30 @@ import (
 	"clawbench/internal/model"
 )
 
-// JSON is not the documented format, but recovering it beats discarding a
-// readable question.
-func TestConvertAskQuestionBlocks_JSONContentIsRecovered(t *testing.T) {
+// JSON is not the documented format and is not recovered: the payload degrades
+// to visible text so malformed output is surfaced rather than masked.
+func TestConvertAskQuestionBlocks_JSONPayloadDegrades(t *testing.T) {
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: "Here is my analysis.\n\n<ask-question>\n{\"questions\":[{\"header\":\"Approach\",\"multiSelect\":false,\"question\":\"Which approach?\",\"options\":[{\"label\":\"Option A\",\"description\":\"Fast\"}]}]}\n</ask-question>"},
+		{Type: "text", Text: "Here is my analysis.\n\n<clawbench-ask-question>\n{\"questions\":[{\"question\":\"Which approach?\",\"options\":[{\"label\":\"Option A\"}]}]}\n</clawbench-ask-question>"},
 	}
 
 	result := ai.ConvertAskQuestionBlocks(blocks)
 
 	for _, b := range result {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
-			qs, _ := b.Input["questions"].([]map[string]any)
-			if len(qs) != 1 || qs[0]["question"] != "Which approach?" {
-				t.Fatalf("unexpected recovered questions: %+v", qs)
-			}
-			return
+			t.Fatalf("JSON must not become a card, got %+v", b)
 		}
 	}
-	t.Fatalf("expected the JSON payload to be recovered, got: %+v", result)
+	if len(result) != 1 || !strings.Contains(result[0].Text, "Which approach?") {
+		t.Fatalf("the payload text must be retained, got %+v", result)
+	}
 }
 
-func TestConvertAskQuestionBlocks_WrongCloseTag_StripsTagFromText(t *testing.T) {
-	// Regression test: When Strategy 2 (wrong-close regex) matches a non-standard
-	// closing tag instead of the standard </ask-question>, the <ask-question> content
-	// must be stripped from the text block.
+func TestConvertAskQuestionBlocks_StripsTagFromText(t *testing.T) {
+	// A converted tag must be removed from the text block, otherwise the card
+	// and the raw markup both render.
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: "Here is my analysis.\n\n---\n\n<ask-question>\n<item><header>Pick</header><multi-select>false</multi-select><question>Which one?</question><option><label>A</label><description>Option A</description></option></item>\n</ask-question>"},
+		{Type: "text", Text: "Here is my analysis.\n\n---\n\n<clawbench-ask-question>\n**Pick**\nWhich one?\n- A — Option A\n</clawbench-ask-question>"},
 	}
 
 	result := ai.ConvertAskQuestionBlocks(blocks)
@@ -45,7 +42,7 @@ func TestConvertAskQuestionBlocks_WrongCloseTag_StripsTagFromText(t *testing.T) 
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
 			askQCount++
 		}
-		if b.Type == "text" && strings.Contains(b.Text, "<ask-question") {
+		if b.Type == "text" && strings.Contains(b.Text, "<clawbench-ask-question") {
 			textHasAskTag = true
 		}
 	}
@@ -54,14 +51,14 @@ func TestConvertAskQuestionBlocks_WrongCloseTag_StripsTagFromText(t *testing.T) 
 		t.Errorf("expected 1 AskUserQuestion tool_use block, got %d", askQCount)
 	}
 	if textHasAskTag {
-		t.Error("text block should NOT contain <ask-question> tag - it must be stripped to avoid duplicate cards")
+		t.Error("text block should NOT contain the tag - it must be stripped to avoid duplicate cards")
 	}
 }
 
 func TestConvertAskQuestionBlocks_IDUsesUUID(t *testing.T) {
 	// Verify that the tool_use block ID uses UUID format ("ask-" + UUID)
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: "<ask-question>\n<item><header>Pick</header><multi-select>false</multi-select><question>Which one?</question><option><label>A</label><description>Option A</description></option></item>\n</ask-question>"},
+		{Type: "text", Text: "<clawbench-ask-question>\n**Pick**\nWhich one?\n- A — Option A\n</clawbench-ask-question>"},
 	}
 
 	result := ai.ConvertAskQuestionBlocks(blocks)
@@ -97,7 +94,7 @@ func TestConvertAskQuestionBlocks_IDsAreUnique(t *testing.T) {
 	ids := make(map[string]bool)
 	for range 10 {
 		blocks := []model.ContentBlock{
-			{Type: "text", Text: "<ask-question>\n<item><header>Pick</header><multi-select>false</multi-select><question>Which one?</question><option><label>A</label><description>Option A</description></option></item>\n</ask-question>"},
+			{Type: "text", Text: "<clawbench-ask-question>\n**Pick**\nWhich one?\n- A — Option A\n</clawbench-ask-question>"},
 		}
 
 		result := ai.ConvertAskQuestionBlocks(blocks)

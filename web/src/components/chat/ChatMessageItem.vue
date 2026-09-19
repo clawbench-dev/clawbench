@@ -723,7 +723,7 @@ function handleCopyMessage() {
 }
 
 /* ── Leaked form/XML control wrapping guard ──
-   A malformed <ask-question> payload (e.g. an <option> without a <question>)
+   A malformed <clawbench-ask-question> payload (e.g. an <option> without a <question>)
    fails isValidAskContent, so detectAskQuestion() reports not-found and the raw
    XML is NOT stripped — it falls through to markdown, where marked passes the
    tags through and DOMPurify keeps them. Those become REAL form elements in the

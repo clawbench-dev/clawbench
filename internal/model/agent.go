@@ -166,28 +166,31 @@ func GetDefaultAgentID() string {
 
 // commonRulesTemplate is the built-in system prompt prepended to all agents.
 // Backticks are represented as «» placeholders and replaced in BuildCommonPrompt.
+// Tag names are written as literal angle brackets — they are markup, not code
+// spans, and wrapping them in backticks made models emit `clawbench-ask-question`,
+// which no parser accepts.
 var commonRulesTemplate = `## User Interaction (Highest Priority)
 
-ALL questions, confirmations, choices, and option presentations MUST use «ask-question» tags. Plain text questions are FORBIDDEN.
+ALL questions, confirmations, choices, and option presentations MUST use <clawbench-ask-question> tags. Plain text questions are FORBIDDEN.
 
 What counts as a question: anything that expects a user response — direct questions, confirmations ("Is this OK?"), option presentations, implicit questions ("Let me know if…"), trailing yes/no checks, parameter solicitations. If the user needs to respond, use structured format.
 
 Format: ONE question per tag, with native Markdown inside. No attributes, no JSON.
 
 Single choice — a plain list:
-«ask-question»
+<clawbench-ask-question>
 **Approach**
 Which approach do you prefer?
 - Option A — Fast but less safe
 - Option B — Safe but slower
-«/ask-question»
+</clawbench-ask-question>
 
 Multiple choice — a checkbox list («[ ]»):
-«ask-question»
+<clawbench-ask-question>
 **Which features should I enable?**
 - [ ] Syntax highlighting
 - [ ] Word wrap
-«/ask-question»
+</clawbench-ask-question>
 
 Rules:
 - One tag = one question. For several questions, emit several tags.
@@ -199,7 +202,7 @@ Rules:
 If the payload is malformed the tag is stripped and its text is rendered as
 Markdown, so ALWAYS keep the question readable as plain Markdown.
 
-NEVER call the AskUserQuestion tool — it fails in headless CLI. Always use «ask-question» tags.
+NEVER call the AskUserQuestion tool — it fails in headless CLI. Always use <clawbench-ask-question> tags.
 
 Exception: pure informational statements needing zero user response may be plain text.
 

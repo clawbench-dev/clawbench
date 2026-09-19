@@ -69,7 +69,7 @@ export function stripScheduledTaskTags(text: string): string {
 // ────────────────────────────────────────────────────────────
 
 /**
- * Validate that <ask-question> content looks like a real structured payload.
+ * Validate that <clawbench-ask-question> content looks like a real structured payload.
  *
  * Now defined as "the payload actually parses", which is what makes detection
  * and parsing impossible to disagree. The previous implementation did literal
@@ -86,7 +86,7 @@ export type { AskItem }
 
 /** Parsed items for a payload — the single parse entry point. */
 function parseAskItems(raw: string): AskItem[] {
-  // Callers pass either a bare payload or a wrapped <ask-question> block.
+  // Callers pass either a bare payload or a wrapped <clawbench-ask-question> block.
   // The canonical module handles both, so try the wrapped form first (which
   // also applies the code-context and span-bounding rules) and fall back to
   // treating the whole string as the payload.
@@ -110,7 +110,7 @@ export interface AskQuestionResult {
 }
 
 /**
- * Detect <ask-question> tags in text.
+ * Detect <clawbench-ask-question> tags in text.
  * Skips tags that appear inside fenced code blocks or inline backticks, and
  * returns every tag rather than only the last one.
  * Only called post-streaming.
@@ -126,7 +126,7 @@ export function detectAskQuestion(text: string): AskQuestionResult {
 }
 
 /**
- * Replace every located <ask-question> span with what should be shown in its
+ * Replace every located <clawbench-ask-question> span with what should be shown in its
  * place.
  *
  * Parsed spans are removed (the card renders them). Unparseable spans are

@@ -13,16 +13,15 @@ import (
 // a `**bold**` line is the header, ordinary lines are the question text, and
 // the options are a Markdown list. A checkbox list means multi-select.
 //
-//	<ask-question>
+//	<clawbench-ask-question>
 //	**方案选择**
 //	你更倾向哪种实现方式？
 //	- 方案 A — 快但不够安全
 //	- 方案 B — 安全但慢
-//	</ask-question>
+//	</clawbench-ask-question>
 //
 // Markdown is the model's native format, so it is written correctly far more
-// often than the bespoke XML it replaces. The legacy XML shape is still parsed
-// (see ParseItems) so historical conversations keep rendering their cards.
+// often than bespoke markup. It is the only accepted payload.
 var (
 	reMdBold     = regexp.MustCompile(`\*\*(.+?)\*\*`)
 	reMdItalic   = regexp.MustCompile(`\*([^*\n]+)\*`)
@@ -201,9 +200,9 @@ func parseMarkdownItems(inner string) []Item {
 	// This is also what gives "parse failure" a precise meaning — the caller
 	// then strips the wrapper and renders the text as Markdown.
 	//
-	// The legacy XML and JSON paths deliberately do NOT require options: they
-	// are either frozen historical behavior or an explicit structured call,
-	// whereas this path parses untrusted free-form prose.
+	// This path parses untrusted free-form prose, so a list is what
+	// distinguishes a real question from a sentence that merely mentions the
+	// tag.
 	if len(options) == 0 {
 		return nil
 	}
@@ -258,8 +257,8 @@ func cleanInline(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// stripAskTags removes the ask-question wrapper and its legacy child elements,
-// leaving everything else — including unknown tags and all text — untouched.
+// stripAskTags removes the clawbench-ask-question wrapper, leaving everything
+// else — including unknown tags and all text — untouched.
 //
 // This is what a failed parse degrades to: the wrapper disappears and the
 // content falls through to the Markdown renderer. It never discards content,
@@ -268,4 +267,4 @@ func stripAskTags(s string) string {
 	return reAskWrapperTags.ReplaceAllString(s, "")
 }
 
-var reAskWrapperTags = regexp.MustCompile(`(?i)</?(?:ask-question|item|header|question|option|options|label|description|multi[_-]?select)\b[^>]*>`)
+var reAskWrapperTags = regexp.MustCompile(`(?i)</?clawbench-ask-question\b[^>]*>`)

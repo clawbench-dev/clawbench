@@ -57,8 +57,7 @@ function setup() {
 }
 
 const WELL_FORMED =
-  '<ask-question><item><header>Approach</header><multi-select>false</multi-select>' +
-  '<question>Which?</question><option><label>A</label><description>Fast</description></option></item></ask-question>'
+  '<clawbench-ask-question>\n**Approach**\nWhich?\n- A — Fast\n</clawbench-ask-question>'
 
 describe('renderTextBlock — ask-question', () => {
   it('renders a card and strips the tag for a well formed payload', () => {
@@ -68,21 +67,37 @@ describe('renderTextBlock — ask-question', () => {
 
     expect(r.blockAskQuestions['m1-0']).toBeTruthy()
     expect((r.blockAskQuestions['m1-0'] as { questions: unknown[] }).questions).toHaveLength(1)
-    expect(html).not.toContain('<ask-question')
+    expect(html).not.toContain('clawbench-ask-question')
     expect(html).toContain('前言')
     expect(html).toContain('后记')
   })
 
-  it('recovers a JSON payload into a card', () => {
-    // JSON is not the documented format, but recovering it beats discarding a
-    // readable question.
+  it('degrades a JSON payload to markdown instead of rendering a card', () => {
+    // JSON recovery was removed: only native Markdown parses. A JSON payload is
+    // now a parse failure, so the wrapper is stripped and the text is kept.
     const r = setup()
-    const text = '前言\n<ask-question>\n{"questions":[{"question":"你最喜欢哪种水果？","options":[{"label":"苹果"}]}]}\n</ask-question>\n后记'
+    const text = '前言\n<clawbench-ask-question>\n{"questions":[{"question":"你最喜欢哪种水果？","options":[{"label":"苹果"}]}]}\n</clawbench-ask-question>\n后记'
     const html = r.renderTextBlock(text, 'm1', 0)
 
-    const stored = r.blockAskQuestions['m1-0'] as { questions: Array<{ question: string }> }
-    expect(stored.questions[0].question).toBe('你最喜欢哪种水果？')
-    expect(html).not.toContain('<ask-question')
+    expect(r.blockAskQuestions['m1-0']).toBeUndefined()
+    expect(html).not.toContain('clawbench-ask-question')
+    expect(html).toContain('你最喜欢哪种水果？')
+    expect(html).toContain('前言')
+    expect(html).toContain('后记')
+  })
+
+  it('degrades a legacy XML payload to markdown instead of rendering a card', () => {
+    // The old <item>/<option> shape was removed with no fallback reader. It now
+    // fails to parse and renders as text rather than becoming a card.
+    const r = setup()
+    const text = '前言\n<clawbench-ask-question>\n<item><header>Approach</header><question>Which?</question><option><label>A</label></option></item>\n</clawbench-ask-question>\n后记'
+    const html = r.renderTextBlock(text, 'm1', 0)
+
+    expect(r.blockAskQuestions['m1-0']).toBeUndefined()
+    expect(html).not.toContain('clawbench-ask-question')
+    expect(html).toContain('Approach')
+    expect(html).toContain('前言')
+    expect(html).toContain('后记')
   })
 
   it('degrades an unparseable payload to markdown instead of deleting it', () => {
@@ -90,20 +105,20 @@ describe('renderTextBlock — ask-question', () => {
     // and the question vanished. Now the wrapper is stripped but the text is
     // kept, so it renders as ordinary Markdown.
     const r = setup()
-    const text = '前言\n<ask-question>\n这里没有列表也没有 JSON，只是一段说明。\n</ask-question>\n后记'
+    const text = '前言\n<clawbench-ask-question>\n这里没有列表，只是一段说明。\n</clawbench-ask-question>\n后记'
     const html = r.renderTextBlock(text, 'm1', 0)
 
     expect(r.blockAskQuestions['m1-0']).toBeUndefined()
-    expect(html).not.toContain('<ask-question')
-    expect(html).toContain('这里没有列表也没有 JSON')
+    expect(html).not.toContain('clawbench-ask-question')
+    expect(html).toContain('这里没有列表')
     expect(html).toContain('前言')
     expect(html).toContain('后记')
   })
 
-  it('retains a payload whose XML is malformed beyond repair', () => {
+  it('retains a payload whose tag is never closed', () => {
     const r = setup()
-    // Unclosed <item> with no option at all: nothing to parse.
-    const text = '前言\n<ask-question>\n<item><header>H</header><question>Q?</question>\n后记'
+    // Unclosed tag: there is no payload to parse.
+    const text = '前言\n<clawbench-ask-question>\n**H**\nQ?\n后记'
     const html = r.renderTextBlock(text, 'm1', 0)
     expect(r.blockAskQuestions['m1-0']).toBeUndefined()
     expect(html).toContain('前言')
@@ -112,15 +127,13 @@ describe('renderTextBlock — ask-question', () => {
   it('collects every tag into one card', () => {
     const r = setup()
     const two =
-      '<ask-question><item><header>Q1</header><multi-select>false</multi-select>' +
-      '<question>第一个?</question><option><label>A</label></option></item></ask-question>\n中间\n' +
-      '<ask-question><item><header>Q2</header><multi-select>false</multi-select>' +
-      '<question>第二个?</question><option><label>B</label></option></item></ask-question>'
+      '<clawbench-ask-question>\n**Q1**\n第一个?\n- A\n</clawbench-ask-question>\n中间\n' +
+      '<clawbench-ask-question>\n**Q2**\n第二个?\n- B\n</clawbench-ask-question>'
     const html = r.renderTextBlock(two, 'm1', 0)
 
     const stored = r.blockAskQuestions['m1-0'] as { questions: Array<{ header: string }> }
     expect(stored.questions.map(q => q.header)).toEqual(['Q1', 'Q2'])
-    expect(html).not.toContain('<ask-question')
+    expect(html).not.toContain('clawbench-ask-question')
     expect(html).toContain('中间')
   })
 
@@ -130,7 +143,7 @@ describe('renderTextBlock — ask-question', () => {
     expect(r.blockAskQuestions['m1-0']).toBeTruthy()
 
     // The block content changed to an unparseable payload.
-    r.renderTextBlock('前言\n<ask-question>{"questions":[]}</ask-question>', 'm1', 0)
+    r.renderTextBlock('前言\n<clawbench-ask-question>{"questions":[]}</clawbench-ask-question>', 'm1', 0)
     expect(r.blockAskQuestions['m1-0']).toBeUndefined()
   })
 

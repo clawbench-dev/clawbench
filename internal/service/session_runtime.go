@@ -1147,7 +1147,7 @@ func assistantConclusionFromBlocks(blocks []model.ContentBlock) string {
 
 // askQuestionText renders any AskUserQuestion cards in the assistant blocks as
 // plain text, reusing extractSummaryCards to parse them. Covers both the
-// <ask-question> tag form (cards.AskQuestions) and the converted AskUserQuestion
+// <clawbench-ask-question> tag form (cards.AskQuestions) and the converted AskUserQuestion
 // tool_use form (cards.Tools[].Input["questions"]). Only AskUserQuestion ever
 // lands in cards.Tools (see isSummaryCardTool), so the input key check below is
 // what guards against non-question tools.

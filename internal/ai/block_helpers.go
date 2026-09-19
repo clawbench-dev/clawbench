@@ -23,7 +23,7 @@ func StringsContainsAnyBlock(blocks []model.ContentBlock, substr string) bool {
 // RemoveRejectedToolBlocks strips tool_use blocks that were rejected by the CLI
 // (Status=="error" and output contains "not found in agent cli"). These occur when
 // the AI model hallucinates tool names (e.g. "/commit" as a slash command, or
-// "AskUserQuestion" when <ask-question> XML tags are also emitted). The rejected
+// "AskUserQuestion" when <clawbench-ask-question> XML tags are also emitted). The rejected
 // tool_use block and its matching warning are confusing noise for the user.
 // Also removes warning blocks containing the "Tool <name> not found in agent cli" pattern.
 func RemoveRejectedToolBlocks(blocks []model.ContentBlock) []model.ContentBlock {
@@ -72,7 +72,7 @@ func RemoveRejectedToolBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 	return filtered
 }
 
-// ConvertAskQuestionBlocks detects <ask-question> tags in text ContentBlocks,
+// ConvertAskQuestionBlocks detects <clawbench-ask-question> tags in text ContentBlocks,
 // parses their payloads, and converts them into a single tool_use ContentBlock
 // with name="AskUserQuestion".
 //
@@ -99,7 +99,7 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 	// Without this, modifying blocks[i].Text below would also modify
 	// the caller's slice (e.g. SessionExecutor.e.blocks) because
 	// Go slices share the underlying array. This caused a bug where
-	// buildResult's postProcessBlocks stripped <ask-question> tags
+	// buildResult's postProcessBlocks stripped <clawbench-ask-question> tags
 	// from e.blocks, then Finalize's postProcessBlocks couldn't
 	// detect the tags anymore — resulting in the AskUserQuestion
 	// tool_use block being lost from chat_history.content.
@@ -114,7 +114,7 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 
 	for i := range blocks {
 		block := &blocks[i]
-		if block.Type != "text" || !strings.Contains(block.Text, "<ask-question") {
+		if block.Type != "text" || !strings.Contains(block.Text, "<clawbench-ask-question") {
 			continue
 		}
 
@@ -127,7 +127,7 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 			// text, so no content is lost.
 			if reasons := askquestion.UnparsedReasons(matches); len(reasons) > 0 {
 				slog.Warn(
-					"ask-question payload unparseable, rendering as markdown",
+					"clawbench-ask-question payload unparseable, rendering as markdown",
 					slog.Any("reasons", reasons),
 				)
 				if clean := strings.TrimSpace(askquestion.Strip(block.Text, matches)); clean != strings.TrimSpace(block.Text) {

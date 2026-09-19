@@ -314,7 +314,7 @@ export function convertVideoLinks(html: string, projectRoot?: string): string {
  *
  * Delegates to the canonical parser (`@/utils/askQuestion.ts`). Returns null if
  * parsing fails or no valid questions were found. The content may include the
- * <ask-question> wrapper or be a bare payload.
+ * <clawbench-ask-question> wrapper or be a bare payload.
  */
 export function parseAskQuestionContent(rawContent: string): { questions: Array<Record<string, unknown>> } | null {
   return parseAskQuestionXML(rawContent) as { questions: Array<Record<string, unknown>> } | null

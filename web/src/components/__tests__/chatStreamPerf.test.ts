@@ -40,7 +40,7 @@ function renderTextBlockDeferred(text: string, _msgId: string, _blockIdx: number
     streaming: false,
     ranKaTeX: true,
     ranScheduledTask: taskIds.length > 0 || text.includes('<scheduled-task'),
-    ranAskQuestion: askResult.found || text.includes('<ask-question'),
+    ranAskQuestion: askResult.found || text.includes('<clawbench-ask-question'),
     ranPathAnnotation: true,
     taskIds,
     askFound: askResult.found,
@@ -74,7 +74,7 @@ describe('renderTextBlock deferred rendering', () => {
   })
 
   it('streaming=false detects ask-question', () => {
-    const text = 'Pick one <ask-question><item><header>Pick</header><multi-select>false</multi-select><question>Which?</question><option><label>A</label><description>Option A</description></option></item></ask-question>'
+    const text = 'Pick one <clawbench-ask-question>\n**Pick**\nWhich?\n- A — Option A\n</clawbench-ask-question>'
     const result = renderTextBlockDeferred(text, 'msg1', 0, false)
     expect(result.askFound).toBe(true)
   })
@@ -242,32 +242,32 @@ describe('detectAskQuestion (early exit optimization)', () => {
     matchAllSpy.mockRestore()
   })
 
-  it('detects valid ask-question with proper closing tag', () => {
-    const text = 'Some text <ask-question><item><header>Pick</header><multi-select>false</multi-select><question>Which?</question><option><label>A</label><description>Option A</description></option></item></ask-question>'
+  it('detects a valid Markdown ask-question with proper closing tag', () => {
+    const text = 'Some text <clawbench-ask-question>\n**Pick**\nWhich?\n- A — Option A\n</clawbench-ask-question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
     expect(result.matches).toHaveLength(1)
     expect(result.items).toHaveLength(1)
   })
 
-  it('returns found=false when tag is present but content is not valid XML', () => {
-    const text = 'Forces structured <ask-question>random text without item tags</ask-question> for user interaction'
+  it('returns found=false when tag is present but content has no list', () => {
+    const text = 'Forces structured <clawbench-ask-question>random text without a list</clawbench-ask-question> for user interaction'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(false)
   })
 })
 
 describe('isValidAskContent', () => {
-  it('returns true for XML with <item> containing <question> and <option>', () => {
-    expect(isValidAskContent('<item><header>Choice</header><multi-select>false</multi-select><question>Pick?</question><option><label>A</label></option></item>')).toBe(true)
+  it('returns true for a Markdown payload with a question and options', () => {
+    expect(isValidAskContent('**Choice**\nPick?\n- A')).toBe(true)
   })
 
-  it('returns false for XML without <question> or <option>', () => {
-    expect(isValidAskContent('<item><header>Choice</header></item>')).toBe(false)
+  it('returns false for a payload with no list', () => {
+    expect(isValidAskContent('**Choice**')).toBe(false)
   })
 
-  it('returns false for non-XML text', () => {
-    expect(isValidAskContent('plain text without item tags')).toBe(false)
+  it('returns false for plain text', () => {
+    expect(isValidAskContent('plain text without a list')).toBe(false)
   })
 })
 

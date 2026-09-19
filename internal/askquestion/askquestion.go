@@ -1,19 +1,23 @@
-// Package askquestion is the single canonical implementation of <ask-question>
-// payload handling.
+// Package askquestion is the single canonical implementation of
+// <clawbench-ask-question> payload handling.
 //
 // Before this package there were five independent parsers (two in Go, three in
-// TS) that disagreed on multi-select spelling, options without a <label>,
-// items without options, closing-tag tolerance, and code-fence exclusion. That
+// TS) that disagreed on closing-tag tolerance and code-fence exclusion. That
 // disagreement was observable: the same message could render a card in one
-// layer and leak raw XML in another, and — worst — a payload that the detector
-// accepted but the parser rejected had its tag stripped anyway, deleting the
-// question from the conversation entirely.
+// layer and leak raw markup in another, and — worst — a payload that the
+// detector accepted but the parser rejected had its tag stripped anyway,
+// deleting the question from the conversation entirely.
 //
 // Two payload shapes reach this package:
 //
 //   - Path A: a native tool call whose input is JSON. Handled by NormalizeInput.
-//   - Path B: <ask-question> XML embedded in assistant text (the shape the
-//     system prompt mandates, see internal/model/agent.go). Handled by Extract.
+//   - Path B: a <clawbench-ask-question> tag embedded in assistant text (the
+//     shape the system prompt mandates, see internal/model/agent.go), whose
+//     payload is native Markdown. Handled by Extract.
+//
+// Only that one payload format is accepted. There is no fallback reader: an
+// earlier version tolerated a bespoke XML shape and recovered JSON, and the
+// extra acceptance hid malformed output instead of surfacing it.
 //
 // The package deliberately imports nothing from this module, so every layer
 // (ai, service, summarize, handler) can depend on it without an import cycle.
@@ -36,7 +40,7 @@ type Item struct {
 	Options     []Option `json:"options"`
 }
 
-// Match is one <ask-question> span located in a text block.
+// Match is one <clawbench-ask-question> span located in a text block.
 //
 // Parsed == false means the span could not be understood. Callers MUST keep
 // Raw in the visible text in that case — never strip it. Silently dropping an
@@ -55,9 +59,8 @@ type Match struct {
 	// Reason is a Reason* code describing why an unparsed span was left alone.
 	Reason string
 	// Fallback is the text to show in place of an unparsed span: the payload
-	// with its ask-question wrapper removed, so it renders as ordinary
-	// Markdown. It is set only when Parsed is false and is never empty for a
-	// non-empty span.
+	// with its tag wrapper removed, so it renders as ordinary Markdown. It is
+	// set only when Parsed is false and is never empty for a non-empty span.
 	//
 	// Showing the inner text (rather than the raw tag) means a parse failure
 	// degrades to readable prose instead of exposing markup. No content is
@@ -69,11 +72,8 @@ type Match struct {
 // package (notably internal/service, which does not disable goconst) never
 // have to inline the literals.
 const (
-	// ReasonNoChildClose means no </item> or </option> was found, so the
-	// payload boundary cannot be distinguished from surrounding prose.
-	ReasonNoChildClose = "no_child_close"
 	// ReasonNoStandardClose means the payload ended without a standard
-	// </ask-question>; the span was bounded at the last real child close.
+	// </clawbench-ask-question>, so there is no payload to parse.
 	ReasonNoStandardClose = "no_standard_close"
 	// ReasonParseFailed means the span was bounded but yielded no question.
 	ReasonParseFailed = "parse_failed"

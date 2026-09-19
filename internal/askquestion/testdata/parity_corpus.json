@@ -1,851 +1,630 @@
 {
-  "comment": "Shared Go/TS parity corpus for ask-question parsing. Asserted by internal/askquestion/parity_test.go and web/src/utils/__tests__/askQuestionParity.test.ts. Every payload is a real malformed sample harvested from ClawBench.db (chat_tool_calls.input for path A, chat_history text blocks for path B).",
-  "input": [
-    {
-      "name": "flat question+options without wrapper",
-      "raw": {
-        "\"question": "以上理解是否正确？",
-        "options": "[{\"label\": \"旋转 Spinner\"}, {\"label\": \"脉冲骨架条\"}]",
-        "question": "以上理解是否正确？"
-      },
-      "want": [
-        {
-          "header": "",
-          "multiSelect": false,
-          "question": "以上理解是否正确？",
-          "options": [
-            {
-              "label": "旋转 Spinner"
-            },
-            {
-              "label": "脉冲骨架条"
-            }
-          ]
-        }
+ "comment": "Shared Go/TS parity corpus for ask-question parsing. Asserted by internal/askquestion/parity_test.go and web/src/utils/__tests__/askQuestionParity.test.ts. Every payload is a real malformed sample harvested from ClawBench.db (chat_tool_calls.input for path A, chat_history text blocks for path B).",
+ "extract": [
+  {
+   "name": "well formed payload",
+   "text": "前言\n\u003cclawbench-ask-question\u003e\n**Approach**\nWhich approach do you prefer?\n- Option A — Fast but less safe\n- Option B — Safe but slower\n\u003c/clawbench-ask-question\u003e\n后记",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "Approach",
+      "multiSelect": false,
+      "question": "Which approach do you prefer?",
+      "options": [
+       {
+        "label": "Option A",
+        "description": "Fast but less safe"
+       },
+       {
+        "label": "Option B",
+        "description": "Safe but slower"
+       }
       ]
-    },
-    {
-      "name": "items wrapper with underscore multi_select",
-      "raw": {
-        "items": [
-          {
-            "header": "费用行",
-            "multi_select": false,
-            "question": "怎么展示？",
-            "options": [
-              {
-                "label": "有币种显符号"
-              }
-            ]
-          }
-        ]
-      },
-      "want": [
-        {
-          "header": "费用行",
-          "multiSelect": false,
-          "question": "怎么展示？",
-          "options": [
-            {
-              "label": "有币种显符号"
-            }
-          ]
-        }
+     }
+    ]
+   ],
+   "wantStripped": "前言\n\n后记"
+  },
+  {
+   "name": "markdown single select",
+   "text": "\u003cclawbench-ask-question\u003e\n**方案选择**\n你更倾向哪种实现方式？\n- 方案 A — 快但不够安全\n- 方案 B — 安全但慢\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "方案选择",
+      "multiSelect": false,
+      "question": "你更倾向哪种实现方式？",
+      "options": [
+       {
+        "label": "方案 A",
+        "description": "快但不够安全"
+       },
+       {
+        "label": "方案 B",
+        "description": "安全但慢"
+       }
       ]
-    },
-    {
-      "name": "params.items double wrap",
-      "raw": {
-        "params": {
-          "items": [
-            {
-              "header": "识别方式",
-              "multi_select": false,
-              "question": "怎么识别？",
-              "options": [
-                {
-                  "label": "围栏约定"
-                }
-              ]
-            }
-          ]
-        }
-      },
-      "want": [
-        {
-          "header": "识别方式",
-          "multiSelect": false,
-          "question": "怎么识别？",
-          "options": [
-            {
-              "label": "围栏约定"
-            }
-          ]
-        }
+     }
+    ]
+   ],
+   "wantStripped": ""
+  },
+  {
+   "name": "markdown multi select",
+   "text": "\u003cclawbench-ask-question\u003e\n**需要启用哪些**\n- [ ] 语法高亮\n- [ ] 自动换行\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "需要启用哪些",
+      "multiSelect": true,
+      "question": "",
+      "options": [
+       {
+        "label": "语法高亮"
+       },
+       {
+        "label": "自动换行"
+       }
       ]
-    },
-    {
-      "name": "parameters wrapper with choices",
-      "raw": {
-        "parameters": [
-          {
-            "question": "背景层怎么处理？",
-            "choices": [
-              {
-                "label": "顺手一起修"
-              },
-              {
-                "label": "只做模糊"
-              }
-            ]
-          }
-        ]
-      },
-      "want": [
-        {
-          "header": "",
-          "multiSelect": false,
-          "question": "背景层怎么处理？",
-          "options": [
-            {
-              "label": "顺手一起修"
-            },
-            {
-              "label": "只做模糊"
-            }
-          ]
-        }
+     }
+    ]
+   ],
+   "wantStripped": ""
+  },
+  {
+   "name": "markdown no header no descriptions",
+   "text": "\u003cclawbench-ask-question\u003e\n你选哪个？\n- 甲\n- 乙\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "",
+      "multiSelect": false,
+      "question": "你选哪个？",
+      "options": [
+       {
+        "label": "甲"
+       },
+       {
+        "label": "乙"
+       }
       ]
-    },
-    {
-      "name": "message instead of question",
-      "raw": {
-        "message": "架构图现在有两种改法，想确认你的偏好：",
-        "options": [
-          {
-            "label": "只删截图素材"
-          }
-        ]
-      },
-      "want": [
-        {
-          "header": "",
-          "multiSelect": false,
-          "question": "架构图现在有两种改法，想确认你的偏好：",
-          "options": [
-            {
-              "label": "只删截图素材"
-            }
-          ]
-        }
+     }
+    ]
+   ],
+   "wantStripped": ""
+  },
+  {
+   "name": "markdown prose without a list is not a card",
+   "text": "\u003cclawbench-ask-question\u003e\n**标题**\n只有说明文字，没有列表\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "**标题**\n只有说明文字，没有列表"
+  },
+  {
+   "name": "markdown two tags are two questions",
+   "text": "\u003cclawbench-ask-question\u003e\n**Q1**\n第一个?\n- A\n\u003c/clawbench-ask-question\u003e\n中间\n\u003cclawbench-ask-question\u003e\n**Q2**\n第二个?\n- B\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true,
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "Q1",
+      "multiSelect": false,
+      "question": "第一个?",
+      "options": [
+       {
+        "label": "A"
+       }
       ]
-    },
-    {
-      "name": "string multiSelect coerced to bool",
-      "raw": {
-        "questions": [
-          {
-            "header": "Features",
-            "multiSelect": "true",
-            "question": "选哪些？",
-            "options": [
-              {
-                "label": "Auth"
-              }
-            ]
-          }
-        ]
-      },
-      "want": [
-        {
-          "header": "Features",
-          "multiSelect": true,
-          "question": "选哪些？",
-          "options": [
-            {
-              "label": "Auth"
-            }
-          ]
-        }
+     }
+    ],
+    [
+     {
+      "header": "Q2",
+      "multiSelect": false,
+      "question": "第二个?",
+      "options": [
+       {
+        "label": "B"
+       }
       ]
-    },
-    {
-      "name": "string options coerced to objects",
-      "raw": {
-        "questions": [
-          {
-            "question": "选哪个？",
-            "options": [
-              "A",
-              "B"
-            ]
-          }
-        ]
-      },
-      "want": [
-        {
-          "header": "",
-          "multiSelect": false,
-          "question": "选哪个？",
-          "options": [
-            {
-              "label": "A"
-            },
-            {
-              "label": "B"
-            }
-          ]
-        }
+     }
+    ]
+   ],
+   "wantStripped": "\n中间\n"
+  },
+  {
+   "name": "prose payload degrades to markdown",
+   "text": "前言\n\u003cclawbench-ask-question\u003e\n这里没有列表，只是一段说明。\n\u003c/clawbench-ask-question\u003e\n后记",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "前言\n这里没有列表，只是一段说明。\n后记"
+  },
+  {
+   "name": "tag inside code fence is ignored",
+   "text": "你可以这样用：\n\n```\n\u003cclawbench-ask-question\u003e\n**Choice**\nPick one\n- A\n\u003c/clawbench-ask-question\u003e\n```\n\n这就是全部。",
+   "wantParsed": [],
+   "wantItems": [],
+   "wantStripped": "你可以这样用：\n\n```\n\u003cclawbench-ask-question\u003e\n**Choice**\nPick one\n- A\n\u003c/clawbench-ask-question\u003e\n```\n\n这就是全部。"
+  },
+  {
+   "name": "tag inside inline code is ignored",
+   "text": "用 `\u003cclawbench-ask-question\u003e` 标签来提问。",
+   "wantParsed": [],
+   "wantItems": [],
+   "wantStripped": "用 `\u003cclawbench-ask-question\u003e` 标签来提问。"
+  },
+  {
+   "name": "prose mentioning the tag is not swallowed",
+   "text": "要发起提问，就用 \u003cclawbench-ask-question\u003e 标签包起来。\n\n现在问你：\n\u003cclawbench-ask-question\u003e\n**Q2**\n第二个?\n- B\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    false,
+    true
+   ],
+   "wantItems": [
+    [],
+    [
+     {
+      "header": "Q2",
+      "multiSelect": false,
+      "question": "第二个?",
+      "options": [
+       {
+        "label": "B"
+       }
       ]
-    },
-    {
-      "name": "hallucinated type object yields nothing",
-      "raw": {
-        "type": "ask-question"
-      },
-      "want": []
-    },
-    {
-      "name": "hallucinated askUserQuestion boolean yields nothing",
-      "raw": {
-        "askUserQuestion": true
-      },
-      "want": []
-    },
-    {
-      "name": "hallucinated taskId yields nothing",
-      "raw": {
-        "taskId": ""
-      },
-      "want": []
-    },
-    {
-      "name": "hallucinated schema yields nothing",
-      "raw": {
-        "schema": [
-          {
-            "name": "header",
-            "type": "string"
-          }
-        ]
-      },
-      "want": []
-    },
-    {
-      "name": "empty object yields nothing",
-      "raw": {},
-      "want": []
-    },
-    {
-      "name": "flat question only is kept",
-      "raw": {
-        "question": "存量统计展示在哪里？"
-      },
-      "want": [
-        {
-          "header": "",
-          "multiSelect": false,
-          "question": "存量统计展示在哪里？",
-          "options": []
-        }
+     }
+    ]
+   ],
+   "wantStripped": "要发起提问，就用 \u003cclawbench-ask-question\u003e 标签包起来。\n\n现在问你：\n"
+  },
+  {
+   "name": "mention after the payload does not extend the span",
+   "text": "先看这个：\n\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\u003c/clawbench-ask-question\u003e\n另外，\u003cclawbench-ask-question\u003e 这个标签还可以嵌套。",
+   "wantParsed": [
+    true,
+    false
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "H",
+      "multiSelect": false,
+      "question": "Q?",
+      "options": [
+       {
+        "label": "A"
+       }
       ]
-    },
-    {
-      "name": "duplicate canonical keys resolve deterministically",
-      "raw": {
-        "question": "UNQUOTED",
-        "\"question": "QUOTED"
-      },
-      "want": [
-        {
-          "header": "",
-          "multiSelect": false,
-          "question": "UNQUOTED",
-          "options": []
-        }
+     }
+    ],
+    []
+   ],
+   "wantStripped": "先看这个：\n\n另外，\u003cclawbench-ask-question\u003e 这个标签还可以嵌套。"
+  },
+  {
+   "name": "unclosed tag does not swallow following details block",
+   "text": "分析如下\n\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\n\u003cdetails\u003e\n\u003csummary\u003e更多\u003c/summary\u003e\n正文内容必须保留\n\u003c/details\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "分析如下\n\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\n\u003cdetails\u003e\n\u003csummary\u003e更多\u003c/summary\u003e\n正文内容必须保留\n\u003c/details\u003e"
+  },
+  {
+   "name": "outer details close is not consumed",
+   "text": "分析\n\u003cdetails\u003e\n\u003csummary\u003e更多\u003c/summary\u003e\n\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\u003c/details\u003e\n正文",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "分析\n\u003cdetails\u003e\n\u003csummary\u003e更多\u003c/summary\u003e\n\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\u003c/details\u003e\n正文"
+  },
+  {
+   "name": "entity decoding is shared",
+   "text": "\u003cclawbench-ask-question\u003e\n**A \u0026amp; B**\n选哪个 \u0026lt; 5?\n- R\u0026amp;D\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "A \u0026 B",
+      "multiSelect": false,
+      "question": "选哪个 \u003c 5?",
+      "options": [
+       {
+        "label": "R\u0026D"
+       }
       ]
-    },
-    {
-      "name": "tab is treated as a key separator on both sides",
-      "raw": {
-        "multi\tselect": true,
-        "question": "Q?"
-      },
-      "want": [
-        {
-          "header": "",
-          "multiSelect": true,
-          "question": "Q?",
-          "options": []
-        }
+     }
+    ]
+   ],
+   "wantStripped": ""
+  },
+  {
+   "name": "entity outside the shared table is left verbatim",
+   "text": "\u003cclawbench-ask-question\u003e\n**H**\nQ? \u0026foo;\n- A\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "H",
+      "multiSelect": false,
+      "question": "Q? \u0026foo;",
+      "options": [
+       {
+        "label": "A"
+       }
       ]
+     }
+    ]
+   ],
+   "wantStripped": ""
+  },
+  {
+   "name": "payload mentioning the tag in its own text still converts",
+   "text": "\u003cclawbench-ask-question\u003e\n**H**\n怎么渲染 \u003cclawbench-ask-question\u003e 这个标签？\n- 保留\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "H",
+      "multiSelect": false,
+      "question": "怎么渲染 \u003cclawbench-ask-question\u003e 这个标签？",
+      "options": [
+       {
+        "label": "保留"
+       }
+      ]
+     }
+    ]
+   ],
+   "wantStripped": ""
+  },
+  {
+   "name": "json payload is no longer recovered",
+   "text": "\u003cclawbench-ask-question\u003e\n{\"questions\":[{\"question\":\"你最喜欢哪种水果？\",\"options\":[{\"label\":\"苹果\"}]}]}\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "{\"questions\":[{\"question\":\"你最喜欢哪种水果？\",\"options\":[{\"label\":\"苹果\"}]}]}"
+  },
+  {
+   "name": "json with unescaped quotes is no longer recovered",
+   "text": "\u003cclawbench-ask-question\u003e\n{\"questions\":[{\"question\":\"可以被\"临时分裂\"多久？\",\"options\":[{\"label\":\"数秒\"}]}]}\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "{\"questions\":[{\"question\":\"可以被\"临时分裂\"多久？\",\"options\":[{\"label\":\"数秒\"}]}]}"
+  },
+  {
+   "name": "legacy item markup is no longer parsed",
+   "text": "\u003cclawbench-ask-question\u003e\n\u003citem\u003e\u003cheader\u003eH\u003c/header\u003e\u003cquestion\u003eQ?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "\u003citem\u003e\u003cheader\u003eH\u003c/header\u003e\u003cquestion\u003eQ?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e"
+  }
+ ],
+ "input": [
+  {
+   "name": "flat question+options without wrapper",
+   "raw": {
+    "\"question": "以上理解是否正确？",
+    "options": "[{\"label\": \"旋转 Spinner\"}, {\"label\": \"脉冲骨架条\"}]",
+    "question": "以上理解是否正确？"
+   },
+   "want": [
+    {
+     "header": "",
+     "multiSelect": false,
+     "question": "以上理解是否正确？",
+     "options": [
+      {
+       "label": "旋转 Spinner"
+      },
+      {
+       "label": "脉冲骨架条"
+      }
+     ]
     }
-  ],
-  "extract": [
+   ]
+  },
+  {
+   "name": "items wrapper with underscore multi_select",
+   "raw": {
+    "items": [
+     {
+      "header": "费用行",
+      "multi_select": false,
+      "question": "怎么展示？",
+      "options": [
+       {
+        "label": "有币种显符号"
+       }
+      ]
+     }
+    ]
+   },
+   "want": [
     {
-      "name": "well formed payload",
-      "text": "前言\n<ask-question>\n<item><header>Approach</header><multi-select>false</multi-select><question>Which approach?</question><option><label>Option A</label><description>Fast</description></option><option><label>Option B</label><description>Safe</description></option></item>\n</ask-question>\n后记",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "Approach",
-            "multiSelect": false,
-            "question": "Which approach?",
-            "options": [
-              {
-                "label": "Option A",
-                "description": "Fast"
-              },
-              {
-                "label": "Option B",
-                "description": "Safe"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "前言\n\n后记"
-    },
-    {
-      "name": "unclosed option still parses",
-      "text": "前言\n<ask-question>\n<item>\n<header>操作确认</header>\n<multi-select>false</multi-select>\n<question>可以停掉吗？</question>\n<option>\n<label>停掉主实例</label>\n<description>kill 后重启</description>\n</item>\n</ask-question>\n后记",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "操作确认",
-            "multiSelect": false,
-            "question": "可以停掉吗？",
-            "options": [
-              {
-                "label": "停掉主实例",
-                "description": "kill 后重启"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "前言\n\n后记"
-    },
-    {
-      "name": "option attributes still parse",
-      "text": "前\n<ask-question><item><header>Pick</header><multi-select>false</multi-select><question>Which?</question><option value=\"A\"><label>A</label></option><option value=\"B\"><label>B</label></option></item></ask-question>\n后",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "Pick",
-            "multiSelect": false,
-            "question": "Which?",
-            "options": [
-              {
-                "label": "A"
-              },
-              {
-                "label": "B"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "前\n\n后"
-    },
-    {
-      "name": "plural options wrapper still parses",
-      "text": "前\n<ask-question><item><header>人月数调整</header><multi-select>false</multi-select><question>是否需要回滚?</question><options><option><label>保留现状</label><description>按 git 数据</description></option><option><label>回滚</label></option></options></item></ask-question>\n后",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "人月数调整",
-            "multiSelect": false,
-            "question": "是否需要回滚?",
-            "options": [
-              {
-                "label": "保留现状",
-                "description": "按 git 数据"
-              },
-              {
-                "label": "回滚"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "前\n\n后"
-    },
-    {
-      "name": "bare text option becomes label",
-      "text": "前\n<ask-question><item><header>确认</header><multi-select>false</multi-select><question>是会话搜索抽屉吗？</question><option>是，就是会话搜索抽屉</option><option>不是，我要改的是文件名搜索</option></item></ask-question>\n后",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "确认",
-            "multiSelect": false,
-            "question": "是会话搜索抽屉吗？",
-            "options": [
-              {
-                "label": "是，就是会话搜索抽屉"
-              },
-              {
-                "label": "不是，我要改的是文件名搜索"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "前\n\n后"
-    },
-    {
-      "name": "obfuscated close tag parses",
-      "text": "前\n<ask-question><item><header>GitHub 认证</header><multi-select>false</multi-select><question>请完成登录。</question><option><label>已打开链接</label></option></item>\n</｜｜DSML｜｜question>",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "GitHub 认证",
-            "multiSelect": false,
-            "question": "请完成登录。",
-            "options": [
-              {
-                "label": "已打开链接"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "前\n"
-    },
-    {
-      "name": "unclosed tag does not swallow following details block",
-      "text": "分析如下\n<ask-question>\n<item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item>\n\n<details>\n<summary>更多</summary>\n正文内容必须保留\n</details>",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "H",
-            "multiSelect": false,
-            "question": "Q?",
-            "options": [
-              {
-                "label": "A"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "分析如下\n\n\n<details>\n<summary>更多</summary>\n正文内容必须保留\n</details>"
-    },
-    {
-      "name": "json payload is recovered into a card",
-      "text": "前言\n<ask-question>\n{\"questions\":[{\"question\":\"你最喜欢哪种水果？\",\"options\":[{\"label\":\"苹果\",\"description\":\"脆甜多汁\"}]}]}\n</ask-question>\n后记",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "",
-            "multiSelect": false,
-            "question": "你最喜欢哪种水果？",
-            "options": [
-              {
-                "label": "苹果",
-                "description": "脆甜多汁"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "前言\n\n后记"
-    },
-    {
-      "name": "two tags both convert",
-      "text": "<ask-question><item><header>Q1</header><multi-select>false</multi-select><question>第一个?</question><option><label>A</label></option></item></ask-question>\n中间\n<ask-question><item><header>Q2</header><multi-select>false</multi-select><question>第二个?</question><option><label>B</label></option></item></ask-question>",
-      "wantParsed": [
-        true,
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "Q1",
-            "multiSelect": false,
-            "question": "第一个?",
-            "options": [
-              {
-                "label": "A"
-              }
-            ]
-          }
-        ],
-        [
-          {
-            "header": "Q2",
-            "multiSelect": false,
-            "question": "第二个?",
-            "options": [
-              {
-                "label": "B"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "\n中间\n"
-    },
-    {
-      "name": "tag inside code fence is ignored",
-      "text": "你可以这样用：\n\n```\n<ask-question>\n<item><header>Choice</header><question>Pick one</question><option><label>A</label></option></item>\n</ask-question>\n```\n\n这就是全部。",
-      "wantParsed": [],
-      "wantItems": [],
-      "wantStripped": "你可以这样用：\n\n```\n<ask-question>\n<item><header>Choice</header><question>Pick one</question><option><label>A</label></option></item>\n</ask-question>\n```\n\n这就是全部。"
-    },
-    {
-      "name": "prose mentioning the tag is not swallowed",
-      "text": "要发起提问，就用 <ask-question> 标签包起来，里面放 <item> 元素。\n\n现在问你：\n<ask-question><item><header>Q2</header><multi-select>false</multi-select><question>第二个?</question><option><label>B</label></option></item></ask-question>",
-      "wantParsed": [
-        false,
-        true
-      ],
-      "wantItems": [
-        [],
-        [
-          {
-            "header": "Q2",
-            "multiSelect": false,
-            "question": "第二个?",
-            "options": [
-              {
-                "label": "B"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "要发起提问，就用 <ask-question> 标签包起来，里面放 <item> 元素。\n\n现在问你：\n"
-    },
-    {
-      "name": "outer details close is not consumed",
-      "text": "分析\n<details>\n<summary>更多</summary>\n<ask-question>\n<item><header>H</header><question>Q?</question><option><label>A</label></option></item>\n</details>\n正文",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "H",
-            "multiSelect": false,
-            "question": "Q?",
-            "options": [
-              {
-                "label": "A"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "分析\n<details>\n<summary>更多</summary>\n\n</details>\n正文"
-    },
-    {
-      "name": "entity decoding is shared",
-      "text": "<ask-question><item><header>H</header><question>Q?</question><option><label>Step&nbsp;1 &hellip; &#8212; end &copy;</label></option></item></ask-question>",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "H",
-            "multiSelect": false,
-            "question": "Q?",
-            "options": [
-              {
-                "label": "Step 1 … — end ©"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": ""
-    },
-    {
-      "name": "payload mentioning the tag in its own text still converts",
-      "text": "<ask-question><item><header>H</header><question>怎么处理 <ask-question> 标签露出？</question><option><label>A</label></option></item></ask-question>",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "H",
-            "multiSelect": false,
-            "question": "怎么处理 标签露出？",
-            "options": [
-              {
-                "label": "A"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": ""
-    },
-    {
-      "name": "mention in first item does not split the payload",
-      "text": "<ask-question><item><question>Q about <ask-question> tags</question><option><label>A</label></option></item><item><question>Q2?</question><option><label>B</label></option></item></ask-question>",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "",
-            "multiSelect": false,
-            "question": "Q about tags",
-            "options": [
-              {
-                "label": "A"
-              }
-            ]
-          },
-          {
-            "header": "",
-            "multiSelect": false,
-            "question": "Q2?",
-            "options": [
-              {
-                "label": "B"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": ""
-    },
-    {
-      "name": "entity outside the shared table is left verbatim",
-      "text": "<ask-question><item><header>H</header><question>Q?</question><option><label>&epsilon; &forall; &alpha;</label></option></item></ask-question>",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "H",
-            "multiSelect": false,
-            "question": "Q?",
-            "options": [
-              {
-                "label": "&epsilon; &forall; &alpha;"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": ""
-    },
-    {
-      "name": "mention after the payload does not extend the span",
-      "text": "<ask-question>这个标签的用法。\n\n<ask-question><item><header>H</header><question>Q?</question><option><label>A</label></option></item></ask-question>",
-      "wantParsed": [
-        false,
-        true
-      ],
-      "wantItems": [
-        [],
-        [
-          {
-            "header": "H",
-            "multiSelect": false,
-            "question": "Q?",
-            "options": [
-              {
-                "label": "A"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "<ask-question>这个标签的用法。\n\n"
-    },
-    {
-      "name": "markdown single select",
-      "text": "前言\n<ask-question>\n**方案选择**\n你更倾向哪种实现方式？\n- 方案 A — 快但不够安全\n- 方案 B — 安全但慢\n</ask-question>\n后记",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "方案选择",
-            "multiSelect": false,
-            "question": "你更倾向哪种实现方式？",
-            "options": [
-              {
-                "label": "方案 A",
-                "description": "快但不够安全"
-              },
-              {
-                "label": "方案 B",
-                "description": "安全但慢"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "前言\n\n后记"
-    },
-    {
-      "name": "markdown multi select",
-      "text": "<ask-question>\n**需要启用哪些**\n- [ ] 语法高亮\n- [ ] 自动换行\n</ask-question>",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "需要启用哪些",
-            "multiSelect": true,
-            "question": "",
-            "options": [
-              {
-                "label": "语法高亮"
-              },
-              {
-                "label": "自动换行"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": ""
-    },
-    {
-      "name": "markdown no header no descriptions",
-      "text": "<ask-question>\n你选哪个？\n- 甲\n- 乙\n</ask-question>",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "",
-            "multiSelect": false,
-            "question": "你选哪个？",
-            "options": [
-              {
-                "label": "甲"
-              },
-              {
-                "label": "乙"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": ""
-    },
-    {
-      "name": "markdown prose without a list is not a card",
-      "text": "说明：<ask-question>Each question needs a list</ask-question> 结束。",
-      "wantParsed": [
-        false
-      ],
-      "wantItems": [
-        []
-      ],
-      "wantStripped": "说明：Each question needs a list 结束。"
-    },
-    {
-      "name": "markdown two tags are two questions",
-      "text": "<ask-question>\n**Q1**\n- 甲\n- 乙\n</ask-question>\n<ask-question>\n**Q2**\n- 丙\n- 丁\n</ask-question>",
-      "wantParsed": [
-        true,
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "Q1",
-            "multiSelect": false,
-            "question": "",
-            "options": [
-              {
-                "label": "甲"
-              },
-              {
-                "label": "乙"
-              }
-            ]
-          }
-        ],
-        [
-          {
-            "header": "Q2",
-            "multiSelect": false,
-            "question": "",
-            "options": [
-              {
-                "label": "丙"
-              },
-              {
-                "label": "丁"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": "\n"
-    },
-    {
-      "name": "prose payload degrades to markdown",
-      "text": "前言\n<ask-question>\n这里没有列表也没有 JSON，只是一段说明。\n</ask-question>\n后记",
-      "wantParsed": [
-        false
-      ],
-      "wantItems": [
-        []
-      ],
-      "wantStripped": "前言\n这里没有列表也没有 JSON，只是一段说明。\n后记"
-    },
-    {
-      "name": "json with unescaped quotes is recovered",
-      "text": "<ask-question>\n{\"questions\":[{\"question\":\"可以被\"临时分裂\"多久？\",\"options\":[{\"label\":\"数秒\"}]}]}\n</ask-question>",
-      "wantParsed": [
-        true
-      ],
-      "wantItems": [
-        [
-          {
-            "header": "",
-            "multiSelect": false,
-            "question": "可以被\"临时分裂\"多久？",
-            "options": [
-              {
-                "label": "数秒"
-              }
-            ]
-          }
-        ]
-      ],
-      "wantStripped": ""
+     "header": "费用行",
+     "multiSelect": false,
+     "question": "怎么展示？",
+     "options": [
+      {
+       "label": "有币种显符号"
+      }
+     ]
     }
-  ]
+   ]
+  },
+  {
+   "name": "params.items double wrap",
+   "raw": {
+    "params": {
+     "items": [
+      {
+       "header": "识别方式",
+       "multi_select": false,
+       "question": "怎么识别？",
+       "options": [
+        {
+         "label": "围栏约定"
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "want": [
+    {
+     "header": "识别方式",
+     "multiSelect": false,
+     "question": "怎么识别？",
+     "options": [
+      {
+       "label": "围栏约定"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "parameters wrapper with choices",
+   "raw": {
+    "parameters": [
+     {
+      "question": "背景层怎么处理？",
+      "choices": [
+       {
+        "label": "顺手一起修"
+       },
+       {
+        "label": "只做模糊"
+       }
+      ]
+     }
+    ]
+   },
+   "want": [
+    {
+     "header": "",
+     "multiSelect": false,
+     "question": "背景层怎么处理？",
+     "options": [
+      {
+       "label": "顺手一起修"
+      },
+      {
+       "label": "只做模糊"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "message instead of question",
+   "raw": {
+    "message": "架构图现在有两种改法，想确认你的偏好：",
+    "options": [
+     {
+      "label": "只删截图素材"
+     }
+    ]
+   },
+   "want": [
+    {
+     "header": "",
+     "multiSelect": false,
+     "question": "架构图现在有两种改法，想确认你的偏好：",
+     "options": [
+      {
+       "label": "只删截图素材"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "string multiSelect coerced to bool",
+   "raw": {
+    "questions": [
+     {
+      "header": "Features",
+      "multiSelect": "true",
+      "question": "选哪些？",
+      "options": [
+       {
+        "label": "Auth"
+       }
+      ]
+     }
+    ]
+   },
+   "want": [
+    {
+     "header": "Features",
+     "multiSelect": true,
+     "question": "选哪些？",
+     "options": [
+      {
+       "label": "Auth"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "string options coerced to objects",
+   "raw": {
+    "questions": [
+     {
+      "question": "选哪个？",
+      "options": [
+       "A",
+       "B"
+      ]
+     }
+    ]
+   },
+   "want": [
+    {
+     "header": "",
+     "multiSelect": false,
+     "question": "选哪个？",
+     "options": [
+      {
+       "label": "A"
+      },
+      {
+       "label": "B"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "hallucinated type object yields nothing",
+   "raw": {
+    "type": "ask-question"
+   },
+   "want": []
+  },
+  {
+   "name": "hallucinated askUserQuestion boolean yields nothing",
+   "raw": {
+    "askUserQuestion": true
+   },
+   "want": []
+  },
+  {
+   "name": "hallucinated taskId yields nothing",
+   "raw": {
+    "taskId": ""
+   },
+   "want": []
+  },
+  {
+   "name": "hallucinated schema yields nothing",
+   "raw": {
+    "schema": [
+     {
+      "name": "header",
+      "type": "string"
+     }
+    ]
+   },
+   "want": []
+  },
+  {
+   "name": "empty object yields nothing",
+   "raw": {},
+   "want": []
+  },
+  {
+   "name": "flat question only is kept",
+   "raw": {
+    "question": "存量统计展示在哪里？"
+   },
+   "want": [
+    {
+     "header": "",
+     "multiSelect": false,
+     "question": "存量统计展示在哪里？",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "duplicate canonical keys resolve deterministically",
+   "raw": {
+    "question": "UNQUOTED",
+    "\"question": "QUOTED"
+   },
+   "want": [
+    {
+     "header": "",
+     "multiSelect": false,
+     "question": "UNQUOTED",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "tab is treated as a key separator on both sides",
+   "raw": {
+    "multi\tselect": true,
+    "question": "Q?"
+   },
+   "want": [
+    {
+     "header": "",
+     "multiSelect": true,
+     "question": "Q?",
+     "options": []
+    }
+   ]
+  }
+ ]
 }

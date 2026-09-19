@@ -1,5 +1,5 @@
 /**
- * Canonical <ask-question> payload handling.
+ * Canonical <clawbench-ask-question> payload handling.
  *
  * This module is the TypeScript mirror of `internal/askquestion` (Go). Both are
  * pinned to identical results by `internal/askquestion/testdata/parity_corpus.json`
@@ -7,16 +7,16 @@
  * `internal/version/compare.go`.
  *
  * Before this module there were three independent TS parsers
- * (streamPerf/xmlParser/chatRenderUtils) that disagreed on multi-select
- * spelling, options without a <label>, items without options, closing-tag
- * tolerance, and code-fence exclusion. The worst consequence was silent
+ * (streamPerf/xmlParser/chatRenderUtils) that disagreed on closing-tag
+ * tolerance and code-fence exclusion. The worst consequence was silent
  * content loss: `detectAskQuestion` accepted a payload that the strict
  * DOMParser then rejected, and the caller stripped the tag anyway — so the
  * question vanished from the conversation with no card and no text.
  *
  * Two payload shapes reach this module:
  *  - Path A: a native tool call whose input is JSON. See normalizeAskInput.
- *  - Path B: <ask-question> XML embedded in assistant text. See extractAskMatches.
+ *  - Path B: a <clawbench-ask-question> tag embedded in assistant text, whose
+ *    payload is native Markdown. See extractAskMatches.
  *
  * Design rules:
  *  - An unparseable span is reported with `parsed: null` and MUST be retained
@@ -38,7 +38,7 @@ export interface AskItem {
 }
 
 /**
- * One located <ask-question> span.
+ * One located <clawbench-ask-question> span.
  *
  * `parsed === null` means the span could not be understood; its `raw` must be
  * kept visible.
@@ -55,7 +55,7 @@ export interface AskMatch {
   reason?: string
   /**
    * Text to show in place of an unparsed span: the payload with its
-   * ask-question wrapper removed, so it renders as ordinary Markdown. Set only
+   * tag wrapper removed, so it renders as ordinary Markdown. Set only
    * when `parsed` is null, and never empty for a non-empty span.
    *
    * Showing the inner text (rather than the raw tag) means a parse failure
@@ -66,7 +66,6 @@ export interface AskMatch {
 }
 
 /** Reason codes for an unparsed span (mirrors the Go constants). */
-export const ReasonNoChildClose = 'no_child_close'
 export const ReasonNoStandardClose = 'no_standard_close'
 export const ReasonParseFailed = 'parse_failed'
 
@@ -81,12 +80,11 @@ const OPTION_KEYS = ['options', 'choices', 'answers', 'values']
 const LABEL_KEYS = ['label', 'value', 'text', 'title']
 const DESC_KEYS = ['description', 'desc', 'detail']
 const MULTI_KEYS = ['multiselect', 'multiple', 'multi']
-const XML_STRING_KEYS = ['ask', 'prompt', 'questions', 'content']
 
 /**
  * Fold a raw key to its comparison form: strip the stray quote/space characters
  * some models emit (real data contains a literal `"question` key) and remove
- * separators, so `multi-select`, `multi_select` and `multiSelect` all collapse
+ * separators, so `multiSelect`, `multi_select` and `multi-select` all collapse
  * to `multiselect`.
  */
 function canonicalKey(k: string): string {
@@ -137,8 +135,8 @@ function isRecord(v: unknown): v is Record<string, unknown> {
  * Accepts every malformed shape observed in production: a flat
  * {question, options} object without the `questions` wrapper, `{items:[...]}`,
  * `{params:{items:[...]}}`, `{parameters:[...]}`, `choices` instead of
- * `options`, `message`/`title` instead of `question`, string-typed booleans and
- * option arrays, and a raw `<item>` XML payload parked in a string field.
+ * `options`, `message`/`title` instead of `question`, and string-typed booleans
+ * and option arrays.
  *
  * Objects carrying no question and no option — hallucinated shapes such as
  * {type:"ask-question"}, {askUserQuestion:true}, {taskId:""} or {schema:[...]}
@@ -148,15 +146,6 @@ export function normalizeAskInput(input: unknown): AskItem[] {
   if (!isRecord(input) || Object.keys(input).length === 0) return []
   const arr = findQuestionArray(input, 0)
   if (arr) return itemsFromArray(arr)
-  const xml = findXmlString(input)
-  if (xml) {
-    const direct = parseItems(xml)
-    if (direct.length > 0) return direct
-    for (const m of extractAskMatches(xml)) {
-      if (m.parsed) return m.parsed
-    }
-    return []
-  }
   const single = normalizeItem(input)
   return single ? [single] : []
 }
@@ -177,15 +166,6 @@ function findQuestionArray(m: Record<string, unknown>, depth: number): unknown[]
     }
   }
   return null
-}
-
-/** Return a string field that looks like a raw <item> payload. */
-function findXmlString(m: Record<string, unknown>): string {
-  for (const key of XML_STRING_KEYS) {
-    const v = lookup(m, key)
-    if (typeof v === 'string' && v.includes('<item')) return v
-  }
-  return ''
 }
 
 /**
@@ -277,77 +257,21 @@ function firstBool(m: Record<string, unknown>, keys: string[]): boolean {
 }
 
 // ────────────────────────────────────────────────────────────
-// L2 — tolerant XML parsing (Path B)
-// ────────────────────────────────────────────────────────────
-
-const RE_ITEM_OPEN = /<item\b[^>]*>/g
-const RE_OPTION_OPEN = /<option\b[^>]*>/g
-const RE_HEADER_TAG = /<header\b[^>]*>([\s\S]*?)<\/header>/
-const RE_QUESTION_TAG = /<question\b[^>]*>([\s\S]*?)<\/question>/
-const RE_MULTI_TAG = /<multi[_-]?select\b[^>]*>([\s\S]*?)<\/multi[_-]?select>/
-const RE_LABEL_TAG = /<label\b[^>]*>([\s\S]*?)<\/label>/
-const RE_DESC_TAG = /<description\b[^>]*>([\s\S]*?)<\/description>/
-const RE_ANY_TAG = /<\/?[a-zA-Z][^>]*>/g
-const RE_CHILD_CLOSER = /<\/(?:item|option)\s*>/g
-const RE_ATTR_LABEL = /\b(?:value|label)\s*=\s*["']([^"']*)["']/i
-const RE_PLURAL_OPTION = /<\/?options\s*>/gi
-const RE_ENTITY = /^[a-zA-Z0-9#x]+;/
+// L2 — payload parsing (Path B)
 
 /**
- * Understand the inner payload of an <ask-question> block. Returns [] when
- * nothing renderable was found.
+ * Understand the inner payload of a clawbench-ask-question block. Returns []
+ * when nothing renderable was found.
  *
- * The current format is native Markdown (see parseMarkdownItems). The legacy
- * XML shape is still accepted so historical conversations keep rendering their
- * cards — without it, every old card would degrade to visible markup.
- *
- * Ordering: a payload containing legacy child elements is parsed as XML only.
- * Running the Markdown parser over XML would "succeed" by treating the tags as
- * question text and produce a garbage card, so the shape is detected first
- * rather than relying on the parsers to disagree.
- *
- * A JSON payload is intentionally not accepted: JSON support was removed on
- * purpose (commit d189374e1).
+ * The only accepted payload is native Markdown (see parseMarkdownItems).
+ * There is deliberately no fallback reader: an earlier version tolerated a
+ * bespoke XML shape and recovered JSON, and the extra acceptance hid malformed
+ * output instead of surfacing it. A payload that does not parse is shown as
+ * text, which is the signal to fix the prompt rather than a reason to guess.
  */
 export function parseItems(inner: string): AskItem[] {
   if (inner.trim() === '') return []
-  if (looksLikeJson(inner)) {
-    // JSON is not the documented format, but models still emit it. Recovery is
-    // attempted because the alternative is discarding a readable question; if
-    // it fails the payload renders as Markdown instead.
-    return recoverJsonItems(inner)
-  }
-  if (looksLikeLegacyXml(inner)) return parseXmlItems(inner)
-  const md = parseMarkdownItems(inner)
-  if (md.length > 0) return md
-  // Not obviously XML, but a malformed payload may still carry XML children.
-  return parseXmlItems(inner)
-}
-
-/**
- * Whether the payload carries any legacy child element. Only these names are
- * checked: a question that merely mentions a tag in prose must still be parsed
- * as Markdown.
- */
-function looksLikeLegacyXml(s: string): boolean {
-  const lower = s.toLowerCase()
-  return [
-    '<item', '<option', '<question', '<header', '<label',
-    '<description', '<multi-select', '<multi_select', '<options',
-  ].some(name => lower.includes(name))
-}
-
-/** The legacy XML parser. */
-function parseXmlItems(inner: string): AskItem[] {
-  // <options> is a plural wrapper some models emit around the real <option>
-  // elements; drop the wrapper so the option scan sees its children.
-  const normalized = inner.replace(RE_PLURAL_OPTION, '')
-  const items = scanItems(normalized)
-  if (items.length > 0) return items
-  // Second attempt: escape stray entity characters and rescan. Done only after
-  // a clean attempt to avoid corrupting legitimate entities.
-  const repaired = escapeStrayEntities(normalized)
-  return repaired === normalized ? [] : scanItems(repaired)
+  return parseMarkdownItems(inner)
 }
 
 // ────────────────────────────────────────────────────────────
@@ -541,237 +465,17 @@ function cleanInline(s: string): string {
 }
 
 /**
- * Remove the ask-question wrapper and its legacy child elements, leaving
+ * Remove the tag wrapper, leaving
  * everything else — including unknown tags and all text — untouched.
  *
  * This is what a failed parse degrades to: the wrapper disappears and the
  * content falls through to the Markdown renderer. It never discards content,
  * so the failure mode is "renders as plain text", not "question vanishes".
  */
-const RE_ASK_WRAPPER_TAGS =
-  /<\/?(?:ask-question|item|header|question|option|options|label|description|multi[_-]?select)\b[^>]*>/gi
+const RE_ASK_WRAPPER_TAGS = /<\/?clawbench-ask-question\b[^>]*>/gi
 
 export function stripAskTags(s: string): string {
   return s.replace(RE_ASK_WRAPPER_TAGS, '')
-}
-
-function looksLikeJson(s: string): boolean {
-  const t = s.trim().replace(/^`+/, '').trim()
-  return t.startsWith('{') || t.startsWith('[')
-}
-
-// ────────────────────────────────────────────────────────────
-// Tolerant JSON recovery
-// ────────────────────────────────────────────────────────────
-
-/**
- * Attempt to read a JSON payload as items.
- *
- * The documented format is Markdown; this exists only so that a model that
- * still emits JSON does not lose its question. Both the object shape
- * ({"questions":[...]}) and a bare array ([{...}]) are accepted, and the
- * unescaped-quote repair is applied when the strict parse fails.
- */
-function recoverJsonItems(inner: string): AskItem[] {
-  const trimmed = inner.trim()
-  if (trimmed === '') return []
-
-  if (trimmed[0] === '[') {
-    const arr = parseTolerantJsonArray(trimmed)
-    if (arr === null) return []
-    return normalizeAskInput({ questions: arr })
-  }
-
-  const obj = parseTolerantJson(trimmed)
-  if (obj === null) return []
-  return normalizeAskInput(obj)
-}
-
-/** Decode a JSON object, repairing unescaped quotes inside string values. */
-function parseTolerantJson(s: string): Record<string, unknown> | null {
-  const t = s.trim()
-  if (!t.startsWith('{')) return null
-  try {
-    const parsed: unknown = JSON.parse(t)
-    return isRecord(parsed) ? parsed : null
-  } catch {
-    // fall through to the repair path
-  }
-  const repaired = repairUnescapedQuotes(t)
-  if (repaired === null) return null
-  try {
-    const parsed: unknown = JSON.parse(repaired)
-    return isRecord(parsed) ? parsed : null
-  } catch {
-    return null
-  }
-}
-
-/** Decode a JSON array, applying the same quote repair. */
-function parseTolerantJsonArray(s: string): unknown[] | null {
-  const t = s.trim()
-  if (!t.startsWith('[')) return null
-  try {
-    const parsed: unknown = JSON.parse(t)
-    return Array.isArray(parsed) ? parsed : null
-  } catch {
-    // fall through to the repair path
-  }
-  const repaired = repairUnescapedQuotes(t)
-  if (repaired === null) return null
-  try {
-    const parsed: unknown = JSON.parse(repaired)
-    return Array.isArray(parsed) ? parsed : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Re-escape double quotes that appear inside a JSON string value.
- *
- * A quote is treated as a *closing* quote only when the next non-space
- * character is structural for the enclosing context (`:`, `,`, `}`, `]`).
- * Anything else is interior text and is escaped. This is enough for the real
- * payloads, which contain typographic quotes inside values, without attempting
- * to be a general JSON repairer.
- *
- * Returns null when no repair was needed (so the caller does not retry an
- * identical parse).
- */
-function repairUnescapedQuotes(s: string): string | null {
-  let out = ''
-  let inString = false
-  let changed = false
-
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i]
-    if (!inString) {
-      out += c
-      if (c === '"') inString = true
-      continue
-    }
-    if (c === '\\') {
-      out += c
-      if (i + 1 < s.length) {
-        i++
-        out += s[i]
-      }
-      continue
-    }
-    if (c === '"') {
-      if (closesString(s, i)) {
-        out += c
-        inString = false
-      } else {
-        out += '\\"'
-        changed = true
-      }
-      continue
-    }
-    out += c
-  }
-  return changed ? out : null
-}
-
-/**
- * Whether the quote at s[i] ends the string it is in: true when what follows is
- * structural (a colon, comma, or closing brace/bracket), skipping whitespace.
- */
-function closesString(s: string, i: number): boolean {
-  for (let j = i + 1; j < s.length; j++) {
-    const c = s[j]
-    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') continue
-    return c === ':' || c === ',' || c === '}' || c === ']'
-  }
-  return true
-}
-
-/**
- * Split the payload into item bodies and parse each.
- *
- * A body runs from the end of one <item> open tag to the next <item> open tag
- * (or end of payload), so an unclosed <item> is bounded by its sibling rather
- * than swallowing the rest of the message.
- */
-function scanItems(payload: string): AskItem[] {
-  const opens = allMatches(payload, RE_ITEM_OPEN)
-  if (opens.length === 0) return []
-  const items: AskItem[] = []
-  for (let i = 0; i < opens.length; i++) {
-    const bodyEnd = i + 1 < opens.length ? opens[i + 1].index : payload.length
-    const body = payload.slice(opens[i].end, bodyEnd)
-    const it = parseItem(body)
-    if (it) items.push(it)
-  }
-  return items
-}
-
-function parseItem(body: string): AskItem | null {
-  const header = tagText(RE_HEADER_TAG, body)
-  const question = tagText(RE_QUESTION_TAG, body)
-  const options = parseOptions(body)
-  if (question === '' && options.length === 0) return null
-  return {
-    header,
-    multiSelect: tagText(RE_MULTI_TAG, body).toLowerCase() === 'true',
-    question,
-    options,
-  }
-}
-
-/** Read every <option>, bounding an unclosed one by the next option open. */
-function parseOptions(body: string): AskOption[] {
-  const opens = allMatches(body, RE_OPTION_OPEN)
-  if (opens.length === 0) return []
-  const opts: AskOption[] = []
-  for (let i = 0; i < opens.length; i++) {
-    const bodyEnd = i + 1 < opens.length ? opens[i + 1].index : body.length
-    const content = body.slice(opens[i].end, bodyEnd).replace(RE_CHILD_CLOSER, '')
-    const opt = parseOption(attrsOf(opens[i].text), content)
-    if (opt) opts.push(opt)
-  }
-  return opts
-}
-
-/** The raw attribute text of an open tag (everything after the tag name). */
-function attrsOf(openTag: string): string {
-  const i = openTag.indexOf(' ')
-  return i >= 0 ? openTag.slice(i).replace(/>$/, '') : ''
-}
-
-/**
- * Read one <option>. A label comes from <label>, else from a value=/label=
- * attribute, else from the element's own bare text.
- */
-function parseOption(attrs: string, content: string): AskOption | null {
-  let label = tagText(RE_LABEL_TAG, content)
-  let desc = tagText(RE_DESC_TAG, content)
-  if (label === '') {
-    const m = attrs.match(RE_ATTR_LABEL)
-    if (m) label = m[1].trim()
-  }
-  if (label === '') label = decodeText(content)
-  if (label === '') return null
-  // A description identical to the label adds nothing to the card.
-  if (desc === label) desc = ''
-  return desc === '' ? { label } : { label, description: desc }
-}
-
-function tagText(re: RegExp, s: string): string {
-  const m = s.match(re)
-  return m ? decodeText(m[1]) : ''
-}
-
-/**
- * Strip nested tags, unescape entities, and collapse whitespace. Only
- * tag-shaped constructs are removed, so literal comparison operators in
- * question text ("< 5" / "> 5") survive.
- */
-function decodeText(s: string): string {
-  return unescapeEntities(s.replace(RE_ANY_TAG, ''))
-    .replace(/\s+/g, ' ')
-    .trim()
 }
 
 /**
@@ -809,71 +513,15 @@ function unescapeEntities(s: string): string {
   })
 }
 
-const KNOWN_TAG_NAMES = [
-  'ask-question', 'item', 'header', 'question', 'option', 'options',
-  'label', 'description', 'multi-select', 'multi_select', 'multiSelect',
-]
-
-/**
- * Escape &, < and > that are not part of a real tag or a valid entity.
- * Last-resort repair, applied only when a clean scan found nothing.
- */
-function escapeStrayEntities(s: string): string {
-  let out = ''
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i]
-    if (c === '&') {
-      if (!RE_ENTITY.test(s.slice(i + 1, i + 11))) {
-        out += '&amp;'
-        continue
-      }
-    } else if (c === '<') {
-      if (!looksLikeTagAt(s, i)) {
-        out += '&lt;'
-        continue
-      }
-    } else if (c === '>') {
-      if (!looksLikeTagEndAt(s, i)) {
-        out += '&gt;'
-        continue
-      }
-    }
-    out += c
-  }
-  return out
-}
-
-/** Whether `s.slice(i)` opens a tag whose name is a known ask-question element. */
-function looksLikeTagAt(s: string, i: number): boolean {
-  const rest = s.slice(i).replace(/^<\/?/, '')
-  return KNOWN_TAG_NAMES.some(name => {
-    if (!rest.startsWith(name)) return false
-    const next = rest[name.length]
-    return next === undefined || '>/ \t\n\r'.includes(next)
-  })
-}
-
-/** Whether `s[i]` closes a tag we recognize. */
-function looksLikeTagEndAt(s: string, i: number): boolean {
-  const open = s.lastIndexOf('<', i)
-  if (open < 0 || /[<>]/.test(s.slice(open, i))) return false
-  return looksLikeTagAt(s, open)
-}
-
 // ────────────────────────────────────────────────────────────
 // L3/L4 — span location and safe stripping
 // ────────────────────────────────────────────────────────────
 
-/**
- * Bound on how much text may sit between the last child close and a standard
- * </ask-question>. A larger gap means the close belongs to something else.
- */
-const GAP_LIMIT = 400
+/** The tag this module understands, without the angle brackets. */
+const TAG_NAME = 'clawbench-ask-question'
 
-const RE_OPEN_TAG = /<ask-question\b[^>]*>/g
-const RE_STD_CLOSE = /<\/ask-question\s*>/
-const RE_ANY_CLOSE = /<\/[^>]+>/
-const RE_CHILD_CLOSE = /<\/(?:item|option)\s*>/g
+const RE_OPEN_TAG = /<clawbench-ask-question\b[^>]*>/g
+const RE_STD_CLOSE = /<\/clawbench-ask-question\s*>/
 const RE_CODE_FENCE = /```[\s\S]*?```/g
 // Inline code cannot span a line break. Without that restriction an orphaned
 // backtick earlier in a long message pairs with a backtick inside a real
@@ -913,13 +561,13 @@ function inAnySpan(spans: Span[], idx: number): boolean {
 }
 
 /**
- * Locate every <ask-question> span outside a code context.
+ * Locate every clawbench-ask-question span outside a code context.
  *
  * A returned match with `parsed === null` could not be understood; its `raw`
  * must be kept visible.
  */
 export function extractAskMatches(text: string): AskMatch[] {
-  if (!text.includes('<ask-question')) return []
+  if (!text.includes('<' + TAG_NAME)) return []
   const code = codeSpans(text)
   const opens = allMatches(text, RE_OPEN_TAG)
   const matches: AskMatch[] = []
@@ -935,22 +583,33 @@ export function extractAskMatches(text: string): AskMatch[] {
 }
 
 function locate(text: string, openStart: number, openEnd: number): AskMatch {
-  const bound = boundSpan(text, openStart, openEnd)
-  const inner = text.slice(openEnd, bound.innerEnd)
+  const bound = boundSpan(text, openEnd)
+  if (bound.closeStart < 0) {
+    // No close tag: there is no payload to parse.
+    const raw = text.slice(openStart, openEnd)
+    return {
+      start: openStart,
+      end: openEnd,
+      raw,
+      parsed: null,
+      reason: bound.reason,
+      fallback: fallbackText(raw),
+    }
+  }
+  const inner = text.slice(openEnd, bound.closeStart)
   const items = parseItems(inner)
   if (items.length > 0) {
     return {
       start: openStart,
-      end: bound.spanEnd,
-      raw: text.slice(openStart, bound.spanEnd),
+      end: bound.closeEnd,
+      raw: text.slice(openStart, bound.closeEnd),
       parsed: items,
     }
   }
-  const end = bound.spanEnd > openStart ? bound.spanEnd : openEnd
-  const raw = text.slice(openStart, end)
+  const raw = text.slice(openStart, bound.closeEnd)
   return {
     start: openStart,
-    end,
+    end: bound.closeEnd,
     raw,
     parsed: null,
     reason: bound.reason,
@@ -959,8 +618,8 @@ function locate(text: string, openStart: number, openEnd: number): AskMatch {
 }
 
 /**
- * Render an unparsed span as plain text: the ask-question wrapper and its legacy
- * child elements are removed, everything else is kept.
+ * Render an unparsed span as plain text: the tag wrapper is removed, everything
+ * else is kept.
  *
  * If stripping the wrapper would leave nothing (an empty tag), the raw span is
  * returned unchanged — an empty fallback would silently erase the span.
@@ -970,131 +629,39 @@ function fallbackText(raw: string): string {
   return stripped === '' ? raw : stripped
 }
 
-interface Bound { innerEnd: number; spanEnd: number; reason: string }
+interface Bound { closeStart: number; closeEnd: number; reason: string }
 
 /**
- * Decide where the payload ends.
+ * Find the close tag that belongs to the payload opened at openEnd.
  *
- * The over-strip defect came from accepting the next closing token blindly:
- * with an unclosed tag followed by a <details> block, that token is the details
- * close, so the whole block was deleted. Here the span is bounded at the last
- * real child close unless the gap to a standard close is provably empty.
+ * A span may never reach past its own payload, so a candidate close is rejected
+ * when another payload starts before it — that close belongs to the later tag.
  */
-function boundSpan(text: string, openStart: number, openEnd: number): Bound {
-  const close = RE_STD_CLOSE.exec(text.slice(openEnd))
-  if (close) {
-    const closeStart = openEnd + close.index
-    const closeEnd = closeStart + close[0].length
-    if (!hasNestedPayloadStart(text.slice(openEnd, closeStart))) {
-      const childEnd = lastChildEnd(text, openEnd, closeStart)
-      if (childEnd < 0) {
-        // A standard close with no child close: hand the whole inner range to
-        // the parser; it will fail and the caller retains the text.
-        return { innerEnd: closeStart, spanEnd: closeEnd, reason: ReasonParseFailed }
-      }
-      // A mention AFTER the last child close means the close belongs to a later
-      // tag: this tag's payload ended at childEnd.
-      const gap = text.slice(childEnd, closeStart)
-      if (isCleanGap(gap) && !gap.includes('<ask-question')) {
-        return { innerEnd: closeStart, spanEnd: closeEnd, reason: '' }
-      }
-    }
+function boundSpan(text: string, openEnd: number): Bound {
+  const m = RE_STD_CLOSE.exec(text.slice(openEnd))
+  if (!m) return { closeStart: -1, closeEnd: -1, reason: ReasonNoStandardClose }
+  const closeStart = openEnd + m.index
+  const closeEnd = closeStart + m[0].length
+  if (RE_NESTED_OPEN.test(text.slice(openEnd, closeStart))) {
+    return { closeStart: -1, closeEnd: -1, reason: ReasonNoStandardClose }
   }
-  // No usable standard close. A non-standard close is accepted only when it
-  // belongs to this payload: the gap since the last child close must be
-  // content-free AND the close name must not match an element opened before
-  // this tag.
-  const childEnd = lastChildEnd(text, openEnd, text.length)
-  if (childEnd < 0) {
-    return { innerEnd: openEnd, spanEnd: openEnd, reason: ReasonNoChildClose }
-  }
-  // Self-containment: if another payload STARTS before this child end, those
-  // children belong to that later tag, so this tag has no payload of its own.
-  if (hasNestedPayloadStart(text.slice(openEnd, childEnd))) {
-    return { innerEnd: openEnd, spanEnd: openEnd, reason: ReasonNoStandardClose }
-  }
-  const anyClose = RE_ANY_CLOSE.exec(text.slice(childEnd))
-  if (anyClose) {
-    const closeStart = childEnd + anyClose.index
-    const closeEnd = closeStart + anyClose[0].length
-    const closeName = closeTagName(text.slice(closeStart, closeEnd))
-    const gap = text.slice(childEnd, closeStart)
-    if (isCleanGap(gap) && !gap.includes('<ask-question') &&
-        closeName !== '' && !hasOuterOpen(text, openStart, closeName)) {
-      return { innerEnd: childEnd, spanEnd: closeEnd, reason: '' }
-    }
-  }
-  return { innerEnd: childEnd, spanEnd: childEnd, reason: ReasonNoStandardClose }
+  return { closeStart, closeEnd, reason: ReasonParseFailed }
 }
 
 /**
- * Matches an ask-question open tag that is itself followed by an <item>, i.e.
- * the beginning of a genuine sibling payload.
+ * A sibling tag: an open tag at the start of a line. A payload may legitimately
+ * mention the tag inline in its own question text ("how should <tag> render?"),
+ * and treating that mention as a sibling would both leak the real payload and
+ * split it.
  */
-const RE_NESTED_PAYLOAD_START = /<ask-question\b[^>]*>\s*<item\b/s
-
-/**
- * Whether `region` contains the start of another payload.
- *
- * A plain substring search for '<ask-question' is too blunt: a payload may
- * legitimately mention the tag in its own question text (e.g. "how should a
- * literal <ask-question> be rendered?"), and treating that mention as a sibling
- * tag both leaks the real payload and can delete part of it. Requiring the
- * mention to be followed by <item> distinguishes a sibling payload from prose.
- */
-function hasNestedPayloadStart(region: string): boolean {
-  return RE_NESTED_PAYLOAD_START.test(region)
-}
-
-/** Extract the element name from a closing tag, or '' when malformed. */
-function closeTagName(tag: string): string {
-  const inner = tag.replace(/^<\//, '').replace(/>$/, '').trim()
-  if (inner === '') return ''
-  return inner.split(/\s+/)[0].toLowerCase()
-}
-
-/**
- * Whether an open tag named `name` appears before openStart. When it does, a
- * matching close belongs to that outer element — the details-before-question
- * shape — and must not be consumed.
- */
-function hasOuterOpen(text: string, openStart: number, name: string): boolean {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`<${escaped}[\\s>/]`, 'i').test(text.slice(0, openStart))
-}
-
-/** End offset of the last </item> or </option> in text[from:to], or -1. */
-function lastChildEnd(text: string, from: number, to: number): number {
-  const slice = text.slice(from, Math.min(to, text.length))
-  const locs = allMatches(slice, RE_CHILD_CLOSE)
-  return locs.length === 0 ? -1 : from + locs[locs.length - 1].end
-}
-
-/**
- * Whether the text between a payload and its closing token carries no content
- * — only whitespace and stray punctuation. Anything else (in particular any
- * letter, digit or CJK character) means the closing token terminates different
- * content.
- */
-function isCleanGap(gap: string): boolean {
-  if (gap.length > GAP_LIMIT) return false
-  return [...gap].every(isGapNoise)
-}
-
-/**
- * Acceptable between a payload and its closing token: whitespace, or the
- * punctuation an obfuscated close leaves behind (fullwidth pipes, colons).
- */
-function isGapNoise(r: string): boolean {
-  return ' \t\n\r｜|:：/\\-_.·'.includes(r)
-}
+const RE_NESTED_OPEN = /^[ \t]*<clawbench-ask-question\b/m
 
 /**
  * Replace every located span with what should be shown in its place.
  *
  * - A parsed span is removed entirely (the card renders it).
  * - An unparsed span is replaced by its `fallback`: the payload with the
- *   ask-question wrapper removed, so it renders as ordinary Markdown instead of
+ *   tag wrapper removed, so it renders as ordinary Markdown instead of
  *   exposing raw markup.
  *
  * No content is ever discarded. An unparsed span's fallback holds everything

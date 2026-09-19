@@ -1,7 +1,7 @@
 /**
  * XML parsing utilities for structured AI output.
  *
- * Handles the <ask-question> XML tag format. All parsing is delegated to
+ * Handles the <clawbench-ask-question> XML tag format. All parsing is delegated to
  * `@/utils/askQuestion.ts`, the canonical implementation shared with the Go
  * backend (`internal/askquestion`). This module keeps the historical export
  * names so existing call sites and tests are unaffected.
@@ -20,10 +20,10 @@ export interface AskQuestionData {
 }
 
 /**
- * Parse <ask-question> XML content into structured data.
+ * Parse <clawbench-ask-question> XML content into structured data.
  * Returns null if the payload is invalid or contains no renderable question.
  *
- * The content may include the <ask-question> wrapper or be a bare payload.
+ * The content may include the <clawbench-ask-question> wrapper or be a bare payload.
  */
 export function parseAskQuestionXML(rawContent: string): AskQuestionData | null {
   const trimmed = rawContent.trim()

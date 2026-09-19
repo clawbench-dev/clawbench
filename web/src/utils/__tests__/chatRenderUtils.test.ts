@@ -583,23 +583,14 @@ describe('convertVideoLinks', () => {
   })
 })
 
-// ─── parseAskQuestionContent (XML format) ────────────────────────────────────
+// ─── parseAskQuestionContent (native Markdown payload) ───────────────────────
 
 describe('parseAskQuestionContent', () => {
-  it('parses XML format with single item', () => {
-    const input = `<item>
-    <header>Approach</header>
-    <multi-select>false</multi-select>
-    <question>Which approach?</question>
-    <option>
-      <label>Option A</label>
-      <description>Fast</description>
-    </option>
-    <option>
-      <label>Option B</label>
-      <description>Safe</description>
-    </option>
-  </item>`
+  it('parses a native Markdown payload with header, question and options', () => {
+    const input = `**Approach**
+Which approach?
+- Option A — Fast
+- Option B — Safe`
     const result = parseAskQuestionContent(input)
     expect(result).not.toBeNull()
     expect(result!.questions).toHaveLength(1)
@@ -611,92 +602,65 @@ describe('parseAskQuestionContent', () => {
     expect(result!.questions[0].options[0].description).toBe('Fast')
   })
 
-  it('parses multiple items', () => {
-    const input = `<item>
-    <header>Q1</header>
-    <multi-select>false</multi-select>
-    <question>First?</question>
-    <option><label>A</label></option>
-  </item>
-  <item>
-    <header>Q2</header>
-    <multi-select>true</multi-select>
-    <question>Second?</question>
-    <option><label>B</label></option>
-  </item>`
+  it('parses a checkbox list as multi-select', () => {
+    const input = `**Pick**
+Choose several
+- [ ] A
+- [x] B`
     const result = parseAskQuestionContent(input)
     expect(result).not.toBeNull()
-    expect(result!.questions).toHaveLength(2)
-    expect(result!.questions[1].multiSelect).toBe(true)
+    expect(result!.questions).toHaveLength(1)
+    expect(result!.questions[0].multiSelect).toBe(true)
+    expect(result!.questions[0].options.map(o => o.label)).toEqual(['A', 'B'])
   })
 
   it('returns null for plain text', () => {
-    expect(parseAskQuestionContent('not xml at all')).toBeNull()
+    expect(parseAskQuestionContent('not a payload at all')).toBeNull()
   })
 
   it('returns null for empty string', () => {
     expect(parseAskQuestionContent('')).toBeNull()
   })
 
-  it('returns null for XML without item elements', () => {
+  it('returns null for markup with no list', () => {
     expect(parseAskQuestionContent('<something>else</something>')).toBeNull()
   })
 
   it('handles option without description', () => {
-    const input = `<item>
-    <header>Pick</header>
-    <multi-select>false</multi-select>
-    <question>Choose</question>
-    <option><label>Yes</label></option>
-  </item>`
+    const input = `**Pick**
+Choose
+- Yes`
     const result = parseAskQuestionContent(input)
     expect(result).not.toBeNull()
     expect(result!.questions[0].options[0].label).toBe('Yes')
     expect(result!.questions[0].options[0].description).toBeUndefined()
   })
 
-  // An item is renderable when it carries question text OR at least one option
-  // — the same bar classifyAskQuestionsInput (renderToolDetail.ts) applies. A
-  // question with no options is still answerable via the supplementary field,
-  // and an option list with no question text still presents a choice. The old
-  // "requires both" rule was one of the divergences between the five parsers.
+  // A Markdown payload is a question when it carries a list, so an option list
+  // with no prose question text still presents a choice: the bold title stands
+  // in as the card's question. A payload with no list at all is not a card.
   it('keeps an item with options but no question text', () => {
-    const input = `<item>
-    <header>H</header>
-    <multi-select>false</multi-select>
-    <option><label>A</label></option>
-  </item>`
+    const input = `**H**
+- A`
     const result = parseAskQuestionContent(input)
     expect(result).not.toBeNull()
     expect(result!.questions[0].options[0].label).toBe('A')
     expect(result!.questions[0].question).toBe('')
   })
 
-  it('keeps an item with a question but no options', () => {
-    const input = `<item>
-    <header>H</header>
-    <multi-select>false</multi-select>
-    <question>Q?</question>
-  </item>`
-    const result = parseAskQuestionContent(input)
-    expect(result).not.toBeNull()
-    expect(result!.questions[0].question).toBe('Q?')
-    expect(result!.questions[0].options).toEqual([])
-  })
-
-  it('returns null for an item with neither question nor options', () => {
-    const input = `<item>
-    <header>H</header>
-    <multi-select>false</multi-select>
-  </item>`
+  it('returns null for a question with no list', () => {
+    const input = `**H**
+Q?`
     expect(parseAskQuestionContent(input)).toBeNull()
   })
 
-  it('recovers JSON content rather than returning null', () => {
+  it('returns null for a payload with neither question nor options', () => {
+    expect(parseAskQuestionContent('**H**')).toBeNull()
+  })
+
+  it('returns null for a JSON payload (recovery was removed)', () => {
     const input = '{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"}]}]}'
-    const result = parseAskQuestionContent(input)
-    expect(result).not.toBeNull()
-    expect(result!.questions[0].header).toBe('Approach')
+    expect(parseAskQuestionContent(input)).toBeNull()
   })
 })
 

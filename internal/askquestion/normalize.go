@@ -15,8 +15,6 @@ var (
 	labelKeys         = []string{"label", "value", "text", "title"}
 	descKeys          = []string{"description", "desc", "detail"}
 	multiKeys         = []string{"multiselect", "multiple", "multi"}
-	// xmlStringKeys hold a raw <item> payload serialized as a JSON string.
-	xmlStringKeys = []string{"ask", "prompt", "questions", "content"}
 )
 
 // canonicalKey folds a raw map key to its comparison form: it strips the
@@ -73,8 +71,8 @@ func preferKey(candidate, current, canonicalName string) bool {
 // It accepts every malformed shape observed in production: a flat
 // {question, options} object without the `questions` wrapper, `{items:[...]}`,
 // `{params:{items:[...]}}`, `{parameters:[...]}`, `choices` instead of
-// `options`, `message`/`title` instead of `question`, string-typed booleans and
-// option arrays, and a raw `<item>` XML payload parked in a string field.
+// `options`, `message`/`title` instead of `question`, and string-typed booleans
+// and option arrays.
 //
 // Objects that carry no question and no option — hallucinated shapes such as
 // {type:"ask-question"}, {askUserQuestion:true}, {taskId:""} or {schema:[...]}
@@ -85,19 +83,6 @@ func NormalizeInput(raw map[string]any) []Item {
 	}
 	if arr := findQuestionArray(raw, 0); arr != nil {
 		return itemsFromArray(arr)
-	}
-	if xmlText := findXMLString(raw); xmlText != "" {
-		// The string may be a raw <item> payload (no <ask-question> wrapper),
-		// so parse it directly as well as through Extract.
-		if items := ParseItems(xmlText); len(items) > 0 {
-			return items
-		}
-		for _, m := range Extract(xmlText) {
-			if m.Parsed {
-				return m.Items
-			}
-		}
-		return nil
 	}
 	// No wrapper at all: the object may itself be a single question.
 	if it, ok := normalizeItem(raw); ok {
@@ -131,21 +116,6 @@ func findQuestionArray(m map[string]any, depth int) []any {
 		}
 	}
 	return nil
-}
-
-// findXMLString returns a string field that looks like a raw <item> payload.
-func findXMLString(m map[string]any) string {
-	for _, key := range xmlStringKeys {
-		v, ok := lookup(m, key)
-		if !ok {
-			continue
-		}
-		s, ok := v.(string)
-		if ok && strings.Contains(s, "<item") {
-			return s
-		}
-	}
-	return ""
 }
 
 // asArray accepts a JSON array or a string holding one (models sometimes

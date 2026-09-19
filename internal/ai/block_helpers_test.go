@@ -12,10 +12,10 @@ import (
 func TestStringsContainsAnyBlock_Found(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "thinking", Text: "hmm"},
-		{Type: "text", Text: "before <ask-question> after"},
+		{Type: "text", Text: "before <clawbench-ask-question> after"},
 	}
-	if !StringsContainsAnyBlock(blocks, "<ask-question") {
-		t.Fatal("expected to find <ask-question in text block")
+	if !StringsContainsAnyBlock(blocks, "<clawbench-ask-question") {
+		t.Fatal("expected to find <clawbench-ask-question in text block")
 	}
 }
 
@@ -23,13 +23,13 @@ func TestStringsContainsAnyBlock_NotFound(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: "plain text"},
 	}
-	if StringsContainsAnyBlock(blocks, "<ask-question") {
-		t.Fatal("expected not to find <ask-question")
+	if StringsContainsAnyBlock(blocks, "<clawbench-ask-question") {
+		t.Fatal("expected not to find <clawbench-ask-question")
 	}
 }
 
 func TestStringsContainsAnyBlock_Empty(t *testing.T) {
-	if StringsContainsAnyBlock(nil, "<ask-question") {
+	if StringsContainsAnyBlock(nil, "<clawbench-ask-question") {
 		t.Fatal("expected false for nil blocks")
 	}
 }
@@ -76,7 +76,11 @@ func TestRemoveRejectedToolBlocks_KeepsNonRejectedErrors(t *testing.T) {
 
 func TestConvertAskQuestionBlocks_XMLFormat(t *testing.T) {
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `<ask-question><item><header>Choice</header><multi-select>false</multi-select><question>Which one?</question><option><label>A</label><description>First</description></option></item></ask-question>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+**Choice**
+Which one?
+- A — First
+</clawbench-ask-question>`},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
 
@@ -96,24 +100,24 @@ func TestConvertAskQuestionBlocks_XMLFormat(t *testing.T) {
 	}
 }
 
-func TestConvertAskQuestionBlocks_JSONContentIsRecovered(t *testing.T) {
-	// JSON is not the documented format, but recovering it beats discarding a
-	// readable question.
+func TestConvertAskQuestionBlocks_JSONPayloadDegrades(t *testing.T) {
+	// JSON is not the documented format and is not recovered: the payload is
+	// shown as text so the malformed output is visible rather than masked.
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `<ask-question>{"questions":[{"question":"Pick one","header":"Choice","multiSelect":false,"options":[{"label":"A","description":"First"}]}]}</ask-question>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+{"questions":[{"question":"Pick one","options":[{"label":"A"}]}]}
+</clawbench-ask-question>`},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
 
 	for _, b := range result {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
-			qs, _ := b.Input["questions"].([]map[string]any)
-			if len(qs) != 1 || qs[0]["question"] != "Pick one" {
-				t.Fatalf("unexpected recovered questions: %+v", qs)
-			}
-			return
+			t.Fatalf("JSON must not become a card, got %+v", b)
 		}
 	}
-	t.Fatalf("expected the JSON payload to be recovered, got: %+v", result)
+	if len(result) != 1 || !strings.Contains(result[0].Text, "Pick one") {
+		t.Fatalf("the payload text must be retained, got %+v", result)
+	}
 }
 
 func TestConvertAskQuestionBlocks_NoTags(t *testing.T) {
@@ -128,7 +132,7 @@ func TestConvertAskQuestionBlocks_NoTags(t *testing.T) {
 
 func TestConvertAskQuestionBlocks_TextBeforeAndAfter(t *testing.T) {
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `before <ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label><description>D</description></option></item></ask-question> after`},
+		{Type: "text", Text: "before <clawbench-ask-question>\n**H**\nQ?\n- A — D\n</clawbench-ask-question> after"},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
 
@@ -153,12 +157,20 @@ func TestConvertAskQuestionBlocks_TextBeforeAndAfter(t *testing.T) {
 
 // --- ConvertAskQuestionBlocks additional cases ---
 
-// 27% of production text blocks contain more than one <ask-question> tag. The
+// 27% of production text blocks contain more than one <clawbench-ask-question> tag. The
 // previous implementation converted only the last one and leaked the rest as
 // raw XML.
 func TestConvertAskQuestionBlocks_MultipleTagsMergeIntoOneBlock(t *testing.T) {
-	one := `<ask-question><item><header>Q1</header><multi-select>false</multi-select><question>第一个?</question><option><label>A</label></option></item></ask-question>`
-	two := `<ask-question><item><header>Q2</header><multi-select>false</multi-select><question>第二个?</question><option><label>B</label></option></item></ask-question>`
+	one := `<clawbench-ask-question>
+**Q1**
+第一个?
+- A
+</clawbench-ask-question>`
+	two := `<clawbench-ask-question>
+**Q2**
+第二个?
+- B
+</clawbench-ask-question>`
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: one + "\n中间\n" + two},
 	}
@@ -173,7 +185,7 @@ func TestConvertAskQuestionBlocks_MultipleTagsMergeIntoOneBlock(t *testing.T) {
 			qs, _ := b.Input["questions"].([]map[string]any)
 			questions = qs
 		}
-		if b.Type == "text" && strings.Contains(b.Text, "<ask-question") {
+		if b.Type == "text" && strings.Contains(b.Text, "<clawbench-ask-question") {
 			t.Errorf("no raw tag may remain in the text block, got %q", b.Text)
 		}
 	}
@@ -191,7 +203,9 @@ func TestConvertAskQuestionBlocks_MultipleTagsMergeIntoOneBlock(t *testing.T) {
 // An unparseable payload must stay in the text block: its raw text is the only
 // remaining copy of the question.
 func TestConvertAskQuestionBlocks_UnparseableTagIsRetained(t *testing.T) {
-	payload := `<ask-question>这里没有列表也没有 JSON，只是一段说明。</ask-question>`
+	payload := `<clawbench-ask-question>
+这里没有列表，只是一段说明。
+</clawbench-ask-question>`
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: "前言\n" + payload + "\n后记"},
 	}
@@ -201,16 +215,16 @@ func TestConvertAskQuestionBlocks_UnparseableTagIsRetained(t *testing.T) {
 	if len(result) != 1 || result[0].Type != "text" {
 		t.Fatalf("expected a single unchanged text block, got %+v", result)
 	}
-	if !strings.Contains(result[0].Text, "这里没有列表也没有 JSON") {
+	if !strings.Contains(result[0].Text, "这里没有列表") {
 		t.Fatalf("the unparseable payload text must be retained, got %q", result[0].Text)
 	}
 }
 
 // The over-strip regression: an unclosed tag followed by a <details> block used
 // to consume the details block (the next closing token) and delete real prose.
+// An unclosed tag has no payload, so it degrades to text.
 func TestConvertAskQuestionBlocks_UnclosedTagDoesNotSwallowFollowingBlock(t *testing.T) {
-	text := "分析如下\n<ask-question>\n<item><header>H</header><multi-select>false</multi-select>" +
-		"<question>Q?</question><option><label>A</label></option></item>\n\n" +
+	text := "分析如下\n<clawbench-ask-question>\n**H**\nQ?\n- A\n\n" +
 		"<details>\n<summary>更多</summary>\n正文内容必须保留\n</details>"
 	blocks := []model.ContentBlock{{Type: "text", Text: text}}
 
@@ -225,8 +239,8 @@ func TestConvertAskQuestionBlocks_UnclosedTagDoesNotSwallowFollowingBlock(t *tes
 			t.Fatalf("the details body was swallowed, got %q", b.Text)
 		}
 	}
-	if !foundTool {
-		t.Fatal("expected the unclosed tag to still convert")
+	if foundTool {
+		t.Fatal("an unclosed tag has no payload and must not convert")
 	}
 }
 
@@ -234,7 +248,11 @@ func TestConvertAskQuestionBlocks_UnclosedTagDoesNotSwallowFollowingBlock(t *tes
 // now parse rather than being silently rejected.
 func TestConvertAskQuestionBlocks_OptionAttributeIsUnderstood(t *testing.T) {
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `<ask-question><item><header>Pick</header><multi-select>false</multi-select><question>Which?</question><option value="restore_only"><label>restore_only</label></option></item></ask-question>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+**Pick**
+Which?
+- restore_only
+</clawbench-ask-question>`},
 	}
 
 	result := ConvertAskQuestionBlocks(blocks)
@@ -258,7 +276,11 @@ func TestConvertAskQuestionBlocks_OptionAttributeIsUnderstood(t *testing.T) {
 func TestConvertAskQuestionBlocks_WrongCloseTag(t *testing.T) {
 	// Non-standard closing tag variant
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item></user_query>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+**H**
+Q?
+- A
+</clawbench-ask-question>`},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
 	found := false
@@ -276,7 +298,10 @@ func TestConvertAskQuestionBlocks_WrongCloseTag(t *testing.T) {
 func TestConvertAskQuestionBlocks_UnclosedTag(t *testing.T) {
 	// No closing tag at all — tag runs to end-of-text
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `<ask-question><item><question>Q?</question><option><label>A</label></option></item>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+Q?
+- A
+</clawbench-ask-question>`},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
 	found := false
@@ -292,9 +317,11 @@ func TestConvertAskQuestionBlocks_UnclosedTag(t *testing.T) {
 }
 
 func TestConvertAskQuestionBlocks_UnparseableContent(t *testing.T) {
-	// <ask-question> tag present but content is not valid XML
+	// Tag present but the payload is not a question
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `<ask-question>garbage content</ask-question>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+garbage content
+</clawbench-ask-question>`},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
 	// Should remain as text block since parsing fails
@@ -315,9 +342,11 @@ func TestConvertAskQuestionBlocks_NonTextBlock(t *testing.T) {
 }
 
 func TestConvertAskQuestionBlocks_OnlyAskQuestionTagNoValidContent(t *testing.T) {
-	// Has <ask-question> tag but no parseable payload
+	// Has the tag but no parseable payload
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `<ask-question>just some text without proper structure</ask-question>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+just some text without proper structure
+</clawbench-ask-question>`},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
 	if len(result) != 1 || result[0].Type != "text" {
@@ -326,11 +355,14 @@ func TestConvertAskQuestionBlocks_OnlyAskQuestionTagNoValidContent(t *testing.T)
 }
 
 func TestConvertAskQuestionBlocks_RejectedToolNotRemoved(t *testing.T) {
-	// ConvertAskQuestionBlocks only handles <ask-question> conversion.
+	// ConvertAskQuestionBlocks only handles clawbench-ask-question conversion.
 	// RemoveRejectedToolBlocks is called separately by postProcessBlocks,
 	// so rejected tool blocks are preserved here.
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `<ask-question><item><question>Q?</question><option><label>A</label></option></item></ask-question>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+Q?
+- A
+</clawbench-ask-question>`},
 		{Type: "tool_use", Name: "BadTool", ID: "x", Status: "error", Output: "not found in agent cli"},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
@@ -351,7 +383,10 @@ func TestConvertAskQuestionBlocks_RejectedToolNotRemoved(t *testing.T) {
 func TestConvertAskQuestionBlocks_EmptyCleanText(t *testing.T) {
 	// When cleanText is empty, the block should be replaced entirely (not appended)
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: `<ask-question><item><question>Q?</question><option><label>A</label></option></item></ask-question>`},
+		{Type: "text", Text: `<clawbench-ask-question>
+Q?
+- A
+</clawbench-ask-question>`},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
 	toolCount := 0
@@ -377,11 +412,11 @@ func TestConvertAskQuestionBlocks_EmptyCleanText(t *testing.T) {
 // does not mutate the caller's slice elements. This is a regression test: the
 // function used to modify blocks[i].Text in-place, which shared the underlying
 // array with the caller (e.g. SessionExecutor.e.blocks). When buildResult called
-// postProcessBlocks first, it stripped <ask-question> tags from e.blocks via this
+// postProcessBlocks first, it stripped <clawbench-ask-question> tags from e.blocks via this
 // mutation, then Finalize's postProcessBlocks couldn't detect the tags anymore —
 // causing the AskUserQuestion tool_use block to be lost from chat_history.content.
 func TestConvertAskQuestionBlocks_DefensiveCopy(t *testing.T) {
-	originalText := "Before <ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label><description>D</description></option></item></ask-question> After"
+	originalText := "Before <clawbench-ask-question>\n**H**\nQ?\n- A — D\n</clawbench-ask-question> After"
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: originalText},
 	}
@@ -404,7 +439,7 @@ func TestConvertAskQuestionBlocks_DefensiveCopy(t *testing.T) {
 	}
 
 	// Call ConvertAskQuestionBlocks again on the same original slice —
-	// it should still detect <ask-question> tags
+	// it should still detect <clawbench-ask-question> tags
 	result2 := ConvertAskQuestionBlocks(blocks)
 	if len(result2) != 2 {
 		t.Fatalf("second call: expected 2 blocks, got %d — tags were stripped by first call", len(result2))
@@ -421,7 +456,7 @@ func TestConvertAskQuestionBlocks_DefensiveCopy(t *testing.T) {
 // the payload's own text survives.
 func TestConvertAskQuestionBlocks_UnparseableDegradesToMarkdown(t *testing.T) {
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: "前言\n<ask-question>\n这里没有列表也没有 JSON，只是一段说明。\n</ask-question>\n后记"},
+		{Type: "text", Text: "前言\n<clawbench-ask-question>\n这里没有列表，只是一段说明。\n</clawbench-ask-question>\n后记"},
 	}
 
 	result := ConvertAskQuestionBlocks(blocks)
@@ -429,10 +464,10 @@ func TestConvertAskQuestionBlocks_UnparseableDegradesToMarkdown(t *testing.T) {
 	if len(result) != 1 || result[0].Type != "text" {
 		t.Fatalf("expected a single text block, got %+v", result)
 	}
-	if strings.Contains(result[0].Text, "<ask-question") {
+	if strings.Contains(result[0].Text, "<clawbench-ask-question") {
 		t.Errorf("the wrapper must be stripped, got %q", result[0].Text)
 	}
-	if !strings.Contains(result[0].Text, "这里没有列表也没有 JSON") {
+	if !strings.Contains(result[0].Text, "这里没有列表") {
 		t.Errorf("the payload text must survive, got %q", result[0].Text)
 	}
 }
@@ -440,7 +475,7 @@ func TestConvertAskQuestionBlocks_UnparseableDegradesToMarkdown(t *testing.T) {
 // The current format is native Markdown inside the tag.
 func TestConvertAskQuestionBlocks_MarkdownFormat(t *testing.T) {
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: "前言\n<ask-question>\n**方案选择**\n你更倾向哪种？\n- 方案 A — 快\n- 方案 B — 安全\n</ask-question>\n后记"},
+		{Type: "text", Text: "前言\n<clawbench-ask-question>\n**方案选择**\n你更倾向哪种？\n- 方案 A — 快\n- 方案 B — 安全\n</clawbench-ask-question>\n后记"},
 	}
 
 	result := ConvertAskQuestionBlocks(blocks)
@@ -450,7 +485,7 @@ func TestConvertAskQuestionBlocks_MarkdownFormat(t *testing.T) {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
 			got = b.Input
 		}
-		if b.Type == "text" && strings.Contains(b.Text, "<ask-question") {
+		if b.Type == "text" && strings.Contains(b.Text, "<clawbench-ask-question") {
 			t.Errorf("no raw tag may remain, got %q", b.Text)
 		}
 	}

@@ -231,7 +231,7 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
    *
    * When streaming=true (during streaming):
    *   Only pure markdown rendering — no structured detection.
-   *   Tags like <scheduled-task> and <ask-question> remain as visible text.
+   *   Tags like <scheduled-task> and <clawbench-ask-question> remain as visible text.
    *   No KaTeX, no file path annotation, no path verification.
    *
    * When streaming=false (post-streaming / history load):
@@ -261,7 +261,7 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
       fetchBatchTaskData(taskKeys)
     }
 
-    // Detect ask-question tags
+    // Detect clawbench-ask-question tags
     const askResult = detectAskQuestion(text)
 
     if (askResult.matches.length > 0) {

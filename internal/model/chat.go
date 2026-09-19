@@ -94,13 +94,13 @@ type SummaryTool struct {
 	Output string         `json:"output,omitempty"`
 }
 
-// AskQuestionOption is a single option in an ask-question card.
+// AskQuestionOption is a single option in a clawbench-ask-question card.
 type AskQuestionOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
 }
 
-// AskQuestionCard is a single question item in an <ask-question> block,
+// AskQuestionCard is a single question item in an <clawbench-ask-question> block,
 // shaped to match the frontend AskItem used by renderAskUserQuestion
 // (web/src/utils/xmlParser.ts). A frontend caller renders it via
 // formatToolInput({ questions: summaryCards.askQuestions }, 'AskUserQuestion').
@@ -162,7 +162,7 @@ func (s *SummaryFileChanges) UnmarshalJSON(data []byte) error {
 // SummaryCards holds the structured card metadata persisted alongside the
 // reading summary text. Tools are auto-expand tool_use blocks; TaskIDs are the
 // scheduled-task IDs referenced by <scheduled-task> tags; AskQuestions are
-// <ask-question> XML cards. Populated at summarization time and stored in the
+// <clawbench-ask-question> XML cards. Populated at summarization time and stored in the
 // summaries.summary_cards column.
 type SummaryCards struct {
 	Tools        []SummaryTool     `json:"tools,omitempty"`

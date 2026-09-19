@@ -282,7 +282,7 @@ function renderWritePreview(input: ToolInput): string {
  *  - 'valid':     carries at least one renderable question (question text or
  *                 non-empty options), so the card is genuinely answerable.
  *  - 'malformed': carries input content but no renderable question — the model
- *                 emitted e.g. a leftover <ask-question> XML fragment or a
+ *                 emitted e.g. a leftover <clawbench-ask-question> XML fragment or a
  *                 junk questions array. Such a call can never be answered.
  *  - 'empty':     no input / no questions at all (slim block awaiting lazy
  *                 load, or a skeleton block whose input has not been written).

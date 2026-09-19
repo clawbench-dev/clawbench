@@ -52,7 +52,7 @@ func StripMarkdown(text string) string {
 	// and subsequent patterns can match the unescaped characters.
 	text = reBackslashEscape.ReplaceAllString(text, "$1")
 
-	// Phase 0.5: Preserve <ask-question> structured question content.
+	// Phase 0.5: Preserve <clawbench-ask-question> structured question content.
 	// These contain questions/options that should be spoken aloud.
 	// Parsing is delegated to internal/askquestion, so TTS understands the same
 	// payloads the UI does (unclosed tags, option attributes, the plural
@@ -126,7 +126,7 @@ func stripInlineCode(text string) string {
 	})
 }
 
-// replaceAskQuestions converts every <ask-question> block into spoken text.
+// replaceAskQuestions converts every <clawbench-ask-question> block into spoken text.
 //
 // Parsing is delegated to internal/askquestion, so TTS understands the same
 // payloads the UI does (unclosed tags, option attributes, the plural <options>

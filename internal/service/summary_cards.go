@@ -22,7 +22,7 @@ func isSummaryCardTool(name string) bool {
 
 // extractSummaryCards walks content blocks and builds the compact card
 // metadata persisted in summaries.summary_cards. Only answerable tool_use
-// blocks, scheduled-task IDs, and <ask-question> cards are retained.
+// blocks, scheduled-task IDs, and <clawbench-ask-question> cards are retained.
 func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 	cards := &model.SummaryCards{}
 	for _, b := range blocks {
@@ -118,7 +118,7 @@ func containsString(slice []string, s string) bool {
 	return false
 }
 
-// extractFromText parses scheduled-task IDs and ask-question cards from a text block.
+// extractFromText parses scheduled-task IDs and clawbench-ask-question cards from a text block.
 func extractFromText(cards *model.SummaryCards, text string) {
 	for _, m := range scheduledTaskIDRe.FindAllStringSubmatch(text, -1) {
 		id, err := strconv.ParseInt(m[1], 10, 64)
@@ -129,7 +129,7 @@ func extractFromText(cards *model.SummaryCards, text string) {
 	}
 	// Parsing is delegated to internal/askquestion so the summary cards agree
 	// with the content blocks: the old regex here required a literal
-	// </ask-question>, so a tag with a non-standard close produced a tool card
+	// </clawbench-ask-question>, so a tag with a non-standard close produced a tool card
 	// but no summary card.
 	for _, item := range askquestion.AllItems(askquestion.Extract(text)) {
 		card := model.AskQuestionCard{
