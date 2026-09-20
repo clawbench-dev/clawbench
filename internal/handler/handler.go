@@ -398,6 +398,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/file/archive", ServeFileArchive)
 	register("/api/file/symbols", ServeFileSymbols)
 	register("/api/recent-projects", ServeRecentProjects)
+	register("/api/conversation-projects", ServeConversationProjects)
 	register("/api/local-file/", ServeLocalFile)
 	register("/api/agents", ServeAgents)
 	register("/api/agents/", ServeAgentSubRoutes)

@@ -1039,6 +1039,62 @@ func titleFromFileEntries(files []model.FileEntry) string {
 	return strings.Join(names, ", ")
 }
 
+// ConversationProject is a project that has at least one conversation on record.
+type ConversationProject struct {
+	// Path is the project directory as stored with the session. It is returned
+	// even when the directory no longer exists on disk.
+	Path string `json:"path"`
+	// SessionCount is the number of sessions recorded for the project.
+	SessionCount int `json:"session_count"`
+	// LastActiveAt is the most recent session creation time, "2006-01-02 15:04:05" UTC.
+	LastActiveAt string `json:"last_active_at"`
+	// Exists reports whether the directory is still present on disk. A deleted
+	// project is still listed — its history remains searchable — but the flag
+	// lets the caller tell the two apart.
+	Exists bool `json:"exists"`
+}
+
+// GetConversationProjects lists every project that has conversation history,
+// newest activity first.
+//
+// The source is the union of chat_sessions and the denormalized chat_metadata
+// ledger: chat_sessions drops rows when a session is hard-deleted, while
+// chat_metadata is written at message time and survives session deletion. Using
+// both means a project whose sessions were all deleted still appears as long as
+// any message was ever recorded for it.
+//
+// Paths whose directory no longer exists are INCLUDED (Exists=false). Unlike
+// GetRecentProjects, which purges vanished directories from the recent list,
+// this endpoint exists to make old history discoverable, so a deleted project
+// must stay listed.
+func GetConversationProjects() ([]ConversationProject, error) {
+	rows, err := dbRead.QueryContext(context.Background(), `
+		SELECT project_path, COUNT(*), MAX(last_at) FROM (
+			SELECT project_path, created_at AS last_at FROM chat_sessions WHERE project_path != ''
+			UNION ALL
+			SELECT project_path, created_at AS last_at FROM chat_metadata WHERE project_path != ''
+		)
+		GROUP BY project_path
+		ORDER BY MAX(last_at) DESC, project_path ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	projects := make([]ConversationProject, 0, 16)
+	for rows.Next() {
+		var p ConversationProject
+		if err := rows.Scan(&p.Path, &p.SessionCount, &p.LastActiveAt); err != nil {
+			return nil, err
+		}
+		if info, statErr := os.Stat(p.Path); statErr == nil && info.IsDir() {
+			p.Exists = true
+		}
+		projects = append(projects, p)
+	}
+	return projects, rows.Err()
+}
+
 // GetRecentProjects returns the most recent project paths as a flat list.
 //
 // It filters out paths whose directories no longer exist on disk (removing

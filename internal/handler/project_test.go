@@ -356,3 +356,82 @@ func TestServeRecentProjects(t *testing.T) {
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	})
 }
+
+func TestServeConversationProjects(t *testing.T) {
+	t.Run("GET_ReturnsEmptyList", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodGet, "/api/conversation-projects", nil)
+		w := callHandler(ServeConversationProjects, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp struct {
+			Projects []service.ConversationProject `json:"projects"`
+		}
+		decodeRespJSON(t, w.Body, &resp)
+		assert.Empty(t, resp.Projects)
+	})
+
+	t.Run("GET_ListsProjectsWithHistory", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		projectPath := filepath.Join(env.WatchDir, "histproj")
+		require.NoError(t, os.MkdirAll(projectPath, 0o755))
+
+		sessionID, err := service.CreateSession(projectPath, "claude", "Test", "claude", "", "default", "chat")
+		require.NoError(t, err)
+		require.NotEmpty(t, sessionID)
+
+		req := newRequest(t, http.MethodGet, "/api/conversation-projects", nil)
+		w := callHandler(ServeConversationProjects, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp struct {
+			Projects []service.ConversationProject `json:"projects"`
+		}
+		decodeRespJSON(t, w.Body, &resp)
+		require.Len(t, resp.Projects, 1)
+		assert.Equal(t, projectPath, resp.Projects[0].Path)
+		assert.True(t, resp.Projects[0].Exists, "a live directory must be flagged as existing")
+	})
+
+	// A project whose directory was deleted must still be returned: that is the
+	// whole reason this endpoint exists next to /api/recent-projects.
+	t.Run("GET_KeepsDeletedProjectDirectories", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		projectPath := filepath.Join(env.WatchDir, "gone")
+		require.NoError(t, os.MkdirAll(projectPath, 0o755))
+
+		sessionID, err := service.CreateSession(projectPath, "claude", "Test", "claude", "", "default", "chat")
+		require.NoError(t, err)
+		require.NotEmpty(t, sessionID)
+
+		require.NoError(t, os.RemoveAll(projectPath))
+
+		req := newRequest(t, http.MethodGet, "/api/conversation-projects", nil)
+		w := callHandler(ServeConversationProjects, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp struct {
+			Projects []service.ConversationProject `json:"projects"`
+		}
+		decodeRespJSON(t, w.Body, &resp)
+		require.Len(t, resp.Projects, 1, "a deleted project must still be listed")
+		assert.Equal(t, projectPath, resp.Projects[0].Path)
+		assert.False(t, resp.Projects[0].Exists, "a deleted directory must be flagged as missing")
+	})
+
+	t.Run("OtherMethod_Returns405", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodPost, "/api/conversation-projects", nil)
+		w := callHandler(ServeConversationProjects, req)
+
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+}

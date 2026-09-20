@@ -20,6 +20,9 @@ func TestRenderCommand_CoversExpectedOperations(t *testing.T) {
 		{
 			cmd: CommandChatSearch,
 			want: []string{
+				// The project list is how the AI finds the exact path of a
+				// project the user names (including deleted ones).
+				"GET /api/conversation-projects",
 				"POST /api/rag/search",
 				"GET /api/rag/message",
 				"GET /api/rag/session",
@@ -61,6 +64,9 @@ func TestRenderCommand_CoversExpectedOperations(t *testing.T) {
 		{
 			cmd: CommandUsage,
 			want: []string{
+				// The project list lets the AI resolve a project the user names
+				// to the exact path the usage endpoint expects.
+				"GET /api/conversation-projects",
 				"GET /api/usage/stats",
 			},
 			// A read-only statistics command must never expose mutating or
@@ -118,7 +124,11 @@ func TestRenderCommand_Deterministic(t *testing.T) {
 // tag-based selection would blow past it immediately.
 func TestRenderCommand_SizeBudget(t *testing.T) {
 	budgets := map[Command]int{
-		CommandChatSearch: 2000,
+		// chatsearch grew when the project-list endpoint joined it, so the AI
+		// can resolve a project the user names to its exact path. The budget
+		// still sits far below the full spec, so a switch back to tag-based
+		// selection would blow past it.
+		CommandChatSearch: 2600,
 		CommandTask:       7000,
 		CommandUsage:      2000,
 	}

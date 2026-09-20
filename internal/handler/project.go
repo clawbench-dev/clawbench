@@ -17,6 +17,28 @@ import (
 	"clawbench/internal/service"
 )
 
+// ServeConversationProjects handles GET /api/conversation-projects — every
+// project that has conversation history, newest activity first.
+//
+// Unlike /api/recent-projects (a user-driven MRU list that drops directories
+// which no longer exist), this endpoint is derived from recorded conversations
+// and deliberately keeps projects whose directory has been deleted: the whole
+// point is to let the built-in slash commands find and search old history. The
+// response carries an `exists` flag so callers can tell a live project from a
+// deleted one without another round trip.
+func ServeConversationProjects(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	projects, err := service.GetConversationProjects()
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to load conversation projects")))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
+}
+
 // ServeRecentProjects handles GET (list) and POST (add) for recent projects.
 //
 // GET returns the projects grouped by git repository: paths sharing one git

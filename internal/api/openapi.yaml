@@ -237,7 +237,7 @@ paths:
 
         **项目范围**由 `scope` 决定：
         - `scope=project`（默认）：限制在项目 Cookie 指定的单个项目内，Cookie
-          必填。浏览器面板走这条路径。
+          必填。浏览器面板走这条路径。Cookie 值可以是任意项目路径。
         - `scope=all`：聚合实例内**全部项目**，仅授予携带本机 AI 令牌的调用方
           （`/cb-usage` 斜杠命令）；浏览器会话请求会被拒绝。该模式要求**不**发送
           项目 Cookie，同时发送两者返回 400。跨项目统计通常配合 `dims=project`。
@@ -666,6 +666,40 @@ paths:
       responses:
         "200":
           description: 设置结果
+
+  /api/conversation-projects:
+    get:
+      tags: [Projects]
+      summary: 有对话历史的项目列表
+      description: |
+        列出所有产生过对话的项目，按最近活动时间倒序。目录已被删除的项目也会列出
+        （响应中的 `exists` 为 false），因此历史对话仍可检索。
+      operationId: conversationProjectsList
+      responses:
+        "200":
+          description: 项目列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                          description: 项目目录路径（目录可能已被删除）
+                        session_count:
+                          type: integer
+                          description: 该项目记录的会话数
+                        last_active_at:
+                          type: string
+                          description: 最近一次活动时间（UTC，`2006-01-02 15:04:05`）
+                        exists:
+                          type: boolean
+                          description: 目录当前是否仍存在于磁盘上
 
   /api/recent-projects:
     get:
@@ -3400,7 +3434,10 @@ paths:
     post:
       tags: [RAG]
       summary: 语义 / 全文混合搜索
-      description: 搜索历史对话（排除 thinking 与 tool_use 块）。
+      description: |
+        搜索历史对话（排除 thinking 与 tool_use 块）。
+        项目范围由项目 Cookie 决定：Cookie 值为任意项目路径时只搜该项目，
+        不发送 Cookie 时跨全部项目（仅本机 AI 令牌可省略 Cookie）。
       operationId: ragSearch
       requestBody:
         required: true
@@ -3625,6 +3662,8 @@ paths:
         `archived`/`session_type`/`sort`/`cursor` 仍然生效。
         浏览态不会混排两类会话：`all`/`chat` 均列出对话会话，只有显式
         `task` 才切换到任务执行会话。
+        项目范围由项目 Cookie 决定：Cookie 值为任意项目路径时只搜该项目，
+        不发送 Cookie 时跨全部项目（仅本机 AI 令牌可省略 Cookie）。
       requestBody:
         required: true
         content:

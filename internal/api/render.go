@@ -21,9 +21,10 @@ const (
 // Spec tags referenced by commandOperations. They are named constants so the
 // selection binding cannot drift by a typo.
 const (
-	tagRAG    = "RAG"
-	tagTasks  = "Tasks"
-	tagAgents = "Agents"
+	tagRAG      = "RAG"
+	tagTasks    = "Tasks"
+	tagAgents   = "Agents"
+	tagProjects = "Projects"
 )
 
 // commandOperations lists the exact operations each command exposes to the AI,
@@ -40,6 +41,10 @@ var commandOperations = map[Command][]struct {
 	Tag string
 }{
 	CommandChatSearch: {
+		// The project list comes first: it is how the AI discovers the exact
+		// path to hand back when the user names a project that is not the
+		// current one (including projects whose directory was deleted).
+		{"conversationProjectsList", tagProjects},
 		{"ragSearch", tagRAG},
 		{"ragMessage", tagRAG},
 		{"ragSession", tagRAG},
@@ -61,6 +66,7 @@ var commandOperations = map[Command][]struct {
 		{"forgeBindingGet", "Forge"},
 	},
 	CommandUsage: {
+		{"conversationProjectsList", tagProjects},
 		{"usageStats", "System"},
 	},
 }
