@@ -14,7 +14,16 @@ files:
 win:
   target: dir
   icon: build/icon.png
-  signAndEditExecutable: false
+  # NOTE: do NOT add `signAndEditExecutable: false` here. It was set historically
+  # to allow cross-building the Windows package from Linux, but it also skips
+  # writing the icon and version metadata into the .exe (electron-builder warns
+  # "executable resource editing and code signing skipped"), so the app shipped
+  # with the default Electron icon. CI builds Windows on windows-latest, where
+  # rcedit runs natively and no workaround is needed — the flag only ever lost
+  # information there.
+  #
+  # For a local Linux cross-build (no wine), pass it on the command line instead:
+  #   npx electron-builder --dir --win --x64 -c.win.signAndEditExecutable=false
 mac:
   target: dir
   icon: build/icon.icns
