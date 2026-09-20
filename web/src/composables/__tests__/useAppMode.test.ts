@@ -37,6 +37,52 @@ describe('useAppMode', () => {
     delete (window as any).ClawBenchNative
   })
 
+  it('reports isDesktopApp for the Electron shell (isDesktopApp() === true)', async () => {
+    ;(window as any).ClawBenchNative = {
+      isNativeApp: () => true,
+      isDesktopApp: () => true,
+    }
+
+    const { useAppMode } = await import('@/composables/useAppMode')
+    const { isAppMode, isDesktopApp } = useAppMode()
+
+    expect(isAppMode.value).toBe(true)
+    expect(isDesktopApp.value).toBe(true)
+
+    delete (window as any).ClawBenchNative
+  })
+
+  it('does not report isDesktopApp for Android (no isDesktopApp on the bridge)', async () => {
+    // Android's bridge has no isDesktopApp(); the optional call must resolve
+    // to false so Android keeps its background-suspension behaviour.
+    ;(window as any).ClawBenchNative = {
+      isNativeApp: () => true,
+    }
+
+    const { useAppMode } = await import('@/composables/useAppMode')
+    const { isAppMode, isDesktopApp } = useAppMode()
+
+    expect(isAppMode.value).toBe(true)
+    expect(isDesktopApp.value).toBe(false)
+
+    delete (window as any).ClawBenchNative
+  })
+
+  it('never reports isDesktopApp in web mode', async () => {
+    ;(window as any).ClawBenchNative = {
+      isNativeApp: () => false,
+      isDesktopApp: () => true, // inconsistent bridge must not leak through
+    }
+
+    const { useAppMode } = await import('@/composables/useAppMode')
+    const { isAppMode, isDesktopApp } = useAppMode()
+
+    expect(isAppMode.value).toBe(false)
+    expect(isDesktopApp.value).toBe(false)
+
+    delete (window as any).ClawBenchNative
+  })
+
   it('detects web mode when ClawBenchNative.isNativeApp() returns false', async () => {
     ;(window as any).ClawBenchNative = {
       isNativeApp: () => false,

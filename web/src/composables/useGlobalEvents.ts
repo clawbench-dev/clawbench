@@ -165,7 +165,7 @@ function syncNativeCursor(eventId: string) {
     }
 }
 
-const { isAppMode } = useAppMode()
+const { isAppMode, isDesktopApp } = useAppMode()
 
 const reconnect = useReconnect({
     baseDelay: 2000,
@@ -629,6 +629,10 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
                 taskId: data.task_id,
                 executionId: data.execution_id,
                 projectPath: data.project_path,
+                // Forge notifications carry no session/task id, so the native
+                // shell needs an explicit discriminator — otherwise its
+                // sessionId/taskId branches both miss and the click is dropped.
+                forge: event === 'forge_event',
             },
             onClick,
         })
@@ -661,6 +665,14 @@ export function useGlobalEvents() {
     // notifications can be shown for terminal events (completed/cancelled/
     // permission_pending/failed). Desktop browsers keep WS alive in background.
     //
+    // The Electron shell reports isNativeApp() === true (it is a native host),
+    // but it must be treated like a desktop browser, NOT like Android: its
+    // window is merely minimized and the process keeps running, so the socket
+    // is never killed by an OS. Dropping it here would mean no event ever
+    // reaches showBrowserNotification while minimized — i.e. no notifications
+    // at all, defeating the whole purpose of the desktop shell. Hence the
+    // isDesktopApp guard.
+    //
     // Design principle: the foreground ('visible') branch is self-contained —
     // it resets reconnect state and reconnects without depending on any timer
     // that may have been scheduled during the background ('hidden') branch.
@@ -678,7 +690,7 @@ export function useGlobalEvents() {
             // Emit a custom event that other composables can listen to
             window.dispatchEvent(new CustomEvent('clawbench-foreground'))
         } else {
-            if (isAppMode.value) {
+            if (isAppMode.value && !isDesktopApp.value) {
                 // App mode: disconnect WebSocket on background.
                 // Disable reconnect to prevent the onclose handler from
                 // scheduling reconnects while backgrounded (the OS will
@@ -691,7 +703,8 @@ export function useGlobalEvents() {
                 // without pauseTimers it created a 100ms window where
                 // reconnect was disabled but no foreground event had fired.
             }
-            // Browser mode: keep WS alive for background notifications
+            // Browser mode (and the Electron shell): keep WS alive so
+            // background/minimized notifications still arrive.
         }
     }
 

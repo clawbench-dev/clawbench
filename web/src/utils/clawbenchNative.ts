@@ -11,6 +11,15 @@
 export interface ClawBenchNative {
   // Sync (preload / JS-interface local values)
   isNativeApp(): boolean
+  /**
+   * True only in the Electron desktop shell (Android returns false/undefined).
+   * Both hosts report isNativeApp() === true, so this is what distinguishes
+   * "window minimized" (desktop, keeps running) from "app backgrounded"
+   * (Android, may be suspended).
+   */
+  isDesktopApp?(): boolean
+  /** Optional (Electron): report that notification-click listeners are registered. */
+  rendererReady?(): void
   getLanguage(): string
   /** Persist the language selected in the Web frontend to native prefs so native UI (splash, login page) follows it. */
   setLanguage?(lang: string): void
@@ -97,6 +106,12 @@ export interface NotificationNav {
   taskId?: string
   executionId?: string
   projectPath?: string
+  /**
+   * Set for forge (GitHub/GitLab) change notifications. They carry no
+   * session/task id — only `projectPath` — so the native shell needs this
+   * explicit discriminator to route the click to the Issues & PRs tab.
+   */
+  forge?: boolean
 }
 
 const bridgeWindow = window as unknown as { ClawBenchNative?: ClawBenchNative }
@@ -111,6 +126,20 @@ export function isNativeApp(): boolean {
   try {
     if (window !== window.top) return false
     return getNative()?.isNativeApp() === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * True only in the Electron desktop shell. Android's bridge has no
+ * isDesktopApp(), so the optional call safely resolves to false there — which
+ * is the point: Android must keep its background-suspension behaviour.
+ */
+export function isDesktopApp(): boolean {
+  try {
+    if (window !== window.top) return false
+    return getNative()?.isDesktopApp?.() === true
   } catch {
     return false
   }

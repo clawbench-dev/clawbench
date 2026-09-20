@@ -10,6 +10,7 @@ import { getMainWindow, createMainWindow, openSandboxWindow, showLoginPage } fro
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
 import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
+import { markRendererReady } from './navReady'
 import { clearCacheAndReload } from './session'
 
 let logFileStream: fs.WriteStream | null = null
@@ -127,6 +128,10 @@ export function registerBridge(): void {
 
   ipcMain.on('native:show-server-dialog', () => showLoginPage())
   ipcMain.on('native:open-session', (_e, id: string) => dispatchOpenSession(id))
+  // The renderer signals that its notification-click listeners are registered.
+  // Until then a clicked notification is stashed rather than sent into a page
+  // that would drop it.
+  ipcMain.on('native:renderer-ready', () => markRendererReady())
   ipcMain.on('native:set-push-enabled', (_e, enabled: boolean) => getStore().set('nativePushEnabled', enabled))
   ipcMain.on('native:update-last-seen', (_e, id: string) => { /* desktop has no SharedPreferences */ })
   ipcMain.on('native:keep-screen-on', (_e, on: boolean) => setKeepScreenOnImpl(on))

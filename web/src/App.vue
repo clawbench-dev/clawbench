@@ -1606,6 +1606,13 @@ function registerAppEventListeners() {
   // Registered here (not in onMounted) because it is part of the global
   // listener set that both cold start and post-login initialization install.
   startSystemThemeWatcher()
+
+  // Tell the desktop shell the notification-click listeners above are live.
+  // Until this fires, a clicked notification is deferred by the main process
+  // rather than sent into a page that has no listener yet — the page's
+  // did-finish-load happens well before this point (initialization awaits the
+  // project load and session bootstrap first).
+  getNative()?.rendererReady?.()
 }
 
 /**

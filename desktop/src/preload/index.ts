@@ -2,9 +2,40 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args)
 
+// Notification clicks arrive from the main process over IPC. The renderer
+// listens for window CustomEvents (App.vue), NOT for IPC — so forward each
+// channel into a CustomEvent, mirroring what the Android shell does with
+// `evaluateJavascript(window.dispatchEvent(new CustomEvent(...)))`. Without
+// this bridge the main process's webContents.send() has no receiver and
+// clicking a notification silently does nothing.
+//
+// The channel list is duplicated from shared/types.ts rather than imported:
+// the main window uses Electron's default `sandbox: true`, and a sandboxed
+// preload cannot require() local files ("module not found"). Importing it
+// would throw at preload load time and take down the ENTIRE ClawBenchNative
+// bridge, not just notifications. `notification.test.ts` guards the copy.
+const NAV_CHANNELS = ['clawbench-open-session', 'clawbench-open-task', 'clawbench-open-forge']
+
+for (const channel of NAV_CHANNELS) {
+  ipcRenderer.on(channel, (_e, detail: unknown) => {
+    window.dispatchEvent(new CustomEvent(channel, { detail }))
+  })
+}
+
 contextBridge.exposeInMainWorld('ClawBenchNative', {
   // sync
   isNativeApp: () => true,
+  // Distinguishes the desktop shell from the Android WebView. Both report
+  // isNativeApp() === true, but only Android needs the background-tab
+  // behaviour (drop the WebSocket when hidden). The desktop window is
+  // minimized rather than backgrounded, and dropping the socket there means
+  // no notification can ever arrive — the exact opposite of the point of the
+  // desktop shell. See useAppMode / useGlobalEvents.
+  isDesktopApp: () => true,
+  // Tells the main process that the page's notification-click listeners are
+  // registered. Until then a clicked notification is deferred instead of being
+  // sent to a page that would drop it.
+  rendererReady: () => { ipcRenderer.send('native:renderer-ready') },
   getLanguage: () => {
     try { return ipcRenderer.sendSync('native:get-language') } catch { return 'en' }
   },

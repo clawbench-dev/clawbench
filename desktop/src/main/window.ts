@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { contextMenuLabels } from './contextMenu'
 import { classifyUrl } from './urlPolicy'
+import { markRendererLoading } from './navReady'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -71,6 +72,9 @@ export function createMainWindow(): BrowserWindow {
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false },
   })
   registerContextMenu(mainWindow.webContents)
+  // A (re)load tears down the renderer's listeners, so anything clicked before
+  // it re-registers must be deferred rather than sent into the void.
+  mainWindow.webContents.on('did-start-loading', () => markRendererLoading())
   const serverUrl = getStore().get('serverUrl')
   if (serverUrl) {
     mainWindow.loadURL(serverUrl)
