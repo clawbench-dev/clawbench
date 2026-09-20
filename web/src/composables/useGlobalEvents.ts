@@ -82,7 +82,6 @@ export interface ForgeItemIdentity {
 
 // Client message types
 type ClientMessage =
-    | { type: 'ack'; id: string }
     | { type: 'pong' }
     | { type: 'subscribe'; session_id: string }
     | { type: 'unsubscribe'; session_id: string }
@@ -388,11 +387,9 @@ function connect() {
                 // and never notify.
                 showEventBrowserNotification(msg.event!, msg.data, true)
 
-                // Send ack
+                // Update last seen event cursor for offline recovery
+                // Only update for terminal-state events that are persisted server-side
                 if (msg.id) {
-                    send({ type: 'ack', id: msg.id })
-                    // Update last seen event cursor for offline recovery
-                    // Only update for terminal-state events that are persisted server-side
                     const status = (msg.data as Record<string, unknown>)?.status as string | undefined
                     const isTerminal = (msg.event === 'session_update' && (status === 'completed' || status === 'cancelled' || status === 'permission_pending'))
                         || (msg.event === 'task_update' && (status === 'completed' || status === 'failed' || status === 'cancelled'))

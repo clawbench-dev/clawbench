@@ -260,8 +260,9 @@ func TestCoalescer_EmptyContentDeltasAreHarmless(t *testing.T) {
 	assert.Equal(t, "real text", (*emitted)[0].Content)
 }
 
-// An oversized delta must be forwarded whole rather than dropped or truncated —
-// the cap exists to bound merge growth, not to police a single event.
+// isCoalescableDelta must classify exactly the same types the coalescer
+// buffers — otherwise either deltas would bypass coalescing or barrier
+// events would re-order buffered text.
 func TestIsCoalescableDelta_MatchesAddBehaviour(t *testing.T) {
 	for _, typ := range []string{"content", "thinking"} {
 		assert.True(t, isCoalescableDelta(ai.StreamEvent{Type: typ}), typ)

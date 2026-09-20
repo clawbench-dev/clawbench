@@ -263,28 +263,7 @@ describe('useGlobalEvents', () => {
         })
     })
 
-    describe('ack', () => {
-        it('should send ack for events with ID', () => {
-            const ws = connectAndGetWs()
-            const id = nextId()
-
-            ws.receive({ type: 'event', id, event: 'session_update', data: {} })
-
-            expect(ws.sentMessages).toContainEqual(JSON.stringify({ type: 'ack', id }))
-        })
-
-        it('should not send ack for events without ID', () => {
-            const ws = connectAndGetWs()
-            ws.sentMessages = []
-
-            ws.receive({ type: 'event', event: 'session_update', data: {} })
-
-            const ackMessages = ws.sentMessages.filter(m => {
-                try { return JSON.parse(m).type === 'ack' } catch { return false }
-            })
-            expect(ackMessages).toHaveLength(0)
-        })
-
+    describe('event cursor', () => {
         it('收到终态事件时同步安卓设备游标，非终态不同步', () => {
             const ws = connectAndGetWs()
 

@@ -127,6 +127,7 @@ func (c *streamCoalescer) add(event ai.StreamEvent) {
 		return
 	}
 
+	// Safe: pending was copied on first buffer, so += does not alias caller's memory.
 	c.pending.Content += event.Content
 	c.pendingBytes += len(event.Content)
 }
