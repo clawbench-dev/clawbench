@@ -1402,10 +1402,12 @@
     // Load server list (single source of truth)
     loadServerList();
 
-    // Version
+    // Version. getAppVersion() goes through ipcRenderer.invoke, so it returns a
+    // Promise — reading it synchronously renders "v[object Promise]".
     try {
-      var ver = ClawBenchNative.getAppVersion();
-      if (ver) document.getElementById('version').textContent = 'v' + ver;
+      Promise.resolve(ClawBenchNative.getAppVersion()).then(function(ver) {
+        if (ver) document.getElementById('version').textContent = 'v' + ver;
+      }).catch(function() {});
     } catch(e) {}
 
     // Event: connect to existing server
@@ -1430,9 +1432,17 @@
 
       setConnecting(true);
       try {
-        // Update saved password in case it was changed
+        // Update saved password in case it was changed.
+        // Both calls go through ipcRenderer.invoke, so failures surface as
+        // Promise rejections rather than throws. The main error path is the
+        // native onConnectError() callback (the window navigates on success),
+        // but a rejection here must still reset the button or the form would
+        // stay stuck on "authenticating" if native never calls back.
         ClawBenchNative.saveServer(url, password);
-        ClawBenchNative.connectToServer(url, password);
+        Promise.resolve(ClawBenchNative.connectToServer(url, password)).catch(function(err) {
+          showError('errorMsg', t('connection_failed') + (err && err.message ? err.message : ''));
+          setConnecting(false);
+        });
       } catch(e) {
         showError('errorMsg', t('connection_failed') + e.message);
         setConnecting(false);
@@ -1464,9 +1474,13 @@
 
       setConnecting(true, true);
       try {
-        // Save to native list first
+        // Save to native list first. See the note in the connect handler above:
+        // these are async, so the rejection must be handled explicitly.
         ClawBenchNative.saveServer(url, password);
-        ClawBenchNative.connectToServer(url, password);
+        Promise.resolve(ClawBenchNative.connectToServer(url, password)).catch(function(err) {
+          showError('addErrorMsg', t('connection_failed') + (err && err.message ? err.message : ''));
+          setConnecting(false, true);
+        });
       } catch(e) {
         showError('addErrorMsg', t('connection_failed') + e.message);
         setConnecting(false, true);
@@ -1485,14 +1499,22 @@
   });
 
   function loadServerList() {
-    try {
-      var json = ClawBenchNative.getServerList();
-      savedServers = JSON.parse(json);
-      if (!Array.isArray(savedServers)) savedServers = [];
-    } catch(e) {
+    // getServerList() goes through ipcRenderer.invoke and returns a Promise.
+    // Reading it synchronously gave JSON.parse() a Promise, which threw and left
+    // savedServers empty — so a returning user never saw their saved servers and
+    // was always dropped into the "add server" form.
+    Promise.resolve(ClawBenchNative.getServerList()).then(function(json) {
+      try {
+        savedServers = JSON.parse(json);
+        if (!Array.isArray(savedServers)) savedServers = [];
+      } catch(e) {
+        savedServers = [];
+      }
+      renderServerList();
+    }).catch(function() {
       savedServers = [];
-    }
-    renderServerList();
+      renderServerList();
+    });
   }
 
   function renderServerList() {
@@ -1628,10 +1650,11 @@
   function deleteServer(url) {
     customConfirm(t('delete_server_msg'), { title: t('delete_server_title'), confirmText: t('delete') }).then(function(ok) {
       if (!ok) return;
-      try {
-        ClawBenchNative.removeServer(url);
-      } catch(e) {}
-      loadServerList();
+      // removeServer is async; reload only after it settles, or the list would
+      // be re-read before the deletion landed and still show the removed entry.
+      Promise.resolve(ClawBenchNative.removeServer(url)).catch(function() {}).then(function() {
+        loadServerList();
+      });
     });
   }
 
