@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -282,6 +283,259 @@ func TestRunTurn_EmitsStreamStartBeforeContent(t *testing.T) {
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND streaming = 1",
 		sessionID).Scan(&streaming))
 	assert.Zero(t, streaming, "the placeholder must have been finalized by the run")
+}
+
+// TestRunTurn_CoalescesContentDeltas verifies the WS frame count drops without
+// losing or reordering content.
+//
+// A real turn streams a 33KB reply as ~3000 separate delta events (measured
+// 2026-09-20: 3062 WS frames in 17s). Each became its own JSON marshal, WS frame
+// and frontend JSON.parse, while the frontend already throttles rendering to
+// 300ms — so the extra frames bought nothing. The coalescer merges them into
+// ~50ms windows.
+//
+// This asserts the three properties that make the merge safe, and it must go
+// through runTurn (not handleNonTerminalEvent directly): the flush is driven by
+// RunWithChannel's ticker and exit defer, which a direct call bypasses.
+func TestRunTurn_CoalescesContentDeltas(t *testing.T) {
+	// 40 deltas of 2 chars each. Comfortably more than one 50ms window, and
+	// small enough that no single window can hold all of them, so coalescing is
+	// observable rather than trivially satisfied.
+	const deltaCount = 40
+	const deltaText = "ab"
+
+	events := make([]ai.StreamEvent, 0, deltaCount+1)
+	var wantText string
+	for range deltaCount {
+		events = append(events, ai.StreamEvent{Type: "content", Content: deltaText})
+		wantText += deltaText
+	}
+	events = append(events, ai.StreamEvent{Type: "done"})
+
+	_, sessionID := setupRunTurnTest(t, events)
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(origMgr) })
+
+	var writeMu sync.Mutex
+	clientID := "run-turn-coalesce-client"
+	sub := mgr.Subscribe(nil, &writeMu, clientID, "")
+	mgr.StreamHub().Subscribe(clientID, sessionID)
+
+	runTurn(TurnSpec{
+		Ctx:             context.Background(),
+		Mode:            ModeInteractive,
+		ProjectPath:     "/tmp",
+		BackendName:     "run-turn-test",
+		SessionID:       sessionID,
+		AgentID:         "run-turn-agent",
+		ChatReq:         ai.ChatRequest{Prompt: "hi"},
+		FileDir:         "/tmp",
+		DrainOnFinalize: true,
+	})
+
+	// The terminal event is emitted by the CALLER after runTurn returns (see
+	// handler/chat.go markDoneAndSendFinal and scheduler.go), not by the
+	// executor. Reproducing that order is the whole point of assertion 3 below:
+	// if RunWithChannel's exit flush did not run, the buffered deltas would land
+	// after this `done` and the frontend would drop them.
+	ws.EmitToSession(sessionID, ai.StreamEvent{Type: "done"})
+
+	// Collect the chat_stream frames this subscriber saw, in order.
+	var contentFrames []string
+	var order []string
+	for _, ev := range sub.GetBufferedEvents() {
+		if ev.Event != "chat_stream" {
+			continue
+		}
+		data, ok := ev.Data.(ws.ChatStreamData)
+		if !ok {
+			continue
+		}
+		order = append(order, data.EventType)
+		if data.EventType != "content" {
+			continue
+		}
+		payload, ok := data.Payload.(map[string]string)
+		require.True(t, ok, "content payload must be a map[string]string")
+		contentFrames = append(contentFrames, payload["content"])
+	}
+
+	// 1. Merging actually happened: strictly fewer frames than deltas.
+	require.NotEmpty(t, contentFrames, "the reply's content must reach the client")
+	assert.Less(t, len(contentFrames), deltaCount,
+		"consecutive deltas must be merged into fewer frames")
+
+	// 2. Nothing lost: the concatenation of all frames is the full reply.
+	var got strings.Builder
+	for _, f := range contentFrames {
+		got.WriteString(f)
+	}
+	assert.Equal(t, wantText, got.String(),
+		"merging must not drop or duplicate content")
+
+	// 3. Ordering: every content frame precedes the terminal done. A delta
+	//    flushed after `done` would be dropped by the frontend, which has
+	//    already left streaming state by then.
+	doneAt := -1
+	lastContentAt := -1
+	for i, typ := range order {
+		if typ == "done" {
+			doneAt = i
+		}
+		if typ == "content" {
+			lastContentAt = i
+		}
+	}
+	require.NotEqual(t, -1, doneAt, "the terminal done event must be delivered")
+	require.NotEqual(t, -1, lastContentAt, "content must be delivered")
+	assert.Less(t, lastContentAt, doneAt,
+		"all buffered content must be flushed BEFORE the terminal done event")
+}
+
+// TestRunTurn_CoalesceTickerDeliversDuringStream is the liveness counterpart to
+// the coalescing test above.
+//
+// Coalescing introduces a buffer, and a buffer that is only ever drained on exit
+// would turn a live stream into one giant frame at the end of the turn — the
+// content would be correct but the UI would sit empty for the whole reply. That
+// failure mode is invisible to an after-the-fact assertion on the buffered
+// events (the exit flush would satisfy it), so this test observes the client
+// DURING the turn.
+func TestRunTurn_CoalesceTickerDeliversDuringStream(t *testing.T) {
+	_, sessionID := setupRunTurnTest(t, nil)
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(origMgr) })
+
+	var writeMu sync.Mutex
+	clientID := "run-turn-live-client"
+	sub := mgr.Subscribe(nil, &writeMu, clientID, "")
+	mgr.StreamHub().Subscribe(clientID, sessionID)
+
+	// Feed the executor by hand so the test controls when the stream ends.
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/tmp",
+		BackendName: "run-turn-test",
+		SessionID:   sessionID,
+		AgentID:     "run-turn-agent",
+	})
+	defer executor.unregisterActiveStream()
+
+	eventCh := make(chan ai.StreamEvent, 8)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		executor.RunWithChannel(eventCh)
+	}()
+
+	contentSeen := func() int {
+		n := 0
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			if data, ok := ev.Data.(ws.ChatStreamData); ok && data.EventType == "content" {
+				n++
+			}
+		}
+		return n
+	}
+
+	eventCh <- ai.StreamEvent{Type: "content", Content: "live token"}
+
+	// The ticker must release it without the stream ending. Wait a few windows
+	// so a slow CI scheduler cannot make this flaky.
+	require.Eventually(t, func() bool { return contentSeen() > 0 },
+		5*wsCoalesceInterval, wsCoalesceInterval/4,
+		"buffered content must reach the client while the stream is still running, "+
+			"not only at turn end")
+
+	// Clean shutdown: terminal event ends the loop.
+	eventCh <- ai.StreamEvent{Type: "done"}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunWithChannel did not return after a terminal event")
+	}
+}
+
+// TestRunTurn_ToolUseDoesNotOvertakeBufferedContent pins the ordering invariant
+// across a real barrier event, through the real executor.
+//
+// The frontend renders blocks in arrival order, so if a tool card overtook the
+// prose that precedes it, the reply would read out of order. The coalescer
+// guarantees this by flushing before emitting a non-delta; this test drives the
+// executor so that guarantee cannot silently regress.
+func TestRunTurn_ToolUseDoesNotOvertakeBufferedContent(t *testing.T) {
+	_, sessionID := setupRunTurnTest(t, nil)
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(origMgr) })
+
+	var writeMu sync.Mutex
+	clientID := "run-turn-order-barrier-client"
+	sub := mgr.Subscribe(nil, &writeMu, clientID, "")
+	mgr.StreamHub().Subscribe(clientID, sessionID)
+
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/tmp",
+		BackendName: "run-turn-test",
+		SessionID:   sessionID,
+		AgentID:     "run-turn-agent",
+	})
+	defer executor.unregisterActiveStream()
+
+	eventCh := make(chan ai.StreamEvent, 8)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		executor.RunWithChannel(eventCh)
+	}()
+
+	// Content, then a tool_use, then the terminal event — all inside one window
+	// so only the barrier flush (not the ticker) can order them.
+	eventCh <- ai.StreamEvent{Type: "content", Content: "prose before the tool"}
+	eventCh <- ai.StreamEvent{Type: "tool_use", Tool: &ai.ToolCall{Name: "Read", ID: "order-t1"}}
+	eventCh <- ai.StreamEvent{Type: "done"}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunWithChannel did not return after a terminal event")
+	}
+
+	var order []string
+	for _, ev := range sub.GetBufferedEvents() {
+		if ev.Event != "chat_stream" {
+			continue
+		}
+		if data, ok := ev.Data.(ws.ChatStreamData); ok {
+			order = append(order, data.EventType)
+		}
+	}
+
+	contentAt, toolAt := -1, -1
+	for i, typ := range order {
+		if typ == "content" && contentAt == -1 {
+			contentAt = i
+		}
+		if typ == "tool_use" && toolAt == -1 {
+			toolAt = i
+		}
+	}
+	require.NotEqual(t, -1, contentAt, "content must be delivered")
+	require.NotEqual(t, -1, toolAt, "the tool_use event must be delivered")
+	assert.Less(t, contentAt, toolAt,
+		"a tool_use must not overtake content buffered before it")
 }
 
 // TestRunTurn_CancelledContextIsReportedAsCancel verifies a cancelled turn is

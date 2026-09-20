@@ -104,6 +104,19 @@ const (
 	// goroutine no longer stalls the consumer on full-block JSON marshal +
 	// SQLite, and the 512-slot stream channel stops dropping events.
 	flushInterval = 500 * time.Millisecond
+
+	// wsCoalesceInterval bounds how long a content/thinking delta may sit in the
+	// coalescer before it is pushed to WS clients.
+	//
+	// Deliberately separate from flushInterval and much shorter: the 500ms window
+	// is about DB write amplification, where a stale row is harmless (the
+	// frontend renders from WS, not the DB). This one is about frame count, and
+	// it directly bounds how long a token can be invisible on screen.
+	//
+	// 50ms matches the existing tool-call debounce (ai/acp_debounce.go) and sits
+	// well under the frontend's own 300ms render throttle, so coalescing adds no
+	// perceptible latency and cannot cause an extra render.
+	wsCoalesceInterval = 50 * time.Millisecond
 	// waitStreamsPollInterval is the polling period for WaitStreamsDrained.
 	// Far below the 500ms flush window and the shutdown deadline, so it adds
 	// no meaningful latency to a graceful stop.
@@ -292,6 +305,11 @@ type SessionExecutor struct {
 	// every 500ms window. Persisted in memory (single writer inside the event
 	// loop, under e.mu) — not re-derived from the DB on each flush.
 	thinkingFlushed map[string]*thinkingFlushState
+
+	// coalescer merges consecutive content/thinking deltas into one WS frame.
+	// Driven exclusively by the event-loop goroutine (handleNonTerminalEvent and
+	// the ticker in RunWithChannel), so it needs no lock of its own.
+	coalescer *streamCoalescer
 }
 
 // thinkingFlushState is the per-block incremental flush cursor. nextSeq is the
@@ -316,10 +334,26 @@ func NewSessionExecutor(ctx context.Context, cfg RunConfig) *SessionExecutor {
 		pendingContextPatches: make(map[string]string),
 		thinkingFlushed:       make(map[string]*thinkingFlushState),
 	}
+	// The coalescer forwards merged deltas through the real WS fan-out. Injected
+	// as a callback so the coalescer stays free of executor state and can be
+	// unit-tested on its own.
+	e.coalescer = &streamCoalescer{emit: e.emitStreamEvent}
 	// Register so graceful shutdown can flush this stream's accumulated blocks.
 	// Removed by unregisterActiveStream once the executor has finished.
 	activeStreams.Store(cfg.SessionID, e)
 	return e
+}
+
+// emitStreamEvent is the coalescer's sink: the actual per-event WS fan-out.
+// Split out from forwardEvent so the coalescer's buffer boundary and the
+// transport are separable (and so emit never re-enters the coalescer).
+func (e *SessionExecutor) emitStreamEvent(event ai.StreamEvent) {
+	ws.EmitToSession(e.cfg.SessionID, event)
+}
+
+// flushCoalesced pushes any buffered delta to WS clients immediately.
+func (e *SessionExecutor) flushCoalesced() {
+	e.coalescer.flush()
 }
 
 // unregisterActiveStream removes the executor from the active-streams registry.
@@ -441,6 +475,14 @@ func WaitSessionStreamDrained(sessionID string, timeout time.Duration) {
 //
 //nolint:gocyclo // multiple event-type branches (content_reset, tool, metadata, context-state, flush gate) are inherently branchy
 func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
+	// No flush-before-dispatch here on purpose. Every client-visible emission in
+	// this executor goes through forwardEvent → coalescer.add, and the coalescer
+	// itself flushes any buffered delta before emitting a non-delta event. That
+	// makes the ordering invariant (a barrier must not overtake buffered text)
+	// hold by construction, in one place, rather than being re-asserted at each
+	// call site. Types below that return without forwarding (session_capture,
+	// compact_detected) emit nothing, so they cannot reorder anything.
+
 	// content_reset: clear accumulated blocks from a failed Prompt before retry.
 	// Sent by ACPBackend.ExecuteStream when the first Prompt fails due to peer
 	// disconnect and the retry Prompt will re-emit the full response. Without
@@ -571,7 +613,8 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	}
 }
 
-// forwardEvent forwards an event to WS clients via StreamHub.
+// forwardEvent forwards an event to WS clients via StreamHub, coalescing
+// consecutive content/thinking deltas into a single frame.
 // Context-state persistence (mode, thinking effort, usage) is deferred to the
 // flush window via persistContextStateToPending — see handleNonTerminalEvent.
 func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
@@ -581,7 +624,10 @@ func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
 		forwardEvent.ToolMeta = &meta
 	}
 
-	ws.EmitToSession(e.cfg.SessionID, forwardEvent)
+	// Deltas are buffered and merged; every other type is an ordering barrier
+	// the coalescer flushes before emitting. The ordering guarantee lives in the
+	// coalescer, so this stays a single call.
+	e.coalescer.add(forwardEvent)
 }
 
 // RunWithChannel executes the event loop against a pre-built event channel.
@@ -596,6 +642,27 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 	// no event trips the rate-limited flush in handleNonTerminalEvent.
 	flushTicker := time.NewTicker(flushInterval)
 	defer flushTicker.Stop()
+
+	// coalesceTicker releases buffered content/thinking deltas on a short window.
+	// Separate from flushTicker: that one bounds DB write amplification (500ms,
+	// a stale row is invisible to the user), this one bounds how long a token
+	// can stay off-screen.
+	coalesceTicker := time.NewTicker(wsCoalesceInterval)
+	defer coalesceTicker.Stop()
+
+	// The terminal "done"/"error"/"cancelled" events are NOT emitted from here —
+	// the handler (handler/chat.go markDoneAndSendFinal) and the scheduler send
+	// them after RunWithChannel AND Finalize have returned. Any delta still
+	// buffered at that point would arrive AFTER the terminal event, and the
+	// frontend has already left streaming state by then, so its content handler
+	// would drop it (no streaming message to append to). Flushing on exit closes
+	// that window.
+	//
+	// A defer (rather than a flush before each of the three returns below)
+	// covers every exit path, including ones added later. It is safe after the
+	// return value is computed: flushing only performs WS fan-out and does not
+	// touch e.blocks or any field buildResult reads.
+	defer e.flushCoalesced()
 	// NOTE: unregistration is deferred to Finalize (after streaming=0 is
 	// written). Registering here in NewSessionExecutor and unregistering only
 	// there keeps the activeStreams registry a faithful "stream not yet fully
@@ -632,6 +699,11 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 				e.flushStreamingMessage()
 				e.lastFlush = time.Now()
 			}
+
+		case <-coalesceTicker.C:
+			// Release buffered deltas. A no-op when nothing is pending (a long
+			// tool call with no output), so this costs a nil check per window.
+			e.flushCoalesced()
 		}
 	}
 }
