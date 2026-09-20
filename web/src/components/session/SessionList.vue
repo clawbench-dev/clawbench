@@ -817,9 +817,10 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* The band sits on the row's bottom edge. Sweeps in sync with the
-   cross-project rows and the chat input button (same keyframes/duration/
-   easing) so the motif reads as one. */
+/* The band sits on the row's bottom edge. Shared by the local rows and the
+   cross-project rows (same class). The chat input button uses its own
+   `sweep-light` keyframes instead — it is a chip, not a full-width row, so the
+   two are deliberately not the same animation. */
 .session-running-line {
   position: absolute;
   bottom: 0;
@@ -835,16 +836,32 @@ onUnmounted(() => {
   content: '';
   position: absolute;
   top: 0;
-  left: -60%;
-  width: 60%;
+  left: 0;
+  width: 200%;
   height: 100%;
   /* Solid 2px at the very bottom, then a fast falloff so the glow stays a
      halo around the line rather than a wash up the row. A plain linear ramp
      to 14px spread the light too thinly and lost the crisp edge. */
   -webkit-mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
   mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
-  background: linear-gradient(90deg, transparent, var(--running-line), transparent);
-  animation: scan-bg 2s ease-in-out infinite;
+  /* Seamless marquee: the layer is twice the row wide and carries two identical
+     60%-wide bands tiled every row-width, so translating it by exactly one tile
+     lands on an identical frame — no jump at the loop point. Because the tile
+     repeats, there is always a band on screen: as one leaves the right edge the
+     next enters from the left, which is what removes the old dead gap.
+     `linear` matters: the previous `ease-in-out` made the band decelerate into
+     each end, which read as a stutter rather than a flow. */
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 20%,
+    var(--running-line) 50%,
+    transparent 80%,
+    transparent 100%
+  );
+  background-size: 50% 100%;
+  background-repeat: repeat-x;
+  animation: scan-bg 2s linear infinite;
 }
 
 /* Hover must still work on a running row — there is no fill to preserve now,
@@ -967,9 +984,15 @@ onUnmounted(() => {
   50% { opacity: var(--opacity-disabled); transform: scale(0.8); }
 }
 
+/* Seamless rightward marquee. The layer is twice the row wide and carries two
+   identical bands tiled every 50% (one row width), so translating it by exactly
+   one tile lands on an identical frame — no jump at the loop point. A band
+   leaves the right edge exactly as the next enters from the left, so the light
+   never blanks out. `linear` matters: the previous `ease-in-out` made the band
+   decelerate into each end, which read as a stutter rather than a flow. */
 @keyframes scan-bg {
-  0% { left: -60%; }
-  100% { left: 100%; }
+  0% { transform: translateX(-50%); }
+  100% { transform: translateX(0); }
 }
 
 .session-row {
