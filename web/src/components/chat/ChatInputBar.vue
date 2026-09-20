@@ -114,7 +114,7 @@
           @blur="onTextareaBlur"
           @beforeinput="onRecoveryBeforeInput"
           @input="onRecoveryInput"
-          @touchstart="onTextareaTouchStart"
+          @touchstart.passive="onTextareaTouchStart"
           @touchend="onTextareaTouchEnd"
           @touchcancel="onTextareaTouchCancel"
           ></textarea>

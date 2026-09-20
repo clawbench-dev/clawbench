@@ -73,7 +73,7 @@
           <Info :size="14" />
         </div>
         <!-- Commit rows -->
-        <div class="commit-list-content" ref="contentRef" @touchstart="onTouchStart" @touchend="onTouchEnd">
+        <div class="commit-list-content" ref="contentRef" @touchstart.passive="onTouchStart" @touchend="onTouchEnd">
           <div
             v-for="(c, idx) in filteredCommits"
             :key="c.sha"

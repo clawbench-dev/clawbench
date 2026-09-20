@@ -18,7 +18,7 @@
     </Transition>
   </div>
 
-  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onContainerMouseDown" @touchstart="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @wheel="onWheelScroll" @scroll="handleScroll">
+  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onContainerMouseDown" @touchstart.passive="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @wheel.passive="onWheelScroll" @scroll="handleScroll">
     <div class="chat-messages-list" :key="listKey">
       <!-- Session switching in progress: the old messages were cleared but the
            new session's history is still loading — show a centered spinner in
@@ -619,6 +619,10 @@ function handleScroll() {
 
 // Touch tracking: during an active touch drag, pause auto-scroll so it
 // doesn't fight the user's scroll gesture (causing "sticky抖动").
+//
+// Bound with `.passive` in the template: this handler only records a flag and
+// never calls preventDefault, so the browser must not wait for it before
+// scrolling. See the guard test that pins this contract.
 function onScrollAndTableTouchStart(e) {
   userTouching = true
   onTableTouchStart(e)  // preserve table-row-expand handling
@@ -627,6 +631,10 @@ function onScrollAndTableTouchStart(e) {
 // PC: a mouse-wheel scroll is a deliberate user scroll just like a touch drag.
 // Wheel has no explicit "end" event, so the flag decays on its own window —
 // refreshed ONLY by wheel events, never by scroll events (see the flag docs).
+//
+// Bound with `.passive`: flag-only, no preventDefault. On the main scroll
+// container this matters most — a non-passive wheel listener forces the browser
+// to block every scroll on this handler while the streaming renderer is busy.
 function onWheelScroll() {
   wheelActive = true
   clearTimeout(wheelDecayTimer)

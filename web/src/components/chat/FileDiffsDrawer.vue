@@ -7,7 +7,7 @@
       <FileIcon :path="filePath" :size="16" class="bs-header-icon" />
       <span class="fd-header-path">{{ baseName }}</span>
     </template>
-    <div class="fd-body tool-detail-body" @click="handleBodyClick" @input="handleBodyInput" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+    <div class="fd-body tool-detail-body" @click="handleBodyClick" @input="handleBodyInput" @mousedown="onTableMouseDown" @touchstart.passive="onTableTouchStart">
       <!-- Full path + jump + badge + change count at the top of the content area -->
       <div class="fd-file-info">
         <span class="fd-file-info-path" :title="displayPath">{{ displayPath }}</span>

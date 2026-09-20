@@ -14,7 +14,7 @@
     </div>
 
     <!-- Scrollable message content -->
-    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onContentTouchStart" @touchend="onContentTouchEnd" @touchcancel="onContentTouchEnd" @scroll="handleScroll">
+    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart.passive="onContentTouchStart" @touchend="onContentTouchEnd" @touchcancel="onContentTouchEnd" @scroll="handleScroll">
       <!-- Trigger source: links an event-triggered run back to its issue/PR and
            shows the exact context block that was prepended to the prompt, so
            the run can be read against what actually triggered it. -->

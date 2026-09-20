@@ -44,9 +44,9 @@
             :class="{ current: m.id === currentModelId, 'is-default': m.id === defaultModelId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectModel(m)"
             @contextmenu.prevent="showDefaultMenu(m)"
-            @touchstart="onTouchStart(m, $event)"
+            @touchstart.passive="onTouchStart(m, $event)"
             @touchend="onTouchEnd"
-            @touchmove="onTouchMove"
+            @touchmove.passive="onTouchMove"
           >
             <span class="model-item-indicator" :class="{ active: m.id === currentModelId }"></span>
             <ProviderIcon :model-name="m.name || m.id" :size="16" />
@@ -86,9 +86,9 @@
             :class="{ current: level.id === currentThinkingEffort, 'is-default': level.id === defaultThinkingEffort, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectThinkingEffort(level.id)"
             @contextmenu.prevent="showThinkingDefaultMenu(level.id)"
-            @touchstart="onTouchStartThinking(level.id, $event)"
+            @touchstart.passive="onTouchStartThinking(level.id, $event)"
             @touchend="onTouchEnd"
-            @touchmove="onTouchMove"
+            @touchmove.passive="onTouchMove"
           >
             <span class="model-item-indicator" :class="{ active: level.id === currentThinkingEffort }"></span>
             <span class="model-item-name">{{ level.name }}</span>
@@ -165,9 +165,9 @@
             :class="{ current: mode.id === currentModeId, 'is-default': mode.id === defaultModeId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectMode(mode)"
             @contextmenu.prevent="showModeDefaultMenu(mode)"
-            @touchstart="onTouchStartMode(mode, $event)"
+            @touchstart.passive="onTouchStartMode(mode, $event)"
             @touchend="onTouchEnd"
-            @touchmove="onTouchMove"
+            @touchmove.passive="onTouchMove"
           >
             <span class="model-item-indicator" :class="{ active: mode.id === currentModeId }"></span>
             <span class="model-item-name">{{ mode.name || mode.id }}</span>
