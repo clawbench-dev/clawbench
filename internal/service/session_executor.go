@@ -71,6 +71,10 @@ const (
 	eventTypeError = "error"
 	// eventTypeSessionUpdate is the stream event type for session updates.
 	eventTypeSessionUpdate = "session_update"
+	// eventTypeUserMessage announces a persisted user message to every session
+	// subscriber (cross-device sync). Used by the direct send, the queue/push
+	// path and auto-continue.
+	eventTypeUserMessage = "user_message"
 	// eventTypeToolUse is the stream event type for tool calls.
 	eventTypeToolUse = "tool_use"
 	// eventTypeToolResult is the stream event type for tool results.

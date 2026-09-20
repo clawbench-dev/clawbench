@@ -298,6 +298,69 @@ func TestServeConfig_Patch_PiperSubConfig(t *testing.T) {
 	assert.Equal(t, 0.3, model.ConfigInstance.TTS.Piper.SentenceSilence)
 }
 
+// The auto-continue toggle and its retry count must survive a PATCH round trip:
+// a field that is in PatchableConfigPaths but missing from applyConfigPatch is
+// accepted, written to config.yaml, and then never reflected in
+// ConfigInstance — the UI toggle would silently snap back.
+func TestServeConfig_Patch_AutoContinue(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	body := `{"chat":{"auto_continue_enabled":true,"auto_continue_max_retries":-1},"language":"en"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.Chat.AutoContinueEnabled,
+		"auto_continue_enabled must be applied to ConfigInstance")
+	assert.Equal(t, -1, model.ConfigInstance.Chat.AutoContinueMaxRetries,
+		"auto_continue_max_retries must keep the -1 unlimited sentinel")
+	assert.Equal(t, "en", model.ConfigInstance.Language)
+	// Hot-reload fields must not trigger a restart dialog.
+	assert.Equal(t, "en", model.Language, "applyHotReloadGlobals must sync model.Language")
+	assert.True(t, model.ChatAutoContinueEnabled)
+	assert.Equal(t, -1, model.ChatAutoContinueMaxRetries)
+}
+
+// Retry counts below the -1 sentinel are unrepresentable and must be rejected
+// rather than stored (they would read as "unlimited" by accident).
+func TestServeConfig_Patch_AutoContinueRetriesBelowSentinel(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"chat":{"auto_continue_max_retries":-2}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// An unsupported language would make every background-localized string fall
+// back to its message key, so it is rejected at the boundary.
+func TestServeConfig_Patch_InvalidLanguage(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"language":"fr"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestServeConfig_Patch_MossNanoInvalidBackend(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

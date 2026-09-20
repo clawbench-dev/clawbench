@@ -2,6 +2,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import i18n, { STORAGE_KEY, setLocaleCookie } from '@/i18n'
 import { getNative } from '@/utils/clawbenchNative'
+import { syncServerLanguage } from '@/utils/serverLanguage'
 
 export function useLocale() {
   const { locale } = useI18n()
@@ -15,6 +16,10 @@ export function useLocale() {
     // Persist to native prefs so native UI (splash, login page) follows the
     // in-app language even before the locale cookie is readable on cold start.
     getNative()?.setLanguage?.(lang)
+    // Tell the server too, so text it persists from background goroutines
+    // (the auto-continue message) is written in the language the user sees.
+    // This path bypasses the settings-panel locale row, so it must sync itself.
+    void syncServerLanguage(lang)
   }
 
   function toggleLocale() {

@@ -612,6 +612,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatSessionPageSize = cfg.Chat.SessionPageSize
 	model.ChatSystemPromptInterval = cfg.Chat.SystemPromptInterval
 	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
+	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
+	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
+	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles

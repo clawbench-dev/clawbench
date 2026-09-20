@@ -3,12 +3,18 @@ import { apiGet, apiPatch, apiPost } from '@/utils/api'
 import i18n, { STORAGE_KEY as LOCALE_KEY, setLocaleCookie } from '@/i18n'
 import { useAgents } from '@/composables/useAgents'
 import { getNative } from '@/utils/clawbenchNative'
+import { syncServerLanguage } from '@/utils/serverLanguage'
 import { resolveThemeId, applyThemeAttributes, onSystemColorSchemeChange } from '@/utils/themeMeta'
 import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
 import { applyServerLimits } from '@/stores/app.ts'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
+
+// Guards the startup reconcile below. The locale side-effect clears it by
+// syncing immediately, and the flag also stops a PATCH → loadConfig → PATCH
+// loop (patchConfig re-reads the whole config).
+let serverLanguageSynced = false
 
 /** One-time migration: copy legacy localStorage keys to new prefixed keys. */
 function migrateLegacyKeys() {
@@ -77,6 +83,10 @@ const legacyKeys: Record<string, {
       // Persist to native prefs so native UI (splash, login page) follows the
       // in-app language even before the locale cookie is readable on cold start.
       getNative()?.setLanguage?.(value)
+      // Keep the server's copy in step so background-persisted text (the
+      // auto-continue message) is written in the user's language.
+      serverLanguageSynced = true
+      void syncServerLanguage(value)
     },
   },
   autoSpeech: {
@@ -420,6 +430,8 @@ const serverDefaults: Record<string, unknown> = {
   'chat.recommend_enabled': false,
   'chat.recommend_context_messages': 3,
   'chat.fork_context_budget': 100000,
+  'chat.auto_continue_enabled': false,
+  'chat.auto_continue_max_retries': 3,
   'session.max_count': 15,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,
@@ -701,6 +713,17 @@ export function useSettingsConfig() {
       // page reload (which re-runs loadProject → /api/roots).
       syncServerLimits(data)
       applyFirstRunThemeDefaults(data)
+      // Reconcile the server's UI language with this browser once per session.
+      // Skipped when the locale side-effect already pushed a value (the user
+      // changed the language this session), so a PATCH cannot loop back through
+      // loadConfig into another PATCH.
+      if (!serverLanguageSynced) {
+        serverLanguageSynced = true
+        const currentLocale = i18n.global.locale.value as string
+        if (currentLocale && data.language !== currentLocale) {
+          void syncServerLanguage(currentLocale)
+        }
+      }
     } catch {
       // Server may be unreachable — keep existing cached values
     }

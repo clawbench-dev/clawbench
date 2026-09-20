@@ -801,3 +801,291 @@ func TestInterruptSessionTurn_ClaimsEmptySlot(t *testing.T) {
 		t.Errorf("cancel reason = %q, want %q", reason, cancelReasonInterrupt)
 	}
 }
+
+// ── Auto-continue ──────────────────────────────────────────────────────────
+//
+// The drain loop owns the guards that only it can see: the session must still
+// be running, and the user's queued work outranks an automatic resume. The
+// retry *policy* (enabled, how many attempts) belongs to the caller's hook and
+// is exercised in auto_continue_test.go.
+
+// An abnormal result must be handed to the hook, and the hook's result must
+// drive the loop from there.
+func TestDrainLoop_AutoContinue_ResumesAbnormalResult(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-auto-continue"
+	setupDrainSession(t, sessionID)
+	SubmitRunForTest(t, sessionID)
+
+	var calls []int
+	var finalEvent ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+			return DrainResult{}
+		},
+		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
+			calls = append(calls, attempt)
+			// Second attempt succeeds cleanly.
+			if attempt == 2 {
+				return DrainResult{}, true
+			}
+			return DrainResult{AbnormalReason: abnormalNoTerminal}, true
+		},
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) { finalEvent = event },
+	}
+
+	RunDrainLoop(cfg, DrainResult{AbnormalReason: abnormalNoTerminal})
+
+	assert.Equal(t, []int{1, 2}, calls, "hook must be called once per attempt")
+	assert.Equal(t, eventTypeDone, finalEvent.Type, "a clean final result ends normally")
+}
+
+// The core requirement: a user cancel must never be resumed, even though it
+// also produces no terminal event.
+func TestDrainLoop_AutoContinue_NotCalledForUserCancel(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-auto-continue-user-cancel"
+	setupDrainSession(t, sessionID)
+	SubmitRunForTest(t, sessionID)
+
+	called := false
+	var finalEvent ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+			return DrainResult{}
+		},
+		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
+			called = true
+			return DrainResult{}, true
+		},
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) { finalEvent = event },
+	}
+
+	// AbnormalReason is empty for a user cancel — that is how the classifier
+	// signals "do not resume".
+	RunDrainLoop(cfg, DrainResult{CancelReason: cancelReasonUser})
+
+	assert.False(t, called, "user cancel must never trigger auto-continue")
+	assert.Equal(t, statusCancelled, finalEvent.Type)
+}
+
+// When the caller refuses a retry (feature off, attempts exhausted, …) the loop
+// must fall through to its normal terminal handling instead of looping.
+func TestDrainLoop_AutoContinue_RefusedFallsThroughToTerminal(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-auto-continue-refused"
+	setupDrainSession(t, sessionID)
+	SubmitRunForTest(t, sessionID)
+
+	var finalEvent ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+			return DrainResult{}
+		},
+		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
+			return prev, false
+		},
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) { finalEvent = event },
+	}
+
+	RunDrainLoop(cfg, DrainResult{AbnormalReason: abnormalEmpty, Empty: true})
+
+	assert.Equal(t, eventTypeError, finalEvent.Type, "empty result still reports an error")
+}
+
+// The user's explicit message outranks an automatic resume: retrying first
+// would persist the "continue" row after the user's queued row and delay their
+// actual request.
+func TestDrainLoop_AutoContinue_SkippedWhenUserHasQueuedMessages(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-auto-continue-queued"
+	setupDrainSession(t, sessionID)
+	SubmitRunForTest(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	_, err := AddQueuedMessage("/test", "codebuddy", sessionID, "my real question", nil, "user-q1", "")
+	require.NoError(t, err)
+
+	called := false
+	executed := 0
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+			executed++
+			return DrainResult{}
+		},
+		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
+			called = true
+			return DrainResult{}, true
+		},
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) {},
+	}
+
+	RunDrainLoop(cfg, DrainResult{AbnormalReason: abnormalNoTerminal})
+
+	assert.False(t, called, "queued user work must preempt auto-continue")
+	assert.Equal(t, 1, executed, "the user's queued message must be executed")
+}
+
+// A cancel that removed the runner must stop the retries: launching a new turn
+// would resurrect a session the user already stopped.
+func TestDrainLoop_AutoContinue_SkippedWhenSessionNotRunning(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-auto-continue-not-running"
+	setupDrainSession(t, sessionID)
+	// Deliberately NOT claimed: no runner is registered.
+
+	called := false
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+			return DrainResult{}
+		},
+		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
+			called = true
+			return DrainResult{}, true
+		},
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) {},
+	}
+
+	RunDrainLoop(cfg, DrainResult{AbnormalReason: abnormalNoTerminal})
+
+	assert.False(t, called, "a session with no live runner must not be resumed")
+}
+
+// A panicking hook must not unwind the drain goroutine: the session would be
+// left running with no loop to finish it.
+func TestDrainLoop_AutoContinue_PanicDegradesToTerminal(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-auto-continue-panic"
+	setupDrainSession(t, sessionID)
+	SubmitRunForTest(t, sessionID)
+
+	var finalEvent ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+			return DrainResult{}
+		},
+		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
+			panic("boom")
+		},
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) { finalEvent = event },
+	}
+
+	require.NotPanics(t, func() {
+		RunDrainLoop(cfg, DrainResult{AbnormalReason: abnormalEmpty, Empty: true})
+	})
+	assert.Equal(t, eventTypeError, finalEvent.Type, "panic must degrade to the normal terminal event")
+}
+
+// A crashed turn with the feature OFF must terminate exactly as it did before
+// this feature existed: the loop must not spin, and it must reach its terminal
+// event. (A crash carries no Err/Empty, so drainHandleTerminal reports false for
+// it and the loop exits through the empty-queue branch — the same path as a
+// clean finish. What matters is that it terminates.)
+func TestDrainLoop_AutoContinue_DisabledCrashStillTerminates(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-auto-continue-disabled-crash"
+	setupDrainSession(t, sessionID)
+	SubmitRunForTest(t, sessionID)
+
+	prevEnabled := model.ChatAutoContinueEnabled
+	model.ChatAutoContinueEnabled = false
+	defer func() { model.ChatAutoContinueEnabled = prevEnabled }()
+
+	var finalEvent ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+			return DrainResult{}
+		},
+		// The real runner is installed, so the disabled path is exercised for
+		// real rather than by omitting the hook.
+		AutoContinue: NewAutoContinueRunner(AutoContinueRunnerConfig{
+			Ctx:         context.Background(),
+			SessionID:   sessionID,
+			ProjectPath: "/test",
+			BackendName: "codebuddy",
+			RunTurn:     func(prompt, queueID string) DrainResult { return DrainResult{} },
+		}),
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) { finalEvent = event },
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RunDrainLoop(cfg, DrainResult{AbnormalReason: abnormalNoTerminal})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("drain loop spun instead of terminating when auto-continue is disabled")
+	}
+	assert.Equal(t, eventTypeDone, finalEvent.Type)
+}
+
+// The attempt budget is per user turn: a long session must get a fresh
+// allowance for each message instead of exhausting it once.
+func TestDrainLoop_AutoContinue_AttemptsResetPerUserTurn(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-auto-continue-reset"
+	setupDrainSession(t, sessionID)
+	SubmitRunForTest(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	// The queued message is inserted from inside the hook (simulating the user
+	// typing while retries run) because a non-empty queue suppresses retries
+	// entirely — the reset is only observable once the loop has drained that
+	// message and finds the queue empty again.
+	var attempts []int
+	inserted := false
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+			// Every user turn fails abnormally.
+			return DrainResult{AbnormalReason: abnormalNoTerminal}
+		},
+		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
+			attempts = append(attempts, attempt)
+			if !AutoContinueAttemptsAllowed(attempt-1, 2) {
+				// This turn's budget is spent. The user now sends a real message,
+				// which must take precedence and start a fresh budget.
+				if !inserted {
+					inserted = true
+					_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "user question", nil, "user-q-reset", "")
+				}
+				return prev, false
+			}
+			return DrainResult{AbnormalReason: abnormalNoTerminal}, true
+		},
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) {},
+	}
+
+	RunDrainLoop(cfg, DrainResult{AbnormalReason: abnormalNoTerminal})
+
+	// Turn 1 spends attempts 1,2 then is refused at 3. The dequeued user message
+	// resets the counter, so turn 2 starts again at 1 — if the budget were
+	// per-session it would start at 4 and be refused immediately.
+	require.Equal(t, []int{1, 2, 3, 1, 2, 3}, attempts,
+		"each user turn must get a fresh attempt budget")
+}

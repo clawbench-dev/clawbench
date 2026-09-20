@@ -46,6 +46,9 @@ var hotReloadFields = map[string]bool{
 	"chat.recommend_enabled":            true,
 	"chat.recommend_context_messages":   true,
 	"chat.fork_context_budget":          true,
+	"chat.auto_continue_enabled":        true,
+	"chat.auto_continue_max_retries":    true,
+	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
 	"session.archive_retention_days":    true,
@@ -242,6 +245,8 @@ type configChat struct {
 	RecommendEnabled         bool `json:"recommend_enabled"`
 	RecommendContextMessages int  `json:"recommend_context_messages"`
 	ForkContextBudget        int  `json:"fork_context_budget"`
+	AutoContinueEnabled      bool `json:"auto_continue_enabled"`
+	AutoContinueMaxRetries   int  `json:"auto_continue_max_retries"`
 }
 
 type configSession struct {
@@ -567,6 +572,9 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.recommend_enabled":            true,
 	"chat.recommend_context_messages":   true,
 	"chat.fork_context_budget":          true,
+	"chat.auto_continue_enabled":        true,
+	"chat.auto_continue_max_retries":    true,
+	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
 	"session.archive_retention_days":    true,
@@ -657,6 +665,13 @@ var validTTSEngines = map[string]bool{
 	"edge": true, "piper": true, "kokoro": true, "moss-nano": true,
 }
 
+// validUILanguages is the set of UI languages the bundled i18n tables carry
+// (internal/i18n/locales/active.{zh,en}.yaml). The frontend PATCHes this field
+// whenever the user changes the interface language.
+var validUILanguages = map[string]bool{
+	"zh": true, "en": true,
+}
+
 // validSummarizeBackends is the set of valid summarization backend values.
 var validSummarizeBackends = map[string]bool{
 	"": true, "simple": true, "api": true,
@@ -708,6 +723,8 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			RecommendEnabled:         cfg.Chat.RecommendEnabled,
 			RecommendContextMessages: cfg.Chat.RecommendContextMessages,
 			ForkContextBudget:        cfg.Chat.ForkContextBudget,
+			AutoContinueEnabled:      cfg.Chat.AutoContinueEnabled,
+			AutoContinueMaxRetries:   cfg.Chat.AutoContinueMaxRetries,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -945,6 +962,14 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 }
 
 func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config validation
+	// language: only locales the bundled translation tables actually carry.
+	// An unknown value would make every background-localized string fall back
+	// to the message key, so it is rejected rather than stored.
+	if v, ok := patch["language"].(string); ok {
+		if !validUILanguages[v] {
+			return fmt.Errorf("language must be one of: zh,en")
+		}
+	}
 	tts, ok := patch["tts"].(map[string]any)
 	if ok {
 		if engine, ok := tts["engine"].(string); ok {
@@ -1143,6 +1168,11 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if v, ok := chat["fork_context_budget"].(float64); ok && v < 1 {
 			return fmt.Errorf("chat.fork_context_budget must be at least 1")
 		}
+		// auto_continue_max_retries: -1 is the "unlimited" sentinel and 0 means
+		// "feature on, no retries". Anything below -1 is unrepresentable.
+		if v, ok := chat["auto_continue_max_retries"].(float64); ok && v < -1 {
+			return fmt.Errorf("chat.auto_continue_max_retries must be at least -1")
+		}
 	}
 	session, ok := patch["session"].(map[string]any)
 	if ok {
@@ -1309,6 +1339,10 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		model.DefaultAgentID = v
 	}
 
+	if v, ok := patch["language"].(string); ok {
+		cfg.Language = v
+	}
+
 	if v, ok := patch["push_mode"].(string); ok {
 		cfg.PushMode = v
 		cfg.DingTalk.Enabled = (v == "dingtalk")
@@ -1365,6 +1399,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := chat["fork_context_budget"].(float64); ok {
 			cfg.Chat.ForkContextBudget = int(v)
+		}
+		if v, ok := chat["auto_continue_enabled"].(bool); ok {
+			cfg.Chat.AutoContinueEnabled = v
+		}
+		if v, ok := chat["auto_continue_max_retries"].(float64); ok {
+			cfg.Chat.AutoContinueMaxRetries = int(v)
 		}
 	}
 
@@ -1666,6 +1706,9 @@ func applyHotReloadGlobals() {
 	model.ChatSystemPromptInterval = cfg.Chat.SystemPromptInterval
 	model.ChatRecommendEnabled = cfg.Chat.RecommendEnabled
 	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
+	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
+	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
+	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
 	model.UploadMaxSizeMB = cfg.Upload.MaxSizeMB

@@ -43,12 +43,12 @@ func IsNotifiableEvent(event string, data any) bool {
 	case *ws.TaskUpdateData:
 		status = d.Status
 	case ws.ChatStreamData: // value type — what StreamHub.Emit constructs
-		if d.EventType == "user_message" {
+		if d.EventType == eventTypeUserMessage {
 			return true
 		}
 		return false
 	case *ws.ChatStreamData: // pointer variant for compatibility
-		if d.EventType == "user_message" {
+		if d.EventType == eventTypeUserMessage {
 			return true
 		}
 		return false

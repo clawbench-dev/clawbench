@@ -36,6 +36,20 @@ func ParseSHA256Hash(password string) string {
 // carries no context-window sizes.
 const DefaultForkContextBudget = 100000
 
+// DefaultLanguage is the UI language used before the frontend reports one.
+// It matches the frontend's fallbackLocale so a fresh server localizes
+// background strings the same way the UI would.
+const DefaultLanguage = "zh"
+
+// DefaultAutoContinueMaxRetries is how many times an abnormally terminated
+// turn is auto-resumed by default (chat.auto_continue_max_retries).
+const DefaultAutoContinueMaxRetries = 3
+
+// AutoContinueUnlimited is the sentinel meaning "no user-configured retry
+// limit". The service layer still applies an internal ceiling so a
+// deterministic failure cannot spin forever.
+const AutoContinueUnlimited = -1
+
 // Config holds the application configuration.
 type Config struct {
 	Port         int    `yaml:"port"`
@@ -43,9 +57,15 @@ type Config struct {
 	LogLevel     string `yaml:"log_level"` // Log level: "debug", "info", "warn", "error" (default: "info")
 	Password     string `yaml:"password"`
 	DefaultAgent string `yaml:"default_agent"`
-	LogDir       string // always <DataDir>/logs; not configurable via yaml
-	LogMaxDays   int    `yaml:"log_max_days"`
-	TLS          struct {
+	// Language is the UI language ("zh" / "en"). It exists so background
+	// goroutines with no HTTP request in scope (scheduled tasks, push
+	// notifications, auto-continue) can localize the strings they persist.
+	// The frontend keeps it in sync on every locale change — see
+	// web/src/composables/useSettingsConfig.ts.
+	Language   string `yaml:"language"`
+	LogDir     string // always <DataDir>/logs; not configurable via yaml
+	LogMaxDays int    `yaml:"log_max_days"`
+	TLS        struct {
 		CertDir string `yaml:"cert_dir"` // Directory containing HTTPS cert/key files; presence of valid files enables HTTPS
 		// Deprecated legacy fields — read for migration only, not used at runtime.
 		Enabled  bool   `yaml:"enabled"`
@@ -69,6 +89,14 @@ type Config struct {
 		RecommendEnabled         bool `yaml:"recommend_enabled"`          // 推荐回复: generate a next-step recommendation after each assistant reply (default: false)
 		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 推荐回复参考的最近消息条数（用户+助手） (default: 10)
 		ForkContextBudget        int  `yaml:"fork_context_budget"`        // Max characters of history re-injected on fork/rewind; older messages are omitted beyond this (default: 100000)
+		// AutoContinueEnabled resumes a session whose turn ended abnormally
+		// (agent crash, empty reply, backend error) by auto-sending a localized
+		// "continue" message. Manual cancels are never resumed. (default: false)
+		AutoContinueEnabled bool `yaml:"auto_continue_enabled"`
+		// AutoContinueMaxRetries bounds those auto-continue attempts per user
+		// turn. -1 means unlimited (still capped internally), 0 disables the
+		// retries without turning the feature off. (default: 3)
+		AutoContinueMaxRetries int `yaml:"auto_continue_max_retries"`
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -319,6 +347,9 @@ var (
 	ServerPort       int      // Server listen port — set once at startup before HTTP listeners start, read-only afterwards. Do NOT modify after server starts; cookie names must be stable.
 	SessionCookie    = "clawbench_session"
 	DefaultAgentID   string // Default agent for new sessions, set from config or first agent
+	// Language is the resolved UI language ("zh" / "en"), read by background
+	// goroutines that must localize without an HTTP request in scope.
+	Language string
 
 	// Upload limits (set from config, with defaults)
 	UploadMaxSizeMB int // Default: 100
@@ -333,6 +364,10 @@ var (
 	// ChatForkContextBudget bounds the history text re-injected on fork/rewind
 	// (default: DefaultForkContextBudget). Read by service.BuildForkContext.
 	ChatForkContextBudget int
+	// ChatAutoContinueEnabled / ChatAutoContinueMaxRetries drive the
+	// abnormal-termination auto-resume. Read by internal/service at turn end.
+	ChatAutoContinueEnabled    bool
+	ChatAutoContinueMaxRetries int
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

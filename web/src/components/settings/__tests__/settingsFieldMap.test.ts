@@ -568,3 +568,39 @@ describe('settingsFieldMap', () => {
     expect(entry!.spec.descriptionKey).toBe('settings.items.filePreviewModeDesc')
   })
 })
+
+describe('auto-continue settings', () => {
+  const chatItems = () => categoryItems['chat'].filter(e => e.type === 'item').map(e => e.spec)
+
+  it('exposes the enable switch and the retry count as server fields', () => {
+    const enabled = chatItems().find(i => i.key === 'chat.auto_continue_enabled')
+    expect(enabled).toBeDefined()
+    expect(enabled!.type).toBe('switch')
+    expect(enabled!.source).toBe('server')
+
+    const retries = chatItems().find(i => i.key === 'chat.auto_continue_max_retries')
+    expect(retries).toBeDefined()
+    expect(retries!.type).toBe('number')
+    expect(retries!.source).toBe('server')
+    // -1 is the "unlimited" sentinel, so the floor must not clamp it away.
+    expect(retries!.min).toBe(-1)
+  })
+
+  it('disables the retry count until auto-continue is on', () => {
+    const retries = chatItems().find(i => i.key === 'chat.auto_continue_max_retries')
+    expect(retries!.disableUnless).toEqual({ key: 'chat.auto_continue_enabled', value: true })
+  })
+
+  it('groups both items under the session recovery section', () => {
+    for (const key of ['chat.auto_continue_enabled', 'chat.auto_continue_max_retries']) {
+      const item = chatItems().find(i => i.key === key)
+      expect(item!.sectionHeader).toBe('settings.items.autoContinueSectionHeader')
+    }
+  })
+
+  it('maps both fields to i18n label keys', () => {
+    const map = getServerFieldToLabelKey()
+    expect(map['chat.auto_continue_enabled']).toBe('settings.items.chatAutoContinueEnabled')
+    expect(map['chat.auto_continue_max_retries']).toBe('settings.items.chatAutoContinueMaxRetries')
+  })
+})

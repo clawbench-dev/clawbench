@@ -82,6 +82,16 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.Port = 20000
 	}
 
+	// --- Language ---
+	// UI language for background-localized strings (scheduled tasks, pushes,
+	// auto-continue). "zh" matches the frontend's fallbackLocale, so a server
+	// that has never been told the user's language behaves like the UI does.
+	// An explicit value from config.yaml wins; the frontend overwrites it on
+	// the first locale change.
+	if cfg.Language == "" {
+		cfg.Language = DefaultLanguage
+	}
+
 	// --- TLS ---
 	// Migrate legacy enabled/cert_file/key_file fields to the new cert_dir scheme.
 	// If cert_dir is unset but legacy cert_file points to an existing directory
@@ -246,6 +256,25 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// falls back to the default rather than meaning "inject nothing".
 	if cfg.Chat.ForkContextBudget <= 0 {
 		cfg.Chat.ForkContextBudget = DefaultForkContextBudget
+	}
+	// AutoContinueEnabled: bool zero-value (false) is the intentional default —
+	// auto-resuming a session spends tokens without the user asking, so it is
+	// opt-in. Use the presence map to distinguish "user wrote false" from
+	// "user omitted the field".
+	if p, ok := presence["chat.auto_continue_enabled"]; !ok || !p {
+		cfg.Chat.AutoContinueEnabled = false
+	}
+	// AutoContinueMaxRetries: -1 (unlimited) and 0 (retries disabled) are both
+	// meaningful, so this CANNOT use a `<= 0 → default` rewrite — that would
+	// silently turn "unlimited" into 3. Only an omitted field takes the default.
+	if p, ok := presence["chat.auto_continue_max_retries"]; !ok || !p {
+		cfg.Chat.AutoContinueMaxRetries = DefaultAutoContinueMaxRetries
+	}
+	// Negative values other than the -1 sentinel are unrepresentable (PATCH
+	// rejects them too); clamp to 0 so a hand-edited yaml cannot produce a
+	// value that would be read as "unlimited" by accident.
+	if cfg.Chat.AutoContinueMaxRetries < AutoContinueUnlimited {
+		cfg.Chat.AutoContinueMaxRetries = 0
 	}
 
 	// --- Session ---

@@ -4,10 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	_ "modernc.org/sqlite"
 )
@@ -473,5 +478,276 @@ func TestScheduledExecution_WithMetadata(t *testing.T) {
 	}
 	if runResult.Metadata.Model != "test-model" {
 		t.Fatalf("expected Model='test-model', got %q", runResult.Metadata.Model)
+	}
+}
+
+// ── Auto-continue ──────────────────────────────────────────────────────────
+//
+// A scheduled execution that dies abnormally must be resumed by sending a
+// localized "continue", reusing the same execution row so the run is not
+// counted as finished while it is still going.
+
+// crashThenSucceedBackend closes the event channel with no terminal event on its
+// first call (a crashed agent process) and answers normally afterwards.
+type crashThenSucceedBackend struct {
+	calls    atomic.Int32
+	mu       sync.Mutex
+	requests []ai.ChatRequest
+}
+
+func (b *crashThenSucceedBackend) Name() string { return "test-auto-continue" }
+
+func (b *crashThenSucceedBackend) ExecuteStream(_ context.Context, req ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	b.mu.Lock()
+	b.requests = append(b.requests, req)
+	n := b.calls.Add(1)
+	b.mu.Unlock()
+
+	ch := make(chan ai.StreamEvent, 4)
+	if n == 1 {
+		// Partial output, then the channel closes with no terminal event — how a
+		// crashed agent process surfaces. The partial text matters: it makes the
+		// session carry real assistant content, which is what lets the retry
+		// resolve resume=true and continue the same context.
+		ch <- ai.StreamEvent{Type: "content", Content: "working on it"}
+		close(ch)
+		return ch, nil
+	}
+	ch <- ai.StreamEvent{Type: "content", Content: "resumed ok"}
+	ch <- ai.StreamEvent{Type: "done"}
+	close(ch)
+	return ch, nil
+}
+
+// autoContinueBackendSeq makes each test's backend id unique.
+var autoContinueBackendSeq atomic.Int32
+
+func (b *crashThenSucceedBackend) snapshotRequests() []ai.ChatRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]ai.ChatRequest(nil), b.requests...)
+}
+
+// setupAutoContinueTaskEnv wires the shared fixtures for the auto-continue
+// scheduler tests: the crash-then-succeed backend, a test agent, a test WS
+// manager, and an instant auto-continue delay.
+func setupAutoContinueTaskEnv(t *testing.T, enabled bool) *crashThenSucceedBackend {
+	t.Helper()
+	backend := &crashThenSucceedBackend{}
+	// RegisterBackend panics on a duplicate id, so each test gets its own.
+	backendName := fmt.Sprintf("test-auto-continue-%d", autoContinueBackendSeq.Add(1))
+	ai.RegisterBackend(backendName, func() ai.AIBackend { return backend })
+
+	setupSchedulerExecDB(t)
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test Agent", Backend: backendName, RuntimeSystemPrompt: "test prompt"},
+	}
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	origMgr := ws.GetManager()
+	ws.SetManagerForTest(ws.NewManagerForTest())
+	t.Cleanup(func() { ws.SetManagerForTest(origMgr) })
+
+	prevEnabled, prevMax, prevLang := model.ChatAutoContinueEnabled, model.ChatAutoContinueMaxRetries, model.Language
+	model.ChatAutoContinueEnabled, model.ChatAutoContinueMaxRetries, model.Language = enabled, 3, "en"
+	t.Cleanup(func() {
+		model.ChatAutoContinueEnabled, model.ChatAutoContinueMaxRetries, model.Language = prevEnabled, prevMax, prevLang
+	})
+
+	prevSleep := autoContinueSleep
+	autoContinueSleep = func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil }
+	t.Cleanup(func() { autoContinueSleep = prevSleep })
+
+	return backend
+}
+
+// runAutoContinueTask executes one task and returns once executeTask finishes.
+func runAutoContinueTask(t *testing.T, s *Scheduler, name string) {
+	t.Helper()
+	task := &model.ScheduledTask{
+		ProjectPath: "/tmp",
+		Name:        name,
+		CronExpr:    "0 * * * *",
+		AgentID:     "test-agent",
+		Prompt:      "do the thing",
+		Status:      "active",
+		RepeatMode:  "unlimited",
+	}
+	if err := s.AddTask(task); err != nil {
+		t.Fatalf("AddTask: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.executeTask(task, "/tmp", "manual", nil)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("executeTask did not return")
+	}
+}
+
+func TestScheduler_ExecuteTask_AutoContinuesCrashedTurn(t *testing.T) {
+	backend := setupAutoContinueTaskEnv(t, true)
+
+	s := NewScheduler()
+	defer s.Stop()
+	runAutoContinueTask(t, s, "Crashy")
+
+	// The backend must have been called twice: the crashed attempt and the resume.
+	reqs := backend.snapshotRequests()
+	if len(reqs) != 2 {
+		t.Fatalf("backend calls = %d, want 2 (crashed attempt + resume)", len(reqs))
+	}
+	if reqs[1].Prompt != "Continue" {
+		t.Errorf("retry prompt = %q, want %q (localized continue)", reqs[1].Prompt, "Continue")
+	}
+	if !reqs[1].Resume {
+		t.Error("the retry must resume the session rather than start a new one")
+	}
+
+	var sessionID string
+	if err := dbRead.QueryRow(
+		"SELECT id FROM chat_sessions WHERE project_path = '/tmp' ORDER BY created_at DESC LIMIT 1",
+	).Scan(&sessionID); err != nil {
+		t.Fatalf("query session: %v", err)
+	}
+
+	// The execution must finish as completed — not failed — after the resume
+	// succeeded, and there must be exactly ONE execution row: the retry reuses
+	// it rather than creating a second (which would double-count the run).
+	var status string
+	if err := dbRead.QueryRow(
+		"SELECT status FROM task_executions WHERE session_id = ?", sessionID,
+	).Scan(&status); err != nil {
+		t.Fatalf("query execution status: %v", err)
+	}
+	if status != "completed" {
+		t.Errorf("execution status = %q, want %q", status, "completed")
+	}
+
+	var execCount int
+	if err := dbRead.QueryRow(
+		"SELECT COUNT(*) FROM task_executions WHERE session_id = ?", sessionID,
+	).Scan(&execCount); err != nil {
+		t.Fatalf("count executions: %v", err)
+	}
+	if execCount != 1 {
+		t.Errorf("execution rows = %d, want 1 (a retry must reuse the row)", execCount)
+	}
+
+	// The auto-sent continue must be a real user row in the transcript.
+	var continueCount int
+	if err := dbRead.QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'user' AND content = 'Continue'",
+		sessionID,
+	).Scan(&continueCount); err != nil {
+		t.Fatalf("count continue messages: %v", err)
+	}
+	if continueCount != 1 {
+		t.Errorf("continue messages = %d, want 1 persisted as a user message", continueCount)
+	}
+}
+
+// alwaysCrashBackend never emits a terminal event, so every attempt fails
+// abnormally and the retry budget is the only thing that stops the loop.
+type alwaysCrashBackend struct {
+	calls atomic.Int32
+}
+
+func (b *alwaysCrashBackend) Name() string { return "test-always-crash" }
+
+func (b *alwaysCrashBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	b.calls.Add(1)
+	ch := make(chan ai.StreamEvent, 1)
+	ch <- ai.StreamEvent{Type: "content", Content: "partial"}
+	close(ch)
+	return ch, nil
+}
+
+// max_retries counts RETRIES, not total turns: with max=2 the task must run the
+// original turn plus exactly two resumes, then give up and mark the execution
+// failed. An off-by-one here would silently change how much a user's budget
+// costs in tokens.
+func TestScheduler_ExecuteTask_AutoContinueHonorsExactRetryBudget(t *testing.T) {
+	backend := &alwaysCrashBackend{}
+	backendName := fmt.Sprintf("test-always-crash-%d", autoContinueBackendSeq.Add(1))
+	ai.RegisterBackend(backendName, func() ai.AIBackend { return backend })
+
+	setupSchedulerExecDB(t)
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test Agent", Backend: backendName, RuntimeSystemPrompt: "test prompt"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	origMgr := ws.GetManager()
+	ws.SetManagerForTest(ws.NewManagerForTest())
+	defer ws.SetManagerForTest(origMgr)
+
+	prevEnabled, prevMax, prevLang := model.ChatAutoContinueEnabled, model.ChatAutoContinueMaxRetries, model.Language
+	model.ChatAutoContinueEnabled, model.ChatAutoContinueMaxRetries, model.Language = true, 2, "en"
+	defer func() {
+		model.ChatAutoContinueEnabled, model.ChatAutoContinueMaxRetries, model.Language = prevEnabled, prevMax, prevLang
+	}()
+	prevSleep := autoContinueSleep
+	autoContinueSleep = func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil }
+	defer func() { autoContinueSleep = prevSleep }()
+
+	s := NewScheduler()
+	defer s.Stop()
+	runAutoContinueTask(t, s, "Always Crashy")
+
+	if got := int(backend.calls.Load()); got != 3 {
+		t.Errorf("backend calls = %d, want 3 (1 original + 2 retries for max_retries=2)", got)
+	}
+
+	var sessionID string
+	if err := dbRead.QueryRow(
+		"SELECT id FROM chat_sessions WHERE project_path = '/tmp' ORDER BY created_at DESC LIMIT 1",
+	).Scan(&sessionID); err != nil {
+		t.Fatalf("query session: %v", err)
+	}
+	var status string
+	if err := dbRead.QueryRow(
+		"SELECT status FROM task_executions WHERE session_id = ?", sessionID,
+	).Scan(&status); err != nil {
+		t.Fatalf("query execution status: %v", err)
+	}
+	if status != "failed" {
+		t.Errorf("execution status = %q, want %q after exhausting retries", status, "failed")
+	}
+}
+
+// When auto-continue is disabled the crashed turn must keep the historical
+// behavior: the execution is marked failed and no extra turn runs.
+func TestScheduler_ExecuteTask_NoAutoContinueWhenDisabled(t *testing.T) {
+	backend := setupAutoContinueTaskEnv(t, false)
+
+	s := NewScheduler()
+	defer s.Stop()
+	runAutoContinueTask(t, s, "Crashy Disabled")
+
+	if got := len(backend.snapshotRequests()); got != 1 {
+		t.Errorf("backend calls = %d, want 1 (disabled auto-continue must not retry)", got)
+	}
+
+	var sessionID string
+	if err := dbRead.QueryRow(
+		"SELECT id FROM chat_sessions WHERE project_path = '/tmp' ORDER BY created_at DESC LIMIT 1",
+	).Scan(&sessionID); err != nil {
+		t.Fatalf("query session: %v", err)
+	}
+
+	var status string
+	if err := dbRead.QueryRow(
+		"SELECT status FROM task_executions WHERE session_id = ?", sessionID,
+	).Scan(&status); err != nil {
+		t.Fatalf("query execution status: %v", err)
+	}
+	if status != "failed" {
+		t.Errorf("execution status = %q, want %q", status, "failed")
 	}
 }
