@@ -566,19 +566,35 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     // Snapshot the outgoing file from the live DOM before pushing the new one.
     captureCurrentFileState(prevPath)
 
-    if (!path.startsWith('/')) {
-      try {
-        const resp = await fetch(`/api/dir?path=${encodeURIComponent(path)}`)
-        if (resp.ok) {
+    // A directory annotation opens as a directory listing, not as a file. The
+    // project-relative form is probed through /api/dir; an ABSOLUTE path is
+    // project-external, which /api/dir refuses — so it is classified through
+    // the shared existence endpoint instead, which stats absolute paths
+    // directly. Without this branch an external directory annotation clicked
+    // inside the viewer would be sent to selectFile and fail as a 404.
+    const isExternalPath = isAbsolutePath(path)
+    try {
+      const resp = isExternalPath
+        ? await fetch('/api/file/batch-exists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: [path] }),
+          })
+        : await fetch(`/api/dir?path=${encodeURIComponent(path)}`)
+      if (resp.ok) {
+        const isDir = isExternalPath
+          ? ((await resp.json() as { results?: Record<string, string> }).results?.[path] === 'dir')
+          : true
+        if (isDir) {
           await handleOpenDirectoryFromContext(path)
           return
         }
-      } catch {
-        // Not a directory, fall through
       }
+    } catch {
+      // Not a directory, fall through
     }
 
-    const isExternal = isAbsolutePath(path)
+    const isExternal = isExternalPath
     const ok = await store.selectFile(path)
     if (ok) {
       openFileInViewer(path, { lineStart, lineEnd, lineRanges })

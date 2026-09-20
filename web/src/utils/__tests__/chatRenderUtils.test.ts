@@ -66,35 +66,35 @@ describe('rewriteImageUrls', () => {
   })
 
   // ── Absolute paths within projectRoot ──
-  // NOTE: The regex /^(https?:|\/\/|^\/)/i catches paths starting with '/',
-  // so absolute paths like /home/user/project/... are treated as "external"
-  // and get styling but NOT rewriting — they never reach the projectRoot logic.
+  // An absolute path is a real filesystem path, not a site-root URL. One that
+  // lies INSIDE the project keeps the stable project-relative URL (so its
+  // cache key does not churn); one outside is served through the ?path= form.
 
-  it('applies styling to absolute path starting with projectRoot but does NOT rewrite (starts with /)', () => {
+  it('rewrites an absolute path inside projectRoot to the project-relative URL', () => {
     const html = `<img src="${projectRoot}/images/foo.png">`
     const result = rewriteImageUrls(html, projectRoot)
-    // Starts with / → caught by external URL branch → styling only, no rewrite
-    expect(result).toContain('chat-img')
-    expect(result).toContain(`src="${projectRoot}/images/foo.png"`)
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).toContain('src="/api/file/thumb?path=images/foo.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/local-file/images/foo.png"')
   })
 
-  it('applies styling to deeply nested absolute path but does NOT rewrite', () => {
+  it('rewrites a deeply nested absolute path inside projectRoot', () => {
     const html = `<img src="${projectRoot}/a/b/c/d.png">`
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('chat-img')
-    expect(result).toContain(`src="${projectRoot}/a/b/c/d.png"`)
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).toContain('src="/api/file/thumb?path=a/b/c/d.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/local-file/a/b/c/d.png"')
   })
 
   // ── Paths outside projectRoot ──
 
-  it('does not rewrite absolute path outside projectRoot', () => {
+  it('rewrites an absolute path outside projectRoot through the ?path= form', () => {
+    // The regression this guards: a "/"-prefixed src used to be classified as
+    // an "external URL" and left untouched, so the browser requested it from
+    // the SITE root and got a 404 — an AI-written `![](/tmp/chart.png)` never
+    // rendered. It must instead be served by the local-file endpoint.
     const html = '<img src="/other/project/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    // Starts with / so it gets styling but NOT rewriting (path doesn't start with projectRoot)
-    expect(result).toContain('src="/other/project/img.png"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).toContain('src="/api/local-file/?path=%2Fother%2Fproject%2Fimg.png"')
+    expect(result).not.toContain('src="/other/project/img.png"')
   })
 
   it('rewrites relative ../ path (no path normalization — resolved string starts with projectRoot/)', () => {
@@ -107,24 +107,27 @@ describe('rewriteImageUrls', () => {
   })
 
   // ── Paths starting with / ──
-  // NOTE: All /-prefixed paths are caught by the external URL regex first,
-  // so they get styling but are never passed to the projectRoot rewriting logic.
 
-  it('applies styling to /-prefixed path within projectRoot but does NOT rewrite', () => {
+  it('rewrites a /-prefixed path inside projectRoot to the project-relative URL', () => {
     const html = `<img src="${projectRoot}/sub/file.png">`
     const result = rewriteImageUrls(html, projectRoot)
-    // Starts with / → external URL branch → styling only
-    expect(result).toContain('chat-img')
-    expect(result).toContain(`src="${projectRoot}/sub/file.png"`)
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).toContain('src="/api/file/thumb?path=sub/file.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/local-file/sub/file.png"')
   })
 
-  it('applies styling but does not rewrite /-prefixed path outside projectRoot', () => {
+  it('rewrites a /-prefixed path outside projectRoot through the ?path= form', () => {
     const html = '<img src="/usr/share/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('chat-img')
-    expect(result).toContain('src="/usr/share/img.png"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).toContain('src="/api/local-file/?path=%2Fusr%2Fshare%2Fimg.png"')
+    expect(result).not.toContain('src="/usr/share/img.png"')
+  })
+
+  it('keeps an absolute path outside the project unthumbnailed for non-raster formats', () => {
+    // SVG has no thumbnail endpoint support; it must still be served full-size.
+    const html = '<img src="/tmp/diagram.svg">'
+    const result = rewriteImageUrls(html, projectRoot)
+    expect(result).toContain('src="/api/local-file/?path=%2Ftmp%2Fdiagram.svg"')
+    expect(result).not.toContain('/api/file/thumb')
   })
 
   // ── Empty projectRoot ──
@@ -238,10 +241,12 @@ describe('rewriteImageUrls', () => {
 
   // ── Edge case: path exactly equal to projectRoot ──
 
-  it('applies styling to path exactly equal to projectRoot but does NOT rewrite (starts with /)', () => {
+  it('leaves a src equal to projectRoot itself untouched (a directory, not a file)', () => {
+    // The project root is a directory: there is nothing to serve, so it must
+    // not be turned into a bogus /api/local-file/ URL (which would be a bare
+    // directory path with an empty segment).
     const html = `<img src="${projectRoot}">`
     const result = rewriteImageUrls(html, projectRoot)
-    // Starts with / → external URL branch → styling only, no rewrite
     expect(result).toContain('chat-img')
     expect(result).toContain(`src="${projectRoot}"`)
     expect(result).not.toContain('/api/local-file/')
@@ -487,11 +492,14 @@ describe('convertAudioLinks', () => {
     expect(result).not.toContain('/api/local-file/')
   })
 
-  it('does not rewrite paths outside the project root', () => {
+  it('serves a project-external absolute path through the ?path= form', () => {
+    // Audio shared resolveMediaSrc with images, so the same fix applies: an
+    // absolute path outside the project must be served by the local-file
+    // endpoint rather than requested from the site root (which 404s).
     const html = '<a href="/tmp/elsewhere/audio.mp3">play</a>'
     const result = convertAudioLinks(html, audioProjectRoot)
-    expect(result).toContain('src="/tmp/elsewhere/audio.mp3"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).toContain('src="/api/local-file/?path=%2Ftmp%2Felsewhere%2Faudio.mp3"')
+    expect(result).not.toContain('src="/tmp/elsewhere/audio.mp3"')
   })
 })
 
@@ -548,11 +556,11 @@ describe('convertVideoLinks', () => {
     expect(result).not.toContain('/api/local-file/')
   })
 
-  it('does not rewrite paths outside the project root', () => {
+  it('serves a project-external absolute path through the ?path= form', () => {
     const html = '<a href="/tmp/elsewhere/movie.mp4">play</a>'
     const result = convertVideoLinks(html, videoProjectRoot)
-    expect(result).toContain('src="/tmp/elsewhere/movie.mp4"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).toContain('src="/api/local-file/?path=%2Ftmp%2Felsewhere%2Fmovie.mp4"')
+    expect(result).not.toContain('src="/tmp/elsewhere/movie.mp4"')
   })
 
   it('leaves non-video links unchanged', () => {

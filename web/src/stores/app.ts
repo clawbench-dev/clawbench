@@ -399,17 +399,37 @@ async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false
     // must be converted to project-relative first. Without this the backend
     // rejects it (AccessDenied).
     dir = toProjectRelative(dir, state.projectRoot)
-    // Defensive: strip leading/trailing slashes so currentDir is always a clean project-relative path.
-    // The Go backend treats paths starting with "/" as absolute filesystem paths,
-    // which causes 500 errors when they're not under configured root paths.
-    dir = dir.replace(/^\/+/, '').replace(/\/+$/, '')
+    // A path that is STILL absolute after relativization lies outside the
+    // project root. The file manager browses those too (chat annotations may
+    // point anywhere), and /api/dir only resolves inside the project — so such
+    // a directory is listed through /api/projects instead, which serves any
+    // absolute path under a configured root with the same entry shape. Keeping
+    // the absolute form in currentDir is what lets the breadcrumb, the parent
+    // button and every joinPath-based row action stay correct.
+    //
+    // Gated on a known projectRoot: without one the path cannot be classified,
+    // and the legacy behavior (treat it as project-relative) is the safe
+    // fallback — an unknown root means every request 403s regardless.
+    const isExternalDir = isAbsolutePath(dir) && !!state.projectRoot
+    if (!isExternalDir) {
+        // Defensive: strip leading/trailing slashes so currentDir is always a
+        // clean project-relative path. The Go backend treats paths starting
+        // with "/" as absolute filesystem paths.
+        dir = dir.replace(/^\/+/, '').replace(/\/+$/, '')
+    } else {
+        // Drop a trailing slash (but keep the root's own "/") so identity
+        // comparisons against listing paths stay stable.
+        dir = dir.replace(/\/+$/, '') || '/'
+    }
     const prevDir = state.currentDir
     const prevEntries = state.dirEntries.slice()
     // noLoading: skip the loading mask on refreshes (delete/rename/watch/git ops);
     // first-open navigation still shows the overlay for visual feedback.
     if (!noLoading) state.dirLoading = true
     try {
-        const url = dir ? `/api/dir?path=${encodeURIComponent(dir)}` : '/api/dir?path='
+        const url = isExternalDir
+            ? `/api/projects?path=${encodeURIComponent(dir)}`
+            : dir ? `/api/dir?path=${encodeURIComponent(dir)}` : '/api/dir?path='
         const data = await apiGet<{ items: DirEntry[] }>(url)
         // A newer loadFiles call started while we were awaiting — discard our result
         if (seq !== loadFilesSeq) {
@@ -664,6 +684,10 @@ async function navigateToParentDir(): Promise<boolean> {
     if (state.dirLoading) return false
     if (state.currentDir === '') return false // already at project root, nothing to go back to
     const parent = dirName(state.currentDir)
+    // A filesystem root ("/", "C:/") has no parent above it — dirName returns
+    // the root itself (or "" for a bare relative name). Loading that again would
+    // just re-list the same directory.
+    if (parent === '' || parent === state.currentDir) return false
     return await loadFiles(parent)
 }
 

@@ -2,11 +2,26 @@
 
 /**
  * Join a directory path with a file/directory name.
- * Strips leading slashes from dir to ensure the result is a project-relative
- * path. The Go backend treats paths starting with "/" as absolute filesystem
- * paths, which causes 500 errors when they're not under configured root paths.
+ *
+ * An ABSOLUTE dir keeps its root: `/tmp` + `a` → `/tmp/a`. The file manager can
+ * browse project-external directories (absolute paths), and dropping the root
+ * there produced a bogus project-relative path (`tmp/a`) that resolved against
+ * the project root instead of the browsed directory.
+ *
+ * A relative dir is normalized to a clean project-relative path by stripping
+ * leading/trailing slashes, as before. That is what lets a caller pass a
+ * project-relative path written with a leading slash (`/src`) and still get a
+ * backend-safe relative result.
  */
 export function joinPath(dir: string, name: string): string {
+    if (isAbsolutePath(dir)) {
+        // Normalize separators so the result matches the DOM data-path
+        // convention (the backend returns forward slashes), collapse redundant
+        // slashes, and drop a trailing slash — but keep the root's own "/":
+        // `/` + `name` → `/name`, `/tmp/` + `name` → `/tmp/name`.
+        const base = normalizeSlashes(dir).replace(/\/{2,}/g, '/').replace(/\/+$/, '')
+        return base ? `${base}/${name}` : `/${name}`
+    }
     const normalizedDir = dir.replace(/^\/+/, '').replace(/\/+$/, '')
     return normalizedDir ? normalizedDir + '/' + name : name
 }
@@ -59,11 +74,16 @@ export function isAbsolutePath(path: string): boolean {
  * Returns the original path when it is not under the root (or root is empty).
  * The comparison is case-insensitive for Windows drive letters, so "e:/…"
  * matches a root of "E:/…". Inputs may use either separator style.
+ *
+ * A POSIX root ("/") is never relativized: stripping the trailing separator
+ * leaves "", which callers read as the PROJECT root — so browsing "/" would
+ * silently land back inside the project instead of the filesystem root.
  */
 export function toProjectRelative(path: string, root: string): string {
     if (!root) return path
     const normPath = normalizeSlashes(path).replace(/\/+$/, '')
     const normRoot = normalizeSlashes(root).replace(/\/+$/, '')
+    if (normPath === '') return normalizeSlashes(path)
     if (normPath.toLowerCase() === normRoot.toLowerCase()) {
         return ''
     }
@@ -82,6 +102,11 @@ export function dirName(path: string): string {
     // Rejoin with original separator style
     const useBackslash = path.includes('\\') && !path.includes('/')
     const result = useBackslash ? parts.join('\\') : parts.join('/')
+    // A depth-1 absolute path ("/tmp", "/etc") pops down to a single EMPTY
+    // segment, which joins to "". Callers read "" as the PROJECT root, so an
+    // external browse would silently jump back inside the project. Return the
+    // filesystem root instead (POSIX dirname("/tmp") === "/").
+    if (result === '' && path.startsWith('/')) return '/'
     // On Windows, a lone "C:" should be the drive root. Match the separator
     // style of the input so joinPath (which uses "/") stays consistent when
     // the path was normalized to forward slashes.

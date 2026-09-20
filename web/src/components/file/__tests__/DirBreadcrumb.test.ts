@@ -44,16 +44,19 @@ describe('DirBreadcrumb', () => {
   // ── reconstructPath (exposed via navigate emission) ──
 
   describe('reconstructPath via navigate emission', () => {
-    it('reconstructs Unix path from segments', async () => {
+    it('reconstructs Unix path from segments, preserving the absolute form', async () => {
       const wrapper = mountBreadcrumb({ path: '/home/user/docs' })
       // Click the second crumb ("home") — index 0 in parts
       const crumbs = wrapper.findAll('.crumb')
       // crumbs[0] = root (Home), crumbs[1] = "home", crumbs[2] = "user", crumbs[3] = "docs"
-      // Clicking "home" (not last) should emit navigate with "home" (relative path, no leading slash)
+      // The input path is absolute, so the crumb must stay absolute — a
+      // rootless "home" would be re-read as project-relative and resolve
+      // against the project root instead of the browsed directory.
+      // (ProjectDialog's onBreadcrumbNavigate accepts both forms.)
       await crumbs[1].trigger('click')
       const emitted = wrapper.emitted('navigate')
       expect(emitted).toBeTruthy()
-      expect(emitted![emitted!.length - 1][0]).toBe('home')
+      expect(emitted![emitted!.length - 1][0]).toBe('/home')
     })
 
     it('reconstructs Windows path from segments', async () => {
@@ -61,7 +64,8 @@ describe('DirBreadcrumb', () => {
       const crumbs = wrapper.findAll('.crumb')
       // parts: ["C:\", "Users", "admin", "docs"]
       // crumbs[0] = root, crumbs[1] = "C:\", crumbs[2] = "Users", crumbs[3] = "admin", crumbs[4] = "docs"
-      // Click "Users" (not last) => navigate with "C:\Users"
+      // Click "Users" (not last) => navigate with "C:\Users" (already absolute —
+      // the drive root carries its own separator, so no "/" is prepended)
       await crumbs[2].trigger('click')
       const emitted = wrapper.emitted('navigate')
       expect(emitted).toBeTruthy()
@@ -133,10 +137,23 @@ describe('DirBreadcrumb', () => {
       expect(wrapper.emitted('navigate')).toBeUndefined()
     })
 
-    it('root crumb emits navigate with empty string', async () => {
+    it('root crumb navigates to the filesystem root for an absolute browse', async () => {
       const wrapper = mountBreadcrumb({ path: '/home/user' })
       const crumbs = wrapper.findAll('.crumb')
-      // First crumb is the root Home icon — emits navigate('')
+      // First crumb is the root Home icon. The input path is absolute, so the
+      // root target is the filesystem root ("/"), NOT "" — an empty string
+      // means the PROJECT root and would jump back inside the project.
+      await crumbs[0].trigger('click')
+      const emitted = wrapper.emitted('navigate')
+      expect(emitted).toBeTruthy()
+      expect(emitted![0][0]).toBe('/')
+    })
+
+    it('root crumb navigates to the project root for a relative browse', async () => {
+      const wrapper = mountBreadcrumb({ path: 'web/src' })
+      const crumbs = wrapper.findAll('.crumb')
+      // A project-relative browse keeps "" as its root (the backend resolves it
+      // against the project root).
       await crumbs[0].trigger('click')
       const emitted = wrapper.emitted('navigate')
       expect(emitted).toBeTruthy()
@@ -229,13 +246,27 @@ describe('DirBreadcrumb — drag to attach', () => {
         setDragImage: setDragImageSpy,
       },
     })
-    // setAttachDragData writes the custom MIME and text/plain
+    // setAttachDragData writes the custom MIME and text/plain. The dragged path
+    // stays absolute because the browsed path is absolute.
     expect(setDataMock).toHaveBeenCalledWith(
       'application/x-clawbench-attach',
-      expect.stringContaining('"path":"home/user"'),
+      expect.stringContaining('"path":"/home/user"'),
     )
-    expect(setDataMock).toHaveBeenCalledWith('text/plain', 'home/user')
+    expect(setDataMock).toHaveBeenCalledWith('text/plain', '/home/user')
     expect(setDragImageSpy).toHaveBeenCalled()
+  })
+
+  it('dragstart on a crumb keeps a project-relative path rootless', async () => {
+    const setDataMock = vi.fn()
+    const wrapper = mountBreadcrumbWide({ path: 'web/src/components' })
+    // crumbs[2] = "src" (root icon, "web", "src", …)
+    await wrapper.findAll('.crumb')[2].trigger('dragstart', {
+      dataTransfer: { setData: setDataMock, effectAllowed: '', setDragImage: vi.fn() },
+    })
+    expect(setDataMock).toHaveBeenCalledWith(
+      'application/x-clawbench-attach',
+      expect.stringContaining('"path":"web/src"'),
+    )
   })
 
   it('dragstart on home crumb attaches root path "/"', async () => {
@@ -254,6 +285,27 @@ describe('DirBreadcrumb — drag to attach', () => {
       'application/x-clawbench-attach',
       expect.stringContaining('"path":"/"'),
     )
+  })
+
+  it('home crumb drag keeps "/" for a project-relative browse too', async () => {
+    // The CLICK target is "" (the project root, resolved by the backend), but
+    // the DRAG payload is a filesystem path consumed by the attach flow — an
+    // empty string would attach nothing. The two deliberately differ.
+    const setDataMock = vi.fn()
+    const wrapper = mountBreadcrumbWide({ path: 'web/src' })
+    await wrapper.findAll('.crumb')[0].trigger('dragstart', {
+      dataTransfer: { setData: setDataMock, effectAllowed: '', setDragImage: vi.fn() },
+    })
+    expect(setDataMock).toHaveBeenCalledWith(
+      'application/x-clawbench-attach',
+      expect.stringContaining('"path":"/"'),
+    )
+  })
+
+  it('home crumb click targets the project root for a project-relative browse', async () => {
+    const wrapper = mountBreadcrumb({ path: 'web/src' })
+    await wrapper.findAll('.crumb')[0].trigger('click')
+    expect(wrapper.emitted('navigate')![0][0]).toBe('')
   })
 
   it('dragstart on narrow screen does not set attach drag data', async () => {

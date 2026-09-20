@@ -108,10 +108,11 @@ describe('dirName', () => {
     expect(dirName('file.txt')).toBe('')
   })
 
-  it('handles unix root path', () => {
-    // dirName('/file.txt') returns '' which represents root dir in this project
-    // Unix convention would be '/' but empty string is used as root elsewhere
-    expect(dirName('/file.txt')).toBe('')
+  it('returns the filesystem root for a file directly under "/"', () => {
+    // POSIX dirname("/file.txt") === "/". Returning "" would be read by callers
+    // as the PROJECT root, so walking up from "/file.txt" would jump inside the
+    // project instead of reaching the filesystem root.
+    expect(dirName('/file.txt')).toBe('/')
   })
 
   it('handles nested paths', () => {
@@ -126,8 +127,8 @@ describe('dirName', () => {
     expect(dirName('/a/b/c/d/e/f')).toBe('/a/b/c/d/e')
   })
 
-  it('handles path with only two segments', () => {
-    expect(dirName('/file')).toBe('')
+  it('returns the filesystem root for a depth-1 unix path', () => {
+    expect(dirName('/file')).toBe('/')
   })
 
   it('handles dot file dirName', () => {

@@ -27,21 +27,31 @@ describe('terminal cwd resolution', () => {
   })
 })
 
-describe('normalizeRelativePath (via resolveTerminalCwd)', () => {
-  it('strips leading slashes from requested cwd', () => {
-    expect(resolveTerminalCwd({ requestedCwd: '///cmd/server' })).toBe('cmd/server')
-  })
-
+describe('cwd normalization (via resolveTerminalCwd)', () => {
   it('strips trailing slashes from requested cwd', () => {
     expect(resolveTerminalCwd({ requestedCwd: 'cmd/server///' })).toBe('cmd/server')
   })
 
-  it('strips both leading and trailing slashes', () => {
-    expect(resolveTerminalCwd({ requestedCwd: '///cmd/server///' })).toBe('cmd/server')
+  it('keeps an absolute requested cwd absolute', () => {
+    // The file manager can browse project-external directories and offers
+    // "open terminal here" there; stripping the root would open the terminal
+    // at the project root instead of the browsed directory.
+    expect(resolveTerminalCwd({ requestedCwd: '/tmp/scratch' })).toBe('/tmp/scratch')
+    expect(resolveTerminalCwd({ requestedCwd: '/tmp/scratch///' })).toBe('/tmp/scratch')
   })
 
-  it('strips leading/trailing slashes from currentDir', () => {
-    expect(resolveTerminalCwd({ currentDir: '///internal/terminal///' })).toBe('internal/terminal')
+  it('keeps an absolute currentDir absolute', () => {
+    expect(resolveTerminalCwd({ currentDir: '/var/log' })).toBe('/var/log')
+  })
+
+  it('normalizes a project-relative currentDir (no leading slash in practice)', () => {
+    // The backend returns rootless project-relative paths for in-project
+    // directories; a stray leading slash would mean project-external instead.
+    expect(resolveTerminalCwd({ currentDir: 'internal/terminal' })).toBe('internal/terminal')
+  })
+
+  it('strips a trailing slash from a project-relative requestedCwd', () => {
+    expect(resolveTerminalCwd({ requestedCwd: 'cmd/server/' })).toBe('cmd/server')
   })
 })
 
@@ -54,8 +64,12 @@ describe('dirname (via resolveTerminalCwd)', () => {
     expect(resolveTerminalCwd({ currentFilePath: 'a/b/c/d.txt', currentDir: '' })).toBe('a/b/c')
   })
 
-  it('handles file path with leading slash', () => {
-    expect(resolveTerminalCwd({ currentFilePath: '/web/src/App.vue', currentDir: '' })).toBe('web/src')
+  it('treats a leading-slash path as absolute (project-external)', () => {
+    // The backend returns rootless project-relative paths for in-project files
+    // and absolute paths for external ones, so a leading "/" means external —
+    // it must keep its root, or "open terminal here" from an external directory
+    // would open at the project root instead.
+    expect(resolveTerminalCwd({ currentFilePath: '/web/src/App.vue', currentDir: '' })).toBe('/web/src')
   })
 
   it('handles file path with trailing slash (treats last segment as directory)', () => {
@@ -85,8 +99,12 @@ describe('resolveTerminalCwd edge cases', () => {
     expect(resolveTerminalCwd({ currentFilePath: 'web/src/App.vue', currentDir: 'docs' })).toBe('web/src')
   })
 
-  it('normalizes the requested cwd path', () => {
-    expect(resolveTerminalCwd({ requestedCwd: '///a/b///' })).toBe('a/b')
+  it('normalizes a project-relative requested cwd', () => {
+    expect(resolveTerminalCwd({ requestedCwd: 'a/b/' })).toBe('a/b')
+  })
+
+  it('keeps an absolute requested cwd absolute', () => {
+    expect(resolveTerminalCwd({ requestedCwd: '/a/b/' })).toBe('/a/b')
   })
 })
 

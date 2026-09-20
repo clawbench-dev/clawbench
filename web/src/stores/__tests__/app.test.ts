@@ -443,6 +443,12 @@ describe('selectFile excalidraw detection', () => {
 describe('loadFiles Windows path normalization', () => {
   beforeEach(() => {
     vi.mocked(apiGet).mockResolvedValue({ items: [] } as never)
+    // These cases exercise separator normalization, not project/external
+    // routing. With no project root an absolute path cannot be classified, so
+    // the store falls back to the legacy project-relative handling — which is
+    // what the assertions below describe. Pin it explicitly rather than
+    // depending on a leaked value from an earlier describe block.
+    store.state.projectRoot = ''
   })
 
   it('normalizes backslash drive paths to forward slashes', async () => {
@@ -489,6 +495,26 @@ describe('loadFiles Windows path normalization', () => {
     store.state.currentDir = ''
     await store.loadFiles('D:/other/dir')
     expect(store.state.currentDir).toBe('D:/other/dir')
+  })
+
+  it('lists a project-external directory through /api/projects', async () => {
+    // /api/dir only resolves inside the project root, so an external directory
+    // must go to /api/projects — which serves any absolute path with the same
+    // entry shape. The absolute form is kept in currentDir so the breadcrumb
+    // and every joinPath-based row action stay correct.
+    store.state.projectRoot = '/home/user/project'
+    store.state.currentDir = ''
+    await store.loadFiles('/tmp/scratch')
+    expect(store.state.currentDir).toBe('/tmp/scratch')
+    expect(apiGet).toHaveBeenCalledWith('/api/projects?path=%2Ftmp%2Fscratch')
+  })
+
+  it('keeps the filesystem root itself as an external currentDir', async () => {
+    store.state.projectRoot = '/home/user/project'
+    store.state.currentDir = ''
+    await store.loadFiles('/')
+    expect(store.state.currentDir).toBe('/')
+    expect(apiGet).toHaveBeenCalledWith('/api/projects?path=%2F')
   })
 })
 

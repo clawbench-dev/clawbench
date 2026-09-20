@@ -18,6 +18,7 @@ import { apiGet } from '@/utils/api'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
 import { parseLineRanges } from '@/utils/lineRanges'
 import { joinPath } from '@/utils/path'
+import { buildDirListUrl } from '@/utils/dirList'
 import { getFileType } from '@/utils/fileType'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
@@ -171,7 +172,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     dirLoading.value = true
     dirError.value = false
     try {
-      const url = `/api/dir?path=${encodeURIComponent(path)}`
+      const url = buildDirListUrl(path)
       const data = await apiGet<{ items: DirPreviewEntry[] }>(url, { timeoutMs: 10_000 })
       if (mySeq !== dirSeq) return
       dirEntries.value = data.items || []

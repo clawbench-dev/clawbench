@@ -4,6 +4,7 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,15 +54,29 @@ func TerminalWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get cwd from query parameter (relative path within project)
+	// Get cwd from query parameter. A relative path resolves against the
+	// project root; an ABSOLUTE one is a project-external directory (the file
+	// manager can browse those and offers "open terminal here") and is used
+	// directly once validated against the configured roots. ValidatePath joins,
+	// so passing an absolute path through it would silently open the terminal
+	// at "<project>/<abs>" instead of the requested directory.
 	cwd := projectPath
-	if relCwd := r.URL.Query().Get("cwd"); relCwd != "" {
-		absCwd, ok := model.ValidatePath(projectPath, relCwd)
-		if !ok {
-			writeLocalizedError(w, r, model.Forbidden(nil, "TerminalCwdInvalid"))
-			return
+	if reqCwd := r.URL.Query().Get("cwd"); reqCwd != "" {
+		if filepath.IsAbs(reqCwd) {
+			abs, err := filepath.Abs(reqCwd)
+			if err != nil || !isPathUnderAnyRoot(abs) {
+				writeLocalizedError(w, r, model.Forbidden(nil, "TerminalCwdInvalid"))
+				return
+			}
+			cwd = abs
+		} else {
+			abs, ok := model.ValidatePath(projectPath, reqCwd)
+			if !ok {
+				writeLocalizedError(w, r, model.Forbidden(nil, "TerminalCwdInvalid"))
+				return
+			}
+			cwd = abs
 		}
-		cwd = absCwd
 	}
 
 	// Get optional session ID for reconnect

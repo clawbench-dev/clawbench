@@ -3,9 +3,9 @@
     <span
       class="crumb crumb-home"
       :draggable="isWideScreen"
-      @dragstart="onCrumbDragStart('/', 'Home', $event)"
+      @dragstart="onCrumbDragStart(homeDragPath, 'Home', $event)"
       @dragend="cleanupDragGhost()"
-      @click="$emit('navigate', '')"
+      @click="$emit('navigate', homePath)"
     >
       <Home :size="14" />
     </span>
@@ -15,9 +15,9 @@
         class="crumb"
         :class="{ current: i === parts.length - 1 }"
         :draggable="isWideScreen"
-        @dragstart="onCrumbDragStart(reconstructPath(parts.slice(0, i + 1)), part, $event)"
+        @dragstart="onCrumbDragStart(crumbPath(parts.slice(0, i + 1)), part, $event)"
         @dragend="cleanupDragGhost()"
-        @click="i < parts.length - 1 && $emit('navigate', reconstructPath(parts.slice(0, i + 1)))"
+        @click="i < parts.length - 1 && $emit('navigate', crumbPath(parts.slice(0, i + 1)))"
       >{{ part }}</span>
     </template>
     <span class="crumb-sep" />
@@ -95,6 +95,46 @@ const parts = computed(() => {
   }
   return segments
 })
+
+/**
+ * Reconstruct a path from breadcrumb segments, preserving the FORM of the
+ * input path. `props.path` is either project-relative (the file manager inside
+ * the project) or absolute (ProjectDialog's directory picker, and the file
+ * manager browsing a project-external directory) — a crumb must stay in
+ * whichever form the input used, or the jump resolves against the wrong root.
+ *
+ * Both consumers accept either form: ProjectDialog's onBreadcrumbNavigate
+ * re-normalizes both, and the file manager passes the value straight to
+ * navigateToDir (which routes absolute paths through /api/projects).
+ */
+function crumbPath(segments) {
+  if (segments.length === 0) return ''
+  const joined = reconstructPath(segments)
+  // Windows: reconstructPath already restored the "C:\" root, so `joined` is
+  // absolute as-is (prepending "/" would produce "/C:\Users").
+  if (/^[A-Za-z]:[\\/]/.test(joined)) return joined
+  return isAbsolutePath(props.path) ? '/' + joined.replace(/^\/+/, '') : joined
+}
+
+/**
+ * Target of the home crumb. For a project-relative browse that is the project
+ * root ("" — /api/dir resolves it); for an absolute browse it must stay
+ * absolute, or the jump would land back inside the project. The root of an
+ * absolute path is "/" on POSIX and the drive root ("C:/") on Windows.
+ */
+const homePath = computed(() => {
+  if (!isAbsolutePath(props.path)) return ''
+  const norm = normalizeSlashes(props.path)
+  const drive = norm.match(/^([A-Za-z]:)\//)
+  return drive ? `${drive[1]}/` : '/'
+})
+
+/**
+ * Path carried by the home crumb's drag payload. Unlike the click target, the
+ * project-relative case keeps the legacy "/" — the attach flow reads a
+ * filesystem path here, and an empty string would attach nothing.
+ */
+const homeDragPath = computed(() => homePath.value || '/')
 </script>
 
 <style scoped>

@@ -67,6 +67,18 @@ describe('dirName', () => {
     expect(dirName('C:/Users/dev')).toBe('C:/Users')
     expect(dirName('C:/dev')).toBe('C:/')
   })
+
+  it('returns the filesystem root for a depth-1 absolute path', () => {
+    // "/tmp" pops down to a single EMPTY segment. Returning "" would be read by
+    // callers as the PROJECT root, so browsing an external directory would
+    // silently jump back inside the project. POSIX dirname("/tmp") === "/".
+    expect(dirName('/tmp')).toBe('/')
+    expect(dirName('/etc')).toBe('/')
+  })
+
+  it('keeps returning empty for a depth-1 relative path', () => {
+    expect(dirName('src')).toBe('')
+  })
 })
 
 describe('isWindowsAbsolutePath', () => {
@@ -200,28 +212,40 @@ describe('joinPath', () => {
     expect(joinPath('', 'file.txt')).toBe('file.txt')
   })
 
-  it('normalizes "/" to root (empty string)', () => {
-    expect(joinPath('/', 'file.txt')).toBe('file.txt')
-  })
-
   it('handles subdirectory paths', () => {
     expect(joinPath('.clawbench/tmp', 'data.json')).toBe('.clawbench/tmp/data.json')
-  })
-
-  it('strips leading slash from dir', () => {
-    expect(joinPath('/src', 'file.ts')).toBe('src/file.ts')
-  })
-
-  it('strips multiple leading slashes', () => {
-    expect(joinPath('///deep', 'file.ts')).toBe('deep/file.ts')
   })
 
   it('strips trailing slash from dir', () => {
     expect(joinPath('src/', 'file.ts')).toBe('src/file.ts')
   })
 
-  it('strips leading and trailing slashes together', () => {
-    expect(joinPath('/src/', 'file.ts')).toBe('src/file.ts')
+  // ── Absolute dirs keep their root ──
+  // The file manager browses project-external directories, where currentDir is
+  // an absolute path. Stripping the leading "/" there produced a bogus
+  // project-relative path that resolved against the project root instead.
+  it('keeps the root of a POSIX absolute dir', () => {
+    expect(joinPath('/tmp', 'file.txt')).toBe('/tmp/file.txt')
+    expect(joinPath('/home/user/project', 'a.ts')).toBe('/home/user/project/a.ts')
+  })
+
+  it('keeps the filesystem root when dir is "/"', () => {
+    expect(joinPath('/', 'file.txt')).toBe('/file.txt')
+  })
+
+  it('collapses redundant and trailing slashes in an absolute dir', () => {
+    expect(joinPath('/src/', 'file.ts')).toBe('/src/file.ts')
+    expect(joinPath('///deep', 'file.ts')).toBe('/deep/file.ts')
+    expect(joinPath('/a//b', 'file.ts')).toBe('/a/b/file.ts')
+  })
+
+  it('keeps a Windows drive root', () => {
+    expect(joinPath('C:/', 'file.ts')).toBe('C:/file.ts')
+    expect(joinPath('C:/Users/dev', 'file.ts')).toBe('C:/Users/dev/file.ts')
+  })
+
+  it('normalizes backslashes in an absolute dir', () => {
+    expect(joinPath('C:\\Users\\dev', 'file.ts')).toBe('C:/Users/dev/file.ts')
   })
 })
 

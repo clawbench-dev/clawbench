@@ -70,6 +70,81 @@ func TestTerminalWebSocketRejectsInvalidCwdBeforeUpgrade(t *testing.T) {
 	}
 }
 
+// The file manager can browse project-external directories and offers "open
+// terminal here" there, so an ABSOLUTE cwd is a legitimate target. It must be
+// accepted (the handler used to route it through model.ValidatePath, which
+// JOINS — "/tmp" became "<project>/tmp" and the terminal opened in the wrong
+// place). A cwd outside every configured root is still rejected.
+func TestTerminalWebSocketCwdAcceptsAbsoluteInsideRoots(t *testing.T) {
+	origMgr := GetTerminalManager()
+	t.Cleanup(func() {
+		curMgr := GetTerminalManager()
+		if curMgr != nil && curMgr != origMgr {
+			curMgr.Close()
+		}
+		SetTerminalManager(origMgr)
+	})
+
+	// Roots are normally "/" on Unix; pin them so the assertions are explicit
+	// about what "inside a configured root" means.
+	origRoots := model.RootPaths
+	model.RootPaths = []string{"/"}
+	t.Cleanup(func() { model.RootPaths = origRoots })
+
+	projectDir := t.TempDir()
+	SetTerminalManager(terminal.NewManager(model.TerminalConfig{
+		Enabled:      true,
+		IdleTimeout:  "1m",
+		BufferLines:  100,
+		MaxLineBytes: 65536,
+		MaxBufferMB:  4,
+	}, 20000))
+
+	// The cwd validation happens before the WebSocket upgrade, so an accepted
+	// path proceeds to the handshake and fails there (not with 403).
+	req := httptest.NewRequest(http.MethodGet, "/api/terminal/ws?cwd=/tmp", http.NoBody)
+	withProjectCookie(req, projectDir)
+	w := callHandler(TerminalWebSocket, req)
+
+	if w.Code == http.StatusForbidden {
+		t.Fatalf("absolute cwd inside a configured root must not be rejected as invalid, got 403 body %s", w.Body.String())
+	}
+}
+
+func TestTerminalWebSocketCwdRejectsAbsoluteOutsideRoots(t *testing.T) {
+	origMgr := GetTerminalManager()
+	t.Cleanup(func() {
+		curMgr := GetTerminalManager()
+		if curMgr != nil && curMgr != origMgr {
+			curMgr.Close()
+		}
+		SetTerminalManager(origMgr)
+	})
+
+	projectDir := t.TempDir()
+	// Narrow the roots so a path outside them is unambiguous.
+	origRoots := model.RootPaths
+	model.RootPaths = []string{projectDir}
+	t.Cleanup(func() { model.RootPaths = origRoots })
+
+	SetTerminalManager(terminal.NewManager(model.TerminalConfig{
+		Enabled:      true,
+		IdleTimeout:  "1m",
+		BufferLines:  100,
+		MaxLineBytes: 65536,
+		MaxBufferMB:  4,
+	}, 20000))
+
+	outside := t.TempDir()
+	req := httptest.NewRequest(http.MethodGet, "/api/terminal/ws?cwd="+outside, http.NoBody)
+	withProjectCookie(req, projectDir)
+	w := callHandler(TerminalWebSocket, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("absolute cwd outside every root must be rejected, got status %d body %s", w.Code, w.Body.String())
+	}
+}
+
 // ---------- TerminalStatus ----------
 
 func TestTerminalStatus_NilManager(t *testing.T) {

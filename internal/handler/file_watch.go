@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -95,18 +96,37 @@ func newWatchClientID() string {
 // post-upgrade path needs a variant that only reports failure.
 //
 // An empty dirRel means the project root itself.
+//
+// An ABSOLUTE target is project-external (the file manager browses those, and a
+// chat annotation may name any path) and is validated against the configured
+// roots instead of being joined to the project — ValidatePath joins, which
+// silently turned "/tmp" into "<project>/tmp" and watched the wrong directory.
 func resolveWatchPaths(projectPath, dirRel, fileRel string) (dirAbs, fileAbs string, ok bool) {
+	resolve := func(p string) (string, bool) {
+		if p == "" {
+			return "", true
+		}
+		if filepath.IsAbs(p) {
+			abs, err := filepath.Abs(p)
+			if err != nil || !isPathUnderAnyRoot(abs) {
+				return "", false
+			}
+			return abs, true
+		}
+		return model.ValidatePath(projectPath, p)
+	}
+
 	if dirRel == "" {
 		dirAbs = projectPath
 	} else {
-		abs, valid := model.ValidatePath(projectPath, dirRel)
+		abs, valid := resolve(dirRel)
 		if !valid {
 			return "", "", false
 		}
 		dirAbs = abs
 	}
 	if fileRel != "" {
-		abs, valid := model.ValidatePath(projectPath, fileRel)
+		abs, valid := resolve(fileRel)
 		if !valid {
 			return "", "", false
 		}
@@ -119,6 +139,11 @@ func resolveWatchPaths(projectPath, dirRel, fileRel string) (dirAbs, fileAbs str
 // against the project root. Paths that are invalid or escape the project are
 // dropped rather than failing the whole frame: a single stale image reference
 // must not break the file watcher for the open file.
+//
+// An ABSOLUTE media path is project-external (a markdown file may embed an
+// image from anywhere) and is watched directly; a relative one resolves against
+// the project root. Joining an absolute path would silently watch the wrong
+// file (ValidatePath joins, so "/tmp/a.png" became "<project>/tmp/a.png").
 //
 // The list is capped at service.MaxMediaWatchPaths; each distinct parent
 // directory costs one inotify watch, so an unbounded list would let one client
@@ -136,9 +161,19 @@ func resolveWatchMediaPaths(projectPath string, rels []string) []string {
 		if rel == "" {
 			continue
 		}
-		abs, ok := model.ValidatePath(projectPath, rel)
-		if !ok {
-			continue
+		var abs string
+		if filepath.IsAbs(rel) {
+			resolved, err := filepath.Abs(rel)
+			if err != nil || !isPathUnderAnyRoot(resolved) {
+				continue
+			}
+			abs = resolved
+		} else {
+			resolved, ok := model.ValidatePath(projectPath, rel)
+			if !ok {
+				continue
+			}
+			abs = resolved
 		}
 		if _, dup := seen[abs]; dup {
 			continue
