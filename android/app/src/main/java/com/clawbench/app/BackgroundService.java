@@ -2475,14 +2475,6 @@ public class BackgroundService extends Service {
                 JSONObject data = msg.optJSONObject("data");
                 if (data == null) return;
 
-                // Send ack for every event
-                if (!eventId.isEmpty()) {
-                    JSONObject ack = new JSONObject();
-                    ack.put("type", "ack");
-                    ack.put("id", eventId);
-                    webSocket.send(ack.toString());
-                }
-
                 // Dedup check (prevents double notifications from WS replay + pending fetch)
                 if (!eventId.isEmpty()) {
                     if (isDuplicateEvent(eventId)) {

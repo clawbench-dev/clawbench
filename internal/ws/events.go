@@ -207,8 +207,6 @@ func readClientMessages(mgr *Manager, conn *websocket.Conn, writeMu *sync.Mutex,
 		readCancel()
 
 		switch msg.Type {
-		case "ack":
-			slog.Debug("ws: ack received", "id", msg.ID, "client_id", clientID)
 		case "pong":
 			// Connection alive
 		case "subscribe":

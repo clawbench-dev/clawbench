@@ -69,11 +69,6 @@ func TestClientMessageJSON(t *testing.T) {
 		want string
 	}{
 		{
-			name: "ack",
-			msg:  ClientMessage{Type: "ack", ID: "evt_123"},
-			want: `{"type":"ack","id":"evt_123"}`,
-		},
-		{
 			name: "pong",
 			msg:  ClientMessage{Type: "pong"},
 			want: `{"type":"pong"}`,
