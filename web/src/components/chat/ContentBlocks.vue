@@ -359,7 +359,7 @@
 
 <script setup lang="ts">
 /* eslint-disable @typescript-eslint/no-explicit-any -- defineProps runtime declarations require any for complex prop types */
-import { ref, watch, onUnmounted, computed, onMounted, onUpdated, reactive, nextTick } from 'vue'
+import { ref, shallowRef, watch, onUnmounted, computed, onMounted, onUpdated, reactive, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import i18n from '@/i18n'
 import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
@@ -1074,13 +1074,42 @@ function handleSummaryToolClick(tool: any, ti: number) {
  *  other: type-bi (fallback)
  *  The index fallback uses the ABSOLUTE root index (absIdx) so a nested
  *  instance's keys never collide with the parent's. */
-function stableBlockKey(bi: number, block: any) {
+function computeStableBlockKey(bi: number, block: any) {
   if (block.type === 'tool_use' && block.id) return block.id
   if (block.type === 'thinking') {
     if (block.think_id) return block.think_id
     if (block._key) return block._key
   }
   return `${block.type || 'other'}-${absIdx(bi)}`
+}
+
+// Per-render memo for `stableBlockKey`. The template calls it roughly a dozen
+// times per thinking block per render pass (v-for :key, both :ref closures, the
+// scroll closure, four class bindings, and again inside each of the three
+// thinking-state helpers) and every call re-derived it from `absIdx`. At 83
+// thinking blocks re-rendering on each of ~290 streaming frames that was
+// hundreds of thousands of calls in the 2026-09-20 freeze trace, showing up as
+// 101ms of self time in `stableBlockKey` plus a share of the 555ms spent in the
+// :ref closures and the 182ms in the thinking-state helpers that call it.
+//
+// Validated on the inputs that actually determine the key, not on a watcher:
+//   * `block` — `props.blocks` is mutated in place while streaming (blocks are
+//     appended, text grows, a tool block's id can be adopted), so the array
+//     reference alone does not change. Comparing the block object catches every
+//     replacement, including a reordered array.
+//   * the two arrays — the index fallback embeds `absIdx(bi)`, which resolves
+//     through the parent's root array, so a replaced array can change the key
+//     for an otherwise unchanged (index, block) pair.
+const _blockKeyCache = new Map<number, { block: any; blocks: any; root: any; key: string }>()
+
+function stableBlockKey(bi: number, block: any) {
+  const hit = _blockKeyCache.get(bi)
+  if (hit && hit.block === block && hit.blocks === props.blocks && hit.root === props.rootBlocks) {
+    return hit.key
+  }
+  const key = computeStableBlockKey(bi, block)
+  _blockKeyCache.set(bi, { block, blocks: props.blocks, root: props.rootBlocks, key })
+  return key
 }
 
 function handleThinkingClick(block: any, bi: number) {
@@ -1315,7 +1344,22 @@ onMounted(() => nextTick(reverifyAnnotations))
 onUpdated(() => nextTick(reverifyAnnotations))
 
 // ── Throttled streaming render ──
-const blockHtmlCache = ref<Record<string, any>>({})
+// Rendered-HTML cache for streaming text/thinking blocks, keyed by stable block
+// key. Deliberately a `shallowRef<Map>` rather than a `ref<Record>`:
+//
+//  * A deep `ref` proxies the whole record, so every `cache.value[key]` read in
+//    the template went through Vue's reactive `get` trap — and each write
+//    replaced the object (`{ ...cache, [k]: v }`), re-proxying all entries. On
+//    the message that produced the 2026-09-20 freeze trace (241 blocks, ~180
+//    stream events/s) that was tens of thousands of proxy allocations per
+//    second, showing up as reactive-`get` self time plus GC.
+//  * `shallowRef` still triggers on `.value = newMap`, so the template
+//    re-renders after a throttled flush exactly as before — it just does not
+//    pay per-key proxy cost, because the Map it hands back is raw.
+//
+// Always assign a NEW Map (never mutate in place): `shallowRef` only tracks
+// `.value` assignment.
+const blockHtmlCache = shallowRef<Map<string, string>>(new Map())
 // Source text behind each cache entry. The flush reuses the cached HTML when the
 // source is unchanged instead of re-running marked + DOMPurify for every block
 // every 300ms — in a long turn with concurrent sub-agents that was thousands of
@@ -1328,11 +1372,11 @@ const THROTTLE_MS = 300
 const _blockFlushScheduler = new StreamFrameScheduler()
 
 /** Drop every cached block's HTML and its source, forcing a full re-render.
- *  Use this instead of assigning `blockHtmlCache.value = {}` directly —
+ *  Use this instead of assigning `blockHtmlCache.value = new Map()` directly —
  *  clearing only the HTML would leave the source map matching, and the next
  *  flush would treat the (now empty) cache as up to date and render nothing. */
 function invalidateBlockHtml() {
-  blockHtmlCache.value = {}
+  blockHtmlCache.value = new Map()
   _blockHtmlSource.clear()
 }
 
@@ -1348,7 +1392,8 @@ function flushBlockHtml() {
   // Schedule the actual work in the next rAF to coalesce with
   // other streaming updates (debouncedRender, scrollTick).
   _blockFlushScheduler.schedule('flush', () => {
-    const newCache: Record<string, string> = {}
+    const prevCache = blockHtmlCache.value
+    const newCache = new Map<string, string>()
     // Rebuilt in the same pass so entries for blocks that disappeared
     // (content_reset, merge, rewind) don't linger and wrongly mark a future
     // same-keyed block as already rendered.
@@ -1365,21 +1410,23 @@ function flushBlockHtml() {
         const key = stableBlockKey(i, block)
         const src = block.text ?? ''
         // Unchanged source → reuse the existing HTML (no marked/DOMPurify).
-        if (_blockHtmlSource.get(key) === src && blockHtmlCache.value[key] !== undefined) {
-          newCache[key] = blockHtmlCache.value[key]
+        const cached = prevCache.get(key)
+        if (_blockHtmlSource.get(key) === src && cached !== undefined) {
+          newCache.set(key, cached)
         } else {
           // streaming=true: deferred rendering — pure markdown only
-          newCache[key] = props.renderTextBlock(block.text, props.msgId, i, true)
+          newCache.set(key, props.renderTextBlock(block.text, props.msgId, i, true))
         }
         newSources.set(key, src)
       } else if (block.type === 'thinking') {
         const key = `t-${stableBlockKey(i, block)}`
         const src = block.text ?? ''
-        if (_blockHtmlSource.get(key) === src && blockHtmlCache.value[key] !== undefined) {
-          newCache[key] = blockHtmlCache.value[key]
+        const cached = prevCache.get(key)
+        if (_blockHtmlSource.get(key) === src && cached !== undefined) {
+          newCache.set(key, cached)
         } else {
           // Thinking blocks use renderMarkdownHtml during streaming
-          newCache[key] = renderMarkdownHtml(block.text, { skipKatex: true })
+          newCache.set(key, renderMarkdownHtml(block.text, { skipKatex: true }))
         }
         newSources.set(key, src)
       }
@@ -1423,17 +1470,21 @@ function getBlockHtml(bi: number, block: any) {
   // Streaming: deferred rendering with throttling
   const key = stableBlockKey(bi, block)
   const src = block.text ?? ''
-  if (blockHtmlCache.value[key] !== undefined) {
+  const cache = blockHtmlCache.value
+  const cached = cache.get(key)
+  if (cached !== undefined) {
     // Only re-render when the source actually changed. Re-rendering on every
-    // template pass (which the flush itself triggers by replacing the cache
-    // object) re-armed the 300ms timer forever, so a long turn never stopped
+    // template pass (which the flush itself triggers by replacing the cache)
+    // re-armed the 300ms timer forever, so a long turn never stopped
     // re-running marked + DOMPurify. An unchanged block just serves its HTML.
     if (_blockHtmlSource.get(key) === src) {
-      return blockHtmlCache.value[key]
+      return cached
     }
     if (!_throttleTimer) {
-      const newCache = { ...blockHtmlCache.value }
-      newCache[key] = props.renderTextBlock(block.text, props.msgId, ai, true)
+      // Copy-on-write: the flush reads the previous Map, and the template may
+      // read the new one mid-pass, so never mutate the Map in place.
+      const newCache = new Map(cache)
+      newCache.set(key, props.renderTextBlock(block.text, props.msgId, ai, true))
       blockHtmlCache.value = newCache
       // The write above is fresh for this text — record it so the next flush
       // does not re-render (and so it is not treated as stale).
@@ -1442,10 +1493,12 @@ function getBlockHtml(bi: number, block: any) {
     } else {
       _throttlePending = true
     }
-    return blockHtmlCache.value[key]
+    return blockHtmlCache.value.get(key) ?? ''
   }
   const html = props.renderTextBlock(block.text, props.msgId, ai, true)
-  blockHtmlCache.value = { ...blockHtmlCache.value, [key]: html }
+  const withHtml = new Map(cache)
+  withHtml.set(key, html)
+  blockHtmlCache.value = withHtml
   _blockHtmlSource.set(key, src)
   return html
 }
@@ -1476,25 +1529,29 @@ function getThinkingTextHtml(text: string, bi: number, block: any) {
   const streamingOpts = { skipKatex: true } as const
   const cacheKey = `t-${stableBlockKey(bi, block)}`
   // Streaming: deferred rendering with throttling (same pattern as text blocks)
-  if (blockHtmlCache.value[cacheKey] !== undefined) {
+  const cache = blockHtmlCache.value
+  const cached = cache.get(cacheKey)
+  if (cached !== undefined) {
     // Unchanged source → serve the cached HTML instead of re-rendering (and
     // re-arming the timer) on every template pass. See getBlockHtml.
     if (_blockHtmlSource.get(cacheKey) === text) {
-      return blockHtmlCache.value[cacheKey]
+      return cached
     }
     if (!_throttleTimer) {
-      const newCache = { ...blockHtmlCache.value }
-      newCache[cacheKey] = renderMarkdownHtml(text, streamingOpts)
+      const newCache = new Map(cache)
+      newCache.set(cacheKey, renderMarkdownHtml(text, streamingOpts))
       blockHtmlCache.value = newCache
       _blockHtmlSource.set(cacheKey, text ?? '')
       _throttleTimer = setTimeout(flushBlockHtml, THROTTLE_MS)
     } else {
       _throttlePending = true
     }
-    return blockHtmlCache.value[cacheKey]
+    return blockHtmlCache.value.get(cacheKey) ?? ''
   }
   const html = renderMarkdownHtml(text, streamingOpts)
-  blockHtmlCache.value = { ...blockHtmlCache.value, [cacheKey]: html }
+  const withHtml = new Map(cache)
+  withHtml.set(cacheKey, html)
+  blockHtmlCache.value = withHtml
   _blockHtmlSource.set(cacheKey, text ?? '')
   return html
 }

@@ -77,6 +77,29 @@ describe('getToolIcon', () => {
   it('returns fallback for non-agent unknown names', () => {
     expect(getToolIcon('random-thing').category).toBe('fallback')
   })
+
+  // The lookup table is prebuilt at module load. If it is ever rebuilt per
+  // call (or the key normalization drifts), these still hold — but the
+  // identity assertions below catch a regression to a fresh object per call,
+  // which would break the template's memoization assumptions.
+  it('returns the same object identity across repeated calls', () => {
+    expect(getToolIcon('Read')).toBe(TOOL_ICONS['Read'])
+    expect(getToolIcon('read')).toBe(TOOL_ICONS['Read'])
+    expect(getToolIcon('READ')).toBe(TOOL_ICONS['Read'])
+    expect(getToolIcon('explore')).toBe(TOOL_ICONS['Agent'])
+    expect(getToolIcon('nope')).toBe(FALLBACK_TOOL_ICON)
+    expect(getToolIcon('')).toBe(FALLBACK_TOOL_ICON)
+  })
+
+  it('resolves every TOOL_ICONS entry case-insensitively', () => {
+    // Guards the prebuilt lowercase index: a missing/renamed key would only
+    // surface as a wrong icon in the UI, not as a thrown error.
+    for (const [name, entry] of Object.entries(TOOL_ICONS)) {
+      expect(getToolIcon(name), name).toBe(entry)
+      expect(getToolIcon(name.toLowerCase()), name).toBe(entry)
+      expect(getToolIcon(name.toUpperCase()), name).toBe(entry)
+    }
+  })
 })
 
 describe('toolDisplayName', () => {

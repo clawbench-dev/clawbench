@@ -2323,6 +2323,55 @@ describe('streaming render cost', () => {
     expect(wrapper.html()).toContain('step one two')
   })
 
+  // The cache is a `shallowRef<Map>`, not a `ref<Record>`. shallowRef only
+  // tracks `.value` assignment, so a regression that mutated the Map in place
+  // (`cache.set(k, v)` without a new Map) would serve fresh HTML that never
+  // reaches the DOM: no re-render, stale `v-html`. These two pin the contract.
+  it('propagates new HTML to the DOM on every content change', async () => {
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'v1' }],
+      streaming: true,
+    })
+    await nextTick()
+    expect(wrapper.html()).toContain('v1')
+
+    // The first change after mount renders through getBlockHtml (fresh Map).
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'v2' }] })
+    await nextTick()
+    expect(wrapper.html()).toContain('v2')
+    expect(wrapper.html()).not.toContain('v1')
+
+    // The next change lands inside the 300ms throttle window, so it is held
+    // until the flush replaces the cache — the flush assignment is exactly what
+    // must reach the DOM (a mutated-in-place Map would not).
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'v3' }] })
+    await nextTick()
+    vi.advanceTimersByTime(400)
+    await nextTick()
+    expect(wrapper.html()).toContain('v3')
+    expect(wrapper.html()).not.toContain('v2')
+  })
+
+  it('re-renders after a throttled flush replaces the cache', async () => {
+    const spy = vi.fn((text: string) => `<p>${text}</p>`)
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'F1' }],
+      streaming: true,
+      renderTextBlock: spy,
+    })
+    await nextTick()
+
+    // Two changes: the first arms the timer, the second sets _throttlePending
+    // so the flush body actually runs.
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'F2' }] })
+    await nextTick()
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'F3' }] })
+    await nextTick()
+    vi.advanceTimersByTime(400)
+    await nextTick()
+
+    expect(wrapper.html()).toContain('F3')
+  })
 })
 
 // ── Static block cache: scope + reactivity contract ──

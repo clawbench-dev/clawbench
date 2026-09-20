@@ -2624,6 +2624,70 @@ describe('useChatStream', () => {
       expect(options.onScrollBottom).not.toHaveBeenCalled()
     })
 
+    // The scheduler coalesces by name, so cancelling before scheduling on every
+    // event was pure overhead: emptying the queue also called
+    // `cancelAnimationFrame`, destroying the pending frame ~180 times/s (measured
+    // 799ms of main-thread self time over 19s) for the same ~15 frames/s.
+    it('does not cancel the pending frame on each stream event', async () => {
+      vi.useFakeTimers()
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 42)
+      const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+      try {
+        const options = createOptions({ isOpen: ref(true) })
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        for (let i = 0; i < 5; i++) {
+          simulateWsEvent('content', { content: `chunk${i}` })
+        }
+        await vi.advanceTimersByTimeAsync(100)
+
+        // Several events, but the frame is only ever requested once and never
+        // torn down while it is still pending.
+        expect(rafSpy.mock.calls.length).toBeLessThanOrEqual(2)
+        expect(cancelSpy).not.toHaveBeenCalled()
+
+        // The coalesced frame still delivers render + scroll exactly once.
+        expect(options.onRenderNeeded).toHaveBeenCalledTimes(1)
+        expect(options.onScrollBottom).toHaveBeenCalledTimes(1)
+      } finally {
+        rafSpy.mockRestore()
+        cancelSpy.mockRestore()
+        vi.advanceTimersByTime(10000)
+        vi.useRealTimers()
+      }
+    })
+
+    it('still drops a queued frame when the panel is hidden', async () => {
+      vi.useFakeTimers()
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 42)
+      const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+      try {
+        const isOpen = ref(true)
+        const options = createOptions({ isOpen })
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        simulateWsEvent('content', { content: 'queued' })
+        await vi.advanceTimersByTimeAsync(100)
+        options.onRenderNeeded.mockClear()
+        options.onScrollBottom.mockClear()
+
+        // Panel hidden: the next event must discard the pending work rather
+        // than leaving a frame that renders an invisible panel.
+        isOpen.value = false
+        simulateWsEvent('content', { content: 'while-hidden' })
+        expect(cancelSpy).toHaveBeenCalled()
+        expect(options.onRenderNeeded).not.toHaveBeenCalled()
+        expect(options.onScrollBottom).not.toHaveBeenCalled()
+      } finally {
+        rafSpy.mockRestore()
+        cancelSpy.mockRestore()
+        vi.advanceTimersByTime(10000)
+        vi.useRealTimers()
+      }
+    })
+
     it('should skip onScrollBottom on tool_use event when isOpen=false', () => {
       const options = createOptions({ isOpen: ref(false) })
       const { connectStream } = useChatStream(options)
