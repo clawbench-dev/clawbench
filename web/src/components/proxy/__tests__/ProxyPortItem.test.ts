@@ -129,4 +129,44 @@ describe('ProxyPortItem', () => {
     expect(wrapper.emitted('edit')).toBeTruthy()
     expect(wrapper.emitted('edit')![0]).toEqual([8080])
   })
+
+  describe('tunnelReady three-state status dot', () => {
+    it('shows tunnel-down when the local listener is not reachable', () => {
+      // The server may still report active=true (its probe targets the port on
+      // the SERVER); the local probe is what matters for the dot.
+      const wrapper = mountItem({ active: true, tunnelReady: false })
+      expect(wrapper.find('.port-status').classes()).toContain('tunnel-down')
+      expect(wrapper.find('.port-status').attributes('title')).toBe('隧道断开')
+    })
+
+    it('shows active when the local listener is up and the target is active', () => {
+      const wrapper = mountItem({ active: true, tunnelReady: true })
+      expect(wrapper.find('.port-status').classes()).toContain('active')
+    })
+
+    it('shows inactive when the tunnel is up but the target service is down', () => {
+      const wrapper = mountItem({ active: false, tunnelReady: true })
+      expect(wrapper.find('.port-status').classes()).toContain('inactive')
+      expect(wrapper.find('.port-status').attributes('title')).toBe('离线')
+    })
+
+    it('falls back to the legacy logic when tunnelReady is not probed (null)', () => {
+      // Guards the Vue Boolean-prop coercion trap: if tunnelReady were declared
+      // as type Boolean, an absent prop would become `false` and every unprobed
+      // port would be painted red.
+      const activeWrapper = mountItem({ active: true })
+      expect(activeWrapper.find('.port-status').classes()).toContain('active')
+
+      const tunnelDownWrapper = mountItem({ active: false, tunnelDisconnected: true })
+      expect(tunnelDownWrapper.find('.port-status').classes()).toContain('tunnel-down')
+
+      const offlineWrapper = mountItem({ active: false })
+      expect(offlineWrapper.find('.port-status').classes()).toContain('inactive')
+    })
+
+    it('lets disabled outrank a failed local probe', () => {
+      const wrapper = mountItem({ enabled: false, tunnelReady: false })
+      expect(wrapper.find('.port-status').classes()).toContain('disabled')
+    })
+  })
 })

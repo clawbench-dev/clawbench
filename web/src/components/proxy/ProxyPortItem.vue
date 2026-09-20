@@ -67,6 +67,15 @@ const props = defineProps({
   reconnecting: { type: Boolean, default: false },
   connecting: { type: Boolean, default: false },
   toggling: { type: Boolean, default: false },
+  /**
+   * Whether THIS device's local listener for the port is accepting connections.
+   * null = not probed (or web mode) → fall back to `active`/`tunnelDisconnected`.
+   *
+   * Deliberately not `type: Boolean`: Vue coerces an absent Boolean prop to
+   * `false`, which would erase the "unknown" state and paint every unprobed
+   * port red.
+   */
+  tunnelReady: { type: null, default: null },
 })
 
 defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove', 'toggleEnabled'])
@@ -74,6 +83,11 @@ defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove', 'toggleEnabl
 const statusClass = computed(() => {
   if (!props.enabled) return 'disabled'
   if (props.connecting) return 'connecting'
+  // Local probe is authoritative when available: the server-side `active` flag
+  // only reports whether the TARGET port is up on the server, so a dead tunnel
+  // used to show a healthy green dot.
+  if (props.tunnelReady === false) return 'tunnel-down'
+  if (props.tunnelReady === true) return props.active ? 'active' : 'inactive'
   if (props.active) return 'active'
   if (props.tunnelDisconnected) return 'tunnel-down'
   return 'inactive'
@@ -82,6 +96,8 @@ const statusClass = computed(() => {
 const statusTitle = computed(() => {
   if (!props.enabled) return t('proxy.portItem.disabled')
   if (props.connecting) return t('proxy.portItem.connecting')
+  if (props.tunnelReady === false) return t('proxy.portItem.tunnelDown')
+  if (props.tunnelReady === true) return props.active ? t('proxy.portItem.active') : t('proxy.portItem.inactive')
   if (props.active) return t('proxy.portItem.active')
   if (props.tunnelDisconnected) return t('proxy.portItem.tunnelDown')
   return t('proxy.portItem.inactive')

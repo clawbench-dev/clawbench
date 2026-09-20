@@ -132,6 +132,7 @@
               :active="p.active"
               :enabled="p.enabled"
               :tunnel-disconnected="tunnelStatus === 'disconnected'"
+              :tunnel-ready="localReachable.get(p.localPort) ?? null"
               :reconnecting="reconnectingPorts.has(p.localPort)"
               :connecting="connectingPorts.has(p.localPort)"
               :toggling="togglingPorts.has(p.localPort)"
@@ -300,7 +301,7 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, scanning, hasScanned, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
 const toast = useToast()
 
 // Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.
