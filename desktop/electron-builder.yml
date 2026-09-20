@@ -1,0 +1,23 @@
+appId: com.xulongzhe.clawbench
+productName: ClawBench
+executableName: clawbench-desktop
+directories:
+  output: release
+  buildResources: build
+extraResources:
+  - from: assets/login.html
+    to: login.html
+files:
+  - dist/
+  - package.json
+  - "!**/node_modules/.cache"
+win:
+  target: dir
+  icon: build/icon.png
+  signAndEditExecutable: false
+mac:
+  target: dir
+  icon: build/icon.icns
+linux:
+  target: dir
+  icon: build/icon.png

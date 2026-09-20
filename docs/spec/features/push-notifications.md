@@ -39,6 +39,7 @@ sequenceDiagram
 - **应用内通知开关**：`inAppNotification` 本地设置（默认开启）控制应用内完成卡片（CompletionPopover）是否弹出。关闭后 `App.vue` 的 `handleCompletionEvent` 在入队前早返回，只拦新的完成事件——已在屏幕上的卡片保留至用户关闭。该开关只管卡片，提示音与系统/IM 推送各有独立开关，互不影响
 - **浏览器通知开关**：`browserNotification` 本地设置（默认开启）控制 `showBrowserNotification()` 是否投递系统通知。**与 `push_mode` 完全解耦**——`push_mode` 选的是手机/IM 通道（原生推送 / 钉钉 / 飞书 / 关闭），而本开关只管「这个浏览器要不要弹系统通知」。二者解耦的原因：把浏览器通知挂在 `push_mode === 'native'` 上时，任何选了钉钉/飞书的用户会连带失去桌面端提醒，而那个开关对他们不可达。开关在 `showBrowserNotification()` 内部统一判定，因此会话、任务、forge 三类生产者自动遵守
 - **设置页小节划分**：推送通知页按使用场景分四节——「应用内通知」（完成卡片 + 提示音，均本地即时生效）、「浏览器通知」（系统通知开关，本地即时生效，**浏览器与 App 模式都渲染**）、「桌面与系统」（悬浮状态窗 + 灵动岛，app-only，浏览器模式下整卡隐藏）、「移动端通知」（推送模式面板，服务端设置，改完点保存）
+- **桌面壳系统通知**：Electron 宿主下 `showBrowserNotification()` 优先走 `native.nativeNotify(title, body, nav)`（`useNotification.ts`），由主进程 `desktop/src/main/notification.ts` 弹原生 OS 通知。这条路径**不依赖页面 JS 存活**，因此窗口最小化/隐藏时仍能弹出——这正是桌面壳相对浏览器标签页的核心价值（浏览器会节流/冻结后台标签的事件循环，页面内 `new Notification()` 不会触发）。点击通知经 `clawbench-open-session` / `clawbench-open-task` 派发到渲染进程；冷启动时通知先于页面加载到达，导航载荷暂存在 `pendingNavigation`，由前端 `getPendingNavigation()` 取走后再跳转
 - **事件缓冲与回放**：WebSocket 断线期间的事件缓冲在服务端，重连后自动回放。确保不丢失关键通知
 - **任务完成推送预览**：WebSocket 通知包含任务完成的响应摘要预览文本和 `Done:` 前缀，用户不用打开 App 就能判断任务是否成功
 - **权限审批推送**：ACP 后端请求工具调用审批时，WebSocket 通知包含工具名称（如 `execute_command`、`write_file`），用户可以及时审批，避免因未审批而阻塞 AI 执行

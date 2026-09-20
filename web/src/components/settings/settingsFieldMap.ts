@@ -345,6 +345,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server', sectionHeader: 'settings.items.aboutVersionSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.aboutAppVersion', descriptionKey: 'settings.items.aboutAppVersionDesc', key: 'appVersion', type: 'info', source: 'local', sectionHeader: 'settings.items.aboutVersionSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.addToHomeScreen', descriptionKey: 'settings.items.addToHomeScreenDesc', key: 'addToHomeScreen', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
+    // NOT appOnly: that flag means "Android app only" and would hide this row
+    // in the desktop browser, which is exactly where it is needed. Visibility is
+    // gated in SettingsCategory.vue instead — the row renders only when a
+    // download URL for the current platform actually exists.
+    { type: 'item', spec: { labelKey: 'settings.items.downloadDesktopApp', descriptionKey: 'settings.items.downloadDesktopAppDesc', key: 'downloadDesktopApp', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.downloadAndroidApp', descriptionKey: 'settings.items.downloadAndroidAppDesc', key: 'downloadAndroidApp', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.showWelcome', descriptionKey: 'settings.items.showWelcomeDesc', key: 'showWelcome', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.restartServer', descriptionKey: 'settings.items.restartServerDesc', key: 'restartServer', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },

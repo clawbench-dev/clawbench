@@ -4004,6 +4004,36 @@ paths:
                 type: string
                 format: binary
 
+  # ── Desktop ───────────────────────────────────────────────────────────────
+  /api/desktop/latest:
+    get:
+      tags: [Desktop]
+      summary: 桌面客户端最新版本
+      description: |
+        免鉴权（下载入口在登录页，此时尚无会话）。
+        查询 npm registry 上各平台的 `@xulongzhe/clawbench-desktop-*` 包，
+        返回最新版本号与按平台分组的 tarball 地址。
+        上游 registry 全部不可用时返回 502。
+      operationId: desktopLatest
+      security: []
+      responses:
+        "200":
+          description: 版本与各平台下载地址
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  downloads:
+                    type: object
+                    description: 平台键（linux-x64 / linux-arm64 / darwin-x64 / darwin-arm64 / win32-x64）到 tarball 地址
+                    additionalProperties:
+                      type: string
+        "502":
+          description: 上游 registry 不可用
+
 components:
   securitySchemes:
     cookieAuth:

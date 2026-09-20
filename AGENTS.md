@@ -63,7 +63,7 @@ npm test                                              # Vitest 前端测试
 | `internal/api/` | `go:embed` OpenAPI 规格，按 operationId 渲染内置斜杠命令注入给 AI 的接口提示片段 |
 | `internal/wallpaper/` | 壁纸校验 / 缩放 / 编码 + 磁盘布局与生效解析；handler 与 service worker 共用。缩放上限取舍见源码注释 |
 | `internal/gitignore/` | 判定「git 是否会跟踪该路径」：go-git 模式引擎 + 来自 index 的三条规则（已跟踪文件/含已跟踪文件的目录永不忽略、祖先被排除则整体忽略、自身最后一条匹配）。文件管理器灰显与 cloc 排除共用；按真实 `git check-ignore` 差分验证 |
-| `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；会话运行态收敛在 `session_runner.go`（单一 owner runner，运行态与可取消性同源），AI 回合编排唯一实现 `run_turn.go`，请求构造唯一实现 `chat_request.go`，队列兜底回收 `queue_reaper.go`；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）等后台 worker |
+| `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；会话运行态收敛在 `session_runner.go`（单一 owner runner，运行态与可取消性同源），AI 回合编排唯一实现 `run_turn.go`，请求构造唯一实现 `chat_request.go`，队列兜底回收 `queue_reaper.go`；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）、桌面端升级检查（`desktop_upgrade.go`）等后台 worker |
 | `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；14 个后端子包；CLI/ACP 均支持无进度看门狗 |
 | `internal/model/` | 数据模型、后端注册表、模型发现（`ModelSource` 注册表 + 单一合并点 `ResolveModels`）、27 个 LLM Provider |
 | `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
@@ -91,6 +91,26 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 `web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `.clawbench-web/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。
 
 `web/src/share/` 是文件分享链接的独立只读 SPA（类型分派渲染 + TOC + 下载），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
+
+### 桌面端（Electron）
+
+源码根：`desktop/src/main/`。桌面端是纯"壳"，复用服务器 + Web 前端全部业务逻辑，仅提供 Web 环境之外的桌面能力（尤其是**窗口最小化/隐藏时仍能弹系统通知**——浏览器标签被冻结时页面内 `Notification` 不会触发）。主进程模块通过 IPC（`native:*`）暴露为 `window.ClawBenchNative`，与 Android WebView 共用同一套前端接口（`web/src/utils/clawbenchNative.ts`）：
+
+| 模块 | 职责 |
+|------|------|
+| `window.ts` | 主窗口创建、原生上下文菜单（cut/copy/paste 走 OS role，copy-link/copy-image 按语言翻译）、外部链接拦截交给默认浏览器 |
+| `bridge.ts` | IPC 桥：服务器列表/凭据、SSH 端口映射、文件下载、分享、系统通知、主题、语言、日志捕获、屏幕常亮 |
+| `tunnel.ts` | ssh2 客户端，读取 `/api/ssh/info` 建立 SSH 端口映射 |
+| `download.ts` | 文件下载（保存对话框 + 下载后定位）、URL/Blob 下载 |
+| `notification.ts` | 原生系统通知，点击导航到会话/任务（冷启动挂起派发） |
+| `updater.ts` | 升级检查（npm registry，国内时区换镜像源；语义化版本比较，降级不误报） |
+| `install.ts` | 自升级安装：下载 → SRI 校验 → 解压（剥 npm `package/` 前缀、拒绝路径穿越）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针 |
+| `secrets.ts` / `store.ts` | safeStorage 加密存密码、electron-store 持久化服务器列表/主题/语言 |
+| `powersave.ts` | 屏幕常亮（powerSaveBlocker） |
+
+**自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；`npm/desktop-main/bin/clawbench-desktop.js` 启动时读该指针决定运行哪个版本（指针缺失/目录不存在则回退到 npm 包自带版本），因此失败可回滚、旧版本保留。
+
+构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job 打包为 zip 挂 GitHub Release；`publish-npm-desktop` 发布 `@xulongzhe/clawbench-desktop` 与 linux/win 平台包（**darwin 不发 npm**，.app tarball 超 npm ~100MB 上限 E413，仅走 Release）。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。
 
 ## 开发规则
 

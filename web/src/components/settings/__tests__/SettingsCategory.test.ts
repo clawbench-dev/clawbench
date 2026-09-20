@@ -123,6 +123,21 @@ vi.mock('@/composables/usePwaInstall', () => ({
   }),
 }))
 
+// Mutable so individual tests can simulate "a download exists for this
+// platform" — the row's visibility depends on it.
+const mockDesktopDownload = {
+  latest: ref(null),
+  loading: ref(false),
+  isDesktop: false,
+  loadLatest: vi.fn(),
+  currentDownloadUrl: () => '',
+  downloadDesktop: vi.fn(),
+}
+
+vi.mock('@/composables/useDesktopDownload', () => ({
+  useDesktopDownload: () => mockDesktopDownload,
+}))
+
 vi.mock('@/utils/api', () => ({
   apiPost: vi.fn().mockResolvedValue({ needs_restart: true }),
   apiGet: vi.fn().mockResolvedValue({ dir: '', fonts: [] }),
@@ -277,6 +292,8 @@ const i18n = createI18n({
           changePassword: '修改密码',
           changePasswordDesc: '更改登录密码',
           addToHomeScreen: '添加到主屏幕',
+          downloadDesktopApp: '下载桌面版',
+          downloadDesktopAppDesc: '下载桌面版',
           downloadAndroidApp: '下载APK',
           showWelcome: '打开欢迎界面',
           showWelcomeDesc: '打开欢迎界面',
@@ -901,6 +918,32 @@ describe('SettingsCategory', () => {
       }
       createElementSpy.mockRestore()
       vi.unmock('@/utils/download')
+    })
+
+    // The "download desktop app" row must only appear when there is actually
+    // something to download for this platform. Rendering it unconditionally
+    // gives the user a row that silently does nothing, and it would also show
+    // on Android/iOS where no desktop build applies.
+    it('hides the downloadDesktopApp row when no platform download exists', () => {
+      const wrapper = mountCategory('about')
+      expect(wrapper.text()).not.toContain('下载桌面版')
+    })
+
+    it('shows the downloadDesktopApp row when a platform download exists', async () => {
+      mockDesktopDownload.isDesktop = true
+      mockDesktopDownload.currentDownloadUrl = () => 'https://example.com/desktop.tgz'
+      const wrapper = mountCategory('about')
+      await nextTick()
+      expect(wrapper.text()).toContain('下载桌面版')
+    })
+
+    it('clicking downloadDesktopApp triggers the download', async () => {
+      mockDesktopDownload.isDesktop = true
+      mockDesktopDownload.currentDownloadUrl = () => 'https://example.com/desktop.tgz'
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'downloadDesktopApp' })
+      expect(mockDesktopDownload.downloadDesktop).toHaveBeenCalled()
     })
   })
 

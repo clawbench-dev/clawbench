@@ -436,6 +436,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// APK is a public resource; users need to download it before they can even log in.
 	registerPublic("/api/apk", ServeAPK)
 
+	// Desktop client download info — intentionally unauthenticated for the same
+	// reason as the APK: the "download desktop app" affordance is shown on the
+	// login screen, before a session exists.
+	registerPublic("/api/desktop/latest", ServeDesktopLatest)
+
 	// File watch WebSocket (auto-refresh on file changes). Replaced an SSE
 	// endpoint: a resident EventSource permanently consumes one of the
 	// browser's 6 HTTP/1.1 connections per origin, which starves parallel REST
