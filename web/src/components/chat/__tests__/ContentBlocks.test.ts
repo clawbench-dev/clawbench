@@ -45,9 +45,15 @@ vi.mock('@/utils/icons', () => ({
   toolDisplayName: (name: string) => name,
 }))
 
+// `renderMarkdownHtml` is used by the thinking renderer, which discards
+// `detectedPaths` (unlike renderTextBlock, which schedules verification). Tests
+// that need annotated thinking markup override this.
+const { mockRenderMarkdownHtml } = vi.hoisted(() => ({
+  mockRenderMarkdownHtml: vi.fn((text: string) => `<p>${text}</p>`),
+}))
 vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdown: (text: string) => `<p>${text}</p>`,
-  renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
+  renderMarkdownHtml: (text: string) => mockRenderMarkdownHtml(text),
 }))
 
 vi.mock('@/utils/appLog', () => ({
@@ -56,6 +62,21 @@ vi.mock('@/utils/appLog', () => ({
 
 vi.mock('@/utils/api', () => ({
   apiGet: vi.fn(),
+}))
+
+// `data-path-type` is applied ONLY by verifyFilePaths mutating the live DOM, so
+// a render served from a cache of the HTML string never carries it. The
+// component re-verifies unverified spans itself; this spy pins that it does.
+const { mockVerifyFilePaths, mockVerifyCommitHashes } = vi.hoisted(() => ({
+  mockVerifyFilePaths: vi.fn().mockResolvedValue(undefined),
+  mockVerifyCommitHashes: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('@/composables/useFilePathAnnotation', () => ({
+  useFilePathAnnotation: () => ({ verifyFilePaths: mockVerifyFilePaths }),
+  verifyFilePaths: mockVerifyFilePaths,
+}))
+vi.mock('@/composables/useCommitHashAnnotation', () => ({
+  verifyCommitHashes: mockVerifyCommitHashes,
 }))
 
 vi.mock('@/stores/app.ts', () => ({
@@ -2301,6 +2322,7 @@ describe('streaming render cost', () => {
 
     expect(wrapper.html()).toContain('step one two')
   })
+
 })
 
 // ── Static block cache: scope + reactivity contract ──
@@ -2392,5 +2414,146 @@ describe('static block cache scope', () => {
     await nextTick()
 
     expect(blockCalls()).toBe(afterMount)
+  })
+})
+
+// ── Path verification survives a cache hit ──
+//
+// `data-path-type` is applied ONLY by verifyFilePaths mutating the live DOM —
+// it is not part of the HTML string that StaticBlockCache stores. Verification
+// is scheduled from renderMarkdown, which runs inside renderTextBlock; on a
+// cache hit renderTextBlock is skipped entirely, so nothing re-schedules it.
+//
+// The observable failure: any rebuild of the DOM from cached HTML (a new
+// message arriving remounts the whole list via ChatMessageList's :key="listKey",
+// as does loadMore or a session switch) leaves annotated-looking spans that do
+// nothing when clicked. A hard refresh cleared the cache and the paths worked
+// again — which is exactly the reported symptom.
+//
+// Found by driving a real browser: a message with 2 typed spans dropped to 0
+// after a no-path reply arrived, with zero new batch-exists requests.
+describe('path verification after a cache hit', () => {
+  it('re-verifies paths when the HTML is served from the cache', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const cache = markRaw(new StaticBlockCache())
+    mockVerifyFilePaths.mockClear()
+
+    // Annotated markup as the real pipeline emits it: span + open button, and
+    // deliberately NO data-path-type (that attribute is DOM-only).
+    const html = '<p>see <span class="chat-file-path" data-file-path="src/real.go">src/real.go</span>'
+      + '<button class="chat-file-open-btn" data-file-path="src/real.go"></button></p>'
+    const renderTextBlock = vi.fn(() => html)
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'see src/real.go' }],
+      staticBlockCache: cache,
+      renderTextBlock,
+    })
+    await nextTick()
+    await nextTick()
+
+    const renderCalls = () => renderTextBlock.mock.calls.filter((c) => c[0] === 'see src/real.go').length
+    const afterMount = renderCalls()
+    expect(afterMount).toBeGreaterThan(0)
+
+    // The first render must already verify (the pipeline's own scheduling is
+    // bypassed in this harness because renderTextBlock is a stub).
+    expect(mockVerifyFilePaths).toHaveBeenCalledWith(['src/real.go'], expect.anything())
+
+    mockVerifyFilePaths.mockClear()
+
+    // New array identity, same text, same scope → cache hit, no re-render.
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'see src/real.go' }] })
+    await nextTick()
+    await nextTick()
+
+    // The cache hit is what the assertion above pins; the point of this test is
+    // that verification still runs despite it.
+    expect(renderCalls()).toBe(afterMount)
+    expect(mockVerifyFilePaths).toHaveBeenCalledWith(['src/real.go'], expect.anything())
+  })
+
+  it('scopes verification to the component root, not the whole document', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const cache = markRaw(new StaticBlockCache())
+    mockVerifyFilePaths.mockClear()
+
+    const html = '<span class="chat-file-path" data-file-path="a/b.go">a/b.go</span>'
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'a/b.go' }],
+      staticBlockCache: cache,
+      renderTextBlock: () => html,
+    })
+    await nextTick()
+    await nextTick()
+
+    expect(mockVerifyFilePaths).toHaveBeenCalled()
+    const container = mockVerifyFilePaths.mock.calls.at(-1)![1] as HTMLElement
+    expect(container?.classList?.contains('content-blocks')).toBe(true)
+    expect(wrapper.element.contains(container)).toBe(true)
+  })
+
+  it('does not re-verify spans that already carry data-path-type', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const cache = markRaw(new StaticBlockCache())
+    mockVerifyFilePaths.mockClear()
+
+    const html = '<span class="chat-file-path" data-file-path="done.go" data-path-type="file">done.go</span>'
+    mountBlocks({
+      blocks: [{ type: 'text', text: 'done.go' }],
+      staticBlockCache: cache,
+      renderTextBlock: () => html,
+    })
+    await nextTick()
+    await nextTick()
+
+    // Already verified — asking again would re-issue batch-exists on every
+    // streaming frame for no benefit.
+    expect(mockVerifyFilePaths).not.toHaveBeenCalled()
+  })
+
+  it('re-verifies commit hashes too (same DOM-only upgrade)', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const cache = markRaw(new StaticBlockCache())
+    mockVerifyCommitHashes.mockClear()
+
+    // Commit hashes carry the same defect: the pending→verified class change is
+    // applied only by verifyCommitHashes against the live DOM, so a cache hit
+    // leaves them permanently in the neutral "pending" style.
+    const html = '<code class="chat-commit-hash-pending" data-commit-sha="a3d276135">a3d276135</code>'
+    mountBlocks({
+      blocks: [{ type: 'text', text: 'a3d276135' }],
+      staticBlockCache: cache,
+      renderTextBlock: () => html,
+    })
+    await nextTick()
+    await nextTick()
+
+    expect(mockVerifyCommitHashes).toHaveBeenCalledWith(['a3d276135'], expect.anything())
+  })
+
+  it('verifies paths inside thinking blocks (rendered via renderMarkdownHtml)', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const cache = markRaw(new StaticBlockCache())
+    mockVerifyFilePaths.mockClear()
+    // The thinking renderer calls renderMarkdownHtml, which DISCARDS the
+    // detectedPaths the pipeline produced — so nothing scheduled verification
+    // and the paths stayed dead. Reproduced in a browser: expanding a thinking
+    // block and immediately clicking one of its paths did nothing.
+    mockRenderMarkdownHtml.mockReturnValue(
+      '<p><span class="chat-file-path" data-file-path="src/real.go">src/real.go</span>'
+      + '<button class="chat-file-open-btn" data-file-path="src/real.go"></button></p>',
+    )
+
+    mountBlocks({
+      blocks: [{ type: 'thinking', text: 'reasoning about src/real.go', done: true }],
+      staticBlockCache: cache,
+      renderTextBlock: () => '',
+    })
+    await nextTick()
+    await nextTick()
+
+    expect(mockVerifyFilePaths).toHaveBeenCalledWith(['src/real.go'], expect.anything())
+    mockRenderMarkdownHtml.mockImplementation((text: string) => `<p>${text}</p>`)
   })
 })

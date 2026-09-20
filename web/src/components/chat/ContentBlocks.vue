@@ -375,6 +375,8 @@ import { appLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
 import { isThinkingUserAwayFromBottom } from '@/utils/thinkingScroll'
+import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
+import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 // Footer pill buttons (.fbtn) — the PermissionApproval card buttons share this
 // language, so the styles must be present wherever the chat surfaces render.
 import '@/assets/modal-footer-btn.css'
@@ -1269,6 +1271,48 @@ function restoreAskStates() {
 }
 onMounted(() => nextTick(restoreAskStates))
 onUpdated(restoreAskStates)
+
+/**
+ * Re-verify path/commit annotations in this component's own subtree.
+ *
+ * `data-path-type` is applied ONLY by `verifyFilePaths` mutating the live DOM —
+ * it is never part of the HTML string that `StaticBlockCache` stores. The
+ * pipeline schedules verification from `renderMarkdown`, which runs inside
+ * `renderTextBlock`; on a cache hit `getBlockHtml` returns the stored string
+ * before `renderTextBlock` is reached, so nothing re-schedules it.
+ *
+ * Every rebuild of the DOM from cached HTML therefore used to leave spans that
+ * look annotated but do nothing when clicked. That happens on any `listKey`
+ * change — a new message arriving remounts the whole list, as do `loadMore`
+ * and session switches — which is why a hard refresh (empty cache → full
+ * pipeline) appeared to fix it.
+ *
+ * Scoped to this component's root so the batch-exists request only covers
+ * paths this subtree actually renders, and gated on the absence of
+ * `data-path-type` so an already-verified span is not re-requested on every
+ * streaming frame.
+ */
+function reverifyAnnotations() {
+  const root = contentRootRef.value
+  if (!root) return
+  const paths: string[] = []
+  const shas: string[] = []
+  for (const el of root.querySelectorAll('.chat-file-path[data-file-path]:not([data-path-type])')) {
+    const p = el.getAttribute('data-file-path')
+    if (p) paths.push(p)
+  }
+  for (const el of root.querySelectorAll('.chat-commit-hash-pending[data-commit-sha]')) {
+    const s = el.getAttribute('data-commit-sha')
+    if (s) shas.push(s)
+  }
+  if (paths.length > 0) void verifyFilePaths([...new Set(paths)], root)
+  if (shas.length > 0) void verifyCommitHashes([...new Set(shas)], root)
+}
+// A cache hit skips renderTextBlock, so this hook is the only thing that can
+// re-verify on the update path. onMounted covers the list-remount path, where
+// onUpdated never fires (same reason the ask-state hook above needs both).
+onMounted(() => nextTick(reverifyAnnotations))
+onUpdated(() => nextTick(reverifyAnnotations))
 
 // ── Throttled streaming render ──
 const blockHtmlCache = ref<Record<string, any>>({})
