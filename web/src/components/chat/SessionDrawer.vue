@@ -839,6 +839,11 @@ defineExpose({
   align-items: center;
   gap: var(--space-2);
   flex-shrink: 0;
+  /* Pin the badge to the row's right edge. The model tab already ends up there
+     because its label sits in .model-item-labels (flex: 1) and absorbs the free
+     space; the thinking / mode / transport tabs render a bare .model-item-name
+     with no growth, so without this the badge trails the text instead. */
+  margin-left: auto;
   color: var(--accent-color, #0066cc);
 }
 
@@ -871,6 +876,9 @@ defineExpose({
   color: var(--text-muted, #999);
   cursor: pointer;
   flex-shrink: 0;
+  /* Same right-edge pin as .default-label, so a row keeps its trailing slot in
+     the same place whether or not it is the default. */
+  margin-left: auto;
   opacity: var(--opacity-soft);
   transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
 }
