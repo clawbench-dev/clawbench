@@ -59,6 +59,14 @@ func (rb *RingBuffer) Write(p []byte) {
 
 // addLine adds a single line to the ring buffer, enforcing size limits.
 func (rb *RingBuffer) addLine(line []byte) {
+	// Copy before storing. The caller may reuse the slice it passes to Write —
+	// readPTY reuses a single 4096-byte buffer for every Read — so retaining a
+	// sub-slice would let the next read overwrite lines that are already
+	// buffered, corrupting the replay (and splitting escape sequences mid-way).
+	owned := make([]byte, len(line))
+	copy(owned, line)
+	line = owned
+
 	// Enforce per-line size limit
 	if len(line) > rb.maxLineBytes {
 		// Truncate and add reset + indicator

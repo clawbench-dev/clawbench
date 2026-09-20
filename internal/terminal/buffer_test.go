@@ -165,3 +165,37 @@ func TestRingBuffer_LargeDataset(t *testing.T) {
 		t.Errorf("expected %d newlines in replay, got %d", capacity, lineCount)
 	}
 }
+
+// Regression: Write must copy the caller's slice.
+//
+// readPTY reuses a single 4096-byte read buffer for the lifetime of the
+// session (`buf := make([]byte, 4096)` outside the loop, then
+// `s.buffer.Write(buf[:n])` on every read). Retaining a sub-slice of that
+// buffer meant each new read overwrote lines already stored in the ring
+// buffer, so the replay handed to a reconnecting client was a splice of
+// stale and fresh bytes. Observed symptom: switching to another dock tab and
+// back left the terminal output garbled, because the dock switch disconnects
+// the WS and reconnects (replaying from this buffer) rather than keeping it
+// alive.
+func TestRingBuffer_WriteCopiesCallerSlice(t *testing.T) {
+	rb := NewRingBuffer(10, 65536, 4*1024*1024)
+
+	// One reused buffer, exactly like readPTY's loop.
+	buf := make([]byte, 64)
+
+	n := copy(buf, "first-line\nsecond-line\n")
+	rb.Write(buf[:n])
+
+	// A later read reuses the same backing array. It must not be able to
+	// mutate what is already buffered.
+	n = copy(buf, "later\n")
+	rb.Write(buf[:n])
+
+	replay := string(rb.Replay())
+	if !strings.Contains(replay, "first-line") || !strings.Contains(replay, "second-line") {
+		t.Errorf("earlier output was overwritten by a later read: %q", replay)
+	}
+	if replay != "first-line\nsecond-line\nlater\n" {
+		t.Errorf("unexpected replay: %q", replay)
+	}
+}
