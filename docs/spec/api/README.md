@@ -50,9 +50,11 @@ Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、G
 
 | 命令 | 注入的 operationId |
 |------|-------------------|
-| `/cb-chatsearch` | `ragSearch`、`ragMessage`、`ragSession`、`ragSessionSearch` |
-| `/cb-task` | `tasksList`、`tasksCreate`、`taskGet`、`taskUpdate`、`taskDelete`、`taskExecutions`、`agentsList` |
-| `/cb-usage` | `usageStats` |
+| `/cb-chatsearch` | `conversationProjectsList`、`ragSearch`、`ragMessage`、`ragSession`、`ragSessionSearch` |
+| `/cb-task` | `tasksList`、`tasksCreate`、`taskGet`、`taskUpdate`、`taskDelete`、`taskExecutions`、`agentsList`、`forgeBindingGet` |
+| `/cb-usage` | `conversationProjectsList`、`usageStats` |
+
+`conversationProjectsList`（`GET /api/conversation-projects`）在两个命令里都排首位：它是 AI 解析"用户点名的另一个项目"的**唯一**手段——拿到确切路径后写进项目 Cookie，搜索与用量接口本身无需为跨项目做任何改动。它列出所有有对话历史的项目（含目录已删除的，`exists=false`），以便历史仍可检索。
 
 选取列表见 `internal/api/render.go` 的 `commandOperations`；`internal/api/render_test.go` 断言每个 operationId 存在且仍带预期 tag。
 

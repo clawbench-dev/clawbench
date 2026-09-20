@@ -4,7 +4,7 @@
 
 **Q: Which operating systems does ClawBench support?**
 
-A: Linux (x86_64 / ARM64) and Windows (x86_64) are supported. The backend is written in Go and the frontend is a standard web application, enabling cross-platform operation.
+A: Linux (x86_64 / ARM64), macOS (Apple Silicon / Intel), and Windows (x86_64) are supported. The backend is written in Go and the frontend is a standard web application, enabling cross-platform operation.
 
 **Q: Which AI backends are supported?**
 

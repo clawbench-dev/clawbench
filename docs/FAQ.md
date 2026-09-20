@@ -4,7 +4,7 @@
 
 **Q: ClawBench 支持哪些操作系统？**
 
-A: 支持 Linux（x86_64 / ARM64）和 Windows（x86_64）。后端使用 Go 编写，前端为标准 Web 应用，可跨平台运行。
+A: 支持 Linux（x86_64 / ARM64）、macOS（Apple Silicon / Intel）和 Windows（x86_64）。后端使用 Go 编写，前端为标准 Web 应用，可跨平台运行。
 
 **Q: 支持哪些 AI 后端？**
 
