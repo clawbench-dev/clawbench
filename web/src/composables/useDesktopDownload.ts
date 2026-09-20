@@ -6,7 +6,13 @@ import { downloadByUrl } from '@/utils/download'
 
 interface DesktopLatest {
   version: string
-  downloads: Record<string, string>
+  /** GitHub release tag; empty on a dev server (downloads is then empty too). */
+  tag: string
+  /**
+   * Platform key -> candidate URLs, best-first. The server orders mirrors ahead
+   * of github.com for mainland China; we just take the first entry.
+   */
+  downloads: Record<string, string[]>
 }
 
 /** Detect the current desktop OS+arch platform key, mirroring spec §8.1. */
@@ -45,17 +51,26 @@ export function useDesktopDownload() {
     }
   }
 
-  function currentDownloadUrl(): string {
+  /** The platform's candidate URLs, best-first (empty when none apply). */
+  function currentDownloadUrls(): string[] {
     const key = detectPlatformKey()
-    if (!key || !latest.value) return ''
-    return latest.value.downloads[key] || ''
+    if (!key || !latest.value) return []
+    return latest.value.downloads?.[key] ?? []
+  }
+
+  function currentDownloadUrl(): string {
+    return currentDownloadUrls()[0] || ''
   }
 
   function downloadDesktop(): void {
     const url = currentDownloadUrl()
     if (!url) return
-    downloadByUrl(url, `clawbench-desktop-${latest.value?.version || 'latest'}.tgz`)
+    // Release assets are zips (they wrap the unpacked app directory), so the
+    // saved filename must end in .zip — a .tgz name would mislead the user and
+    // make the file fail to open on double-click.
+    const version = latest.value?.version || 'latest'
+    downloadByUrl(url, `clawbench-desktop-${version}.zip`)
   }
 
-  return { latest, loading, isDesktop, loadLatest, currentDownloadUrl, downloadDesktop }
+  return { latest, loading, isDesktop, loadLatest, currentDownloadUrl, currentDownloadUrls, downloadDesktop }
 }

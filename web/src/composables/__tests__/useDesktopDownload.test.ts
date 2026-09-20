@@ -91,7 +91,7 @@ describe('useDesktopDownload', () => {
 
   it('loadLatest fetches and stores latest when on desktop', async () => {
     setUA('Mozilla/5.0 (X11; Linux x86_64)')
-    const latest = { version: '1.2.3', downloads: { 'linux-x64': '/dl/linux.tgz' } }
+    const latest = { version: '1.2.3', downloads: { 'linux-x64': ['/dl/linux.tgz'] } }
     mockApiGet.mockResolvedValue(latest)
 
     const { useDesktopDownload } = await import('../useDesktopDownload')
@@ -136,7 +136,7 @@ describe('useDesktopDownload', () => {
 
   it('currentDownloadUrl returns the URL for the detected platform key', async () => {
     setUA('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-    const latest = { version: '1.0', downloads: { 'win32-x64': '/dl/win.tgz' } }
+    const latest = { version: '1.0', downloads: { 'win32-x64': ['/dl/win.tgz'] } }
     mockApiGet.mockResolvedValue(latest)
 
     const { useDesktopDownload } = await import('../useDesktopDownload')
@@ -155,7 +155,7 @@ describe('useDesktopDownload', () => {
 
   it('currentDownloadUrl returns empty string when platform not detected', async () => {
     setUA('Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)')
-    const latest = { version: '1.0', downloads: { 'win32-x64': '/dl/win.tgz' } }
+    const latest = { version: '1.0', downloads: { 'win32-x64': ['/dl/win.tgz'] } }
     mockApiGet.mockResolvedValue(latest)
 
     const { useDesktopDownload } = await import('../useDesktopDownload')
@@ -167,7 +167,7 @@ describe('useDesktopDownload', () => {
 
   it('currentDownloadUrl returns empty string when key missing from downloads', async () => {
     setUA('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-    const latest = { version: '1.0', downloads: { 'linux-x64': '/dl/linux.tgz' } }
+    const latest = { version: '1.0', downloads: { 'linux-x64': ['/dl/linux.tgz'] } }
     mockApiGet.mockResolvedValue(latest)
 
     const { useDesktopDownload } = await import('../useDesktopDownload')
@@ -179,7 +179,7 @@ describe('useDesktopDownload', () => {
 
   it('downloadDesktop calls downloadByUrl with versioned filename', async () => {
     setUA('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-    const latest = { version: '2.0.0', downloads: { 'win32-x64': '/dl/win.tgz' } }
+    const latest = { version: '2.0.0', downloads: { 'win32-x64': ['/dl/win.tgz'] } }
     mockApiGet.mockResolvedValue(latest)
 
     const { useDesktopDownload } = await import('../useDesktopDownload')
@@ -187,12 +187,12 @@ describe('useDesktopDownload', () => {
     await loadLatest()
 
     downloadDesktop()
-    expect(mockDownloadByUrl).toHaveBeenCalledWith('/dl/win.tgz', 'clawbench-desktop-2.0.0.tgz')
+    expect(mockDownloadByUrl).toHaveBeenCalledWith('/dl/win.tgz', 'clawbench-desktop-2.0.0.zip')
   })
 
   it('downloadDesktop falls back to "latest" version when version missing', async () => {
     setUA('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-    const latest = { version: '', downloads: { 'win32-x64': '/dl/win.tgz' } }
+    const latest = { version: '', downloads: { 'win32-x64': ['/dl/win.tgz'] } }
     mockApiGet.mockResolvedValue(latest)
 
     const { useDesktopDownload } = await import('../useDesktopDownload')
@@ -200,12 +200,12 @@ describe('useDesktopDownload', () => {
     await loadLatest()
 
     downloadDesktop()
-    expect(mockDownloadByUrl).toHaveBeenCalledWith('/dl/win.tgz', 'clawbench-desktop-latest.tgz')
+    expect(mockDownloadByUrl).toHaveBeenCalledWith('/dl/win.tgz', 'clawbench-desktop-latest.zip')
   })
 
   it('downloadDesktop does nothing when no download URL available', async () => {
     setUA('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-    const latest = { version: '1.0', downloads: { 'linux-x64': '/dl/linux.tgz' } }
+    const latest = { version: '1.0', downloads: { 'linux-x64': ['/dl/linux.tgz'] } }
     mockApiGet.mockResolvedValue(latest)
 
     const { useDesktopDownload } = await import('../useDesktopDownload')
@@ -214,5 +214,48 @@ describe('useDesktopDownload', () => {
 
     downloadDesktop()
     expect(mockDownloadByUrl).not.toHaveBeenCalled()
+  })
+
+  // The server returns an ordered candidate list (mirror first in China,
+  // github.com last). We take the first entry — the server has already ordered
+  // them for the region, so re-ordering here would fight it.
+  it('uses the first candidate URL when the server offers several', async () => {
+    setUA('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+    mockApiGet.mockResolvedValue({
+      version: '2.0.0',
+      tag: 'v2.0.0',
+      downloads: { 'win32-x64': ['https://mirror/x.zip', 'https://github.com/x.zip'] },
+    })
+
+    const { useDesktopDownload } = await import('../useDesktopDownload')
+    const { loadLatest, currentDownloadUrl, currentDownloadUrls } = useDesktopDownload()
+    await loadLatest()
+
+    expect(currentDownloadUrls()).toEqual(['https://mirror/x.zip', 'https://github.com/x.zip'])
+    expect(currentDownloadUrl()).toBe('https://mirror/x.zip')
+  })
+
+  // A dev server answers 200 with an empty downloads map. That must read as
+  // "nothing to offer", not crash on a missing key.
+  it('handles a dev-server response with no downloads', async () => {
+    setUA('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+    mockApiGet.mockResolvedValue({ version: 'dev', tag: '', downloads: {} })
+
+    const { useDesktopDownload } = await import('../useDesktopDownload')
+    const { loadLatest, currentDownloadUrl } = useDesktopDownload()
+    await loadLatest()
+
+    expect(currentDownloadUrl()).toBe('')
+  })
+
+  it('handles a response with downloads missing entirely', async () => {
+    setUA('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+    mockApiGet.mockResolvedValue({ version: 'dev' })
+
+    const { useDesktopDownload } = await import('../useDesktopDownload')
+    const { loadLatest, currentDownloadUrl } = useDesktopDownload()
+    await loadLatest()
+
+    expect(currentDownloadUrl()).toBe('')
   })
 })

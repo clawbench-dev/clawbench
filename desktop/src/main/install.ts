@@ -3,10 +3,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import http from 'node:http'
 import https from 'node:https'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
 import { spawn } from 'node:child_process'
-import { createGunzip } from 'node:zlib'
+import { inflateRawSync } from 'node:zlib'
 import { app } from 'electron'
 import { verifyIntegrity } from '../shared/integrity'
 
@@ -14,8 +12,11 @@ import { verifyIntegrity } from '../shared/integrity'
  * Self-upgrade installer for the desktop shell.
  *
  * The previous implementation stopped after downloading and verifying the
- * tarball — it created an empty directory and called that "installed", so the
+ * archive — it created an empty directory and called that "installed", so the
  * app could never actually upgrade itself.
+ *
+ * Upgrades are fetched as the same .zip release assets published on GitHub,
+ * which is also what /api/desktop/latest points at.
  *
  * The hard constraint is that a running process cannot replace its own
  * executable, and on Windows it cannot even overwrite it. So this does NOT
@@ -63,82 +64,158 @@ export function writePointer(version: string): void {
   fs.renameSync(tmp, target)
 }
 
-const TAR_BLOCK = 512
+/** Zip local-file-header and central-directory signatures. */
+const ZIP_LOCAL = 0x04034b50
+const ZIP_CENTRAL = 0x02014b50
+const ZIP_EOCD = 0x06054b50
+/** End-of-central-directory is at least 22 bytes; the comment field caps at 64KiB. */
+const ZIP_EOCD_MIN = 22
+const ZIP_EOCD_MAX = ZIP_EOCD_MIN + 0xffff
 
 /**
- * Extract a gzipped tar buffer into `destDir`.
+ * Extract a zip archive into `destDir`.
  *
- * npm tarballs wrap everything in a top-level `package/` directory, which is
- * stripped here so the result is the package root (the layout the launcher and
- * electron-builder expect).
+ * Release assets are zips whose entries all share a single top-level directory
+ * (`linux-unpacked/`, `win-unpacked/`, `mac/`, `mac-arm64/`). That wrapper is
+ * stripped so the result is the app root the launcher expects — the same
+ * normalization the npm tarball path did with its `package/` prefix.
  *
- * Only regular files and directories are handled — npm tarballs contain no
- * symlinks or device nodes, and silently following them would be a path
- * traversal risk.
+ * The archive is read through its central directory rather than by walking
+ * local headers: local headers may declare sizes in a trailing data descriptor,
+ * which a naive sequential walk cannot handle.
+ *
+ * Unix permission bits are restored. The executable bit is load-bearing —
+ * without it the Linux binary extracts as non-executable and will not start.
  */
-export async function extractTarball(tarball: Buffer, destDir: string): Promise<void> {
-  const tar = await gunzip(tarball)
-  let offset = 0
-  // A pax extended header (type 'x') carries metadata for the entry that
-  // follows it, including the real path when it exceeds the 100-byte ustar
-  // field. Without this the long path would be read as its truncated form.
-  let paxPath = ''
+export function extractZip(zip: Buffer, destDir: string): void {
+  const entries = readCentralDirectory(zip)
+  // Determine the shared wrapper directory, if any.
+  const wrapper = commonTopLevelDir(entries.map((e) => e.name))
 
-  while (offset + TAR_BLOCK <= tar.length) {
-    const header = tar.subarray(offset, offset + TAR_BLOCK)
-    // A zeroed block marks the end of the archive.
-    if (header.every((b) => b === 0)) break
-
-    const name = readString(header, 0, 100)
-    const prefix = readString(header, 345, 155)
-    const size = parseOctal(readString(header, 124, 12))
-    const typeFlag = String.fromCharCode(header[156] || 0)
-    offset += TAR_BLOCK
-
-    const body = tar.subarray(offset, offset + size)
-    offset += Math.ceil(size / TAR_BLOCK) * TAR_BLOCK
-
-    if (typeFlag === 'x') {
-      paxPath = readPaxPath(body)
-      continue
+  for (const entry of entries) {
+    let rel = entry.name
+    if (wrapper) {
+      rel = rel.slice(wrapper.length)
     }
-    // Global pax headers and GNU long-name entries carry nothing to extract.
-    if (typeFlag === 'g' || typeFlag === 'L' || typeFlag === 'K') continue
-
-    const fullName = paxPath || (prefix ? `${prefix}/${name}` : name)
-    paxPath = ''
-
-    // Strip the npm `package/` wrapper.
-    const rel = fullName.replace(/^package\/?/, '')
+    rel = rel.replace(/^\/+/, '')
     if (!rel) continue
 
     const target = safeJoin(destDir, rel)
-    if (target === null) throw new Error(`tar entry escapes destination: ${fullName}`)
+    if (target === null) throw new Error(`zip entry escapes destination: ${entry.name}`)
 
-    if (typeFlag === '5' || rel.endsWith('/')) {
+    if (entry.name.endsWith('/')) {
       fs.mkdirSync(target, { recursive: true })
       continue
     }
-    // '0' and the NUL byte both mean a regular file; anything else (symlink,
-    // hardlink, device) is skipped rather than materialized.
-    if (typeFlag !== '0' && typeFlag !== '\0') continue
+
+    const raw = zip.subarray(entry.dataOffset, entry.dataOffset + entry.compressedSize)
+    let content: Buffer
+    if (entry.method === 0) {
+      content = Buffer.from(raw)
+    } else if (entry.method === 8) {
+      content = inflateRawSync(raw)
+    } else {
+      throw new Error(`unsupported zip compression method ${entry.method} for ${entry.name}`)
+    }
+    if (content.length !== entry.uncompressedSize) {
+      throw new Error(`zip entry size mismatch for ${entry.name}`)
+    }
 
     fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.writeFileSync(target, body)
+    fs.writeFileSync(target, content)
+    applyMode(target, entry.externalAttributes)
   }
 }
 
-/** Read the `path=` record from a pax extended header body. */
-function readPaxPath(body: Buffer): string {
-  const text = body.toString('utf8')
-  // Records are "<len> <key>=<value>\n", where <len> counts the whole record.
-  for (const record of text.split('\n')) {
-    const eq = record.indexOf('=')
-    if (eq === -1) continue
-    const key = record.slice(0, eq).split(' ').pop()
-    if (key === 'path') return record.slice(eq + 1)
+interface ZipEntry {
+  name: string
+  method: number
+  compressedSize: number
+  uncompressedSize: number
+  /** Byte offset of the entry's payload in the archive. */
+  dataOffset: number
+  /** High 16 bits of the central-directory external attributes (unix mode). */
+  externalAttributes: number
+}
+
+/** Parse the central directory into entry descriptors. */
+function readCentralDirectory(zip: Buffer): ZipEntry[] {
+  const eocd = findEOCD(zip)
+  if (eocd < 0) throw new Error('not a zip archive: no end-of-central-directory record')
+
+  const count = zip.readUInt16LE(eocd + 10)
+  let offset = zip.readUInt32LE(eocd + 16)
+  const entries: ZipEntry[] = []
+
+  for (let i = 0; i < count; i++) {
+    if (offset + 46 > zip.length || zip.readUInt32LE(offset) !== ZIP_CENTRAL) {
+      throw new Error('corrupt zip: bad central directory header')
+    }
+    const method = zip.readUInt16LE(offset + 10)
+    const compressedSize = zip.readUInt32LE(offset + 20)
+    const uncompressedSize = zip.readUInt32LE(offset + 24)
+    const nameLen = zip.readUInt16LE(offset + 28)
+    const extraLen = zip.readUInt16LE(offset + 30)
+    const commentLen = zip.readUInt16LE(offset + 32)
+    const externalAttributes = zip.readUInt32LE(offset + 38)
+    const localOffset = zip.readUInt32LE(offset + 42)
+    const name = zip.subarray(offset + 46, offset + 46 + nameLen).toString('utf8')
+
+    // The local header repeats the name/extra lengths; its payload starts after
+    // them, and those lengths can differ from the central directory's.
+    if (localOffset + 30 > zip.length || zip.readUInt32LE(localOffset) !== ZIP_LOCAL) {
+      throw new Error(`corrupt zip: bad local header for ${name}`)
+    }
+    const localNameLen = zip.readUInt16LE(localOffset + 26)
+    const localExtraLen = zip.readUInt16LE(localOffset + 28)
+    const dataOffset = localOffset + 30 + localNameLen + localExtraLen
+
+    entries.push({ name, method, compressedSize, uncompressedSize, dataOffset, externalAttributes })
+    offset += 46 + nameLen + extraLen + commentLen
   }
-  return ''
+  return entries
+}
+
+/** Locate the end-of-central-directory record, scanning back over any comment. */
+function findEOCD(zip: Buffer): number {
+  const from = Math.max(0, zip.length - ZIP_EOCD_MAX)
+  for (let i = zip.length - ZIP_EOCD_MIN; i >= from; i--) {
+    if (zip.readUInt32LE(i) === ZIP_EOCD) return i
+  }
+  return -1
+}
+
+/**
+ * Return the single top-level directory shared by every entry, or '' when the
+ * entries do not share one (then paths are used as-is).
+ *
+ * Requiring ALL entries to share it matters: a stray top-level file must not be
+ * silently dropped by stripping a prefix that only some entries have.
+ */
+function commonTopLevelDir(names: string[]): string {
+  let candidate = ''
+  for (const name of names) {
+    const slash = name.indexOf('/')
+    if (slash <= 0) return ''
+    const top = name.slice(0, slash + 1)
+    if (candidate === '') candidate = top
+    else if (candidate !== top) return ''
+  }
+  return candidate
+}
+
+/**
+ * Apply the unix permission bits recorded in the entry's external attributes.
+ * Best-effort: on Windows chmod cannot set the executable bit and is skipped.
+ */
+function applyMode(target: string, externalAttributes: number): void {
+  const mode = (externalAttributes >>> 16) & 0xffff
+  if (mode === 0 || process.platform === 'win32') return
+  try {
+    fs.chmodSync(target, mode & 0o777)
+  } catch {
+    // A filesystem that cannot represent the mode (e.g. FAT) is not fatal.
+  }
 }
 
 /**
@@ -155,44 +232,23 @@ function safeJoin(root: string, rel: string): string | null {
   return target
 }
 
-function readString(buf: Buffer, start: number, len: number): string {
-  const slice = buf.subarray(start, start + len)
-  const end = slice.indexOf(0)
-  return slice.subarray(0, end === -1 ? slice.length : end).toString('utf8')
-}
-
-/** Parse a NUL/space-terminated octal field. Returns 0 for an empty field. */
-function parseOctal(s: string): number {
-  const trimmed = s.replace(/\0.*$/, '').trim()
-  if (!trimmed) return 0
-  const n = parseInt(trimmed, 8)
-  if (Number.isNaN(n)) throw new Error(`invalid tar entry size: ${JSON.stringify(s)}`)
-  return n
-}
-
-async function gunzip(buf: Buffer): Promise<Buffer> {
-  const chunks: Buffer[] = []
-  await pipeline(Readable.from(buf), createGunzip(), async function* (source) {
-    for await (const chunk of source) {
-      chunks.push(chunk as Buffer)
-    }
-  })
-  return Buffer.concat(chunks)
-}
-
 /**
  * Download, verify and unpack a desktop version, then select it.
  *
  * The unpack goes to a temp directory that is renamed into place only after it
  * completes, so a partial download or an extraction failure never leaves a
  * directory that looks installable. Returns the directory now selected.
+ *
+ * `urls` is an ordered list of candidates for the same archive (mirror first
+ * for China, direct github.com last). Each is tried in turn so one dead mirror
+ * degrades the upgrade rather than failing it.
  */
 export async function downloadAndInstall(
-  tarballUrl: string,
+  urls: string | string[],
   version: string,
   integrity: string,
 ): Promise<string> {
-  const buf = await httpGetBuffer(tarballUrl)
+  const buf = await downloadFirstAvailable(Array.isArray(urls) ? urls : [urls])
   if (integrity && !verifyIntegrity(buf, integrity)) {
     throw new Error('integrity verification failed')
   }
@@ -203,7 +259,7 @@ export async function downloadAndInstall(
   fs.mkdirSync(staging, { recursive: true })
 
   try {
-    await extractTarball(buf, staging)
+    extractZip(buf, staging)
   } catch (err) {
     fs.rmSync(staging, { recursive: true, force: true })
     throw err
@@ -215,6 +271,19 @@ export async function downloadAndInstall(
 
   writePointer(version)
   return dest
+}
+
+/** Try each candidate URL in order, returning the first body that downloads. */
+export async function downloadFirstAvailable(urls: string[]): Promise<Buffer> {
+  const errs: string[] = []
+  for (const url of urls) {
+    try {
+      return await httpGetBuffer(url)
+    } catch (err) {
+      errs.push(`${url}: ${(err as Error)?.message || err}`)
+    }
+  }
+  throw new Error(`all download sources failed:\n${errs.join('\n')}`)
 }
 
 /**

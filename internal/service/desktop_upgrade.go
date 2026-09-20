@@ -1,26 +1,29 @@
 package service
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
-	"net/http"
-	"time"
+	"net/url"
+
+	"clawbench/internal/platform"
+	"clawbench/internal/version"
 )
 
-// desktopPlatformPkg maps GOOS/GOARCH to the desktop npm platform package,
-// mirroring desktop/src/shared/registry.ts.
-var desktopPlatformPkg = map[string]string{
-	"linux/amd64":   "@xulongzhe/clawbench-desktop-linux-x64",
-	"linux/arm64":   "@xulongzhe/clawbench-desktop-linux-arm64",
-	"darwin/amd64":  "@xulongzhe/clawbench-desktop-darwin-x64",
-	"darwin/arm64":  "@xulongzhe/clawbench-desktop-darwin-arm64",
-	"windows/amd64": "@xulongzhe/clawbench-desktop-win32-x64",
+// desktopReleaseRepo is the GitHub repository that hosts the desktop release
+// assets produced by release.yml's build-desktop-* jobs.
+const desktopReleaseRepo = "clawbench-dev/clawbench"
+
+// desktopAssetName maps GOOS/GOARCH to the release asset filename. Keep in sync
+// with the `zip -r` / `Compress-Archive` steps in release.yml.
+var desktopAssetName = map[string]string{
+	"linux/amd64":   "clawbench-desktop-linux-x64.zip",
+	"linux/arm64":   "clawbench-desktop-linux-arm64.zip",
+	"darwin/amd64":  "clawbench-desktop-darwin-x64.zip",
+	"darwin/arm64":  "clawbench-desktop-darwin-arm64.zip",
+	"windows/amd64": "clawbench-desktop-windows-x64.zip",
 }
 
-// desktopDownloadKey is the response key for each platform (matches preload arch keys).
+// desktopDownloadKey is the response key for each platform. It matches the
+// keys the web client derives from the user agent (detectPlatformKey).
 var desktopDownloadKey = map[string]string{
 	"linux/amd64":   "linux-x64",
 	"linux/arm64":   "linux-arm64",
@@ -29,71 +32,66 @@ var desktopDownloadKey = map[string]string{
 	"windows/amd64": "win32-x64",
 }
 
+// githubReleaseMirrors are prefix proxies that forward to github.com. They are
+// tried before the direct URL for users in mainland China, where release
+// downloads from github.com are frequently slow or unreachable.
+//
+// These are community-run services with no uptime guarantee, so they are only
+// candidates: the client walks the list in order, and the direct github.com URL
+// is always included as the final fallback.
+var githubReleaseMirrors = []string{
+	"https://gh-proxy.com/",
+	"https://ghproxy.net/",
+}
+
 // DesktopLatestResult is the response of GET /api/desktop/latest.
 type DesktopLatestResult struct {
-	Version   string            `json:"version"`
-	Downloads map[string]string `json:"downloads"`
+	Version string `json:"version"`
+	// Tag is the GitHub release tag the downloads point at, or "" when the
+	// server is a dev build with no matching release (Downloads is then empty).
+	Tag string `json:"tag"`
+	// Downloads maps a platform key to an ordered list of candidate URLs. The
+	// client tries them in order, so one dead mirror degrades the download
+	// rather than breaking it.
+	Downloads map[string][]string `json:"downloads"`
 }
 
-// fetchDesktopLatestFrom queries the npm registry base for each desktop platform
-// package and returns the latest version plus per-platform tarball URLs.
-// base is injectable for tests (httptest server).
-func fetchDesktopLatestFrom(base string) (*DesktopLatestResult, error) {
-	res := &DesktopLatestResult{Downloads: make(map[string]string)}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+// releaseAssetURLs returns the candidate download URLs for one release asset,
+// ordered by what is likely to work from the server's region. The direct
+// github.com URL is always present, last for China and first elsewhere.
+func releaseAssetURLs(tag, asset string) []string {
+	direct := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s",
+		desktopReleaseRepo, url.PathEscape(tag), url.PathEscape(asset))
 
-	for osArch, pkg := range desktopPlatformPkg {
-		url := fmt.Sprintf("%s/%s/latest", base, pkg)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := upgradeHTTPClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			_ = resp.Body.Close()
-			// Platform package not published (or registry error) — skip it.
-			continue
-		}
-		var npmResp npmRegistryResponse
-		if err := json.NewDecoder(resp.Body).Decode(&npmResp); err != nil {
-			_ = resp.Body.Close()
-			return nil, err
-		}
-		_ = resp.Body.Close()
+	mirrors := make([]string, 0, len(githubReleaseMirrors))
+	for _, m := range githubReleaseMirrors {
+		mirrors = append(mirrors, m+direct)
+	}
+	if platform.IsChinaMainland() {
+		return append(mirrors, direct)
+	}
+	return append([]string{direct}, mirrors...)
+}
 
-		tarball := npmResp.Dist.Tarball
-		if tarball == "" {
-			continue
-		}
-		if res.Version == "" || npmResp.Version > res.Version {
-			res.Version = npmResp.Version
-		}
-		res.Downloads[desktopDownloadKey[osArch]] = rewriteTarballURL(tarball, base)
+// FetchDesktopLatest builds the desktop download info for the running server
+// version.
+//
+// It deliberately does NOT query an external registry. The desktop client ships
+// in lockstep with the server — the server is what tells the client which
+// version to run — so the server's own version IS the latest desktop version.
+// That removes the dependency on npm, whose size limits were the only reason
+// these packages were difficult to publish, and on any third-party API.
+func FetchDesktopLatest() (*DesktopLatestResult, error) {
+	v := version.Get()
+	tag := version.ReleaseTag(v)
+	res := &DesktopLatestResult{Version: v, Tag: tag, Downloads: map[string][]string{}}
+	if tag == "" {
+		// Dev or untagged build: no release exists, so offer nothing rather
+		// than links that would 404.
+		return res, nil
+	}
+	for osArch, asset := range desktopAssetName {
+		res.Downloads[desktopDownloadKey[osArch]] = releaseAssetURLs(tag, asset)
 	}
 	return res, nil
-}
-
-// FetchDesktopLatest queries the npm registry for the current region, falling
-// back to the user's configured mirror if the default registry is unreachable
-// or yields no downloadable platforms.
-func FetchDesktopLatest() (*DesktopLatestResult, error) {
-	var errs []error
-	for _, base := range registryCandidates() {
-		res, err := fetchDesktopLatestFrom(base)
-		if err == nil {
-			// A response with no downloads (e.g. every platform returned 404)
-			// is not a usable result — fall through to the next candidate.
-			if len(res.Downloads) > 0 {
-				return res, nil
-			}
-			err = fmt.Errorf("registry returned no downloadable platforms")
-		}
-		errs = append(errs, fmt.Errorf("%s: %w", base, err))
-		slog.Warn("upgrade: desktop registry query failed, trying next candidate", "base", base, "error", err)
-	}
-	return nil, fmt.Errorf("all registry sources failed: %w", errors.Join(errs...))
 }

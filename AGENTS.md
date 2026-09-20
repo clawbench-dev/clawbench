@@ -103,14 +103,18 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 | `tunnel.ts` | ssh2 客户端，读取 `/api/ssh/info` 建立 SSH 端口映射 |
 | `download.ts` | 文件下载（保存对话框 + 下载后定位）、URL/Blob 下载 |
 | `notification.ts` | 原生系统通知，点击导航到会话/任务（冷启动挂起派发） |
-| `updater.ts` | 升级检查（npm registry，国内时区换镜像源；语义化版本比较，降级不误报） |
-| `install.ts` | 自升级安装：下载 → SRI 校验 → 解压（剥 npm `package/` 前缀、拒绝路径穿越）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针 |
+| `updater.ts` | 升级检查：请求**服务端** `/api/desktop/latest`（不查 npm）；语义化版本比较，降级不误报 |
+| `install.ts` | 自升级安装：多候选 URL 依次降级下载 → SRI 校验 → 解压 zip（剥顶层包装目录、拒绝路径穿越、**恢复可执行位**）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针 |
 | `secrets.ts` / `store.ts` | safeStorage 加密存密码、electron-store 持久化服务器列表/主题/语言 |
 | `powersave.ts` | 屏幕常亮（powerSaveBlocker） |
 
 **自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；`npm/desktop-main/bin/clawbench-desktop.js` 启动时读该指针决定运行哪个版本（指针缺失/目录不存在则回退到 npm 包自带版本），因此失败可回滚、旧版本保留。
 
-构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job 打包为 zip 挂 GitHub Release；`publish-npm-desktop` 发布 `@xulongzhe/clawbench-desktop` 与 linux/win 平台包（**darwin 不发 npm**，.app tarball 超 npm ~100MB 上限 E413，仅走 Release）。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。
+**分发以 GitHub Release 为准，npm 只是可选渠道**：桌面端与服务端同版本发布，`/api/desktop/latest` 直接返回服务端自身版本 + Release 资产地址，**不查询任何外部服务**（不查 npm、不查 GitHub API）。这消除了对 npm 的依赖——Electron 44 的运行时让 tarball 达到 ~120MiB，逼近 npm 的体积上限。每个平台返回**候选 URL 列表**（国内镜像优先、直连 github.com 兜底），客户端与前端都取首个可用项。
+
+`tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、客户端隐藏下载入口——不要把它当错误处理。
+
+构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job 打包为 zip 挂 GitHub Release。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 仍发 `@xulongzhe/clawbench-desktop` 与 linux/win 平台包，但**带体积门控**（超 100MiB 跳过并 warning，不再让整个 release 失败）；darwin 从不发 npm。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。
 
 ## 开发规则
 

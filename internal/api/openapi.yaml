@@ -4047,17 +4047,23 @@ paths:
   /api/desktop/latest:
     get:
       tags: [Desktop]
-      summary: 桌面客户端最新版本
+      summary: 桌面客户端下载信息
       description: |
         免鉴权（下载入口在登录页，此时尚无会话）。
-        查询 npm registry 上各平台的 `@xulongzhe/clawbench-desktop-*` 包，
-        返回最新版本号与按平台分组的 tarball 地址。
-        上游 registry 全部不可用时返回 502。
+
+        桌面端与服务端同版本发布，服务端版本即桌面端最新版本，因此本接口
+        不查询任何外部服务——只把自身版本号拼成 GitHub Release 资产地址。
+
+        `tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时
+        `downloads` 为空对象，客户端应隐藏下载入口而非报错。
+
+        每个平台给出**候选 URL 列表**：国内优先走 GitHub 代理镜像，直连
+        github.com 始终作为最后兜底。镜像为社区服务，不保证可用，故逐个降级。
       operationId: desktopLatest
       security: []
       responses:
         "200":
-          description: 版本与各平台下载地址
+          description: 版本与各平台候选下载地址
           content:
             application/json:
               schema:
@@ -4065,13 +4071,22 @@ paths:
                 properties:
                   version:
                     type: string
+                    description: 服务端版本号，即桌面端目标版本
+                  tag:
+                    type: string
+                    description: 对应的 GitHub Release tag；dev 构建为空字符串
                   downloads:
                     type: object
-                    description: 平台键（linux-x64 / linux-arm64 / darwin-x64 / darwin-arm64 / win32-x64）到 tarball 地址
+                    description: |
+                      平台键（linux-x64 / linux-arm64 / darwin-x64 /
+                      darwin-arm64 / win32-x64）到**候选 URL 数组**，
+                      按推荐顺序排列，客户端依次尝试。
                     additionalProperties:
-                      type: string
+                      type: array
+                      items:
+                        type: string
         "502":
-          description: 上游 registry 不可用
+          description: 生成下载信息失败
 
 components:
   securitySchemes:

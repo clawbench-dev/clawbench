@@ -584,6 +584,10 @@ jobs:
 
   build-desktop-linux:
     name: Build Desktop Linux
+    # Gate on lint + tests like every other build job. Without this the
+    # desktop packages were the only ones that could reach npm while the
+    # rest of the release was still failing its checks.
+    needs: [test]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -595,6 +599,18 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
+
+      - name: Set desktop version from tag
+        # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
+        # app.getVersion() reads it, and the updater compares that against the
+        # version published to npm — so leaving it unset makes every startup
+        # report an available update and re-download the tarball forever.
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${VERSION#v}"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('desktop/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('desktop/package.json',JSON.stringify(p,null,2)+'\n')"
+          echo "desktop version set to $VERSION"
 
       - name: Build desktop (Linux)
         run: |
@@ -619,6 +635,10 @@ jobs:
 
   build-desktop-linux-arm64:
     name: Build Desktop Linux arm64
+    # Gate on lint + tests like every other build job. Without this the
+    # desktop packages were the only ones that could reach npm while the
+    # rest of the release was still failing its checks.
+    needs: [test]
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: write
@@ -630,6 +650,18 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
+
+      - name: Set desktop version from tag
+        # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
+        # app.getVersion() reads it, and the updater compares that against the
+        # version published to npm — so leaving it unset makes every startup
+        # report an available update and re-download the tarball forever.
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${VERSION#v}"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('desktop/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('desktop/package.json',JSON.stringify(p,null,2)+'\n')"
+          echo "desktop version set to $VERSION"
 
       - name: Build desktop (Linux arm64)
         run: |
@@ -654,6 +686,10 @@ jobs:
 
   build-desktop-windows:
     name: Build Desktop Windows
+    # Gate on lint + tests like every other build job. Without this the
+    # desktop packages were the only ones that could reach npm while the
+    # rest of the release was still failing its checks.
+    needs: [test]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -665,6 +701,18 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
+
+      - name: Set desktop version from tag
+        # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
+        # app.getVersion() reads it, and the updater compares that against the
+        # version published to npm — so leaving it unset makes every startup
+        # report an available update and re-download the tarball forever.
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${VERSION#v}"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('desktop/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('desktop/package.json',JSON.stringify(p,null,2)+'\n')"
+          echo "desktop version set to $VERSION"
 
       - name: Build desktop (Windows)
         run: |
@@ -688,6 +736,10 @@ jobs:
 
   build-desktop-macos:
     name: Build Desktop macOS
+    # Gate on lint + tests like every other build job. Without this the
+    # desktop packages were the only ones that could reach npm while the
+    # rest of the release was still failing its checks.
+    needs: [test]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -699,6 +751,18 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
+
+      - name: Set desktop version from tag
+        # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
+        # app.getVersion() reads it, and the updater compares that against the
+        # version published to npm — so leaving it unset makes every startup
+        # report an available update and re-download the tarball forever.
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${VERSION#v}"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('desktop/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('desktop/package.json',JSON.stringify(p,null,2)+'\n')"
+          echo "desktop version set to $VERSION"
 
       - name: Install desktop deps
         run: |
@@ -786,12 +850,6 @@ jobs:
           name: desktop-windows-package
           path: pkg-desktop/win32-x64/app/
 
-      - name: Download desktop macOS
-        uses: actions/download-artifact@v4
-        with:
-          name: desktop-macos-package
-          path: pkg-desktop/macos-all/
-
       - name: Assemble desktop npm packages
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
@@ -799,11 +857,19 @@ jobs:
           # tarball exceeds npm's ~100MB size limit (E413). They ship via the
           # GitHub Release assets instead. Keep the split so linux/win assembly
           # stays uniform.
+          # os/cpu are required: these are optionalDependencies of the main
+          # package, and without them npm cannot prune the other platforms, so
+          # every install would pull all three ~120MB tarballs.
           for PLATFORM in linux-x64 linux-arm64 win32-x64; do
             PKG="npm/platforms-desktop/$PLATFORM"
             mkdir -p "$PKG"
             cp -r "pkg-desktop/$PLATFORM/app/." "$PKG/"
-            node -e "const fs=require('fs');const p={name:'@xulongzhe/clawbench-desktop-$PLATFORM',version:'$VERSION',description:'ClawBench desktop client',files:['**/*']};fs.writeFileSync('$PKG/package.json',JSON.stringify(p,null,2)+'\n')"
+            case "$PLATFORM" in
+              linux-x64)   OS=linux; CPU=x64 ;;
+              linux-arm64) OS=linux; CPU=arm64 ;;
+              win32-x64)   OS=win32; CPU=x64 ;;
+            esac
+            node -e "const fs=require('fs');const p={name:'@xulongzhe/clawbench-desktop-$PLATFORM',version:'$VERSION',description:'ClawBench desktop client',os:['$OS'],cpu:['$CPU'],files:['**/*']};fs.writeFileSync('$PKG/package.json',JSON.stringify(p,null,2)+'\n')"
           done
           echo "Assembled desktop npm packages"
 
@@ -824,6 +890,16 @@ jobs:
             echo "Version $VERSION already published, skipping"
             exit 0
           fi
+          # The Electron runtime pushes these past npm's tarball limit. npm is
+          # only a convenience channel now — the canonical download source is
+          # the GitHub Release asset — so an oversized package is skipped with a
+          # warning instead of failing the whole release.
+          SIZE=$(npm pack --dry-run --json ./npm/platforms-desktop/linux-x64 | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{console.log(JSON.parse(d)[0].size)})")
+          LIMIT=$((100 * 1024 * 1024))
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::warning::@xulongzhe/clawbench-desktop-linux-x64 is $((SIZE / 1024 / 1024))MiB, over the $((LIMIT / 1024 / 1024))MiB npm limit — skipping npm publish. Users get it from the GitHub Release asset."
+            exit 0
+          fi
           npm publish ./npm/platforms-desktop/linux-x64 --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -835,6 +911,16 @@ jobs:
             echo "Version $VERSION already published, skipping"
             exit 0
           fi
+          # The Electron runtime pushes these past npm's tarball limit. npm is
+          # only a convenience channel now — the canonical download source is
+          # the GitHub Release asset — so an oversized package is skipped with a
+          # warning instead of failing the whole release.
+          SIZE=$(npm pack --dry-run --json ./npm/platforms-desktop/linux-arm64 | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{console.log(JSON.parse(d)[0].size)})")
+          LIMIT=$((100 * 1024 * 1024))
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::warning::@xulongzhe/clawbench-desktop-linux-arm64 is $((SIZE / 1024 / 1024))MiB, over the $((LIMIT / 1024 / 1024))MiB npm limit — skipping npm publish. Users get it from the GitHub Release asset."
+            exit 0
+          fi
           npm publish ./npm/platforms-desktop/linux-arm64 --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -844,6 +930,16 @@ jobs:
           VERSION="${{ steps.version.outputs.VERSION }}"
           if npm view "@xulongzhe/clawbench-desktop-win32-x64@$VERSION" version >/dev/null 2>&1; then
             echo "Version $VERSION already published, skipping"
+            exit 0
+          fi
+          # The Electron runtime pushes these past npm's tarball limit. npm is
+          # only a convenience channel now — the canonical download source is
+          # the GitHub Release asset — so an oversized package is skipped with a
+          # warning instead of failing the whole release.
+          SIZE=$(npm pack --dry-run --json ./npm/platforms-desktop/win32-x64 | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{console.log(JSON.parse(d)[0].size)})")
+          LIMIT=$((100 * 1024 * 1024))
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::warning::@xulongzhe/clawbench-desktop-win32-x64 is $((SIZE / 1024 / 1024))MiB, over the $((LIMIT / 1024 / 1024))MiB npm limit — skipping npm publish. Users get it from the GitHub Release asset."
             exit 0
           fi
           npm publish ./npm/platforms-desktop/win32-x64 --access public

@@ -27,7 +27,7 @@ async function promptAndInstallUpdate(): Promise<void> {
     // A registry that is unreachable or slow must never block startup.
     return
   }
-  if (!info.hasUpdate || !info.tarball) return
+  if (!info.hasUpdate || info.urls.length === 0) return
 
   const parent = getMainWindow() ?? undefined
   const { response } = await dialog.showMessageBox(parent as BrowserWindow, {
@@ -42,7 +42,7 @@ async function promptAndInstallUpdate(): Promise<void> {
   if (response !== 0) return
 
   try {
-    await downloadAndInstall(info.tarball, info.version, info.integrity)
+    await downloadAndInstall(info.urls, info.version, '')
   } catch (err) {
     await dialog.showMessageBox(parent as BrowserWindow, {
       type: 'error',
