@@ -111,6 +111,14 @@ function hasActivePorts(): boolean {
 // sync with the value usePortForward() exposes.
 const { isAppMode } = useAppMode()
 
+// Guards against overlapping probe rounds. Module-scoped on purpose: it
+// protects the module-level `localReachable`, while usePortForward() is called
+// from several places (the panel, App.vue's syncToNative, the localhost
+// annotation handler). A closure-local flag would let two instances probe
+// concurrently — each probe is a synchronous JS-bridge call that can take 500ms
+// on Android, so overlapping rounds double the bridge load.
+let probingReachability = false
+
 /**
  * Ports with their `active` flag corrected for the local device.
  *
@@ -152,9 +160,6 @@ function tunnelStatusFromPorts(_hasPorts: boolean): 'ok' | 'degraded' {
  */
 export function usePortForward() {
   const { currentSessionId } = useSessionIdentity()
-
-  // Guards against overlapping probe rounds (see refreshLocalReachability).
-  let probingReachability = false
 
   // Set up the callback for native port-forward-result events.
   // This needs to be inside usePortForward() because it calls loadPorts()

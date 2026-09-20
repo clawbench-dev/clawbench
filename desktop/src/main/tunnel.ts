@@ -105,9 +105,15 @@ function openClient(host: string, port: number, username: string): Promise<boole
       try { stale.end() } catch { /* already gone */ }
     }
     timer = setTimeout(() => {
+      // Give up on this attempt: drop the reference and release the socket, or
+      // a connection that completes after the deadline would pass the
+      // `client === c` guard below and flip the module to "connected" for a
+      // promise that already reported failure.
       if (client === c) {
+        client = null
         state.connected = false
         state.error = state.error || 'connection timed out'
+        try { c.end() } catch { /* ignore */ }
       }
       done(false)
     }, CONNECT_TIMEOUT_MS)
@@ -176,12 +182,21 @@ export function disconnectTunnel(): void {
 
 /**
  * Bind localhost:localPort and pipe each accepted socket through the SSH
- * channel to host:targetPort. Idempotent per local port: an existing listener
- * is released first, or listen() fails with EADDRINUSE.
+ * channel to host:targetPort.
+ *
+ * Per-port single-flight: `listen()` is asynchronous, so two concurrent binds
+ * for the same port would both reach the OS; the loser's EADDRINUSE handler
+ * used to `closeForwardServer(localPort)`, which destroyed the WINNER's entry
+ * and left the port unreachable while `state.forwarded` still claimed it was
+ * forwarded. Joining the in-flight bind instead makes repeated adds idempotent.
  */
+const pendingBinds = new Map<number, Promise<boolean>>()
+
 function listenForward(localPort: number, targetPort: number, host: string): Promise<boolean> {
+  const inFlight = pendingBinds.get(localPort)
+  if (inFlight) return inFlight
   closeForwardServer(localPort)
-  return new Promise((resolve) => {
+  const p = new Promise<boolean>((resolve) => {
     if (!client || !state.connected) { resolve(false); return }
     const server = net.createServer((socket) => {
       const c = client
@@ -192,18 +207,34 @@ function listenForward(localPort: number, targetPort: number, host: string): Pro
       })
     })
     server.listen(localPort, '127.0.0.1', () => {
+      // A removeForwardedPort() landing during listen() must win: publishing
+      // here would revive a port the user just deleted, with no desired entry.
+      if (!state.forwarded.has(localPort)) {
+        try { server.close() } catch { /* ignore */ }
+        resolve(false)
+        return
+      }
       forwardServers.set(localPort, server)
       resolve(true)
     })
     server.on('error', () => {
-      // A failed listen must not leave a half-registered listener behind.
-      closeForwardServer(localPort)
+      // Release only THIS server, never a different (winning) one.
+      if (forwardServers.get(localPort) === server) forwardServers.delete(localPort)
+      try { server.close() } catch { /* ignore */ }
       resolve(false)
     })
-  })
+  }).finally(() => { pendingBinds.delete(localPort) })
+  pendingBinds.set(localPort, p)
+  return p
 }
 
-/** Re-bind every desired forward. Called after the client becomes ready. */
+/**
+ * Re-bind every desired forward. Called after the client becomes ready.
+ *
+ * The snapshot is taken up front and the awaits yield, so a
+ * removeForwardedPort() can land mid-rebuild; listenForward() re-checks
+ * `state.forwarded` at publish time and refuses to bind a deleted port.
+ */
 async function rebuildAllForwards(): Promise<void> {
   for (const [localPort, fwd] of [...state.forwarded.entries()]) {
     await listenForward(localPort, fwd.targetPort, fwd.host)

@@ -75,7 +75,13 @@ export interface ClawBenchNative {
   removeServer(url: string): Promise<void>
   setSSHPassword(pwd: string): Promise<void>
   connectToServer(url: string, password: string): Promise<void>
-  addForwardedPort(localPort: number, targetPort: number, host: string): Promise<void>
+  /**
+   * Bind a local forward. The result differs by host:
+   *   - Electron: `Promise<boolean>` — false means the listener could not bind.
+   *   - Android: `undefined` (a synchronous @JavascriptInterface `void` method),
+   *     so a missing/false result must NOT be read as failure there.
+   */
+  addForwardedPort(localPort: number, targetPort: number, host: string): Promise<boolean | void> | void
   removeForwardedPort(localPort: number): Promise<void>
   reconnectTunnel(): Promise<boolean>
   reconnectTunnelAsync(): Promise<void>

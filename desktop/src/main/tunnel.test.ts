@@ -2,6 +2,32 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import net from 'node:net'
 import { PassThrough } from 'node:stream'
 
+// Test-only knob: delays the `listen` callback so the rebuild window (the span
+// between the desired-set snapshot and an actual bind) is observable. Real
+// binds complete too fast to hit the mid-rebuild removal race deterministically.
+const { listenDelay } = vi.hoisted(() => ({ listenDelay: { ms: 0 } }))
+
+vi.mock('node:net', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:net')>()
+  const realCreateServer = actual.createServer as unknown as (...a: unknown[]) => net.Server
+  const createServer = (...args: unknown[]) => {
+    const server = realCreateServer(...args)
+    const realListen = server.listen.bind(server)
+    server.listen = ((...largs: unknown[]) => {
+      const cb = typeof largs[largs.length - 1] === 'function'
+        ? (largs.pop() as () => void)
+        : undefined
+      return realListen(...(largs as []), () => {
+        if (cb) setTimeout(cb, listenDelay.ms)
+      })
+    }) as typeof server.listen
+    return server
+  }
+  // `tunnel.ts` does `import net from 'node:net'`, so the default export is what
+  // it reads — keep it in sync with the named one.
+  return { ...actual, createServer, default: { ...actual, createServer } }
+})
+
 // A controllable stand-in for ssh2's Client. Each instance records the
 // handlers the module registered and exposes emit*() so a test can drive the
 // connection lifecycle deterministically (no real SSH server involved).
@@ -127,6 +153,7 @@ beforeEach(() => {
   resetModule()
   FakeClient.instances = []
   storeData.serverUrl = 'https://127.0.0.1:20000'
+  listenDelay.ms = 0
 })
 
 afterEach(() => {
@@ -148,6 +175,50 @@ describe('tunnel: reconnect preserves and rebuilds forwards', () => {
 
     // Regression guard: the old code cleared state.forwarded in
     // disconnectTunnel(), so this came back as [] and the port was dead.
+    expect(getForwardedPorts()).toEqual([{ port: PORT_A, host: '' }])
+    expect(await testPortReachable(PORT_A)).toBe(true)
+  })
+
+  it('does not resurrect a forward removed DURING the rebuild window', async () => {
+    await connectOnce()
+    await addForwardedPort(PORT_A, 20000, '')
+    await addForwardedPort(PORT_B, 20000, '')
+    disconnectTunnel()
+    expect(getForwardedPorts().length).toBe(2)
+
+    // Widen the window between rebuildAllForwards() snapshotting the desired
+    // set and each individual bind completing.
+    listenDelay.ms = 60
+    const reconnected = ensureTunnel()
+    await vi.waitFor(() => expect(FakeClient.instances.length).toBeGreaterThan(1))
+    FakeClient.last().emit('ready')
+    // A's bind is now in flight; delete B while the rebuild still holds it.
+    await new Promise(r => setTimeout(r, 30))
+    removeForwardedPort(PORT_B)
+    await reconnected
+    listenDelay.ms = 0
+
+    // Regression guard: the snapshot-only loop used to bind B anyway, leaving a
+    // live listener for a port that no longer exists in the desired set.
+    expect(getForwardedPorts()).toEqual([{ port: PORT_A, host: '' }])
+    expect(await testPortReachable(PORT_B)).toBe(false)
+    expect(await testPortReachable(PORT_A)).toBe(true)
+  })
+
+  it('a failed concurrent bind does not destroy the winning listener', async () => {
+    await connectOnce()
+    listenDelay.ms = 50
+    // Two adds for the SAME local port. The loser used to hit EADDRINUSE and
+    // call closeForwardServer(), which deleted the winner's entry — leaving the
+    // port dead while state.forwarded still claimed it was forwarded.
+    const [first, second] = await Promise.all([
+      addForwardedPort(PORT_A, 20000, ''),
+      addForwardedPort(PORT_A, 20000, ''),
+    ])
+    listenDelay.ms = 0
+
+    expect(first).toBe(true)
+    expect(second).toBe(true)
     expect(getForwardedPorts()).toEqual([{ port: PORT_A, host: '' }])
     expect(await testPortReachable(PORT_A)).toBe(true)
   })
@@ -237,6 +308,29 @@ describe('tunnel: failure handling', () => {
       // No 'ready' and no 'error' — without the timeout this promise would hang.
       await vi.advanceTimersByTimeAsync(20001)
       expect(await p).toBe(false)
+      expect(isTunnelConnected()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a timed-out attempt is abandoned, so a late ready cannot flip the state', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = ensureTunnel()
+      for (let i = 0; i < 20 && FakeClient.instances.length === 0; i++) {
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      const timedOut = FakeClient.last()
+      await vi.advanceTimersByTimeAsync(20001)
+      expect(await p).toBe(false)
+      // The socket must be released, not left half-open.
+      expect(timedOut.ended).toBe(true)
+
+      // A connection completing after the deadline must NOT report the module as
+      // connected — the caller was already told the attempt failed.
+      timedOut.emit('ready')
+      await vi.advanceTimersByTimeAsync(0)
       expect(isTunnelConnected()).toBe(false)
     } finally {
       vi.useRealTimers()
