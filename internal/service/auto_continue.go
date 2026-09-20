@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -68,13 +67,21 @@ var retryableWarningReasons = map[string]bool{
 // that must never be overridden by anything else: a user who pressed stop, or
 // redirected the turn with "interrupt and send", must not have their session
 // silently resumed — that is the single hardest requirement of this feature.
+//
+// Partial output does NOT suppress a retry. An earlier version required "no
+// readable text yet", on the theory that re-prompting a model which already
+// answered would duplicate its answer. That reasoning only holds for a turn
+// interrupted while writing its reply; it is wrong for the common case of a
+// long agentic run (many tool calls) killed part-way through, where the model
+// has narrated plenty but the WORK is unfinished. Refusing to resume there left
+// the user to click "继续" by hand — exactly what this feature exists to avoid.
+// Resuming is cheap and the user opted in; a redundant "continue" on a finished
+// answer is a far smaller cost than a stalled long task.
 func classifyTurnAbnormality(cancelReason string, receivedTerminal, empty bool, blocks []model.ContentBlock) string {
 	if cancelReason != "" {
 		return ""
 	}
-	// No terminal event at all: the agent process died mid-turn. Retryable
-	// regardless of how much partial content it had emitted — the reply is
-	// known-incomplete, so resuming is the intended recovery.
+	// No terminal event at all: the agent process died mid-turn.
 	if !receivedTerminal {
 		return abnormalNoTerminal
 	}
@@ -82,30 +89,12 @@ func classifyTurnAbnormality(cancelReason string, receivedTerminal, empty bool, 
 		return abnormalEmpty
 	}
 	// A backend error event lands as a warning block, not in TurnResult.Err.
-	// Only resume when there is no real answer to preserve: re-prompting a model
-	// that already wrote half a response would append a redundant second answer
-	// to a reply the user can already read.
-	if hasSubstantiveText(blocks) {
-		return ""
-	}
 	for i := range blocks {
 		if retryableWarningReasons[blocks[i].Reason] {
 			return blocks[i].Reason
 		}
 	}
 	return ""
-}
-
-// hasSubstantiveText reports whether the turn produced prose the user can read.
-// Tool calls alone do not count — a turn that only ran tools and then died has
-// no answer yet, which is exactly the case worth resuming.
-func hasSubstantiveText(blocks []model.ContentBlock) bool {
-	for i := range blocks {
-		if blocks[i].Type == contentKeyText && strings.TrimSpace(blocks[i].Text) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 // AutoContinueEnabled reports whether the user opted into auto-resuming

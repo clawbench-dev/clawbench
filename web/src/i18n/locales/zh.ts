@@ -2257,7 +2257,7 @@ export default {
       chatRecommendContextMessagesDesc: '生成推荐时参考的最近消息条数（用户与助手消息均计入），帮助 AI 理解你的意图（0 为不参考）',
       autoContinueSectionHeader: '会话恢复',
       chatAutoContinueEnabled: '异常终止自动继续',
-      chatAutoContinueEnabledDesc: '会话因进程崩溃、AI 无输出或后端报错而意外中断时，自动发送「继续」并接着跑。手动终止（含打断重发）的会话永不续接',
+      chatAutoContinueEnabledDesc: '会话因进程崩溃、AI 无输出或后端报错而意外中断时，自动发送「继续」并接着跑，不论当时是否已产出部分内容。手动终止（含打断重发）的会话永不续接',
       chatAutoContinueMaxRetries: '最大重试次数',
       chatAutoContinueMaxRetriesDesc: '每个用户消息允许自动续接的次数。-1 表示不限（服务端仍有硬上限保护），0 表示不重试',
       ttsSpeed: '语速',

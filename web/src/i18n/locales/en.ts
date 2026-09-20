@@ -2254,7 +2254,7 @@ export default {
       chatRecommendContextMessagesDesc: 'Number of recent messages (user and assistant turns) to consider when generating a recommendation (0 = none)',
       autoContinueSectionHeader: 'Session Recovery',
       chatAutoContinueEnabled: 'Auto-continue on Abnormal End',
-      chatAutoContinueEnabledDesc: 'When a session is interrupted unexpectedly — process crash, no AI output, or a backend error — automatically send "Continue" and resume. Sessions you stopped yourself (including interrupt-and-send) are never resumed',
+      chatAutoContinueEnabledDesc: 'When a session is interrupted unexpectedly — process crash, no AI output, or a backend error — automatically send "Continue" and resume, regardless of how much output it had already produced. Sessions you stopped yourself (including interrupt-and-send) are never resumed',
       chatAutoContinueMaxRetries: 'Max Retries',
       chatAutoContinueMaxRetriesDesc: 'How many times each user message may be auto-resumed. -1 means unlimited (the server still enforces a hard ceiling); 0 disables retries',
       ttsSpeed: 'Speed',

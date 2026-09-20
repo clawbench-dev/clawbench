@@ -18,8 +18,6 @@ import (
 // rather than trusted to a default.
 func TestClassifyTurnAbnormality(t *testing.T) {
 	text := []model.ContentBlock{{Type: "text", Text: "here is the answer"}}
-	blankText := make([]model.ContentBlock, 0, 1)
-	blankText = append(blankText, model.ContentBlock{Type: "text", Text: "   \n\t "})
 	toolOnly := []model.ContentBlock{{Type: "tool_use", Name: "Bash", ID: "t1"}}
 
 	warn := func(reason string) []model.ContentBlock {
@@ -77,9 +75,16 @@ func TestClassifyTurnAbnormality(t *testing.T) {
 		{"normal completion", "", true, false, text, ""},
 		{"normal completion, no blocks", "", true, false, nil, ""},
 
-		// ── A half-answer must not be re-prompted ──
-		{"backend exit but text already produced", "", true, false, warnPlusText(ai.ReasonBackendExit), ""},
-		{"whitespace-only text is not an answer", "", true, false, append(blankText, warn(ai.ReasonBackendExit)...), ai.ReasonBackendExit},
+		// ── Partial output must NOT suppress a retry ──
+		// A long agentic run that dies part-way through has narrated plenty but
+		// the work is unfinished. Suppressing the resume there is what left the
+		// user clicking "继续" by hand, so text presence is deliberately not a
+		// gate — only the cancellation/non-retryable reasons above are.
+		{"backend exit after text was produced", "", true, false, warnPlusText(ai.ReasonBackendExit), ai.ReasonBackendExit},
+		{"empty with text produced", "", true, false, []model.ContentBlock{
+			{Type: blockTypeWarning, Text: "boom", Reason: ai.ReasonEmpty},
+			{Type: "text", Text: "partial answer"},
+		}, ""},
 	}
 
 	for _, tt := range tests {
@@ -108,6 +113,30 @@ func TestAutoContinueAttemptsAllowed_RetryCountSemantics(t *testing.T) {
 	// max_retries=0 means the feature is on but no retry may run.
 	if AutoContinueAttemptsAllowed(0, 0) {
 		t.Error("max_retries=0 must not permit a retry")
+	}
+}
+
+// Regression for the reported case: a long agentic run that narrated many
+// steps and was refused part-way through (with a tool call still in flight)
+// must still be resumed. The earlier "no readable text yet" gate suppressed
+// exactly this, leaving the user to click 继续 by hand.
+func TestClassifyTurnAbnormality_LongRunRefusedMidWorkIsResumed(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: blockTypeThinking, Text: "planning the change"},
+		{Type: "text", Text: "I'll implement all four fixes. Let me first read the files."},
+		{Type: "tool_use", Name: "Read", ID: "t1", Done: true},
+		{Type: "text", Text: "Now implementing. Starting with the preload."},
+		{Type: "tool_use", Name: "Edit", ID: "t2", Done: true},
+		{Type: "text", Text: "Critical finding — the E2E test caught a regression."},
+		// The turn was cut off while this call was still running.
+		{Type: "tool_use", Name: "Bash", ID: "t3", Done: false},
+		{Type: blockTypeWarning, Text: "AI request refused by the agent", Reason: ai.ReasonRefused},
+	}
+
+	got := classifyTurnAbnormality("", true, false, blocks)
+	if got != ai.ReasonRefused {
+		t.Errorf("classifyTurnAbnormality = %q, want %q (a refused long run must be resumed)",
+			got, ai.ReasonRefused)
 	}
 }
 
