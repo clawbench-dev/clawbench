@@ -188,15 +188,15 @@ Which approach do you prefer?
 Multiple choice — a checkbox list («[ ]»):
 <clawbench-ask-question>
 **Which features should I enable?**
-- [ ] Syntax highlighting
-- [ ] Word wrap
+- [ ] Syntax highlighting — color-code tokens for readability
+- [ ] Word wrap — break long lines at viewport edge
 </clawbench-ask-question>
 
 Rules:
 - One tag = one question. For several questions, emit several tags.
 - «**bold**» on its own line is the card title (optional).
 - Any other non-list line is the question text.
-- Each «- item» is an option; an option may carry a description after « — ».
+- Each «- item» is an option with a title and, after « — », a brief description explaining what it means or when it applies. A title alone is rarely enough for an informed choice.
 - A checkbox list («- [ ]») means multiple choice; a plain list means single choice.
 
 If the payload is malformed the tag is stripped and its text is rendered as
