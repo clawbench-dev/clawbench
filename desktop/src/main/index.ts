@@ -1,10 +1,9 @@
-import { app, BrowserWindow, Menu, dialog, globalShortcut, session } from 'electron'
+import { app, BrowserWindow, Menu, dialog, session } from 'electron'
 import { initStore } from './store'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { checkForUpdate } from './updater'
 import { downloadAndInstall, restartInto } from './install'
-import { clearCacheAndReload } from './session'
 
 /**
  * Last-resort safety net for the main process.
@@ -116,18 +115,10 @@ app.whenReady().then(() => {
     callback(permission === 'media')
   })
 
-  // Ctrl+F5 (Cmd+Shift+R on macOS): hard refresh clearing cached resources.
-  const accelerator = process.platform === 'darwin' ? 'CommandOrControl+Shift+R' : 'Control+F5'
-  globalShortcut.register(accelerator, () => { void clearCacheAndReload() })
-
   // Give the window a moment to appear before a modal dialog can steal focus.
   setTimeout(() => { void promptAndInstallUpdate() }, 3000)
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow() })
-})
-
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll()
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

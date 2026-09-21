@@ -1460,6 +1460,15 @@ Worktree 标注 → 文件路径标注 → localhost 标注 → commit hash 标�
 
 **代码查看器**：`Mod+F` 打开搜索面板，`Mod+S` 保存（编辑态）。
 
+**桌面端应用级快捷键**（Electron 壳）：
+
+| 快捷键 | 作用 |
+|---|---|
+| `Ctrl+Shift+R`（macOS `Cmd+Shift+R`） | 强制刷新：清空缓存与存储后重载页面 |
+| `F12` / `Ctrl+Shift+I`（macOS `Cmd+Option+I`） | 打开 / 关闭开发者工具 |
+
+强制刷新会一并清除 Cookie 与本地存储，因此会重新登录；在 ClawBench 默认的 localhost 部署下会自动登回。这些快捷键在窗口内生效，未占用的按键（例如终端与文件管理器用到的 `F5`）会照常传给页面。
+
 顶栏的快捷键提示跑马灯点击可打开完整快捷键弹窗。
 
 ## 16. 多项目与 Worktree

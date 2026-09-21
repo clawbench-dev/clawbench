@@ -5,6 +5,7 @@ import { getStore } from './store'
 import { contextMenuLabels } from './contextMenu'
 import { classifyUrl } from './urlPolicy'
 import { markRendererLoading } from './navReady'
+import { handleShortcut } from './shortcuts'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -12,6 +13,33 @@ export function getMainWindow(): BrowserWindow | null { return mainWindow }
 
 function loginPagePath(): string {
   return path.join(process.resourcesPath, 'login.html')
+}
+
+/**
+ * Claim the app-level shortcuts (hard reload, DevTools) on this window.
+ *
+ * Uses `before-input-event` rather than `globalShortcut`: a global shortcut is
+ * captured by the OS and never reaches the renderer, which would break the
+ * page's own use of the same keys — the terminal sends F5/F12 to the running
+ * TUI and the file manager refreshes on F5. This runs in the window's own
+ * event path, so unclaimed keys fall through to the page untouched.
+ */
+function registerKeyboardShortcuts(webContents: Electron.WebContents): void {
+  const isMac = process.platform === 'darwin'
+  webContents.on('before-input-event', (event, input) => {
+    const claimed = handleShortcut(input, isMac, {
+      // Imported lazily: session.ts imports getMainWindow() from this module,
+      // so a top-level import here would be a cycle.
+      onHardReload: () => { void import('./session').then((m) => m.clearCacheAndReload()) },
+      onToggleDevTools: () => {
+        const wc = webContents
+        if (wc.isDevToolsOpened()) wc.closeDevTools()
+        else wc.openDevTools({ mode: 'bottom' })
+      },
+    })
+    // preventDefault stops the renderer from also seeing a key we handled.
+    if (claimed) event.preventDefault()
+  })
 }
 
 /** Register native context menu handlers for text selection, editable fields, links, and images. */
@@ -72,6 +100,7 @@ export function createMainWindow(): BrowserWindow {
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false },
   })
   registerContextMenu(mainWindow.webContents)
+  registerKeyboardShortcuts(mainWindow.webContents)
   // A (re)load tears down the renderer's listeners, so anything clicked before
   // it re-registers must be deferred rather than sent into the void.
   mainWindow.webContents.on('did-start-loading', () => markRendererLoading())
