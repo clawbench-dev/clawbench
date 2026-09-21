@@ -113,24 +113,30 @@
     /* ── Running-session indicator. The motif differs by surface, and the two
        forms exist for measured reasons rather than taste.
 
-       `--running-line` — the session-list rows (local and cross-project). A
-       light band along the row's bottom edge: a 2px line with a short glow
-       bleeding upward.
+       `--running-line` — the session-list rows (local and cross-project). The
+       row's bottom edge carries two layers: a static base glow spanning the
+       full width (`--running-glow`), and the travelling band that sweeps across
+       it (`--running-line`). The base glow is what keeps the edge faintly lit
+       between passes — without it the row went completely dark once the band
+       had moved on, which read as the indicator switching off and on.
 
-       Why the rows do not use a sweep: an earlier design tinted the whole row
-       and swept a wide band across it, and on dark themes that washed the row
-       milky. A dark theme's accent sits far above its row background (OKLab L
-       +0.50, vs −0.40 on a light one), so any alpha high enough to show the
-       band flooded the entire row, and the band then read as a grey smudge on
-       top of it. Confining the light to the bottom edge removes the trade-off
-       — it can carry real colour without touching the row's own background.
+       Why the rows do not use a sweep across the whole row: an earlier design
+       tinted the whole row and swept a wide band across it, and on dark themes
+       that washed the row milky. A dark theme's accent sits far above its row
+       background (OKLab L +0.50, vs −0.40 on a light one), so any alpha high
+       enough to show the band flooded the entire row, and the band then read as
+       a grey smudge on top of it. Confining the light to the bottom edge
+       removes the trade-off — it can carry real colour without touching the
+       row's own background.
 
-       Both tokens are deliberately translucent: at full strength the band read
-       as a hard stripe and the button as a solid block, which was heavier than
-       a "this session is running" signal should be. These alphas keep the
-       accent's exact hue and saturation (never blended toward grey) while
-       landing at 1.44:1 worst case for the band and 1.30:1 for the sweep,
-       against 1.10:1 / 1.08:1 for the original fixed green. ── */
+       All three tokens are deliberately translucent: at full strength the band
+       read as a hard stripe and the button as a solid block, which was heavier
+       than a "this session is running" signal should be. These alphas keep the
+       accent's exact hue and saturation (never blended toward grey): the sweep
+       lands at 1.44:1 worst case and the base glow at 1.10:1, so the glow is
+       always visible but never competes with the band passing over it.
+       (The original fixed green scored 1.10:1 / 1.08:1.) ── */
+    --running-glow: color-mix(in srgb, var(--accent-color) 14%, transparent);
     --running-line: color-mix(in srgb, var(--accent-color) 55%, transparent);
     --running-sweep: color-mix(in srgb, var(--accent-color) 45%, transparent);
 

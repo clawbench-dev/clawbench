@@ -832,35 +832,49 @@ onUnmounted(() => {
   z-index: 1;
 }
 
+/* Static base glow: the full row width stays faintly lit even where the
+   travelling band is not. Without this the edge went completely dark between
+   passes, so the indicator blinked off and on instead of reading as a
+   continuously running session. It shares the band's mask so both layers have
+   the same 2px line + upward falloff. */
+.session-running-line::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  -webkit-mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
+  mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
+  background: var(--running-glow);
+}
+
 .session-running-line::after {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
-  width: 200%;
+  /* One band, 80% of the row wide, travelling from fully off the left edge to
+     fully off the right. The layer is exactly one band — no tile, no repeat —
+     so the next pass starts the instant this one clears the right edge: bands
+     never double up, and there is no gap between them either.
+     The old version tiled two bands across a 200%-wide layer and scrolled it,
+     which read as a marquee: a new band entered from the left while the
+     previous one was still crossing the middle. */
+  width: 80%;
   height: 100%;
   /* Solid 2px at the very bottom, then a fast falloff so the glow stays a
      halo around the line rather than a wash up the row. A plain linear ramp
      to 14px spread the light too thinly and lost the crisp edge. */
   -webkit-mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
   mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
-  /* Seamless marquee: the layer is twice the row wide and carries two identical
-     60%-wide bands tiled every row-width, so translating it by exactly one tile
-     lands on an identical frame — no jump at the loop point. Because the tile
-     repeats, there is always a band on screen: as one leaves the right edge the
-     next enters from the left, which is what removes the old dead gap.
-     `linear` matters: the previous `ease-in-out` made the band decelerate into
-     each end, which read as a stutter rather than a flow. */
+  /* Soft shoulders so the band reads as light rather than a solid bar. */
   background-image: linear-gradient(
     90deg,
     transparent 0%,
-    transparent 20%,
     var(--running-line) 50%,
-    transparent 80%,
     transparent 100%
   );
-  background-size: 50% 100%;
-  background-repeat: repeat-x;
   animation: scan-bg 2s linear infinite;
 }
 
@@ -984,15 +998,16 @@ onUnmounted(() => {
   50% { opacity: var(--opacity-disabled); transform: scale(0.8); }
 }
 
-/* Seamless rightward marquee. The layer is twice the row wide and carries two
-   identical bands tiled every 50% (one row width), so translating it by exactly
-   one tile lands on an identical frame — no jump at the loop point. A band
-   leaves the right edge exactly as the next enters from the left, so the light
-   never blanks out. `linear` matters: the previous `ease-in-out` made the band
-   decelerate into each end, which read as a stutter rather than a flow. */
+/* A single band crossing the row, back to back with no pause. The band is 80%
+   of the row wide, so -100% of its own width parks it just off the left edge
+   and 125% (100% / 0.8) carries it just off the right. Both ends are fully
+   outside the row, so the wrap from 125% back to -100% is invisible and the
+   next pass begins the moment the previous one leaves — no overlap, no gap.
+   `linear` matters: `ease-in-out` made the band decelerate into each end, which
+   read as a stutter rather than a flow. */
 @keyframes scan-bg {
-  0% { transform: translateX(-50%); }
-  100% { transform: translateX(0); }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(125%); }
 }
 
 .session-row {

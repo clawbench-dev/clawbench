@@ -207,6 +207,11 @@ describe('running-session indicator is theme-derived and visible on every theme'
     const cases: { file: string; selector: RegExp; token: string }[] = [
       {
         file: 'src/components/session/SessionList.vue',
+        selector: /\.session-running-line::before\s*\{[^}]*\}/,
+        token: '--running-glow',
+      },
+      {
+        file: 'src/components/session/SessionList.vue',
         selector: /\.session-running-line::after\s*\{[^}]*\}/,
         token: '--running-line',
       },
@@ -245,11 +250,43 @@ describe('running-session indicator is theme-derived and visible on every theme'
     expect(failures, `band below ${MIN_LINE}:1:\n${failures.join('\n')}`).toEqual([])
   })
 
+  it('keeps the edge faintly lit between passes, without competing with the band', () => {
+    // The travelling band only covers 80% of the row at any instant, so
+    // whatever it is not covering must still show the static base glow —
+    // otherwise the edge blinks off and on between passes. Two properties:
+    // the glow is visible at all, and it stays clearly weaker than the band
+    // so the band still reads as the moving highlight on top of it.
+    const failures: string[] = []
+    for (const theme of THEMES) {
+      const vars = varsFor(theme.id)
+      const glow = evalToken(vars['--running-glow'], vars)
+      const band = evalToken(vars['--running-line'], vars)
+      for (const bgToken of ['--bg-primary', '--bg-secondary']) {
+        const raw = vars[bgToken]
+        if (!raw) continue
+        const bg = parseHex(raw)
+        const glowRatio = contrastRatio(toHex(over(glow.color, bg, glow.alpha)), toHex(bg))
+        const bandRatio = contrastRatio(toHex(over(band.color, bg, band.alpha)), toHex(bg))
+        // Visible at all — it is a deliberate signal, not a rounding artefact.
+        if (glowRatio < 1.03) {
+          failures.push(`${theme.id} (${bgToken}): glow ${glowRatio.toFixed(3)}:1 — invisible`)
+        }
+        // Strictly weaker than the band, so the band stays the highlight.
+        if (glowRatio >= bandRatio) {
+          failures.push(
+            `${theme.id} (${bgToken}): glow ${glowRatio.toFixed(2)} >= band ${bandRatio.toFixed(2)}`,
+          )
+        }
+      }
+    }
+    expect(failures, `base glow:\n${failures.join('\n')}`).toEqual([])
+  })
+
   it('keeps the theme colour instead of washing it out to grey', () => {
     // Design 2's other failure mode: forcing contrast by blending the accent
     // toward black/white muted every theme (github-light #4a90d9 → #ccd7e1,
     // saturation 0.66 → 0.09). Neither token may blend the accent away.
-    for (const token of ['--running-line', '--running-sweep']) {
+    for (const token of ['--running-glow', '--running-line', '--running-sweep']) {
       for (const theme of THEMES) {
         const vars = varsFor(theme.id)
         const accent = parseHex(vars['--accent-color'])
