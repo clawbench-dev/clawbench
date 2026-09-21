@@ -31,6 +31,20 @@ let client: Client | null = null
 // addForwardedPort — would hang with no listener ever bound.
 const CONNECT_TIMEOUT_MS = 20000
 
+// SSH keepalive, mirroring Android's JSch settings
+// (BackgroundService: setServerAliveInterval(30000) / setServerAliveCountMax(3)).
+// Without it an idle tunnel is silently dropped by NAT/stateful firewalls — the
+// observed failure was a remote client whose connection died after exactly
+// 12.5s, after which nothing restored it.
+const KEEPALIVE_INTERVAL_MS = 30000
+const KEEPALIVE_COUNT_MAX = 3
+
+// Connection monitor: Android has a 15s poll with 5/10/30/60/120s backoff and
+// automatic re-establishment of every forward. The desktop shell had no
+// equivalent, so any drop was permanent until the user manually hit refresh.
+const MONITOR_INTERVAL_MS = 15000
+const RECONNECT_DELAYS_MS = [5000, 10000, 30000, 60000, 120000]
+
 // The listening net.Server for each forwarded local port. Kept alongside
 // `state.forwarded` because removing a forward must CLOSE the listener — the
 // map entry alone is bookkeeping, and dropping it without closing leaves the
@@ -43,6 +57,53 @@ const forwardServers = new Map<number, net.Server>()
 // the module's client, so a second attempt would strand the first caller's
 // promise (see ensureTunnel).
 let connecting: Promise<boolean> | null = null
+
+// Connection monitor. Armed whenever there is at least one desired forward, so
+// a dropped tunnel is restored without the user having to notice and hit
+// refresh. Mirrors Android's BackgroundService connection monitor.
+let monitorTimer: ReturnType<typeof setInterval> | null = null
+let reconnectAttempt = 0
+let lastAttemptAt = 0
+
+function startMonitor(): void {
+  if (monitorTimer) return
+  monitorTimer = setInterval(() => { void monitorTick() }, MONITOR_INTERVAL_MS)
+  // Never let the monitor alone keep the app's event loop alive.
+  monitorTimer.unref?.()
+}
+
+function stopMonitor(): void {
+  if (!monitorTimer) return
+  clearInterval(monitorTimer)
+  monitorTimer = null
+  reconnectAttempt = 0
+}
+
+/** Keep the monitor armed exactly while there is something worth maintaining. */
+function syncMonitor(): void {
+  if (state.forwarded.size > 0) startMonitor()
+  else stopMonitor()
+}
+
+/**
+ * One monitor tick: if the tunnel is down but forwards are still desired,
+ * reconnect (with backoff) so `openClient`'s ready handler rebuilds them.
+ */
+async function monitorTick(): Promise<void> {
+  if (state.forwarded.size === 0) { stopMonitor(); return }
+  if (state.connected && client) { reconnectAttempt = 0; return }
+  if (connecting) return // an attempt is already in flight; let it finish
+
+  if (reconnectAttempt > 0) {
+    const delay = RECONNECT_DELAYS_MS[Math.min(reconnectAttempt - 1, RECONNECT_DELAYS_MS.length - 1)]
+    if (Date.now() - lastAttemptAt < delay) return
+  }
+  reconnectAttempt++
+  lastAttemptAt = Date.now()
+  // On success the ready handler runs rebuildAllForwards(), restoring every
+  // desired port; failures are retried on subsequent ticks with longer delays.
+  await ensureTunnel()
+}
 
 /** Close and forget the listener for one local port, if any. */
 function closeForwardServer(localPort: number): void {
@@ -125,6 +186,7 @@ function openClient(host: string, port: number, username: string): Promise<boole
       state.connected = true
       state.error = ''
       state.errorType = ''
+      reconnectAttempt = 0
       // Rebuild every desired forward on the fresh channel. This is what makes
       // a reconnect (and a startup sync) actually restore reachability.
       rebuildAllForwards()
@@ -147,14 +209,24 @@ function openClient(host: string, port: number, username: string): Promise<boole
           client = null
           state.connected = false
           // Only the runtime listeners die here. The desired set is kept so the
-          // next ensureTunnel() can rebuild it.
+          // monitor (or a caller) can rebuild it.
           closeAllForwardServers()
+          // An unexpected drop: keep/arm the monitor so the forwards come back
+          // on their own. disconnectTunnel() stops it for an explicit teardown.
+          syncMonitor()
         }
         done(false)
       })
 
     try {
-      c.connect({ host, port, username, password: getPassword() })
+      c.connect({
+        host,
+        port,
+        username,
+        password: getPassword(),
+        keepaliveInterval: KEEPALIVE_INTERVAL_MS,
+        keepaliveCountMax: KEEPALIVE_COUNT_MAX,
+      })
     } catch (err) {
       state.connected = false
       state.error = String((err as Error)?.message || err)
@@ -170,6 +242,9 @@ function openClient(host: string, port: number, username: string): Promise<boole
  * clearing it here silently dropped every mapping.
  */
 export function disconnectTunnel(): void {
+  // An explicit teardown means "stop maintaining this" — only an unexpected
+  // close should leave the monitor running to recover.
+  stopMonitor()
   if (client) {
     try { client.end() } catch { /* ignore */ }
     client = null
@@ -250,12 +325,16 @@ export async function addForwardedPort(localPort: number, targetPort: number, ho
   // Record the intent BEFORE binding, so a concurrent reconnect's
   // rebuildAllForwards() can pick it up even if this call loses the race.
   state.forwarded.set(localPort, { targetPort, host })
+  // There is now something worth keeping alive.
+  syncMonitor()
   return listenForward(localPort, targetPort, host)
 }
 
 export function removeForwardedPort(localPort: number): void {
   closeForwardServer(localPort)
   state.forwarded.delete(localPort)
+  // Nothing left to maintain → stop polling.
+  syncMonitor()
 }
 
 export function testPortReachable(localPort: number): Promise<boolean> {

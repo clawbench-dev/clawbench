@@ -1749,8 +1749,7 @@ describe('usePortForward', () => {
         })
     })
 
-    describe('local reachability probing', () => {
-        it('fills localReachable from testPortReachable in app mode', async () => {
+    describe('local reachability probing', () => {        it('fills localReachable from testPortReachable in app mode', async () => {
             mockIsAppMode.value = true
             mockApiGet.mockResolvedValue({
                 ports: [
@@ -1826,6 +1825,137 @@ describe('usePortForward', () => {
             expect(seen.length).toBeGreaterThan(0)
             expect(seen.every(p => p.active === false)).toBe(true)
 
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+    })
+
+    describe('poll-driven reconnect', () => {
+        it('syncToNative arms the health poll so a later drop self-heals', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: true, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            // Native accepts the forward, then reports the tunnel as down.
+            const mockReconnect = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(true),
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { syncToNative } = usePortForward()
+
+            await syncToNative()
+            mockReconnect.mockClear()
+
+            // The poll must have been armed by the sync — otherwise a drop after
+            // startup would never be noticed until the user opened the panel.
+            await vi.advanceTimersByTimeAsync(5000)
+
+            expect(mockReconnect).toHaveBeenCalled()
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('asks native to reconnect when the tunnel is down but ports are enabled', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            const mockReconnect = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            // Arming the poll requires a disconnected status.
+            await checkTunnelHealth()
+            mockReconnect.mockClear()
+
+            await vi.advanceTimersByTimeAsync(5000)
+
+            // Recovery must not depend on the user pressing retry.
+            expect(mockReconnect).toHaveBeenCalled()
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not reconnect when native status is unknown (null)', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: false, clientCount: 0, activeChannels: 0 } }
+            })
+            const mockReconnect = vi.fn().mockResolvedValue(true)
+            // No isTunnelConnected → getNativeTunnelStatus() resolves null.
+            ;(window as any).ClawBenchNative = { reconnectTunnelAsync: mockReconnect }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            await checkTunnelHealth()
+            await vi.advanceTimersByTimeAsync(20000)
+
+            // null means "no native status", not "disconnected" — calling
+            // reconnect there would be meaningless.
+            expect(mockReconnect).not.toHaveBeenCalled()
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not reconnect when no enabled ports exist', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: false }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            const mockReconnect = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            await checkTunnelHealth()
+            await vi.advanceTimersByTimeAsync(20000)
+
+            // Nothing enabled to maintain → do not churn the tunnel.
+            expect(mockReconnect).not.toHaveBeenCalled()
+
+            vi.useRealTimers()
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })

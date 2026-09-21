@@ -57,7 +57,6 @@ const { FakeClient } = vi.hoisted(() => {
       this.connectArgs = args
       return this
     }
-
     end(): void { this.ended = true }
 
     forwardOut(
@@ -411,5 +410,101 @@ describe('tunnel: test harness sanity', () => {
     expect(await testPortReachable(PORT_B)).toBe(true)
     await new Promise<void>(r => server.close(() => r()))
     expect(await testPortReachable(PORT_B)).toBe(false)
+  })
+})
+
+describe('tunnel: keepalive (parity with Android JSch setServerAliveInterval)', () => {
+  it('enables SSH keepalive on connect', async () => {
+    await connectOnce()
+    const args = FakeClient.last().connectArgs as Record<string, unknown>
+    // Without this the tunnel is silently dropped by idle NAT/firewall timeouts
+    // and nothing restores it — the reported "PC port mapping does not work".
+    expect(args.keepaliveInterval).toBe(30000)
+    expect(args.keepaliveCountMax).toBe(3)
+  })
+})
+
+describe('tunnel: connection monitor auto-reconnects', () => {
+  // The monitor interval must be CREATED while fake timers are installed, or it
+  // is a real timer that advanceTimersByTimeAsync() cannot reach. Enabling
+  // shouldAdvanceTime keeps libuv socket I/O (the real bind + probe) moving.
+  async function connectAndMap() {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const c = await connectOnce()
+    await addForwardedPort(PORT_A, 20000, '')
+    expect(await testPortReachable(PORT_A)).toBe(true)
+    return c
+  }
+
+  it('re-establishes the tunnel and its forwards after an unexpected drop', async () => {
+    const c = await connectAndMap()
+    try {
+      // Simulate the SSH connection dying (network blip / idle timeout).
+      c.emit('close')
+      expect(isTunnelConnected()).toBe(false)
+
+      // The monitor polls every 15s and reconnects on its own.
+      await vi.advanceTimersByTimeAsync(15001)
+      expect(FakeClient.instances.length).toBeGreaterThan(1)
+      FakeClient.last().emit('ready')
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+
+      // Both the tunnel and the forward are back without any user action.
+      expect(isTunnelConnected()).toBe(true)
+      expect(getForwardedPorts()).toEqual([{ port: PORT_A, host: '' }])
+      expect(await testPortReachable(PORT_A)).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not reconnect after an explicit disconnectTunnel()', async () => {
+    await connectAndMap()
+    try {
+      const before = FakeClient.instances.length
+      // An explicit teardown means "stop maintaining this".
+      disconnectTunnel()
+      await vi.advanceTimersByTimeAsync(300001)
+      expect(FakeClient.instances.length).toBe(before)
+      expect(isTunnelConnected()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops monitoring once the last forward is removed', async () => {
+    const c = await connectAndMap()
+    try {
+      removeForwardedPort(PORT_A)
+      c.emit('close')
+      const before = FakeClient.instances.length
+      await vi.advanceTimersByTimeAsync(300001)
+      // Nothing left to maintain → no reconnect attempts.
+      expect(FakeClient.instances.length).toBe(before)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('backs off instead of hammering the server on repeated failures', async () => {
+    const c = await connectAndMap()
+    try {
+      c.emit('close')
+      const before = FakeClient.instances.length
+
+      // First tick fires attempt #1.
+      await vi.advanceTimersByTimeAsync(15001)
+      const afterFirst = FakeClient.instances.length
+      expect(afterFirst).toBe(before + 1)
+
+      // Fail it so the backoff gate applies...
+      FakeClient.last().emit('error', new Error('ECONNREFUSED'))
+      // ...and a tick arriving 15s later (> 5s backoff) makes exactly one more.
+      await vi.advanceTimersByTimeAsync(15001)
+      expect(FakeClient.instances.length).toBe(afterFirst + 1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

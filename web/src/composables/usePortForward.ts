@@ -403,6 +403,11 @@ export function usePortForward() {
     // Re-probe now that the forwards have been (re)established, so the dots
     // reflect reality instead of the pre-sync state.
     await refreshLocalReachability()
+    // Enabled ports exist (we returned early otherwise), so run a health check:
+    // if the tunnel is down it arms the 5s poll, which asks the native layer to
+    // reconnect. Secondary to the shell's own monitor, but it keeps recovery
+    // working even if that monitor is not armed.
+    await checkTunnelHealth()
   }
 
   /**
@@ -574,6 +579,17 @@ export function usePortForward() {
           tunnelStatus.value = 'degraded'
           tunnelMessage.value = gt('portForward.tunnelDegraded')
         }
+        return
+      }
+
+      // Native reports the tunnel down while ports are still wanted: ask it to
+      // reconnect. The desktop shell self-heals via its own monitor, but doing
+      // it here too means recovery does not depend on that monitor being armed.
+      // Only for an explicit `false` — `null` means "no native status", where a
+      // reconnect call would be meaningless.
+      if (nativeConnected === false && ports.value.some(p => p.enabled)) {
+        await nativeReconnectTunnel()
+        await loadPorts()
         return
       }
 
