@@ -303,6 +303,22 @@ describe('convertAudioLinks', () => {
     expect(result).not.toContain('<a href=')
   })
 
+  it('converts an annotated link carrying target/rel', () => {
+    // annotateExternalLinkTargets runs earlier in the markdown pipeline and
+    // stamps target/rel onto external links. The converter must still match
+    // those anchors, or an external .mp3 degrades to a plain link.
+    const html = '<a href="https://example.com/sound.mp3" target="_blank" rel="noopener noreferrer">play</a>'
+    const result = convertAudioLinks(html)
+    expect(result).toContain('<audio src="https://example.com/sound.mp3" controls')
+    expect(result).not.toContain('<a ')
+  })
+
+  it('converts a link whose href is not the first attribute', () => {
+    const html = '<a class="x" href="audio.mp3" title="t">play</a>'
+    const result = convertAudioLinks(html)
+    expect(result).toContain('<audio src="audio.mp3" controls')
+  })
+
   it('converts .wav links to audio player', () => {
     const html = '<a href="sound.wav">wav</a>'
     const result = convertAudioLinks(html)
@@ -514,6 +530,15 @@ describe('convertVideoLinks', () => {
     expect(result).toContain('<video src="/api/local-file/movie.mp4" controls')
     expect(result).toContain('class="chat-video-player"')
     expect(result).not.toContain('<a href=')
+  })
+
+  it('converts an annotated link carrying target/rel', () => {
+    // Same reason as the audio case: the external-link annotator stamps
+    // target/rel before this step runs.
+    const html = '<a href="https://example.com/movie.mp4" target="_blank" rel="noopener noreferrer">play</a>'
+    const result = convertVideoLinks(html, videoProjectRoot)
+    expect(result).toContain('<video src="https://example.com/movie.mp4" controls')
+    expect(result).not.toContain('<a ')
   })
 
   it('converts .webm and .mov links to video player', () => {

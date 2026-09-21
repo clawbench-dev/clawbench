@@ -454,3 +454,53 @@ describe('KaTeX stretchy-delimiter svgs are not hijacked as media (issue #473)',
     expect(html).toContain('lightbox-svg-wrap')
   })
 })
+
+describe('external links open in a new tab (browser mode)', () => {
+  // Regression: markdown links rendered as a bare `<a href>` navigated the
+  // CURRENT page, replacing the whole app UI with the target site.
+  const anchorsIn = (html: string) =>
+    Array.from(new DOMParser().parseFromString(html, 'text/html').querySelectorAll('a'))
+
+  it('stamps target=_blank on external links through the full pipeline', () => {
+    // Runs the real marked + DOMPurify + annotator chain: DOMPurify strips
+    // `target` unless allow-listed, so this guards the step's ordering too.
+    const html = renderMarkdownHtml('see [site](https://example.com/page) now')
+    const [a] = anchorsIn(html)
+    expect(a.getAttribute('href')).toBe('https://example.com/page')
+    expect(a.getAttribute('target')).toBe('_blank')
+    expect(a.getAttribute('rel')).toContain('noopener')
+  })
+
+  it('annotates in streaming mode (skipEnhancements) as well', () => {
+    // Streaming skips the step-9 enhancement block; the annotation must live in
+    // the always-run phase so a link is already correct while the reply streams.
+    const html = renderMarkdownHtml('[site](https://example.com)', { skipEnhancements: true, skipKatex: true })
+    expect(anchorsIn(html)[0].getAttribute('target')).toBe('_blank')
+  })
+
+  it('annotates in file-preview mode (skipEnhancements)', () => {
+    const { html } = buildMarkdownPreviewDom(
+      { content: '[site](https://example.com)', path: 'docs/README.md' },
+      { isPC: true, imageTimestamp: 1 }
+    )
+    expect(anchorsIn(html)[0].getAttribute('target')).toBe('_blank')
+  })
+
+  it('leaves relative, anchor and same-origin links untouched', () => {
+    const html = renderMarkdownHtml(
+      '[doc](docs/a.md) [jump](#setup) [app](/settings) [mail](mailto:a@b.com)'
+    )
+    for (const a of anchorsIn(html)) {
+      expect(a.hasAttribute('target'), a.getAttribute('href') || '').toBe(false)
+    }
+  })
+
+  it('keeps external media links as inline players, not plain links', () => {
+    // The audio/video converters run AFTER the annotator; if their regex
+    // required a bare `<a href>`, the stamped target/rel would make the link
+    // fall through and degrade the player back to a link.
+    const html = renderMarkdownHtml('[play](https://example.com/song.mp3)')
+    expect(html).toContain('<audio')
+    expect(html).toContain('src="https://example.com/song.mp3"')
+  })
+})

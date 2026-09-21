@@ -320,13 +320,26 @@ function escapeHtmlAttr(str: string): string {
 }
 
 /**
+ * Matches a rendered markdown link and captures its href plus inner text.
+ *
+ * The href is NOT assumed to be the only attribute: `annotateExternalLinkTargets`
+ * stamps `target`/`rel` onto external links earlier in the pipeline, and the
+ * localhost annotator does the same for its own wrappers. Requiring
+ * `<a href="…">` with nothing else made those anchors stop matching, so an
+ * external .mp3/.mp4 link silently degraded from an inline player back to a
+ * plain link. Extra attributes on either side of href are tolerated; the
+ * captured href and inner text are all the media converters need.
+ */
+const MARKDOWN_LINK_RE = /<a\s+[^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g
+
+/**
  * Convert audio file links to inline audio players.
  * Replaces <a href="...mp3"> links with <audio> elements.
  * Project-relative paths (not /api/local-file/ or external URLs) are rewritten
  * to /api/local-file/ URLs so the browser can load them, mirroring image handling.
  */
 export function convertAudioLinks(html: string, projectRoot?: string): string {
-  return html.replace(/<a href="([^"]+)">([^<]*)<\/a>/g, (match, href) => {
+  return html.replace(MARKDOWN_LINK_RE, (match, href) => {
     const lower = href.toLowerCase()
     if (AUDIO_EXTENSIONS.some(ext => lower.endsWith(ext))) {
       const src = resolveLocalMediaSrc(href, projectRoot)
@@ -343,7 +356,7 @@ export function convertAudioLinks(html: string, projectRoot?: string): string {
  * project-relative paths to /api/local-file/ URLs like audio/images.
  */
 export function convertVideoLinks(html: string, projectRoot?: string): string {
-  return html.replace(/<a href="([^"]+)">([^<]*)<\/a>/g, (match, href) => {
+  return html.replace(MARKDOWN_LINK_RE, (match, href) => {
     const lower = href.toLowerCase()
     if (VIDEO_EXTENSIONS.some(ext => lower.endsWith(ext))) {
       const src = resolveLocalMediaSrc(href, projectRoot)
