@@ -77,7 +77,16 @@ function reload() {
   border-radius: 6px;
   cursor: pointer;
   font-size: var(--font-size-md, 14px);
-  background: var(--accent, #b8bb26);
+  /* The accent token is --accent-color, not --accent. The old name was never
+     declared anywhere, so this always fell through to its fallback — a
+     hard-coded gruvbox green that ignored the user's theme entirely (this
+     screen is the second-tab block, rendered before the app's own theme
+     plumbing runs).
+     The fallback must stay: --accent-color is declared only under
+     [data-theme="…"], and index.html's inline bootstrap is what sets that
+     attribute. Keeping a neutral blue here means the button is still legible
+     if the screen ever renders before that script has run. */
+  background: var(--accent-color, #4a90d9);
   color: var(--bg-primary, #1d2021);
 }
 
