@@ -97,6 +97,8 @@ const fileUrl = computed(() => {
 })
 
 // --- PPT zoom: CSS transform on pptx-preview-wrapper ---
+// `scale` is user zoom on top of the width fit: at 1 the wrapper is laid out at
+// the container width and the library's own per-slide scale fits the content.
 function applyPptScale() {
   if (!isPpt.value || !bodyRef.value) return
   const wrapper = bodyRef.value.querySelector('.pptx-preview-wrapper')
@@ -108,7 +110,8 @@ function applyPptScale() {
     wrapper.style.transform = `scale(${scale.value})`
     wrapper.style.transformOrigin = 'top left'
   }
-  // Scale the wrapper's layout size so the scroll container adjusts correctly
+  // Give the scaled wrapper a layout width that keeps the visible result inside
+  // the container, so the scroll extent stays correct.
   wrapper.style.width = `${100 / scale.value}%`
 }
 
@@ -171,7 +174,85 @@ function onRendered() {
   scale.value = 1.0
   // Apply scale after DOM is ready
   if (isPpt.value) {
-    nextTick(applyPptScale)
+    nextTick(() => {
+      applyPptScale()
+      // The viewer measured the container before it had a usable size (e.g. it
+      // was mounted while hidden) and fell back to 960x540. Re-fit against the
+      // real width now that the slides exist.
+      lastFitWidth = -1
+      scheduleRefit()
+    })
+  }
+}
+
+// --- Container resize: re-fit the viewer to the available width ---
+// Both viewers size themselves once and never re-measure on a layout-only
+// change (dragging the splitter, toggling a dock panel) — which produces no
+// window `resize` event:
+//   * @vue-office/pptx freezes the width/height it measured at mount and bakes
+//     a per-slide scale from it, so slides keep the width of the pane they were
+//     mounted in.
+//   * @vue-office/excel re-measures only from the window `resize` listener it
+//     registers internally.
+// Watching the body element catches both, including a file mounted while hidden
+// (0-width → the viewers fall back to 960 / 1200).
+let resizeObserver = null
+let refitRaf = 0
+let refitTimer = 0
+let lastFitWidth = -1
+
+function refitPptx() {
+  const body = bodyRef.value
+  if (!body) return
+  const wrapper = body.querySelector('.pptx-preview-wrapper')
+  if (!wrapper) return
+  // The slide width that scale=1 produces is the scroll container's content
+  // width (clientWidth excludes the vertical scrollbar). User zoom is applied
+  // separately as a transform on the wrapper, so it must not enter this
+  // calculation — the slides stay fitted and the transform magnifies them.
+  const fitWidth = body.clientWidth
+  if (!fitWidth) return
+  for (const slide of wrapper.querySelectorAll('.pptx-preview-slide-wrapper')) {
+    const inner = slide.querySelector('.slide-wrapper')
+    if (!inner) continue
+    const baseW = parseFloat(inner.style.width)
+    const baseH = parseFloat(inner.style.height)
+    if (!baseW || !baseH) continue
+    const ratio = fitWidth / baseW
+    slide.style.width = `${fitWidth}px`
+    slide.style.height = `${baseH * ratio}px`
+    for (const layer of slide.querySelectorAll('.slide-wrapper, .slide-master-wrapper, .slide-layout-wrapper')) {
+      layer.style.transform = `scale(${ratio})`
+    }
+  }
+}
+
+function refitExcel() {
+  // @vue-office/excel owns its spreadsheet instance and exposes no re-measure
+  // API; dispatching the event it listens for makes it re-read
+  // clientWidth/clientHeight and redraw the canvas from the loaded data.
+  window.dispatchEvent(new Event('resize'))
+}
+
+function scheduleRefit() {
+  const body = bodyRef.value
+  if (!body) return
+  const width = body.clientWidth
+  // Hidden (e.g. inactive tab): leave lastFitWidth untouched so the observer
+  // fires a real re-fit once the element has a size again.
+  if (!width || width === lastFitWidth) return
+  lastFitWidth = width
+  if (isPpt.value) {
+    if (refitRaf) return
+    refitRaf = requestAnimationFrame(() => {
+      refitRaf = 0
+      refitPptx()
+    })
+  } else if (isExcel.value) {
+    // Trailing debounce: a splitter drag emits a resize per frame and each
+    // excel re-measure redraws the whole sheet.
+    clearTimeout(refitTimer)
+    refitTimer = setTimeout(refitExcel, 120)
   }
 }
 
@@ -200,13 +281,27 @@ watch(() => props.file?.path, (newPath, oldPath) => {
     error.value = ''
     scale.value = 1.0
     mediaTimestamp.value = Date.now()
+    // New document, new mount-time geometry.
+    lastFitWidth = -1
   }
 })
 
 onMounted(() => {
+  if (typeof ResizeObserver === 'undefined' || !bodyRef.value) return
+  resizeObserver = new ResizeObserver(scheduleRefit)
+  resizeObserver.observe(bodyRef.value)
 })
 
 onUnmounted(() => {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+  if (refitRaf) {
+    cancelAnimationFrame(refitRaf)
+    refitRaf = 0
+  }
+  clearTimeout(refitTimer)
 })
 
 defineExpose({
@@ -278,7 +373,12 @@ defineExpose({
   display: none !important;
 }
 
-/* PPT overrides: wrapper fills container, slides full width, no extra spacing */
+/* PPT overrides: wrapper fills container, slides full width, no extra spacing.
+   The slide wrapper and the three scaled layers get their pixel width/height
+   from the library (and are re-fitted on container resize in script); forcing
+   `width: 100% !important` here would override those inline sizes while the
+   library still applies its own `transform: scale()`, double-scaling the slide
+   and clipping it. Only reset the box spacing. */
 .office-preview-body :deep(.vue-office-pptx) {
   width: 100% !important;
   height: 100% !important;
@@ -290,15 +390,12 @@ defineExpose({
 }
 
 .office-preview-body :deep(.pptx-preview-slide-wrapper) {
-  width: 100% !important;
-  margin:0 auto var(--space-5) !important;
+  margin: 0 auto var(--space-5) !important;
 }
 
 .office-preview-body :deep(.slide-wrapper),
 .office-preview-body :deep(.slide-master-wrapper),
 .office-preview-body :deep(.slide-layout-wrapper) {
-  width: 100% !important;
-  max-width: 100% !important;
   margin: 0 !important;
   padding: 0 !important;
 }
