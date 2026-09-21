@@ -1,5 +1,5 @@
 <template>
-  <div v-if="parts.length > 0" class="dir-breadcrumb" data-horizontal-scroll="true">
+  <div v-if="showBreadcrumb" class="dir-breadcrumb" data-horizontal-scroll="true">
     <!-- Filesystem root, shown ONLY while browsing project-external. The Home
          crumb below always means "project root", so an external browse needs a
          separate way back up to "/" — otherwise the only exit from /var/log
@@ -7,11 +7,12 @@
     <template v-if="showRootCrumb">
       <span
         class="crumb crumb-fs-root"
+        :class="{ current: isAtFsRoot }"
         :draggable="isWideScreen"
         :title="fsRootTitle"
         @dragstart="onCrumbDragStart(fsRootPath, 'FSRoot', $event)"
         @dragend="cleanupDragGhost()"
-        @click="$emit('navigate', fsRootPath)"
+        @click="!isAtFsRoot && $emit('navigate', fsRootPath)"
       >
         <HardDrive :size="14" />
       </span>
@@ -148,6 +149,19 @@ const parts = computed(() => {
   }
   return segments
 })
+
+/**
+ * Whether to render at all. `parts` is empty both for "nothing to show"
+ * (the picker at its top level, an empty path) and for the POSIX filesystem
+ * root, where `splitPath('/')` yields no segments. Hiding the bar in the latter
+ * case traps the user: the up-one-level button is a no-op there (`dirName('/')`
+ * is `'/'`) and the Home crumb is the only way back to the project. Windows
+ * never hit this — `C:\` keeps a `C:` segment, so the bar stayed visible.
+ */
+const showBreadcrumb = computed(() => parts.value.length > 0 || isExternalBrowse.value)
+
+/** Browsing the filesystem root itself — there is nothing above it. */
+const isAtFsRoot = computed(() => isExternalBrowse.value && fsRootPath.value === normalizeSlashes(props.path))
 
 /**
  * Reconstruct a path from breadcrumb segments, preserving the FORM of the

@@ -205,11 +205,28 @@ describe('DirBreadcrumb', () => {
   // ── reconstructPath edge cases ──
 
   describe('reconstructPath edge cases', () => {
-    it('handles single Unix root segment "/"', async () => {
-      // Path "/" => splitPath("/") = ["", ""] => filter("") => []
-      // No crumbs except root icon, so no non-root segment to click
+    it('keeps the breadcrumb visible at the POSIX filesystem root', () => {
+      // Regression: splitPath("/") yields NO segments, so a `parts.length > 0`
+      // guard hid the entire bar at "/". The up-one-level button is a no-op
+      // there (dirName("/") === "/"), which made the Home crumb — the only way
+      // back to the project — unreachable. The user was stranded.
       const wrapper = mountBreadcrumb({ path: '/' })
-      expect(wrapper.find('.dir-breadcrumb').exists()).toBe(false)
+      expect(wrapper.find('.dir-breadcrumb').exists()).toBe(true)
+      expect(wrapper.find('.crumb-home').exists()).toBe(true)
+    })
+
+    it('marks the filesystem-root crumb as current at "/" and does not navigate', async () => {
+      const wrapper = mountBreadcrumb({ path: '/' })
+      const fsRoot = wrapper.find('.crumb-fs-root')
+      expect(fsRoot.classes()).toContain('current')
+      await fsRoot.trigger('click')
+      expect(wrapper.emitted('navigate')).toBeUndefined()
+    })
+
+    it('still offers Home as the way back to the project from "/"', async () => {
+      const wrapper = mountBreadcrumb({ path: '/' })
+      await wrapper.find('.crumb-home').trigger('click')
+      expect(wrapper.emitted('navigate')![0][0]).toBe('')
     })
 
     it('handles single Windows drive root', async () => {

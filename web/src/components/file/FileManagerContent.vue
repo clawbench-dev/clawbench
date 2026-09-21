@@ -185,7 +185,15 @@
       <!-- Breadcrumb (multi-select info is merged into the bottom bar so the
            directory context is never obscured) -->
       <div v-if="currentDir" class="dir-nav-bottom">
-        <button class="dir-up-btn" :title="t('file.nav.parentDir')" @click="goToParentDir">
+        <!-- Disabled at a filesystem root: dirName("/") is "/", so the walk-up
+             is a no-op. Leaving it enabled there offers an affordance that
+             silently does nothing. -->
+        <button
+          class="dir-up-btn"
+          :disabled="!hasParentDir"
+          :title="hasParentDir ? t('file.nav.parentDir') : t('file.nav.fsRoot')"
+          @click="goToParentDir"
+        >
           <ArrowLeft :size="14" />
         </button>
         <DirBreadcrumb :path="currentDir" @navigate="$emit('navigateDir', $event)" />
@@ -1520,6 +1528,18 @@ const displayEntries = computed(() => {
  * so the absolute form of currentDir is exactly the external signal.
  */
 const isExternalDir = computed(() => isAbsolutePath(props.currentDir || ''))
+
+/**
+ * Whether "up one level" can actually go anywhere. False at the project root
+ * (empty currentDir) and at a filesystem root, where dirName is self-referential
+ * — the same predicate the back state machine uses, so the button and Back
+ * agree about when the action is a no-op.
+ */
+const hasParentDir = computed(() => {
+  const dir = props.currentDir || ''
+  if (dir === '') return false
+  return dirName(dir) !== dir
+})
 
 function currentDirPath() {
     const dir = props.currentDir || ''
@@ -2906,6 +2926,20 @@ function scrollSelectedIntoView(path) {
     .dir-up-btn:hover {
         background: var(--bg-secondary, #e0e0e0);
         color: var(--accent-color, #4a90d9);
+    }
+}
+
+/* At a filesystem root there is nowhere to go up to; keep the button present so
+   the bar's layout does not shift, but make the dead affordance read as dead. */
+.dir-up-btn:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+@media (hover: hover) {
+    .dir-up-btn:disabled:hover {
+        background: transparent;
+        color: var(--text-muted, #999);
     }
 }
 

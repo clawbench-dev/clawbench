@@ -4182,6 +4182,18 @@ describe('FileManagerContent — internal move helpers', () => {
     expect(wrapper.find('.dir-nav-external').exists()).toBe(true)
   })
 
+  it('disables the up button at the filesystem root (nowhere to go)', () => {
+    // dirName("/") === "/", so the walk-up is a no-op; an enabled button would
+    // offer an affordance that silently does nothing.
+    const wrapper = mountContent({ currentDir: '/', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('disabled')).toBeDefined()
+  })
+
+  it('keeps the up button enabled one level below the filesystem root', () => {
+    const wrapper = mountContent({ currentDir: '/var', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('disabled')).toBeUndefined()
+  })
+
   it('does not label the browse panel for a project-relative currentDir', () => {
     const wrapper = mountContent({ currentDir: 'web/src', entries: [] })
     expect(wrapper.find('.dir-nav-external').exists()).toBe(false)
