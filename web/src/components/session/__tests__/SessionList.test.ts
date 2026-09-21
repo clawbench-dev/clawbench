@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
 import { LongPressDirective } from '@/directives/longPress'
+import { RunningSweepDirective } from '@/directives/runningSweep'
 
 // UI zoom factor driving toFixedCSS()/getZoomedViewport() in the component's
 // clamp math. Defaults to 1 (no zoom); individual tests raise it to prove the
@@ -162,7 +163,7 @@ describe('SessionList', () => {
   async function mountList(props = {}) {
     const wrapper = mount(SessionList, {
       props: { currentSessionId: 's1', runningSessionIds: new Set(), ...props },
-      global: { directives: { 'long-press': LongPressDirective } },
+      global: { directives: { 'long-press': LongPressDirective, 'running-sweep': RunningSweepDirective } },
     })
     await flushPromises()
     return wrapper
@@ -191,6 +192,24 @@ describe('SessionList', () => {
     await wrapper.vm.loadSessions()
     await flushPromises()
     expect(wrapper.vm.sessionsWithStatus[0].running).toBe(true)
+  })
+
+  it('renders the sweep band as a real element only on running rows', async () => {
+    // The band must be a real node, not a `::after`: its travel is driven by
+    // v-running-sweep through the Web Animations API, which cannot target a
+    // pseudo-element. And it must be scoped to running rows, since it is the
+    // visual signal for them.
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1, sessionsFixture().s2], hasMore: false }) })
+    const wrapper = await mountList({ runningSessionIds: new Set(['s1']) })
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    const rows = wrapper.findAll('.session-row')
+    expect(rows).toHaveLength(2)
+    const runningRow = wrapper.find('[data-session-id="s1"]')
+    const idleRow = wrapper.find('[data-session-id="s2"]')
+    expect(runningRow.find('.session-running-band').exists(), 'running row should carry the band').toBe(true)
+    expect(idleRow.find('.session-running-band').exists(), 'idle row should not').toBe(false)
   })
 
   it('emits archive after confirmation', async () => {

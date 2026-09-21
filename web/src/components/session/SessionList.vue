@@ -34,7 +34,7 @@
             @contextmenu.prevent="showContextMenu($event, session)"
             v-long-press="onSessionLongPress"
           >
-            <span v-if="session.running" class="session-running-line"></span>
+            <span v-if="session.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
             <div
               class="session-item"
               :class="{ active: session.id === currentSessionId }"
@@ -93,7 +93,7 @@
               class="cross-session-row"
               :class="{ running: session.running }"
             >
-              <span v-if="session.running" class="session-running-line"></span>
+              <span v-if="session.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
               <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
                 <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
                 <div class="session-item-info">
@@ -849,8 +849,11 @@ onUnmounted(() => {
   background: var(--running-glow);
 }
 
-.session-running-line::after {
-  content: '';
+/* The travelling band. A real element (not `::after`) because its travel is
+   driven by v-running-sweep through the Web Animations API, which can only
+   target a real node. */
+.session-running-band {
+  display: block;
   position: absolute;
   top: 0;
   left: 0;
@@ -875,7 +878,14 @@ onUnmounted(() => {
     var(--running-line) 50%,
     transparent 100%
   );
-  animation: scan-bg 2s linear infinite;
+  /* The travel itself is driven by v-running-sweep (Web Animations API), NOT a
+     CSS animation. A CSS animation starts when its element first matches the
+     rule, so each row would run at its own phase and lose that phase whenever
+     Vue's TransitionGroup reorders rows (which restarts the animation). The
+     directive pins every band to the shared document timeline instead, so all
+     running sessions sweep in step. This base transform parks the band off the
+     left edge, where the directive's first keyframe also holds it. */
+  transform: translateX(-100%);
 }
 
 /* Hover must still work on a running row — there is no fill to preserve now,
@@ -998,17 +1008,12 @@ onUnmounted(() => {
   50% { opacity: var(--opacity-disabled); transform: scale(0.8); }
 }
 
-/* A single band crossing the row, back to back with no pause. The band is 80%
-   of the row wide, so -100% of its own width parks it just off the left edge
-   and 125% (100% / 0.8) carries it just off the right. Both ends are fully
-   outside the row, so the wrap from 125% back to -100% is invisible and the
-   next pass begins the moment the previous one leaves — no overlap, no gap.
-   `linear` matters: `ease-in-out` made the band decelerate into each end, which
-   read as a stutter rather than a flow. */
-@keyframes scan-bg {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(125%); }
-}
+/* The sweep's keyframes now live in v-running-sweep (directives/runningSweep.ts)
+   rather than here: it drives them through the Web Animations API so every
+   running session's band shares one phase (see the directive header for why a
+   CSS animation could not do that). The geometry — -100% to 125% of the band's
+   own width, `linear` so it flows instead of stuttering into each end — is
+   unchanged; it just lives where it can be phase-locked. */
 
 .session-row {
   display: flex;

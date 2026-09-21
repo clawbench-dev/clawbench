@@ -212,7 +212,7 @@ describe('running-session indicator is theme-derived and visible on every theme'
       },
       {
         file: 'src/components/session/SessionList.vue',
-        selector: /\.session-running-line::after\s*\{[^}]*\}/,
+        selector: /\.session-running-band\s*\{[^}]*\}/,
         token: '--running-line',
       },
       {
@@ -337,10 +337,10 @@ describe('running-session indicator is theme-derived and visible on every theme'
     expect(height, `band is ${height}px — too tall to be a bottom-edge glow`).toBeLessThanOrEqual(20)
 
     // The mask must actually fade out, or the glow would be a solid block.
-    const after = list.match(/\.session-running-line::after\s*\{[^}]*\}/)?.[0]
-    expect(after, '.session-running-line::after should exist').toBeTruthy()
-    expect(after, 'glow needs a mask to fade upward').toMatch(/mask-image:\s*linear-gradient/)
-    expect(after).toMatch(/transparent\s+\d+px/)
+    const band = list.match(/\.session-running-band\s*\{[^}]*\}/)?.[0]
+    expect(band, '.session-running-band should exist').toBeTruthy()
+    expect(band, 'glow needs a mask to fade upward').toMatch(/mask-image:\s*linear-gradient/)
+    expect(band).toMatch(/transparent\s+\d+px/)
   })
 
   it('keeps the dark band no brighter than the light one relative to its row', () => {

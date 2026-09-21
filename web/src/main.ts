@@ -11,6 +11,7 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import i18n from './i18n'
 import { LongPressDirective } from './directives/longPress.ts'
+import { RunningSweepDirective } from './directives/runningSweep.ts'
 import { configureMarkedRenderer } from './utils/markedConfig.ts'
 import { appLog } from './utils/appLog.ts'
 import { installAuthRedirectInterceptor } from './utils/authExpiry.ts'
@@ -104,6 +105,7 @@ async function bootstrap() {
   const app = createApp(App)
   app.use(i18n)
   app.directive('long-press', LongPressDirective)
+  app.directive('running-sweep', RunningSweepDirective)
 
   // Capture Vue component errors (render, lifecycle, event handlers)
   app.config.errorHandler = (err, _instance, info) => {
