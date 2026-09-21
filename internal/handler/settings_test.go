@@ -372,7 +372,7 @@ func TestServeConfig_Patch_ForgePauseEventTasks(t *testing.T) {
 		"pause_event_tasks must be applied to ConfigInstance")
 
 	// GET must echo the stored value, otherwise the switch resets on reload.
-	getReq := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
 	withAuthCookie(getReq, model.SessionToken)
 	gw := callHandler(ServeConfig, getReq)
 	assert.Equal(t, http.StatusOK, gw.Code)

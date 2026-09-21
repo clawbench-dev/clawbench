@@ -39,6 +39,32 @@ func GetTerminalManager() *terminal.Manager {
 	return m
 }
 
+// resolveTerminalCwd resolves the terminal's working directory from the "cwd"
+// query parameter. An empty value defaults to the project root. A relative
+// value resolves against the project root via ValidatePath; an absolute value
+// is a project-external directory used directly once validated against the
+// configured roots. Writes an error and returns false on failure.
+func resolveTerminalCwd(w http.ResponseWriter, r *http.Request, projectPath string) (string, bool) {
+	reqCwd := r.URL.Query().Get("cwd")
+	if reqCwd == "" {
+		return projectPath, true
+	}
+	if filepath.IsAbs(reqCwd) {
+		abs, err := filepath.Abs(reqCwd)
+		if err != nil || !isPathUnderAnyRoot(abs) {
+			writeLocalizedError(w, r, model.Forbidden(nil, "TerminalCwdInvalid"))
+			return "", false
+		}
+		return abs, true
+	}
+	abs, ok := model.ValidatePath(projectPath, reqCwd)
+	if !ok {
+		writeLocalizedError(w, r, model.Forbidden(nil, "TerminalCwdInvalid"))
+		return "", false
+	}
+	return abs, true
+}
+
 // TerminalWebSocket handles WebSocket connections for the interactive terminal.
 func TerminalWebSocket(w http.ResponseWriter, r *http.Request) {
 	mgr := GetTerminalManager()
@@ -60,23 +86,9 @@ func TerminalWebSocket(w http.ResponseWriter, r *http.Request) {
 	// directly once validated against the configured roots. ValidatePath joins,
 	// so passing an absolute path through it would silently open the terminal
 	// at "<project>/<abs>" instead of the requested directory.
-	cwd := projectPath
-	if reqCwd := r.URL.Query().Get("cwd"); reqCwd != "" {
-		if filepath.IsAbs(reqCwd) {
-			abs, err := filepath.Abs(reqCwd)
-			if err != nil || !isPathUnderAnyRoot(abs) {
-				writeLocalizedError(w, r, model.Forbidden(nil, "TerminalCwdInvalid"))
-				return
-			}
-			cwd = abs
-		} else {
-			abs, ok := model.ValidatePath(projectPath, reqCwd)
-			if !ok {
-				writeLocalizedError(w, r, model.Forbidden(nil, "TerminalCwdInvalid"))
-				return
-			}
-			cwd = abs
-		}
+	cwd, ok := resolveTerminalCwd(w, r, projectPath)
+	if !ok {
+		return
 	}
 
 	// Get optional session ID for reconnect

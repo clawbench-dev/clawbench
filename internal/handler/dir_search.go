@@ -175,6 +175,22 @@ func classifyEntry(d fs.DirEntry, name string) string {
 	return entryTypeFile
 }
 
+// resolveSearchRoot resolves the search root for DirSearch. An absolute path is
+// a project-EXTERNAL directory and is used directly once validated against the
+// configured roots; a relative path resolves against basePath (the project
+// root). Writes an error and returns false on failure.
+func resolveSearchRoot(w http.ResponseWriter, r *http.Request, basePath, pathParam string) (string, bool) {
+	if !filepath.IsAbs(pathParam) {
+		return validateAndResolvePath(w, r, basePath, pathParam)
+	}
+	resolved, err := filepath.Abs(pathParam)
+	if err != nil || !isPathUnderAnyRoot(resolved) {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return "", false
+	}
+	return resolved, true
+}
+
 // DirSearch handles GET /api/dir/search — SSE stream for file search with fuzzy matching.
 // Query params: path (relative dir to search from), q (query string),
 // recursive (optional, default "true"), limit (optional, default file_search.display_limit+1, max 500).
@@ -204,20 +220,9 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	// (validated against the configured roots); a relative one resolves against
 	// the project root. This mirrors how the file manager lists external
 	// directories through /api/projects.
-	var absPath string
-	if filepath.IsAbs(params.path) {
-		resolved, err := filepath.Abs(params.path)
-		if err != nil || !isPathUnderAnyRoot(resolved) {
-			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-			return
-		}
-		absPath = resolved
-	} else {
-		var ok bool
-		absPath, ok = validateAndResolvePath(w, r, basePath, params.path)
-		if !ok {
-			return
-		}
+	absPath, ok := resolveSearchRoot(w, r, basePath, params.path)
+	if !ok {
+		return
 	}
 
 	// SSE headers — written before any streaming

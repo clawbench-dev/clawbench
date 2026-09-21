@@ -1075,7 +1075,7 @@ func TestClassifyPorts_ConcurrencyBounded(t *testing.T) {
 		got = classifyPorts(infos, probe)
 	}()
 
-	for i := 0; i < detectProbeConcurrency; i++ {
+	for i := range detectProbeConcurrency {
 		select {
 		case <-entered:
 		case <-time.After(5 * time.Second):
@@ -1154,7 +1154,7 @@ func TestDetectProbeTimeoutBudget(t *testing.T) {
 		"per-port probe budget must stay small; see the frontend detect timeout")
 }
 
-// TestDetectTLS_NonTLSListenerReturnsFalse is the behavioural counterpart: a
+// TestDetectTLS_NonTLSListenerReturnsFalse is the behavioral counterpart: a
 // listener that accepts TCP but never speaks TLS must be reported as non-TLS.
 func TestDetectTLS_NonTLSListenerReturnsFalse(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
