@@ -4887,6 +4887,46 @@ describe('FileManagerContent — docked preview pane', () => {
 })
 
 describe('FileManagerContent — panel layout (search bar belongs to the listing)', () => {
+  it('renders the search field flat and the dock compact', () => {
+    // The resident search bar is a flat field on the dock's own material: the
+    // pill contributes no fill and no outline of its own. jsdom has no CSS
+    // engine, so assert against the source.
+    const src = readSource()
+    const pill = src.match(/\.fs-input-row :deep\(\.search-pill\)\s*\{([^}]*)\}/)
+    expect(pill).toBeTruthy()
+    expect(pill![1]).toMatch(/background:\s*transparent/)
+    expect(pill![1]).toMatch(/border:\s*none/)
+
+    // The dock must stay compact — the search row and the toggle buttons share
+    // one 26px band.
+    const row = src.match(/\.fs-input-row\s*\{([^}]*)\}/)
+    expect(row).toBeTruthy()
+    expect(row![1]).toMatch(/align-items:\s*center/)
+    const toggle = src.match(/\.fs-toggle-btn\s*\{([^}]*)\}/)
+    expect(toggle).toBeTruthy()
+    expect(toggle![1]).toMatch(/width:\s*26px/)
+    expect(toggle![1]).toMatch(/height:\s*26px/)
+  })
+
+  it('leaves the field with no fill or border in ANY state, including focus', () => {
+    // SearchInput's own treatment paints the pill (--bg-primary + 1px border)
+    // and adds an accent border + glow on focus. On a flat dock field both read
+    // as a nested box, so every state must resolve to no fill and no outline —
+    // the caret is the only focus indicator. `:deep()` carries the parent's
+    // data-v onto .fs-input-row, which keeps this rule specific enough to beat
+    // the child's own .focused rule regardless of the order rollup emits the
+    // two style blocks in.
+    const src = readSource()
+    const focused = src.match(/\.fs-input-row :deep\(\.search-pill\.focused\)\s*\{([^}]*)\}/)
+    expect(focused).toBeTruthy()
+    expect(focused![1]).toMatch(/border:\s*none/)
+    expect(focused![1]).toMatch(/box-shadow:\s*none/)
+    expect(focused![1]).toMatch(/background:\s*transparent/)
+    // A tint would reintroduce the box this field exists to avoid.
+    expect(focused![1]).not.toMatch(/--bg-hover/)
+    expect(focused![1]).not.toMatch(/--accent-color/)
+  })
+
   it('keeps the split a bounded flex column when preview mode is off', () => {
     // Regression: with the split disabled, SplitView's pane wrappers become
     // `display: contents`, so the slot content's layout parent is the split
