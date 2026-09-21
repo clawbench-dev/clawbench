@@ -1462,9 +1462,8 @@ export default {
       projectRoot: '项目根目录',
       backToProject: '返回项目根目录',
       fsRoot: '文件系统根目录',
-      external: '项目外',
-      externalDir: '项目外目录',
-      externalFile: '项目外文件',
+      external: '外部',
+      externalTip: '位于项目目录之外',
     },
     recent: {
       title: '最近文件',

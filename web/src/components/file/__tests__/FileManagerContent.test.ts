@@ -369,7 +369,7 @@ const i18n = createI18n({
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
         search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
-        nav: { parentDir: '返回上一级' },
+        nav: { parentDir: '返回上一级', fsRoot: '文件系统根目录' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -4182,6 +4182,54 @@ describe('FileManagerContent — internal move helpers', () => {
     expect(wrapper.find('.dir-nav-external').exists()).toBe(true)
   })
 
+  it('disables the up button at the filesystem root (nowhere to go)', () => {
+    // dirName("/") === "/", so the walk-up is a no-op; an enabled button would
+    // offer an affordance that silently does nothing.
+    const wrapper = mountContent({ currentDir: '/', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('disabled')).toBeDefined()
+  })
+
+  it('explains why the up button is dead at the filesystem root', () => {
+    // A greyed-out button with the normal "go up one level" tooltip still reads
+    // as broken; the tooltip has to say what the state is.
+    const wrapper = mountContent({ currentDir: '/', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('title')).toBe('文件系统根目录')
+  })
+
+  it('keeps the normal tooltip one level below the filesystem root', () => {
+    const wrapper = mountContent({ currentDir: '/var', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('title')).toBe('返回上一级')
+  })
+
+  it('disables the up button at a Windows drive root too', () => {
+    // dirName("C:/") === "C:/" — same self-reference as POSIX "/".
+    const wrapper = mountContent({ currentDir: 'C:/', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('disabled')).toBeDefined()
+  })
+
+  it('keeps the up button enabled one level below the filesystem root', () => {
+    const wrapper = mountContent({ currentDir: '/var', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('disabled')).toBeUndefined()
+  })
+
+  it('leaves the project root up button enabled when it is the only parent', () => {
+    // The project root itself hides the whole nav row, but a single-segment
+    // project-relative dir must still be able to walk up to it — that parent is
+    // "" and is a real destination, not a self-reference.
+    const wrapper = mountContent({ currentDir: 'src', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('disabled')).toBeUndefined()
+  })
+
+  it('does not emit navigateDir when the up button is disabled at "/"', async () => {
+    // The disabled attribute alone does not stop a synthetic click from
+    // reaching the handler in every environment, so the guard in
+    // goToParentDir must also hold — otherwise a stray click would emit a
+    // self-navigation to "/".
+    const wrapper = mountContent({ currentDir: '/', entries: [] })
+    await wrapper.find('.dir-up-btn').trigger('click')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+  })
+
   it('does not label the browse panel for a project-relative currentDir', () => {
     const wrapper = mountContent({ currentDir: 'web/src', entries: [] })
     expect(wrapper.find('.dir-nav-external').exists()).toBe(false)
@@ -4887,6 +4935,46 @@ describe('FileManagerContent — docked preview pane', () => {
 })
 
 describe('FileManagerContent — panel layout (search bar belongs to the listing)', () => {
+  it('renders the search field flat and the dock compact', () => {
+    // The resident search bar is a flat field on the dock's own material: the
+    // pill contributes no fill and no outline of its own. jsdom has no CSS
+    // engine, so assert against the source.
+    const src = readSource()
+    const pill = src.match(/\.fs-input-row :deep\(\.search-pill\)\s*\{([^}]*)\}/)
+    expect(pill).toBeTruthy()
+    expect(pill![1]).toMatch(/background:\s*transparent/)
+    expect(pill![1]).toMatch(/border:\s*none/)
+
+    // The dock must stay compact — the search row and the toggle buttons share
+    // one 26px band.
+    const row = src.match(/\.fs-input-row\s*\{([^}]*)\}/)
+    expect(row).toBeTruthy()
+    expect(row![1]).toMatch(/align-items:\s*center/)
+    const toggle = src.match(/\.fs-toggle-btn\s*\{([^}]*)\}/)
+    expect(toggle).toBeTruthy()
+    expect(toggle![1]).toMatch(/width:\s*26px/)
+    expect(toggle![1]).toMatch(/height:\s*26px/)
+  })
+
+  it('leaves the field with no fill or border in ANY state, including focus', () => {
+    // SearchInput's own treatment paints the pill (--bg-primary + 1px border)
+    // and adds an accent border + glow on focus. On a flat dock field both read
+    // as a nested box, so every state must resolve to no fill and no outline —
+    // the caret is the only focus indicator. `:deep()` carries the parent's
+    // data-v onto .fs-input-row, which keeps this rule specific enough to beat
+    // the child's own .focused rule regardless of the order rollup emits the
+    // two style blocks in.
+    const src = readSource()
+    const focused = src.match(/\.fs-input-row :deep\(\.search-pill\.focused\)\s*\{([^}]*)\}/)
+    expect(focused).toBeTruthy()
+    expect(focused![1]).toMatch(/border:\s*none/)
+    expect(focused![1]).toMatch(/box-shadow:\s*none/)
+    expect(focused![1]).toMatch(/background:\s*transparent/)
+    // A tint would reintroduce the box this field exists to avoid.
+    expect(focused![1]).not.toMatch(/--bg-hover/)
+    expect(focused![1]).not.toMatch(/--accent-color/)
+  })
+
   it('keeps the split a bounded flex column when preview mode is off', () => {
     // Regression: with the split disabled, SplitView's pane wrappers become
     // `display: contents`, so the slot content's layout parent is the split

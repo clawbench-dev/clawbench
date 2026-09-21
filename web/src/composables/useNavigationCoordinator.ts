@@ -1,7 +1,7 @@
 import { computed, nextTick, type Ref, type ComputedRef } from 'vue'
 import { store as defaultStore } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
-import { isAbsolutePath } from '@/utils/path'
+import { isAbsolutePath, dirName } from '@/utils/path'
 import { getFileType } from '@/utils/fileType'
 import { openRecentFile } from '@/composables/useRecentFiles'
 import { getFileScroll, getFileScrollEntry, setFileScroll, type FileScrollEntry } from '@/utils/fileScrollCache'
@@ -360,6 +360,18 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     return true
   }
 
+  /**
+   * Whether the browsed directory has a parent to walk up to. Must match what
+   * navigateToParentDir can actually do: at a filesystem root ("/", "C:/")
+   * dirName is self-referential, so the walk is a no-op there even though
+   * currentDir is a non-empty string.
+   */
+  function hasParentDir(): boolean {
+    const dir = store.state.currentDir
+    if (dir === '') return false // already at the project root
+    return dirName(dir) !== dir
+  }
+
   const fileBackTarget = useFileBackTarget(() => ({
     browseSession: browseFileSession.value,
     canGoBackFile: fileNav.canGoBack.value,
@@ -385,7 +397,12 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     goBackFile,
     hasOrigin: () => !(panelIsActive('view') && fileBackTarget.value === 'browse') && navigation.hasOrigin.value,
     returnToOrigin,
-    canGoBackDir: () => panelIsActive('browse') && !isFileManagerMultiSelectActive() && store.state.currentDir !== '',
+    // Must mirror what goBackDir can actually DO, not merely "there is a dir".
+    // At a filesystem root ("/", "C:/") dirName is self-referential, so
+    // navigateToParentDir is a no-op — yet `currentDir !== ''` is true there,
+    // which reported "can go back", consumed the Back press, and left the user
+    // with a dead key (no fall-through to the other handlers either).
+    canGoBackDir: () => panelIsActive('browse') && !isFileManagerMultiSelectActive() && hasParentDir(),
     goBackDir: async () => {
       await store.navigateToParentDir()
       return true

@@ -205,11 +205,62 @@ describe('DirBreadcrumb', () => {
   // ── reconstructPath edge cases ──
 
   describe('reconstructPath edge cases', () => {
-    it('handles single Unix root segment "/"', async () => {
-      // Path "/" => splitPath("/") = ["", ""] => filter("") => []
-      // No crumbs except root icon, so no non-root segment to click
+    it('keeps the breadcrumb visible at the POSIX filesystem root', () => {
+      // Regression: splitPath("/") yields NO segments, so a `parts.length > 0`
+      // guard hid the entire bar at "/". The up-one-level button is a no-op
+      // there (dirName("/") === "/"), which made the Home crumb — the only way
+      // back to the project — unreachable. The user was stranded.
       const wrapper = mountBreadcrumb({ path: '/' })
-      expect(wrapper.find('.dir-breadcrumb').exists()).toBe(false)
+      expect(wrapper.find('.dir-breadcrumb').exists()).toBe(true)
+      expect(wrapper.find('.crumb-home').exists()).toBe(true)
+    })
+
+    it('marks the filesystem-root crumb as current at "/" and does not navigate', async () => {
+      const wrapper = mountBreadcrumb({ path: '/' })
+      const fsRoot = wrapper.find('.crumb-fs-root')
+      expect(fsRoot.classes()).toContain('current')
+      await fsRoot.trigger('click')
+      expect(wrapper.emitted('navigate')).toBeUndefined()
+    })
+
+    it('still offers Home as the way back to the project from "/"', async () => {
+      const wrapper = mountBreadcrumb({ path: '/' })
+      await wrapper.find('.crumb-home').trigger('click')
+      expect(wrapper.emitted('navigate')![0][0]).toBe('')
+    })
+
+    it('marks the drive root as current at "C:/" and does not navigate', async () => {
+      // The Windows analogue of "/": fsRootPath("C:/") === "C:/", so the drive
+      // crumb is where the user already is. Windows never hit the *hidden bar*
+      // bug (a "C:" segment keeps `parts` non-empty), but the self-navigation
+      // and the enabled up-button were the same dead affordances there.
+      const wrapper = mountBreadcrumb({ path: 'C:/' })
+      const fsRoot = wrapper.find('.crumb-fs-root')
+      expect(fsRoot.exists()).toBe(true)
+      expect(fsRoot.classes()).toContain('current')
+      await fsRoot.trigger('click')
+      expect(wrapper.emitted('navigate')).toBeUndefined()
+    })
+
+    it('does NOT mark the drive crumb as current while below the drive root', () => {
+      // Guards the comparison against a loose prefix match: "C:/Users" starts
+      // with "C:/" but is not the root itself.
+      const wrapper = mountBreadcrumb({ path: 'C:/Users/admin' })
+      expect(wrapper.find('.crumb-fs-root').classes()).not.toContain('current')
+    })
+
+    it('does not treat a backslash drive root as a different path', () => {
+      // props.path arrives in either separator style depending on the producer
+      // (the Go backend returns platform-native form). Both must resolve to the
+      // same root, or the crumb would offer a pointless "go to C:/" at C:\.
+      const wrapper = mountBreadcrumb({ path: 'C:\\' })
+      expect(wrapper.find('.crumb-fs-root').classes()).toContain('current')
+    })
+
+    it('the picker at "/" still hides nothing it needs', () => {
+      // projectScoped=false has no filesystem-root crumb and Home already means
+      // the top level, so an empty `parts` legitimately means "nothing to show".
+      expect(mountPicker({ path: '/' }).find('.dir-breadcrumb').exists()).toBe(false)
     })
 
     it('handles single Windows drive root', async () => {

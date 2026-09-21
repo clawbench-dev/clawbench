@@ -667,6 +667,36 @@ describe('useNavigationCoordinator', () => {
       expect(fakeStore.navigateToParentDir).toHaveBeenCalled()
     })
 
+    it('does not consume Back at a filesystem root (there is no parent)', async () => {
+      // Regression: canGoBackDir only checked `currentDir !== ''`, which is true
+      // at "/" — so Back was consumed but navigateToParentDir is a no-op there
+      // (dirName("/") === "/"), leaving the user with a dead key. Reporting
+      // "cannot handle" lets the press fall through to the other handlers.
+      activeTab.value = 'browse'
+      fakeStore.state.currentDir = '/'
+
+      const coord = createCoordinator()
+      expect(coord.canHandleBack('header')).toBe(false)
+    })
+
+    it('does not consume Back at a Windows drive root either', () => {
+      activeTab.value = 'browse'
+      fakeStore.state.currentDir = 'C:/'
+
+      const coord = createCoordinator()
+      expect(coord.canHandleBack('header')).toBe(false)
+    })
+
+    it('still consumes Back one level below a filesystem root', async () => {
+      activeTab.value = 'browse'
+      fakeStore.state.currentDir = '/var'
+
+      const coord = createCoordinator()
+      expect(coord.canHandleBack('header')).toBe(true)
+      await coord.handleNavigateBack()
+      expect(fakeStore.navigateToParentDir).toHaveBeenCalled()
+    })
+
     it('closes overlay and returns to browse when browse session was active', async () => {
       activeTab.value = 'view'
       browseFileSession.value = true

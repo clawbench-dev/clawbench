@@ -120,19 +120,18 @@ describe('wallpaper-active single-surface transparency', () => {
     expect(edit).toContain('var(--code-bg)')
   })
 
-  it('lets the wallpaper show through the file manager search dock and pill', () => {
-    // The resident search dock and the SearchInput pill both carry the top
-    // toolbar's material (--bg-tertiary); if only the pill went translucent the
-    // solid dock behind it would still render opaque, so the pair is treated
-    // together.
+  it('lets the wallpaper show through the file manager search dock', () => {
+    // The resident search dock carries the top toolbar's material (--bg-tertiary)
+    // and goes translucent at --panel-alpha.
     const dock = ruleContaining('html.wallpaper-active .fs-nav-bottom')
     expect(dock).toMatch(
       /background:\s*color-mix\(in srgb,\s*var\(--bg-tertiary\)\s*var\(--panel-alpha\),\s*transparent\);/,
     )
-    const pill = ruleContaining('html.wallpaper-active .fs-nav-bottom .search-pill')
-    expect(pill).toMatch(
-      /background:\s*color-mix\(in srgb,\s*var\(--bg-tertiary\)\s*var\(--panel-alpha\),\s*transparent\);/,
-    )
+    // The pill inside it is a deliberately flat field — no fill and no border in
+    // any state, focus included. There is therefore no solid fill to re-tint,
+    // and a wallpaper-scoped tint here would put back the box the field sheds
+    // (and would win on specificity, since it also matches while unfocused).
+    expect(css).not.toContain('html.wallpaper-active .fs-nav-bottom .search-pill')
   })
 
   it('lets the wallpaper show through the plan panel chip and expanded card', () => {
