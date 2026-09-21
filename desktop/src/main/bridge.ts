@@ -1,4 +1,5 @@
 import { app, ipcMain, shell, clipboard, nativeTheme } from 'electron'
+import { DEFAULT_THEME_ID, isDarkThemeId } from '../shared/theme'
 import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
@@ -135,11 +136,18 @@ export function registerBridge(): void {
   ipcMain.on('native:set-push-enabled', (_e, enabled: boolean) => getStore().set('nativePushEnabled', enabled))
   ipcMain.on('native:update-last-seen', (_e, id: string) => { /* desktop has no SharedPreferences */ })
   ipcMain.on('native:keep-screen-on', (_e, on: boolean) => setKeepScreenOnImpl(on))
-  ipcMain.on('native:get-theme', (e) => { e.returnValue = getStore().get('theme') || 'dark' })
+  ipcMain.on('native:get-theme', (e) => { e.returnValue = getStore().get('theme') || DEFAULT_THEME_ID })
   ipcMain.on('native:set-theme', (_e, theme: string) => {
-    const t = theme === 'light' ? 'light' : 'dark'
-    getStore().set('theme', t)
-    nativeTheme.themeSource = t
+    // Persist the full theme ID (e.g. 'github-dark', 'nord'), NOT a collapsed
+    // 'dark'/'light'. The login page resolves colours from
+    // [data-theme="<id>"] and has no rule for a bare 'dark', so collapsing here
+    // made the login page fall back to its defaults and never match the main
+    // UI. Android stores the raw ID for the same reason (ThemePalette).
+    const id = theme || DEFAULT_THEME_ID
+    getStore().set('theme', id)
+    // nativeTheme only understands light/dark, so derive that from the ID while
+    // keeping the full ID in the store.
+    nativeTheme.themeSource = isDarkThemeId(id) ? 'dark' : 'light'
   })
   ipcMain.on('native:log', (_e, level: string, tag: string, msg: string) => { /* route to main log */ })
 }

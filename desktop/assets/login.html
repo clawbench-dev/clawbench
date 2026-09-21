@@ -64,9 +64,17 @@
   try {
     var THEME = (ClawBenchNative.getTheme && ClawBenchNative.getTheme()) || 'github-dark';
     document.documentElement.setAttribute('data-theme', THEME);
-    var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','solarized-deep','gruvbox-dark','high-contrast-dark','night-owl','ayu-dark','vitesse-dark','rose-pine','everforest-dark','kanagawa'];
+    // Must list every dark theme in web/src/utils/themeMeta.ts. A missing ID
+    // makes the page treat a dark theme as light (wrong data-theme-base, and
+    // unreadable text over the splash backdrop). Kept in sync by
+    // desktop/src/shared/theme.test.ts.
+    var DARK_IDS = ['ayu-dark','bluloco-dark','catppuccin-mocha','dark-plus','dracula','everforest-dark','github-dark','gruvbox-dark','high-contrast-dark','kanagawa','material-darker','monokai','night-owl','nord','one-dark-pro','rose-pine','solarized-dark','solarized-deep','tokyo-night','vitesse-dark'];
     var BASE = DARK_IDS.indexOf(THEME) >= 0 ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme-base', BASE);
+    // Sync the resolved theme back to native. Without this, a first launch (or
+    // a launch where native holds no value) leaves the store empty, so the next
+    // launch cannot follow the main interface. Android does the same.
+    if (ClawBenchNative.setTheme) ClawBenchNative.setTheme(THEME);
   } catch(e) {}
 </script>
 <style>
@@ -141,8 +149,8 @@
     --color-red: #f38ba8;
     --grid-color: rgba(69, 71, 90, 0.3);
     --gradient-color: rgba(137, 180, 250, 0.06);
-  }
     --accent-rgb: 137, 180, 250;
+  }
 
   /* ── Catppuccin Latte ─────────────────────────────────────── */
   [data-theme="catppuccin-latte"] {
@@ -158,9 +166,9 @@
     --color-red: #d20f39;
     --grid-color: rgba(0, 0, 0, 0.06);
     --gradient-color: rgba(30, 102, 245, 0.06);
+    --accent-rgb: 30, 102, 245;
   }
 
-    --accent-rgb: 30, 102, 245;
   /* ── Dracula ──────────────────────────────────────────────── */
   [data-theme="dracula"] {
     --bg-primary: #282a36;
@@ -1078,12 +1086,17 @@
     cursor: default;
   }
 
-  /* Spinner */
+  /* Spinner shown inside the connect button. Its colours must contrast with
+     the BUTTON background (the accent colour), not the page: using
+     --text-primary put a dark grey spinner on the blue button (1.64:1 on
+     github-dark, 1.21:1 on solarized-light) and it all but vanished.
+     Android hardcodes white here for the same reason; white is the one value
+     that works on every theme's accent. */
   .spinner {
     width: 16px;
     height: 16px;
-    border: 2px solid var(--border-color);
-    border-top-color: var(--text-primary);
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
