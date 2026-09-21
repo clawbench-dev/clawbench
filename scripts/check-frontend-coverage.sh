@@ -166,12 +166,25 @@ def pass_fail(passed):
 
 # ── Helper: extract src/... path from absolute or relative path ──
 def extract_src_path(path):
-    """Extract the src/... portion from a path like /abs/path/web/src/components/Foo.vue"""
-    idx = path.find("/src/")
+    """Extract the src/... portion of a FRONTEND path, else None.
+
+    Must be anchored to the frontend root (`web/src/`). Matching the first
+    `/src/` anywhere in the path looks equivalent but is not: it also matches
+    `desktop/src/…`, `android/app/src/…` and `web/vendor-build/excalidraw/src/…`.
+    A desktop path like /repo/desktop/src/main/install.ts then reduces to
+    `src/main/install.ts`, whose first two segments give the Tier 1 bucket
+    `src/main` — a directory that does not exist in the frontend at all. Those
+    files got averaged into that phantom bucket and dragged it below the floor,
+    failing Tier 1 locally while CI passed (CI has no desktop/node_modules, so
+    it collects only the dependency-free desktop tests).
+
+    Non-frontend paths are not frontend coverage and must be skipped outright.
+    """
+    idx = path.find("/web/src/")
     if idx >= 0:
-        return path[idx + 1:]  # e.g., src/components/Foo.vue
-    if path.startswith("src/"):
-        return path
+        return path[idx + 5:]  # e.g., src/components/Foo.vue
+    if path.startswith("web/src/"):
+        return path[4:]
     return None
 
 def extract_web_src_path(path):
@@ -342,12 +355,13 @@ else:
     # Normalize Istanbul absolute paths to web/src/... for git diff matching
     line_coverage = defaultdict(dict)
     for file_path, file_data in istanbul.items():
-        # Normalize: extract web/src/... or src/... from absolute paths
+        # Only frontend sources participate. extract_web_src_path and
+        # extract_src_path are both anchored to web/src/, so a path that fails
+        # the first also fails the second — there is deliberately no
+        # "src/…"-style fallback here, because that is what used to admit
+        # desktop/android paths and fabricate a web/src/… path that git diff
+        # could never match anyway.
         norm_path = extract_web_src_path(file_path)
-        if not norm_path:
-            norm_path = extract_src_path(file_path)
-            if norm_path:
-                norm_path = "web/" + norm_path  # add web/ prefix for git diff matching
         if not norm_path:
             continue
         stmt_map = file_data.get("statementMap", {})
