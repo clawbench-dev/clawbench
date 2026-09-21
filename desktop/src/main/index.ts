@@ -5,6 +5,7 @@ import { registerBridge } from './bridge'
 import { checkForUpdate } from './updater'
 import { downloadAndInstall, restartInto } from './install'
 import { recordError, flushOnShutdown } from './clientLog'
+import { APP_USER_MODEL_ID } from './identity'
 
 /**
  * Last-resort safety net for the main process.
@@ -105,6 +106,24 @@ async function promptAndInstallUpdate(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  // Windows toast notifications are addressed by Application User Model ID, and
+  // without an explicit one Electron falls back to the generic
+  // `electron.app.Electron`. The consequences on Windows are that the
+  // notification is attributed to "Electron" rather than ClawBench (or does not
+  // appear at all, because Windows only shows toasts for an AUMID it can
+  // resolve to an installed shortcut).
+  //
+  // Must be set before any Notification is constructed, hence at the top of the
+  // ready handler rather than lazily. The value matches electron-builder's
+  // `appId` (desktop/electron-builder.yml) so the toast, the Start Menu
+  // shortcut and the version resource all agree on one identity. It is
+  // duplicated here because electron-builder.yml is a build-time file that is
+  // NOT shipped inside app.asar, so the runtime has no way to read it.
+  //
+  // Documented as win32-only, but verified safe to call on Linux/macOS (no-op,
+  // does not throw) — so this needs no platform guard.
+  app.setAppUserModelId(APP_USER_MODEL_ID)
+
   // No OS menu bar — the app is fully UI-driven.
   Menu.setApplicationMenu(null)
   initStore()
