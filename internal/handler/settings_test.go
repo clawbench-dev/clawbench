@@ -5,11 +5,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -342,6 +347,101 @@ func TestServeConfig_Patch_AutoContinueRetriesBelowSentinel(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// The forge kill-switch must survive a PATCH round trip. It is in
+// PatchableConfigPaths, so a PATCH is accepted and written to config.yaml — but
+// when applyConfigPatch has no branch for it, ConfigInstance (and therefore the
+// event-trigger consumer and GET /api/config) never sees the change. The toggle
+// then flips visually for one render and snaps back on the reload that
+// patchConfig() performs.
+func TestServeConfig_Patch_ForgePauseEventTasks(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"forge":{"pause_event_tasks":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.Forge.PauseEventTasks,
+		"pause_event_tasks must be applied to ConfigInstance")
+
+	// GET must echo the stored value, otherwise the switch resets on reload.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	withAuthCookie(getReq, model.SessionToken)
+	gw := callHandler(ServeConfig, getReq)
+	assert.Equal(t, http.StatusOK, gw.Code)
+	assert.Contains(t, gw.Body.String(), `"pause_event_tasks":true`)
+}
+
+// TestApplyConfigPatchCoversEveryPatchableField is the structural guard for the
+// class of bug above. PatchableConfigPaths decides what a PATCH may contain;
+// applyConfigPatch decides what actually reaches ConfigInstance. Nothing forces
+// the two to agree, so a field can be whitelisted, persisted to config.yaml, and
+// still never applied — the write looks successful (HTTP 200, value on disk) and
+// only the in-memory state is stale, which the UI shows as a toggle that snaps
+// back after the reload patchConfig() performs.
+//
+// The check is deliberately coarse: it only requires that each whitelisted
+// leaf's name appears somewhere in applyConfigPatch. That is enough to catch a
+// wholly missing branch (this bug) without pinning down how a field is applied,
+// so refactors that restructure the function stay green. It cannot catch a
+// branch that reads the wrong key or assigns the wrong target — those need a
+// round-trip test, which every whitelisted field should have anyway.
+func TestApplyConfigPatchCoversEveryPatchableField(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok, "runtime.Caller must resolve this test file")
+	path := filepath.Join(filepath.Dir(file), "settings.go")
+	fset := token.NewFileSet()
+	// Parsed rather than grepped: the leaf names are Go string literals, and a
+	// regex over the raw text has to get quote pairing right across every
+	// comment and raw string in the function. The AST has no such ambiguity.
+	parsed, err := parser.ParseFile(fset, path, nil, 0)
+	require.NoError(t, err, "settings.go must parse")
+
+	// Collect the string literals used as map keys inside applyConfigPatch.
+	// Bounding the walk to that function keeps a leaf from being "covered" by
+	// an unrelated mention elsewhere in the file.
+	var applyBody *ast.BlockStmt
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		if fn, isFn := n.(*ast.FuncDecl); isFn && fn.Name.Name == "applyConfigPatch" {
+			applyBody = fn.Body
+		}
+		return true
+	})
+	require.NotNil(t, applyBody, "applyConfigPatch must exist")
+
+	applied := map[string]bool{}
+	ast.Inspect(applyBody, func(n ast.Node) bool {
+		if lit, isLit := n.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
+			if s, err := strconv.Unquote(lit.Value); err == nil {
+				applied[s] = true
+			}
+		}
+		return true
+	})
+
+	var missing []string
+	for p := range PatchableConfigPaths {
+		leaf := p
+		if i := strings.LastIndex(p, "."); i >= 0 {
+			leaf = p[i+1:]
+		}
+		if !applied[leaf] {
+			missing = append(missing, p)
+		}
+	}
+	sort.Strings(missing)
+
+	assert.Empty(t, missing,
+		"these paths are PATCHable but never applied to ConfigInstance; "+
+			"the PATCH returns 200 and writes config.yaml, so the value silently "+
+			"never takes effect: %v", missing)
 }
 
 // An unsupported language would make every background-localized string fall

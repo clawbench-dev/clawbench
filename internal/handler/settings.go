@@ -1678,6 +1678,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := forgeMap["insecure_tls"].(bool); ok {
 			cfg.Forge.InsecureTLS = v
 		}
+		if v, ok := forgeMap["pause_event_tasks"].(bool); ok {
+			cfg.Forge.PauseEventTasks = v
+		}
 		if notify, ok := forgeMap["notify"].(map[string]any); ok {
 			applyBool := func(key string, target *bool) {
 				if v, ok := notify[key].(bool); ok {
