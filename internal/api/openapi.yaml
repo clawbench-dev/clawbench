@@ -4023,12 +4023,14 @@ paths:
       summary: 回传客户端日志
       description: |
         需鉴权：这是向服务端文件追加写入的原语，匿名调用者可伪造日志行或反复触发轮转
-        以销毁上一代日志。两个客户端上报时均已登录——JS 中继受「调试日志捕获」开关门控
+        以销毁上一代日志。三个客户端上报时均已登录——JS 中继受「调试日志捕获」开关门控
         且仅在已认证的应用内启用，Android 的 `AppLog.startCapture` 由登录后的 WebView
-        桥触发，且 WebView Cookie 与它同进程。
-        仅写日志（不可读），汇入 `{LogDir}/logs/client.log`，行内带 `[js]`/`[android]`
-        来源标记；50MiB 轮转到 `.1`。单请求上限 200 条，且所有字段均被清洗
-        （转义换行/CR/NUL 并截断）。磁盘由字节上限与文件上限封死，故不限流。
+        桥触发，且 WebView Cookie 与它同进程；Electron 主进程中继读取 Electron cookie
+        jar 里的会话 Cookie，未登录时静默跳过。
+        仅写日志（不可读），汇入 `{LogDir}/logs/client.log`，行内带
+        `[js]`/`[android]`/`[electron]` 来源标记；50MiB 轮转到 `.1`。单请求上限 200 条，
+        且所有字段均被清洗（转义换行/CR/NUL 并截断）。磁盘由字节上限与文件上限封死，
+        故不限流。
       operationId: clientLog
       requestBody:
         required: true
@@ -4254,4 +4256,4 @@ components:
           description: epoch 毫秒
         source:
           type: string
-          description: "`android` 或 `js`；缺省视为 `android`。"
+          description: "`android`、`js` 或 `electron`；缺省视为 `android`。"

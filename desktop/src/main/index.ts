@@ -4,6 +4,7 @@ import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { checkForUpdate } from './updater'
 import { downloadAndInstall, restartInto } from './install'
+import { recordError, flushOnShutdown } from './clientLog'
 
 /**
  * Last-resort safety net for the main process.
@@ -22,9 +23,11 @@ import { downloadAndInstall, restartInto } from './install'
  */
 process.on('uncaughtException', (err) => {
   console.error('[main] uncaught exception:', err)
+  recordError('Main', err)
 })
 process.on('unhandledRejection', (reason) => {
   console.error('[main] unhandled rejection:', reason)
+  recordError('Main', reason)
 })
 
 /**
@@ -122,3 +125,10 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+
+// Last chance to ship buffered shell logs before the process goes away.
+// `before-quit` is async-unfriendly (Electron does not await handlers), so the
+// flush races the exit; the renderer relay has the same property. Worth doing
+// because the entries most likely still buffered are the ones around whatever
+// caused the quit.
+app.on('before-quit', () => { void flushOnShutdown() })

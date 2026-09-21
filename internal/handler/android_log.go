@@ -15,29 +15,38 @@ import (
 )
 
 // clientLogMu protects concurrent writes to the unified client log file.
-// All sources (android native, js frontend) share ONE file; each line carries
-// an inline [source] marker so entries can be distinguished when reading.
+// All sources (android native, electron main process, js frontend) share ONE
+// file; each line carries an inline [source] marker so entries can be
+// distinguished when reading.
 var clientLogMu sync.Mutex
 
 // Per-field caps. Every one of these fields is attacker-controlled, and a log
 // line is only useful if its shape is predictable — an unbounded field both
 // lets a client forge structure and lets a single request exhaust the file cap.
 const (
-	clientLogMaxMsgLen   = 4096
-	clientLogMaxTagLen   = 128
+	clientLogMaxMsgLen = 4096
+	clientLogMaxTagLen = 128
+	// clientLogMaxLevelLen holds "D"/"I"/"W"/"E".
 	clientLogMaxLevelLen = 8
+	// clientLogMaxSourceLen is separate from the level cap: sources are longer
+	// than levels and carry meaning ("android", "js", "electron"). Sharing the
+	// level cap happened to fit every source so far, but "electron" is exactly
+	// 8 bytes — one more character in a future source name would silently
+	// truncate it into a different source.
+	clientLogMaxSourceLen = 32
 	// clientLogMaxBodyBytes bounds one request's total contribution to the file,
 	// independent of entry count, so 200 entries cannot each carry 4 KiB.
 	clientLogMaxBodyBytes = 256 << 10 // 256 KiB
 )
 
-// ClientLogEntry represents a single log entry from a client (Android app or JS frontend).
+// ClientLogEntry represents a single log entry from a client (Android app,
+// Electron desktop shell, or JS frontend).
 type ClientLogEntry struct {
 	Level  string `json:"level"` // D, I, W, E
 	Tag    string `json:"tag"`
 	Msg    string `json:"msg"`
 	Ts     int64  `json:"ts"`               // epoch millis
-	Source string `json:"source,omitempty"` // "android" or "js"; defaults to "android" when empty
+	Source string `json:"source,omitempty"` // "android" | "js" | "electron"; defaults to "android" when empty
 }
 
 // clientLogRequest is the request body for POST /api/client-log.
@@ -124,8 +133,8 @@ func clientLogEntryLine(e ClientLogEntry) string {
 
 // ServeClientLog handles POST /api/client-log. It receives batched log entries
 // from clients and appends them to a single unified log file
-// ({LogDir}/logs/client.log); each line carries an inline [js] / [android]
-// marker for its origin.
+// ({LogDir}/logs/client.log); each line carries an inline [android] / [js] /
+// [electron] marker for its origin.
 //
 // No rate limit, deliberately. Disk usage is already bounded by the per-request
 // byte cap plus the 50 MiB file cap with rotation, and the endpoint is
@@ -179,7 +188,7 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 		e.Msg = sanitizeLogField(e.Msg, clientLogMaxMsgLen)
 		e.Tag = sanitizeLogField(e.Tag, clientLogMaxTagLen)
 		e.Level = sanitizeLogField(e.Level, clientLogMaxLevelLen)
-		e.Source = sanitizeLogField(e.Source, clientLogMaxLevelLen)
+		e.Source = sanitizeLogField(e.Source, clientLogMaxSourceLen)
 
 		line := clientLogEntryLine(e)
 		if len(lines)+len(line) > clientLogMaxBodyBytes {

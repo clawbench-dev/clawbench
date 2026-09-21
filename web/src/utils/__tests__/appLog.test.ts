@@ -85,6 +85,63 @@ describe('appLog native relay', () => {
     appLog.w('Test', 'circular:', circular)
     expect(logSpy).toHaveBeenCalled()
   })
+
+  describe('Electron desktop shell', () => {
+    // On desktop the local sink is desktop.log, which the shell fills from the
+    // renderer's `console-message` event. So console must stay ON while capture
+    // is enabled — otherwise desktop.log is written to but never receives
+    // anything (the bug this guards).
+    it('keeps console output when capture is on (desktop.log depends on it)', async () => {
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      ;(window as any).ClawBenchNative = {
+        log: logSpy,
+        isNativeApp: () => true,
+        isDesktopApp: () => true,
+      }
+      setLogCaptureEnabled(true)
+      appLog.d('ChatStream', 'desktop line')
+
+      expect(consoleSpy).toHaveBeenCalledWith('[ChatStream]', 'desktop line')
+      setLogCaptureEnabled(false)
+    })
+
+    it('skips the native bridge relay on desktop to avoid duplicating each line', async () => {
+      // The console listener already writes desktop.log; forwarding through
+      // native:log as well would put every line in that file twice.
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      ;(window as any).ClawBenchNative = {
+        log: logSpy,
+        isNativeApp: () => true,
+        isDesktopApp: () => true,
+      }
+      setLogCaptureEnabled(true)
+      appLog.d('ChatStream', 'desktop line')
+
+      expect(logSpy).not.toHaveBeenCalled()
+      setLogCaptureEnabled(false)
+    })
+
+    it('still relays via the native bridge on Android (no isDesktopApp)', () => {
+      // Guard against over-correcting: Android keeps its existing behaviour.
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => true }
+      appLog.d('ChatStream', 'android line')
+
+      expect(logSpy).toHaveBeenCalledWith('D', 'ChatStream', 'android line')
+    })
+
+    it('still skips console on Android when capture is on', () => {
+      // The Android skip is deliberate (avoids a duplicate logcat line); only
+      // desktop changed.
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => true }
+      setLogCaptureEnabled(true)
+      appLog.d('ChatStream', 'android line')
+
+      expect(consoleSpy).not.toHaveBeenCalled()
+      setLogCaptureEnabled(false)
+    })
+  })
 })
 
 describe('appLog HTTP relay', () => {

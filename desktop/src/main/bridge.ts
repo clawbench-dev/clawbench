@@ -13,9 +13,7 @@ import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
 import { markRendererReady } from './navReady'
 import { clearCacheAndReload } from './session'
-
-let logFileStream: fs.WriteStream | null = null
-let logListener: ((event: Electron.Event, level: number, message: string) => void) | null = null
+import { record, recordError, startClientLog, stopClientLog } from './clientLog'
 
 export function registerBridge(): void {
   initStore()
@@ -105,20 +103,14 @@ export function registerBridge(): void {
   })
   ipcMain.handle('native:start-log-capture', () => {
     const w = getMainWindow()
-    if (!w || logFileStream) return Promise.resolve()
-    const file = path.join(app.getPath('userData'), 'desktop.log')
-    logFileStream = fs.createWriteStream(file, { flags: 'a' })
-    logListener = (_event: Electron.Event, level: number, message: string) => {
-      logFileStream?.write(`[${new Date().toISOString()}] [${level}] ${message}\n`)
-    }
-    w.webContents.on('console-message', logListener)
+    // Opens the local desktop.log, mirrors the renderer console into it, and
+    // arms the HTTP relay to /api/client-log (source="electron").
+    startClientLog(w ? w.webContents : null)
     return Promise.resolve()
   })
   ipcMain.handle('native:stop-log-capture', () => {
     const w = getMainWindow()
-    if (w && logListener) w.webContents.removeListener('console-message', logListener)
-    logListener = null
-    if (logFileStream) { logFileStream.end(); logFileStream = null }
+    stopClientLog(w ? w.webContents : null)
     return Promise.resolve()
   })
   ipcMain.handle('native:reload-app', () => clearCacheAndReload())
@@ -152,5 +144,11 @@ export function registerBridge(): void {
     // keeping the full ID in the store.
     nativeTheme.themeSource = isDarkThemeId(id) ? 'dark' : 'light'
   })
-  ipcMain.on('native:log', (_e, level: string, tag: string, msg: string) => { /* route to main log */ })
+  // Renderer-side appLog relayed through the native bridge. Android sends these
+  // to logcat; the desktop shell has no such sink, so they go to desktop.log
+  // (and the server relay while capture is on) instead of being dropped.
+  ipcMain.on('native:log', (_e, level: string, tag: string, msg: string) => {
+    const letter = (['D', 'I', 'W', 'E'].includes(level) ? level : 'I') as 'D' | 'I' | 'W' | 'E'
+    record(letter, tag || 'Renderer', msg)
+  })
 }

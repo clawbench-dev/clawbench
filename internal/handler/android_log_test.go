@@ -224,6 +224,70 @@ func TestSanitizeLogField_TruncatesOnRuneBoundary(t *testing.T) {
 	assert.True(t, utf8.ValidString(got), "truncation must not split a rune")
 }
 
+// The Electron shell reports source="electron". It must survive intact — a
+// truncated source would make shell logs indistinguishable from another origin.
+func TestServeClientLog_AcceptsElectronSource(t *testing.T) {
+	logDir := setupClientLogTest(t)
+
+	body := map[string]any{"entries": []ClientLogEntry{{
+		Level: "E", Tag: "Main", Msg: "shell crash", Source: "electron", Ts: 1700000000000,
+	}}}
+	req := newRequest(t, http.MethodPost, "/api/client-log", body)
+	w := callHandler(ServeClientLog, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	content := readClientLog(t, logDir)
+	assert.Contains(t, content, "[electron] E/Main: shell crash")
+	assert.NotContains(t, content, "[truncated]", "the electron source must not be truncated")
+}
+
+// The source cap must be wider than the level cap.
+//
+// Regression guard: Source used to be sanitized with clientLogMaxLevelLen (8).
+// "electron" is exactly 8 bytes so nothing broke YET, but the next source name
+// one character longer would be silently truncated into a *different* source —
+// a corruption that reads as valid data. This asserts the headroom exists
+// rather than only that today's value happens to fit.
+func TestServeClientLog_SourceCapExceedsLevelCap(t *testing.T) {
+	assert.Greater(t, clientLogMaxSourceLen, clientLogMaxLevelLen,
+		"source names are longer than level letters; sharing the level cap "+
+			"silently truncates any source beyond 8 bytes")
+
+	logDir := setupClientLogTest(t)
+
+	// A source longer than the level cap but within the source cap must pass
+	// through whole.
+	longSource := strings.Repeat("e", clientLogMaxLevelLen+1) // 9 bytes
+	body := map[string]any{"entries": []ClientLogEntry{{
+		Level: "I", Tag: "T", Msg: "m", Source: longSource, Ts: 1700000000000,
+	}}}
+	req := newRequest(t, http.MethodPost, "/api/client-log", body)
+	w := callHandler(ServeClientLog, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	content := readClientLog(t, logDir)
+	assert.Contains(t, content, "["+longSource+"]",
+		"a source within the source cap must not be truncated")
+	assert.NotContains(t, content, "[truncated]")
+}
+
+// A source longer than the cap is still escaped and bounded (attacker-controlled).
+func TestServeClientLog_BoundsSourceField(t *testing.T) {
+	logDir := setupClientLogTest(t)
+
+	body := map[string]any{"entries": []ClientLogEntry{{
+		Level: "I", Tag: "T", Msg: "m", Source: strings.Repeat("s", clientLogMaxSourceLen*3), Ts: 1700000000000,
+	}}}
+	req := newRequest(t, http.MethodPost, "/api/client-log", body)
+	w := callHandler(ServeClientLog, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	content := readClientLog(t, logDir)
+	assert.Contains(t, content, "[truncated]")
+	assert.NotContains(t, content, strings.Repeat("s", clientLogMaxSourceLen*2),
+		"an oversized source must be cut at the cap")
+}
+
 // --- Hardening: request body bound (end-to-end) ---
 
 // A single request must not append more than clientLogMaxBodyBytes. This goes
