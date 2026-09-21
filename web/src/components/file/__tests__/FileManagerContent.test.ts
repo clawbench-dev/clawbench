@@ -4177,6 +4177,16 @@ describe('FileManagerContent — internal move helpers', () => {
     expect(item.attributes('data-path')).toBe('/tmp/scratch/a.png')
   })
 
+  it('labels the browse panel as external when currentDir is absolute', () => {
+    const wrapper = mountContent({ currentDir: '/var/log', entries: [] })
+    expect(wrapper.find('.dir-nav-external').exists()).toBe(true)
+  })
+
+  it('does not label the browse panel for a project-relative currentDir', () => {
+    const wrapper = mountContent({ currentDir: 'web/src', entries: [] })
+    expect(wrapper.find('.dir-nav-external').exists()).toBe(false)
+  })
+
   it('scrollToEntryAndSelect selects a path without a container', async () => {
     const wrapper = mountContent()
     await wrapper.vm.scrollToEntryAndSelect('test.ts', { openFile: true })

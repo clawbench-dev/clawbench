@@ -29,6 +29,10 @@
     <!-- Region 1: File name -->
     <div class="file-name-wrap">
       <span class="file-path-hint" :class="{ 'file-path-draggable': isWideScreen }" :draggable="isWideScreen" @click="$emit('showDetails')" @dragstart="handleFileNameDragStart" @dragend="handleFileNameDragEnd" :title="file.name">{{ file.name }}</span>
+      <!-- The viewer can open any path a chat annotation names, including files
+           outside the project; without this the header looks identical to a
+           project file and the user has no cue where the file came from. -->
+      <ExternalBadge v-if="isExternalFile" kind="file" class="file-header-external" />
     </div>
 
     <!-- Region 2: Toolbar (ResizeObserver target) -->
@@ -214,6 +218,8 @@
 import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import ExternalBadge from '@/components/file/ExternalBadge.vue'
+import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
 import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
@@ -251,6 +257,10 @@ const { isAppMode } = useAppMode()
 const { t } = useI18n()
 const { isWideScreen } = getWideScreenState()
 const { refreshFileShare, isFileShared } = useFileShare()
+
+/** The open file lives outside the project root (chat annotations may name any
+ *  path the server exposes; the viewer opens them like any other file). */
+const isExternalFile = computed(() => isAbsolutePath(props.file?.path || ''))
 
 // Whether the currently open file has an active public share link. Mirrors the
 // ShareLinkDialog state via the module-level Set so the button highlights as

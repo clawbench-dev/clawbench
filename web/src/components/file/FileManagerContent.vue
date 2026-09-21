@@ -189,6 +189,10 @@
           <ArrowLeft :size="14" />
         </button>
         <DirBreadcrumb :path="currentDir" @navigate="$emit('navigateDir', $event)" />
+        <!-- Explicit label beside the breadcrumb: the orange Home crumb alone
+             is a colour cue, which is not enough to state "you are outside the
+             project" (and is invisible to screen readers). -->
+        <ExternalBadge v-if="isExternalDir" kind="dir" class="dir-nav-external" />
       </div>
     </div>
 
@@ -566,6 +570,7 @@ import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
 import SplitView from '@/components/common/SplitView.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
+import ExternalBadge from './ExternalBadge.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
@@ -1508,6 +1513,13 @@ const displayEntries = computed(() => {
  * through untouched — stripping its leading "/" would silently retarget every
  * create/paste/upload at the project root instead.
  */
+/**
+ * True while the manager is browsing a directory OUTSIDE the project root.
+ * loadFiles routes absolute paths through /api/projects (see utils/dirList.ts),
+ * so the absolute form of currentDir is exactly the external signal.
+ */
+const isExternalDir = computed(() => isAbsolutePath(props.currentDir || ''))
+
 function currentDirPath() {
     const dir = props.currentDir || ''
     return isAbsolutePath(dir) ? dir : dir.replace(/^\/+/, '')
@@ -2865,6 +2877,12 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
+}
+
+/* Kept outside the breadcrumb's own horizontal scroll so the "you are outside
+   the project" label does not scroll away with a long path. */
+.dir-nav-external {
+    flex-shrink: 0;
 }
 
 /* Pinned outside the breadcrumb's horizontal scroll area so it stays reachable

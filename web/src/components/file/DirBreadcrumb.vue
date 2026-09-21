@@ -1,11 +1,30 @@
 <template>
   <div v-if="parts.length > 0" class="dir-breadcrumb" data-horizontal-scroll="true">
+    <!-- Filesystem root, shown ONLY while browsing project-external. The Home
+         crumb below always means "project root", so an external browse needs a
+         separate way back up to "/" — otherwise the only exit from /var/log
+         would be the project root and the filesystem could not be walked. -->
+    <template v-if="showRootCrumb">
+      <span
+        class="crumb crumb-fs-root"
+        :draggable="isWideScreen"
+        :title="fsRootTitle"
+        @dragstart="onCrumbDragStart(fsRootPath, 'FSRoot', $event)"
+        @dragend="cleanupDragGhost()"
+        @click="$emit('navigate', fsRootPath)"
+      >
+        <HardDrive :size="14" />
+      </span>
+      <span class="crumb-sep">/</span>
+    </template>
     <span
       class="crumb crumb-home"
       :draggable="isWideScreen"
+      :title="homeTitle"
       @dragstart="onCrumbDragStart(homeDragPath, 'Home', $event)"
       @dragend="cleanupDragGhost()"
       @click="$emit('navigate', homePath)"
+      :class="{ external: isExternalBrowse }"
     >
       <Home :size="14" />
     </span>
@@ -29,7 +48,7 @@
 
 <script setup>
 import { computed, inject, ref } from 'vue'
-import { Home, Copy } from 'lucide-vue-next'
+import { Home, Copy, HardDrive } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { splitPath, normalizeSlashes, isAbsolutePath } from '@/utils/path.ts'
 import { copyText } from '@/utils/clipboard.ts'
@@ -39,12 +58,46 @@ import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 
 const props = defineProps({
   path: { type: String, default: '' },
+  /**
+   * Whether "" means the PROJECT root (the file manager) or the filesystem's
+   * top level (ProjectDialog's picker, which has no project concept). Decides
+   * what the Home crumb targets and whether a filesystem-root crumb is needed.
+   */
+  projectScoped: { type: Boolean, default: true },
 })
 defineEmits(['navigate'])
 const { t } = useI18n()
 const toast = inject('toast', null)
 const copied = ref(false)
 const { isWideScreen } = useWideScreenLayout()
+
+/** Browsing a directory outside the project (only meaningful when scoped). */
+const isExternalBrowse = computed(() => props.projectScoped && isAbsolutePath(props.path))
+
+/** Filesystem root of the browsed absolute path: "/" on POSIX, "C:/" on Windows. */
+const fsRootPath = computed(() => {
+  const norm = normalizeSlashes(props.path)
+  const drive = norm.match(/^([A-Za-z]:)\//)
+  return drive ? `${drive[1]}/` : '/'
+})
+
+/**
+ * The Home crumb ALWAYS means "project root" ("" — the backend resolves it),
+ * never the browsed directory's own root. That gives the user one predictable
+ * exit no matter how deep an external tree they wandered into.
+ */
+const homePath = computed(() => '')
+
+/**
+ * An external browse also needs a crumb for the FILESYSTEM root, because Home
+ * has been repurposed as "project root" — without it there would be no way back
+ * up to "/" (Back alone walks up and eventually strands the user there).
+ */
+const showRootCrumb = computed(() => isExternalBrowse.value)
+
+/** Tooltips make the two adjacent roots unambiguous in an external browse. */
+const homeTitle = computed(() => (isExternalBrowse.value ? t('file.nav.backToProject') : t('file.nav.projectRoot')))
+const fsRootTitle = computed(() => t('file.nav.fsRoot'))
 
 function onCrumbDragStart(path, name, e) {
   if (!isWideScreen.value) return
@@ -117,24 +170,11 @@ function crumbPath(segments) {
 }
 
 /**
- * Target of the home crumb. For a project-relative browse that is the project
- * root ("" — /api/dir resolves it); for an absolute browse it must stay
- * absolute, or the jump would land back inside the project. The root of an
- * absolute path is "/" on POSIX and the drive root ("C:/") on Windows.
+ * Path carried by the Home crumb's drag payload. The click target is "" (the
+ * project root, a backend-resolved notion), but the attach flow reads a real
+ * filesystem path — so it gets the project root directory itself.
  */
-const homePath = computed(() => {
-  if (!isAbsolutePath(props.path)) return ''
-  const norm = normalizeSlashes(props.path)
-  const drive = norm.match(/^([A-Za-z]:)\//)
-  return drive ? `${drive[1]}/` : '/'
-})
-
-/**
- * Path carried by the home crumb's drag payload. Unlike the click target, the
- * project-relative case keeps the legacy "/" — the attach flow reads a
- * filesystem path here, and an empty string would attach nothing.
- */
-const homeDragPath = computed(() => homePath.value || '/')
+const homeDragPath = computed(() => normalizeSlashes(store.state.projectRoot || '') || '/')
 </script>
 
 <style scoped>
@@ -177,6 +217,35 @@ const homeDragPath = computed(() => homePath.value || '/')
 @media (hover: hover) {
   .crumb.current:hover {
     background: none;
+    color: var(--text-primary, #1a1a1a);
+  }
+}
+
+/* ── Project-external browsing ──────────────────────────────────────────────
+   Orange is the established "outside the project" colour (see
+   annotation-buttons.css / code-viewer.css). Here it marks the two things that
+   change meaning once you leave the project: the Home crumb no longer means
+   "the browsed tree's root" but "back to the project", and the extra crumb on
+   its left is the filesystem root. Colouring them apart keeps the two adjacent
+   roots from reading as the same control. */
+.crumb.crumb-home.external {
+  color: var(--color-orange, #d9730d);
+}
+
+@media (hover: hover) {
+  .crumb.crumb-home.external:hover {
+    color: var(--color-orange, #d9730d);
+    background: color-mix(in srgb, var(--color-orange, #d9730d) 15%, transparent);
+  }
+}
+
+.crumb.crumb-fs-root {
+  color: var(--text-muted, #999);
+}
+
+@media (hover: hover) {
+  .crumb.crumb-fs-root:hover {
+    background: var(--bg-secondary, #e0e0e0);
     color: var(--text-primary, #1a1a1a);
   }
 }

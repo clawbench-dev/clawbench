@@ -594,6 +594,28 @@ describe('navigateToDir and navigateToParentDir', () => {
     expect(store.state.currentDir).toBe('src')
   })
 
+  // Regression: dirName("web") === "", and "" means the PROJECT ROOT here — a
+  // perfectly valid parent. A guard on `parent === ''` (added to stop at a
+  // filesystem root) therefore stranded the user one level below the root: the
+  // back state machine still reported "can go back" (currentDir !== "") and
+  // consumed the press, but the action silently did nothing.
+  it('navigateToParentDir walks a single-segment dir up to the project root', async () => {
+    store.state.currentDir = 'web'
+    const ok = await store.navigateToParentDir()
+    expect(ok).toBe(true)
+    expect(store.state.currentDir).toBe('')
+    expect(apiGet).toHaveBeenCalledWith('/api/dir?path=')
+  })
+
+  it('navigateToParentDir stops at a filesystem root (no parent above it)', async () => {
+    // External browse: dirName("/") === "/" (self-referential), so there is
+    // nothing to walk up to. Loading it again would just re-list the same dir.
+    store.state.currentDir = '/'
+    const ok = await store.navigateToParentDir()
+    expect(ok).toBe(false)
+    expect(store.state.currentDir).toBe('/')
+  })
+
   it('navigateToParentDir returns false when already at project root', async () => {
     store.state.currentDir = ''
     const ok = await store.navigateToParentDir()

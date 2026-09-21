@@ -684,10 +684,15 @@ async function navigateToParentDir(): Promise<boolean> {
     if (state.dirLoading) return false
     if (state.currentDir === '') return false // already at project root, nothing to go back to
     const parent = dirName(state.currentDir)
-    // A filesystem root ("/", "C:/") has no parent above it — dirName returns
-    // the root itself (or "" for a bare relative name). Loading that again would
-    // just re-list the same directory.
-    if (parent === '' || parent === state.currentDir) return false
+    // A filesystem root ("/", "C:/") has no parent above it: dirName returns the
+    // root ITSELF, so loading it again would just re-list the same directory.
+    //
+    // Do NOT also guard on `parent === ''`: that is the normal result for a
+    // single-segment project-relative dir (dirName("web") === ""), and "" means
+    // the PROJECT ROOT here — a perfectly valid parent. Guarding it stranded the
+    // user one level below the root (the state machine still reported "can go
+    // back" because currentDir !== "", so the press was consumed and did nothing).
+    if (parent === state.currentDir) return false
     return await loadFiles(parent)
 }
 
