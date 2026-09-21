@@ -4,6 +4,40 @@ import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
 import OfficePreview from '../OfficePreview.vue'
 
+// Controllable ResizeObserver so tests can simulate a container resize (which
+// emits no window `resize` event — the splitter-drag / dock-toggle case).
+let roCallbacks: ResizeObserverCallback[] = []
+class MockResizeObserver {
+  static instances: MockResizeObserver[] = []
+  callback: ResizeObserverCallback
+  constructor(cb: ResizeObserverCallback) {
+    this.callback = cb
+    roCallbacks.push(cb)
+    MockResizeObserver.instances.push(this)
+  }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+vi.stubGlobal('ResizeObserver', MockResizeObserver)
+function triggerResize() {
+  for (const cb of roCallbacks) cb([], {} as ResizeObserver)
+}
+
+// Manual rAF control so the pptx re-fit (deferred to the next frame) is
+// deterministic.
+let pendingRafs: Array<() => void> = []
+vi.stubGlobal('requestAnimationFrame', vi.fn((cb: () => void) => {
+  pendingRafs.push(cb)
+  return pendingRafs.length
+}))
+vi.stubGlobal('cancelAnimationFrame', vi.fn(() => { pendingRafs = [] }))
+function flushRafs() {
+  const queue = pendingRafs
+  pendingRafs = []
+  queue.forEach((cb) => cb())
+}
+
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
@@ -44,7 +78,16 @@ vi.mock('@vue-office/excel', () => ({
   default: { name: 'VueOfficeExcel', template: '<div class="mock-excel"></div>' },
 }))
 vi.mock('@vue-office/pptx', () => ({
-  default: { name: 'VueOfficePptx', template: '<div class="mock-pptx"><div class="pptx-preview-wrapper"></div></div>' },
+  default: {
+    name: 'VueOfficePptx',
+    // Mirrors the real library: each slide wrapper holds a `.slide-wrapper`
+    // sized at the document's native size (720x540) with a baked scale.
+    template: `<div class="mock-pptx"><div class="pptx-preview-wrapper">
+      <div class="pptx-preview-slide-wrapper" style="width: 720px; height: 540px;">
+        <div class="slide-wrapper" style="position:absolute; width: 720px; height: 540px; transform: scale(1);"></div>
+      </div>
+    </div></div>`,
+  },
 }))
 vi.mock('@vue-office/docx/lib/index.css', () => ({}))
 vi.mock('@vue-office/excel/lib/index.css', () => ({}))
@@ -60,6 +103,8 @@ describe('OfficePreview', () => {
   beforeEach(() => {
     mockIsAppMode.value = false
     mockDownloadFileByPath.mockClear()
+    roCallbacks = []
+    pendingRafs = []
   })
 
   function mountOffice(props = {}) {
@@ -280,5 +325,116 @@ describe('OfficePreview', () => {
     const vm = wrapper.vm as any
     expect(vm).toBeDefined()
     wrapper.unmount()
+  })
+
+  describe('container resize re-fit', () => {
+    // A splitter drag or dock toggle resizes the preview container without any
+    // window `resize` event, so the component must observe its own body element.
+    function stubBodyWidth(wrapper: any, width: number) {
+      const body = wrapper.find('.office-preview-body').element as HTMLElement
+      Object.defineProperty(body, 'clientWidth', { value: width, configurable: true })
+    }
+
+    it('observes the preview body on mount', () => {
+      const wrapper = mountOffice()
+      expect(roCallbacks.length).toBeGreaterThan(0)
+      wrapper.unmount()
+    })
+
+    it('re-fits pptx slides to the new container width', async () => {
+      const wrapper = mountOffice({ file: { name: 'slides.pptx', path: 'slides.pptx', isOffice: true } })
+      await nextTick()
+      stubBodyWidth(wrapper, 900)
+
+      triggerResize()
+      flushRafs()
+      await nextTick()
+
+      const slide = wrapper.find('.pptx-preview-slide-wrapper').element as HTMLElement
+      const inner = wrapper.find('.slide-wrapper').element as HTMLElement
+      expect(slide.style.width).toBe('900px')
+      // 540/720 = 0.75 → height and the baked scale both follow the new width
+      expect(slide.style.height).toBe('675px')
+      expect(inner.style.transform).toBe('scale(1.25)')
+      wrapper.unmount()
+    })
+
+    it('does not re-fit when the width is unchanged', async () => {
+      const wrapper = mountOffice({ file: { name: 'slides.pptx', path: 'slides.pptx', isOffice: true } })
+      await nextTick()
+      stubBodyWidth(wrapper, 900)
+      triggerResize(); flushRafs(); await nextTick()
+      const slide = wrapper.find('.pptx-preview-slide-wrapper').element as HTMLElement
+      expect(slide.style.width).toBe('900px')
+
+      // Same width again — must not schedule another re-fit.
+      const rafCountBefore = pendingRafs.length
+      triggerResize()
+      expect(pendingRafs.length).toBe(rafCountBefore)
+      wrapper.unmount()
+    })
+
+    it('ignores a zero-width (hidden) container and re-fits on re-show', async () => {
+      const wrapper = mountOffice({ file: { name: 'slides.pptx', path: 'slides.pptx', isOffice: true } })
+      await nextTick()
+      stubBodyWidth(wrapper, 0)
+      triggerResize(); flushRafs(); await nextTick()
+      // Still at the native size — a hidden container must not produce a 0-width slide.
+      expect((wrapper.find('.pptx-preview-slide-wrapper').element as HTMLElement).style.width).toBe('720px')
+
+      stubBodyWidth(wrapper, 800)
+      triggerResize(); flushRafs(); await nextTick()
+      expect((wrapper.find('.pptx-preview-slide-wrapper').element as HTMLElement).style.width).toBe('800px')
+      wrapper.unmount()
+    })
+
+    it('re-dispatches window resize so the excel viewer re-measures', async () => {
+      vi.useFakeTimers()
+      try {
+        const wrapper = mountOffice({ file: { name: 'data.xlsx', path: 'data.xlsx', isOffice: true } })
+        await nextTick()
+        const spy = vi.fn()
+        window.addEventListener('resize', spy)
+        stubBodyWidth(wrapper, 640)
+
+        triggerResize()
+        // Debounced: nothing until the timer flushes, then exactly one event.
+        expect(spy).not.toHaveBeenCalled()
+        vi.advanceTimersByTime(200)
+        expect(spy).toHaveBeenCalledTimes(1)
+
+        window.removeEventListener('resize', spy)
+        wrapper.unmount()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('does not dispatch a resize for docx (library handles it via CSS)', async () => {
+      vi.useFakeTimers()
+      try {
+        const wrapper = mountOffice({ file: { name: 'report.docx', path: 'report.docx', isOffice: true } })
+        await nextTick()
+        const spy = vi.fn()
+        window.addEventListener('resize', spy)
+        stubBodyWidth(wrapper, 500)
+        triggerResize()
+        vi.advanceTimersByTime(500)
+        expect(spy).not.toHaveBeenCalled()
+        window.removeEventListener('resize', spy)
+        wrapper.unmount()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('disconnects the observer on unmount', () => {
+      const wrapper = mountOffice()
+      // The component creates its own ResizeObserver; capture that instance.
+      const observer = MockResizeObserver.instances[MockResizeObserver.instances.length - 1]
+      const spy = vi.spyOn(observer, 'disconnect')
+      wrapper.unmount()
+      expect(spy).toHaveBeenCalledTimes(1)
+    })
   })
 })

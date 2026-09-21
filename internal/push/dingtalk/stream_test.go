@@ -1223,3 +1223,315 @@ func waitForReply(t *testing.T, reply *[]byte) {
 	}
 	t.Fatal("timed out waiting for a reply")
 }
+
+// TestParseInbound_RichTextReadsTextFromContent pins the exact defect: a
+// richText message carries its text in content, NOT in data.Text.Content.
+// Routing on data.Text.Content is what produced the empty send.
+func TestParseInbound_RichTextReadsTextFromContent(t *testing.T) {
+	data := &chatbot.BotCallbackDataModel{
+		Msgtype: "richText",
+		Text:    chatbot.BotCallbackDataTextModel{Content: ""}, // empty for richText
+		Content: map[string]any{"richText": []any{
+			map[string]any{"text": "@deadbeef 看看这个"},
+			map[string]any{"downloadCode": "code-1", "type": "picture"},
+		}},
+	}
+
+	text, media := parseInbound(data.Msgtype, data)
+
+	if text != "@deadbeef 看看这个" {
+		t.Errorf("text = %q, want the richText body", text)
+	}
+	if len(media) != 1 {
+		t.Fatalf("media = %d, want 1", len(media))
+	}
+	if media[0].code != "code-1" {
+		t.Errorf("media code = %q, want code-1", media[0].code)
+	}
+	// A richText picture element carries no name, so it gets the picture default.
+	if media[0].filename != "image.png" {
+		t.Errorf("media filename = %q, want image.png", media[0].filename)
+	}
+}
+
+// sentMessage is what a session received, captured by the mock messenger.
+type sentMessage struct {
+	sid   string
+	msg   string
+	files []model.FileEntry
+}
+
+// richTextEnv builds a manager wired for a richText end-to-end test: a working
+// media server, two sessions sharing a real temp project dir, and a channel
+// capturing what reaches the session. The sticky target is the first session,
+// so only a correctly parsed "@{shortID}" reaches the second.
+func richTextEnv(t *testing.T) (*Manager, *[]byte, chan sentMessage, *[]string) {
+	t.Helper()
+
+	srv, _ := mediaTestServer(t, "image-bytes", http.StatusOK)
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
+		{ID: "deadbeef-2222-2222-2222-222222222222", Title: "Named Session", ProjectPath: project},
+	}
+	mgr, reply, setCalls := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", sessions)
+	mgr.httpClient = srv.Client()
+	mgr.cfg = &model.DingTalkConfig{AppKey: "test-app-key"}
+	mgr.cachedToken = "test-access-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sent := make(chan sentMessage, 4)
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(sid, msg string, files []model.FileEntry) error {
+		sent <- sentMessage{sid, msg, files}
+		return nil
+	}
+	return mgr, reply, sent, setCalls
+}
+
+// The reported bug: "@session-id" together with an image. DingTalk delivers it
+// as richText; before the fix both the target and the image were dropped and an
+// EMPTY message was posted to the sticky session.
+func TestOnChatBotMessage_RichTextRoutesExplicitTargetWithImage(t *testing.T) {
+	const named = "deadbeef-2222-2222-2222-222222222222"
+	// Sticky points elsewhere, so only a correctly parsed @id reaches `named`.
+	mgr, _, sent, setCalls := richTextEnv(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "richText"
+	data.Text = chatbot.BotCallbackDataTextModel{Content: ""} // empty for richText
+	data.Content = map[string]any{"richText": []any{
+		map[string]any{"text": "@deadbeef 看看这张图"},
+		map[string]any{"downloadCode": "code-1", "type": "picture"},
+	}}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sent:
+		if got.sid != named {
+			t.Errorf("sent to %q, want the explicitly named session", got.sid)
+		}
+		if got.msg != "看看这张图" {
+			t.Errorf("message = %q, want the text after the @id", got.msg)
+		}
+		if len(got.files) != 1 {
+			t.Fatalf("files = %d, want the attached image", len(got.files))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out: the richText message was never delivered")
+	}
+
+	if len(*setCalls) != 1 || (*setCalls)[0] != named {
+		t.Errorf("sticky target updates = %v, want one write of the named session", *setCalls)
+	}
+}
+
+// A richText message with text but no image must send its text, not an empty
+// message (the pre-fix behavior for every richText message).
+func TestOnChatBotMessage_RichTextTextOnlyStillSends(t *testing.T) {
+	mgr, _, sent, _ := richTextEnv(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "richText"
+	data.Content = map[string]any{"richText": []any{
+		map[string]any{"text": "just some formatted text"},
+	}}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sent:
+		if got.msg != "just some formatted text" {
+			t.Errorf("message = %q, want the richText body", got.msg)
+		}
+		if len(got.files) != 0 {
+			t.Errorf("files = %d, want none", len(got.files))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the text to be sent")
+	}
+}
+
+// An unsupported type (no text, no media) must produce a hint, never an empty
+// send to the session.
+func TestOnChatBotMessage_UnsupportedTypeRepliesInsteadOfEmptySend(t *testing.T) {
+	mgr, reply, sent, _ := richTextEnv(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "audio" // no text, nothing downloadable
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sent:
+		t.Fatalf("nothing must be sent to the session, got msg=%q", got.msg)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	waitForReply(t, reply)
+	if !strings.Contains(string(*reply), "暂不支持") {
+		t.Errorf("reply should explain the unsupported type, got %s", string(*reply))
+	}
+}
+
+// A richText message with images but no text still delivers the images.
+func TestOnChatBotMessage_RichTextMediaOnlySendsAttachments(t *testing.T) {
+	mgr, _, sent, _ := richTextEnv(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "richText"
+	data.Content = map[string]any{"richText": []any{
+		map[string]any{"downloadCode": "code-1", "type": "picture"},
+	}}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sent:
+		if got.msg != "" {
+			t.Errorf("message = %q, want empty for a media-only richText", got.msg)
+		}
+		if len(got.files) != 1 {
+			t.Fatalf("files = %d, want 1", len(got.files))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the attachment")
+	}
+}
+
+// The attachment count cap must truncate rather than download everything, and
+// the reply must say so.
+func TestOnChatBotMessage_RichTextCappedAtMaxFiles(t *testing.T) {
+	orig := model.UploadMaxFiles
+	model.UploadMaxFiles = 2
+	t.Cleanup(func() { model.UploadMaxFiles = orig })
+
+	mgr, reply, sent, _ := richTextEnv(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "richText"
+	data.Content = map[string]any{"richText": []any{
+		map[string]any{"downloadCode": "code-1"},
+		map[string]any{"downloadCode": "code-2"},
+		map[string]any{"downloadCode": "code-3"},
+	}}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sent:
+		if len(got.files) != 2 {
+			t.Errorf("files = %d, want the 2 allowed by the cap", len(got.files))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the attachments")
+	}
+
+	waitForReply(t, reply)
+	if !strings.Contains(string(*reply), "上限") {
+		t.Errorf("reply should mention the attachment cap, got %s", string(*reply))
+	}
+}
+
+// A partial download failure must not discard the whole message: the files that
+// did download are sent, and the reply names how many failed.
+func TestOnChatBotMessage_RichTextPartialDownloadSendsRest(t *testing.T) {
+	// The download API succeeds only for the first code; the rest 500.
+	var calls int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls > 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"downloadUrl":"http://` + r.Host + `/blob"}`))
+	})
+	mux.HandleFunc("/blob", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok-bytes"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	origURL := dingtalkMessageFileURL
+	dingtalkMessageFileURL = srv.URL + "/download"
+	t.Cleanup(func() { dingtalkMessageFileURL = origURL })
+
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "S", ProjectPath: project},
+	}
+	mgr, reply, _ := stickyTestEnv(t, "a1b2c3d4-1111-1111-1111-111111111111", sessions)
+	mgr.httpClient = srv.Client()
+	mgr.cfg = &model.DingTalkConfig{AppKey: "test-app-key"}
+	mgr.cachedToken = "test-access-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sent := make(chan []model.FileEntry, 1)
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(_, _ string, files []model.FileEntry) error {
+		sent <- files
+		return nil
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "richText"
+	data.Content = map[string]any{"richText": []any{
+		map[string]any{"downloadCode": "good"},
+		map[string]any{"downloadCode": "bad"},
+	}}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case files := <-sent:
+		if len(files) != 1 {
+			t.Errorf("files = %d, want only the one that downloaded", len(files))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a partial failure must still deliver the successful attachment")
+	}
+
+	waitForReply(t, reply)
+	if !strings.Contains(string(*reply), "下载失败") {
+		t.Errorf("reply should name the failure, got %s", string(*reply))
+	}
+}

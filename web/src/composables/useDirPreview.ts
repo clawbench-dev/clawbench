@@ -11,6 +11,7 @@
 import { ref, watch, type Ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
+import { buildDirListUrl } from '@/utils/dirList'
 
 /** A single entry as returned by GET /api/dir. */
 export interface DirPreviewEntry {
@@ -48,7 +49,7 @@ export function useDirPreview(options: UseDirPreviewOptions) {
     loading.value = true
     error.value = false
     try {
-      const url = `/api/dir?path=${encodeURIComponent(path)}`
+      const url = buildDirListUrl(path)
       const data = await apiGet<{ items: DirPreviewEntry[] }>(url, { timeoutMs: 10_000 })
       if (mySeq !== seq) return
       entries.value = data.items || []

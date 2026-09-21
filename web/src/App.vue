@@ -545,6 +545,7 @@ import { handleBackNavigation, canNavigateBack, requestExitConfirm, canNavigateB
 import { useNavigationContext } from './composables/useNavigationContext'
 import { useNavigationCoordinator } from './composables/useNavigationCoordinator'
 import { useAndroidBackPress } from './composables/useAndroidBackPress'
+import { useF5Reload } from './composables/useF5Reload'
 import { useDirectoryReturn } from './composables/useDirectoryReturn'
 import { store } from './stores/app.ts'
 import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
@@ -1351,6 +1352,10 @@ const disposeAndroidBackPress = useAndroidBackPress({
     requestExitConfirm,
     showExitHint: () => toast.show(t('toast.swipeAgainToExit'), { icon: '👋', type: 'info', duration: 2000 }),
 })
+// F5 reloads the page unless the terminal (forwards F5 to the TUI) or the file
+// manager (refreshes its listing) already claimed the key. See the composable
+// for why the check is deferred rather than read synchronously.
+useF5Reload()
 window.addEventListener('clawbench-reconnect', handleReconnect)
 const terminalRequestedCwd = ref<string | null>(null)
 
@@ -1606,6 +1611,13 @@ function registerAppEventListeners() {
   // Registered here (not in onMounted) because it is part of the global
   // listener set that both cold start and post-login initialization install.
   startSystemThemeWatcher()
+
+  // Tell the desktop shell the notification-click listeners above are live.
+  // Until this fires, a clicked notification is deferred by the main process
+  // rather than sent into a page that has no listener yet — the page's
+  // did-finish-load happens well before this point (initialization awaits the
+  // project load and session bootstrap first).
+  getNative()?.rendererReady?.()
 }
 
 /**

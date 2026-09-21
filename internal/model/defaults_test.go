@@ -807,6 +807,79 @@ func TestApplyDefaults_ChatRecommendEnabledPresenceTrue(t *testing.T) {
 	}
 }
 
+func TestApplyDefaults_ChatAutoContinueDefaults(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Chat.AutoContinueEnabled {
+		t.Error("Chat.AutoContinueEnabled should default to false (opt-in)")
+	}
+	if cfg.Chat.AutoContinueMaxRetries != DefaultAutoContinueMaxRetries {
+		t.Errorf("Chat.AutoContinueMaxRetries = %d, want %d",
+			cfg.Chat.AutoContinueMaxRetries, DefaultAutoContinueMaxRetries)
+	}
+}
+
+// The -1 "unlimited" sentinel and 0 "retries off" are both meaningful, so the
+// default must be driven by the presence map alone. A `<= 0 → default` rewrite
+// (the pattern used by the numeric chat fields) would silently turn an
+// explicitly configured "unlimited" into 3.
+func TestApplyDefaults_ChatAutoContinueMaxRetriesPresence(t *testing.T) {
+	setupTestBinDir(t)
+
+	for _, want := range []int{AutoContinueUnlimited, 0, 7} {
+		cfg := Config{}
+		cfg.Chat.AutoContinueMaxRetries = want
+		ApplyDefaults(&cfg, map[string]bool{"chat.auto_continue_max_retries": true})
+		if cfg.Chat.AutoContinueMaxRetries != want {
+			t.Errorf("explicit Chat.AutoContinueMaxRetries = %d was rewritten to %d",
+				want, cfg.Chat.AutoContinueMaxRetries)
+		}
+	}
+}
+
+// A negative value below the -1 sentinel is unrepresentable (PATCH rejects it);
+// a hand-edited yaml must not have it read as "unlimited" by accident.
+func TestApplyDefaults_ChatAutoContinueMaxRetriesClampsInvalid(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.Chat.AutoContinueMaxRetries = -5
+	ApplyDefaults(&cfg, map[string]bool{"chat.auto_continue_max_retries": true})
+	if cfg.Chat.AutoContinueMaxRetries != 0 {
+		t.Errorf("Chat.AutoContinueMaxRetries = %d, want 0 for out-of-range -5",
+			cfg.Chat.AutoContinueMaxRetries)
+	}
+}
+
+func TestApplyDefaults_ChatAutoContinueEnabledPresenceTrue(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.Chat.AutoContinueEnabled = true
+	ApplyDefaults(&cfg, map[string]bool{"chat.auto_continue_enabled": true})
+	if !cfg.Chat.AutoContinueEnabled {
+		t.Error("Chat.AutoContinueEnabled should stay true when explicitly set")
+	}
+}
+
+func TestApplyDefaults_Language(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Language != DefaultLanguage {
+		t.Errorf("Language = %q, want %q", cfg.Language, DefaultLanguage)
+	}
+
+	cfg = Config{Language: "en"}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Language != "en" {
+		t.Errorf("Language = %q, want explicit \"en\" preserved", cfg.Language)
+	}
+}
+
 func TestApplyDefaults_AISummaryFormatDefault(t *testing.T) {
 	setupTestBinDir(t)
 

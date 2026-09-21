@@ -6082,3 +6082,31 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	assert.Equal(t, ids[0], legacyPage2[0].ID,
 		"legacy created_at-only cursor still returns the pinned row first")
 }
+
+// TestGetQuestionByQueueID covers the subscribe-time recovery lookup: given the
+// streaming row's queue_id, the service must return the question row so the
+// late subscriber can be handed a bubble to attach the reply to.
+func TestGetQuestionByQueueID(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Q")
+
+	const qid = "q-20260921112506-1"
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, queue_id) VALUES (?, ?, ?, 'user', 'hello from dingtalk', 0, ?)",
+		"/project", "claude", sid, qid,
+	)
+	require.NoError(t, err)
+
+	id, content, ok := service.GetQuestionByQueueID(sid, qid)
+	require.True(t, ok, "the question row must be found by its queue id")
+	assert.NotZero(t, id)
+	assert.Equal(t, "hello from dingtalk", content)
+
+	// Unknown queue id → not found (scheduled runs have no question).
+	_, _, ok = service.GetQuestionByQueueID(sid, "q-does-not-exist")
+	assert.False(t, ok)
+
+	// Empty queue id must short-circuit rather than match the first empty row.
+	_, _, ok = service.GetQuestionByQueueID(sid, "")
+	assert.False(t, ok, "an empty queue id must never resolve to a row")
+}

@@ -189,6 +189,10 @@
           <ArrowLeft :size="14" />
         </button>
         <DirBreadcrumb :path="currentDir" @navigate="$emit('navigateDir', $event)" />
+        <!-- Explicit label beside the breadcrumb: the orange Home crumb alone
+             is a colour cue, which is not enough to state "you are outside the
+             project" (and is invisible to screen readers). -->
+        <ExternalBadge v-if="isExternalDir" kind="dir" class="dir-nav-external" />
       </div>
     </div>
 
@@ -540,7 +544,7 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
-import { joinPath, normalizeSlashes, baseName, dirName } from '@/utils/path'
+import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@/utils/path'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
 import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft } from 'lucide-vue-next'
@@ -566,6 +570,7 @@ import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
 import SplitView from '@/components/common/SplitView.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
+import ExternalBadge from './ExternalBadge.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
@@ -698,7 +703,7 @@ async function handleInternalMoveDrop(e) {
     const target = e.target.closest('.file-item, .grid-item')
     const targetDir = target && target.dataset.action === 'dir'
         ? target.dataset.path
-        : props.currentDir.replace(/^\/+/, '')
+        : currentDirPath()
     const entries = srcPaths.map(p => ({ name: p.split('/').pop(), path: p }))
     const allOk = await transferEntries(entries, targetDir, true)
     emit('refresh')
@@ -793,9 +798,10 @@ const dialog = useDialog()
 const jumpOpen = ref(false)
 async function handleJumpConfirm(path) {
   jumpOpen.value = false
-  // Jump supports files and directories, relative and absolute paths, but
-  // only inside the project root. navToFileInManager handles path
-  // normalization, existence checks and the out-of-project toast.
+  // Jump accepts files and directories, as an absolute path or a path relative
+  // to the project root. In-project absolute paths are normalized to relative
+  // and external ones stay absolute (browsed via /api/projects);
+  // navToFileInManager handles normalization and the existence check.
   await navToFileInManager(path)
 }
 const sharedDrawerRef = ref(null)
@@ -1500,6 +1506,26 @@ const displayEntries = computed(() => {
     return visibleEntries.value.map(browseToDisplay)
 })
 
+/**
+ * The browsed directory in the form the backend expects for row actions.
+ *
+ * Inside the project that is the project-relative path. When browsing a
+ * project-EXTERNAL directory it is an absolute path, which must be passed
+ * through untouched — stripping its leading "/" would silently retarget every
+ * create/paste/upload at the project root instead.
+ */
+/**
+ * True while the manager is browsing a directory OUTSIDE the project root.
+ * loadFiles routes absolute paths through /api/projects (see utils/dirList.ts),
+ * so the absolute form of currentDir is exactly the external signal.
+ */
+const isExternalDir = computed(() => isAbsolutePath(props.currentDir || ''))
+
+function currentDirPath() {
+    const dir = props.currentDir || ''
+    return isAbsolutePath(dir) ? dir : dir.replace(/^\/+/, '')
+}
+
 function pathOf(entry) {
     return entry.path != null ? entry.path : joinPath(props.currentDir, entry.name)
 }
@@ -1630,8 +1656,14 @@ function goToParentDir() {
     if (props.dirLoading) return
     const child = baseName(props.currentDir)
     if (!child) return
-    pendingParentSelect = { parent: dirName(props.currentDir), path: props.currentDir }
-    emit('navigateDir', pendingParentSelect.parent)
+    const parent = dirName(props.currentDir)
+    // Already at a filesystem root ("/", "C:/") while browsing an external
+    // tree: dirName returns the root itself, so there is nothing to walk up to.
+    // (For a project-relative single segment dirName yields "" — the project
+    // root — which IS a valid parent, so only the identity case is skipped.)
+    if (parent === props.currentDir) return
+    pendingParentSelect = { parent, path: props.currentDir }
+    emit('navigateDir', parent)
 }
 
 // Post-flush so this runs after the watcher above has cleared the selection
@@ -1752,7 +1784,7 @@ function isCutItem(path) {
 }
 
 function getDestDir(entry) {
-    if (!entry) return props.currentDir.replace(/^\/+/, '')
+    if (!entry) return currentDirPath()
     if (entry.type === 'dir') return entry.path
     const idx = entry.path.lastIndexOf('/')
     return idx > 0 ? entry.path.slice(0, idx) : ''
@@ -1781,10 +1813,16 @@ function doCopyPath() {
  * Resolve the absolute filesystem path for a context-menu entry.
  * projectRoot is platform-native (E:\… on Windows), entry.path is always
  * "/"-separated — normalize both, then join without double/leading slashes.
+ *
+ * When the manager is browsing OUTSIDE the project, entry.path is already an
+ * absolute path: it must be returned as-is, since prefixing the project root
+ * would produce a nonsense "/project//etc/hosts".
  */
 function absPathForEntry(entry) {
+    const entryPath = normalizeSlashes(entry?.path || '')
+    if (isAbsolutePath(entryPath)) return entryPath
     const root = normalizeSlashes(store.state.projectRoot || '')
-    const rel = normalizeSlashes(entry?.path || '').replace(/^\/+/, '')
+    const rel = entryPath.replace(/^\/+/, '')
     return root ? root.replace(/\/+$/, '') + '/' + rel : rel
 }
 
@@ -2840,6 +2878,12 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
+}
+
+/* Kept outside the breadcrumb's own horizontal scroll so the "you are outside
+   the project" label does not scroll away with a long path. */
+.dir-nav-external {
+    flex-shrink: 0;
 }
 
 /* Pinned outside the breadcrumb's horizontal scroll area so it stays reachable

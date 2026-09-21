@@ -40,28 +40,41 @@ function mountBreadcrumb(props: Record<string, any> = {}) {
   })
 }
 
+/**
+ * Mount as ProjectDialog does: no project concept, so "" already means the
+ * filesystem top level. Its breadcrumbs therefore have NO extra filesystem-root
+ * crumb and Home keeps the plain "up to the top" meaning.
+ */
+function mountPicker(props: Record<string, any> = {}) {
+  return mountBreadcrumb({ projectScoped: false, ...props })
+}
+
 describe('DirBreadcrumb', () => {
   // ── reconstructPath (exposed via navigate emission) ──
+  // Absolute paths here are the ProjectDialog picker shape (projectScoped=false),
+  // which has no project concept: its crumbs keep the absolute form and Home
+  // means the filesystem top level.
 
   describe('reconstructPath via navigate emission', () => {
-    it('reconstructs Unix path from segments', async () => {
-      const wrapper = mountBreadcrumb({ path: '/home/user/docs' })
-      // Click the second crumb ("home") — index 0 in parts
+    it('reconstructs Unix path from segments, preserving the absolute form', async () => {
+      const wrapper = mountPicker({ path: '/home/user/docs' })
       const crumbs = wrapper.findAll('.crumb')
-      // crumbs[0] = root (Home), crumbs[1] = "home", crumbs[2] = "user", crumbs[3] = "docs"
-      // Clicking "home" (not last) should emit navigate with "home" (relative path, no leading slash)
+      // crumbs[0] = Home, crumbs[1] = "home", crumbs[2] = "user", crumbs[3] = "docs"
+      // The input path is absolute, so the crumb must stay absolute — a
+      // rootless "home" would be re-read as relative to the browse root.
       await crumbs[1].trigger('click')
       const emitted = wrapper.emitted('navigate')
       expect(emitted).toBeTruthy()
-      expect(emitted![emitted!.length - 1][0]).toBe('home')
+      expect(emitted![emitted!.length - 1][0]).toBe('/home')
     })
 
     it('reconstructs Windows path from segments', async () => {
-      const wrapper = mountBreadcrumb({ path: 'C:\\Users\\admin\\docs' })
+      const wrapper = mountPicker({ path: 'C:\\Users\\admin\\docs' })
       const crumbs = wrapper.findAll('.crumb')
       // parts: ["C:\", "Users", "admin", "docs"]
-      // crumbs[0] = root, crumbs[1] = "C:\", crumbs[2] = "Users", crumbs[3] = "admin", crumbs[4] = "docs"
-      // Click "Users" (not last) => navigate with "C:\Users"
+      // crumbs[0] = Home, crumbs[1] = "C:\", crumbs[2] = "Users", …
+      // Click "Users" (not last) => "C:\Users" (already absolute — the drive
+      // root carries its own separator, so no "/" is prepended)
       await crumbs[2].trigger('click')
       const emitted = wrapper.emitted('navigate')
       expect(emitted).toBeTruthy()
@@ -69,7 +82,7 @@ describe('DirBreadcrumb', () => {
     })
 
     it('reconstructs Windows path to drive root', async () => {
-      const wrapper = mountBreadcrumb({ path: 'C:\\Users\\admin' })
+      const wrapper = mountPicker({ path: 'C:\\Users\\admin' })
       const crumbs = wrapper.findAll('.crumb')
       // Click "C:\" (not last) => navigate with "C:\"
       await crumbs[1].trigger('click')
@@ -83,26 +96,26 @@ describe('DirBreadcrumb', () => {
 
   describe('parts computed', () => {
     it('splits Unix path into segments', () => {
-      const wrapper = mountBreadcrumb({ path: '/home/user/docs' })
-      // crumbs: [root_icon, "home", "user", "docs"]
+      const wrapper = mountPicker({ path: '/home/user/docs' })
+      // crumbs: [Home, "home", "user", "docs"]
       const crumbs = wrapper.findAll('.crumb')
-      expect(crumbs.length).toBe(4) // root + 3 segments
+      expect(crumbs.length).toBe(4) // home + 3 segments
       expect(crumbs[1].text()).toBe('home')
       expect(crumbs[2].text()).toBe('user')
       expect(crumbs[3].text()).toBe('docs')
     })
 
     it('merges bare drive letter C: into C:\\', () => {
-      const wrapper = mountBreadcrumb({ path: 'C:\\Users\\admin' })
+      const wrapper = mountPicker({ path: 'C:\\Users\\admin' })
       const crumbs = wrapper.findAll('.crumb')
       // splitPath("C:\Users\admin") => ["C:", "Users", "admin"]
       // parts merges "C:" => "C:\", so parts = ["C:\", "Users", "admin"]
-      // crumbs: [root_icon, "C:\", "Users", "admin"]
+      // crumbs: [Home, "C:\", "Users", "admin"]
       expect(crumbs[1].text()).toBe('C:\\')
     })
 
     it('merges bare drive letter D: into D:\\', () => {
-      const wrapper = mountBreadcrumb({ path: 'D:\\Projects\\app' })
+      const wrapper = mountPicker({ path: 'D:\\Projects\\app' })
       const crumbs = wrapper.findAll('.crumb')
       expect(crumbs[1].text()).toBe('D:\\')
     })
@@ -132,15 +145,60 @@ describe('DirBreadcrumb', () => {
       // The template: i < parts.length - 1 condition prevents emission
       expect(wrapper.emitted('navigate')).toBeUndefined()
     })
+  })
 
-    it('root crumb emits navigate with empty string', async () => {
-      const wrapper = mountBreadcrumb({ path: '/home/user' })
-      const crumbs = wrapper.findAll('.crumb')
-      // First crumb is the root Home icon — emits navigate('')
-      await crumbs[0].trigger('click')
-      const emitted = wrapper.emitted('navigate')
-      expect(emitted).toBeTruthy()
-      expect(emitted![0][0]).toBe('')
+  // ── Two roots: Home = project root, extra crumb = filesystem root ──
+
+  describe('project vs filesystem root', () => {
+    it('Home always targets the project root while browsing an external dir', async () => {
+      // The whole point of Plan A: Home is a predictable "get me out of here"
+      // exit no matter how deep into the filesystem the user wandered.
+      const wrapper = mountBreadcrumb({ path: '/var/log' })
+      const home = wrapper.find('.crumb-home')
+      expect(home.exists()).toBe(true)
+      await home.trigger('click')
+      expect(wrapper.emitted('navigate')![0][0]).toBe('')
+    })
+
+    it('Home targets the project root for a project-relative browse too', async () => {
+      const wrapper = mountBreadcrumb({ path: 'web/src' })
+      await wrapper.find('.crumb-home').trigger('click')
+      expect(wrapper.emitted('navigate')![0][0]).toBe('')
+    })
+
+    it('renders a filesystem-root crumb only while browsing externally', () => {
+      // Without it there would be no way back up to "/" once Home means
+      // "project root" — Back alone walks up and strands the user at the root.
+      expect(mountBreadcrumb({ path: '/var/log' }).find('.crumb-fs-root').exists()).toBe(true)
+      expect(mountBreadcrumb({ path: 'web/src' }).find('.crumb-fs-root').exists()).toBe(false)
+    })
+
+    it('the filesystem-root crumb navigates to "/"', async () => {
+      const wrapper = mountBreadcrumb({ path: '/var/log' })
+      await wrapper.find('.crumb-fs-root').trigger('click')
+      expect(wrapper.emitted('navigate')![0][0]).toBe('/')
+    })
+
+    it('the filesystem-root crumb targets the drive root on Windows', async () => {
+      const wrapper = mountBreadcrumb({ path: 'C:\\Users\\admin' })
+      await wrapper.find('.crumb-fs-root').trigger('click')
+      expect(wrapper.emitted('navigate')![0][0]).toBe('C:/')
+    })
+
+    it('marks the Home crumb as external while browsing outside the project', () => {
+      expect(mountBreadcrumb({ path: '/var/log' }).find('.crumb-home').classes()).toContain('external')
+      expect(mountBreadcrumb({ path: 'web/src' }).find('.crumb-home').classes()).not.toContain('external')
+    })
+
+    it('the picker (no project concept) gets no filesystem-root crumb', () => {
+      // Its "" already means the filesystem top level, so Home covers it.
+      expect(mountPicker({ path: '/home/user' }).find('.crumb-fs-root').exists()).toBe(false)
+    })
+
+    it('the picker Home still goes to the filesystem top level', async () => {
+      const wrapper = mountPicker({ path: '/home/user' })
+      await wrapper.find('.crumb-home').trigger('click')
+      expect(wrapper.emitted('navigate')![0][0]).toBe('')
     })
   })
 
@@ -157,10 +215,12 @@ describe('DirBreadcrumb', () => {
     it('handles single Windows drive root', async () => {
       // Path "C:\" => splitPath("C:\") = ["C:", ""] => filter empty => ["C:"]
       // parts merges "C:" => "C:\", so parts = ["C:\"]
-      const wrapper = mountBreadcrumb({ path: 'C:\\' })
+      // projectScoped=false (picker shape): no extra filesystem-root crumb,
+      // since Home already means "the top level".
+      const wrapper = mountPicker({ path: 'C:\\' })
       const crumbs = wrapper.findAll('.crumb')
-      // Only root icon + "C:\" (which is current/last, not clickable for navigate)
-      expect(crumbs.length).toBe(2) // root + "C:\"
+      // Only Home + "C:\" (which is current/last, not clickable for navigate)
+      expect(crumbs.length).toBe(2) // home + "C:\"
       expect(crumbs[1].text()).toBe('C:\\')
     })
   })
@@ -181,8 +241,13 @@ describe('DirBreadcrumb — drag to attach', () => {
     })
   }
 
+  /** Wide-screen picker mount — absolute paths with no extra root crumb. */
+  function mountPickerWide(props: Record<string, any> = {}) {
+    return mountBreadcrumbWide({ projectScoped: false, ...props })
+  }
+
   it('crumb segments are draggable on wide screen', () => {
-    const wrapper = mountBreadcrumbWide({ path: '/home/user/docs' })
+    const wrapper = mountPickerWide({ path: '/home/user/docs' })
     const crumbs = wrapper.findAll('.crumb')
     // All crumbs (including home) should be draggable
     for (const crumb of crumbs) {
@@ -212,14 +277,13 @@ describe('DirBreadcrumb — drag to attach', () => {
 
   it('crumb home has crumb-home class', () => {
     const wrapper = mountBreadcrumbWide({ path: '/home/user' })
-    const homeCrumb = wrapper.findAll('.crumb')[0]
-    expect(homeCrumb.classes()).toContain('crumb-home')
+    expect(wrapper.find('.crumb-home').exists()).toBe(true)
   })
 
   it('dragstart on a crumb sets attach drag data', async () => {
     const setDataMock = vi.fn()
     const setDragImageSpy = vi.fn()
-    const wrapper = mountBreadcrumbWide({ path: '/home/user/docs' })
+    const wrapper = mountPickerWide({ path: '/home/user/docs' })
     const crumbs = wrapper.findAll('.crumb')
     const userCrumb = crumbs[2] // "user"
     await userCrumb.trigger('dragstart', {
@@ -229,26 +293,53 @@ describe('DirBreadcrumb — drag to attach', () => {
         setDragImage: setDragImageSpy,
       },
     })
-    // setAttachDragData writes the custom MIME and text/plain
+    // setAttachDragData writes the custom MIME and text/plain. The dragged path
+    // stays absolute because the browsed path is absolute.
     expect(setDataMock).toHaveBeenCalledWith(
       'application/x-clawbench-attach',
-      expect.stringContaining('"path":"home/user"'),
+      expect.stringContaining('"path":"/home/user"'),
     )
-    expect(setDataMock).toHaveBeenCalledWith('text/plain', 'home/user')
+    expect(setDataMock).toHaveBeenCalledWith('text/plain', '/home/user')
     expect(setDragImageSpy).toHaveBeenCalled()
   })
 
-  it('dragstart on home crumb attaches root path "/"', async () => {
+  it('dragstart on a crumb keeps a project-relative path rootless', async () => {
+    const setDataMock = vi.fn()
+    const wrapper = mountBreadcrumbWide({ path: 'web/src/components' })
+    // crumbs[1] = "src" (home, "web", "src", …)
+    await wrapper.findAll('.crumb')[2].trigger('dragstart', {
+      dataTransfer: { setData: setDataMock, effectAllowed: '', setDragImage: vi.fn() },
+    })
+    expect(setDataMock).toHaveBeenCalledWith(
+      'application/x-clawbench-attach',
+      expect.stringContaining('"path":"web/src"'),
+    )
+  })
+
+  it('dragstart on home crumb attaches the project root path', async () => {
+    // The click target is "" (project root, a backend notion) but the attach
+    // flow needs a real filesystem path — so the drag carries the project root.
     const setDataMock = vi.fn()
     const setDragImageSpy = vi.fn()
-    const wrapper = mountBreadcrumbWide({ path: '/home/user/docs' })
-    const homeCrumb = wrapper.findAll('.crumb')[0]
-    await homeCrumb.trigger('dragstart', {
+    const wrapper = mountBreadcrumbWide({ path: 'web/src' })
+    await wrapper.find('.crumb-home').trigger('dragstart', {
       dataTransfer: {
         setData: setDataMock,
         effectAllowed: '',
         setDragImage: setDragImageSpy,
       },
+    })
+    expect(setDataMock).toHaveBeenCalledWith(
+      'application/x-clawbench-attach',
+      expect.stringContaining('"path":"/project"'),
+    )
+  })
+
+  it('the filesystem-root crumb drags the real filesystem root', async () => {
+    const setDataMock = vi.fn()
+    const wrapper = mountBreadcrumbWide({ path: '/var/log' })
+    await wrapper.find('.crumb-fs-root').trigger('dragstart', {
+      dataTransfer: { setData: setDataMock, effectAllowed: '', setDragImage: vi.fn() },
     })
     expect(setDataMock).toHaveBeenCalledWith(
       'application/x-clawbench-attach',

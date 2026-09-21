@@ -720,7 +720,11 @@ async function drainBatch(): Promise<void> {
  * Verify which file paths actually exist on the server.
  * For non-existent paths with a data-fallback-path, swap to the fallback
  * (if it exists) instead of removing the annotation entirely.
- * For project-external directories, remove the annotation (only external files are annotated).
+ *
+ * Both files and directories are annotated, project-internal or external: the
+ * file manager can browse any directory the server exposes (see loadFiles),
+ * and the preview card lists directories, so an external directory is a valid
+ * click target rather than something to strip.
  */
 export async function verifyFilePaths(paths: string[], containerEl: HTMLElement): Promise<void> {
     const unique = [...new Set(paths)]
@@ -768,24 +772,9 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
             continue
         }
 
-        // Keep project-internal directories (valid navigation targets)
+        // Directories are valid navigation targets — inside the project AND
+        // outside it (the manager browses both). Mark them and move on.
         if (pathType === 'dir') {
-            // Remove project-external directory annotations
-            containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"].external`).forEach(btn => btn.remove())
-            containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"], .code-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"]`).forEach(el => {
-                if (el.tagName === 'A' || el.tagName === 'CODE') {
-                    // Keep the element but drop its file-open affordances.
-                    el.classList.remove('chat-file-path', 'code-file-path', 'external')
-                    el.removeAttribute('data-file-path')
-                    el.removeAttribute('data-fallback-path')
-                    el.removeAttribute('data-external')
-                    el.removeAttribute('data-line-start')
-                    el.removeAttribute('data-line-end')
-                    el.removeAttribute('data-line-ranges')
-                } else {
-                    el.replaceWith(...el.childNodes)
-                }
-            })
             containerEl.querySelectorAll(`[data-file-path="${CSS.escape(path)}"]`).forEach(el => {
                 el.setAttribute('data-path-type', 'dir')
             })
@@ -794,36 +783,29 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
 
         // pathType === 'none' — try fallback swap before removing.
         //
-        // Swap when the fallback exists as a file, or as a project-INTERNAL
-        // directory. The directory case matters because it is the normal shape
-        // for a directory written in a doc: the primary candidate is resolved
-        // relative to the FILE's own directory (which usually does not contain
-        // that directory), while the real target is the project-root fallback.
+        // Swap when the fallback exists as a file or as a directory. The
+        // directory case matters because it is the normal shape for a directory
+        // written in a doc: the primary candidate is resolved relative to the
+        // FILE's own directory (which usually does not contain that directory),
+        // while the real target is the project-root fallback.
         // e.g. `web/src/composables` in test/path-annotation/README.md →
         // primary `test/path-annotation/web/src/composables` (none) + fallback
         // `web/src/composables` (dir). Skipping dir fallbacks stripped the
         // annotation even though the directory exists.
-        //
-        // Project-EXTERNAL directories stay excluded: they are not valid
-        // navigation targets, and the `pathType === 'dir'` branch above strips
-        // them for the same reason.
         const els = containerEl.querySelectorAll(`[data-file-path="${CSS.escape(path)}"]`)
         let swapped = false
         for (const el of els) {
             const fallback = el.getAttribute('data-fallback-path')
             if (!fallback) continue
             const fallbackType = results.get(fallback)
-            const isNowExternal = isAbsolutePath(fallback)
-            const canSwap = fallbackType === 'file'
-                || (fallbackType === 'dir' && !isNowExternal)
-            if (!canSwap) continue
+            if (fallbackType !== 'file' && fallbackType !== 'dir') continue
 
             // Swap data-file-path to fallback
             el.setAttribute('data-file-path', fallback)
             el.removeAttribute('data-fallback-path')
-            el.setAttribute('data-path-type', fallbackType!)
+            el.setAttribute('data-path-type', fallbackType)
             // Update external status
-            if (isNowExternal) {
+            if (isAbsolutePath(fallback)) {
                 el.setAttribute('data-external', 'true')
                 el.classList.add('external')
             } else {
@@ -992,14 +974,11 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
                 useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
                 return false
             }
-            if (isExternal && type === 'dir') {
-                const { useToast } = await import('@/composables/useToast')
-                const { gt } = await import('@/composables/useLocale')
-                useToast().show(gt('file.toast.externalPathNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
-                return false
-            }
             if (type === 'dir') {
-                // Path is a directory — dispatch unified directory jump
+                // Path is a directory — dispatch unified directory jump. This
+                // covers project-external directories too: the file manager
+                // browses them via /api/projects (see loadFiles), so they are
+                // ordinary navigation targets rather than a refusal.
                 window.dispatchEvent(new CustomEvent('open-directory-from-context', {
                     detail: { path: targetPath, source },
                 }))
@@ -1062,8 +1041,8 @@ async function fetchPathType(targetPath: string): Promise<'file' | 'dir' | 'none
  * parent directory and silently highlight nothing (the file manager retries for
  * 15s, then gives up with no explanation).
  *
- * Returns false when the path could not be revealed (missing or external), so a
- * caller can tell a no-op from a real jump.
+ * Returns false when the path could not be revealed (missing), so a caller can
+ * tell a no-op from a real jump.
  */
 export async function revealInFileManager(resolvedPath: string, source?: NavigationSurface): Promise<boolean> {
     const parsed = parseFileUri(resolvedPath)
@@ -1071,23 +1050,14 @@ export async function revealInFileManager(resolvedPath: string, source?: Navigat
     if (!targetPath) return false
 
     // Normalize Windows backslashes and relativize an absolute in-project path,
-    // so the prefix match and the /api/dir listing below agree on the form.
+    // so the prefix match and the directory listing below agree on the form.
     targetPath = normalizeSlashes(targetPath)
     targetPath = toProjectRelative(targetPath, store.state.projectRoot)
-
-    // /api/dir only browses inside the project root, so an external path cannot
-    // be revealed — report it instead of failing later as a dir-load error.
-    const isExternal = isAbsolutePath(targetPath)
 
     const pathType = await fetchPathType(targetPath)
     if (pathType === 'none') {
         const { useToast } = await import('@/composables/useToast')
         useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
-        return false
-    }
-    if (isExternal) {
-        const { useToast } = await import('@/composables/useToast')
-        useToast().show(gt('file.toast.externalPathNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
         return false
     }
 
@@ -1111,42 +1081,19 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
     // prefix match below works for drive-letter paths (C:\…/C:/…).
     targetPath = normalizeSlashes(targetPath)
 
-    // Convert an absolute project path to a project-relative one so the /api/dir
-    // listing (whose relative paths resolve against the project root) can
-    // navigate into its parent directory.
+    // Convert an absolute project path to a project-relative one so the
+    // directory listing (whose relative paths resolve against the project root)
+    // can navigate into its parent directory. Paths that stay absolute are
+    // outside the project — the manager browses those too, through
+    // /api/projects (see loadFiles).
     targetPath = toProjectRelative(targetPath, store.state.projectRoot)
-
-    // /api/dir only browses inside the project root, so external paths
-    // (Unix absolute outside the project, or other drives on Windows) cannot
-    // be revealed in the file manager — show the unsupported toast instead.
-    const isExternal = isAbsolutePath(targetPath)
 
     // Verify the path exists. Project-relative paths resolve against the
     // project root on the backend; external paths are stat'd directly.
-    let pathType: 'file' | 'dir' | 'none' = 'none'
-    try {
-        const resp = await fetch('/api/file/batch-exists', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: [targetPath] }),
-        })
-        if (resp.ok) {
-            const data = await resp.json() as { results: Record<string, string> }
-            pathType = (data.results?.[targetPath] as 'file' | 'dir' | 'none') || 'none'
-        }
-    } catch { /* proceed as best-effort */ }
-
+    const pathType = await fetchPathType(targetPath)
     if (pathType === 'none') {
         const { useToast } = await import('@/composables/useToast')
         useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
-        return false
-    }
-
-    // External paths (directories AND files) cannot be revealed: /api/dir only
-    // lists directories inside the project root.
-    if (isExternal && (pathType === 'dir' || pathType === 'file')) {
-        const { useToast } = await import('@/composables/useToast')
-        useToast().show(gt('file.toast.externalPathNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
         return false
     }
 

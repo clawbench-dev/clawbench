@@ -33,33 +33,87 @@ export function getThumbWidth(isPC: boolean): number {
 }
 
 /**
- * Rewrite a project-relative media path to a /api/local-file/ URL.
- * Returns the rewritten URL, or the original src unchanged when:
- *  - it is an absolute/external URL (http(s)://, protocol-relative //, or /api/local-file/),
- *  - it is an absolute path outside the project root,
- *  - no projectRoot is provided.
- * Shared by image/audio/video media rewriting so all media types resolve the same way.
+ * Media src forms that are NOT local files and must never be rewritten:
+ * remote URLs, protocol-relative URLs, inline data URIs, and URLs already
+ * served by one of our own file endpoints (a re-render can see these).
  */
-function resolveLocalMediaSrc(src: string, projectRoot?: string): string {
-  if (!projectRoot) return src
-  if (/^(https?:|\/\/|\/api\/local-file\/)/i.test(src)) return src
-  const absolutePath = src.startsWith('/') ? src : `${projectRoot}/${src}`
-  if (!(absolutePath.startsWith(projectRoot + '/') || absolutePath === projectRoot)) {
-    return src
-  }
-  const rel = absolutePath.slice(projectRoot.length + 1)
-  // Encode each path segment to handle CJK/special characters
-  let decoded = rel
-  try { decoded = decodeURIComponent(rel) } catch { /* malformed encoding, use as-is */ }
-  return `/api/local-file/${decoded.split('/').map((s: string) => encodeURIComponent(s)).join('/')}`
+const NON_LOCAL_MEDIA_SRC_RE = /^(https?:|\/\/|data:|\/api\/local-file\/|\/api\/file\/)/i
+
+/** A media src resolved to the URL that serves its bytes. */
+interface ResolvedMediaSrc {
+  /** URL the browser fetches. */
+  url: string
+  /**
+   * Path argument to hand to /api/file/thumb, or null when the src cannot be
+   * thumbnailed (remote/embedded, or no project root to resolve against).
+   * For the project-relative form this is already segment-encoded, which is
+   * what buildThumbUrl expects; for the external form it is the raw absolute
+   * path (the thumb endpoint decodes its query param once).
+   */
+  thumbPath: string | null
 }
 
 /**
- * Rewrite image URLs in HTML: convert local project file paths to /api/local-file/ URLs.
+ * Resolve a media src to a served URL (plus the matching thumbnail path).
+ *
+ * - Remote / embedded / already-served srcs pass through untouched.
+ * - A project-relative path, or an absolute path INSIDE the project, is served
+ *   as `/api/local-file/<project-relative>` (segment-encoded per part).
+ * - An absolute path OUTSIDE the project is served as
+ *   `/api/local-file/?path=<absolute>`: the same endpoint accepts absolute
+ *   paths directly. Previously EVERY "/"-prefixed src was classified as an
+ *   "external URL" and left alone, so the browser requested it from the site
+ *   root and got a 404 — an AI-written `![](/tmp/chart.png)` never rendered.
+ */
+function resolveMediaSrc(src: string, projectRoot?: string): ResolvedMediaSrc | null {
+  if (!src || NON_LOCAL_MEDIA_SRC_RE.test(src)) return null
+
+  if (src.startsWith('/')) {
+    // Absolute path. Decide project-internal vs external by prefix, so an
+    // in-project absolute path keeps the stable relative URL (and its cache
+    // key) while everything else is served through the ?path= form.
+    if (projectRoot) {
+      const normRoot = projectRoot.replace(/\/+$/, '')
+      if (src === normRoot) return null // the project root itself is not a file
+      if (src.startsWith(normRoot + '/')) {
+        const rel = src.slice(normRoot.length + 1)
+        return { url: localFileUrlForRelative(rel), thumbPath: encodeSegments(rel) }
+      }
+    }
+    return { url: `/api/local-file/?path=${encodeURIComponent(src)}`, thumbPath: encodeSegments(src) }
+  }
+
+  if (!projectRoot) return null
+  return { url: localFileUrlForRelative(src), thumbPath: encodeSegments(src) }
+}
+
+/** Segment-encode a project-relative path, tolerating malformed escapes. */
+function encodeSegments(rel: string): string {
+  let decoded = rel
+  try { decoded = decodeURIComponent(rel) } catch { /* malformed encoding, use as-is */ }
+  return decoded.split('/').map((s: string) => encodeURIComponent(s)).join('/')
+}
+
+/** Build the `/api/local-file/<rel>` URL for an already segment-encoded rel. */
+function localFileUrlForRelative(rel: string): string {
+  return `/api/local-file/${encodeSegments(rel)}`
+}
+
+/**
+ * Rewrite a media path to a served URL, or return the src unchanged when it is
+ * not a local file. Shared by the image/audio/video rewriting steps so all
+ * media types resolve identically (including project-external absolute paths).
+ */
+function resolveLocalMediaSrc(src: string, projectRoot?: string): string {
+  return resolveMediaSrc(src, projectRoot)?.url ?? src
+}
+
+/**
+ * Rewrite image URLs in HTML: convert local file paths to /api/local-file/ URLs.
  * For raster formats the thumb endpoint can decode, the inline src is rewritten to a
  * lightweight JPEG thumbnail (/api/file/thumb?path=...) and the original full-size
  * URL is stored in data-full-src (used by the lightbox to show the full image).
- * Skips absolute/external URLs. Applies thumbnail styling.
+ * Skips remote/embedded URLs. Applies thumbnail styling.
  *
  * Every <img> also gets the `lightbox-img` marker class (+ `chat-img` in chat)
  * so the media-block factory (annotateMediaBlocks) lifts it into the unified
@@ -71,23 +125,14 @@ export function rewriteImageUrls(html: string, projectRoot: string, thumbWidth: 
     const srcMatch = cleanAttrs.match(/\bsrc="([^"]*)"/)
     if (srcMatch) {
       const src = srcMatch[1]
-      // Try to resolve as a project-local path (skip absolute/external URLs)
-      if (/^(https?:|\/\/|^\/)/i.test(src)) {
-        return `<img${cleanAttrs} class="chat-img lightbox-img">`
-      }
-      if (projectRoot) {
-        const rewritten = resolveLocalMediaSrc(src, projectRoot)
-        if (rewritten !== src) {
-          cleanAttrs = cleanAttrs.replace(`src="${src}"`, `src="${rewritten}"`)
-          const rel = rewritten.replace(/^\/api\/local-file\//, '')
-          if (isThumbExtension(src)) {
-            // Inline src → thumbnail; keep the original for the lightbox.
-            // rel is already segment-encoded (CJK → %XX); the backend decodes
-            // the query param once, so pass it through unencoded.
-            const fullSrc = escapeHtmlAttr(rewritten)
-            const thumbSrc = buildThumbUrl(rel, thumbWidth)
-            cleanAttrs = cleanAttrs.replace(/src="[^"]*"/, `src="${thumbSrc}" data-full-src="${fullSrc}"`)
-          }
+      const resolved = resolveMediaSrc(src, projectRoot)
+      if (resolved && resolved.url !== src) {
+        cleanAttrs = cleanAttrs.replace(`src="${src}"`, `src="${escapeHtmlAttr(resolved.url)}"`)
+        if (isThumbExtension(src) && resolved.thumbPath) {
+          // Inline src → thumbnail; keep the original for the lightbox.
+          const fullSrc = escapeHtmlAttr(resolved.url)
+          const thumbSrc = buildThumbUrl(resolved.thumbPath, thumbWidth)
+          cleanAttrs = cleanAttrs.replace(/src="[^"]*"/, `src="${thumbSrc}" data-full-src="${fullSrc}"`)
         }
       }
     }
@@ -275,13 +320,26 @@ function escapeHtmlAttr(str: string): string {
 }
 
 /**
+ * Matches a rendered markdown link and captures its href plus inner text.
+ *
+ * The href is NOT assumed to be the only attribute: `annotateExternalLinkTargets`
+ * stamps `target`/`rel` onto external links earlier in the pipeline, and the
+ * localhost annotator does the same for its own wrappers. Requiring
+ * `<a href="…">` with nothing else made those anchors stop matching, so an
+ * external .mp3/.mp4 link silently degraded from an inline player back to a
+ * plain link. Extra attributes on either side of href are tolerated; the
+ * captured href and inner text are all the media converters need.
+ */
+const MARKDOWN_LINK_RE = /<a\s+[^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g
+
+/**
  * Convert audio file links to inline audio players.
  * Replaces <a href="...mp3"> links with <audio> elements.
  * Project-relative paths (not /api/local-file/ or external URLs) are rewritten
  * to /api/local-file/ URLs so the browser can load them, mirroring image handling.
  */
 export function convertAudioLinks(html: string, projectRoot?: string): string {
-  return html.replace(/<a href="([^"]+)">([^<]*)<\/a>/g, (match, href) => {
+  return html.replace(MARKDOWN_LINK_RE, (match, href) => {
     const lower = href.toLowerCase()
     if (AUDIO_EXTENSIONS.some(ext => lower.endsWith(ext))) {
       const src = resolveLocalMediaSrc(href, projectRoot)
@@ -298,7 +356,7 @@ export function convertAudioLinks(html: string, projectRoot?: string): string {
  * project-relative paths to /api/local-file/ URLs like audio/images.
  */
 export function convertVideoLinks(html: string, projectRoot?: string): string {
-  return html.replace(/<a href="([^"]+)">([^<]*)<\/a>/g, (match, href) => {
+  return html.replace(MARKDOWN_LINK_RE, (match, href) => {
     const lower = href.toLowerCase()
     if (VIDEO_EXTENSIONS.some(ext => lower.endsWith(ext))) {
       const src = resolveLocalMediaSrc(href, projectRoot)

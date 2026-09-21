@@ -926,3 +926,44 @@ describe('FileHeader', () => {
     })
   })
 })
+
+// ── Project-external indicator ──
+// The viewer opens any path a chat annotation names, including files outside
+// the project root. Without a badge the header is indistinguishable from a
+// project file, so the user cannot tell where the file came from.
+describe('FileHeader — project-external badge', () => {
+  const i18nEn = createI18n({
+    legacy: false,
+    locale: 'en',
+    messages: {
+      en: {
+        nav: { refresh: 'Refresh' },
+        common: { download: 'Download', delete: 'Delete', close: 'Close' },
+        chat: { actions: { attachToChat: 'Attach' }, attach: { removeFromChat: 'Remove', addedToChat: 'Added', removedFromChat: 'Removed' } },
+        file: {
+          header: { toc: 'TOC', search: 'Search', fitWidth: 'Fit', quoteInChat: 'Quote', sourceView: 'Source', renderedView: 'Rendered', finishEditing: 'Done', edit: 'Edit', more: 'More' },
+          nav: { externalFile: 'File outside project' },
+        },
+      },
+    },
+  })
+
+  function mountWith(filePath: string) {
+    return mount(FileHeader, {
+      props: {
+        file: { name: filePath.split('/').pop(), path: filePath, content: 'x' },
+        viewMode: 'source', tocOpen: false, searchOpen: false, wordWrap: true,
+        showLineNumbers: true, stickyScroll: true, overlayOpen: false,
+      },
+      global: { plugins: [i18nEn], stubs: { Teleport: { template: '<div><slot /></div>' } } },
+    })
+  }
+
+  it('shows the badge for a file outside the project', () => {
+    expect(mountWith('/tmp/scratch/notes.md').find('.external-badge').exists()).toBe(true)
+  })
+
+  it('hides the badge for a project-relative file', () => {
+    expect(mountWith('web/src/App.vue').find('.external-badge').exists()).toBe(false)
+  })
+})

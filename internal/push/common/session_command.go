@@ -75,16 +75,6 @@ func ClassifyIncoming(text, stickySessionID string) Route {
 	return Route{Kind: RouteToSession, Message: trimmed}
 }
 
-// ClassifyIncomingAttachment routes an inbound file/image message. Attachments
-// carry no text, so the only targets are the sticky session (auto) or the
-// "/ls" hint when none is set.
-func ClassifyIncomingAttachment(stickySessionID string) Route {
-	if stickySessionID == "" {
-		return Route{Kind: RouteNoTarget}
-	}
-	return Route{Kind: RouteToSession}
-}
-
 // ResolveShortSessionID resolves an 8-char short session ID to a full session ID and title.
 // It first checks running sessions, then falls back to all sessions.
 // Matching is case-insensitive (UUIDs are lowercase in DB, user may type uppercase).

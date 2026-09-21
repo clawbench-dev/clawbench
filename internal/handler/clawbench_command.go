@@ -35,11 +35,16 @@ Auth: send the header "{{AI_TOKEN_HEADER}}: {{AI_TOKEN}}" on every request. If a
 Endpoints:
 {{ENDPOINTS}}
 
+Choosing the project — pick exactly one per request:
+- Current project (default): send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}". Use this when the user asks about "this project" or names no project.
+- A specific other project: call "GET /api/conversation-projects" to find its exact path, then send the cookie "{{PROJECT_COOKIE}}=<that path>". Match the project the user names by its directory name (the last path segment) or by its full path; if several projects share a name, ask which one rather than guessing. The list includes projects whose directory was deleted, so history stays reachable after the folder is gone.
+- All projects: send NO project cookie at all. The search then covers every project on this instance and is what the user means by "across projects", "all projects" or "everywhere".
+
 Required parameters:
 - The search query (body field "q") is required.
-- Send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" so results stay inside this project.
 - Set exclude_session_id to {{SESSION_ID}} to keep the current conversation out of the results.
 
+When the search spans more than one project, say which project each result belongs to.
 After searching, present the results in a natural, readable format (e.g. a summary paragraph or bullet list). Mention the session titles and key findings.
 If no results found, answer based on your own knowledge — do NOT mention the search process.
 `
@@ -85,8 +90,9 @@ Current time (UTC): {{NOW}}
 Endpoints:
 {{ENDPOINTS}}
 
-Choosing the scope — pick exactly one per request:
-- Single project: send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" and omit scope (it defaults to project). This is the default; use it when the user asks about "this project".
+Choosing the project — pick exactly one per request:
+- Current project (default): send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" and omit scope (it defaults to project). Use this when the user asks about "this project" or names no project.
+- A specific other project: call "GET /api/conversation-projects" to find its exact path, then send the cookie "{{PROJECT_COOKIE}}=<that path>" and omit scope. Match the project the user names by its directory name (the last path segment) or by its full path; if several projects share a name, ask which one rather than guessing. Projects whose directory was deleted are still listed and their recorded usage remains queryable.
 - All projects: send "scope=all" and do NOT send the project cookie. This aggregates every project on this instance and is what the user means by "across projects", "all projects" or "everything". Sending the cookie together with scope=all is rejected as contradictory.
   When the user wants to know which project consumes the most, also pass "dims=project" so rows are grouped per project instead of merged into one total.
 
@@ -96,7 +102,7 @@ Working with time:
 - The date range is capped by the server; keep it to a few months at most.
 
 Present the numbers in a readable form: a short summary plus a table when several rows come back. Scale large token counts (e.g. 1.2M) and state the currency for cost.
-State which scope you used, and in scope=all list the projects by consumption.
+State which project (or that all projects were used) the numbers cover.
 If no data is returned, say so plainly — do NOT invent figures.
 `
 

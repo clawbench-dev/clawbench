@@ -128,6 +128,7 @@ describe('useSettingsConfig', () => {
     expect('showHidden' in localConfig).toBe(true)
     expect('fileView' in localConfig).toBe(true)
     expect('terminalFontSize' in localConfig).toBe(true)
+    expect('terminalCopyOnSelect' in localConfig).toBe(true)
     expect('logCapture' in localConfig).toBe(true)
     expect('swipeSession' in localConfig).toBe(true)
   })
@@ -210,25 +211,54 @@ describe('useSettingsConfig', () => {
   // Browser/system notifications default ON: they are a separate channel from
   // the server-side push_mode, so an upgrading user who never touched this
   // switch keeps getting desktop alerts.
-  it('localConfig has browserNotification defaulting to true', () => {
+  it('localConfig has desktopNotification defaulting to true', () => {
     const { localConfig } = useSettingsConfig()
-    localStorage.removeItem('clawbench-settings-browserNotification')
-    expect('browserNotification' in localConfig).toBe(true)
-    expect(localConfig.browserNotification).toBe(true)
+    localStorage.removeItem('clawbench-settings-desktopNotification')
+    expect('desktopNotification' in localConfig).toBe(true)
+    expect(localConfig.desktopNotification).toBe(true)
   })
 
-  it('setLocalConfig persists browserNotification to localStorage', () => {
+  it('setLocalConfig persists desktopNotification to localStorage', () => {
     const { localConfig, setLocalConfig } = useSettingsConfig()
 
-    setLocalConfig('browserNotification', false)
-    expect(localConfig.browserNotification).toBe(false)
-    expect(localStorage.getItem('clawbench-settings-browserNotification')).toBe('false')
+    setLocalConfig('desktopNotification', false)
+    expect(localConfig.desktopNotification).toBe(false)
+    expect(localStorage.getItem('clawbench-settings-desktopNotification')).toBe('false')
 
-    setLocalConfig('browserNotification', true)
-    expect(localConfig.browserNotification).toBe(true)
-    expect(localStorage.getItem('clawbench-settings-browserNotification')).toBe('true')
+    setLocalConfig('desktopNotification', true)
+    expect(localConfig.desktopNotification).toBe(true)
+    expect(localStorage.getItem('clawbench-settings-desktopNotification')).toBe('true')
+
+    localStorage.removeItem('clawbench-settings-desktopNotification')
+  })
+
+  // The key was renamed from browserNotification. An upgrading user who had
+  // turned the switch OFF must stay off — a silent reset to the default would
+  // start showing notifications they had deliberately disabled.
+  it('migrates a stored browserNotification value to desktopNotification', async () => {
+    localStorage.setItem('clawbench-settings-browserNotification', 'false')
+    localStorage.removeItem('clawbench-settings-desktopNotification')
+
+    // migrateLegacyKeys() runs at module load, so re-import to trigger it.
+    vi.resetModules()
+    const { useSettingsConfig: fresh } = await import('@/composables/useSettingsConfig')
+    expect(fresh().localConfig.desktopNotification).toBe(false)
+    expect(localStorage.getItem('clawbench-settings-desktopNotification')).toBe('false')
 
     localStorage.removeItem('clawbench-settings-browserNotification')
+    localStorage.removeItem('clawbench-settings-desktopNotification')
+  })
+
+  it('does not let the legacy key override an explicit new value', async () => {
+    localStorage.setItem('clawbench-settings-browserNotification', 'false')
+    localStorage.setItem('clawbench-settings-desktopNotification', 'true')
+
+    vi.resetModules()
+    const { useSettingsConfig: fresh } = await import('@/composables/useSettingsConfig')
+    expect(fresh().localConfig.desktopNotification).toBe(true)
+
+    localStorage.removeItem('clawbench-settings-browserNotification')
+    localStorage.removeItem('clawbench-settings-desktopNotification')
   })
 
   it('localConfig has messageDisplayMode defaulting to mixed', () => {

@@ -348,11 +348,20 @@ vi.mock('@/utils/fileManager', async (importOriginal) => {
   }
 })
 
-vi.mock('@/utils/path.ts', () => ({
-  dirName: (p: string) => p.split('/').slice(0, -1).join('/') || '',
-  splitPath: (p: string) => p.split('/').filter(Boolean),
-  joinPath: (...parts: string[]) => parts.join('/'),
-}))
+// Only the path helpers this spec actually needs are pinned; everything else
+// (isAbsolutePath, normalizeSlashes, baseName…) is delegated to the real module.
+// A hand-written partial mock silently breaks the component the moment it
+// imports one more helper — FileManagerContent's isExternalDir needed
+// isAbsolutePath and every mount in this file blew up on the missing export.
+vi.mock('@/utils/path.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/path.ts')>()
+  return {
+    ...actual,
+    dirName: (p: string) => p.split('/').slice(0, -1).join('/') || '',
+    splitPath: (p: string) => p.split('/').filter(Boolean),
+    joinPath: (...parts: string[]) => parts.join('/'),
+  }
+})
 
 // Import after mocks
 import FileManagerContent from '@/components/file/FileManagerContent.vue'

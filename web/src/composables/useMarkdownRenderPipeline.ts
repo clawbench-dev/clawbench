@@ -80,8 +80,19 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
             const srcMatch = attrs.match(/src="([^"]*)"/)
             if (!srcMatch) return match
             const src = srcMatch[1]
-            if (/^(https?:|\/\/|^\/|data:)/i.test(src)) return match
-            let resolved = joinPath(currentDir, src)
+            // Remote, embedded, or already-served srcs pass through untouched.
+            // `/api/local-file/…` matters here: re-rendering markup that already
+            // went through this step (or markup authored with a served URL) must
+            // not be wrapped a second time into `?path=/api/local-file/…`.
+            if (/^(https?:|\/\/|data:|\/api\/local-file\/|\/api\/file\/)/i.test(src)) return match
+            // An absolute src is a real filesystem path (the AI writing
+            // `![](/tmp/chart.png)`), NOT a site-root URL: resolve it through
+            // the absolute form so it renders instead of 404-ing at the site
+            // root. A leading "/" on a RELATIVE reference cannot occur here —
+            // markdown image srcs are resolved against the document's own
+            // directory, and a root-relative reference has no local meaning.
+            const isAbsoluteSrc = isAbsolutePath(src)
+            let resolved = isAbsoluteSrc ? normalizeSlashes(src) : joinPath(currentDir, src)
             try {
                 resolved = decodeURIComponent(resolved)
             } catch { /* malformed encoding, use as-is */ }
@@ -92,6 +103,10 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
                 if (part === '..') { normalized.pop(); continue }
                 normalized.push(encodeURIComponent(part))
             }
+            // Segment-encoded project-relative form. Only used for RELATIVE srcs:
+            // an absolute src is served through the ?path= forms below, where the
+            // path must stay absolute (a rootless form would resolve against the
+            // project root instead of the file's real location).
             const rel = normalized.join('/')
             const shareMode = isShareMode()
             if (shareMode) {
@@ -101,22 +116,33 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
                 // passes absolute paths), resolve media to their absolute
                 // target and use the ?path= form; otherwise the token endpoint
                 // treats {rel} as relative to the shared file's directory.
-                if (isAbsolutePath(currentDir)) {
+                if (isAbsolutePath(currentDir) || isAbsoluteSrc) {
                     // Rebuild the absolute target from the raw (still-decoded)
                     // src so `..` segments survive for the backend to resolve.
-                    const absTarget = normalizeSlashes(`${currentDir.replace(/\/+$/, '')}/${src}`)
+                    const absTarget = isAbsoluteSrc
+                        ? normalizeSlashes(src)
+                        : normalizeSlashes(`${currentDir.replace(/\/+$/, '')}/${src}`)
                     const shareSrc = shareApiUrl('local') + '?path=' + encodeURIComponent(absTarget) + `&t=${imageTimestamp}`
                     return match.replace(`src="${src}"`, `src="${shareSrc}"`)
                 }
                 const shareSrc = buildLocalMediaUrl(rel, imageTimestamp)
                 return match.replace(`src="${src}"`, `src="${shareSrc}"`)
             }
-            const fullSrc = buildLocalMediaUrl(rel, imageTimestamp)
+            // Project-external absolute path: served through the ?path= form
+            // (the relative form would resolve against the project root and
+            // silently point at a different — usually nonexistent — file).
+            const fullSrc = isAbsoluteSrc
+                ? `/api/local-file/?path=${encodeURIComponent(src)}&t=${imageTimestamp}`
+                : buildLocalMediaUrl(rel, imageTimestamp)
             // Raster formats the thumb endpoint can decode → use a lightweight JPEG
             // thumbnail for the inline src (kept stable so ETag revalidation refreshes
             // it when the source file changes) and keep the full image for the lightbox.
             // Other formats (svg/webp/gif/… ) keep serving the original full-size file.
-            const thumbSrc = isThumbExtension(src) ? buildThumbUrl(rel, getThumbWidth(isPC)) : null
+            // The thumb endpoint takes a path in its own right (absolute paths are
+            // stat'd directly), so the absolute form is passed encoded as-is.
+            const thumbSrc = isThumbExtension(src)
+                ? buildThumbUrl(isAbsoluteSrc ? encodeURIComponent(src) : rel, getThumbWidth(isPC))
+                : null
             // data-attach-src carries the DECODED project-relative file path (resolved
             // against the markdown file's dir) so the rendered view can re-drag the
             // image out onto the chat column as a reference attachment. The decoded
@@ -125,9 +151,17 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
             // The decoded value is HTML-escaped before interpolation: decodeURIComponent
             // can surface quote/angle characters (e.g. a literal %22 filename) that
             // would otherwise break out of the attribute on the rendered page.
-            let attachPath = rel
-            try { attachPath = decodeURIComponent(rel) } catch { /* rel is always encodeURIComponent output, keep as-is */ }
-            const attachAttr = ` data-attach-src="${escapeHtml(attachPath)}"`
+            //
+            // An EXTERNAL absolute image gets no attach attribute: the attach flow
+            // speaks project-relative paths, so advertising one would offer a drag /
+            // attach affordance that cannot resolve. External images stay
+            // view-only (the figure still renders and opens in the lightbox).
+            let attachAttr = ''
+            if (!isAbsoluteSrc) {
+                let attachPath = rel
+                try { attachPath = decodeURIComponent(rel) } catch { /* rel is always encodeURIComponent output, keep as-is */ }
+                attachAttr = ` data-attach-src="${escapeHtml(attachPath)}"`
+            }
             const replacement = thumbSrc
                 ? `src="${thumbSrc}" data-full-src="${fullSrc}"${attachAttr}`
                 : `src="${fullSrc}"${attachAttr}`

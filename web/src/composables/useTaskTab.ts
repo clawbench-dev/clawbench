@@ -73,7 +73,7 @@ export function resetTaskTabState() {
 function onTaskCompleted(task: TaskItem) {
     // Sound + haptic + system notification. Whether a system notification is
     // actually shown is decided inside showBrowserNotification, gated by the
-    // local `browserNotification` setting and by page focus — NOT by the
+    // local `desktopNotification` setting and by page focus — NOT by the
     // server-side push_mode (which selects the mobile/IM channel).
     playNotificationSound()
     try {

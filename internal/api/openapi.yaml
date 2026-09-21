@@ -237,7 +237,7 @@ paths:
 
         **项目范围**由 `scope` 决定：
         - `scope=project`（默认）：限制在项目 Cookie 指定的单个项目内，Cookie
-          必填。浏览器面板走这条路径。
+          必填。浏览器面板走这条路径。Cookie 值可以是任意项目路径。
         - `scope=all`：聚合实例内**全部项目**，仅授予携带本机 AI 令牌的调用方
           （`/cb-usage` 斜杠命令）；浏览器会话请求会被拒绝。该模式要求**不**发送
           项目 Cookie，同时发送两者返回 400。跨项目统计通常配合 `dims=project`。
@@ -614,6 +614,11 @@ paths:
     get:
       tags: [Projects]
       summary: 列出项目目录
+      description: |
+        列出任意目录，用于项目选择与**项目外目录浏览**：`path` 可为绝对路径
+        （在配置的根路径下校验）或相对路径（按第一个根路径解析）。空/`/`
+        时列出根层级（Windows 为盘符列表）。条目结构与 `/api/dir` 的
+        DirEntry 一致，故文件管理器浏览项目外目录时复用同一套渲染与操作。
       operationId: projectsList
       parameters:
         - name: path
@@ -666,6 +671,40 @@ paths:
       responses:
         "200":
           description: 设置结果
+
+  /api/conversation-projects:
+    get:
+      tags: [Projects]
+      summary: 有对话历史的项目列表
+      description: |
+        列出所有产生过对话的项目，按最近活动时间倒序。目录已被删除的项目也会列出
+        （响应中的 `exists` 为 false），因此历史对话仍可检索。
+      operationId: conversationProjectsList
+      responses:
+        "200":
+          description: 项目列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                          description: 项目目录路径（目录可能已被删除）
+                        session_count:
+                          type: integer
+                          description: 该项目记录的会话数
+                        last_active_at:
+                          type: string
+                          description: 最近一次活动时间（UTC，`2006-01-02 15:04:05`）
+                        exists:
+                          type: boolean
+                          description: 目录当前是否仍存在于磁盘上
 
   /api/recent-projects:
     get:
@@ -1803,6 +1842,10 @@ paths:
       description: |
         取代已移除的递归 `/api/files`；相对路径按项目根解析。
 
+        **只服务项目内目录**：项目外（绝对）路径请用 `/api/projects`，它对任意
+        绝对目录返回同一套 DirEntry 条目结构。前端据此按路径形态选择端点
+        （见 web/src/utils/dirList.ts）。
+
         条目中的 `ignored` 表示 git 不会跟踪该项（命中 .gitignore 或位于被排除目录下）。
         它只是提示：条目照常返回且可操作，前端仅做灰显。非 git 仓库时恒不出现。
       operationId: dirList
@@ -1843,6 +1886,11 @@ paths:
         Server-Sent Events 流式返回匹配项。OpenAPI 不建模事件流。
 
         `result` 事件与 `/api/dir` 的 DirEntry 同样带 `ignored` 字段，便于前端统一灰显。
+
+        `path` 为空或相对时按项目根解析；**绝对路径表示项目外目录**，直接
+        在配置的根路径下使用（与 `/api/projects` 一致），此时 `result.path`
+        返回绝对路径而非项目相对路径。绝对路径会把前导分隔符原样保留——
+        去掉后 `/tmp` 会被当成项目内的 `tmp`，静默搜索错误的目录并返回 0 条。
       operationId: dirSearch
       parameters:
         - name: q
@@ -2248,6 +2296,10 @@ paths:
         非法或越界的条目会被逐条丢弃而非整帧拒绝，最多接受 200 条。
         打开的文件与 `files` 中的文件都通过其**父目录**监听（原子保存是写临时文件再
         rename，会替换 inode，直接监听文件会失效）。
+
+        `dir`/`file`/`files` 中的**绝对路径表示项目外目标**，直接在配置的根路径下
+        校验并使用（文件管理器可浏览项目外目录，聊天里的图片也可能来自任意位置）；
+        相对路径仍按项目根解析。
       operationId: fileWatchWS
       parameters:
         - name: dir
@@ -3070,7 +3122,9 @@ paths:
       summary: 终端 WebSocket（升级）
       description: |
         WebSocket 端点，承载 PTY 双向字节流与终端状态。OpenAPI 不建模升级握手。
-        查询参数 `cwd` 指定初始工作目录。
+        查询参数 `cwd` 指定初始工作目录：相对路径按项目根解析，**绝对路径表示
+        项目外目录**（文件管理器的"在此打开终端"支持项目外浏览），在配置的根
+        路径下校验后直接使用。
       operationId: terminalWS
       parameters:
         - name: cwd
@@ -3400,7 +3454,10 @@ paths:
     post:
       tags: [RAG]
       summary: 语义 / 全文混合搜索
-      description: 搜索历史对话（排除 thinking 与 tool_use 块）。
+      description: |
+        搜索历史对话（排除 thinking 与 tool_use 块）。
+        项目范围由项目 Cookie 决定：Cookie 值为任意项目路径时只搜该项目，
+        不发送 Cookie 时跨全部项目（仅本机 AI 令牌可省略 Cookie）。
       operationId: ragSearch
       requestBody:
         required: true
@@ -3625,6 +3682,8 @@ paths:
         `archived`/`session_type`/`sort`/`cursor` 仍然生效。
         浏览态不会混排两类会话：`all`/`chat` 均列出对话会话，只有显式
         `task` 才切换到任务执行会话。
+        项目范围由项目 Cookie 决定：Cookie 值为任意项目路径时只搜该项目，
+        不发送 Cookie 时跨全部项目（仅本机 AI 令牌可省略 Cookie）。
       requestBody:
         required: true
         content:
@@ -3964,12 +4023,14 @@ paths:
       summary: 回传客户端日志
       description: |
         需鉴权：这是向服务端文件追加写入的原语，匿名调用者可伪造日志行或反复触发轮转
-        以销毁上一代日志。两个客户端上报时均已登录——JS 中继受「调试日志捕获」开关门控
+        以销毁上一代日志。三个客户端上报时均已登录——JS 中继受「调试日志捕获」开关门控
         且仅在已认证的应用内启用，Android 的 `AppLog.startCapture` 由登录后的 WebView
-        桥触发，且 WebView Cookie 与它同进程。
-        仅写日志（不可读），汇入 `{LogDir}/logs/client.log`，行内带 `[js]`/`[android]`
-        来源标记；50MiB 轮转到 `.1`。单请求上限 200 条，且所有字段均被清洗
-        （转义换行/CR/NUL 并截断）。磁盘由字节上限与文件上限封死，故不限流。
+        桥触发，且 WebView Cookie 与它同进程；Electron 主进程中继读取 Electron cookie
+        jar 里的会话 Cookie，未登录时静默跳过。
+        仅写日志（不可读），汇入 `{LogDir}/logs/client.log`，行内带
+        `[js]`/`[android]`/`[electron]` 来源标记；50MiB 轮转到 `.1`。单请求上限 200 条，
+        且所有字段均被清洗（转义换行/CR/NUL 并截断）。磁盘由字节上限与文件上限封死，
+        故不限流。
       operationId: clientLog
       requestBody:
         required: true
@@ -4003,6 +4064,51 @@ paths:
               schema:
                 type: string
                 format: binary
+
+  # ── Desktop ───────────────────────────────────────────────────────────────
+  /api/desktop/latest:
+    get:
+      tags: [Desktop]
+      summary: 桌面客户端下载信息
+      description: |
+        免鉴权（下载入口在登录页，此时尚无会话）。
+
+        桌面端与服务端同版本发布，服务端版本即桌面端最新版本，因此本接口
+        不查询任何外部服务——只把自身版本号拼成 GitHub Release 资产地址。
+
+        `tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时
+        `downloads` 为空对象，客户端应隐藏下载入口而非报错。
+
+        每个平台给出**候选 URL 列表**：国内优先走 GitHub 代理镜像，直连
+        github.com 始终作为最后兜底。镜像为社区服务，不保证可用，故逐个降级。
+      operationId: desktopLatest
+      security: []
+      responses:
+        "200":
+          description: 版本与各平台候选下载地址
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                    description: 服务端版本号，即桌面端目标版本
+                  tag:
+                    type: string
+                    description: 对应的 GitHub Release tag；dev 构建为空字符串
+                  downloads:
+                    type: object
+                    description: |
+                      平台键（linux-x64 / linux-arm64 / darwin-x64 /
+                      darwin-arm64 / win32-x64）到**候选 URL 数组**，
+                      按推荐顺序排列，客户端依次尝试。
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+        "502":
+          description: 生成下载信息失败
 
 components:
   securitySchemes:
@@ -4150,4 +4256,4 @@ components:
           description: epoch 毫秒
         source:
           type: string
-          description: "`android` 或 `js`；缺省视为 `android`。"
+          description: "`android`、`js` 或 `electron`；缺省视为 `android`。"

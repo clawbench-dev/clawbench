@@ -106,7 +106,7 @@ type DirSearchError struct {
 
 // dirSearchParams holds the parsed query parameters for a directory search.
 type dirSearchParams struct {
-	relPath   string
+	path      string
 	query     string
 	recursive bool
 	exact     bool
@@ -116,7 +116,15 @@ type dirSearchParams struct {
 // parseSearchParams extracts and validates search query parameters from the request.
 // Returns the params and true on success, or writes an error and returns false.
 func parseSearchParams(w http.ResponseWriter, r *http.Request) (dirSearchParams, bool) {
-	relPath := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
+	// An absolute path is a project-EXTERNAL directory (the file manager can
+	// browse those) and must keep its leading separator — trimming it turned
+	// "/tmp" into the project-relative "tmp", so an external search silently
+	// walked a nonexistent in-project directory and returned zero hits.
+	rawPath := r.URL.Query().Get("path")
+	pathParam := rawPath
+	if !filepath.IsAbs(rawPath) {
+		pathParam = strings.TrimPrefix(rawPath, "/")
+	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
@@ -153,7 +161,7 @@ func parseSearchParams(w http.ResponseWriter, r *http.Request) (dirSearchParams,
 		limit = maxSearchLimit
 	}
 
-	return dirSearchParams{relPath: relPath, query: query, recursive: recursive, exact: exact, limit: limit}, true
+	return dirSearchParams{path: pathParam, query: query, recursive: recursive, exact: exact, limit: limit}, true
 }
 
 // classifyEntry returns the entry type string for a directory entry.
@@ -165,6 +173,22 @@ func classifyEntry(d fs.DirEntry, name string) string {
 		return entryTypeImage
 	}
 	return entryTypeFile
+}
+
+// resolveSearchRoot resolves the search root for DirSearch. An absolute path is
+// a project-EXTERNAL directory and is used directly once validated against the
+// configured roots; a relative path resolves against basePath (the project
+// root). Writes an error and returns false on failure.
+func resolveSearchRoot(w http.ResponseWriter, r *http.Request, basePath, pathParam string) (string, bool) {
+	if !filepath.IsAbs(pathParam) {
+		return validateAndResolvePath(w, r, basePath, pathParam)
+	}
+	resolved, err := filepath.Abs(pathParam)
+	if err != nil || !isPathUnderAnyRoot(resolved) {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return "", false
+	}
+	return resolved, true
 }
 
 // DirSearch handles GET /api/dir/search — SSE stream for file search with fuzzy matching.
@@ -192,7 +216,11 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath, ok := validateAndResolvePath(w, r, basePath, params.relPath)
+	// Search root: an absolute path is project-EXTERNAL and is used directly
+	// (validated against the configured roots); a relative one resolves against
+	// the project root. This mirrors how the file manager lists external
+	// directories through /api/projects.
+	absPath, ok := resolveSearchRoot(w, r, basePath, params.path)
 	if !ok {
 		return
 	}
@@ -215,6 +243,12 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	var totalMatchCount int
 	var truncated bool
 
+	// An absolute search root is project-external: the walk reports hit paths
+	// relative to the PROJECT root, which for such a root yields "../.."-laden
+	// values. Emit absolute paths instead, matching how the external listing
+	// (/api/projects) and the manager's row paths are formed.
+	externalRoot := filepath.IsAbs(params.path)
+
 	onMatch := func(name, relPathStr, entryType string, matchedIndexes []int, info fs.FileInfo, absMatchPath string) {
 		totalMatchCount++
 		if sentCount >= params.limit {
@@ -228,9 +262,13 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 
+		resultPath := relPathStr
+		if externalRoot {
+			resultPath = filepath.ToSlash(absMatchPath)
+		}
 		result := DirSearchResult{
 			Name:           name,
-			Path:           relPathStr,
+			Path:           resultPath,
 			Type:           entryType,
 			MatchedIndices: matchedIndexes,
 			Ignored:        isIgnored(ign, filepath.Dir(absMatchPath), name, entryType == entryTypeDir),
@@ -247,10 +285,18 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 		sentCount++
 	}
 
+	// The walk uses this base only to derive a root-relative path for the
+	// subtree-pruning heuristic (a "build" segment strictly above the leaf is
+	// skipped). For an external root the project root would yield "../.."-laden
+	// paths, so anchor the heuristic at the search root itself.
+	walkBase := basePath
+	if externalRoot {
+		walkBase = absPath
+	}
 	if params.recursive {
-		walkAndMatchRecursive(ctx, absPath, basePath, params.query, params.exact, onMatch)
+		walkAndMatchRecursive(ctx, absPath, walkBase, params.query, params.exact, onMatch)
 	} else {
-		walkAndMatchFlat(ctx, absPath, basePath, params.query, params.exact, onMatch)
+		walkAndMatchFlat(ctx, absPath, walkBase, params.query, params.exact, onMatch)
 	}
 
 	// Check if context was cancelled

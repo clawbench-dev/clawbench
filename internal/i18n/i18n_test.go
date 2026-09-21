@@ -133,6 +133,9 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"TextRequired",
 		"JobIdRequired",
 		"FileNotFound",
+		// Auto-continue is rendered from a background goroutine (no request),
+		// so it is the one key most likely to be added on only one side.
+		"AutoContinue",
 	}
 
 	for _, key := range keys {

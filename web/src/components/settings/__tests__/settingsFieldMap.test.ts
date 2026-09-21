@@ -256,11 +256,25 @@ describe('settingsFieldMap', () => {
     const cfg = panels[0]
     expect(cfg.enableKey).toBe('terminal.enabled')
     expect(cfg.enableLabelKey).toBe('settings.items.terminalEnabled')
-    expect(cfg.commonFields.length).toBe(5)
+    expect(cfg.commonFields.length).toBe(6)
     expect(cfg.commonFields[0].key).toBe('terminalTheme')
     expect(cfg.commonFields[0].source).toBe('local')
     expect(cfg.commonFields[1].key).toBe('terminalFontSize')
     expect(cfg.commonFields[1].source).toBe('local')
+  })
+
+  it('terminal panel exposes copy-on-select as a local switch', () => {
+    const cfg = getCategoryPanels('terminal')[0]
+    const item = cfg.commonFields.find(f => f.key === 'terminalCopyOnSelect')
+
+    expect(item).toBeDefined()
+    expect(item!.type).toBe('switch')
+    // Local-only: it is a pure frontend behaviour, so it must not appear in the
+    // server field map (a server source would require a backend whitelist entry).
+    expect(item!.source).toBe('local')
+    expect(item!.labelKey).toBe('settings.items.terminalCopyOnSelect')
+    expect(item!.descriptionKey).toBe('settings.items.terminalCopyOnSelectDesc')
+    expect(getServerFieldToLabelKey()['terminalCopyOnSelect']).toBeUndefined()
   })
 
   // ── TTS panel ──
@@ -403,23 +417,23 @@ describe('settingsFieldMap', () => {
 
   // ── Notification (push) panel ──
 
-  it('notification items are split into in-app, browser and desktop/system sections', () => {
+  it('notification items are split into in-app, desktop and desktop/system sections', () => {
     const items = categoryItems['notification'].filter(e => e.type === 'item').map(e => e.spec)
 
     const inApp = items.filter(i => i.sectionHeader === 'settings.items.inAppNotifySection')
     expect(inApp.map(i => i.key)).toEqual(['inAppNotification', 'notificationSound'])
 
-    const browser = items.filter(i => i.sectionHeader === 'settings.items.browserNotifySection')
-    expect(browser.map(i => i.key)).toEqual(['browserNotification'])
+    const desktopNotify = items.filter(i => i.sectionHeader === 'settings.items.desktopNotifySection')
+    expect(desktopNotify.map(i => i.key)).toEqual(['desktopNotification'])
 
-    const desktop = items.filter(i => i.sectionHeader === 'settings.items.desktopSystemSection')
-    expect(desktop.map(i => i.key)).toEqual(['floatingStatusWindow', 'liveUpdate'])
+    const desktopSystem = items.filter(i => i.sectionHeader === 'settings.items.desktopSystemSection')
+    expect(desktopSystem.map(i => i.key)).toEqual(['floatingStatusWindow', 'liveUpdate'])
 
     // Every item must carry one of the three section headers, so no row can fall
     // into the header-less "其他" card at the bottom of the page.
     const known = new Set([
       'settings.items.inAppNotifySection',
-      'settings.items.browserNotifySection',
+      'settings.items.desktopNotifySection',
       'settings.items.desktopSystemSection',
     ])
     expect(items.every(i => known.has(i.sectionHeader!))).toBe(true)
@@ -444,11 +458,11 @@ describe('settingsFieldMap', () => {
     expect(desktop.every(i => i.appOnly === true)).toBe(true)
   })
 
-  it('browserNotification is a local switch that is NOT app-only', () => {
+  it('desktopNotification is a local switch that is NOT app-only', () => {
     const item = categoryItems['notification']
       .filter(e => e.type === 'item')
       .map(e => e.spec)
-      .find(i => i.key === 'browserNotification')
+      .find(i => i.key === 'desktopNotification')
 
     expect(item).toBeDefined()
     expect(item!.type).toBe('switch')
@@ -566,5 +580,41 @@ describe('settingsFieldMap', () => {
     expect(entry!.spec.type).toBe('switch')
     expect(entry!.spec.labelKey).toBe('settings.items.filePreviewMode')
     expect(entry!.spec.descriptionKey).toBe('settings.items.filePreviewModeDesc')
+  })
+})
+
+describe('auto-continue settings', () => {
+  const chatItems = () => categoryItems['chat'].filter(e => e.type === 'item').map(e => e.spec)
+
+  it('exposes the enable switch and the retry count as server fields', () => {
+    const enabled = chatItems().find(i => i.key === 'chat.auto_continue_enabled')
+    expect(enabled).toBeDefined()
+    expect(enabled!.type).toBe('switch')
+    expect(enabled!.source).toBe('server')
+
+    const retries = chatItems().find(i => i.key === 'chat.auto_continue_max_retries')
+    expect(retries).toBeDefined()
+    expect(retries!.type).toBe('number')
+    expect(retries!.source).toBe('server')
+    // -1 is the "unlimited" sentinel, so the floor must not clamp it away.
+    expect(retries!.min).toBe(-1)
+  })
+
+  it('disables the retry count until auto-continue is on', () => {
+    const retries = chatItems().find(i => i.key === 'chat.auto_continue_max_retries')
+    expect(retries!.disableUnless).toEqual({ key: 'chat.auto_continue_enabled', value: true })
+  })
+
+  it('groups both items under the session recovery section', () => {
+    for (const key of ['chat.auto_continue_enabled', 'chat.auto_continue_max_retries']) {
+      const item = chatItems().find(i => i.key === key)
+      expect(item!.sectionHeader).toBe('settings.items.autoContinueSectionHeader')
+    }
+  })
+
+  it('maps both fields to i18n label keys', () => {
+    const map = getServerFieldToLabelKey()
+    expect(map['chat.auto_continue_enabled']).toBe('settings.items.chatAutoContinueEnabled')
+    expect(map['chat.auto_continue_max_retries']).toBe('settings.items.chatAutoContinueMaxRetries')
   })
 })

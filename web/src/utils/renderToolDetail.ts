@@ -2143,10 +2143,10 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
         const selected = item.querySelectorAll('.ask-question-option.selected')
         const labels = [...selected].map(el => (el as HTMLElement).dataset.label)
         if (labels.length > 0) {
-          answers.push(labels.join(', '))
+          answers.push(labels.map(l => `- ${l}`).join('\n'))
         }
       }
-      // Append supplementary text if provided
+      // Append supplementary text as a separate paragraph
       const supplementaryInput = askSupplementaryField(view)
       const supplementaryText = supplementaryInput?.value?.trim()
       if (supplementaryText) {
@@ -2186,8 +2186,8 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
       // the send fails (see revertAskSubmission). Sent only when the card has a
       // key, so every other send-message emit keeps its single-argument shape.
       const cardKey = askKeyOf(view)
-      if (cardKey) emit('send-message', answers.join('\n'), cardKey)
-      else emit('send-message', answers.join('\n'))
+      if (cardKey) emit('send-message', answers.join('\n\n'), cardKey)
+      else emit('send-message', answers.join('\n\n'))
     }
     return true
   }

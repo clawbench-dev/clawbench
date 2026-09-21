@@ -20,7 +20,10 @@
         </button>
         <SearchInput v-model="searchQuery" :placeholder="t('projectDialog.search')" />
       </div>
-      <DirBreadcrumb :path="browsePath === '/' ? '' : browsePath" @navigate="onBreadcrumbNavigate" />
+      <!-- No project concept here: the picker browses the whole filesystem, so
+           "" already means the filesystem top level. Home must not be
+           repurposed as "project root", nor a filesystem-root crumb added. -->
+      <DirBreadcrumb :path="browsePath === '/' ? '' : browsePath" :project-scoped="false" @navigate="onBreadcrumbNavigate" />
     </div>
 
     <!-- Content -->

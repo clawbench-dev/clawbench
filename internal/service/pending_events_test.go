@@ -506,6 +506,9 @@ func TestStoreNotifiableEvent_UserMessage_AllConnected(t *testing.T) {
 		}
 		var wmu sync.Mutex
 		mgr.Subscribe(conn, &wmu, "connected-client", "")
+		// Subscribe to the session under test: storage is skipped only when
+		// every connected client is actually watching THIS session.
+		mgr.StreamHub().Subscribe("connected-client", "sess_1")
 		close(connected)
 		time.Sleep(2 * time.Second)
 		_ = conn.Close(websocket.StatusNormalClosure, "done")
@@ -895,12 +898,15 @@ func TestStoreNotifiableEventAllClientsConnected(t *testing.T) {
 		t.Fatal("timed out waiting for connected client")
 	}
 
-	// Now HasDisconnectedClients should return false → StoreNotifiableEvent returns early
+	// The connected client is watching "sess_watched", so an event for that
+	// session has no unreached audience and is not stored.
+	mgr.StreamHub().Subscribe("connected-client", "sess_watched")
+
 	msg := ws.ServerMessage{
 		Type:  "event",
 		ID:    "evt_connected",
 		Event: "session_update",
-		Data:  &ws.SessionUpdateData{Status: "completed"},
+		Data:  &ws.SessionUpdateData{SessionID: "sess_watched", Status: "completed"},
 	}
 
 	StoreNotifiableEvent(msg)
@@ -1011,4 +1017,81 @@ func TestStoreNotifiableEventStoreError(t *testing.T) {
 
 	// Should not panic, just log warning
 	StoreNotifiableEvent(msg)
+}
+
+// TestStoreNotifiableEvent_ConnectedButNotSubscribed is the regression guard
+// for a permanently lost cross-device message.
+//
+// The reported scenario: a browser has the target session OPEN (so a WS
+// connection exists and is "connected"), but at the moment DingTalk sends, that
+// client holds no StreamHub subscription for the session — e.g. a reconnect
+// replaced the connection and the re-subscribe had not landed yet. The event is
+// then dropped live (no_subscribers).
+//
+// Recovery must come from the write-ahead log. But StoreNotifiableEvent skips
+// storage whenever no client is DISCONNECTED, and here a connected client
+// exists — just not for this session. The event therefore vanished entirely:
+// neither delivered nor stored, so the reconnect replay could not recover it,
+// and the client rendered the assistant reply with no question above it.
+//
+// Storage must key on "can this session be delivered to anyone" rather than
+// "is some unrelated client disconnected".
+func TestStoreNotifiableEvent_ConnectedButNotSubscribed(t *testing.T) {
+	db, teardown := setupTestDBForPendingEvents(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	// A real connected client, subscribed to a DIFFERENT session — exactly the
+	// "browser is open on another session" case.
+	ready := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		mgr.Subscribe(conn, &wmu, "browser", "")
+		mgr.StreamHub().Subscribe("browser", "some-other-session")
+		close(ready)
+		time.Sleep(3 * time.Second)
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _, err := websocket.Dial(ctx, "ws"+server.URL[4:], nil)
+	require.NoError(t, err)
+	select {
+	case <-ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for connected client")
+	}
+
+	// Sanity: a client IS connected, so the old gate would skip storage.
+	require.False(t, mgr.HasDisconnectedClients(),
+		"precondition: a connected client exists, so the old gate skips storage")
+
+	StoreNotifiableEvent(ws.ServerMessage{
+		Type:  "event",
+		ID:    "evt_unsubscribed",
+		Event: "chat_stream",
+		Data: ws.ChatStreamData{
+			SessionID: "target-session",
+			EventType: "user_message",
+			Payload:   map[string]any{"messageId": int64(42), "content": "from dingtalk"},
+		},
+	})
+
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM pending_events").Scan(&count))
+	assert.Equal(t, 1, count,
+		"a user_message for a session nobody is subscribed to must be persisted, "+
+			"even though some unrelated client is connected")
 }

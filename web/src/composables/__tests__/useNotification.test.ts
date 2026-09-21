@@ -39,7 +39,7 @@ vi.mock('@/composables/useLocale', () => ({
 
 // The browser-notification switch lives in localConfig (reactive). The mock is
 // mutable so each test can flip it without re-importing the module.
-const mockLocalConfig: Record<string, unknown> = { browserNotification: true }
+const mockLocalConfig: Record<string, unknown> = { desktopNotification: true }
 vi.mock('@/composables/useSettingsConfig', () => ({
     localConfig: mockLocalConfig,
 }))
@@ -51,7 +51,7 @@ describe('useNotification', () => {
         mockRequestPermissionResult = 'granted'
         MockNotification.permission = 'default'
         MockNotification.requestPermission.mockClear()
-        mockLocalConfig.browserNotification = true
+        mockLocalConfig.desktopNotification = true
     })
 
     afterEach(() => {
@@ -307,17 +307,17 @@ describe('useNotification', () => {
             expect(closeSpy).toHaveBeenCalled()
         })
 
-        // ── browserNotification setting gate ──
+        // ── desktopNotification setting gate ──
         //
         // The local switch (设置 → 推送通知 → 浏览器通知) is independent of the
         // server-side push_mode: push_mode picks the mobile/IM channel, this one
         // decides whether THIS browser surfaces system notifications. It is
         // enforced here so every producer (session/task/forge) honors it.
 
-        it('does not create a notification when browserNotification is off', async () => {
+        it('does not create a notification when desktopNotification is off', async () => {
             ;(globalThis as any).Notification = MockNotification
             MockNotification.permission = 'granted'
-            mockLocalConfig.browserNotification = false
+            mockLocalConfig.desktopNotification = false
 
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
@@ -328,10 +328,10 @@ describe('useNotification', () => {
             expect(mockNotificationInstances).toHaveLength(0)
         })
 
-        it('does not route to the native host when browserNotification is off', async () => {
+        it('does not route to the native host when desktopNotification is off', async () => {
             ;(globalThis as any).Notification = MockNotification
             MockNotification.permission = 'granted'
-            mockLocalConfig.browserNotification = false
+            mockLocalConfig.desktopNotification = false
 
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
@@ -349,7 +349,7 @@ describe('useNotification', () => {
         it('creates a notification when the setting is explicitly true', async () => {
             ;(globalThis as any).Notification = MockNotification
             MockNotification.permission = 'granted'
-            mockLocalConfig.browserNotification = true
+            mockLocalConfig.desktopNotification = true
 
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
@@ -365,7 +365,7 @@ describe('useNotification', () => {
             MockNotification.permission = 'granted'
             // Simulates a user who never touched the switch: the key exists with
             // its default, but a legacy/absent value must not silence alerts.
-            delete mockLocalConfig.browserNotification
+            delete mockLocalConfig.desktopNotification
 
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
@@ -376,7 +376,7 @@ describe('useNotification', () => {
 
                 expect(mockNotificationInstances).toHaveLength(1)
             } finally {
-                mockLocalConfig.browserNotification = true
+                mockLocalConfig.desktopNotification = true
             }
         })
     })

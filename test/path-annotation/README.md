@@ -83,18 +83,62 @@ in the web frontend. These files are **not** meant to be compiled or executed.
 - 反例对照：`/home/user/project/.worktrees` — 无后续 `/segment`，是合法文件夹，
   应标注（可导航进入）
 
-### 项目外文件夹（橙色，但校验后会被撤销）
+### 项目外文件夹（橙色，保留，可导航进入）
 
-只有**文件**才保留项目外标注；项目外**目录**在 `verifyFilePaths` 收到
-`dir` 后会被摘掉标注（`openFilePath` 点击时也会弹「不支持外部路径」）。
-另注意文本分支同样要求扩展名，`/var/log` 这类无扩展名的外部目录只有
-**行内代码**形式才会先被标注、再被校验撤销：
+项目外**目录与文件一样保留标注**（`verifyFilePaths` 收到 `dir` 只标记
+`data-path-type="dir"`，不再摘除）。点击后由文件管理器打开该目录——
+绝对路径走 `/api/projects`（`/api/dir` 对项目外路径返回 400，前端按路径形态
+选端点，见 `web/src/utils/dirList.ts`）。
 
-- `/home/xulongzhe/.codebuddy` — 行内代码标注后撤销（末段 `.codebuddy` 像扩展名，文本形式也会先标注）
+注意文本分支同样要求扩展名，`/var/log` 这类无扩展名的外部目录只有
+**行内代码**形式才会被标注：
+
+- `/home/xulongzhe/.codebuddy` — 行内代码与文本形式都会标注（末段 `.codebuddy` 像扩展名）
 - `/home/xulongzhe/.codebuddy/plugins`
-- `/var/log` — 仅行内代码形式进入标注，随后撤销
+- `/var/log` — 仅行内代码形式进入标注（无扩展名，文本正则不匹配）
 - `~/.codebuddy` → 展开为 `/home/xulongzhe/.codebuddy`
-- `/var/log/syslog` 的上级 `/var/log`（对照：`/var/log/syslog` 是文件，保留橙色）
+- `/var/log/syslog` 的上级 `/var/log`（对照：`/var/log/syslog` 是文件）
+
+> 历史行为（2026-09-20 已改）：项目外目录的标注曾被 `verifyFilePaths` 摘除，
+> 点击时弹「仅支持项目内的路径跳转」。该文案（`file.toast.externalPathNotSupported`）
+> 随之删除，en/zh 两份都已移除。项目外**文件**点击后仍会提示
+> 「此文件位于项目目录之外」（`file.toast.externalFile`，信息性提示，不阻断打开）。
+
+### 项目外路径的「上一级」与两个根
+
+**Home 图标永远表示项目根**（`navigate('')`），与是否在项目外无关——走多深都有
+一个确定出口。因此外部浏览时面包屑最左侧会多一个**文件系统根**图标（`HardDrive`），
+点击回 `/`（Windows 为 `C:/`）。两个相邻的「根」用颜色区分：外部浏览时 Home 转橙色，
+文件系统根保持中性色。
+
+「上一级」按钮与 Home 的分工：**逐级向上 vs 一步回项目**。
+
+手工验证：进入 `/var/log` → 连点「上一级」→ 应停在 `/`（不会跳回项目内）；
+点 Home → 直接回项目根；点最左的文件系统根图标 → 回 `/`。
+
+> 历史行为（2026-09-21 已改）：Home 曾按路径形态切换含义——项目内指项目根、
+> 项目外指文件系统根，导致外部浏览时**没有任何回到项目的入口**（Back 一路向上
+> 停在 `/`）。现改为 Home 恒为项目根，文件系统根另设图标。
+>
+> 另注：`navigateToParentDir` 曾有个错误守卫 `parent === ''`，而 `dirName('web') === ''`
+> 正是项目内**单段**目录 → 「上一级」静默无动作，且状态机仍报「能返回」，用户卡死。
+> 已修为只挡自指（文件系统根 `dirName('/') === '/'`）。
+
+`/` 与项目根不同形：`toProjectRelative('/', root)` 特判返回 `'/'`（不做相对化），
+否则会被归一成 `''` 而与项目根混淆。
+
+### 项目外的视觉区分（四个面）
+
+橙色是本项目既有的「项目外」约定色。以下四面都应有橙色标识（`ExternalBadge` 组件）：
+
+| 面 | 位置 | 触发条件 |
+|---|---|---|
+| 文件浏览 | 面包屑栏右侧 chip（滚动区之外） | `currentDir` 为绝对路径 |
+| 文件预览 | 文件名旁 chip | `file.path` 为绝对路径 |
+| 目录浏览 | 同文件浏览 | 同上 |
+| 目录预览 | 标题行 chip | `dirPath` 为绝对路径 |
+
+验证：从聊天点开项目外路径 → 对应面出现橙色 chip；项目内文件/目录**不应**出现。
 
 ### 文件夹 + 行号（无意义，不应出现）
 
@@ -138,3 +182,31 @@ in the web frontend. These files are **not** meant to be compiled or executed.
 - `web/src/App.vue:L879-L885,L1000` — 带 L 前缀的多区间
 - `web/src/App.vue:879-885, 1000, 1200-1205` — 逗号后允许空格
 - `web/src/App.vue:1-1000` — 区间过宽，预览卡只高亮窗口内（约 200 行）的部分
+
+### 项目外目录跳转（点击进入该目录，不弹「不支持」）
+
+以下路径点击后应打开**文件管理器并列出该目录内容**（面包屑为绝对路径，
+「上一级」继续在文件系统内向上）。此前会弹「仅支持项目内的路径跳转」：
+
+- `/var/log` — 行内代码形式（无扩展名，文本形式不标注）
+- `/home/xulongzhe/.codebuddy`
+- `/home/xulongzhe/.codebuddy/plugins`
+- `/usr/share/pixmaps`
+- `~/.codebuddy` — tilde 展开后同上
+
+预期网络请求（可在浏览器 Network 面板核对）：列目录打到
+`/api/projects?path=<绝对路径>`，**不是** `/api/dir`（后者对项目外路径返回 400）。
+
+### 项目外媒体渲染（`/api/local-file/?path=` 绝对路径形式）
+
+Markdown 里的图片/音频/视频若指向项目外真实文件，必须能渲染出来。
+历史缺陷：所有以 `/` 开头的 `src` 都被当成「站点根 URL」原样放行，
+浏览器于是向站点根请求而 404——图片**根本不显示**。
+
+- `/usr/share/pixmaps/debian-logo.png` — 项目外图片，应正常显示
+- `/tmp/diagram.svg` — 项目外 SVG（存在时），应正常显示
+- `/etc/hosts` — 非媒体文件，不应被当图片渲染（对照）
+
+预期：项目外媒体被改写为 `src="/api/local-file/?path=%2Fusr%2F…"`
+（项目内则仍是稳定的 `/api/local-file/<项目相对路径>`）。
+项目外图片**不带** `data-attach-src`——附加流程只认项目相对路径。

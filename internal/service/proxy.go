@@ -433,6 +433,60 @@ type detectedPortInfo struct {
 	ProcessArgs string
 }
 
+// TLS probe tuning. The probe target is always loopback, where a real handshake
+// completes in well under a millisecond, so these are generous by orders of
+// magnitude. They must stay short because ports that accept TCP but never speak
+// TLS (a very common shape — dev-server worker pools and ephemeral listeners)
+// burn the full handshake timeout each. A busy host can expose 100+ listening
+// ports, so a long per-port timeout multiplies straight into the request
+// latency the UI waits on.
+const (
+	// detectProbeConcurrency is the number of ports probed in parallel.
+	detectProbeConcurrency = 32
+	// detectDialTimeout bounds establishing the TCP connection.
+	detectDialTimeout = 500 * time.Millisecond
+	// detectHandshakeTimeout bounds the TLS handshake that follows.
+	detectHandshakeTimeout = 500 * time.Millisecond
+)
+
+// tlsProbe reports whether a loopback port speaks TLS. Injected so tests can
+// observe and control probing without touching the network.
+type tlsProbe func(port int) bool
+
+// detectSem bounds the TOTAL number of concurrent TLS probes across every
+// in-flight scan, not just within one request — N simultaneous
+// /api/proxy/detect calls would otherwise each fan out to the per-call worker
+// count. Mirrors thumbDecodeSem in internal/handler/file_thumb.go.
+var detectSem = make(chan struct{}, detectProbeConcurrency)
+
+// classifyPorts determines the protocol of every detected port, probing in
+// parallel with a bounded worker pool.
+//
+// Each goroutine writes only its own result[i], so no mutex is needed. Input
+// order is preserved because the index is the loop index, not completion order.
+func classifyPorts(infos []detectedPortInfo, probe tlsProbe) []DetectedPort {
+	result := make([]DetectedPort, len(infos))
+	var wg sync.WaitGroup
+
+	for i, p := range infos {
+		wg.Add(1)
+		go func(i int, p detectedPortInfo) {
+			defer wg.Done()
+			detectSem <- struct{}{}
+			defer func() { <-detectSem }()
+			result[i] = DetectedPort{
+				Port:        p.Port,
+				Protocol:    classifyPort(p.Port, p.ProcessName, probe),
+				ProcessName: p.ProcessName,
+				ProcessArgs: p.ProcessArgs,
+			}
+		}(i, p)
+	}
+
+	wg.Wait()
+	return result
+}
+
 // DetectListeningPorts returns a list of TCP ports currently in LISTEN state
 // on the server, filtered to exclude system ports and ClawBench's own port.
 // Each port is probed to determine if it speaks TLS (https).
@@ -463,19 +517,15 @@ func (r *ProxyRegistry) DetectListeningPorts() []DetectedPort {
 		return filtered[i].Port < filtered[j].Port
 	})
 
-	// Classify each port
-	result := make([]DetectedPort, len(filtered))
-	for i, p := range filtered {
-		protocol := classifyPort(p.Port, p.ProcessName)
-		result[i] = DetectedPort{Port: p.Port, Protocol: protocol, ProcessName: p.ProcessName, ProcessArgs: p.ProcessArgs}
-	}
-	return result
+	// Classify each port (parallel: the TLS probe dominates the scan latency)
+	return classifyPorts(filtered, detectTLS)
 }
 
 // classifyPort determines the protocol of a listening port.
 // Known non-HTTP ports (SSH, MySQL, Redis, etc.) are marked as "other"
 // since they cannot be forwarded through an HTTP proxy/browser.
-func classifyPort(port int, processName string) string { //nolint:gocyclo // multi-condition port classification
+// probe is only consulted for ports that survive the known-service checks.
+func classifyPort(port int, processName string, probe tlsProbe) string { //nolint:gocyclo // multi-condition port classification
 	// Well-known non-HTTP ports
 	switch port {
 	case 22, 2222: // SSH
@@ -513,23 +563,25 @@ func classifyPort(port int, processName string) string { //nolint:gocyclo // mul
 	}
 
 	// Probe for TLS
-	if detectTLS(port) {
+	if probe(port) {
 		return "https"
 	}
 	return "http"
 }
 
 // detectTLS attempts a TLS handshake to determine if a port speaks HTTPS.
+// The target is always loopback, so the timeouts stay short — see the tuning
+// constants above for why that matters.
 func detectTLS(port int) bool {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, detectDialTimeout)
 	if err != nil {
 		return false
 	}
 	defer func() { _ = conn.Close() }()
 
 	tlsConn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true})
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(detectHandshakeTimeout))
 	err = tlsConn.Handshake()
 	return err == nil
 }

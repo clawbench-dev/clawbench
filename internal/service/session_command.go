@@ -219,7 +219,7 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 	// attachment bubble without a reload. QueueID lets that client anchor the
 	// streaming reply to this bubble.
 	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type: "user_message",
+		Type: eventTypeUserMessage,
 		UserMessage: &ai.UserMessageData{
 			MessageID: msgID,
 			Content:   message,
@@ -335,16 +335,42 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 				cfg.Files = msg.Files
 				nextResult := executeStreamRunShared(ctx, cfg)
 				return DrainResult{
-					CancelReason: nextResult.cancelReason,
-					Err:          nextResult.err,
-					Empty:        nextResult.empty,
+					CancelReason:   nextResult.cancelReason,
+					Err:            nextResult.err,
+					Empty:          nextResult.empty,
+					AbnormalReason: nextResult.abnormalReason,
 				}
 			},
+			// Resume an abnormally terminated turn by sending a localized
+			// "continue" and running one more turn. The prompt/queueID come from
+			// the shared runner, which also owns the delay and cancel checks.
+			AutoContinue: NewAutoContinueRunner(AutoContinueRunnerConfig{
+				Ctx:         ctx,
+				SessionID:   sessionID,
+				ProjectPath: cfg.ProjectPath,
+				BackendName: cfg.BackendName,
+				RunTurn: func(prompt, queueID string) DrainResult {
+					// Mutate the shared cfg for this attempt only; the drain loop
+					// overwrites Message/Files/QueueID when it dequeues the next
+					// real user message, so nothing leaks forward.
+					cfg.Message = prompt
+					cfg.QueueID = queueID
+					cfg.Files = nil
+					res := executeStreamRunShared(ctx, cfg)
+					return DrainResult{
+						CancelReason:   res.cancelReason,
+						Err:            res.err,
+						Empty:          res.empty,
+						AbnormalReason: res.abnormalReason,
+					}
+				},
+			}),
 			MarkDoneAndSendFinal: markDoneAndSendFinal,
 		}, DrainResult{
-			CancelReason: result.cancelReason,
-			Err:          result.err,
-			Empty:        result.empty,
+			CancelReason:   result.cancelReason,
+			Err:            result.err,
+			Empty:          result.empty,
+			AbnormalReason: result.abnormalReason,
 		})
 	}()
 }
@@ -576,9 +602,10 @@ func FormatToolUseBlock(b model.ContentBlock, toolCallMap map[string]*ToolCallRe
 }
 
 type streamRunResultShared struct {
-	cancelReason string
-	err          string
-	empty        bool
+	cancelReason   string
+	err            string
+	empty          bool
+	abnormalReason string
 }
 
 // executeStreamRunShared runs one AI backend execution.
@@ -615,8 +642,9 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		LocalizeError:   serviceLocalizeError,
 	})
 	return streamRunResultShared{
-		cancelReason: res.CancelReason,
-		err:          res.Err,
-		empty:        res.Empty,
+		cancelReason:   res.CancelReason,
+		err:            res.Err,
+		empty:          res.Empty,
+		abnormalReason: res.AbnormalReason,
 	}
 }

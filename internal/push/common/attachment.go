@@ -45,6 +45,19 @@ func AttachmentMaxBytes() int64 {
 	return int64(mb) * 1024 * 1024
 }
 
+// AttachmentMaxFiles is the per-message cap on how many attachments the bot
+// will download. It reuses the web upload limit for the same reason as
+// AttachmentMaxBytes: one setting bounds both paths. A rich-text IM message can
+// embed an arbitrary number of images, and each download is a separate API call
+// plus a file on disk, so the count needs its own bound.
+func AttachmentMaxFiles() int {
+	n := model.UploadMaxFiles
+	if n <= 0 {
+		n = 20
+	}
+	return n
+}
+
 // ErrAttachmentTooLarge is returned when a download exceeds AttachmentMaxBytes.
 var ErrAttachmentTooLarge = fmt.Errorf("attachment exceeds the size limit")
 

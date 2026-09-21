@@ -62,9 +62,20 @@
   function t(key) { return I18N[LANG][key] || I18N['en'][key] || key; }
   // Follow the main interface theme when available.
   try {
-    var THEME = (ClawBenchNative.getTheme && ClawBenchNative.getTheme()) || 'github-dark';
+    // Every colour variable is declared inside a [data-theme="<id>"] block, so
+    // an unrecognised value leaves them ALL undefined and the page renders with
+    // transparent inputs and buttons. That happens when native has no saved
+    // value yet (fresh install) or persisted a collapsed 'dark'/'light'.
+    // Validate against the known IDs and substitute a real one instead.
+    var DARK_IDS = ['ayu-dark','bluloco-dark','catppuccin-mocha','dark-plus','dracula','everforest-dark','github-dark','gruvbox-dark','high-contrast-dark','kanagawa','material-darker','monokai','night-owl','nord','one-dark-pro','rose-pine','solarized-dark','solarized-deep','tokyo-night','vitesse-dark'];
+    var LIGHT_IDS = ['alabaster','ayu-light','bluloco-light','catppuccin-latte','everforest-light','github-light','gruvbox-light','high-contrast-light','light-modern','light-plus','material-lighter','nord-light','one-light','quiet-light','solarized-light','vitesse-light'];
+    var THEME = (ClawBenchNative.getTheme && ClawBenchNative.getTheme()) || '';
+    if (DARK_IDS.indexOf(THEME) < 0 && LIGHT_IDS.indexOf(THEME) < 0) {
+      // Keep the colour scheme the caller implied, so a light-mode user is not
+      // flipped to a dark page (and vice versa).
+      THEME = (THEME === 'light') ? 'github-light' : 'github-dark';
+    }
     document.documentElement.setAttribute('data-theme', THEME);
-    var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','solarized-deep','gruvbox-dark','high-contrast-dark','night-owl','ayu-dark','vitesse-dark','rose-pine','everforest-dark','kanagawa'];
     var BASE = DARK_IDS.indexOf(THEME) >= 0 ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme-base', BASE);
     // Sync resolved theme back to native on first launch when native has no saved value

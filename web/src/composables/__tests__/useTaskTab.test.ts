@@ -533,7 +533,7 @@ describe('useTaskTab', () => {
 
     // ── push_mode must NOT gate the system notification ──
     //
-    // The decision belongs to the local `browserNotification` setting (checked
+    // The decision belongs to the local `desktopNotification` setting (checked
     // inside showBrowserNotification) and to page focus. It used to be gated on
     // `serverConfig.push_mode === 'native'`, which silenced the desktop tab of
     // anyone who had picked DingTalk/飞书/关闭 for their PHONE.

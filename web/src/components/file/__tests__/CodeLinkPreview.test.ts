@@ -1152,8 +1152,9 @@ describe('CodeLinkPreview.vue', () => {
     const revealBtn = document.querySelector('button[title="Open Directory"]') as HTMLButtonElement
     expect(revealBtn).not.toBeNull()
     revealBtn.click()
+    await flushPromises()
     await nextTick()
-    await nextTick()
+    await flushPromises()
 
     expect(loadFilesSpy).toHaveBeenCalledWith('src', false, 0, true)
     expect(preview.close).toHaveBeenCalled()
@@ -2015,8 +2016,9 @@ describe('CodeLinkPreview.vue', () => {
     const revealBtn = footer?.querySelector('.reveal-btn') as HTMLElement
     expect(revealBtn).not.toBeNull()
     revealBtn.click()
+    await flushPromises()
     await nextTick()
-    await nextTick()
+    await flushPromises()
     expect(loadFilesSpy).toHaveBeenCalledWith('packages/agent/src', false, 0, true)
     vi.unstubAllGlobals()
 

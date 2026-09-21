@@ -1111,3 +1111,44 @@ describe('ChatMessageItem — sessionId reaches ContentBlocks', () => {
     expect(region).toMatch(/:sessionId="sessionId"/)
   })
 })
+
+/**
+ * `content-visibility: auto` on .chat-message was removed (16382ef31 added it,
+ * reverted after a scroll-flicker regression).
+ *
+ * Why it must not come back: with `contain-intrinsic-size: auto 240px`, an
+ * offscreen message's height is a GUESS (240px) until the browser measures it
+ * once, and that measurement is remembered per ELEMENT. ChatMessageList
+ * remounts the whole list whenever `listKey` changes — and listKey includes the
+ * message count, so EVERY send remounts it. Fresh elements lose the remembered
+ * heights, scrollHeight collapses to the 240px estimate, the browser clamps
+ * scrollTop up to the shrunken maximum, followToBottom pins against that wrong
+ * height, and the ResizeObserver backstop re-pins once the real heights land —
+ * two instant jumps, i.e. the "flicker to the middle then to the bottom" report.
+ *
+ * Measured on a real 20-message / 12.7MB session: scrollTop 5018 → 4050 → 5710.
+ * Isolated to this rule: with no remount, or with the rule removed, 0px.
+ *
+ * NOTE: jsdom has no layout engine, so the scroll consequence cannot be
+ * asserted behaviourally here — this guards the declaration's absence, and the
+ * pixel-level evidence lives in the comment in ChatMessageItem.vue.
+ */
+describe('ChatMessageItem — .chat-message must not use content-visibility', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatMessageItem.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('does not declare content-visibility or contain-intrinsic-size', async () => {
+    const src = await source()
+    // Match the declaration, not the prose in the explanatory comment above it
+    // (which deliberately names the property to explain why it is banned).
+    expect(src).not.toMatch(/^\s*content-visibility\s*:/m)
+    expect(src).not.toMatch(/^\s*contain-intrinsic-size\s*:/m)
+  })
+
+  it('keeps the explanatory comment so the ban is discoverable', async () => {
+    const src = await source()
+    expect(src).toContain('DO NOT reintroduce `content-visibility: auto`')
+  })
+})

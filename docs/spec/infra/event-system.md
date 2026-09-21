@@ -1,6 +1,6 @@
 # 事件体系
 
-ClawBench 的事件体系是系统实时性的基础设施——会话状态变更、聊天流、任务更新、权限待审等事件从后端产生，经 WebSocket Manager / StreamHub 推送给在线客户端。聊天流（`ChatStreamData`）由 `StreamHub.EmitToSession` 做会话级扇出；系统事件（`session_update`/`task_update`/`summary_update`）由 `ws.Manager` 广播。客户端通过 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong`/`metrics_preference` 消息与后端交互。
+ClawBench 的事件体系是系统实时性的基础设施——会话状态变更、聊天流、任务更新、权限待审等事件从后端产生，经 WebSocket Manager / StreamHub 推送给在线客户端。聊天流（`ChatStreamData`）由 `StreamHub.EmitToSession` 做会话级扇出；系统事件（`session_update`/`task_update`/`summary_update`）由 `ws.Manager` 广播。客户端通过 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`pong`/`metrics_preference` 消息与后端交互。
 
 ## 流程图
 
@@ -21,7 +21,6 @@ sequenceDiagram
         StreamHub->>ws.Manager: 推送给会话订阅者
         ws.Manager->>在线客户端: WS 推送
     end
-    在线客户端-->>ws.Manager: ack
     alt WS 断开
         ws.Manager->>ws.Manager: 缓冲事件
         Note over ws.Manager: 等待重连后回放
@@ -76,8 +75,8 @@ flowchart TD
 
 ### 设计要点
 
-- **WS 统一通道**：系统事件和聊天流均通过 `/api/ai/events/ws` 发送。WS 的双向通信能力支持 ack、subscribe、cancel 和 permission_respond，并减少客户端需要维护的连接数
+- **WS 统一通道**：系统事件和聊天流均通过 `/api/ai/events/ws` 发送。WS 的双向通信能力支持 subscribe、cancel、permission_respond 和 metrics_preference，并减少客户端需要维护的连接数
 - **断线清理超时**：客户端 120s 无活动后清理（可能只是网络抖动）
-- **ack 机制用于确认而非可靠投递**：客户端发送 ack 表示已收到事件，但不触发重发。事件缓冲是时间窗口而非确认驱动——简化了服务端逻辑
+- **事件缓冲是时间窗口而非确认驱动**：断线期间的事件在服务端按条数缓冲，重连后回放。不依赖客户端逐条确认——简化了服务端逻辑
 - **可靠投递按事件语义与来源双层分级**：关键事件（承载状态机终态）在通道满时值得等待，高频增量不值得——丢一条 thinking 用户无感，丢一条 `done` 会让 UI 永久停在 loading。但等待本身也可能致命：ACP 通知由 SDK 单条共享 goroutine 处理、队列有界且溢出会直接关掉连接，因此在该来源上禁止阻塞，否则"丢一个增量"会升级成"连接死亡"。缺任一层判断都会引入更严重的故障
 - **可观测性先于可靠性**：先让丢弃变得可计数、可分级记录，再谈如何不丢——否则无法判断一个"UI 卡住"是投递问题还是生产问题

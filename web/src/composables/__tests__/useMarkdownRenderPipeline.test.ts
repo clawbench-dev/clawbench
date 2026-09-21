@@ -7,6 +7,7 @@ import {
 } from '@/composables/useMarkdownRenderPipeline'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { setShareToken } from '@/share/shareMode'
+import { escapeHtml } from '@/utils/html'
 
 configureMarkedRenderer()
 
@@ -28,9 +29,9 @@ describe('createFixLocalImagePaths', () => {
     expect(out).toContain('image-block-open-btn')
   })
 
-  it('keeps external URLs untouched', () => {
+  it('keeps remote and embedded URLs untouched', () => {
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
-    for (const src of ['https://x.com/a.png', '//cdn.x.com/a.png', '/abs/a.png', 'data:image/png;base64,abc']) {
+    for (const src of ['https://x.com/a.png', '//cdn.x.com/a.png', 'data:image/png;base64,abc']) {
       const out = fix(`<img src="${src}">`)
       expect(out).toContain(`src="${src}"`)
       expect(out).not.toContain('/api/')
@@ -39,6 +40,51 @@ describe('createFixLocalImagePaths', () => {
       // Still lifted into a block wrapper, but only the view button applies.
       expect(out).toContain('image-block-wrapper')
       expect(out).not.toContain('image-block-attach-btn')
+    }
+  })
+
+  it('serves an absolute filesystem path instead of leaving it to 404 at the site root', () => {
+    // An absolute src is a real path (the AI writing `![](/tmp/chart.png)`),
+    // not a site-root URL. Left untouched, the browser would request it from
+    // the site root and get a 404 — the reported "external image doesn't show"
+    // bug. It must be served through the absolute forms of the local endpoints,
+    // and carries no attach data (the attach flow speaks project-relative paths).
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const out = fix('<img src="/abs/a.png">')
+    expect(out).toContain('data-full-src="/api/local-file/?path=%2Fabs%2Fa.png&amp;t=1"')
+    expect(out).toContain('path=%2Fabs%2Fa.png')
+    expect(out).not.toContain('src="/abs/a.png"')
+    expect(out).not.toContain('data-attach-src')
+    expect(out).not.toContain('image-block-attach-btn')
+  })
+
+  it('serves a project-external absolute path without prefixing the document dir', () => {
+    // baseDir must NOT be prepended to an absolute src: "docs/tmp/a.png" would
+    // resolve against the project root and point at a different file.
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 3, isPC: true })
+    const out = fix('<img src="/tmp/final_icon.png">')
+    expect(out).toContain('?path=%2Ftmp%2Ffinal_icon.png')
+    expect(out).not.toContain('docs%2Ftmp')
+    expect(out).not.toContain('/api/local-file/docs')
+  })
+
+  it('does not re-wrap a src that is already served by a file endpoint', () => {
+    // Markup can be rendered through this pipeline more than once (and export
+    // re-renders content that may already carry served URLs). Wrapping an
+    // already-served URL a second time produced
+    // `?path=/api/local-file/images/a.png`, which the backend then treats as a
+    // literal relative path and skips.
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    for (const src of [
+      '/api/local-file/images/a.png',
+      '/api/local-file/?path=%2Ftmp%2Fa.png',
+      '/api/file/thumb?path=images/a.png&w=1200',
+    ]) {
+      const out = fix(`<img src="${src}">`)
+      // The src is preserved verbatim (only "&" is HTML-escaped in the
+      // attribute), and nothing is wrapped around it again.
+      expect(out).toContain(escapeHtml(src))
+      expect(out).not.toContain('data-full-src="/api/local-file/?path=%2Fapi')
     }
   })
 
@@ -406,5 +452,55 @@ describe('KaTeX stretchy-delimiter svgs are not hijacked as media (issue #473)',
     const html = renderMarkdownHtml(md)
     expect(html).toContain('image-block-wrapper')
     expect(html).toContain('lightbox-svg-wrap')
+  })
+})
+
+describe('external links open in a new tab (browser mode)', () => {
+  // Regression: markdown links rendered as a bare `<a href>` navigated the
+  // CURRENT page, replacing the whole app UI with the target site.
+  const anchorsIn = (html: string) =>
+    Array.from(new DOMParser().parseFromString(html, 'text/html').querySelectorAll('a'))
+
+  it('stamps target=_blank on external links through the full pipeline', () => {
+    // Runs the real marked + DOMPurify + annotator chain: DOMPurify strips
+    // `target` unless allow-listed, so this guards the step's ordering too.
+    const html = renderMarkdownHtml('see [site](https://example.com/page) now')
+    const [a] = anchorsIn(html)
+    expect(a.getAttribute('href')).toBe('https://example.com/page')
+    expect(a.getAttribute('target')).toBe('_blank')
+    expect(a.getAttribute('rel')).toContain('noopener')
+  })
+
+  it('annotates in streaming mode (skipEnhancements) as well', () => {
+    // Streaming skips the step-9 enhancement block; the annotation must live in
+    // the always-run phase so a link is already correct while the reply streams.
+    const html = renderMarkdownHtml('[site](https://example.com)', { skipEnhancements: true, skipKatex: true })
+    expect(anchorsIn(html)[0].getAttribute('target')).toBe('_blank')
+  })
+
+  it('annotates in file-preview mode (skipEnhancements)', () => {
+    const { html } = buildMarkdownPreviewDom(
+      { content: '[site](https://example.com)', path: 'docs/README.md' },
+      { isPC: true, imageTimestamp: 1 }
+    )
+    expect(anchorsIn(html)[0].getAttribute('target')).toBe('_blank')
+  })
+
+  it('leaves relative, anchor and same-origin links untouched', () => {
+    const html = renderMarkdownHtml(
+      '[doc](docs/a.md) [jump](#setup) [app](/settings) [mail](mailto:a@b.com)'
+    )
+    for (const a of anchorsIn(html)) {
+      expect(a.hasAttribute('target'), a.getAttribute('href') || '').toBe(false)
+    }
+  })
+
+  it('keeps external media links as inline players, not plain links', () => {
+    // The audio/video converters run AFTER the annotator; if their regex
+    // required a bare `<a href>`, the stamped target/rel would make the link
+    // fall through and degrade the player back to a link.
+    const html = renderMarkdownHtml('[play](https://example.com/song.mp3)')
+    expect(html).toContain('<audio')
+    expect(html).toContain('src="https://example.com/song.mp3"')
   })
 })

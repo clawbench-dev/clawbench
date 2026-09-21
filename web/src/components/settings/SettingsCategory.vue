@@ -109,6 +109,7 @@ import { useAppMode } from '@/composables/useAppMode'
 import { setLogCaptureEnabled } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { usePwaInstall } from '@/composables/usePwaInstall'
+import { useDesktopDownload } from '@/composables/useDesktopDownload'
 import { downloadByUrl } from '@/utils/download'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 import { THEMES } from '@/utils/themeMeta'
@@ -133,6 +134,7 @@ const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, se
 const { loadAgents } = useAgents()
 const { isAppMode } = useAppMode()
 const pwaInstall = usePwaInstall()
+const desktopDownload = useDesktopDownload()
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
 const showIosSheet = ref(false)
@@ -146,6 +148,9 @@ onMounted(() => {
       if (native?.getAppVersion) nativeAppVersion.value = (await native.getAppVersion()) ?? '-'
     } catch { /* not in app mode */ }
   })()
+  // Resolve the desktop download URL so the "download desktop app" row knows
+  // whether it has anything to offer on this platform.
+  void desktopDownload.loadLatest()
 })
 
 // Load agents when chat or agents category is shown
@@ -205,6 +210,9 @@ const renderList = computed(() => {
       if (entry.spec.key === 'appVersion' && !isAppMode.value) continue
       if (entry.spec.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
       if (entry.spec.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
+      // Hide when this platform has no published desktop build (or the registry
+      // query failed) — otherwise the row is a dead end that downloads nothing.
+      if (entry.spec.key === 'downloadDesktopApp' && !(desktopDownload.isDesktop && !!desktopDownload.currentDownloadUrl())) continue
       result.push(entry)
     } else {
       // Panel entries always render
@@ -418,6 +426,9 @@ function handleClick(item: ItemSpec) {
   }
   if (item.key === 'downloadAndroidApp') {
     downloadByUrl('/api/apk', 'clawbench-android.apk')
+  }
+  if (item.key === 'downloadDesktopApp') {
+    desktopDownload.downloadDesktop()
   }
   if (item.navigateTo) {
     emit('navigate', item.navigateTo)

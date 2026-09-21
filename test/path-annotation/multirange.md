@@ -89,3 +89,25 @@ Windows 盘符（盘符不应被当成行号后缀）：
 - `web/src/App.vue:879-885` — 单区间，无 data-line-ranges
 - `go.mod:1-5` — 单区间
 - `README.md:1-3,5` — 多区间
+
+## 7. 项目外目录（点击进入该目录，保留橙色标注）
+
+无扩展名的外部目录需**行内代码**形式（文本正则要求扩展名）：
+
+- `/var/log`
+- `/home/xulongzhe/.codebuddy`
+- `/usr/share/pixmaps`
+- `~/.codebuddy`
+
+点击后应打开文件管理器列出该目录（走 `/api/projects`），而不是弹
+「仅支持项目内的路径跳转」。项目外目录的标注**不再**被校验撤销。
+
+## 8. 项目外媒体渲染（改写为 `/api/local-file/?path=<绝对路径>`）
+
+- `/usr/share/pixmaps/debian-logo.png` — 项目外图片，应正常显示（历史缺陷：404 不显示）
+- `/tmp/diagram.svg` — 项目外 SVG（存在时）
+
+## 9. 文件系统根边界（「上一级」不应跳回项目内）
+
+进入 `/var/log` 后连点「上一级」：`/var/log` → `/var` → `/`，
+到 `/` 后按钮应无动作（不跳回项目根）。

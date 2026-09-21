@@ -1,0 +1,38 @@
+appId: com.xulongzhe.clawbench
+productName: ClawBench
+executableName: clawbench-desktop
+directories:
+  output: release
+  buildResources: build
+extraResources:
+  - from: assets/login.html
+    to: login.html
+  # The first-run login page renders <img src="logo.png"> next to login.html, so
+  # the logo must ship as a sibling resource. Without it the image is broken and
+  # the browser falls back to the alt text, which the decorative ring then
+  # clips — that is why the page showed a cropped "ClawBenc".
+  - from: assets/logo.png
+    to: logo.png
+files:
+  - dist/
+  - package.json
+  - "!**/node_modules/.cache"
+win:
+  target: dir
+  icon: build/icon.png
+  # NOTE: do NOT add `signAndEditExecutable: false` here. It was set historically
+  # to allow cross-building the Windows package from Linux, but it also skips
+  # writing the icon and version metadata into the .exe (electron-builder warns
+  # "executable resource editing and code signing skipped"), so the app shipped
+  # with the default Electron icon. CI builds Windows on windows-latest, where
+  # rcedit runs natively and no workaround is needed — the flag only ever lost
+  # information there.
+  #
+  # For a local Linux cross-build (no wine), pass it on the command line instead:
+  #   npx electron-builder --dir --win --x64 -c.win.signAndEditExecutable=false
+mac:
+  target: dir
+  icon: build/icon.icns
+linux:
+  target: dir
+  icon: build/icon.png

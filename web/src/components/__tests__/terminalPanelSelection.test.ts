@@ -108,7 +108,43 @@ describe('TerminalPanel xterm selection defaults', () => {
 
     // The selection copy bar is mobile-only: PC users get native Ctrl+C / right-click copy.
     // Gating on !isPC (same platform flag already used for the virtual key toolbar).
-    expect(source).toContain('v-if="selectionActive && !isPC"')
+    // `autoCopyFailed` restores the bar when the deferred clipboard write was
+    // rejected — without it, a WebView that denies the write would leave mobile
+    // users with no copy affordance whatsoever.
+    expect(source).toContain('v-if="selectionActive && !isPC && (!copyOnSelect || autoCopyFailed)"')
+  })
+
+  it('tracks auto-copy failure so the mobile copy bar can fall back to it', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    expect(source).toContain('const autoCopyFailed = ref(false)')
+    // Both clipboard outcomes must be wired, otherwise a failed write would be
+    // indistinguishable from a successful one.
+    expect(source).toMatch(/autoCopyFailed\.value = false/)
+    expect(source).toMatch(/autoCopyFailed\.value = true/)
+    // A new selection is a fresh attempt: a stale failure must not pin the bar
+    // open for the rest of the session.
+    expect(source).toContain('if (text) autoCopyFailed.value = false')
+  })
+
+  it('copies the selection automatically when copy-on-select is on', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // The setting defaults on, so the gate must be an explicit opt-out
+    // (undefined/true => on) rather than a truthiness check that would leave
+    // existing installs without the persisted key on the old behaviour.
+    expect(source).toContain("localConfig.terminalCopyOnSelect !== false")
+    // The selection-change handler feeds the auto-copy hook.
+    expect(source).toContain('autoCopy.onSelectionChanged(text)')
+    // Auto-copy must not clear the selection: the user still needs to see what
+    // was copied, and the right-click menu operates on the live selection.
+    const updateFn = source.slice(
+      source.indexOf('function updateSelectionFromTerm'),
+      source.indexOf('/** Read the real CSS cell height'),
+    )
+    expect(updateFn).not.toContain('clearSelection')
+    // A pending copy from the previous tab must be dropped on tab switch.
+    expect(source).toContain('autoCopy.dispose()')
   })
 
   it('provides a help button that opens the terminal help drawer', () => {

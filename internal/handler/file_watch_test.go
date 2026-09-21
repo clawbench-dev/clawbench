@@ -573,6 +573,31 @@ func TestResolveWatchMediaPaths(t *testing.T) {
 		got := resolveWatchMediaPaths(project, rels)
 		assert.Len(t, got, service.MaxMediaWatchPaths)
 	})
+
+	// An ABSOLUTE media path is project-external (a markdown file may embed an
+	// image from anywhere). It must be watched at its real location — joining it
+	// to the project (ValidatePath) silently watched "<project>/tmp/a.png".
+	t.Run("absolute paths resolve directly, not against the project", func(t *testing.T) {
+		outsideDir := t.TempDir()
+		origRoots := model.RootPaths
+		model.RootPaths = []string{outsideDir}
+		defer func() { model.RootPaths = origRoots }()
+
+		img := filepath.Join(outsideDir, "a.png")
+		got := resolveWatchMediaPaths(project, []string{img})
+		assert.Equal(t, []string{img}, got)
+		assert.NotContains(t, got[0], project, "must not be re-rooted under the project")
+	})
+
+	t.Run("absolute paths outside every root are dropped", func(t *testing.T) {
+		origRoots := model.RootPaths
+		model.RootPaths = []string{project}
+		defer func() { model.RootPaths = origRoots }()
+
+		outsideDir := t.TempDir()
+		got := resolveWatchMediaPaths(project, []string{filepath.Join(outsideDir, "a.png")})
+		assert.Empty(t, got)
+	})
 }
 
 // ---------- FileWatchWS: media watch frames ----------
@@ -679,6 +704,43 @@ func TestResolveWatchPaths(t *testing.T) {
 
 	t.Run("file traversal is rejected", func(t *testing.T) {
 		_, _, ok := resolveWatchPaths(project, "", "../../../etc/passwd")
+		assert.False(t, ok)
+	})
+
+	// The file manager can browse project-external directories, so an absolute
+	// target must be watched where it really is. Joining it to the project
+	// silently watched "<project>/tmp" and the browsed directory never refreshed.
+	t.Run("absolute dir outside the project is watched directly", func(t *testing.T) {
+		outsideDir := t.TempDir()
+		origRoots := model.RootPaths
+		model.RootPaths = []string{outsideDir}
+		defer func() { model.RootPaths = origRoots }()
+
+		dirAbs, fileAbs, ok := resolveWatchPaths(project, outsideDir, "")
+		assert.True(t, ok)
+		assert.Equal(t, outsideDir, dirAbs)
+		assert.NotContains(t, dirAbs, project, "must not be re-rooted under the project")
+		assert.Empty(t, fileAbs)
+	})
+
+	t.Run("absolute file outside the project is watched directly", func(t *testing.T) {
+		outsideDir := t.TempDir()
+		origRoots := model.RootPaths
+		model.RootPaths = []string{outsideDir}
+		defer func() { model.RootPaths = origRoots }()
+
+		file := filepath.Join(outsideDir, "a.go")
+		_, fileAbs, ok := resolveWatchPaths(project, "", file)
+		assert.True(t, ok)
+		assert.Equal(t, file, fileAbs)
+	})
+
+	t.Run("absolute dir outside every root is rejected", func(t *testing.T) {
+		origRoots := model.RootPaths
+		model.RootPaths = []string{project}
+		defer func() { model.RootPaths = origRoots }()
+
+		_, _, ok := resolveWatchPaths(project, t.TempDir(), "")
 		assert.False(t, ok)
 	})
 }

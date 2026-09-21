@@ -69,7 +69,8 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 const mockTunnelStatusFromPorts = vi.fn(() => 'ok')
 
 vi.mock('@/utils/portForwardUtils', () => ({
-    tunnelStatusFromPorts: () => mockTunnelStatusFromPorts(),
+    // Forward the ports array so tests can inspect what effectivePorts() produced.
+    tunnelStatusFromPorts: (...args: unknown[]) => mockTunnelStatusFromPorts(...args),
     buildPortUrl: (port: number, protocol?: string, path?: string) => {
         const scheme = protocol || 'http'
         const urlPath = path || '/'
@@ -769,9 +770,67 @@ describe('usePortForward', () => {
 
             await detectPorts()
 
-            expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/detect')
+            expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/detect', { timeoutMs: 60_000 })
             expect(detectedPorts.value).toHaveLength(1)
             expect(hasScanned.value).toBe(true)
+        })
+
+        it('clears scanError on a successful scan', async () => {
+            mockApiGet.mockRejectedValueOnce(new Error('boom'))
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { detectPorts, scanError } = usePortForward()
+            await detectPorts()
+            expect(scanError.value).toBe('boom')
+
+            mockApiGet.mockResolvedValue({ ports: [{ port: 8080, protocol: 'http', processName: 'node', processArgs: '' }] })
+            await detectPorts()
+            expect(scanError.value).toBe('')
+        })
+
+        it('records the failure in scanError instead of rejecting', async () => {
+            // The scan is invoked unawaited from the drawer-open handler and from
+            // a @click handler, so a rejection would only reach the global
+            // unhandledrejection logger. detectPorts must swallow it.
+            mockApiGet.mockRejectedValue(new Error('Request timed out'))
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { detectPorts, scanError, detectedPorts } = usePortForward()
+
+            await expect(detectPorts()).resolves.toBeUndefined()
+
+            expect(scanError.value).toBe('Request timed out')
+            expect(detectedPorts.value).toEqual([])
+        })
+
+        it('does not mark hasScanned after a failure so the first-open auto-scan retries', async () => {
+            mockApiGet.mockRejectedValue(new Error('timed out'))
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { openScanDrawer, hasScanned, scanError } = usePortForward()
+
+            await openScanDrawer()
+
+            expect(scanError.value).toBe('timed out')
+            expect(hasScanned.value).toBe(false)
+
+            // A second open must retry rather than silently do nothing.
+            const callsBefore = mockApiGet.mock.calls.length
+            await openScanDrawer()
+            expect(mockApiGet.mock.calls.length).toBeGreaterThan(callsBefore)
+        })
+
+        it('clears a previous error before retrying', async () => {
+            mockApiGet.mockRejectedValueOnce(new Error('timed out'))
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { rescanPorts, scanError } = usePortForward()
+
+            await rescanPorts()
+            expect(scanError.value).toBe('timed out')
+
+            mockApiGet.mockResolvedValue({ ports: [] })
+            await rescanPorts()
+            expect(scanError.value).toBe('')
         })
     })
 
@@ -793,7 +852,7 @@ describe('usePortForward', () => {
 
             await openScanDrawer()
 
-            expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/detect')
+            expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/detect', { timeoutMs: 60_000 })
             expect(detectedPorts.value).toHaveLength(1)
             expect(hasScanned.value).toBe(true)
         })
@@ -1668,6 +1727,295 @@ describe('usePortForward', () => {
             // Both instances should see the same sshInfo (module-level singleton)
             expect(instance1.sshInfo.value).toEqual(sshInfoResponse)
             expect(instance2.sshInfo.value).toEqual(sshInfoResponse)
+        })
+    })
+
+    describe('native forward failure reporting', () => {
+        it('reports failure when addForwardedPort resolves false (Electron shape)', async () => {
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            // Electron returns a Promise<boolean>; false = listener could not bind.
+            const mockAdd = vi.fn().mockResolvedValue(false)
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAdd }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            // Let the fire-and-forget .then() settle.
+            await Promise.resolve()
+            await Promise.resolve()
+
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.objectContaining({ type: 'error' }),
+            )
+            // The pending yellow dot must not be left spinning on a dead forward.
+            expect(connectingPorts.value.has(3000)).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does NOT report failure when addForwardedPort returns undefined (Android shape)', async () => {
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            // Android's @JavascriptInterface returns void → undefined. Treating
+            // that as failure would pop a false error on every Android call.
+            const mockAdd = vi.fn().mockReturnValue(undefined)
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAdd }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            await Promise.resolve()
+            await Promise.resolve()
+
+            expect(mockToastShow).not.toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.anything(),
+            )
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('reports failure when addForwardedPort rejects', async () => {
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            const mockAdd = vi.fn().mockRejectedValue(new Error('bridge down'))
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAdd }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            await Promise.resolve()
+            await Promise.resolve()
+
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.objectContaining({ type: 'error' }),
+            )
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+    })
+
+    describe('local reachability probing', () => {        it('fills localReachable from testPortReachable in app mode', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockResolvedValue({
+                ports: [
+                    { port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: true, enabled: true },
+                    { port: 8080, localPort: 8080, host: '', name: 'B', protocol: 'http', active: true, enabled: true },
+                ],
+            })
+            // 3000's tunnel is dead locally even though the server says the
+            // target port is up — this is the false-green the dot must expose.
+            const mockTest = vi.fn(async (p: number) => p === 8080)
+            ;(window as any).ClawBenchNative = { testPortReachable: mockTest }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { loadPorts, localReachable } = usePortForward()
+
+            await loadPorts()
+
+            expect(mockTest).toHaveBeenCalledWith(3000)
+            expect(mockTest).toHaveBeenCalledWith(8080)
+            expect(localReachable.value.get(3000)).toBe(false)
+            expect(localReachable.value.get(8080)).toBe(true)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not probe in web mode (no local tunnel exists)', async () => {
+            mockIsAppMode.value = false
+            mockApiGet.mockResolvedValue({
+                ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: true, enabled: true }],
+            })
+            const mockTest = vi.fn()
+            ;(window as any).ClawBenchNative = { testPortReachable: mockTest }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { loadPorts, localReachable } = usePortForward()
+
+            await loadPorts()
+
+            expect(mockTest).not.toHaveBeenCalled()
+            expect(localReachable.value.size).toBe(0)
+
+            delete (window as any).ClawBenchNative
+        })
+
+        it('treats an unreachable local listener as degraded even when the server reports active', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockResolvedValue({
+                ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: true, enabled: true }],
+            })
+            // The pure util is mocked, so capture the ports array it was handed:
+            // that array is what effectivePorts() produced.
+            let seen: Array<{ active: boolean }> = []
+            mockTunnelStatusFromPorts.mockImplementation((p: Array<{ active: boolean }>) => {
+                seen = p
+                return 'degraded'
+            })
+            ;(window as any).ClawBenchNative = { testPortReachable: vi.fn(async () => false) }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { loadPorts, checkTunnelHealth } = usePortForward()
+
+            mockApiGet.mockImplementation(async (url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: true, enabled: true }] }
+                }
+                return { enabled: true, host: 'h', port: 20001, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+            })
+            await loadPorts()
+            await checkTunnelHealth()
+
+            // Server says active, but the local listener is dead → not active.
+            expect(seen.length).toBeGreaterThan(0)
+            expect(seen.every(p => p.active === false)).toBe(true)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+    })
+
+    describe('poll-driven reconnect', () => {
+        it('syncToNative arms the health poll so a later drop self-heals', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: true, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            // Native accepts the forward, then reports the tunnel as down.
+            const mockReconnect = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(true),
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { syncToNative } = usePortForward()
+
+            await syncToNative()
+            mockReconnect.mockClear()
+
+            // The poll must have been armed by the sync — otherwise a drop after
+            // startup would never be noticed until the user opened the panel.
+            await vi.advanceTimersByTimeAsync(5000)
+
+            expect(mockReconnect).toHaveBeenCalled()
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('asks native to reconnect when the tunnel is down but ports are enabled', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            const mockReconnect = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            // Arming the poll requires a disconnected status.
+            await checkTunnelHealth()
+            mockReconnect.mockClear()
+
+            await vi.advanceTimersByTimeAsync(5000)
+
+            // Recovery must not depend on the user pressing retry.
+            expect(mockReconnect).toHaveBeenCalled()
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not reconnect when native status is unknown (null)', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: false, clientCount: 0, activeChannels: 0 } }
+            })
+            const mockReconnect = vi.fn().mockResolvedValue(true)
+            // No isTunnelConnected → getNativeTunnelStatus() resolves null.
+            ;(window as any).ClawBenchNative = { reconnectTunnelAsync: mockReconnect }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            await checkTunnelHealth()
+            await vi.advanceTimersByTimeAsync(20000)
+
+            // null means "no native status", not "disconnected" — calling
+            // reconnect there would be meaningless.
+            expect(mockReconnect).not.toHaveBeenCalled()
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not reconnect when no enabled ports exist', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: false }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            const mockReconnect = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            await checkTunnelHealth()
+            await vi.advanceTimersByTimeAsync(20000)
+
+            // Nothing enabled to maintain → do not churn the tunnel.
+            expect(mockReconnect).not.toHaveBeenCalled()
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
         })
     })
 })

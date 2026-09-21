@@ -767,6 +767,29 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	}
 }
 
+// abandonTurn tears down a scheduled turn that will NOT be finalized normally:
+// it flushes the batched writes accumulated since the last window, finalizes the
+// streaming row left behind, unregisters the executor, and drains the event
+// channel so the producer goroutine can exit.
+//
+// cancelReason is forwarded to FinalizeOrphanedMessages; passing "user" for a
+// user-initiated cancel suppresses the misleading "Finalization failed, AI
+// response may be incomplete" warning block, because that truncation was
+// intentional rather than a DB failure.
+//
+// The background drain is not optional: parser sends are not context-aware, so
+// a producer that fills the channel with no consumer would block forever and
+// leak the goroutine along with the agent process.
+func abandonTurn(executor *SessionExecutor, eventCh <-chan ai.StreamEvent, sessionID, cancelReason string) {
+	executor.flushStreamingMessage()
+	FinalizeOrphanedMessages(sessionID, cancelReason)
+	executor.unregisterActiveStream()
+	go func() {
+		for range eventCh {
+		}
+	}()
+}
+
 // executeTask runs a task by invoking the AI backend and inserting
 // the result as an assistant message in the original session.
 //
@@ -963,100 +986,174 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// update the execution row and emit task events — behavior the interactive
 	// paths do not have.
 	//
-	// The "running" event rides OnStarted rather than being emitted after this
-	// call: runTurnStart's last step is the blocking event loop, so emitting it
-	// afterwards sent "running" once the task had already finished (subscribers
-	// saw started → completed with nothing in between). OnStarted fires after
-	// the backend and placeholder exist but before the loop, so the event is
-	// both truthful and correctly ordered. It also preserves ISS-128: a turn
-	// that fails before starting never reaches the hook, so no "running" event
-	// is emitted for it — only "failed".
-	at := runTurnStart(TurnSpec{
-		Ctx:         ctx,
-		Mode:        ModeScheduled,
-		ProjectPath: projectPath,
-		BackendName: backendName,
-		SessionID:   sessionID,
-		AgentID:     task.AgentID,
-		ChatReq:     chatReq,
-		FileDir:     projectPath,
-		TaskID:      task.ID,
-		ExecutionID: executionID,
-		TriggerType: triggerType,
-		OnStarted: func() {
-			emitTaskEvent(fmt.Sprintf("%d", task.ID), "running", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-		},
-	})
-	defer at.release()
+	// The turn is repeated when it ends abnormally (agent crash, empty reply,
+	// backend error) and the user enabled auto-continue. The task prompt has
+	// already been consumed by then, so a retry sends a localized "continue"
+	// instead of re-running the task from scratch.
+	//
+	// Everything that belongs to the EXECUTION rather than to one attempt — the
+	// session, the execution row, the registered cancel context and the
+	// "running" event — is set up once above. Only the turn itself repeats, and
+	// the execution row stays "running" across attempts: marking it failed
+	// mid-retry would count the run as finished in the unread query and push a
+	// notification for a task that is still going.
+	// finalRunResult carries the last attempt's finalized result out of the
+	// loop so the post-completion summarization below still has the assistant
+	// message id and blocks (it used to read the single turn's result).
+	var finalRunResult RunResult
 
-	// Backend creation / stream start failed. ISS-128: no "running" event may be
-	// emitted for a task that fails before it starts, or the frontend shows a
-	// running state that immediately fails. So the failure branch comes first
-	// and emits only "failed". (OnStarted never ran in this case.)
-	if !at.started() {
-		slog.Error("failed to start task execution", slog.String("err", at.earlyFails.Err))
-		_ = UpdateExecutionStatus(sessionID, "failed")
-		SetSessionRunning(sessionID, false, true)
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
-		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-		return
-	}
+	attempt := 0
+	for {
+		attempt++
 
-	executor := at.executor
-	eventCh := at.eventCh
-	runResult := at.runResult
+		// Retries resume the existing CLI/ACP session instead of starting a
+		// new one. The first attempt already persisted an assistant row, so
+		// BuildChatRequest resolves resume=true and the agent keeps the context
+		// it had built before it died. (For pi, `Resume && SessionID != ""`
+		// outranks ScheduledExecution, so --no-session cannot discard it.)
+		turnReq := chatReq
+		if attempt > 1 {
+			turnReq = BuildChatRequest(AutoContinuePrompt(), sessionID, projectPath, backendName,
+				task.AgentID, effectiveModel, effectiveThinking, "", "", projectPath, false)
+		}
 
-	// stream_start is emitted by runTurnStart, BEFORE the turn's event loop, so
-	// subscribers get the placeholder id before any content arrives. It used to
-	// be emitted here (with SkipStreamStart set) — which put it after the whole
-	// turn had already run, so a client could create a placeholder for an
-	// already-finished row.
+		// The "running" event rides OnStarted rather than being emitted after this
+		// call: runTurnStart's last step is the blocking event loop, so emitting it
+		// afterwards sent "running" once the task had already finished (subscribers
+		// saw started → completed with nothing in between). OnStarted fires after
+		// the backend and placeholder exist but before the loop, so the event is
+		// both truthful and correctly ordered. It also preserves ISS-128: a turn
+		// that fails before starting never reaches the hook, so no "running" event
+		// is emitted for it — only "failed".
+		at := runTurnStart(TurnSpec{
+			Ctx:         ctx,
+			Mode:        ModeScheduled,
+			ProjectPath: projectPath,
+			BackendName: backendName,
+			SessionID:   sessionID,
+			AgentID:     task.AgentID,
+			ChatReq:     turnReq,
+			FileDir:     projectPath,
+			TaskID:      task.ID,
+			ExecutionID: executionID,
+			TriggerType: triggerType,
+			OnStarted: func() {
+				// Only the first attempt announces "running". A retry is a
+				// continuation of the same execution, so re-emitting would make
+				// the task list flicker back into a state it never left.
+				if attempt == 1 {
+					emitTaskEvent(fmt.Sprintf("%d", task.ID), "running", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+				}
+			},
+		})
 
-	// If context was cancelled, mark execution as cancelled and update stats
-	if ctx.Err() == context.Canceled {
-		slog.Info(
-			"task execution cancelled",
-			slog.Int64("task_id", task.ID),
-			slog.String("session_id", sessionID),
-		)
-		_ = UpdateExecutionStatus(sessionID, "cancelled")
-		s.runningExecutions.Delete(sessionID)
-		SetSessionRunning(sessionID, false, true)
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "cancelled"})
-		emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
-		UpdateTaskStats(task)
-		// Persist any batched tool-call/context-state writes accumulated since
-		// the last flush window, so the cancelled task's final content survives.
-		executor.flushStreamingMessage()
-		// Finalize orphaned streaming messages since executor.Finalize() was skipped.
-		// cancelReason="user": this is a user-initiated/graceful cancel — suppress
-		// the misleading "Finalization failed, AI response may be incomplete"
-		// warning block (the stream is truncated by intent, not by a DB failure).
-		FinalizeOrphanedMessages(sessionID, "user")
-		// executor.Finalize() was skipped, so unregister here — otherwise the
-		// active-streams registry (used by graceful shutdown) would keep waiting
-		// on an executor that will never finalize.
-		executor.unregisterActiveStream()
-		// Drain the event channel in the background until the producer closes it.
-		// Without this the producer goroutine can block forever on a full channel
-		// (parser sends are not ctx-aware), leaking the goroutine.
-		go func() {
-			for range eventCh {
+		// Backend creation / stream start failed. ISS-128: no "running" event may
+		// be emitted for a task that fails before it starts, or the frontend shows a
+		// running state that immediately fails. So the failure branch comes first
+		// and emits only "failed". (OnStarted never ran in this case.)
+		//
+		// Deliberately never retried: these failures are deterministic (missing
+		// binary, unusable working directory), so retrying could only spin.
+		if !at.started() {
+			at.release()
+			slog.Error("failed to start task execution", slog.String("err", at.earlyFails.Err))
+			_ = UpdateExecutionStatus(sessionID, "failed")
+			SetSessionRunning(sessionID, false, true)
+			ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
+			emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+			return
+		}
+
+		executor := at.executor
+		eventCh := at.eventCh
+		runResult := at.runResult
+
+		// If context was cancelled, mark execution as cancelled and update stats
+		if ctx.Err() == context.Canceled {
+			at.release()
+			slog.Info(
+				"task execution cancelled",
+				slog.Int64("task_id", task.ID),
+				slog.String("session_id", sessionID),
+			)
+			_ = UpdateExecutionStatus(sessionID, "cancelled")
+			s.runningExecutions.Delete(sessionID)
+			SetSessionRunning(sessionID, false, true)
+			ws.EmitToSession(sessionID, ai.StreamEvent{Type: "cancelled"})
+			emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+			// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
+			UpdateTaskStats(task)
+			// Persist any batched tool-call/context-state writes accumulated since
+			// the last flush window, so the cancelled task's final content survives,
+			// then finalize the orphaned streaming row since executor.Finalize() was
+			// skipped. cancelReason="user": this is a user-initiated/graceful cancel
+			// — suppress the misleading "Finalization failed, AI response may be
+			// incomplete" warning block (the stream is truncated by intent, not by
+			// a DB failure).
+			abandonTurn(executor, eventCh, sessionID, cancelReasonUser)
+			return
+		}
+
+		// The attempt is over. Persist what it produced, then classify the
+		// outcome to decide whether to resume.
+		var abnormal string
+		if runResult.ReceivedTerminal {
+			// Finalize persists blocks to DB, saves metadata and drains remaining
+			// events — shared with the interactive paths so the persisted shape
+			// cannot drift.
+			abnormal = at.runTurnFinalize().AbnormalReason
+			// at.runResult was updated by Finalize, so it carries the persisted
+			// MsgID and blocks the completion path needs.
+			finalRunResult = at.runResult
+		} else {
+			// If the event channel closed without a terminal event (done/error),
+			// the CLI process likely crashed or was killed (e.g. SIGKILL, OOM).
+			// Finalize is skipped so the partial content is persisted and the
+			// orphaned row finalized by hand, matching the historical behavior.
+			slog.Warn(
+				"task execution ended without terminal event (CLI process crashed?)",
+				slog.Int64("task_id", task.ID),
+				slog.String("session_id", sessionID),
+			)
+			abandonTurn(executor, eventCh, sessionID, "")
+			abnormal = classifyTurnAbnormality(runResult.CancelReason, runResult.ReceivedTerminal, runResult.Empty, runResult.Blocks)
+		}
+		at.release()
+
+		// Clean finish — fall through to the completion bookkeeping below.
+		if abnormal == "" {
+			break
+		}
+
+		// Abnormal end. Resume it when the user opted in and the budget allows.
+		// attempt-1 is the number of RETRIES already spent: attempt counts turns
+		// (the first turn is attempt 1 and is not a retry), while max_retries
+		// counts resumes. Passing attempt here would spend one retry too few.
+		if AutoContinueEnabled() && AutoContinueAttemptsAllowed(attempt-1, model.ChatAutoContinueMaxRetries) {
+			if autoContinueSleep(ctx, autoContinueDelay) && ctx.Err() == nil {
+				queueID := newAutoContinueQueueID()
+				if _, err := PrepareAutoContinueMessage(sessionID, projectPath, backendName, queueID); err != nil {
+					slog.Error("task auto-continue: failed to persist continue message",
+						slog.Int64("task_id", task.ID),
+						slog.String("session_id", sessionID),
+						slog.String("err", err.Error()))
+				} else {
+					slog.Info("task auto-continue: resuming abnormally terminated execution",
+						slog.Int64("task_id", task.ID),
+						slog.String("session_id", sessionID),
+						slog.Int("attempt", attempt),
+						slog.String("reason", abnormal))
+					continue
+				}
+			} else {
+				slog.Info("task auto-continue: cancelled during delay",
+					slog.Int64("task_id", task.ID),
+					slog.String("session_id", sessionID),
+					slog.Int("attempt", attempt))
 			}
-		}()
-		return
-	}
+		}
 
-	// If the event channel closed without a terminal event (done/error),
-	// the CLI process likely crashed or was killed (e.g. SIGKILL, OOM).
-	// Mark as failed to prevent zombie "running" state in DB.
-	if !runResult.ReceivedTerminal {
-		slog.Warn(
-			"task execution ended without terminal event (CLI process crashed?)",
-			slog.Int64("task_id", task.ID),
-			slog.String("session_id", sessionID),
-		)
+		// No retry available — report the failure.
 		_ = UpdateExecutionStatus(sessionID, "failed")
 		s.runningExecutions.Delete(sessionID)
 		SetSessionRunning(sessionID, false, true)
@@ -1064,26 +1161,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
 		UpdateTaskStats(task)
-		// Persist any batched tool-call/context-state writes accumulated since
-		// the last flush window, so the failed task's partial content survives.
-		executor.flushStreamingMessage()
-		// Finalize orphaned streaming messages since executor.Finalize() was skipped
-		FinalizeOrphanedMessages(sessionID, "")
-		// executor.Finalize() was skipped, so unregister here — see the cancel
-		// path above.
-		executor.unregisterActiveStream()
-		// Drain the event channel in the background until the producer closes it.
-		// See comment on the cancel path above.
-		go func() {
-			for range eventCh {
-			}
-		}()
 		return
 	}
-
-	// Finalize: persist blocks to DB, save metadata, drain remaining events.
-	// Shared with the interactive paths so the persisted shape cannot drift.
-	at.runTurnFinalize()
 
 	// Mark execution as completed
 	_ = UpdateExecutionStatus(sessionID, "completed")
@@ -1188,8 +1267,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// assistant message ID (runResult.MsgID), same as interactive chat sessions.
 	// This unifies the summary storage model so ContinueFromExecution no longer
 	// needs to convert between target_types.
-	if runResult.MsgID > 0 {
-		_ = summarizeMessage(runResult.MsgID, runResult.Blocks, task.ProjectPath, sessionID)
+	if finalRunResult.MsgID > 0 {
+		_ = summarizeMessage(finalRunResult.MsgID, finalRunResult.Blocks, task.ProjectPath, sessionID)
 	}
 }
 

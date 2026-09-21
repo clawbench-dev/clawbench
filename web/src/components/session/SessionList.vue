@@ -34,7 +34,7 @@
             @contextmenu.prevent="showContextMenu($event, session)"
             v-long-press="onSessionLongPress"
           >
-            <span v-if="session.running" class="session-running-line"></span>
+            <span v-if="session.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
             <div
               class="session-item"
               :class="{ active: session.id === currentSessionId }"
@@ -93,7 +93,7 @@
               class="cross-session-row"
               :class="{ running: session.running }"
             >
-              <span v-if="session.running" class="session-running-line"></span>
+              <span v-if="session.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
               <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
                 <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
                 <div class="session-item-info">
@@ -817,9 +817,10 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* The band sits on the row's bottom edge. Sweeps in sync with the
-   cross-project rows and the chat input button (same keyframes/duration/
-   easing) so the motif reads as one. */
+/* The band sits on the row's bottom edge. Shared by the local rows and the
+   cross-project rows (same class). The chat input button uses its own
+   `sweep-light` keyframes instead — it is a chip, not a full-width row, so the
+   two are deliberately not the same animation. */
 .session-running-line {
   position: absolute;
   bottom: 0;
@@ -831,20 +832,60 @@ onUnmounted(() => {
   z-index: 1;
 }
 
-.session-running-line::after {
+/* Static base glow: the full row width stays faintly lit even where the
+   travelling band is not. Without this the edge went completely dark between
+   passes, so the indicator blinked off and on instead of reading as a
+   continuously running session. It shares the band's mask so both layers have
+   the same 2px line + upward falloff. */
+.session-running-line::before {
   content: '';
   position: absolute;
   top: 0;
-  left: -60%;
-  width: 60%;
+  left: 0;
+  right: 0;
+  height: 100%;
+  -webkit-mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
+  mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
+  background: var(--running-glow);
+}
+
+/* The travelling band. A real element (not `::after`) because its travel is
+   driven by v-running-sweep through the Web Animations API, which can only
+   target a real node. */
+.session-running-band {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* One band, 80% of the row wide, travelling from fully off the left edge to
+     fully off the right. The layer is exactly one band — no tile, no repeat —
+     so the next pass starts the instant this one clears the right edge: bands
+     never double up, and there is no gap between them either.
+     The old version tiled two bands across a 200%-wide layer and scrolled it,
+     which read as a marquee: a new band entered from the left while the
+     previous one was still crossing the middle. */
+  width: 80%;
   height: 100%;
   /* Solid 2px at the very bottom, then a fast falloff so the glow stays a
      halo around the line rather than a wash up the row. A plain linear ramp
      to 14px spread the light too thinly and lost the crisp edge. */
   -webkit-mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
   mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
-  background: linear-gradient(90deg, transparent, var(--running-line), transparent);
-  animation: scan-bg 2s ease-in-out infinite;
+  /* Soft shoulders so the band reads as light rather than a solid bar. */
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--running-line) 50%,
+    transparent 100%
+  );
+  /* The travel itself is driven by v-running-sweep (Web Animations API), NOT a
+     CSS animation. A CSS animation starts when its element first matches the
+     rule, so each row would run at its own phase and lose that phase whenever
+     Vue's TransitionGroup reorders rows (which restarts the animation). The
+     directive pins every band to the shared document timeline instead, so all
+     running sessions sweep in step. This base transform parks the band off the
+     left edge, where the directive's first keyframe also holds it. */
+  transform: translateX(-100%);
 }
 
 /* Hover must still work on a running row — there is no fill to preserve now,
@@ -967,10 +1008,12 @@ onUnmounted(() => {
   50% { opacity: var(--opacity-disabled); transform: scale(0.8); }
 }
 
-@keyframes scan-bg {
-  0% { left: -60%; }
-  100% { left: 100%; }
-}
+/* The sweep's keyframes now live in v-running-sweep (directives/runningSweep.ts)
+   rather than here: it drives them through the Web Animations API so every
+   running session's band shares one phase (see the directive header for why a
+   CSS animation could not do that). The geometry — -100% to 125% of the band's
+   own width, `linear` so it flows instead of stuttering into each end — is
+   unchanged; it just lives where it can be phase-locked. */
 
 .session-row {
   display: flex;

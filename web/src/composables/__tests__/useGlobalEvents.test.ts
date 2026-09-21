@@ -46,9 +46,14 @@ vi.mock('@/utils/clawbenchNative', () => ({
 
 // Mutable flag for app mode — use plain object since vi.mock is hoisted
 const appModeState = { value: false }
+// Electron shell flag. Both isAppMode and isDesktopApp are true in the desktop
+// shell; only isAppMode is true on Android. The visibility handler must not
+// disconnect the WS when isDesktopApp is set.
+const desktopAppState = { value: false }
 vi.mock('@/composables/useAppMode', () => ({
     useAppMode: () => ({
-        isAppMode: { get value() { return appModeState.value }, set value(v: boolean) { appModeState.value = v } }
+        isAppMode: { get value() { return appModeState.value }, set value(v: boolean) { appModeState.value = v } },
+        isDesktopApp: { get value() { return desktopAppState.value }, set value(v: boolean) { desktopAppState.value = v } },
     }),
 }))
 
@@ -122,6 +127,7 @@ describe('useGlobalEvents', () => {
         mockPlayNotificationSound.mockReset()
         mockUpdateLastSeenEventId.mockReset()
         appModeState.value = false  // Default to browser mode
+        desktopAppState.value = false  // Default to non-desktop (Android/web)
         originalWebSocket = globalThis.WebSocket
         globalThis.WebSocket = MockWebSocket as any
         events = useGlobalEvents()
@@ -263,28 +269,7 @@ describe('useGlobalEvents', () => {
         })
     })
 
-    describe('ack', () => {
-        it('should send ack for events with ID', () => {
-            const ws = connectAndGetWs()
-            const id = nextId()
-
-            ws.receive({ type: 'event', id, event: 'session_update', data: {} })
-
-            expect(ws.sentMessages).toContainEqual(JSON.stringify({ type: 'ack', id }))
-        })
-
-        it('should not send ack for events without ID', () => {
-            const ws = connectAndGetWs()
-            ws.sentMessages = []
-
-            ws.receive({ type: 'event', event: 'session_update', data: {} })
-
-            const ackMessages = ws.sentMessages.filter(m => {
-                try { return JSON.parse(m).type === 'ack' } catch { return false }
-            })
-            expect(ackMessages).toHaveLength(0)
-        })
-
+    describe('event cursor', () => {
         it('收到终态事件时同步安卓设备游标，非终态不同步', () => {
             const ws = connectAndGetWs()
 
@@ -473,6 +458,46 @@ describe('useGlobalEvents', () => {
 
             // WebSocket should still be open (browser mode keeps WS alive)
             expect(ws.readyState).toBe(MockWebSocket.OPEN)
+        })
+
+        it('should keep WebSocket alive on background in the Electron desktop shell', () => {
+            // Regression: the Electron shell reports isNativeApp() === true, so
+            // isAppMode is true there too. If the visibility handler keyed only
+            // on isAppMode it would drop the socket on minimize, and since
+            // every notification is produced from a WS event, minimizing the
+            // window would mean no notifications at all.
+            appModeState.value = true
+            desktopAppState.value = true
+            events.init()
+            const ws = connectAndGetWs()
+
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'hidden',
+                writable: true,
+                configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+
+            // Socket must survive minimization (desktop is not Android).
+            expect(ws.readyState).toBe(MockWebSocket.OPEN)
+        })
+
+        it('should still disconnect on background on Android (no desktop flag)', () => {
+            // Guard against over-correcting: the Android path must keep its
+            // background-suspension behaviour.
+            appModeState.value = true
+            desktopAppState.value = false
+            events.init()
+            const ws = connectAndGetWs()
+
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'hidden',
+                writable: true,
+                configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+
+            expect(ws.readyState).toBe(MockWebSocket.CLOSED)
         })
 
         it('should reconnect on foreground after background', () => {
@@ -1102,6 +1127,41 @@ describe('useGlobalEvents', () => {
             )
         })
 
+        it('marks the nav payload as forge so the native shell can route the click', () => {
+            // Regression: a forge notification carries no sessionId/taskId, so
+            // the desktop shell's channel selection had nothing to match on and
+            // dropped the click entirely. The explicit flag is what routes it to
+            // clawbench-open-forge.
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({ type: 'event', id: nextId(), event: 'forge_event', data: forgeEventData() })
+
+            const opts = mockShowBrowserNotification.mock.calls[0][1]
+            expect(opts.nav.forge).toBe(true)
+            // And it really has no session/task id — that is why the flag is needed.
+            expect(opts.nav.sessionId).toBeUndefined()
+            expect(opts.nav.taskId).toBeUndefined()
+        })
+
+        it('does not mark session/task notifications as forge', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's1', status: 'completed' },
+            })
+
+            const opts = mockShowBrowserNotification.mock.calls[0][1]
+            expect(opts.nav.forge).toBe(false)
+            expect(opts.nav.sessionId).toBe('s1')
+        })
+
         it('does not notify when the event identity is missing', () => {
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
@@ -1187,7 +1247,7 @@ describe('useGlobalEvents', () => {
 
     // ── push_mode is not a gate ──
     //
-    // The system-notification decision belongs to the local `browserNotification`
+    // The system-notification decision belongs to the local `desktopNotification`
     // setting (checked inside showBrowserNotification) and page focus. Gating it
     // here on the server-side push_mode made the switch unreachable for anyone
     // who had picked DingTalk/飞书, and silenced the desktop tab of users whose

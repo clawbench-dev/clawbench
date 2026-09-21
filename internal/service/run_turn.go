@@ -107,6 +107,17 @@ type TurnResult struct {
 	// rather than a clean finish.
 	ReceivedTerminal bool
 
+	// AbnormalReason is non-empty when the turn ended abnormally in a way that
+	// is worth resuming (see classifyTurnAbnormality). It is empty both for a
+	// clean finish and for failures that must NOT be resumed (user cancel,
+	// timeout, panic, …), so callers can treat "" as "do not auto-continue".
+	//
+	// Only ever set on the finalized path: an early failure (backend create /
+	// stream start / placeholder) returns earlyFails without going through
+	// runTurnFinalize, because those failures are deterministic and retrying
+	// them would spin.
+	AbnormalReason string
+
 	// MsgID is the streaming assistant placeholder row id (0 if it could not be
 	// created).
 	MsgID int64
@@ -353,6 +364,13 @@ func (at *activeTurn) runTurnFinalize() TurnResult {
 	case runResult.Empty:
 		result.Empty = true
 	}
+
+	// Classify AFTER the switch so it sees the executor's raw cancel reason and
+	// the finalized blocks (the warning blocks that carry a backend reason are
+	// only present after Finalize). Auto-continue policy lives in
+	// classifyTurnAbnormality — see auto_continue.go for the exclusions.
+	result.AbnormalReason = classifyTurnAbnormality(
+		runResult.CancelReason, runResult.ReceivedTerminal, runResult.Empty, runResult.Blocks)
 
 	slog.Info("ai stream run done",
 		slog.String("session", at.spec.SessionID),

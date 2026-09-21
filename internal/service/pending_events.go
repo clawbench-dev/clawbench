@@ -43,12 +43,12 @@ func IsNotifiableEvent(event string, data any) bool {
 	case *ws.TaskUpdateData:
 		status = d.Status
 	case ws.ChatStreamData: // value type — what StreamHub.Emit constructs
-		if d.EventType == "user_message" {
+		if d.EventType == eventTypeUserMessage {
 			return true
 		}
 		return false
 	case *ws.ChatStreamData: // pointer variant for compatibility
-		if d.EventType == "user_message" {
+		if d.EventType == eventTypeUserMessage {
 			return true
 		}
 		return false
@@ -183,16 +183,30 @@ func CleanupPendingEvents() {
 	}
 }
 
-// StoreNotifiableEvent persists a notifiable WS event if it's a terminal state.
-// Only stores when there are disconnected clients (conditional storage).
+// StoreNotifiableEvent persists a notifiable WS event so a client that missed
+// it live can recover it on reconnect.
+//
+// Storage is conditional on the event not having reached every interested
+// client. The old gate asked "is any client disconnected?", which is the wrong
+// question: a browser can be connected yet hold no subscription for the
+// session the event belongs to (WS reconnect replaced the connection and the
+// re-subscribe had not landed). Such an event is dropped live — and if storage
+// is skipped too, it is lost for good: not delivered, not replayable, so the
+// client shows the assistant reply with no question bubble above it until a
+// full history reload.
+//
+// So the gate is now per-session: store unless every connected client is
+// actually subscribed to this event's session.
 func StoreNotifiableEvent(msg ws.ServerMessage) {
 	if !IsNotifiableEvent(msg.Event, msg.Data) {
 		return
 	}
-	// Conditional storage: only persist if clients are disconnected
-	mgr := ws.GetManager()
-	if mgr != nil && !mgr.HasDisconnectedClients() {
-		return
+	// Conditional storage: skip only when this event's session is being watched
+	// by every connected client (nobody could have missed it).
+	if sessionID := notifiableSessionID(msg); sessionID != "" {
+		if mgr := ws.GetManager(); mgr != nil && mgr.AllConnectedClientsSubscribe(sessionID) {
+			return
+		}
 	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
@@ -215,4 +229,23 @@ func StoreNotifiableEvent(msg ws.ServerMessage) {
 	if err := StorePendingEvent(msg.ID, msg.Event, string(payload), expiresAt); err != nil {
 		slog.Warn("pending_events: store failed", "error", err)
 	}
+}
+
+// notifiableSessionID extracts the session an event belongs to, or "" when the
+// event is not session-scoped (e.g. a task update) — those keep the previous
+// unconditional-storage behavior.
+func notifiableSessionID(msg ws.ServerMessage) string {
+	switch d := msg.Data.(type) {
+	case ws.ChatStreamData:
+		return d.SessionID
+	case *ws.ChatStreamData:
+		return d.SessionID
+	case *ws.SessionUpdateData:
+		return d.SessionID
+	case map[string]any:
+		if s, ok := d["session_id"].(string); ok {
+			return s
+		}
+	}
+	return ""
 }

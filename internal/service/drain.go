@@ -2,6 +2,7 @@ package service
 
 import (
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"clawbench/internal/ai"
@@ -16,6 +17,11 @@ type DrainResult struct {
 	CancelReason string
 	Err          string
 	Empty        bool
+	// AbnormalReason is non-empty when the turn ended abnormally in a way that
+	// is worth resuming (see classifyTurnAbnormality). Empty means "do not
+	// auto-continue" — which covers both a clean finish and a non-retryable
+	// failure such as a user cancel.
+	AbnormalReason string
 }
 
 // DrainConfig holds the parameters for the drain loop.
@@ -32,6 +38,19 @@ type DrainConfig struct {
 
 	// MarkDoneAndSendFinal sends the terminal event (done/cancelled/error).
 	MarkDoneAndSendFinal func(event ai.StreamEvent)
+
+	// AutoContinue, when non-nil, is called to resume a turn that ended
+	// abnormally instead of letting the loop terminate. It returns the result
+	// of the resumed turn, or ok=false to refuse the retry — in which case the
+	// loop falls through to its normal terminal handling of prev.
+	//
+	// The caller owns the policy (is the feature enabled, how many attempts
+	// remain) and the mechanics (persist the message, wait, run one turn),
+	// because those differ between the interactive and scheduled paths. The
+	// loop owns only the liveness guards it alone can enforce: it stops
+	// retrying when the session is no longer running, and it never retries
+	// while the user has queued work waiting.
+	AutoContinue func(attempt int, prev DrainResult) (DrainResult, bool)
 }
 
 // emitDrainEvent emits a stream event to WS clients via StreamHub.
@@ -142,6 +161,56 @@ func drainHandleTerminal(cfg DrainConfig, result DrainResult) bool {
 	return false
 }
 
+// shouldAutoContinue reports whether the loop may hand this result to the
+// caller's AutoContinue hook.
+//
+// It enforces the two liveness guards that belong to the loop rather than to
+// any individual caller, because only the loop can see both:
+//
+//   - the session must still be running. CancelSession removes the runner, so a
+//     user who pressed stop while the previous attempt was being torn down must
+//     not have a new turn launched for them.
+//   - the user must have nothing queued. Their explicit message outranks an
+//     automatic resume.
+func shouldAutoContinue(cfg DrainConfig, result DrainResult, attempts int) bool {
+	if cfg.AutoContinue == nil || result.AbnormalReason == "" {
+		return false
+	}
+	if GetQueuedCount(cfg.SessionID) > 0 {
+		slog.Info("auto-continue: skipped, user has queued messages",
+			slog.String("session", cfg.SessionID),
+			slog.Int("attempts", attempts))
+		return false
+	}
+	if !IsSessionRunning(cfg.SessionID) {
+		slog.Info("auto-continue: skipped, session no longer running",
+			slog.String("session", cfg.SessionID),
+			slog.Int("attempts", attempts))
+		return false
+	}
+	return true
+}
+
+// runAutoContinue invokes the caller's hook with a panic barrier.
+//
+// A panic here would otherwise unwind the whole drain goroutine: the session
+// would be left with a runner registered but no loop, and its terminal event
+// would never be sent — the frontend would sit in "streaming" until a reload.
+// Recovering and refusing the retry degrades to the pre-feature behavior.
+func runAutoContinue(cfg DrainConfig, attempt int, prev DrainResult) (result DrainResult, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("auto-continue: hook panicked, giving up",
+				slog.String("session", cfg.SessionID),
+				slog.Int("attempt", attempt),
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())))
+			result, ok = prev, false
+		}
+	}()
+	return cfg.AutoContinue(attempt, prev)
+}
+
 // retryDequeueAfterError accounts for one failed dequeue and reports whether
 // the drain loop may keep going. A real DB error must not exit as if the queue
 // were empty (that would silently lose messages): transient blips are retried
@@ -177,7 +246,27 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 	// that recover are retried without losing messages.
 	dequeueFailures := 0
 
+	// Auto-continue attempts spent on the CURRENT user turn. Reset whenever a
+	// real queued user message is dequeued: the budget belongs to a user turn,
+	// not to the session, so a long conversation gets a fresh allowance per
+	// message instead of exhausting it once and never resuming again.
+	autoContinueAttempts := 0
+
 	for {
+		// Resume an abnormally terminated turn before deciding the loop is
+		// done. This must run BEFORE drainHandleTerminal, which treats Err and
+		// Empty as terminal — but only when the user has nothing queued, so an
+		// explicit message always wins over an automatic resume (otherwise the
+		// auto message would be persisted after the user's row and delay their
+		// actual request).
+		if shouldAutoContinue(cfg, result, autoContinueAttempts) {
+			autoContinueAttempts++
+			if next, ok := runAutoContinue(cfg, autoContinueAttempts, result); ok {
+				result = next
+				continue
+			}
+		}
+
 		if drainHandleTerminal(cfg, result) {
 			return
 		}
@@ -204,6 +293,8 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 		// A message was successfully dequeued — the DB recovered, reset the
 		// failure counter.
 		dequeueFailures = 0
+		// A real user turn is starting: give it its own auto-continue budget.
+		autoContinueAttempts = 0
 
 		// Queue has next message — drain it (row already persisted with queued=0)
 		slog.Info("drain: draining queued message",

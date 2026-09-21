@@ -23,8 +23,7 @@ type ServerMessage struct {
 
 // ClientMessage is a message sent from client to server.
 type ClientMessage struct {
-	Type       string `json:"type"`                   // "ack", "pong", "subscribe", "unsubscribe", "cancel", "permission_respond", "metrics_preference"
-	ID         string `json:"id,omitempty"`           // ack target event ID
+	Type       string `json:"type"`                   // "pong", "subscribe", "unsubscribe", "cancel", "permission_respond", "metrics_preference"
 	SessionID  string `json:"session_id,omitempty"`   // for subscribe/unsubscribe/cancel
 	ToolCallID string `json:"tool_call_id,omitempty"` // for permission_respond
 	OptionID   string `json:"option_id,omitempty"`    // for permission_respond

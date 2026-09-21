@@ -71,6 +71,32 @@ func IsDevBuild(v string) bool {
 	return pre != ""
 }
 
+// ReleaseTag returns the GitHub release tag that a build's version corresponds
+// to, or "" when it corresponds to no release.
+//
+// build.sh stamps versions in three shapes: a clean tag ("v0.98.0") for release
+// builds, a commit-describe ("v0.98.0-5-g830bb6c") for commits after a tag, and
+// either of those with an appended "-MMDDHHMM" build-time suffix for dev builds.
+// Only the clean form names a tag, so callers must not build download URLs from
+// the others — they would 404.
+//
+// The build-time suffix is stripped first because it is build metadata, not part
+// of the tag: "v0.98.0-07291030" is still the v0.98.0 release.
+func ReleaseTag(v string) string {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	v = stripBuildTimeSuffix(v)
+	if v == "" || IsDevBuild(v) {
+		return ""
+	}
+	// A pre-release tag (e.g. "v1.0.0-rc1") is a real tag, but so far the
+	// release workflow only publishes from plain "v*" tags. Reject anything
+	// with a suffix rather than guess at a tag that may not exist.
+	if strings.Contains(v, "-") {
+		return ""
+	}
+	return "v" + v
+}
+
 // stripBuildTimeSuffix removes a trailing "-MMDDHHMM" build-time suffix (8 digits after last '-').
 // e.g. "v0.70.0-5-g830bb6c-07291030" → "v0.70.0-5-g830bb6c"
 // "v1.0.0-07291030" → "v1.0.0"

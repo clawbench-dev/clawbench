@@ -303,3 +303,24 @@ describe('DirPreviewBody', () => {
     expect(thumb![1]).toMatch(/height:\s*20px/)
   })
 })
+
+// ── Project-external indicator ──
+// The pane lists whatever directory it is handed, which may be outside the
+// project root; the title alone would not tell the user where they are.
+describe('DirPreviewBody — project-external badge', () => {
+  it('shows the badge when listing a directory outside the project', () => {
+    const wrapper = mountBody({ dirPath: '/var/log', dirName: 'log' })
+    expect(wrapper.find('.external-badge').exists()).toBe(true)
+  })
+
+  it('hides the badge for a project-relative directory', () => {
+    const wrapper = mountBody({ dirPath: 'web/src', dirName: 'src' })
+    expect(wrapper.find('.external-badge').exists()).toBe(false)
+  })
+
+  it('hides the badge when no path is known', () => {
+    // Without a path the pane cannot tell, and guessing would mislabel every
+    // listing; the type icons fallback already covers this case.
+    expect(mountBody({ dirName: 'src' }).find('.external-badge').exists()).toBe(false)
+  })
+})

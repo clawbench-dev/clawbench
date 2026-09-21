@@ -2132,6 +2132,32 @@ describe('duplicate message root causes (regression)', () => {
     expect(bubble._remoteQueueId).toBe('remote-q-queued')
   })
 
+  it('auto-continue: repeated identical user messages each get their own bubble', () => {
+    // The auto-continue feature sends the SAME localized text ("继续" /
+    // "Continue") up to N times for one user turn. The reducer's content-based
+    // dedup must not collapse them into a single bubble — each attempt is a real
+    // message with its own DB id and queue id, and losing them would make the
+    // transcript lie about how many times the session was resumed.
+    let s: any[] = [
+      { role: 'user', id: 1, content: 'do the thing', blocks: [{ type: 'text', text: 'do the thing' }] },
+    ]
+
+    // First auto-continue message.
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 501, content: 'Continue', queueId: 'auto-1-1' },
+    } as any)
+    // Second attempt: identical content, different ids.
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 503, content: 'Continue', queueId: 'auto-2-2' },
+    } as any)
+
+    const continues = s.filter((m: any) => m.role === 'user' && m.content === 'Continue')
+    expect(continues).toHaveLength(2, 'each auto-continue attempt must render its own bubble')
+    expect(continues.map((m: any) => m.id).sort()).toEqual([501, 503])
+  })
+
   it('ws_user_message without queued flag creates normal remote bubble', () => {
     // A non-queued (immediately started) message must keep the existing
     // behavior: a normal _remote bubble with no pending marker.

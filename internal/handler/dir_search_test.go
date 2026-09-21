@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -369,6 +370,50 @@ func TestDirSearch_Limit(t *testing.T) {
 	}
 }
 
+// An absolute search root is a project-EXTERNAL directory: the file manager can
+// browse those, and its search box searches the browsed directory. It must be
+// searched at its real location and report absolute hit paths — trimming the
+// leading "/" made "/tmp" look like the project-relative "tmp", so the walk
+// silently searched a nonexistent in-project directory and returned zero hits.
+func TestDirSearch_ExternalAbsolutePath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Lives OUTSIDE the project (sibling of it, still under the test watch dir).
+	outsideDir := filepath.Join(env.WatchDir, "outside")
+	require.NoError(t, os.MkdirAll(outsideDir, 0o755))
+	createTestFile(t, outsideDir, "external_hit.go", "package outside")
+	// A same-named file inside the project must NOT be what the search reports.
+	createTestFile(t, env.ProjectDir, "external_hit.go", "package inside")
+
+	req := newRequest(t, http.MethodGet,
+		"/api/dir/search?path="+url.QueryEscape(outsideDir)+"&q=external_hit&recursive=false", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+	results := events["result"]
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result from the external dir, got %d", len(results))
+	}
+
+	var r DirSearchResult
+	if err := json.Unmarshal(results[0], &r); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+	if r.Name != "external_hit.go" {
+		t.Errorf("expected external_hit.go, got %s", r.Name)
+	}
+	// Hit paths are absolute for an external root, matching the listing form.
+	if !filepath.IsAbs(r.Path) {
+		t.Errorf("expected an absolute hit path for an external root, got %s", r.Path)
+	}
+	if r.Path != filepath.ToSlash(filepath.Join(outsideDir, "external_hit.go")) {
+		t.Errorf("expected the external file's own path, got %s", r.Path)
+	}
+}
+
 func TestDirSearch_ImageType(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -525,8 +570,8 @@ func TestParseSearchParams_Defaults(t *testing.T) {
 	if params.query != "test" {
 		t.Errorf("expected query=test, got %s", params.query)
 	}
-	if params.relPath != "sub" {
-		t.Errorf("expected relPath=sub, got %s", params.relPath)
+	if params.path != "sub" {
+		t.Errorf("expected path=sub, got %s", params.path)
 	}
 	if !params.recursive {
 		t.Error("expected recursive=true by default")
@@ -599,14 +644,35 @@ func TestParseSearchParams_NegativeLimit(t *testing.T) {
 }
 
 func TestParseSearchParams_PathLeadingSlash(t *testing.T) {
-	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&path=/sub/dir", nil)
+	// A real absolute path, not a POSIX literal: filepath.IsAbs("/sub/dir") is
+	// false on Windows (it needs a drive or UNC prefix), so a hard-coded
+	// "/sub/dir" is not absolute there and would be treated as project-relative.
+	absPath := filepath.Join(t.TempDir(), "sub", "dir")
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&path="+url.QueryEscape(absPath), nil)
 	w := httptest.NewRecorder()
 	params, ok := parseSearchParams(w, req)
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
-	if params.relPath != "sub/dir" {
-		t.Errorf("expected relPath=sub/dir (leading slash stripped), got %s", params.relPath)
+	// An absolute path is a project-EXTERNAL directory and must keep its leading
+	// separator. Stripping it made "/tmp" look like the project-relative "tmp",
+	// so an external search silently walked a nonexistent in-project directory
+	// and returned zero hits.
+	if params.path != absPath {
+		t.Errorf("expected path=%s (absolute preserved), got %s", absPath, params.path)
+	}
+}
+
+func TestParseSearchParams_RelativePathKeepsProjectSemantics(t *testing.T) {
+	// A bare relative path stays project-relative (no leading separator added).
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&path=sub/dir", nil)
+	w := httptest.NewRecorder()
+	params, ok := parseSearchParams(w, req)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if params.path != "sub/dir" {
+		t.Errorf("expected path=sub/dir, got %s", params.path)
 	}
 }
 

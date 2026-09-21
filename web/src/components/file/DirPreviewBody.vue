@@ -10,6 +10,10 @@
     <div v-if="!chromeless" class="dir-preview-meta">
       <div class="dir-preview-meta-info">
         <span class="dir-preview-title">{{ dirName }}</span>
+        <!-- Preview can list a directory outside the project (the pane fetches
+             whatever path it is handed), so the title alone would not tell the
+             user where they are. -->
+        <ExternalBadge v-if="isExternalDir" kind="dir" />
         <span class="dir-preview-count">{{ t('file.dirPreview.count', { n: shown.length }) }}</span>
       </div>
       <div class="dir-preview-actions">
@@ -99,6 +103,8 @@ import { computed, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ExternalLink, FolderOpen, Link2, X } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
+import ExternalBadge from '@/components/file/ExternalBadge.vue'
+import { isAbsolutePath } from '@/utils/path.ts'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { buildThumbUrl, isThumbable } from '@/utils/fileManager'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
@@ -125,6 +131,9 @@ const props = defineProps<{
    */
   chromeless?: boolean
 }>()
+
+/** The listed directory is outside the project root (absolute dirPath). */
+const isExternalDir = computed(() => isAbsolutePath(props.dirPath || ''))
 
 const emit = defineEmits<{
   /** A file was clicked — the caller opens it in the full-screen viewer. */

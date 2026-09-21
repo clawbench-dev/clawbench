@@ -33,6 +33,8 @@ const props = defineProps({
   appMode: Boolean,
   /** macOS desktop — the copy chord is Cmd+C there, not Ctrl+Shift+C. */
   mac: Boolean,
+  /** Copy-on-select is enabled — the selection reaches the clipboard by itself. */
+  copyOnSelect: Boolean,
 })
 defineEmits(['close'])
 
@@ -86,6 +88,14 @@ const sections = computed<HelpSection[]>(() => {
   const common: HelpItem[] = [
     { key: 'keys', nameKey: 'terminal.helpCommonKeys', descKey: 'terminal.helpCommonKeysDesc' },
     { key: 'repeat', nameKey: 'terminal.helpCommonRepeat', descKey: 'terminal.helpCommonRepeatDesc' },
+  ]
+  // Copy-on-select is on by default, so it leads the copy entries: it is the
+  // path most users will actually take, and the explicit chords below are the
+  // fallback for when it is switched off.
+  if (props.copyOnSelect) {
+    common.push({ key: 'copyOnSelect', nameKey: 'terminal.helpCommonCopyOnSelect', descKey: 'terminal.helpCommonCopyOnSelectDesc' })
+  }
+  common.push(
     // The copy chord differs by platform, so show a literal label rather than a
     // single translated string (macOS reserves Cmd+C and keeps Ctrl+C as SIGINT).
     {
@@ -97,7 +107,7 @@ const sections = computed<HelpSection[]>(() => {
     { key: 'copyInsert', nameKey: 'terminal.helpCommonCopyInsert', descKey: 'terminal.helpCommonCopyInsertDesc' },
     { key: 'rightClick', nameKey: 'terminal.helpCommonRightClick', descKey: 'terminal.helpCommonRightClickDesc' },
     { key: 'tools', nameKey: 'terminal.helpCommonTools', descKey: 'terminal.helpCommonToolsDesc' },
-  ]
+  )
   // Android app mode: hardware volume keys forward arrows.
   if (props.appMode) {
     common.push({ key: 'volume', nameKey: 'terminal.helpVolumeKeys', descKey: 'terminal.helpVolumeKeysDesc' })

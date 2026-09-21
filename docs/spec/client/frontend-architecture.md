@@ -41,7 +41,7 @@ flowchart LR
 - **抽屉式导航**：Session 抽屉（会话列表）、ACP Session 抽屉（ACP 模式/权限管理）、TOC 抽屉（文件目录）、搜索抽屉等。从侧面滑入，不占常驻空间——移动端屏幕有限，抽屉比常驻面板更节省空间
 - **会话列表是单一扁平列表**：项目面板内的会话不再分成「置顶 / 最近」两个分组（无分组头、无折叠、无分组计数），置顶会话仍排在最前（服务端 `pinned DESC` 排序不变），只在行的右上角加一个三角标记。跨项目面板按项目分组的结构保留不变。分组把同一份数据渲染成两个 `TransitionGroup` 与一套索引偏移计算，键盘导航还得补偿分组偏移——而用户要的只是"置顶的在上面"，一个标记就能表达
 - **模块级 Composable 单例**：多个 composable 使用模块级 `ref`，所有消费者共享同一份状态（如 `useToast`、`useSessionIdentity`、`useGlobalEvents`）。跨组件状态协调无需 provide/inject
-- **WebSocket 单通道**：所有实时推送走 `/api/ai/events/ws`。聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）由 `StreamHub.EmitToSession` 推送；系统事件（`session_update/task_update/summary_update`）通过 `ws.Manager` 广播。断线 ≤10s 自动缓冲重放（≤50 条），>120s 清理订阅（`internal/ws/manager.go`）。客户端通过 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong`/`metrics_preference` 七种消息与后端交互
+- **WebSocket 单通道**：所有实时推送走 `/api/ai/events/ws`。聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）由 `StreamHub.EmitToSession` 推送；系统事件（`session_update/task_update/summary_update`）通过 `ws.Manager` 广播。断线 ≤10s 自动缓冲重放（≤50 条），>120s 清理订阅（`internal/ws/manager.go`）。客户端通过 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`pong`/`metrics_preference` 六种消息与后端交互
 
   旁注：还存在几条独立小通道用于专门场景——`GET /api/file/watch/ws`（WebSocket）、`GET /api/dir/search`（SSE）、`GET /api/tts/audio/ws`（WebSocket）——与聊天流无关
 - **ACP 会话管理**：`useAcpSession` 管理 ACP 模式切换、思考深度、斜杠命令、权限审批和计划进度。`AcpSessionDrawer` 展示 ACP 特有的会话状态，`PlanPanel` 显示计划步骤和进度。计划进度**不持久化**——只缓存在 ACP 连接对象上（无 plan 表，`context_state` 只含 mode/thinkingEffort/usage），因此会话回溯（rewind）销毁连接后无从还原：`rewindSession` 成功后显式 `clearPlanState()`，`onSessionEvent` 收到 `status="rewound"` 且属于当前会话时同样清空（覆盖未发起回溯的其他客户端）；清空早于 `loadHistory`，使 reload 自带的 planState 仍能生效

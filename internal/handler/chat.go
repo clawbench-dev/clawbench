@@ -651,25 +651,48 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				}
 				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir, msg.QueueID)
 				return service.DrainResult{
-					CancelReason: nextResult.cancelReason,
-					Err:          nextResult.err,
-					Empty:        nextResult.empty,
+					CancelReason:   nextResult.cancelReason,
+					Err:            nextResult.err,
+					Empty:          nextResult.empty,
+					AbnormalReason: nextResult.abnormalReason,
 				}
 			},
+			// Resume an abnormally terminated turn by sending a localized
+			// "continue" and running one more turn. The prompt/queueID come from
+			// the shared runner; the request is built here because the handler
+			// owns the agent/model overrides.
+			AutoContinue: service.NewAutoContinueRunner(service.AutoContinueRunnerConfig{
+				Ctx:         ctx,
+				SessionID:   sessionID,
+				ProjectPath: projectPath,
+				BackendName: backendName,
+				RunTurn: func(prompt, queueID string) service.DrainResult {
+					retryChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
+					retryResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, retryChatReq, fileDir, queueID)
+					return service.DrainResult{
+						CancelReason:   retryResult.cancelReason,
+						Err:            retryResult.err,
+						Empty:          retryResult.empty,
+						AbnormalReason: retryResult.abnormalReason,
+					}
+				},
+			}),
 			MarkDoneAndSendFinal: markDoneAndSendFinal,
 		}, service.DrainResult{
-			CancelReason: result.cancelReason,
-			Err:          result.err,
-			Empty:        result.empty,
+			CancelReason:   result.cancelReason,
+			Err:            result.err,
+			Empty:          result.empty,
+			AbnormalReason: result.abnormalReason,
 		})
 	}()
 }
 
 // streamRunResult captures the outcome of a single AI stream execution.
 type streamRunResult struct {
-	cancelReason string // "", "user"
-	err          string // error message if execution failed
-	empty        bool   // true if AI returned no content
+	cancelReason   string // "", "user"
+	err            string // error message if execution failed
+	empty          bool   // true if AI returned no content
+	abnormalReason string // non-empty when the turn may be auto-resumed
 }
 
 // executeStreamRun runs one AI backend execution from start to finish.
@@ -707,9 +730,10 @@ func executeStreamRun(
 	})
 
 	return streamRunResult{
-		cancelReason: res.CancelReason,
-		err:          res.Err,
-		empty:        res.Empty,
+		cancelReason:   res.CancelReason,
+		err:            res.Err,
+		empty:          res.Empty,
+		abnormalReason: res.AbnormalReason,
 	}
 }
 

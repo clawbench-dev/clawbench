@@ -1,7 +1,7 @@
 <template>
   <div class="markdown-preview">
     <!-- Rendered markdown -->
-    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @dragstart="onMarkdownDragStart" @dragend="onMarkdownDragEnd" @load.capture="onImageLoad">
+    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart.passive="onTableTouchStart" @dragstart="onMarkdownDragStart" @dragend="onMarkdownDragEnd" @load.capture="onImageLoad">
       <div class="markdown-content" v-html="renderedHtml" />
       <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
       <button

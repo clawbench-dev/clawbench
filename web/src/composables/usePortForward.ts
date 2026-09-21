@@ -62,11 +62,30 @@ const tunnelErrorType = ref<TunnelErrorType>('')
 // These show a yellow blinking dot instead of green/grey.
 const connectingPorts = ref(new Set<number>())
 
+// Whether the LOCAL listener for each localPort is actually accepting
+// connections on this device. The server-side `active` flag probes the TARGET
+// port on the server, so it stays green even when the local tunnel is dead —
+// in app mode this map is the only honest source for the status dot.
+// Empty in web mode (no native bridge to probe with), where `active` is used.
+const localReachable = ref(new Map<number, boolean>())
+
 // Port scan drawer state: whether a scan has ever completed (drives first-open auto-scan),
 // the current scanning flag, and the open state of the scan drawer.
 const scanDrawerOpen = ref(false)
 const hasScanned = ref(false)
 const scanning = ref(false)
+// Non-empty when the last scan attempt failed. Kept separate from `hasScanned`
+// so the UI can tell "the scan failed" apart from "the scan ran and found
+// nothing" — both used to render the same empty state, which silently hid
+// request failures (a 10s timeout on a busy host was indistinguishable from a
+// genuinely empty port table).
+const scanError = ref('')
+
+// Port scans probe every listening port with a TLS handshake, so a host with
+// 100+ ports can take far longer than the 10s default API timeout. The backend
+// probes in parallel and bounds each handshake, but the ceiling still needs
+// headroom for very busy hosts.
+const SCAN_TIMEOUT_MS = 60_000
 
 // Auto-refresh interval when tunnel is unhealthy
 let tunnelPollTimer: ReturnType<typeof setInterval> | null = null
@@ -94,9 +113,43 @@ function ensurePortForwardListener() {
   }) as EventListener)
 }
 
-/** Returns true if any enabled port has an active backend */
+/** Returns true if any enabled port has an active backend. */
 function hasActivePorts(): boolean {
-  return ports.value.some(p => p.enabled && p.active)
+  return effectivePorts().some(p => p.enabled && p.active)
+}
+
+// The app-mode flag is a module-level singleton ref, so reading it here keeps
+// the module-level helpers below (effectivePorts, tunnelStatusFromPorts) in
+// sync with the value usePortForward() exposes.
+const { isAppMode } = useAppMode()
+
+// Guards against overlapping probe rounds. Module-scoped on purpose: it
+// protects the module-level `localReachable`, while usePortForward() is called
+// from several places (the panel, App.vue's syncToNative, the localhost
+// annotation handler). A closure-local flag would let two instances probe
+// concurrently — each probe is a synchronous JS-bridge call that can take 500ms
+// on Android, so overlapping rounds double the bridge load.
+let probingReachability = false
+
+/**
+ * Ports with their `active` flag corrected for the local device.
+ *
+ * The server computes `active` by probing the target port ON THE SERVER, which
+ * says nothing about whether this device's tunnel listener exists. In app mode
+ * we therefore override it with the locally probed result: a port is only
+ * "active" when the local listener answers AND the server sees the target up.
+ * `undefined` (never probed) falls back to the server's value.
+ *
+ * Web mode is untouched — there is no local tunnel to probe, and `active` is
+ * already the right answer there.
+ */
+function effectivePorts(): ForwardedPort[] {
+  if (!isAppMode.value || localReachable.value.size === 0) return ports.value
+  return ports.value.map(p => {
+    const reachable = localReachable.value.get(p.localPort)
+    if (reachable === undefined) return p
+    return { ...p, active: reachable && p.active }
+  })
 }
 
 // Sync enabled port count to global store for dock badge.
@@ -110,7 +163,7 @@ watch(ports, () => {
  * Determines tunnel status from port state (delegates to pure utility).
  */
 function tunnelStatusFromPorts(_hasPorts: boolean): 'ok' | 'degraded' {
-  return tunnelStatusFromPortsUtil(ports.value)
+  return tunnelStatusFromPortsUtil(effectivePorts())
 }
 
 /**
@@ -118,7 +171,6 @@ function tunnelStatusFromPorts(_hasPorts: boolean): 'ok' | 'degraded' {
  * auto-detection, and registration with Android native layer.
  */
 export function usePortForward() {
-  const { isAppMode } = useAppMode()
   const { currentSessionId } = useSessionIdentity()
 
   // Set up the callback for native port-forward-result events.
@@ -162,9 +214,75 @@ export function usePortForward() {
           connectingPorts.value = new Set(connectingPorts.value)
         }
       }
+      // Refresh local reachability so the status dots reflect THIS device's
+      // tunnel rather than only the server's view of the target port.
+      await refreshLocalReachability()
     } finally {
       if (!silent) loading.value = false
     }
+  }
+
+  /**
+   * Probe each enabled port's LOCAL listener on this device and record the
+   * result in `localReachable`.
+   *
+   * Sequential on purpose: on Android each probe crosses the JS bridge and can
+   * take up to 500ms, so firing them all at once would stall the bridge. The
+   * whole map is replaced each round, which also prunes ports that disappeared.
+   * Web mode clears the map — there is no local tunnel to probe, and `active`
+   * already reflects the right thing there.
+   */
+  async function refreshLocalReachability() {
+    const native = getNative()
+    if (!isAppMode.value || typeof native?.testPortReachable !== 'function') {
+      if (localReachable.value.size > 0) localReachable.value = new Map()
+      return
+    }
+    // Probes are sequential and can take 500ms each, while loadPorts() is
+    // called from a 5s poll. Without this guard the rounds overlap and a stale
+    // round can overwrite a newer one's results.
+    if (probingReachability) return
+    probingReachability = true
+    try {
+      const next = new Map<number, boolean>()
+      for (const p of ports.value) {
+        if (!p.enabled) continue
+        try {
+          next.set(p.localPort, (await native.testPortReachable(p.localPort)) === true)
+        } catch {
+          next.set(p.localPort, false)
+        }
+      }
+      localReachable.value = next
+    } finally {
+      probingReachability = false
+    }
+  }
+
+  /**
+   * Register a forward with the native layer and surface a hard failure.
+   *
+   * The bridge is heterogeneous: Android returns undefined (synchronous void),
+   * Electron returns Promise<boolean>. Only an explicit `false` means "the
+   * listener could not be bound" — treating undefined as failure would pop a
+   * false error on every Android call, and swallowing false (the old behaviour)
+   * left a dead mapping looking healthy.
+   */
+  function addNativeForward(localPort: number, targetPort: number, host: string): void {
+    const native = getNative()
+    if (!native?.addForwardedPort) return
+    Promise.resolve(native.addForwardedPort(localPort, targetPort, host || ''))
+      .then(ok => { if (ok === false) reportForwardFailure(localPort) })
+      .catch(() => reportForwardFailure(localPort))
+  }
+
+  /** Clear the pending indicator and tell the user the port could not be bound. */
+  function reportForwardFailure(localPort: number) {
+    if (connectingPorts.value.delete(localPort)) {
+      connectingPorts.value = new Set(connectingPorts.value)
+    }
+    const toast = useToast()
+    toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
   }
 
   async function registerPort(port: number, name?: string, protocol?: string, host?: string): Promise<number> {
@@ -184,9 +302,7 @@ export function usePortForward() {
     connectingPorts.value = new Set(connectingPorts.value)
     // Register with Android native layer: pass localPort, targetPort, host
     if (isAppMode.value) {
-      // Native writes are fire-and-forget. The Android bridge is synchronous and returns
-      // undefined, so wrap the result so .catch always works (Electron returns a Promise).
-      Promise.resolve(getNative()?.addForwardedPort?.(localPort, port, host || '')).catch(() => {})
+      addNativeForward(localPort, port, host || '')
     }
     // Fire-and-forget: refresh port list and SSH info in the background.
     // Do NOT await — the caller needs localPort immediately to open the WebView.
@@ -200,9 +316,7 @@ export function usePortForward() {
     // Re-sync native layer after update: remove old, add new with correct localPort
     if (isAppMode.value) {
       Promise.resolve(getNative()?.removeForwardedPort?.(localPort)).catch(() => {})
-      // Native writes are fire-and-forget. The Android bridge is synchronous and returns
-      // undefined, so wrap the result so .catch always works (Electron returns a Promise).
-      Promise.resolve(getNative()?.addForwardedPort?.(localPort, port, host || '')).catch(() => {})
+      addNativeForward(localPort, port, host || '')
     }
     await Promise.all([loadPorts(true), loadSSHInfo()])
   }
@@ -217,10 +331,21 @@ export function usePortForward() {
 
   async function detectPorts() {
     scanning.value = true
+    scanError.value = ''
     try {
-      const data = await apiGet<{ ports: DetectedPort[] }>('/api/proxy/detect')
+      const data = await apiGet<{ ports: DetectedPort[] }>('/api/proxy/detect', { timeoutMs: SCAN_TIMEOUT_MS })
       detectedPorts.value = data.ports || []
       hasScanned.value = true
+    } catch (e) {
+      // Swallowed on purpose. Callers invoke this unawaited (handleOpenScan) or
+      // from a @click handler (rescanPorts), so rethrowing would surface as an
+      // unhandledrejection that main.ts only logs. The failure is reported
+      // through scanError instead.
+      //
+      // hasScanned deliberately stays false: it gates the first-open auto-scan,
+      // so setting it here would disable retries after a single failure.
+      detectedPorts.value = []
+      scanError.value = e instanceof Error ? e.message : String(e)
     } finally {
       scanning.value = false
     }
@@ -236,7 +361,7 @@ export function usePortForward() {
       const p = ports.value.find(x => x.localPort === localPort)
       const native = getNative()
       if (enabled && p) {
-        Promise.resolve(native?.addForwardedPort?.(p.localPort, p.port, p.host || '')).catch(() => {})
+        addNativeForward(p.localPort, p.port, p.host || '')
       } else if (!enabled) {
         Promise.resolve(native?.removeForwardedPort?.(localPort)).catch(() => {})
       }
@@ -292,8 +417,20 @@ export function usePortForward() {
     }
 
     for (const p of enabledPorts) {
-      Promise.resolve(native.addForwardedPort?.(p.localPort, p.port, p.host || '')).catch(() => {})
+      // Sequential: the native layer shares one SSH tunnel, and concurrent
+      // connects used to cancel each other (each add cancelled the in-flight
+      // one), leaving every mapping dead. Awaiting keeps them strictly ordered.
+      const ok = await Promise.resolve(native.addForwardedPort?.(p.localPort, p.port, p.host || '')).catch(() => false)
+      if (ok === false) reportForwardFailure(p.localPort)
     }
+    // Re-probe now that the forwards have been (re)established, so the dots
+    // reflect reality instead of the pre-sync state.
+    await refreshLocalReachability()
+    // Enabled ports exist (we returned early otherwise), so run a health check:
+    // if the tunnel is down it arms the 5s poll, which asks the native layer to
+    // reconnect. Secondary to the shell's own monitor, but it keeps recovery
+    // working even if that monitor is not armed.
+    await checkTunnelHealth()
   }
 
   /**
@@ -465,6 +602,17 @@ export function usePortForward() {
           tunnelStatus.value = 'degraded'
           tunnelMessage.value = gt('portForward.tunnelDegraded')
         }
+        return
+      }
+
+      // Native reports the tunnel down while ports are still wanted: ask it to
+      // reconnect. The desktop shell self-heals via its own monitor, but doing
+      // it here too means recovery does not depend on that monitor being armed.
+      // Only for an explicit `false` — `null` means "no native status", where a
+      // reconnect call would be meaningless.
+      if (nativeConnected === false && ports.value.some(p => p.enabled)) {
+        await nativeReconnectTunnel()
+        await loadPorts()
         return
       }
 
@@ -658,9 +806,11 @@ export function usePortForward() {
     tunnelError,
     tunnelErrorType,
     connectingPorts,
+    localReachable,
     scanDrawerOpen,
     hasScanned,
     scanning,
+    scanError,
     loadPorts,
     registerPort,
     updatePort,

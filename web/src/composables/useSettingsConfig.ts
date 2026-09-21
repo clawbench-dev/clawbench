@@ -3,12 +3,18 @@ import { apiGet, apiPatch, apiPost } from '@/utils/api'
 import i18n, { STORAGE_KEY as LOCALE_KEY, setLocaleCookie } from '@/i18n'
 import { useAgents } from '@/composables/useAgents'
 import { getNative } from '@/utils/clawbenchNative'
+import { syncServerLanguage } from '@/utils/serverLanguage'
 import { resolveThemeId, applyThemeAttributes, onSystemColorSchemeChange } from '@/utils/themeMeta'
 import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
 import { applyServerLimits } from '@/stores/app.ts'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
+
+// Guards the startup reconcile below. The locale side-effect clears it by
+// syncing immediately, and the flag also stops a PATCH → loadConfig → PATCH
+// loop (patchConfig re-reads the whole config).
+let serverLanguageSynced = false
 
 /** One-time migration: copy legacy localStorage keys to new prefixed keys. */
 function migrateLegacyKeys() {
@@ -23,6 +29,12 @@ function migrateLegacyKeys() {
     fileView: { key: 'clawbench-file-view', format: 'raw' },
     filePreviewMode: { key: 'clawbench-file-preview-mode', format: 'raw' },
     terminalFontSize: { key: 'clawbench-terminal-font-size', format: 'raw' },
+    // Renamed from browserNotification: the switch is about system notifications
+    // from the desktop shell / this browser, and "browser" misdescribed the
+    // Electron case (where the notification comes from the main process). The
+    // old prefixed key is the legacy source here, so an existing choice carries
+    // over instead of silently resetting to the default.
+    desktopNotification: { key: LOCAL_PREFIX + 'browserNotification', format: 'json' },
   }
   for (const [settingsKey, legacy] of Object.entries(migrations)) {
     const newKey = LOCAL_PREFIX + settingsKey
@@ -77,6 +89,10 @@ const legacyKeys: Record<string, {
       // Persist to native prefs so native UI (splash, login page) follows the
       // in-app language even before the locale cookie is readable on cold start.
       getNative()?.setLanguage?.(value)
+      // Keep the server's copy in step so background-persisted text (the
+      // auto-continue message) is written in the user's language.
+      serverLanguageSynced = true
+      void syncServerLanguage(value)
     },
   },
   autoSpeech: {
@@ -322,6 +338,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   filePreviewMode: false,
   messageDisplayMode: 'mixed',
   terminalFontSize: 12,
+  // Copy-on-select is ON by default, matching mainstream terminals (GNOME
+  // Terminal / Windows Terminal / Termius). Only the PC floating-copy-bar
+  // fallback is gated by it — the explicit copy chords always work.
+  terminalCopyOnSelect: true,
   logCapture: false,
   swipeSession: false,
   preventScreenLock: true,
@@ -334,11 +354,17 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // in-app card itself — the alert sound and system/IM push have their own switches.
   inAppNotification: true,
   notificationSound: true,
-  // Desktop/system notifications from this browser (or the Electron shell).
+  // System notifications (设置 → 推送通知 → 桌面端通知).
+  //
+  // Covers both the Electron shell (native OS notification from the main
+  // process) and the in-page Notification API in a plain browser. Named
+  // "desktop" rather than "browser" because the Electron case is the one that
+  // matters most and is not a browser notification at all.
+  //
   // Independent of the server-side `push_mode`, which selects the MOBILE/IM
-  // channel: a user on DingTalk push still wants the tab to notify them when
-  // they are sitting at the desktop.
-  browserNotification: true,
+  // channel: a user on DingTalk push still wants their desktop to notify them
+  // when they are sitting at it.
+  desktopNotification: true,
   floatingStatusWindow: false,
   liveUpdate: true,
   fontMono: 'default',
@@ -420,6 +446,8 @@ const serverDefaults: Record<string, unknown> = {
   'chat.recommend_enabled': false,
   'chat.recommend_context_messages': 3,
   'chat.fork_context_budget': 100000,
+  'chat.auto_continue_enabled': false,
+  'chat.auto_continue_max_retries': 3,
   'session.max_count': 15,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,
@@ -701,6 +729,17 @@ export function useSettingsConfig() {
       // page reload (which re-runs loadProject → /api/roots).
       syncServerLimits(data)
       applyFirstRunThemeDefaults(data)
+      // Reconcile the server's UI language with this browser once per session.
+      // Skipped when the locale side-effect already pushed a value (the user
+      // changed the language this session), so a PATCH cannot loop back through
+      // loadConfig into another PATCH.
+      if (!serverLanguageSynced) {
+        serverLanguageSynced = true
+        const currentLocale = i18n.global.locale.value as string
+        if (currentLocale && data.language !== currentLocale) {
+          void syncServerLanguage(currentLocale)
+        }
+      }
     } catch {
       // Server may be unreachable — keep existing cached values
     }

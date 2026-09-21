@@ -86,13 +86,23 @@ export function useChatStream(options: UseChatStreamOptions) {
   const { onEvent, sendWsMessage, connected } = useGlobalEvents()
 
   function debouncedRender() {
-    renderScheduler.cancel('render')
-    renderScheduler.cancel('scroll')
-    // Panel not visible: skip rendering and scrolling — data still accumulates,
-    // rendering will catch up when the tab becomes active (loadHistory on re-activate)
+    // Panel not visible: drop any pending render/scroll — data still accumulates
+    // and rendering catches up when the tab becomes active (loadHistory on
+    // re-activate). The cancels must stay on this branch: they are what
+    // discards work already queued before the panel was hidden.
     if (!isOpen.value) {
+      renderScheduler.cancel('render')
+      renderScheduler.cancel('scroll')
       return
     }
+    // No cancel before scheduling. `schedule` already replaces a pending
+    // callback of the same name, and cancelling here had a nasty side effect:
+    // when the cancel emptied the queue it also called `cancelAnimationFrame`,
+    // so every stream event destroyed the pending frame and requested a new
+    // one. At ~180 events/s that was ~2,900 cancel+request round trips per
+    // 19s window (measured: 799ms of main-thread self time in
+    // `cancelAnimationFrame`) for the same 290 frames. Leaving the frame
+    // pending lets the events coalesce into it as intended.
     renderScheduler.schedule('render', onRenderNeeded)
     // Streaming context: content is still arriving, so the viewport should
     // follow even if the container height hasn't grown to the bottom yet.

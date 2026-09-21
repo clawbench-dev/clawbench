@@ -111,32 +111,6 @@ func TestClassifyIncoming(t *testing.T) {
 	}
 }
 
-func TestClassifyIncomingAttachment(t *testing.T) {
-	tests := []struct {
-		name   string
-		sticky string
-		want   RouteKind
-	}{
-		{"with sticky target routes to it", "sess-1", RouteToSession},
-		{"without sticky target asks for one", "", RouteNoTarget},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ClassifyIncomingAttachment(tt.sticky)
-			if got.Kind != tt.want {
-				t.Fatalf("Kind = %v, want %v", got.Kind, tt.want)
-			}
-			// An attachment carries no text, and never names a session.
-			if got.Message != "" {
-				t.Errorf("Message = %q, want empty", got.Message)
-			}
-			if got.ShortID != "" {
-				t.Errorf("ShortID = %q, want empty", got.ShortID)
-			}
-		})
-	}
-}
-
 func TestSanitizeFilename(t *testing.T) {
 	tests := []struct {
 		name string
@@ -497,5 +471,28 @@ func assertNoUploads(t *testing.T, project string) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("expected no saved attachments, found %d", len(entries))
+	}
+}
+
+// TestAttachmentMaxFiles pins the fallback: an unset/zero config must still
+// bound a download batch, since a rich-text IM message can embed an arbitrary
+// number of images and each one is a separate API call plus a file on disk.
+func TestAttachmentMaxFiles(t *testing.T) {
+	orig := model.UploadMaxFiles
+	t.Cleanup(func() { model.UploadMaxFiles = orig })
+
+	model.UploadMaxFiles = 0
+	if got := AttachmentMaxFiles(); got != 20 {
+		t.Errorf("unset config: got %d, want the default 20", got)
+	}
+
+	model.UploadMaxFiles = -5
+	if got := AttachmentMaxFiles(); got != 20 {
+		t.Errorf("negative config: got %d, want the default 20", got)
+	}
+
+	model.UploadMaxFiles = 3
+	if got := AttachmentMaxFiles(); got != 3 {
+		t.Errorf("configured value must win: got %d, want 3", got)
 	}
 }

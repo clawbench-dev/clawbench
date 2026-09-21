@@ -224,6 +224,8 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.chatForkContextBudget', descriptionKey: 'settings.items.chatForkContextBudgetDesc', key: 'chat.fork_context_budget', type: 'number', source: 'server', min: 1000 } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRecommendEnabled', descriptionKey: 'settings.items.chatRecommendEnabledDesc', key: 'chat.recommend_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.recommendSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRecommendContextMessages', descriptionKey: 'settings.items.chatRecommendContextMessagesDesc', key: 'chat.recommend_context_messages', type: 'number', source: 'server', min: 0, max: 20, disableUnless: { key: 'chat.recommend_enabled', value: true }, sectionHeader: 'settings.items.recommendSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueEnabled', descriptionKey: 'settings.items.chatAutoContinueEnabledDesc', key: 'chat.auto_continue_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoContinueSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueMaxRetries', descriptionKey: 'settings.items.chatAutoContinueMaxRetriesDesc', key: 'chat.auto_continue_max_retries', type: 'number', source: 'server', min: -1, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'aiSummary', disableUnless: { key: 'chat.recommend_enabled', value: true }, sectionHeader: 'settings.items.recommendSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
@@ -285,12 +287,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // settings and take effect immediately (no save button).
     { type: 'item', spec: { labelKey: 'settings.items.inAppNotification', descriptionKey: 'settings.items.inAppNotificationDesc', key: 'inAppNotification', type: 'switch', source: 'local', sectionHeader: 'settings.items.inAppNotifySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.notificationSound', descriptionKey: 'settings.items.notificationSoundDesc', key: 'notificationSound', type: 'switch', source: 'local', sectionHeader: 'settings.items.inAppNotifySection' } },
-    // Browser/system notifications. Deliberately NOT appOnly and deliberately
-    // its own section: the "桌面与系统" card below is app-only and disappears in
-    // browser mode, which is precisely where this switch matters most. It gates
-    // the Notification API path and is independent of the server-side push_mode
-    // (that one selects the mobile/IM channel).
-    { type: 'item', spec: { labelKey: 'settings.items.browserNotification', descriptionKey: 'settings.items.browserNotificationDesc', key: 'browserNotification', type: 'switch', source: 'local', sectionHeader: 'settings.items.browserNotifySection' } },
+    // System notifications. Deliberately NOT appOnly: the "桌面与系统" card below
+    // is app-only and disappears in browser mode, which is precisely where this
+    // switch matters most. It gates the Notification API path and is independent
+    // of the server-side push_mode (that one selects the mobile/IM channel).
+    { type: 'item', spec: { labelKey: 'settings.items.desktopNotification', descriptionKey: 'settings.items.desktopNotificationDesc', key: 'desktopNotification', type: 'switch', source: 'local', sectionHeader: 'settings.items.desktopNotifySection' } },
     // Out-of-app desktop/system surfaces (app-only, so the whole card disappears
     // in browser mode — the render list is filtered before cards are grouped).
     { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
@@ -345,6 +346,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server', sectionHeader: 'settings.items.aboutVersionSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.aboutAppVersion', descriptionKey: 'settings.items.aboutAppVersionDesc', key: 'appVersion', type: 'info', source: 'local', sectionHeader: 'settings.items.aboutVersionSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.addToHomeScreen', descriptionKey: 'settings.items.addToHomeScreenDesc', key: 'addToHomeScreen', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
+    // NOT appOnly: that flag means "Android app only" and would hide this row
+    // in the desktop browser, which is exactly where it is needed. Visibility is
+    // gated in SettingsCategory.vue instead — the row renders only when a
+    // download URL for the current platform actually exists.
+    { type: 'item', spec: { labelKey: 'settings.items.downloadDesktopApp', descriptionKey: 'settings.items.downloadDesktopAppDesc', key: 'downloadDesktopApp', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.downloadAndroidApp', descriptionKey: 'settings.items.downloadAndroidAppDesc', key: 'downloadAndroidApp', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.showWelcome', descriptionKey: 'settings.items.showWelcomeDesc', key: 'showWelcome', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.restartServer', descriptionKey: 'settings.items.restartServerDesc', key: 'restartServer', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
@@ -361,6 +367,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       commonFields: [
         { labelKey: 'settings.items.terminalTheme', descriptionKey: 'settings.items.terminalThemeDesc', key: 'terminalTheme', type: 'select', source: 'local', defaultValue: 'auto' },
         { labelKey: 'settings.items.terminalFontSize', descriptionKey: 'settings.items.terminalFontSizeDesc', key: 'terminalFontSize', type: 'slider', source: 'local', min: 10, max: 24, step: 1, defaultValue: 12 },
+        { labelKey: 'settings.items.terminalCopyOnSelect', descriptionKey: 'settings.items.terminalCopyOnSelectDesc', key: 'terminalCopyOnSelect', type: 'switch', source: 'local' },
         { labelKey: 'settings.items.terminalIdleTimeout', descriptionKey: 'settings.items.terminalIdleTimeoutDesc', key: 'terminal.idle_timeout', type: 'text', source: 'server' },
         { labelKey: 'settings.items.terminalMaxSessions', descriptionKey: 'settings.items.terminalMaxSessionsDesc', key: 'terminal.max_sessions', type: 'number', source: 'server' },
         { labelKey: 'settings.items.terminalBufferLines', descriptionKey: 'settings.items.terminalBufferLinesDesc', key: 'terminal.buffer_lines', type: 'number', source: 'server' },

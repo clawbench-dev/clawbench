@@ -18,7 +18,7 @@
       :active="props.active"
       :midTurnSupported="midTurnSupported"
       :pendingActionBusy="pendingActionBusy"
-      @touchstart="swipeSession.onTouchStart"
+      @touchstart.passive="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
       @show-tool-detail="handleShowToolDetail"

@@ -15,9 +15,23 @@ import (
 // — both must serialize identical JSON shapes for DB/WS consistency.
 type ContextStateUsage = ai.UsageState
 
+// payloadKeyMessageID is the chat_stream payload field carrying a message's DB
+// row id, shared by the user_message / queue_drain / queue_inject payloads.
+const payloadKeyMessageID = "messageId"
+
 // GetContextStateUsageFunc is a function that retrieves persisted usage state
 // for a session. Injected by the service layer to avoid circular imports.
 type GetContextStateUsageFunc func(sessionID string) *ContextStateUsage
+
+// StreamStateLookupFunc returns the live run's streaming row id and answered
+// queue id for a session (id is 0 when nothing is streaming). Injected by the
+// service layer to avoid a circular import.
+type StreamStateLookupFunc func(sessionID string) (messageID int64, queueID string)
+
+// QuestionLookupFunc returns the user message that carries queueID — the
+// question a run answers. ok is false when no such row exists (runs without a
+// question, e.g. scheduled tasks). Injected by the service layer.
+type QuestionLookupFunc func(sessionID, queueID string) (id int64, content string, ok bool)
 
 // StreamHub manages session-scoped streaming event fan-out via WebSocket.
 // It replaces the single-consumer SSE channel with multi-client WS delivery.
@@ -28,6 +42,8 @@ type StreamHub struct {
 	mgr               *Manager
 	getContextUsageFn GetContextStateUsageFunc // injected by service layer
 	storeEventFn      func(ServerMessage)      // injected by service layer (write-ahead)
+	streamStateFn     StreamStateLookupFunc    // injected by service layer
+	questionFn        QuestionLookupFunc       // injected by service layer
 }
 
 // SetGetContextStateUsageFunc injects a function that retrieves persisted usage
@@ -35,6 +51,22 @@ type StreamHub struct {
 // circular imports.
 func (h *StreamHub) SetGetContextStateUsageFunc(fn GetContextStateUsageFunc) {
 	h.getContextUsageFn = fn
+}
+
+// SetStreamStateLookupFunc injects the lookup for a session's live streaming
+// row (id + answered queue id). Called by the service layer at init.
+func (h *StreamHub) SetStreamStateLookupFunc(fn StreamStateLookupFunc) {
+	h.mu.Lock()
+	h.streamStateFn = fn
+	h.mu.Unlock()
+}
+
+// SetQuestionLookupFunc injects the lookup that resolves an answered queue id
+// back to the question row. Called by the service layer at init.
+func (h *StreamHub) SetQuestionLookupFunc(fn QuestionLookupFunc) {
+	h.mu.Lock()
+	h.questionFn = fn
+	h.mu.Unlock()
 }
 
 // SetEventStoreFunc injects a function that persists notifiable WS events
@@ -98,6 +130,15 @@ func (h *StreamHub) UnsubscribeAll(clientID string) {
 	}
 }
 
+// IsSubscribed reports whether clientID is currently subscribed to sessionID.
+func (h *StreamHub) IsSubscribed(clientID, sessionID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	_, ok := h.subscribers[sessionID][clientID]
+	return ok
+}
+
 // HasSubscribers returns true if any client is subscribed to the session.
 func (h *StreamHub) HasSubscribers(sessionID string) bool {
 	h.mu.RLock()
@@ -109,33 +150,14 @@ func (h *StreamHub) HasSubscribers(sessionID string) bool {
 
 // Emit fans out a streaming event to all subscribed WS clients for a session.
 func (h *StreamHub) Emit(sessionID string, event ai.StreamEvent) {
-	// Convert StreamEvent to WS message (needed for both write-ahead and fan-out)
-	payload := StreamEventToPayload(event)
-	if payload == nil {
+	msg, ok := buildChatStreamMessage(sessionID, event)
+	if !ok {
 		return
 	}
 
-	msg := ServerMessage{
-		Type:  MessageTypeEvent,
-		ID:    GenerateEventID(),
-		Event: "chat_stream",
-		Data: ChatStreamData{
-			SessionID: sessionID,
-			EventType: event.Type,
-			Payload:   payload,
-		},
-	}
-
 	// Write-ahead: persist notifiable events (user_message) before broadcast so
-	// offline clients can recover them after reconnect. This runs even when there
-	// are no subscribers — StoreNotifiableEvent's HasDisconnectedClients returns
-	// true with zero subscriptions.
-	h.mu.RLock()
-	storeFn := h.storeEventFn
-	h.mu.RUnlock()
-	if storeFn != nil && event.Type == "user_message" {
-		storeFn(msg)
-	}
+	// offline clients can recover them after reconnect.
+	h.storeEventIfNotifiable(msg, event.Type)
 
 	// Fan out to subscribers
 	h.mu.RLock()
@@ -157,6 +179,40 @@ func (h *StreamHub) Emit(sessionID string, event ai.StreamEvent) {
 	}
 }
 
+// buildChatStreamMessage converts a StreamEvent into its chat_stream envelope.
+// ok is false for events with no wire payload (they are dropped, as before).
+func buildChatStreamMessage(sessionID string, event ai.StreamEvent) (ServerMessage, bool) {
+	payload := StreamEventToPayload(event)
+	if payload == nil {
+		return ServerMessage{}, false
+	}
+	return ServerMessage{
+		Type:  MessageTypeEvent,
+		ID:    GenerateEventID(),
+		Event: "chat_stream",
+		Data: ChatStreamData{
+			SessionID: sessionID,
+			EventType: event.Type,
+			Payload:   payload,
+		},
+	}, true
+}
+
+// storeEventIfNotifiable runs the injected write-ahead hook for event types it
+// covers. The hook is only invoked when set; whether to actually persist is
+// StoreNotifiableEvent's decision (it skips when every client is connected).
+func (h *StreamHub) storeEventIfNotifiable(msg ServerMessage, eventType string) {
+	if eventType != "user_message" {
+		return
+	}
+	h.mu.RLock()
+	storeFn := h.storeEventFn
+	h.mu.RUnlock()
+	if storeFn != nil {
+		storeFn(msg)
+	}
+}
+
 // EmitToSession emits a StreamEvent to all subscribers of a session.
 // This is a convenience function that retrieves the Manager and StreamHub,
 // checking for nil and subscriber presence. Use this instead of duplicating
@@ -173,10 +229,23 @@ func EmitToSession(sessionID string, event ai.StreamEvent) {
 		return
 	}
 	if !hub.HasSubscribers(sessionID) {
-		// No live subscriber: the event goes nowhere. Record it — silently
+		// No live subscriber: nothing to deliver. Record it — silently
 		// returning here is what previously made a lost subscription
 		// indistinguishable from a backend that never sent anything.
 		recordDeliveryDrop(DropReasonNoSubscribers, sessionID, event.Type)
+		// Still hand the event to the write-ahead store. Emit is the ONLY place
+		// that persists notifiable events, so returning here outright dropped
+		// them for good: a user_message sent while the client was mid-reconnect
+		// was never delivered AND never stored, so the reconnect replay could
+		// not recover it either — the client then rendered the assistant reply
+		// with no question above it until a full history reload.
+		//
+		// StoreNotifiableEvent decides for itself whether to persist (it skips
+		// when every client is connected), so calling it unconditionally here
+		// keeps that policy in one place.
+		if msg, ok := buildChatStreamMessage(sessionID, event); ok {
+			hub.storeEventIfNotifiable(msg, event.Type)
+		}
 		return
 	}
 	hub.Emit(sessionID, event)
@@ -365,8 +434,8 @@ func userMessagePayload(event ai.StreamEvent) any {
 		return nil
 	}
 	payload := map[string]any{
-		"messageId": event.UserMessage.MessageID,
-		"content":   event.UserMessage.Content,
+		payloadKeyMessageID: event.UserMessage.MessageID,
+		"content":           event.UserMessage.Content,
 	}
 	if len(event.UserMessage.Files) > 0 {
 		payload["files"] = event.UserMessage.Files
@@ -428,13 +497,13 @@ func queueDrainPayload(event ai.StreamEvent) any {
 		return nil
 	}
 	return map[string]any{
-		"sessionId": event.QueueEvent.SessionID,
-		"queueId":   event.QueueEvent.QueueID,
-		"text":      event.QueueEvent.Text,
-		"messageId": event.QueueEvent.MessageID,
-		"filePaths": event.QueueEvent.FilePaths,
-		"files":     event.QueueEvent.Files,
-		"queue":     event.QueueEvent.Queue,
+		"sessionId":         event.QueueEvent.SessionID,
+		"queueId":           event.QueueEvent.QueueID,
+		"text":              event.QueueEvent.Text,
+		payloadKeyMessageID: event.QueueEvent.MessageID,
+		"filePaths":         event.QueueEvent.FilePaths,
+		"files":             event.QueueEvent.Files,
+		"queue":             event.QueueEvent.Queue,
 	}
 }
 
@@ -446,9 +515,9 @@ func queueInjectPayload(event ai.StreamEvent) any {
 		return nil
 	}
 	return map[string]any{
-		"sessionId": event.QueueEvent.SessionID,
-		"queueId":   event.QueueEvent.QueueID,
-		"messageId": event.QueueEvent.MessageID,
+		"sessionId":         event.QueueEvent.SessionID,
+		"queueId":           event.QueueEvent.QueueID,
+		payloadKeyMessageID: event.QueueEvent.MessageID,
 	}
 }
 
@@ -518,6 +587,55 @@ func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID i
 		payload["queue_id"] = queueID
 	}
 	h.emitStateEvent(clientID, sessionID, "stream_start", payload)
+}
+
+// EmitUserMessageEvent sends a user_message chat_stream event to a single
+// client. Used by the subscribe-time recovery path to hand a late subscriber
+// the question its live stream_start refers to.
+func (h *StreamHub) EmitUserMessageEvent(clientID, sessionID string, messageID int64, content, queueID string) {
+	payload := map[string]any{
+		payloadKeyMessageID: messageID,
+		"content":           content,
+	}
+	if queueID != "" {
+		payload["queueId"] = queueID
+	}
+	h.emitStateEvent(clientID, sessionID, "user_message", payload)
+}
+
+// EmitLiveRunStateToClient re-emits the state a client needs to render a run it
+// subscribed to mid-flight: the question bubble, then the stream_start that
+// anchors the reply to it.
+//
+// The question MUST be emitted before the stream_start. A late subscriber has
+// no question bubble (it missed the live user_message, or that event was
+// dropped because it held no subscription at send time), so without this it
+// renders the reply with nothing above it — the "assistant message but no user
+// message" symptom, repairable only by a full history reload. Emitting the
+// question first also means the placeholder's queueId anchor resolves
+// immediately, instead of pointing at a bubble that has not arrived.
+//
+// No-op when nothing is streaming, or when the run has no question (scheduled
+// runs), in which case only stream_start is sent.
+func (h *StreamHub) EmitLiveRunStateToClient(clientID, sessionID string) {
+	h.mu.RLock()
+	stateFn := h.streamStateFn
+	questionFn := h.questionFn
+	h.mu.RUnlock()
+
+	if stateFn == nil {
+		return
+	}
+	msgID, queueID := stateFn(sessionID)
+	if msgID <= 0 {
+		return
+	}
+	if queueID != "" && questionFn != nil {
+		if qID, qContent, ok := questionFn(sessionID, queueID); ok {
+			h.EmitUserMessageEvent(clientID, sessionID, qID, qContent, queueID)
+		}
+	}
+	h.EmitStreamStartEvent(clientID, sessionID, msgID, queueID)
 }
 
 // emitStateEvent sends a single chat_stream state event to a specific client.

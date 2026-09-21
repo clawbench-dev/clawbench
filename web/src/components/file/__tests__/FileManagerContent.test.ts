@@ -4143,6 +4143,50 @@ describe('FileManagerContent — internal move helpers', () => {
     expect(wrapper.vm.getDestDir(null)).toBe('src')
   })
 
+  // ── Project-external browsing ──
+  // currentDir is an ABSOLUTE path while the manager browses outside the
+  // project. Every row action must keep it absolute: stripping the root would
+  // silently retarget the operation at the project root.
+
+  it('getDestDir keeps an absolute currentDir for a falsy entry', () => {
+    const wrapper = mountContent({ currentDir: '/tmp/scratch' })
+    expect(wrapper.vm.getDestDir(null)).toBe('/tmp/scratch')
+  })
+
+  it('getDestDir keeps an absolute directory entry path', () => {
+    const wrapper = mountContent({ currentDir: '/tmp' })
+    expect(wrapper.vm.getDestDir({ type: 'dir', path: '/tmp/nested' })).toBe('/tmp/nested')
+  })
+
+  it('absPathForEntry returns an already-absolute path unchanged', () => {
+    const wrapper = mountContent()
+    expect(wrapper.vm.absPathForEntry({ path: '/tmp/a.png' })).toBe('/tmp/a.png')
+  })
+
+  it('absPathForEntry still joins a project-relative path to the root', () => {
+    const wrapper = mountContent()
+    expect(wrapper.vm.absPathForEntry({ path: 'src/a.ts' })).toBe('/project/src/a.ts')
+  })
+
+  it('builds row paths from an absolute currentDir without dropping the root', () => {
+    const wrapper = mountContent({
+      currentDir: '/tmp/scratch',
+      entries: [{ name: 'a.png', type: 'image', modified: '2025-01-01T00:00:00Z', size: 10 }],
+    })
+    const item = wrapper.find('.file-item')
+    expect(item.attributes('data-path')).toBe('/tmp/scratch/a.png')
+  })
+
+  it('labels the browse panel as external when currentDir is absolute', () => {
+    const wrapper = mountContent({ currentDir: '/var/log', entries: [] })
+    expect(wrapper.find('.dir-nav-external').exists()).toBe(true)
+  })
+
+  it('does not label the browse panel for a project-relative currentDir', () => {
+    const wrapper = mountContent({ currentDir: 'web/src', entries: [] })
+    expect(wrapper.find('.dir-nav-external').exists()).toBe(false)
+  })
+
   it('scrollToEntryAndSelect selects a path without a container', async () => {
     const wrapper = mountContent()
     await wrapper.vm.scrollToEntryAndSelect('test.ts', { openFile: true })

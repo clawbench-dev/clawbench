@@ -286,6 +286,28 @@ func TestProcessClawbenchCommand_NoMessageDuplication(t *testing.T) {
 		"user message should appear exactly once in the final prompt for /cb-task (ISS-287)")
 }
 
+// TestProcessClawbenchCommand_ChatSearchDocumentsProjectSelection guards the
+// project-selection contract. The AI can only target another project if the
+// prompt tells it (a) that the project list endpoint exists, (b) that the
+// cookie value is what selects the project, and (c) that omitting the cookie
+// means "all projects". A bare "send the cookie for this project" wording
+// leaves the other two paths undiscoverable.
+func TestProcessClawbenchCommand_ChatSearchDocumentsProjectSelection(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-chatsearch 搜索所有项目", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "GET /api/conversation-projects",
+		"the project list endpoint must be advertised so the AI can resolve a named project")
+	assert.Contains(t, result, "clawbench_project=/project",
+		"the current-project path must carry the concrete cookie value")
+	assert.Contains(t, result, "send NO project cookie",
+		"the all-projects path must be stated explicitly")
+	assert.Contains(t, result, "cookie",
+		"the prompt must explain that the cookie value selects the project")
+}
+
 // --- /cb-usage ---
 
 func TestProcessClawbenchCommand_UsageInjects(t *testing.T) {
@@ -351,6 +373,22 @@ func TestProcessClawbenchCommand_UsageDocumentsBothScopes(t *testing.T) {
 		"the single-project path must still carry the concrete cookie value")
 	assert.NotContains(t, result, "Send the cookie \"clawbench_project=/project\" on every request",
 		"an unconditional cookie instruction contradicts scope=all")
+}
+
+// TestProcessClawbenchCommand_UsageDocumentsProjectSelection guards the
+// "a specific other project" path: the AI must be told to look the path up in
+// the project list (which includes deleted directories) before sending it as
+// the cookie, otherwise it can only ever report on the current project.
+func TestProcessClawbenchCommand_UsageDocumentsProjectSelection(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-usage myapp 上个月花了多少", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "GET /api/conversation-projects",
+		"the project list endpoint must be advertised so the AI can resolve a named project")
+	assert.Contains(t, result, "A specific other project",
+		"the prompt must describe targeting a project other than the current one")
 }
 
 // TestProcessClawbenchCommand_UsageExcludesUnrelatedSystemOps asserts the

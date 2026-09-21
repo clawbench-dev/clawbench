@@ -13,7 +13,7 @@
  *   appLog.e → console.error/ AppLog.e (E)
  */
 
-import { getNative, isNativeApp as nativeBridgeIsNativeApp } from '@/utils/clawbenchNative'
+import { getNative, isNativeApp as nativeBridgeIsNativeApp, isDesktopApp as nativeBridgeIsDesktopApp } from '@/utils/clawbenchNative'
 
 const LOG_ENDPOINT = '/api/client-log'
 const FLUSH_INTERVAL_MS = 2000  // 2-second flush interval
@@ -77,6 +77,14 @@ export function setLogCaptureEnabled(enabled: boolean): void {
 function isNativeApp(): boolean {
   try {
     return nativeBridgeIsNativeApp()
+  } catch {
+    return false
+  }
+}
+
+function isDesktopShell(): boolean {
+  try {
+    return nativeBridgeIsDesktopApp()
   } catch {
     return false
   }
@@ -164,14 +172,26 @@ if (typeof document !== 'undefined') {
 type ConsoleMethod = 'log' | 'info' | 'warn' | 'error'
 
 function emit(method: ConsoleMethod, level: 'D' | 'I' | 'W' | 'E', tag: string, args: unknown[]): void {
-  // App (native) mode with capture ON: JS logs go to the server ONLY via the
-  // HTTP relay — a single, structured ([js]-tagged) copy. Skipping console and
-  // the native bridge avoids the duplicate "WebView:LOG" logcat line and the
-  // lossy [object Object] serialization that goes with it.
-  const singleHttp = isNativeApp() && httpRelayEnabled
+  const desktop = isDesktopShell()
+
+  // Android, capture ON: JS logs go to the server ONLY via the HTTP relay — a
+  // single, structured ([js]-tagged) copy. Skipping console and the native
+  // bridge avoids the duplicate "WebView:LOG" logcat line and the lossy
+  // [object Object] serialization that goes with it. Android can afford this
+  // because AppLog still writes logcat natively, so a local copy survives.
+  //
+  // The Electron shell must NOT take that path. It has no logcat equivalent:
+  // its only local sink is desktop.log, which the shell fills from
+  // `console-message`. Skipping console there left desktop.log empty exactly
+  // when capture was on — i.e. the file existed but never had anything in it.
+  // So on desktop the console stays on (which also keeps DevTools usable), and
+  // the native bridge relay is skipped instead: the console listener already
+  // writes desktop.log, and the HTTP relay already covers the server. Relaying
+  // both ways would double every line in the file and in client.log.
+  const singleHttp = isNativeApp() && !desktop && httpRelayEnabled
   if (!singleHttp) {
     ;(console as Record<ConsoleMethod, (...a: unknown[]) => void>)[method](`[${tag}]`, ...args)
-    relayToNative(level, tag, args)
+    if (!desktop) relayToNative(level, tag, args)
   }
   enqueue(level, tag, args)
 }

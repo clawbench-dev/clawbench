@@ -398,6 +398,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/file/archive", ServeFileArchive)
 	register("/api/file/symbols", ServeFileSymbols)
 	register("/api/recent-projects", ServeRecentProjects)
+	register("/api/conversation-projects", ServeConversationProjects)
 	register("/api/local-file/", ServeLocalFile)
 	register("/api/agents", ServeAgents)
 	register("/api/agents/", ServeAgentSubRoutes)
@@ -435,6 +436,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Android APK download — intentionally unauthenticated:
 	// APK is a public resource; users need to download it before they can even log in.
 	registerPublic("/api/apk", ServeAPK)
+
+	// Desktop client download info — intentionally unauthenticated for the same
+	// reason as the APK: the "download desktop app" affordance is shown on the
+	// login screen, before a session exists.
+	registerPublic("/api/desktop/latest", ServeDesktopLatest)
 
 	// File watch WebSocket (auto-refresh on file changes). Replaced an SSE
 	// endpoint: a resident EventSource permanently consumes one of the

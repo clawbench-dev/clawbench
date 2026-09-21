@@ -9,6 +9,7 @@ import { annotateFilePathsIn } from '@/composables/useFilePathAnnotation.ts'
 import { annotateCommitHashesIn } from '@/composables/useCommitHashAnnotation.ts'
 import { annotateWorktreePathsIn } from '@/composables/useWorktreeAnnotation.ts'
 import { annotateLocalhostUrlsIn } from '@/composables/useLocalhostAnnotation.ts'
+import { annotateExternalLinkTargetsIn } from '@/composables/useExternalLinkAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { resetHeadingIds } from '@/utils/markedConfig.ts'
 
@@ -230,6 +231,7 @@ const DOMPURIFY_ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|
  * 管线：extractCodeAndMath → marked.parse → [renderKatexInString | stripMathPlaceholders]
  *       → DOMPurify → fixImagePaths → table-wrap → injectTableRowAttrs
  *       → annotateCodeBlockHeaders → annotateTableBlockHeaders
+ *       → annotateExternalLinkTargets
  *       → [rewriteImageUrls → convertAudioLinks → convertVideoLinks → annotateWorktreePaths
  *          → annotateFilePaths → annotateCommitHashes → annotateLocalhostUrls
  *          → markInlineSvgs → annotateMediaBlocks]
@@ -316,11 +318,18 @@ export function renderMarkdown(
     // 6-8 run for every render (including streaming): table row ids, then code
     // and table block headers. Order matters — table headers require the
     // table-wrap divs from step 5, and row attrs from step 6.
+    //
+    // External-link `target` stamping rides in this same phase (web mode only)
+    // so it also covers streaming and file previews — the contexts that skip
+    // the step-9 enhancement block. It must run AFTER DOMPurify (step 3), which
+    // strips `target` unless explicitly allow-listed; annotating post-sanitize
+    // keeps that attribute out of the sanitizer's allow-list entirely.
     {
         const doc = new DOMParser().parseFromString(html, 'text/html')
         injectTableRowAttrsIn(doc)
         annotateCodeBlockHeadersIn(doc)
         annotateTableBlockHeadersIn(doc)
+        annotateExternalLinkTargetsIn(doc)
         html = doc.body.innerHTML
     }
 

@@ -612,6 +612,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatSessionPageSize = cfg.Chat.SessionPageSize
 	model.ChatSystemPromptInterval = cfg.Chat.SystemPromptInterval
 	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
+	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
+	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
+	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
@@ -1196,14 +1199,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	ws.OnSubscribe = func(mgr *ws.Manager, clientID, sessionID string) {
 		hub := mgr.StreamHub()
 		hub.EmitACPStateEvents(clientID, sessionID)
+		// Re-emit the live run's question + stream_start so a client that
+		// subscribed mid-flight can render the reply under its own question.
+		// See EmitLiveRunStateToClient for why the order matters.
 		if service.IsSessionRunning(sessionID) {
-			// The streaming row's queue_id is the queueId of the question this
-			// run answers. Broadcasting it lets the subscribing client re-anchor
-			// the streaming placeholder to the true question even when its own
-			// question bubble arrived out of order (recovery path).
-			if msgID, queueID := service.GetStreamingMessageInfo(sessionID); msgID > 0 {
-				hub.EmitStreamStartEvent(clientID, sessionID, msgID, queueID)
-			}
+			hub.EmitLiveRunStateToClient(clientID, sessionID)
 		}
 	}
 	ws.OnCancelSession = service.CancelSession
@@ -1219,6 +1219,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		}
 		return ctxState.Usage
 	})
+
+	// Inject the lookups behind the subscribe-time live-run recovery emit
+	// (breaks import cycle between ws and service).
+	ws.GetManager().StreamHub().SetStreamStateLookupFunc(service.GetStreamingMessageInfo)
+	ws.GetManager().StreamHub().SetQuestionLookupFunc(service.GetQuestionByQueueID)
 
 	// Inject pending_events write-ahead for user_message events (breaks import
 	// cycle between ws and service). StreamHub.Emit stores user_message before

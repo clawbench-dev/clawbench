@@ -44,9 +44,9 @@
             :class="{ current: m.id === currentModelId, 'is-default': m.id === defaultModelId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectModel(m)"
             @contextmenu.prevent="showDefaultMenu(m)"
-            @touchstart="onTouchStart(m, $event)"
+            @touchstart.passive="onTouchStart(m, $event)"
             @touchend="onTouchEnd"
-            @touchmove="onTouchMove"
+            @touchmove.passive="onTouchMove"
           >
             <span class="model-item-indicator" :class="{ active: m.id === currentModelId }"></span>
             <ProviderIcon :model-name="m.name || m.id" :size="16" />
@@ -86,9 +86,9 @@
             :class="{ current: level.id === currentThinkingEffort, 'is-default': level.id === defaultThinkingEffort, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectThinkingEffort(level.id)"
             @contextmenu.prevent="showThinkingDefaultMenu(level.id)"
-            @touchstart="onTouchStartThinking(level.id, $event)"
+            @touchstart.passive="onTouchStartThinking(level.id, $event)"
             @touchend="onTouchEnd"
-            @touchmove="onTouchMove"
+            @touchmove.passive="onTouchMove"
           >
             <span class="model-item-indicator" :class="{ active: level.id === currentThinkingEffort }"></span>
             <span class="model-item-name">{{ level.name }}</span>
@@ -165,9 +165,9 @@
             :class="{ current: mode.id === currentModeId, 'is-default': mode.id === defaultModeId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectMode(mode)"
             @contextmenu.prevent="showModeDefaultMenu(mode)"
-            @touchstart="onTouchStartMode(mode, $event)"
+            @touchstart.passive="onTouchStartMode(mode, $event)"
             @touchend="onTouchEnd"
-            @touchmove="onTouchMove"
+            @touchmove.passive="onTouchMove"
           >
             <span class="model-item-indicator" :class="{ active: mode.id === currentModeId }"></span>
             <span class="model-item-name">{{ mode.name || mode.id }}</span>
@@ -839,6 +839,11 @@ defineExpose({
   align-items: center;
   gap: var(--space-2);
   flex-shrink: 0;
+  /* Pin the badge to the row's right edge. The model tab already ends up there
+     because its label sits in .model-item-labels (flex: 1) and absorbs the free
+     space; the thinking / mode / transport tabs render a bare .model-item-name
+     with no growth, so without this the badge trails the text instead. */
+  margin-left: auto;
   color: var(--accent-color, #0066cc);
 }
 
@@ -871,6 +876,9 @@ defineExpose({
   color: var(--text-muted, #999);
   cursor: pointer;
   flex-shrink: 0;
+  /* Same right-edge pin as .default-label, so a row keeps its trailing slot in
+     the same place whether or not it is the default. */
+  margin-left: auto;
   opacity: var(--opacity-soft);
   transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
 }

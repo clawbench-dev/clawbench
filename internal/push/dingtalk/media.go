@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"clawbench/internal/model"
 	"clawbench/internal/push/common"
@@ -24,6 +25,11 @@ var dingtalkMessageFileURL = "https://api.dingtalk.com/v1.0/robot/messageFiles/d
 const (
 	msgTypeFile    = "file"
 	msgTypePicture = "picture"
+	// msgTypeRichText is what DingTalk sends when a message mixes text and
+	// images (e.g. "@abc look at this" + a screenshot). It is the only way a
+	// bot receives text and media TOGETHER, so it is the one type that needs
+	// both a text and a media parse.
+	msgTypeRichText = "richText"
 )
 
 // dingtalkMediaContent is the "content" object of a file or picture callback.
@@ -31,6 +37,68 @@ const (
 type dingtalkMediaContent struct {
 	DownloadCode string `json:"downloadCode"`
 	FileName     string `json:"fileName"`
+}
+
+// dingtalkRichTextContent is the "content" object of a richText callback:
+// a flat list of fragments, each either a text run or a picture.
+//
+//	{"richText":[{"text":"@abc look"},{"downloadCode":"mIof...","type":"picture"}]}
+//
+// type is not modeled: the docs only define "picture", and a present
+// downloadCode is the reliable signal that a fragment is downloadable.
+type dingtalkRichTextContent struct {
+	RichText []struct {
+		Text         string `json:"text"`
+		DownloadCode string `json:"downloadCode"`
+	} `json:"richText"`
+}
+
+// parseRichText extracts the text and the downloadable image codes from a
+// richText callback.
+//
+// ok is false when content is not a richText object at all (a malformed or
+// unexpected payload), which the caller treats the same as "nothing to send".
+//
+// Text fragments are concatenated with NO separator: they are runs of a single
+// line (DingTalk splits on formatting and on each image), so inserting a space
+// would corrupt the message and could break an "@{shortID}" prefix match.
+func parseRichText(content any) (text string, codes []string, ok bool) {
+	// The SDK types Content as interface{}, which json.Unmarshal fills with a
+	// map[string]any. A string payload is also possible in principle, so
+	// normalize to bytes before decoding rather than type-asserting.
+	raw, err := json.Marshal(content)
+	if err != nil {
+		return "", nil, false
+	}
+	if len(raw) > 0 && raw[0] == '"' {
+		// content was a JSON-encoded string; unwrap it to the object it holds.
+		var inner string
+		if err := json.Unmarshal(raw, &inner); err != nil {
+			return "", nil, false
+		}
+		raw = []byte(inner)
+	}
+
+	var parsed dingtalkRichTextContent
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		slog.Warn("dingtalk: richText content parse failed", "error", err)
+		return "", nil, false
+	}
+
+	var sb strings.Builder
+	seen := make(map[string]struct{}, len(parsed.RichText))
+	for _, frag := range parsed.RichText {
+		sb.WriteString(frag.Text)
+		if frag.DownloadCode == "" {
+			continue
+		}
+		if _, dup := seen[frag.DownloadCode]; dup {
+			continue
+		}
+		seen[frag.DownloadCode] = struct{}{}
+		codes = append(codes, frag.DownloadCode)
+	}
+	return sb.String(), codes, true
 }
 
 // mediaDownloadResult is the response of the messageFiles/download API.

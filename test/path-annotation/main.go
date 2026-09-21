@@ -69,12 +69,36 @@ var (
 	relDirEscape  = "../.."
 )
 
-// 项目外文件夹（校验后标注会被撤销，橙色不保留）
+// 项目外文件夹（校验后标注保留，点击进入该目录；见 README）
 var (
 	extDirCodebuddy = "/home/xulongzhe/.codebuddy"
 	extDirPlugins   = "/home/xulongzhe/.codebuddy/plugins"
 	extDirLog       = "/var/log"
 	extDirTilde     = "~/.codebuddy"
+)
+
+// 项目外目录跳转：点击应打开文件管理器并列出该目录（不弹「不支持」）。
+// 列目录请求应打到 /api/projects（绝对路径），而非 /api/dir。
+var (
+	extDirPixmaps = "/usr/share/pixmaps"
+	extDirEtc     = "/etc"
+)
+
+// ─── 项目外媒体（应渲染，改写为 /api/local-file/?path=<绝对路径>）───
+
+// 历史缺陷：所有 "/" 开头的 src 都被当站点根 URL 放行 → 404 不显示。
+var (
+	extImage = "/usr/share/pixmaps/debian-logo.png"
+	extSvg   = "/tmp/diagram.svg"
+)
+
+// ─── 文件系统根边界（「上一级」不应跳回项目内）───
+
+// dirName("/tmp") === "/"，dirName("/") === "/"（根自身，无上级）
+var (
+	rootDir  = "/"
+	rootTmp  = "/tmp"
+	rootHome = "/home"
 )
 
 // 末尾含点号、易被误判为文件的文件夹
