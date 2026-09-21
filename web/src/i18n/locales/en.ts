@@ -1531,6 +1531,7 @@ export default {
     rescan: 'Rescan',
     scanInProgress: 'Scanning ports on the server...',
     scanNoResults: 'No mappable ports detected',
+    scanFailed: 'Scan failed — could not reach the server',
     scanCount: 'Found {count} ports',
     toast: {
       checkFailed: 'Detection failed, please check network',

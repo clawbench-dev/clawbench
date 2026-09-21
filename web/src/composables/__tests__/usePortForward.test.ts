@@ -770,9 +770,67 @@ describe('usePortForward', () => {
 
             await detectPorts()
 
-            expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/detect')
+            expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/detect', { timeoutMs: 60_000 })
             expect(detectedPorts.value).toHaveLength(1)
             expect(hasScanned.value).toBe(true)
+        })
+
+        it('clears scanError on a successful scan', async () => {
+            mockApiGet.mockRejectedValueOnce(new Error('boom'))
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { detectPorts, scanError } = usePortForward()
+            await detectPorts()
+            expect(scanError.value).toBe('boom')
+
+            mockApiGet.mockResolvedValue({ ports: [{ port: 8080, protocol: 'http', processName: 'node', processArgs: '' }] })
+            await detectPorts()
+            expect(scanError.value).toBe('')
+        })
+
+        it('records the failure in scanError instead of rejecting', async () => {
+            // The scan is invoked unawaited from the drawer-open handler and from
+            // a @click handler, so a rejection would only reach the global
+            // unhandledrejection logger. detectPorts must swallow it.
+            mockApiGet.mockRejectedValue(new Error('Request timed out'))
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { detectPorts, scanError, detectedPorts } = usePortForward()
+
+            await expect(detectPorts()).resolves.toBeUndefined()
+
+            expect(scanError.value).toBe('Request timed out')
+            expect(detectedPorts.value).toEqual([])
+        })
+
+        it('does not mark hasScanned after a failure so the first-open auto-scan retries', async () => {
+            mockApiGet.mockRejectedValue(new Error('timed out'))
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { openScanDrawer, hasScanned, scanError } = usePortForward()
+
+            await openScanDrawer()
+
+            expect(scanError.value).toBe('timed out')
+            expect(hasScanned.value).toBe(false)
+
+            // A second open must retry rather than silently do nothing.
+            const callsBefore = mockApiGet.mock.calls.length
+            await openScanDrawer()
+            expect(mockApiGet.mock.calls.length).toBeGreaterThan(callsBefore)
+        })
+
+        it('clears a previous error before retrying', async () => {
+            mockApiGet.mockRejectedValueOnce(new Error('timed out'))
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { rescanPorts, scanError } = usePortForward()
+
+            await rescanPorts()
+            expect(scanError.value).toBe('timed out')
+
+            mockApiGet.mockResolvedValue({ ports: [] })
+            await rescanPorts()
+            expect(scanError.value).toBe('')
         })
     })
 
@@ -794,7 +852,7 @@ describe('usePortForward', () => {
 
             await openScanDrawer()
 
-            expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/detect')
+            expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/detect', { timeoutMs: 60_000 })
             expect(detectedPorts.value).toHaveLength(1)
             expect(hasScanned.value).toBe(true)
         })

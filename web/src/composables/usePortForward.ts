@@ -74,6 +74,18 @@ const localReachable = ref(new Map<number, boolean>())
 const scanDrawerOpen = ref(false)
 const hasScanned = ref(false)
 const scanning = ref(false)
+// Non-empty when the last scan attempt failed. Kept separate from `hasScanned`
+// so the UI can tell "the scan failed" apart from "the scan ran and found
+// nothing" — both used to render the same empty state, which silently hid
+// request failures (a 10s timeout on a busy host was indistinguishable from a
+// genuinely empty port table).
+const scanError = ref('')
+
+// Port scans probe every listening port with a TLS handshake, so a host with
+// 100+ ports can take far longer than the 10s default API timeout. The backend
+// probes in parallel and bounds each handshake, but the ceiling still needs
+// headroom for very busy hosts.
+const SCAN_TIMEOUT_MS = 60_000
 
 // Auto-refresh interval when tunnel is unhealthy
 let tunnelPollTimer: ReturnType<typeof setInterval> | null = null
@@ -319,10 +331,21 @@ export function usePortForward() {
 
   async function detectPorts() {
     scanning.value = true
+    scanError.value = ''
     try {
-      const data = await apiGet<{ ports: DetectedPort[] }>('/api/proxy/detect')
+      const data = await apiGet<{ ports: DetectedPort[] }>('/api/proxy/detect', { timeoutMs: SCAN_TIMEOUT_MS })
       detectedPorts.value = data.ports || []
       hasScanned.value = true
+    } catch (e) {
+      // Swallowed on purpose. Callers invoke this unawaited (handleOpenScan) or
+      // from a @click handler (rescanPorts), so rethrowing would surface as an
+      // unhandledrejection that main.ts only logs. The failure is reported
+      // through scanError instead.
+      //
+      // hasScanned deliberately stays false: it gates the first-open auto-scan,
+      // so setting it here would disable retries after a single failure.
+      detectedPorts.value = []
+      scanError.value = e instanceof Error ? e.message : String(e)
     } finally {
       scanning.value = false
     }
@@ -787,6 +810,7 @@ export function usePortForward() {
     scanDrawerOpen,
     hasScanned,
     scanning,
+    scanError,
     loadPorts,
     registerPort,
     updatePort,

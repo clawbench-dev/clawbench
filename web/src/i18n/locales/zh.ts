@@ -1534,6 +1534,7 @@ export default {
     rescan: '重新扫描',
     scanInProgress: '正在扫描服务器上的端口...',
     scanNoResults: '未检测到可转发的端口',
+    scanFailed: '扫描失败——无法连接到服务端',
     scanCount: '扫描到 {count} 个端口',
     toast: {
       checkFailed: '检测失败，请检查网络连接',

@@ -187,6 +187,14 @@
               </button>
             </div>
 
+            <div v-else-if="scanError" class="port-scan-empty port-scan-error">
+              <CircleAlert :size="24" />
+              <span>{{ t('proxy.scanFailed') }}</span>
+              <button class="port-scan-retry" :disabled="scanning" @click="rescanPorts">
+                {{ t('proxy.rescan') }}
+              </button>
+            </div>
+
             <div v-else class="port-scan-empty">
               <Search :size="24" />
               <span>{{ t('proxy.scanNoResults') }}</span>
@@ -256,7 +264,7 @@
 </template>
 
 <script setup>
-import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, Network as NetworkIcon, Server } from 'lucide-vue-next'
+import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, Network as NetworkIcon, Server, CircleAlert } from 'lucide-vue-next'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
@@ -301,7 +309,7 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
 const toast = useToast()
 
 // Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.
@@ -1032,6 +1040,33 @@ async function handleRetryTunnel() {
   padding:40px var(--space-6);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
+  opacity: var(--opacity-hover);
+}
+
+/* Scan failed — distinct from the "nothing found" state so a request error is
+   never mistaken for an empty port table. Full opacity: this is an error, not
+   a subdued empty placeholder. */
+.port-scan-error {
+  color: var(--color-red);
+  opacity: 1;
+}
+
+.port-scan-retry {
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.port-scan-retry:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.port-scan-retry:disabled {
+  cursor: default;
   opacity: var(--opacity-hover);
 }
 

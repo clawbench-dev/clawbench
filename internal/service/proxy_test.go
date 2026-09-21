@@ -4,7 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 
@@ -956,6 +959,16 @@ func TestProxyRegistry_RegisterPort_PrivilegedPort_ReturnsLocalPort(t *testing.T
 
 // ---------- classifyPort ----------
 
+// noProbe fails the test if it is ever called. Used to prove that the
+// known-service early returns never fall through to a TLS probe.
+func noProbe(t *testing.T) tlsProbe {
+	t.Helper()
+	return func(port int) bool {
+		t.Fatalf("probe must not be called for port %d (early return expected)", port)
+		return false
+	}
+}
+
 func TestClassifyPort_WellKnownNonHTTP(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -976,7 +989,7 @@ func TestClassifyPort_WellKnownNonHTTP(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, classifyPort(tt.port, tt.procName))
+			assert.Equal(t, tt.expected, classifyPort(tt.port, tt.procName, noProbe(t)))
 		})
 	}
 }
@@ -997,19 +1010,182 @@ func TestClassifyPort_ProcessName(t *testing.T) {
 		{"mongod process", 1234, "mongod", "other"},
 		{"case insensitive SSH", 1234, "SSHD", "other"},
 		{"partial match sshd", 1234, "/usr/sbin/sshd", "other"},
-		{"unknown process returns http", 8080, "myapp", "http"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, classifyPort(tt.port, tt.procName))
+			assert.Equal(t, tt.expected, classifyPort(tt.port, tt.procName, noProbe(t)))
 		})
 	}
 }
 
-func TestClassifyPort_DefaultHTTP(t *testing.T) {
-	// Unknown port with unknown process name → http
-	assert.Equal(t, "http", classifyPort(8080, ""))
-	assert.Equal(t, "http", classifyPort(3000, "node"))
+func TestClassifyPort_EarlyReturnDoesNotProbe(t *testing.T) {
+	// A process name match must short-circuit BEFORE the TLS probe. If the
+	// implementation probed first, noProbe would fail this test.
+	assert.Equal(t, "other", classifyPort(6379, "redis-server", noProbe(t)))
+	assert.Equal(t, "other", classifyPort(22, "", noProbe(t)))
+}
+
+func TestClassifyPort_UnknownProcessUsesProbe(t *testing.T) {
+	// Unknown process on an unknown port falls through to the probe.
+	assert.Equal(t, "http", classifyPort(8080, "myapp", func(int) bool { return false }))
+	assert.Equal(t, "https", classifyPort(8080, "myapp", func(int) bool { return true }))
+	assert.Equal(t, "http", classifyPort(3000, "node", func(int) bool { return false }))
+}
+
+// ---------- classifyPorts (parallel probing) ----------
+
+// TestClassifyPorts_ConcurrencyBounded proves two things at once that are
+// invisible from the outside: that probing actually runs in parallel, and that
+// the parallelism is capped. The probe blocks until released, so with more
+// inputs than the bound exactly `detectProbeConcurrency` probes must be in
+// flight simultaneously — a serial implementation would stall after the first.
+func TestClassifyPorts_ConcurrencyBounded(t *testing.T) {
+	const n = detectProbeConcurrency * 3
+	infos := make([]detectedPortInfo, n)
+	for i := range infos {
+		infos[i] = detectedPortInfo{Port: 10000 + i}
+	}
+
+	entered := make(chan struct{}, n)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	// Deferred so a t.Fatal cannot leak goroutines blocked on release.
+	defer unblock()
+
+	var inFlight, maxSeen atomic.Int64
+	probe := func(int) bool {
+		cur := inFlight.Add(1)
+		for {
+			seen := maxSeen.Load()
+			if cur <= seen || maxSeen.CompareAndSwap(seen, cur) {
+				break
+			}
+		}
+		entered <- struct{}{}
+		<-release
+		inFlight.Add(-1)
+		return false
+	}
+
+	done := make(chan struct{})
+	var got []DetectedPort
+	go func() {
+		defer close(done)
+		got = classifyPorts(infos, probe)
+	}()
+
+	for i := 0; i < detectProbeConcurrency; i++ {
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d probes ran concurrently; expected %d (serial regression?)", i, detectProbeConcurrency)
+		}
+	}
+
+	// Exact equality also proves the bound is not exceeded.
+	assert.Equal(t, int64(detectProbeConcurrency), maxSeen.Load(), "probe concurrency must equal the configured bound")
+
+	unblock()
+	<-done
+
+	assert.Len(t, got, n)
+}
+
+// TestClassifyPorts_OrderPreserved pins that results line up with the input
+// slice rather than completion order (a real risk once probes run in parallel
+// with varying latencies).
+func TestClassifyPorts_OrderPreserved(t *testing.T) {
+	// Deliberately unsorted, and the probe's latency varies with the port so
+	// completion order differs from input order.
+	infos := []detectedPortInfo{
+		{Port: 9000, ProcessName: "c"},
+		{Port: 1000, ProcessName: "a"},
+		{Port: 5000, ProcessName: "b"},
+	}
+	probe := func(port int) bool {
+		time.Sleep(time.Duration(port%3) * 10 * time.Millisecond)
+		return port == 5000
+	}
+
+	got := classifyPorts(infos, probe)
+
+	assert.Len(t, got, len(infos))
+	for i, info := range infos {
+		assert.Equal(t, info.Port, got[i].Port, "index %d must hold input port", i)
+		assert.Equal(t, info.ProcessName, got[i].ProcessName, "index %d must hold input process", i)
+	}
+	// Probe results must land on the right entries.
+	assert.Equal(t, "http", got[0].Protocol)  // 9000
+	assert.Equal(t, "http", got[1].Protocol)  // 1000
+	assert.Equal(t, "https", got[2].Protocol) // 5000
+}
+
+func TestClassifyPorts_EmptyInput(t *testing.T) {
+	got := classifyPorts(nil, func(int) bool {
+		t.Fatal("probe must not run for an empty input")
+		return false
+	})
+	assert.Empty(t, got)
+}
+
+// TestClassifyPorts_NonProbedPortsDoNotUseProbe confirms known services are
+// classified without touching the network even in the parallel path.
+func TestClassifyPorts_NonProbedPortsDoNotUseProbe(t *testing.T) {
+	infos := []detectedPortInfo{
+		{Port: 22, ProcessName: ""},
+		{Port: 6379, ProcessName: "redis-server"},
+	}
+	got := classifyPorts(infos, noProbe(t))
+	assert.Len(t, got, 2)
+	assert.Equal(t, "other", got[0].Protocol)
+	assert.Equal(t, "other", got[1].Protocol)
+}
+
+// ---------- probe timeout budget ----------
+
+// TestDetectProbeTimeoutBudget guards the invariant that one port's probe can
+// never blow the request budget. The frontend aborts the scan after 10s, and a
+// busy host can expose 100+ ports, so a per-port budget approaching seconds
+// would make the endpoint unusable (the original bug: 1s dial + 2s handshake).
+func TestDetectProbeTimeoutBudget(t *testing.T) {
+	perPort := detectDialTimeout + detectHandshakeTimeout
+	assert.LessOrEqual(t, perPort, 1*time.Second,
+		"per-port probe budget must stay small; see the frontend detect timeout")
+}
+
+// TestDetectTLS_NonTLSListenerReturnsFalse is the behavioural counterpart: a
+// listener that accepts TCP but never speaks TLS must be reported as non-TLS.
+func TestDetectTLS_NonTLSListenerReturnsFalse(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	assert.NoError(t, err)
+	defer ln.Close()
+
+	// Accept and hold connections open so the client waits for a reply that
+	// never comes (the realistic shape of an HTTP listener being TLS-probed).
+	accepted := make(chan net.Conn, 4)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- c
+		}
+	}()
+	defer func() {
+		for {
+			select {
+			case c := <-accepted:
+				c.Close()
+			default:
+				return
+			}
+		}
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	assert.False(t, detectTLS(port), "a non-TLS listener must not be classified as https")
 }
 
 // ---------- loadPortsFromDB reverse proxy ----------
