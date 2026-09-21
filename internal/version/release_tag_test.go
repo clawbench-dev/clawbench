@@ -22,6 +22,10 @@ func TestReleaseTag(t *testing.T) {
 		{"vcs short hash", "830bb6c", ""},
 		// A pre-release tag is not something the release workflow publishes.
 		{"pre-release", "v1.0.0-rc1", ""},
+		// A trailing separator survives the dev-build check (a lone "-" is not a
+		// git hash and leaves an empty pre-release part), so it must be rejected
+		// by the contains-"-" guard rather than turned into tag "v1.0.0-".
+		{"trailing separator", "v1.0.0-", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
