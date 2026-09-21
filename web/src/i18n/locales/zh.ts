@@ -1598,8 +1598,8 @@ export default {
   },
   jump: {
     title: '跳转到路径',
-    placeholder: '输入项目内路径，支持文件或目录、相对或绝对路径',
-    placeholderBrowse: '输入目录路径，如 src/utils 或 C:\\projects',
+    placeholder: '输入绝对路径，或以项目为基准的相对路径（文件或目录均可）',
+    placeholderBrowse: '输入绝对路径，如 /home/user/projects 或 C:\\projects',
     confirm: '跳转',
     cancel: '取消',
     button: '跳转',

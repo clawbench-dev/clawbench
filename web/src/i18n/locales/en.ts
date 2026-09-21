@@ -1595,8 +1595,8 @@ export default {
   },
   jump: {
     title: 'Jump to path',
-    placeholder: 'Enter a path inside the project (file or directory, relative or absolute)',
-    placeholderBrowse: 'Enter a directory path, e.g. src/utils or C:\\projects',
+    placeholder: 'Enter an absolute path, or a path relative to the project (file or directory)',
+    placeholderBrowse: 'Enter an absolute path, e.g. /home/user/projects or C:\\projects',
     confirm: 'Jump',
     cancel: 'Cancel',
     button: 'Jump',

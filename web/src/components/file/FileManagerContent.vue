@@ -798,9 +798,10 @@ const dialog = useDialog()
 const jumpOpen = ref(false)
 async function handleJumpConfirm(path) {
   jumpOpen.value = false
-  // Jump supports files and directories, relative and absolute paths, but
-  // only inside the project root. navToFileInManager handles path
-  // normalization, existence checks and the out-of-project toast.
+  // Jump accepts files and directories, as an absolute path or a path relative
+  // to the project root. In-project absolute paths are normalized to relative
+  // and external ones stay absolute (browsed via /api/projects);
+  // navToFileInManager handles normalization and the existence check.
   await navToFileInManager(path)
 }
 const sharedDrawerRef = ref(null)
