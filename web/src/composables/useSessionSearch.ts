@@ -28,6 +28,15 @@ export interface SessionSearchResult {
   chunks: ChunkHit[]
   /** Raw stored value: 'chat' | 'scheduled'. Drives the type badge. */
   session_type: string
+  /** The session's title matched the query, not just its message content. */
+  title_match: boolean
+  /** Rune offsets into session_title, for highlighting the matched words. */
+  title_match_positions?: MatchRange[]
+  /**
+   * Matched on the title alone, so there are no chunks to show. The detail view
+   * lazily fetches the first message instead, exactly as browse mode does.
+   */
+  title_only: boolean
 }
 
 interface SessionSearchResponse {

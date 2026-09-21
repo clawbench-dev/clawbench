@@ -3684,6 +3684,9 @@ paths:
         `task` 才切换到任务执行会话。
         项目范围由项目 Cookie 决定：Cookie 值为任意项目路径时只搜该项目，
         不发送 Cookie 时跨全部项目（仅本机 AI 令牌可省略 Cookie）。
+        同时匹配会话名称与消息内容，名称命中排在内容命中之前；两通道都命中的
+        会话只出现一次，且共用同一组过滤。按 `newest`/`oldest` 排序时名称置顶
+        不再保留。RAG 未配置时仍可用名称匹配，此时 `mode` 为 `title`。
       requestBody:
         required: true
         content:
@@ -3733,7 +3736,9 @@ paths:
                   type: string
       responses:
         "200":
-          description: 聚合结果
+          description: |
+            聚合结果。会话带 `title_match`、`title_match_positions`（标题内
+            字符级偏移，用于高亮）与 `title_only`（无内容分块，需懒加载首条消息）。
 
   /api/rag/session-first-message:
     get:

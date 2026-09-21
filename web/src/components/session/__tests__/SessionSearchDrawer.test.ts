@@ -22,6 +22,8 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.openSession': 'Open',
       'sessionSearch.modeHybrid': 'Hybrid',
       'sessionSearch.modeFts': 'Full-text',
+      'sessionSearch.modeTitle': 'Name only',
+      'sessionSearch.titleMatch': 'Name match',
       'sessionSearch.modeLabel': 'Search Mode',
       'sessionSearch.filterArchive': 'Status',
       'sessionSearch.archiveAll': 'All',
@@ -497,6 +499,20 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.session-search-mode').text()).toBe('Full-text')
   })
 
+  // "title" means only the name channel ran (RAG not configured). It must not
+  // be confused with "recent" (browse), which renders the paginated browse list.
+  it('shows the name-only badge and no browse sentinel in title mode', () => {
+    mockSearchState.mockReturnValue(createState({
+      query: 'test',
+      results: [{ ...sampleResult, title_match: true, title_only: true, chunks: [] }],
+      searchMode: 'title',
+    }))
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-mode').text()).toBe('Name only')
+    expect(wrapper.find('.session-search-sentinel').exists()).toBe(false)
+    expect(wrapper.find('.session-search-end').exists()).toBe(false)
+  })
+
   it('does not show a mode badge when searchMode is empty', () => {
     mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult], searchMode: '' }))
     const wrapper = mountDrawer()
@@ -796,5 +812,102 @@ describe('SessionSearchDrawer', () => {
 
     await wrapper.findAll('.time-date-input')[0].trigger('change')
     expect(mockSetFilters).not.toHaveBeenCalled()
+  })
+
+  // ── Title matching ──
+
+  it('badges a session found by its name', () => {
+    mockSearchState.mockReturnValue(createState({
+      query: 'test',
+      results: [{ ...sampleResult, title_match: true, title_only: false }],
+    }))
+
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-item-titlematch').exists()).toBe(true)
+    expect(wrapper.find('.session-search-item-titlematch').text()).toBe('Name match')
+  })
+
+  it('does not badge a content-only match', () => {
+    mockSearchState.mockReturnValue(createState({
+      query: 'test',
+      results: [{ ...sampleResult, title_match: false, title_only: false }],
+    }))
+
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-item-titlematch').exists()).toBe(false)
+  })
+
+  it('highlights the matched words in the title', () => {
+    mockSearchState.mockReturnValue(createState({
+      query: 'test',
+      results: [{
+        ...sampleResult,
+        session_title: 'My Session',
+        title_match: true,
+        title_only: true,
+        title_match_positions: [{ start: 0, end: 2 }],
+      }],
+    }))
+
+    const wrapper = mountDrawer()
+    // The mocked highlighter appends a marker when positions are present.
+    expect(wrapper.find('.session-search-item-title').html()).toContain('<mark>')
+  })
+
+  it('renders a plain title when there are no match positions', () => {
+    mockSearchState.mockReturnValue(createState({
+      query: 'test',
+      results: [{ ...sampleResult, title_match: false, title_only: false }],
+    }))
+
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-item-title').html()).not.toContain('<mark>')
+  })
+
+  // A title-only match carries no chunks, so the detail view must lazily fetch
+  // the first message — exactly as browse mode does.
+  it('lazily fetches the first message when drilling into a title-only match', async () => {
+    mockSearchState.mockReturnValue(createState({
+      query: 'test',
+      results: [{ ...sampleResult, title_match: true, title_only: true, chunks: [] }],
+      searchMode: 'fts',
+    }))
+    mockFetchFirstMessage.mockResolvedValue({
+      chunk_id: 7,
+      chunk_text: 'first message body',
+      match_positions: [],
+      score: 0,
+      role: 'user',
+      message_id: 7,
+      created_at: '2025-01-01',
+    })
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession({ ...sampleResult, title_match: true, title_only: true, chunks: [] })
+    await flushPromises()
+    instance.update()
+
+    expect(mockFetchFirstMessage).toHaveBeenCalledWith('s1')
+    expect(wrapper.find('.detail-chunk').exists()).toBe(true)
+  })
+
+  // A session found by both channels keeps its chunks: no lazy fetch, and the
+  // detail view shows the message hits it already has.
+  it('does not lazily fetch for a session matching both title and content', async () => {
+    mockSearchState.mockReturnValue(createState({
+      query: 'test',
+      results: [{ ...sampleResult, title_match: true, title_only: false }],
+      searchMode: 'fts',
+    }))
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession({ ...sampleResult, title_match: true, title_only: false })
+    await flushPromises()
+    instance.update()
+
+    expect(mockFetchFirstMessage).not.toHaveBeenCalled()
+    expect(wrapper.find('.detail-chunk').exists()).toBe(true)
   })
 })

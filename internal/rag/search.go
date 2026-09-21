@@ -19,6 +19,11 @@ const (
 	SearchModeVector SearchMode = "vector" // Vector similarity only
 	SearchModeFTS    SearchMode = "fts"    // Full-text search only (BM25)
 	SearchModeRecent SearchMode = "recent" // Browse all sessions newest-first (empty query)
+	// SearchModeTitle means only the title channel ran: RAG is not configured,
+	// so no content search happened. It is deliberately distinct from "recent"
+	// (browse) — the client treats "recent" as the paginated browse list, and
+	// these are search results.
+	SearchModeTitle SearchMode = "title"
 )
 
 // SearchParams holds the parameters for a RAG search request.
@@ -209,6 +214,16 @@ type SessionSearchResult struct {
 	// SessionType is the raw stored value ("chat" | "scheduled") so the client
 	// can badge task executions apart from interactive conversations.
 	SessionType string `json:"session_type"`
+	// TitleMatch reports that the session's title matched the query, so the
+	// client can badge it and highlight the title. A session may match on both
+	// title and content.
+	TitleMatch bool `json:"title_match"`
+	// TitleMatchPositions are rune offsets into SessionTitle, for highlighting.
+	TitleMatchPositions []MatchRange `json:"title_match_positions,omitempty"`
+	// TitleOnly reports that this session matched on its title alone and
+	// therefore carries no chunks: the detail view has nothing to show, so the
+	// client fetches the first message instead (as it does in browse mode).
+	TitleOnly bool `json:"title_only"`
 }
 
 // ChunkHit represents a single matching chunk within a session search result.
@@ -272,16 +287,92 @@ func RecentSessions(ctx context.Context, projectPath string, limit int, archiveF
 	}, nil
 }
 
-// RAGSessionSearch performs RAG search and aggregates results by session.
-// It fetches an expanded pool of chunks, groups by session_id with a per-session
-// chunk cap, applies the archive filter, sorts by relevance or session time, and
-// returns up to searchLimit sessions.
+// RAGSessionSearch performs RAG search and aggregates results by session,
+// merged with sessions matched by title.
+//
+// Two independent channels feed the result: message content (the RAG index) and
+// session title (a plain SQL LIKE on chat_sessions). They exist side by side
+// because a session the user renamed, or one whose auto-title was truncated,
+// cannot be found by the words in its name through the content index. Title
+// matches rank ahead of content matches — a user typing a remembered name wants
+// that session first — and a session found by both keeps its chunks while also
+// carrying the title-match badge.
+//
+// A nil store (RAG not configured) is not an error here: the title channel is
+// pure SQL and still answers, so those installs get name search rather than a
+// 503. The response mode then reports "title" to say no content search ran.
 func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, params SearchParams, searchLimit int, searchPoolSize int) (*SessionSearchResponse, error) {
-	if store == nil {
-		return nil, fmt.Errorf("RAG not initialized: store is nil")
-	}
 	if params.Query == "" {
 		return &SessionSearchResponse{}, nil
+	}
+
+	// Title channel. Its filters mirror the content channel's, so the two sets
+	// of results are drawn from the same population — including the
+	// single-session and excluded-session scopes.
+	titleMatches, err := service.SearchSessionsByTitle(
+		params.ProjectPath, titleSearchTerms(params.Query), searchLimit,
+		params.Archived, params.SessionType, params.FromTime, params.ToTime,
+		params.SessionID, params.ExcludeSessionID,
+	)
+	if err != nil {
+		// A failing title channel must not sink a working content search.
+		slog.Warn("rag: title search failed, continuing with content only", slog.String("err", err.Error()))
+		titleMatches = nil
+	}
+
+	// Content channel. Skipped entirely when RAG is unavailable — the title
+	// channel above is the whole answer in that case.
+	contentSessions, contentMode, err := contentSessionMatches(ctx, store, embedder, params, searchLimit, searchPoolSize)
+	if err != nil {
+		return nil, err
+	}
+
+	sessions := mergeTitleAndContentMatches(titleMatches, contentSessions, params.Query)
+
+	// Sort sessions. Default keeps the title-first, then relevance ordering
+	// established by the merge; time orders re-sort the whole result set by the
+	// session's creation time, tie-broken by session id.
+	sortSessionResults(sessions, params.SortOrder)
+
+	// Truncate to searchLimit
+	if len(sessions) > searchLimit {
+		sessions = sessions[:searchLimit]
+	}
+
+	// Build response. Titles come from the DB, so a title-matched session keeps
+	// the exact stored string its offsets were computed against.
+	out := make([]SessionSearchResult, len(sessions))
+	for i, s := range sessions {
+		out[i] = *s
+	}
+
+	slog.Info(
+		"rag session search completed",
+		slog.String("query", params.Query),
+		slog.String("mode", string(contentMode)),
+		slog.Int("sessions", len(out)),
+		slog.Int("title_matches", len(titleMatches)),
+		slog.Int("search_limit", searchLimit),
+	)
+
+	return &SessionSearchResponse{
+		Sessions: out,
+		Total:    len(out),
+		Mode:     contentMode,
+	}, nil
+}
+
+// contentSessionMatches runs the content channel and returns the aggregated
+// sessions plus the mode to report. A nil store means RAG is not configured:
+// there is no content to search, so it returns no sessions and SearchModeTitle
+// to say the title channel is the whole answer.
+//
+// The archive and session-type filters run here, after aggregation, because
+// rag_chunks carries neither column — the predicates can only be applied once
+// each session's DB metadata has been loaded.
+func contentSessionMatches(ctx context.Context, store *Store, embedder *EmbeddingClient, params SearchParams, searchLimit, searchPoolSize int) ([]*SessionSearchResult, SearchMode, error) {
+	if store == nil {
+		return nil, SearchModeTitle, nil
 	}
 
 	// Use searchPoolSize as expanded limit (already configurable, default 20)
@@ -296,7 +387,7 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 
 	result, err := RAGSearch(ctx, store, embedder, expandedParams, expandedLimit, searchPoolSize)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	sessions := aggregateSessionHits(result.Results)
@@ -315,11 +406,9 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 		sessions = filtered
 	}
 
-	// Filter by session type. Like the archive filter this runs post-aggregation:
-	// rag_chunks has no session_type column, so the predicate can only be applied
-	// once each session's DB metadata has been loaded. A session whose row is
-	// missing (or whose stored type is empty) counts as 'chat' — the schema
-	// default — mirroring how a missing row is treated as active above.
+	// Filter by session type. A session whose row is missing (or whose stored
+	// type is empty) counts as 'chat' — the schema default — mirroring how a
+	// missing row is treated as active above.
 	if dbType := service.SessionTypeDBValue(params.SessionType); dbType != "" {
 		filtered := sessions[:0]
 		for _, s := range sessions {
@@ -334,39 +423,109 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 		sessions = filtered
 	}
 
-	// Sort sessions. Default keeps search-engine relevance (best chunk score
-	// desc); time orders re-sort the relevance result set by the session's
-	// creation time, tie-broken by session id.
-	sortSessionResults(sessions, params.SortOrder)
+	return sessions, result.Mode, nil
+}
 
-	// Truncate to searchLimit
-	if len(sessions) > searchLimit {
-		sessions = sessions[:searchLimit]
+// mergeTitleAndContentMatches folds the two channels into one ordered list:
+// title matches first (newest-first, as the title query returned them), then
+// content matches in relevance order. A session present in both is emitted once
+// in the title block, keeping its chunks so the detail view still shows the
+// message hits, and is marked so the client can badge both kinds of match.
+//
+// Content matches carry no title text — only chunks — so their titles are
+// filled in from the DB here. That is also where the title-match offsets are
+// computed: they are rune offsets into the stored title, the same coordinate
+// space the chunk highlighting uses.
+func mergeTitleAndContentMatches(titleMatches []service.RecentSession, contentSessions []*SessionSearchResult, query string) []*SessionSearchResult {
+	merged := make([]*SessionSearchResult, 0, len(titleMatches)+len(contentSessions))
+	seen := make(map[string]int, len(titleMatches))
+
+	for _, t := range titleMatches {
+		s := &SessionSearchResult{
+			SessionID:    t.ID,
+			SessionTitle: t.Title,
+			Backend:      t.Backend,
+			ProjectPath:  t.ProjectPath,
+			Archived:     t.Archived,
+			CreatedAt:    t.CreatedAt,
+			SessionType:  t.SessionType,
+			TitleMatch:   true,
+			TitleOnly:    true,
+			// No content search ran for this session, so there is no match count.
+			MatchCount: 0,
+			Chunks:     []ChunkHit{},
+		}
+		s.TitleMatchPositions = textMatchPositions(query, t.Title)
+		seen[t.ID] = len(merged)
+		merged = append(merged, s)
 	}
 
-	// Build response
-	titles := getSessionTitles(sessionIDSet(sessions))
-	out := make([]SessionSearchResult, len(sessions))
-	for i, s := range sessions {
-		out[i] = *s
-		if title, ok := titles[s.SessionID]; ok {
-			out[i].SessionTitle = title
+	for _, c := range contentSessions {
+		if idx, ok := seen[c.SessionID]; ok {
+			// Found by both channels: keep the chunks from the content pass and
+			// record that the title matched too.
+			existing := merged[idx]
+			existing.Chunks = c.Chunks
+			existing.MatchCount = c.MatchCount
+			existing.Score = c.Score
+			existing.TitleOnly = false
+			continue
+		}
+		seen[c.SessionID] = len(merged)
+		merged = append(merged, c)
+	}
+
+	// Content-only results arrive without a title (the content query carries
+	// none), so fill them in — the client renders and highlights titles.
+	if missing := titlesMissingFrom(merged); len(missing) > 0 {
+		titles := getSessionTitles(missing)
+		for _, s := range merged {
+			if s.SessionTitle == "" {
+				if title, ok := titles[s.SessionID]; ok {
+					s.SessionTitle = title
+				}
+			}
 		}
 	}
 
-	slog.Info(
-		"rag session search completed",
-		slog.String("query", params.Query),
-		slog.String("mode", string(result.Mode)),
-		slog.Int("sessions", len(out)),
-		slog.Int("search_limit", searchLimit),
-	)
+	return merged
+}
 
-	return &SessionSearchResponse{
-		Sessions: out,
-		Total:    len(out),
-		Mode:     result.Mode,
-	}, nil
+// titlesMissingFrom collects the IDs of results that still have no title text,
+// so they can be fetched in one batch.
+func titlesMissingFrom(sessions []*SessionSearchResult) map[string]bool {
+	missing := make(map[string]bool)
+	for _, s := range sessions {
+		if s.SessionTitle == "" {
+			missing[s.SessionID] = true
+		}
+	}
+	return missing
+}
+
+// titleSearchTerms splits a title query into the terms that must all appear in
+// a session title. Segmentation output includes single-character tokens
+// (whitespace, punctuation, a lone CJK character); tokens shorter than two
+// runes are dropped because matching them would return nearly every session.
+// When that leaves nothing — a one-character query, or punctuation only — the
+// trimmed query is returned as a single literal term, so the search still
+// honors what the user typed rather than silently matching everything.
+func titleSearchTerms(query string) []string {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return nil
+	}
+	terms := make([]string, 0, 4)
+	for _, tok := range SegmentTokens(trimmed) {
+		tok = strings.TrimSpace(tok)
+		if len([]rune(tok)) >= 2 {
+			terms = append(terms, tok)
+		}
+	}
+	if len(terms) == 0 {
+		return []string{trimmed}
+	}
+	return terms
 }
 
 // aggregateSessionHits groups raw chunk hits by session_id in first-seen order,
@@ -444,9 +603,17 @@ func sessionIDSet(sessions []*SessionSearchResult) map[string]bool {
 	return ids
 }
 
-// sortSessionResults sorts sessions in place. Default keeps search-engine
-// relevance (best chunk score desc); time orders re-sort by session creation
-// time, tie-broken by session id.
+// sortSessionResults sorts sessions in place. The default order puts title
+// matches first — a user who typed a remembered name wants that session at the
+// top — then orders each block by search-engine relevance (best chunk score
+// desc). Time orders re-sort the whole set by session creation time, tie-broken
+// by session id; a title match carries no score, so relevance is the only order
+// in which it can outrank a content hit.
+//
+// Equal scores fall back to newest-first, then session id. The newest-first step
+// is what preserves the title query's own ordering (all title matches score 0);
+// the id step keeps the result deterministic, since sort.Slice is not stable and
+// sessions can share both a score and a timestamp.
 func sortSessionResults(sessions []*SessionSearchResult, sortOrder string) {
 	switch service.NormalizeSessionSortOrder(sortOrder) {
 	case service.SessionSortNewest:
@@ -465,7 +632,20 @@ func sortSessionResults(sessions []*SessionSearchResult, sortOrder string) {
 		})
 	default:
 		sort.Slice(sessions, func(i, j int) bool {
-			return sessions[i].Score > sessions[j].Score
+			if sessions[i].TitleMatch != sessions[j].TitleMatch {
+				return sessions[i].TitleMatch
+			}
+			if sessions[i].Score != sessions[j].Score {
+				return sessions[i].Score > sessions[j].Score
+			}
+			// Within a block of equal scores, newest first. This is what keeps
+			// title matches in the newest-first order the title query returned:
+			// they all score 0, so without it they would fall through to the id
+			// tie-break and come out in UUID order.
+			if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+				return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+			}
+			return sessions[i].SessionID < sessions[j].SessionID
 		})
 	}
 }

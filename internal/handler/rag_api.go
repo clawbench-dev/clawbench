@@ -625,6 +625,9 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		SessionType:      req.SessionType,
 	}
 
+	// A nil store means RAG is not configured, not that search is impossible:
+	// the title channel is plain SQL and still answers. RAGSessionSearch handles
+	// the nil store itself and returns title matches only.
 	result, err := rag.RAGSessionSearch(r.Context(), rag.GlobalStore, rag.GlobalEmbedder, params, searchLimit, searchPoolSize)
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSearchFailed")

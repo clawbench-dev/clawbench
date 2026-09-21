@@ -15,7 +15,7 @@
         <button class="detail-back-btn" @click.stop="selectSession(null)">
           <ChevronLeft :size="18" />
         </button>
-        <span class="bs-header-title detail-header-title">{{ selectedSession.session_title || t('sessionSearch.untitledSession') }}</span>
+        <span class="bs-header-title detail-header-title" v-html="titleHtml(selectedSession)" />
         <span v-if="selectedSession.archived" class="detail-archived-badge">{{ t('sessionSearch.archived') }}</span>
       </template>
     </template>
@@ -189,11 +189,12 @@
           </div>
           <div v-for="(session, idx) in searchState.results" :key="session.session_id" class="session-search-item" :class="{ 'session-search-item-active': listNav.activeIndex.value === idx }" @click="selectSession(session)">
             <div class="session-search-item-header">
-              <span class="session-search-item-title">{{ session.session_title || t('sessionSearch.untitledSession') }}</span>
+              <span class="session-search-item-title" v-html="titleHtml(session)" />
               <span class="session-search-item-meta">{{ formatRelativeTime(session.created_at) }}</span>
             </div>
             <div v-if="session.chunks.length > 0" class="session-search-item-preview" v-html="getPreviewHtml(session)" />
             <div class="session-search-item-footer">
+              <span v-if="session.title_match" class="session-search-item-titlematch">{{ t('sessionSearch.titleMatch') }}</span>
               <span v-if="session.session_type" class="session-search-item-type" :class="'session-search-item-type-' + session.session_type">{{ sessionTypeLabel(session.session_type) }}</span>
               <span v-if="session.archived" class="session-search-item-archived">{{ t('sessionSearch.archived') }}</span>
               <span v-if="session.backend" class="session-search-item-backend">{{ session.backend }}</span>
@@ -427,8 +428,9 @@ async function loadFirstMessage(session: SessionSearchResult) {
   lazyChunks.value = chunk ? [chunk] : []
 }
 
-// Open a session's detail view. Browse results have no chunk content, so their
-// first message is fetched lazily; search results already carry their hits.
+// Open a session's detail view. Browse results and title-only matches have no
+// chunk content, so their first message is fetched lazily; content matches
+// already carry their hits.
 function selectSession(session: SessionSearchResult | null | undefined) {
   selectedSession.value = session ?? null
   if (!session) {
@@ -437,7 +439,7 @@ function selectSession(session: SessionSearchResult | null | undefined) {
     lazyLoading.value = false
     return
   }
-  if (isBrowseMode.value) {
+  if (isBrowseMode.value || session.title_only) {
     void loadFirstMessage(session)
   } else {
     lazyRequestId++
@@ -518,17 +520,22 @@ watch(() => searchState.results, () => listNav.reset())
 
 const searchModeLabel = computed(() => {
   if (!searchState.searchMode) return ''
-  return searchState.searchMode === 'hybrid' ? t('sessionSearch.modeHybrid') : t('sessionSearch.modeFts')
+  if (searchState.searchMode === 'hybrid') return t('sessionSearch.modeHybrid')
+  if (searchState.searchMode === 'title') return t('sessionSearch.modeTitle')
+  return t('sessionSearch.modeFts')
 })
 
 // Browse mode (empty query) lists all sessions newest-first; its preview chunk
 // is not a search hit, so the match count label is hidden.
 const isBrowseMode = computed(() => searchState.searchMode === 'recent')
 
-// Chunks shown in the detail view. Search results carry their hits; browse
-// results carry none, so their first message is lazily fetched on drilldown.
+// Chunks shown in the detail view. Content matches carry their hits; browse
+// results and title-only matches carry none, so their first message is lazily
+// fetched on drilldown.
 const detailChunks = computed<ChunkHit[]>(() =>
-  isBrowseMode.value ? lazyChunks.value : (selectedSession.value?.chunks ?? [])
+  isBrowseMode.value || selectedSession.value?.title_only
+    ? lazyChunks.value
+    : (selectedSession.value?.chunks ?? [])
 )
 
 // ── Back handler for drilldown ──
@@ -648,6 +655,19 @@ function highlightTermsInElement(el: HTMLElement, terms: string[]) {
     }
     parent.replaceChild(frag, node)
   }
+}
+
+// ── Session title rendering ──
+// A title match carries rune offsets into the stored title, so the matched
+// words are highlighted the same way chunk text is. Untitled sessions fall back
+// to the placeholder label, which has no offsets to apply.
+function titleHtml(session: SessionSearchResult): string {
+  const title = session.session_title || t('sessionSearch.untitledSession')
+  const positions = session.title_match_positions
+  if (!session.session_title || !positions || positions.length === 0) {
+    return escapeHtml(title)
+  }
+  return highlightTextByPositions(title, positions)
 }
 
 // ── Search list preview ──
@@ -957,6 +977,16 @@ defineExpose({ focusSearchInput })
   min-width: 0;
 }
 
+/* Highlight for the matched words inside a session title. Same treatment as
+   the chunk preview, so a name match and a content match read alike. */
+.session-search-item-title :deep(mark),
+.detail-header-title :deep(mark) {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
+  color: inherit;
+  border-radius: var(--radius-xs);
+  padding: 0 1px;
+}
+
 .session-search-item-meta {
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
@@ -1004,6 +1034,17 @@ defineExpose({ focusSearchInput })
   border-radius: var(--radius-xs);
   background: var(--bg-tertiary, #eee);
   color: var(--text-secondary, #666);
+}
+
+/* Title-match badge: the session was found by its name, not (only) by its
+   message content. Accent-tinted so it reads as the stronger signal — title
+   matches are ranked first in the list. */
+.session-search-item-titlematch {
+  font-size: var(--font-size-2xs);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: rgba(74, 144, 217, 0.14);
+  color: var(--accent-color, #4a90d9);
 }
 
 /* Session-type badge: distinguishes task executions (session_type='scheduled')
@@ -1227,6 +1268,12 @@ defineExpose({ focusSearchInput })
 
 /* Dark theme overrides — non-scoped for [data-theme] selector */
 [data-theme-base="dark"] .session-search-item-preview mark {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
+  color: inherit;
+}
+
+[data-theme-base="dark"] .session-search-item-title mark,
+[data-theme-base="dark"] .detail-header-title mark {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
   color: inherit;
 }

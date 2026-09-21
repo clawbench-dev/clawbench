@@ -2572,6 +2572,185 @@ func TestGetRecentSessions_TypeFilterSeparation(t *testing.T) {
 	assert.Len(t, archivedTask, 0)
 }
 
+// ---------- SearchSessionsByTitle ----------
+
+func TestSearchSessionsByTitle_MatchesTitleAndOrdersNewestFirst(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "a", "数据库优化方案", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "b", "数据库迁移记录", "2024-03-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "c", "前端重构", "2024-02-01 10:00:00", false)
+
+	got, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, got, 2)
+	// Newest first.
+	assert.Equal(t, "b", got[0].ID)
+	assert.Equal(t, "a", got[1].ID)
+	assert.Equal(t, "数据库迁移记录", got[0].Title)
+}
+
+// Every term must be present: a second term narrows the result rather than
+// widening it, which is what makes a multi-word query useful.
+func TestSearchSessionsByTitle_AllTermsMustMatch(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "both", "数据库优化方案", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "one", "数据库迁移记录", "2024-01-02 10:00:00", false)
+	insertSessionWithTime(t, "/project", "none", "前端重构", "2024-01-03 10:00:00", false)
+
+	got, err := service.SearchSessionsByTitle("/project", []string{"数据库", "优化"}, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "both", got[0].ID)
+
+	// Terms are ANDed, so a term absent from every title yields nothing even
+	// though the first term alone would have matched two rows.
+	got, err = service.SearchSessionsByTitle("/project", []string{"数据库", "不存在"}, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// A literal % or _ in the query must not act as a LIKE wildcard, and the
+// backslash escape must survive the round trip.
+func TestSearchSessionsByTitle_EscapesLikeWildcards(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "pct", "覆盖率 100% 达成", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "other", "覆盖率统计", "2024-01-02 10:00:00", false)
+
+	got, err := service.SearchSessionsByTitle("/project", []string{"100%"}, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "pct", got[0].ID)
+
+	// A bare "%" must match only titles that literally contain it, not every
+	// title in the project.
+	got, err = service.SearchSessionsByTitle("/project", []string{"%"}, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "pct", got[0].ID)
+
+	// A backslash in the query is matched literally too.
+	insertSessionWithTime(t, "/project", "bs", `路径 C:\temp 记录`, "2024-01-03 10:00:00", false)
+	got, err = service.SearchSessionsByTitle("/project", []string{`C:\temp`}, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "bs", got[0].ID)
+}
+
+func TestSearchSessionsByTitle_Filters(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "active", "数据库优化", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "archived", "数据库归档", "2024-02-01 10:00:00", true)
+	insertSessionWithTime(t, "/other", "otherproj", "数据库优化", "2024-03-01 10:00:00", false)
+	insertSessionWithTypeAndTime(t, "/project", "task", "数据库任务", "scheduled", "2024-04-01 10:00:00", false)
+
+	// Project scope is always applied.
+	got, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	// Conversations only: the task execution is excluded by default.
+	require.Len(t, got, 2)
+	for _, s := range got {
+		assert.NotEqual(t, "task", s.ID)
+		assert.NotEqual(t, "otherproj", s.ID)
+	}
+
+	// Archive filter narrows to one side.
+	active, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, service.SessionArchiveFilterActive, "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, "active", active[0].ID)
+
+	archived, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, service.SessionArchiveFilterArchived, "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, archived, 1)
+	assert.Equal(t, "archived", archived[0].ID)
+
+	// Type filter switches to task executions.
+	tasks, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", service.SessionTypeFilterTask, "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "task", tasks[0].ID)
+
+	// Time range bounds the creation time.
+	windowed, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "2024-01-15 00:00:00", "2024-03-15 00:00:00", "", "")
+	assert.NoError(t, err)
+	require.Len(t, windowed, 1)
+	assert.Equal(t, "archived", windowed[0].ID)
+
+	// Limit truncates the newest-first list.
+	limited, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 1, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, limited, 1)
+	assert.Equal(t, "archived", limited[0].ID)
+}
+
+func TestSearchSessionsByTitle_EmptyTermsMatchNothing(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "a", "任意标题", "2024-01-01 10:00:00", false)
+
+	// No terms → no matches. Callers wanting the whole project use
+	// GetRecentSessions; returning everything here would silently turn a
+	// title search into a browse.
+	got, err := service.SearchSessionsByTitle("/project", nil, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	assert.Empty(t, got)
+
+	got, err = service.SearchSessionsByTitle("/project", []string{}, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// SQLite's LIKE folds ASCII case, so an ASCII query matches regardless of how
+// the title was typed.
+func TestSearchSessionsByTitle_CaseInsensitiveASCII(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "a", "Fix RAG Indexer", "2024-01-01 10:00:00", false)
+
+	got, err := service.SearchSessionsByTitle("/project", []string{"rag"}, 0, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "a", got[0].ID)
+}
+
+// The single-session and excluded-session scopes mirror the content channel's.
+// exclude_session_id is what keeps the current conversation out of its own
+// /cb-chatsearch results, so the title channel must honor it too.
+func TestSearchSessionsByTitle_SessionScopes(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "s1", "数据库优化", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s2", "数据库迁移", "2024-01-02 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s3", "数据库归档", "2024-01-03 10:00:00", false)
+
+	// sessionID narrows to exactly that session.
+	one, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "s2", "")
+	assert.NoError(t, err)
+	require.Len(t, one, 1)
+	assert.Equal(t, "s2", one[0].ID)
+
+	// excludeSessionID drops it, leaving the other two.
+	rest, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "", "s2")
+	assert.NoError(t, err)
+	require.Len(t, rest, 2)
+	for _, s := range rest {
+		assert.NotEqual(t, "s2", s.ID)
+	}
+}
+
+func TestEscapeLikePattern(t *testing.T) {
+	// Escaping is what makes the ESCAPE '\' clause meaningful; without it a
+	// query of "%" would match every row.
+	assert.Equal(t, `100\%`, service.EscapeLikePatternForTest("100%"))
+	assert.Equal(t, `a\_b`, service.EscapeLikePatternForTest("a_b"))
+	assert.Equal(t, `C:\\temp`, service.EscapeLikePatternForTest(`C:\temp`))
+	assert.Equal(t, "plain", service.EscapeLikePatternForTest("plain"))
+}
+
 func TestGetRecentSessions_CursorPaginationNewest(t *testing.T) {
 	setupDB(t)
 
