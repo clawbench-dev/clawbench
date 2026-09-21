@@ -21,10 +21,10 @@ import { verifyIntegrity } from '../shared/integrity'
  * The hard constraint is that a running process cannot replace its own
  * executable, and on Windows it cannot even overwrite it. So this does NOT
  * install in place. Instead it unpacks each version into its own directory and
- * flips a POINTER file; the launcher (npm/desktop-main/bin/clawbench-desktop.js)
- * reads that pointer on startup and runs whichever version it names. Switching
- * versions is then an atomic file write plus a relaunch, and a bad build can be
- * rolled back by rewriting the pointer.
+ * flips a POINTER file; startup reads that pointer and runs whichever version
+ * it names (see handOffToPointedVersion). Switching versions is then an atomic
+ * file write plus a relaunch, and a bad build can be rolled back by rewriting
+ * the pointer.
  */
 
 /** Root of the version store: ~/.clawbench-desktop */
@@ -289,9 +289,9 @@ export async function downloadFirstAvailable(urls: string[]): Promise<Buffer> {
 /**
  * Path to the executable inside an unpacked version directory.
  *
- * Mirrors the launcher's resolution in npm/desktop-main/bin/clawbench-desktop.js:
  * electron-builder's `dir` target puts the binary at the package root on
- * Linux/Windows, and inside the .app bundle on macOS.
+ * Linux/Windows, and inside the .app bundle on macOS. Both the install path and
+ * the startup handoff resolve it through here so they cannot disagree.
  */
 export function executableIn(dir: string): string {
   if (process.platform === 'darwin') {
@@ -316,6 +316,68 @@ export function restartInto(version: string): void {
   const child = spawn(bin, [], { detached: true, stdio: 'ignore' })
   child.unref()
   app.exit(0)
+}
+
+/**
+ * Decide which installed version should be running, given the pointer and the
+ * currently-running version.
+ *
+ * Returns the version to switch to, or '' when the current process should just
+ * keep going. Pure (no filesystem or Electron access) so the decision table is
+ * unit-testable; the caller performs the side effect.
+ *
+ * The pointer is written by `downloadAndInstall` and used to be read only by an
+ * npm launcher that has since been removed along with desktop npm publishing.
+ * Users now run the unpacked binary directly, so the app resolves the pointer
+ * itself; without that an upgrade would be written but never applied, and the
+ * next cold start would silently revert.
+ */
+export function selectStartupVersion(
+  pointed: string,
+  running: string,
+): string {
+  if (!pointed) return ''
+  // Already the pointed-at version: nothing to do. This is the normal case
+  // after a restart, and it is also what stops the handoff from looping.
+  if (pointed === running) return ''
+  return pointed
+}
+
+/**
+ * If the pointer names a different, actually-installed version, start that one
+ * and quit this process.
+ *
+ * Called once at startup. Guards, in order:
+ *   - no pointer / same version          → nothing to do
+ *   - the pointed version's directory or executable is missing (a deleted or
+ *     half-written upgrade) → clear the pointer and continue with THIS version,
+ *     so a broken upgrade can never leave the user unable to start the app
+ *   - the pointed binary is this very file (e.g. someone unpacked a release on
+ *     top of the version store) → continue rather than re-exec forever
+ *
+ * Returns true when a handoff was started (the caller should not continue
+ * initialising; this process is about to exit).
+ */
+export function handOffToPointedVersion(runningVersion: string): boolean {
+  const pointed = readCurrentVersion()
+  if (selectStartupVersion(pointed, runningVersion) === '') return false
+
+  const bin = executableIn(versionDir(pointed))
+  let sameFile = false
+  try {
+    sameFile = fs.realpathSync(bin) === fs.realpathSync(process.execPath)
+  } catch {
+    sameFile = false
+  }
+  if (!fs.existsSync(bin) || sameFile) {
+    // Broken or self-referential pointer: drop it and run what we have.
+    try { fs.rmSync(pointerPath(), { force: true }) } catch { /* best effort */ }
+    return false
+  }
+
+  const child = spawn(bin, [], { detached: true, stdio: 'ignore' })
+  child.unref()
+  return true
 }
 
 export function httpGetBuffer(url: string, redirectsLeft = 5): Promise<Buffer> {

@@ -11,7 +11,34 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '0.1.0', relaunch: vi.fn(), exit: vi.fn() },
 }))
 
-import { extractZip, writePointer, readCurrentVersion, pointerPath, versionDir, downloadFirstAvailable } from './install'
+// ESM module namespaces are not configurable, so `vi.spyOn(childProcess, 'spawn')`
+// throws. Mock the module instead: the handoff must never actually launch a
+// process during tests.
+// vi.hoisted because the factory below is hoisted above ordinary declarations;
+// referencing a plain `const` there would throw "Cannot access before
+// initialization". This mirrors how tunnel.test.ts exposes its FakeClient.
+const { spawnMock } = vi.hoisted(() => ({
+  // Typed loosely: the assertions only inspect the first argument (the binary
+  // path), and giving vi.fn a precise overload here would fight the spread of
+  // child_process' own signatures.
+  spawnMock: vi.fn((..._args: unknown[]) => ({ unref: () => {} })),
+}))
+vi.mock('node:child_process', () => ({
+  spawn: spawnMock,
+  // Pass through everything else the module graph may need.
+  default: { spawn: spawnMock },
+}))
+
+import {
+  extractZip,
+  writePointer,
+  readCurrentVersion,
+  pointerPath,
+  versionDir,
+  downloadFirstAvailable,
+  selectStartupVersion,
+  handOffToPointedVersion,
+} from './install'
 
 /**
  * Build a zip archive from entries.
@@ -209,6 +236,110 @@ describe('pointer file', () => {
       expect(readCurrentVersion()).toBe('')
     } finally {
       spy.mockRestore()
+    }
+  })
+})
+
+/**
+ * Startup handoff. The pointer is written by downloadAndInstall and, before
+ * desktop distribution moved to GitHub Releases, was read only by the npm
+ * launcher. Users now run the unpacked binary directly, so the app has to
+ * resolve the pointer itself — otherwise an upgrade is written but never
+ * applied and the next cold start silently reverts.
+ */
+describe('selectStartupVersion', () => {
+  it('switches to a pointed version that differs from the running one', () => {
+    expect(selectStartupVersion('1.2.3', '1.0.0')).toBe('1.2.3')
+  })
+
+  it('does nothing when the pointer names the running version', () => {
+    // The normal case right after a restart. Returning a version here would
+    // make the handoff re-exec itself forever.
+    expect(selectStartupVersion('1.2.3', '1.2.3')).toBe('')
+  })
+
+  it('does nothing when there is no pointer', () => {
+    expect(selectStartupVersion('', '1.0.0')).toBe('')
+  })
+})
+
+describe('handOffToPointedVersion', () => {
+  let homedirSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmpRoot)
+    spawnMock.mockClear()
+  })
+
+  afterEach(() => {
+    homedirSpy.mockRestore()
+  })
+
+  /** Create the version directory with an executable inside it. */
+  function installVersion(version: string): string {
+    const dir = versionDir(version)
+    fs.mkdirSync(dir, { recursive: true })
+    const bin = path.join(dir, process.platform === 'win32' ? 'clawbench-desktop.exe' : 'clawbench-desktop')
+    fs.writeFileSync(bin, 'x')
+    return bin
+  }
+
+  it('starts the pointed version and reports the handoff', () => {
+    installVersion('1.2.3')
+    writePointer('1.2.3')
+
+    expect(handOffToPointedVersion('1.0.0')).toBe(true)
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    expect(String(spawnMock.mock.calls[0]?.[0])).toContain('1.2.3')
+  })
+
+  it('does not hand off when the pointer names the running version', () => {
+    installVersion('1.2.3')
+    writePointer('1.2.3')
+
+    expect(handOffToPointedVersion('1.2.3')).toBe(false)
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('does not hand off when there is no pointer', () => {
+    expect(handOffToPointedVersion('1.0.0')).toBe(false)
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('clears a pointer whose version directory is gone, instead of refusing to start', () => {
+    // A deleted or half-written upgrade must not brick the app: the pointer is
+    // dropped and the current version keeps running.
+    writePointer('9.9.9') // never installed
+
+    expect(handOffToPointedVersion('1.0.0')).toBe(false)
+    expect(spawnMock).not.toHaveBeenCalled()
+    expect(readCurrentVersion()).toBe('')
+  })
+
+  it('clears a pointer whose version directory exists but has no executable', () => {
+    fs.mkdirSync(versionDir('9.9.9'), { recursive: true })
+    writePointer('9.9.9')
+
+    expect(handOffToPointedVersion('1.0.0')).toBe(false)
+    expect(spawnMock).not.toHaveBeenCalled()
+    expect(readCurrentVersion()).toBe('')
+  })
+
+  it('does not re-exec when the pointed binary IS the running process', () => {
+    // Happens when someone unpacks a release on top of the version store: the
+    // pointer would name the file we are already running, and spawning it
+    // would loop. Compare against process.execPath, which the guard realpaths.
+    const bin = installVersion('1.2.3')
+    writePointer('1.2.3')
+    const execSpy = vi.spyOn(process, 'execPath', 'get').mockReturnValue(bin)
+
+    try {
+      expect(handOffToPointedVersion('1.0.0')).toBe(false)
+      expect(spawnMock).not.toHaveBeenCalled()
+      // The pointer is dropped so the next start is a normal one.
+      expect(readCurrentVersion()).toBe('')
+    } finally {
+      execSpy.mockRestore()
     }
   })
 })

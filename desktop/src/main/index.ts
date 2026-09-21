@@ -3,7 +3,7 @@ import { initStore } from './store'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { checkForUpdate } from './updater'
-import { downloadAndInstall, restartInto } from './install'
+import { downloadAndInstall, restartInto, handOffToPointedVersion } from './install'
 import { recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
 
@@ -86,8 +86,8 @@ async function promptAndInstallUpdate(): Promise<void> {
     cancelId: 1,
     title: '更新已就绪',
     message: `ClawBench 桌面版 ${info.version} 已安装。`,
-    // The pointer is already flipped, so "later" still lands on the new
-    // version the next time the app starts via the launcher.
+    // The pointer is already flipped, and startup now reads it itself, so
+    // "later" still lands on the new version on the next launch.
     detail: '重启后生效。选择“稍后”也可在下次启动时自动使用新版本。',
   })
   if (restart !== 0) return
@@ -106,6 +106,23 @@ async function promptAndInstallUpdate(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  // Self-upgrade handoff. `downloadAndInstall` unpacks the new version and
+  // writes the `current` pointer, but a running process cannot replace its own
+  // executable — so the switch happens HERE, on the next start: if the pointer
+  // names a different installed version, start that one and quit this process.
+  //
+  // This used to be an npm launcher's job, but desktop distribution moved to
+  // GitHub Releases (and npm publishing was removed), so users run the unpacked
+  // binary directly. Without resolving the pointer here it would be written but
+  // never read, and an upgrade would silently revert on the next cold start.
+  //
+  // Runs before any window exists: showing a window and then quitting would
+  // flash a window on every upgrade launch.
+  if (handOffToPointedVersion(app.getVersion())) {
+    app.exit(0)
+    return
+  }
+
   // Windows toast notifications are addressed by Application User Model ID, and
   // without an explicit one Electron falls back to the generic
   // `electron.app.Electron`. The consequences on Windows are that the
