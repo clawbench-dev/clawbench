@@ -16,11 +16,6 @@
 # an *older* dev build. Android saw 1 < 1167 and refused with
 # "已安装更高版本", even though v0.99.0 > v0.97.0-51-g463667161 by versionName.
 #
-# The formula below reads only the nearest version tag, which a shallow clone
-# still has. Verified: `git describe --tags --long` on a depth=1 clone of a tag
-# yields "<tag>-0-g<hash>", i.e. the same tag/distance as a full clone. So the
-# result is identical in CI and on a developer machine.
-#
 #   versionCode = major*100000000 + minor*100000 + patch*1000 + distance
 #
 # `distance` is the number of commits since the nearest vX.Y.Z tag (0 for a
@@ -31,6 +26,10 @@
 #   v0.99.0+188    -> 0*1e8 +  99*1e5 + 0*1e3 + 188 =   9900188
 #   v0.100.0       -> 0*1e8 + 100*1e5 + 0*1e3 +   0 =  10000000
 #   v1.0.0         -> 1*1e8 +   0*1e5 + 0*1e3 +   0 = 100000000
+#
+# `distance` needs the commit graph, which a CI checkout does not have. So the
+# two callers use different entry points (see "Two modes" below): CI reads the
+# tag alone and never fetches history; local dev builds use `git describe`.
 #
 # Field widths are chosen so the fields never collide, and are *checked* rather
 # than silently truncated. The tighter `minor*10000` layout that looks natural
@@ -53,10 +52,22 @@
 #   scripts/lib/version-code.sh --assert        # exit 1 if it degenerates to <= 1
 #   scripts/lib/version-code.sh --repo <dir>    # inspect another checkout
 #   scripts/lib/version-code.sh --parse '<describe output>'   # pure parse, no git
+#   scripts/lib/version-code.sh --tag-only      # CI mode: use the newest tag, no history
 #
 #   # sourced (build.sh)
 #   source scripts/lib/version-code.sh
 #   VERSION_CODE=$(clawbench_version_code "$SCRIPT_DIR")
+#
+# Two modes
+# ---------
+# `git describe` needs the commit graph. A CI checkout does not have one, and
+# asking CI to fetch all history just for a version number is wasteful. So:
+#
+#   local dev build  -> `git describe`: nearest tag + commit distance (distance>0)
+#   CI               -> `--tag-only`: newest vX.Y.Z tag, distance forced to 0
+#
+# CI builds are release builds (a tag push), so distance is 0 there anyway —
+# `--tag-only` produces the same number, from the tags alone.
 
 # Repository this library lives in: scripts/lib/ -> repo root.
 CLAWBENCH_VERSION_CODE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -123,10 +134,24 @@ clawbench_version_code_from_describe() {
     echo $(( 10#$major * 100000000 + 10#$minor * 100000 + 10#$patch * 1000 + 10#$distance ))
 }
 
+# clawbench_version_code_from_tag <tag>
+#
+# Same as from_describe but for a bare tag ("v0.99.0"), i.e. a release build
+# where the commit distance is 0 by definition. Implemented by delegating to
+# from_describe so the range checks and the formula exist in exactly one place.
+clawbench_version_code_from_tag() {
+    local tag="$1"
+    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        return 1
+    fi
+    clawbench_version_code_from_describe "${tag}-0-g0"
+}
+
 # clawbench_version_code [<repo-dir>]
 #
 # Prints the versionCode for the given checkout (default: this library's own
-# repository).
+# repository) using `git describe`, i.e. nearest tag PLUS the commit distance.
+# This is the developer path: it orders builds made between two releases.
 #
 # Fail-open: when git cannot describe a version tag the historical value 1 is
 # printed and the function still succeeds. That matters for `set -e` callers
@@ -152,6 +177,40 @@ clawbench_version_code() {
     esac
 }
 
+# clawbench_version_code_tag_only [<repo-dir>]
+#
+# CI path: derives the versionCode from the newest version tag alone, with no
+# dependence on the commit graph (`git tag` lists refs; it does not walk
+# history). Intended for a checkout that fetched only tag refs, so CI never has
+# to pull the full history just to compute a version number.
+#
+# Equivalent to `clawbench_version_code` on a release checkout, where the
+# distance is 0 anyway. On a checkout that is ahead of its newest tag this
+# reports the release it is based on rather than a distance-suffixed value —
+# acceptable for CI, which builds release tags.
+#
+# Fail-open to 1 when there is no version tag at all, matching
+# `clawbench_version_code`.
+clawbench_version_code_tag_only() {
+    local repo="${1:-$CLAWBENCH_VERSION_CODE_ROOT}"
+    local tag code rc=0
+
+    # -v:refname sorts by version, not lexically, so v0.100.0 outranks v0.99.1
+    # (a plain sort would put v0.99.1 last). Verified against those two tags.
+    tag=$(git -C "$repo" tag --sort=-v:refname --list 'v[0-9]*' 2>/dev/null | head -1)
+    if [[ -z "$tag" ]]; then
+        echo 1
+        return 0
+    fi
+
+    code=$(clawbench_version_code_from_tag "$tag") || rc=$?
+    case "$rc" in
+        0) echo "$code" ;;
+        1) echo 1 ;;
+        *) return "$rc" ;;
+    esac
+}
+
 _clawbench_version_code_usage() {
     cat <<'EOF'
 Usage: version-code.sh [options]
@@ -159,13 +218,14 @@ Usage: version-code.sh [options]
   --assert        exit 1 if the versionCode degenerates to <= 1
   --repo <dir>    inspect this checkout instead of the library's own
   --parse <str>   parse a `git describe --tags --long` string, no git needed
+  --tag-only      newest tag only, no commit history (CI mode)
   -h, --help      show this help
 EOF
 }
 
 _clawbench_version_code_main() {
     local repo="$CLAWBENCH_VERSION_CODE_ROOT"
-    local parse="" assert=0
+    local parse="" assert=0 tag_only=0
 
     while (( $# )); do
         case "$1" in
@@ -183,6 +243,10 @@ _clawbench_version_code_main() {
                 assert=1
                 shift
                 ;;
+            --tag-only)
+                tag_only=1
+                shift
+                ;;
             -h | --help)
                 _clawbench_version_code_usage
                 return 0
@@ -197,6 +261,8 @@ _clawbench_version_code_main() {
     local code rc=0
     if [[ -n "$parse" ]]; then
         code=$(clawbench_version_code_from_describe "$parse") || rc=$?
+    elif (( tag_only )); then
+        code=$(clawbench_version_code_tag_only "$repo") || rc=$?
     else
         code=$(clawbench_version_code "$repo") || rc=$?
     fi

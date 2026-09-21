@@ -22,16 +22,19 @@ def autoVersionName() {
 /**
  * Auto-generate versionCode when not provided via -PversionCode.
  *
- * Mirrors scripts/lib/version-code.sh — that script is the single source of
- * truth; this is only the fallback for a bare `./gradlew assembleRelease` that
- * does not pass -PversionCode (build.sh and CI always pass it).
+ * Mirrors the LOCAL path of scripts/lib/version-code.sh — that script is the
+ * single source of truth; this is only the fallback for a bare
+ * `./gradlew assembleRelease` that does not pass -PversionCode (build.sh and
+ * CI always pass it, and CI uses the script's --tag-only mode).
  *
  *     versionCode = major*100000000 + minor*100000 + patch*1000 + distance
  *
- * derived from `git describe --tags --long --match 'v[0-9]*'`. The previous
- * implementation used `git rev-list --count HEAD`, which silently collapses to
- * 1 under a shallow clone — and actions/checkout defaults to depth=1, so every
- * released APK shipped versionCode=1 and could not replace an older dev build.
+ * derived from `git describe --tags --long --match 'v[0-9]*'`, so a developer
+ * build between two releases carries a non-zero `distance` and stays ordered
+ * against both. The previous implementation used `git rev-list --count HEAD`,
+ * which silently collapses to 1 under a shallow clone — and actions/checkout
+ * defaults to depth=1, so every released APK shipped versionCode=1 and could
+ * not replace an older dev build.
  *
  * Fail-open to 1 when no version tag is reachable; a version outside the
  * supported range is a hard error (see version-code.sh for the rationale).

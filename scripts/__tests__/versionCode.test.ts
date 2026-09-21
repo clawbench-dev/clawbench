@@ -83,6 +83,28 @@ function makeRepo(tag: string, extraCommits: number): string {
   return dir
 }
 
+/** Create a repo with several tags on one linear history, oldest first. */
+function makeTaggedRepo(tags: string[]): string {
+  const dir = mkdtempSync(resolve(tmpdir(), 'vc-tags-'))
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+  git('init', '-q', '.')
+  git('config', 'user.email', 't@t')
+  git('config', 'user.name', 't')
+  git('config', 'commit.gpgsign', 'false')
+  git('config', 'tag.gpgsign', 'false')
+  writeFileSync(resolve(dir, 'f'), 'x')
+  git('add', 'f')
+  git('commit', '-qm', 'init')
+  for (const [i, tag] of tags.entries()) {
+    if (i > 0) {
+      writeFileSync(resolve(dir, 'f'), `x${i}\n`, { flag: 'a' })
+      git('commit', '-qam', `c${i}`)
+    }
+    git('tag', tag)
+  }
+  return dir
+}
+
 describe('version-code.sh — formula', () => {
   it('maps a release tag to a code that increases with the version', () => {
     // The exact table the implementation documents.
@@ -169,6 +191,101 @@ describe('version-code.sh — fail-open and clamping', () => {
       const r = parse(input)
       expect(r.status, `input=${input}`).toBe(2)
       expect(r.stderr).toContain(field)
+    }
+  })
+})
+
+describe('version-code.sh — tag-only mode (CI, no commit history)', () => {
+  it('picks the newest tag by version, not lexically', () => {
+    // The trap: a plain string sort puts v0.99.1 last among these, which would
+    // hand v0.99.1 a *higher* code than v0.100.0. `--sort=-v:refname` is what
+    // makes the ordering correct.
+    const dir = makeTaggedRepo(['v0.99.0', 'v0.99.1', 'v0.100.0', 'v1.0.0'])
+    try {
+      const r = runScript(['--repo', dir, '--tag-only'])
+      expect(r.status).toBe(0)
+      expect(Number(r.stdout)).toBe(100_000_000) // v1.0.0, not v0.99.1
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('picks v0.100.0 over v0.99.1 specifically', () => {
+    // The pair that a lexical sort gets wrong, isolated from v1.0.0.
+    const dir = makeTaggedRepo(['v0.99.0', 'v0.99.1', 'v0.100.0'])
+    try {
+      expect(Number(runScript(['--repo', dir, '--tag-only']).stdout)).toBe(10_000_000)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores non-version tags', () => {
+    // The repo carries tags like "test-449-splash-failsafe" and
+    // "backup/doc-sync-pre-0914"; they must not be mistaken for versions.
+    const dir = makeTaggedRepo(['v0.99.0'])
+    try {
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+      git('tag', 'test-449-splash-failsafe')
+      git('tag', 'backup/doc-sync-pre-0914')
+      expect(Number(runScript(['--repo', dir, '--tag-only']).stdout)).toBe(9_900_000)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('needs no commit graph', () => {
+    // The point of the mode: a checkout that has tags but no history (what CI
+    // fetches) still produces the right code. Built by fetching tag refs only
+    // into an empty repo — the same command the workflows run.
+    const origin = makeRepo('v0.99.0', 3)
+    const shallow = mkdtempSync(resolve(tmpdir(), 'vc-tagonly-'))
+    try {
+      execFileSync('git', ['init', '-q', '.'], { cwd: shallow, stdio: 'ignore' })
+      execFileSync(
+        'git',
+        ['fetch', '-q', '--depth=1', '--no-tags', `file://${origin}`, '+refs/tags/v*:refs/tags/v*'],
+        { cwd: shallow, stdio: 'ignore' },
+      )
+      // Tags present, history absent — `git describe` cannot work here...
+      expect(runScript(['--repo', shallow]).stdout).toBe('1')
+      // ...but --tag-only does.
+      expect(Number(runScript(['--repo', shallow, '--tag-only']).stdout)).toBe(9_900_000)
+    } finally {
+      rmSync(shallow, { recursive: true, force: true })
+      rmSync(origin, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to 1 when there is no version tag', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'vc-tagonly-none-'))
+    try {
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+      git('init', '-q', '.')
+      git('config', 'user.email', 't@t')
+      git('config', 'user.name', 't')
+      writeFileSync(resolve(dir, 'f'), 'x')
+      git('add', 'f')
+      git('commit', '-qm', 'init')
+
+      const r = runScript(['--repo', dir, '--tag-only'])
+      expect(r.status).toBe(0)
+      expect(r.stdout).toBe('1')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports the release a dev checkout is based on (distance is dropped)', () => {
+    // Documented behaviour of --tag-only: on a checkout ahead of its newest
+    // tag the distance is not applied. CI builds release tags, where the
+    // distance is 0 anyway, so this is only about stating the contract.
+    const dir = makeRepo('v0.99.0', 5)
+    try {
+      expect(Number(runScript(['--repo', dir]).stdout)).toBe(9_900_005) // describe: +5
+      expect(Number(runScript(['--repo', dir, '--tag-only']).stdout)).toBe(9_900_000)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
@@ -262,10 +379,38 @@ describe('versionCode derivation is not duplicated across the build', () => {
     expect(read('.github/workflows/release.yml')).toContain('scripts/lib/version-code.sh')
   })
 
+  it('uses the tag-only mode in CI and the describe mode locally', () => {
+    // CI has no commit graph and must not fetch one; local builds need the
+    // distance. Both entry points live in the shared script.
+    for (const rel of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+      expect(read(rel), `${rel} must use --tag-only`).toMatch(/version-code\.sh"?\s+--tag-only/)
+    }
+    // build.sh keeps the distance-aware path (no --tag-only).
+    expect(read('build.sh')).not.toContain('--tag-only')
+  })
+
+  it('fetches only tag refs in CI, never full history', () => {
+    // The whole point of tag-only mode: CI must not pull all history. A
+    // `fetch-depth: 0` on the APK jobs would silently reintroduce that cost.
+    for (const rel of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+      const src = read(rel)
+      expect(src, `${rel} must fetch tags explicitly`).toMatch(
+        /git fetch[^\n]*refs\/tags\/v\*:refs\/tags\/v\*/,
+      )
+    }
+    // The APK jobs must not ask checkout for full history.
+    const ci = read('.github/workflows/ci.yml')
+    const buildAndroid = ci.slice(ci.indexOf('  build-android:'), ci.indexOf('  e2e:'))
+    expect(buildAndroid).not.toContain('fetch-depth: 0')
+    const rel = read('.github/workflows/release.yml')
+    const relAndroid = rel.slice(rel.indexOf('  build-android:'), rel.indexOf('  docker:'))
+    expect(relAndroid).not.toContain('fetch-depth: 0')
+  })
+
   it('asserts in the release path so a recurrence fails the release', () => {
     // The release workflow is the only place allowed to ship an APK to users,
     // so that is where the guard belongs.
-    expect(read('.github/workflows/release.yml')).toMatch(/version-code\.sh"?\s+--assert/)
+    expect(read('.github/workflows/release.yml')).toMatch(/version-code\.sh"?\s+--tag-only\s+--assert/)
   })
 
   it('keeps the Gradle fallback on the same formula', () => {
