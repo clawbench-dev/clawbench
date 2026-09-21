@@ -2799,6 +2799,28 @@ func GetStreamingMessageInfo(sessionID string) (id int64, queueID string) {
 	return id, queueID
 }
 
+// GetQuestionByQueueID returns the user message that carries queueID — the
+// question a run answers. ok is false when no such row exists (runs without a
+// question, e.g. scheduled tasks).
+//
+// The subscribe-time recovery path uses this to re-emit the question alongside
+// the live stream_start: a client that subscribed after the run began gets the
+// reply but would otherwise have no bubble to attach it to, rendering the reply
+// with no question above it until a full history reload.
+func GetQuestionByQueueID(sessionID, queueID string) (id int64, content string, ok bool) {
+	if queueID == "" {
+		return 0, "", false
+	}
+	err := dbRead.QueryRow(
+		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'user' AND queue_id = ? ORDER BY id DESC LIMIT 1",
+		sessionID, queueID,
+	).Scan(&id, &content)
+	if err != nil {
+		return 0, "", false
+	}
+	return id, content, true
+}
+
 // UpdateMessageContent updates the content of a specific message by its ID.
 func UpdateMessageContent(messageID int, content string) error {
 	_, err := WriteExec("UPDATE chat_history SET content = ? WHERE id = ?", content, messageID)

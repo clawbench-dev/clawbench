@@ -187,3 +187,48 @@ func TestEmitToSession_CriticalDropIsObservable(t *testing.T) {
 	require.Equal(t, int64(1), stats.NoSubscribers,
 		"a dropped terminal event must be observable — this is what makes the stuck-UI case diagnosable")
 }
+
+// TestEmitToSession_UserMessageReachesWriteAheadWithoutSubscribers is the
+// regression guard for a permanently lost cross-device message.
+//
+// Scenario: a message is sent from DingTalk/Feishu while a browser has the
+// target session open. If the session has no live StreamHub subscriber at that
+// instant (WS reconnect window), EmitToSession returns early and the
+// user_message never reaches StreamHub.Emit — which is the ONLY place the
+// write-ahead store runs. The event is therefore neither delivered nor
+// persisted, so the reconnect replay cannot recover it: the client shows the
+// assistant reply with no user bubble, and only a full history reload fixes it.
+//
+// The store must be reached even when there is no live subscriber, because the
+// write-ahead exists precisely for that case (StoreNotifiableEvent itself
+// decides whether anyone is disconnected).
+func TestEmitToSession_UserMessageReachesWriteAheadWithoutSubscribers(t *testing.T) {
+	ResetDeliveryStatsForTest()
+	t.Cleanup(ResetDeliveryStatsForTest)
+
+	mgr := NewManagerForTest()
+	SetManagerForTest(mgr)
+	t.Cleanup(func() { SetManagerForTest(nil) })
+
+	var stored []ServerMessage
+	mgr.StreamHub().SetEventStoreFunc(func(m ServerMessage) { stored = append(stored, m) })
+
+	// No subscriber for this session — a WS reconnect window.
+	EmitToSession("session-reconnecting", ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID: 42,
+			Content:   "sent from dingtalk",
+			QueueID:   "q-1",
+		},
+	})
+
+	require.Len(t, stored, 1,
+		"a user_message with no live subscriber must still reach the write-ahead store, "+
+			"otherwise a reconnect can never replay it")
+	assert.Equal(t, "chat_stream", stored[0].Event)
+
+	// And the drop must still be accounted for — it was not delivered live.
+	assert.Equal(t, int64(1), GetDeliveryStats().NoSubscribers,
+		"the live-delivery drop must still be counted")
+}

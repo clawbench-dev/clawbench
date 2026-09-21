@@ -557,6 +557,41 @@ func (s *ClientSubscription) bufferEvent(msg ServerMessage) {
 	}
 }
 
+// AllConnectedClientsSubscribe reports whether every connected client is
+// subscribed to sessionID — i.e. nobody who is currently online could have
+// missed an event for that session.
+//
+// Returns false when there are no connected clients at all, so callers that
+// persist "events a client might have missed" still store in that case.
+//
+// This is deliberately per-session rather than HasDisconnectedClients: a
+// browser can be connected yet not subscribed to the session an event belongs
+// to (a reconnect replaced the connection before its re-subscribe landed). Such
+// an event is dropped live, so asking "is any client disconnected?" wrongly
+// concludes it was seen.
+func (m *Manager) AllConnectedClientsSubscribe(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	connected := 0
+	m.mu.Lock()
+	for clientID, sub := range m.subscriptions {
+		sub.mu.Lock()
+		live := sub.conn != nil
+		sub.mu.Unlock()
+		if !live {
+			continue
+		}
+		connected++
+		if !m.hub.IsSubscribed(clientID, sessionID) {
+			m.mu.Unlock()
+			return false
+		}
+	}
+	m.mu.Unlock()
+	return connected > 0
+}
+
 // HasDisconnectedClients returns true if any subscription is disconnected
 // or if there are no subscriptions at all. Used to conditionally persist
 // events only when clients might miss them.

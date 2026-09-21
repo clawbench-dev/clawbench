@@ -1061,3 +1061,139 @@ func TestStreamStartPayload_QueueID(t *testing.T) {
 	})
 	assert.Equal(t, map[string]any{"message_id": int64(5)}, bare)
 }
+
+// --- EmitUserMessageEvent ---
+
+// TestStreamHub_EmitUserMessageEvent covers the subscribe-time recovery path:
+// a client that subscribes mid-run must receive the QUESTION bubble, not just
+// the reply's stream_start. Without it the client renders the assistant reply
+// with no user message above it until a full history reload.
+func TestStreamHub_EmitUserMessageEvent(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "client-q", "")
+	hub.Subscribe("client-q", "session-q")
+
+	hub.EmitUserMessageEvent("client-q", "session-q", 51659, "hello from dingtalk", "q-20260921112506-1")
+
+	buffered := sub.GetBufferedEvents()
+	require.NotEmpty(t, buffered, "expected at least one buffered event")
+	data, ok := buffered[0].Data.(ChatStreamData)
+	require.True(t, ok, "expected ChatStreamData")
+	assert.Equal(t, "user_message", data.EventType)
+	assert.Equal(t, "session-q", data.SessionID)
+	payload, ok := data.Payload.(map[string]any)
+	require.True(t, ok, "expected map payload")
+	assert.Equal(t, int64(51659), payload["messageId"])
+	assert.Equal(t, "hello from dingtalk", payload["content"])
+	// The queue id must ride along: it is what ties this bubble to the
+	// stream_start the client is about to receive.
+	assert.Equal(t, "q-20260921112506-1", payload["queueId"])
+}
+
+// TestStreamHub_EmitUserMessageEvent_OmitsEmptyQueueID guards the scheduled-run
+// case (no question), where an empty queueId must not be sent as "".
+func TestStreamHub_EmitUserMessageEvent_OmitsEmptyQueueID(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "client-noq", "")
+	hub.Subscribe("client-noq", "session-noq")
+
+	hub.EmitUserMessageEvent("client-noq", "session-noq", 7, "text", "")
+
+	buffered := sub.GetBufferedEvents()
+	require.NotEmpty(t, buffered)
+	data := buffered[0].Data.(ChatStreamData)
+	payload := data.Payload.(map[string]any)
+	_, hasQueue := payload["queueId"]
+	assert.False(t, hasQueue, "an empty queue id must be omitted, not sent as \"\"")
+}
+
+// --- EmitLiveRunStateToClient ---
+
+// TestStreamHub_EmitLiveRunState_QuestionBeforeStreamStart is the regression
+// guard for the "assistant message but no user message" symptom.
+//
+// A client subscribing mid-run missed the live user_message (it held no
+// subscription at send time, or the event was dropped). Recovery must hand it
+// the question bubble BEFORE the stream_start that anchors the reply to it —
+// otherwise the reply renders with nothing above it until a full history
+// reload. The assertion on ORDER is the point of this test.
+func TestStreamHub_EmitLiveRunState_QuestionBeforeStreamStart(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "client-late", "")
+	hub.Subscribe("client-late", "session-live")
+
+	hub.SetStreamStateLookupFunc(func(sessionID string) (int64, string) {
+		return 51660, "q-20260921112506-1"
+	})
+	hub.SetQuestionLookupFunc(func(sessionID, queueID string) (int64, string, bool) {
+		if queueID != "q-20260921112506-1" {
+			return 0, "", false
+		}
+		return 51659, "hello from dingtalk", true
+	})
+
+	hub.EmitLiveRunStateToClient("client-late", "session-live")
+
+	buffered := sub.GetBufferedEvents()
+	require.Len(t, buffered, 2, "expected the question and the stream_start")
+
+	first, ok := buffered[0].Data.(ChatStreamData)
+	require.True(t, ok)
+	assert.Equal(t, "user_message", first.EventType,
+		"the question must be emitted BEFORE stream_start, or the reply has no bubble to anchor to")
+	firstPayload := first.Payload.(map[string]any)
+	assert.Equal(t, int64(51659), firstPayload["messageId"])
+	assert.Equal(t, "q-20260921112506-1", firstPayload["queueId"])
+
+	second, ok := buffered[1].Data.(ChatStreamData)
+	require.True(t, ok)
+	assert.Equal(t, "stream_start", second.EventType)
+	secondPayload := second.Payload.(map[string]any)
+	assert.Equal(t, int64(51660), secondPayload["message_id"])
+	assert.Equal(t, "q-20260921112506-1", secondPayload["queue_id"])
+}
+
+// TestStreamHub_EmitLiveRunState_NoQuestion covers a scheduled run: nothing to
+// anchor to, so only stream_start is emitted (and no error).
+func TestStreamHub_EmitLiveRunState_NoQuestion(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "client-sched", "")
+	hub.Subscribe("client-sched", "session-sched")
+
+	hub.SetStreamStateLookupFunc(func(string) (int64, string) { return 99, "" })
+	hub.SetQuestionLookupFunc(func(string, string) (int64, string, bool) {
+		t.Fatal("question lookup must not be called when the run has no queue id")
+		return 0, "", false
+	})
+
+	hub.EmitLiveRunStateToClient("client-sched", "session-sched")
+
+	buffered := sub.GetBufferedEvents()
+	require.Len(t, buffered, 1, "only stream_start when there is no question")
+	data := buffered[0].Data.(ChatStreamData)
+	assert.Equal(t, "stream_start", data.EventType)
+}
+
+// TestStreamHub_EmitLiveRunState_NothingStreaming verifies the idle case emits
+// nothing at all (the caller also guards on IsSessionRunning).
+func TestStreamHub_EmitLiveRunState_NothingStreaming(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "client-idle", "")
+	hub.Subscribe("client-idle", "session-idle")
+
+	hub.SetStreamStateLookupFunc(func(string) (int64, string) { return 0, "" })
+
+	hub.EmitLiveRunStateToClient("client-idle", "session-idle")
+
+	assert.Empty(t, sub.GetBufferedEvents(), "nothing streaming → nothing to re-emit")
+}

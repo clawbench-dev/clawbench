@@ -82,7 +82,7 @@ flowchart TD
 
 - **只持久化终端状态事件**：`session_update`（completed/cancelled/permission_pending）、`task_update`（completed/failed/cancelled）
 - **全局事件日志**：不按 client_id 分区，所有客户端共享同一个事件日志
-- **条件存储**：仅当存在断开连接的客户端时才写入（`HasDisconnectedClients()`），避免所有客户端在线时的写放大
+- **条件存储**：按**会话**判定——只有当「所有已连接客户端都订阅了该事件所属会话」时才跳过写入（`AllConnectedClientsSubscribe(sessionID)`），避免所有客户端都在看这个会话时的写放大。**不能用「是否存在断开的客户端」判定**：浏览器可能连着 WS、却没有该会话的订阅（重连换连接后重订阅尚未落地），此时事件实时投递被丢，若也不落库就永久丢失——客户端会只显示助手回复、没有用户提问，直到整页刷新重载历史。非会话级事件（如 `task_update`）保持无条件存储
 - **Write-ahead**：先存储后广播，确保事件日志无间隙
 - **客户端游标**：每个客户端维护 `last_seen_event_id` 游标（前端为会话级内存态，重启后置空；Android 端持久化到设备），收到终态事件时同步推进，重连时用 `after` 参数拉取游标之后的事件。前端只同步 Android 设备游标、不反向读取——避免后台推送重复投递用户在前台已看到的事件
 - **TTL**：
@@ -182,3 +182,13 @@ sequenceDiagram
 **push 发送必须自带 queueID（回复顺序）**：IM 发送没有网页端那样的前端 `queueId`，`sendMessageToSessionFromPush` 因此自己生成一个（`newPushQueueID`）并同时传给执行与 `user_message` 事件。这个 id 是**唯一能把回复锚定到它回答的那个问题**的键：`run_turn` 把它写进 streaming 助手行的 `queue_id` 并经 `stream_start.queue_id` 下发，前端据此把回复重锚到同 `queueId` 的问题气泡上。
 
 缺了它前端会退化为「锚到最新一条用户消息」，而 `stream_start` 由**异步**执行 goroutine 发出、`user_message` 在 `LaunchSessionExecution` 返回后才发，因此 `stream_start` 常常先到——此时「最新用户消息」还是**上一个**问题，回复就排到了自己问题的上方（刷新后 DB 重建才恢复）。
+
+### 订阅时的实时运行状态补发
+
+客户端在 AI 运行中途订阅某会话时，必须补齐渲染该回合所需的**两侧**状态：`OnSubscribe` 先补发 **问题气泡**（`user_message`，由 streaming 行的 `queue_id` 反查用户行），再补发 `stream_start`（含同一 `queue_id`）。实现见 `StreamHub.EmitLiveRunStateToClient`。
+
+**顺序不能颠倒**：`stream_start` 是回复的锚点，它靠 `queue_id` 找到问题气泡；问题气泡不在数组里时，回复会渲染在自己问题之上（或干脆没有用户气泡），只有整页刷新重载历史才能恢复。这也解释了「只有助手消息、没有用户消息」这一症状——晚订阅的客户端拿到了助手侧（`stream_start` + 内容流），却从未拿到问题侧。
+
+### 事件丢弃与写前日志的边界
+
+`EmitToSession` 在会话无订阅者时**不能直接 return**：`StreamHub.Emit` 是写前日志（`pending_events`）唯一的落库点，提前返回会让事件既未投递也未持久化，重连重放也无法补偿。因此无订阅者时仍要把事件交给写前日志，由 `StoreNotifiableEvent` 按上述**会话级**条件决定是否真正落库（投递丢弃计数照常记录）。
