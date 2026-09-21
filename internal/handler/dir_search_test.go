@@ -644,7 +644,11 @@ func TestParseSearchParams_NegativeLimit(t *testing.T) {
 }
 
 func TestParseSearchParams_PathLeadingSlash(t *testing.T) {
-	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&path=/sub/dir", nil)
+	// A real absolute path, not a POSIX literal: filepath.IsAbs("/sub/dir") is
+	// false on Windows (it needs a drive or UNC prefix), so a hard-coded
+	// "/sub/dir" is not absolute there and would be treated as project-relative.
+	absPath := filepath.Join(t.TempDir(), "sub", "dir")
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&path="+url.QueryEscape(absPath), nil)
 	w := httptest.NewRecorder()
 	params, ok := parseSearchParams(w, req)
 	if !ok {
@@ -654,8 +658,8 @@ func TestParseSearchParams_PathLeadingSlash(t *testing.T) {
 	// separator. Stripping it made "/tmp" look like the project-relative "tmp",
 	// so an external search silently walked a nonexistent in-project directory
 	// and returned zero hits.
-	if params.path != "/sub/dir" {
-		t.Errorf("expected path=/sub/dir (leading slash preserved), got %s", params.path)
+	if params.path != absPath {
+		t.Errorf("expected path=%s (absolute preserved), got %s", absPath, params.path)
 	}
 }
 

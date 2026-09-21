@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"clawbench/internal/model"
@@ -85,10 +88,16 @@ func TestTerminalWebSocketCwdAcceptsAbsoluteInsideRoots(t *testing.T) {
 		SetTerminalManager(origMgr)
 	})
 
-	// Roots are normally "/" on Unix; pin them so the assertions are explicit
-	// about what "inside a configured root" means.
+	// Pin the roots so the assertion is explicit about what "inside a configured
+	// root" means. A real absolute path under the root is used rather than a
+	// POSIX literal like "/tmp": filepath.IsAbs("/tmp") is false on Windows, so
+	// that literal would take the relative branch and never exercise the
+	// absolute-cwd handling this test is about.
+	rootDir := t.TempDir()
+	absCwd := filepath.Join(rootDir, "sub")
+	require.NoError(t, os.MkdirAll(absCwd, 0o755))
 	origRoots := model.RootPaths
-	model.RootPaths = []string{"/"}
+	model.RootPaths = []string{rootDir}
 	t.Cleanup(func() { model.RootPaths = origRoots })
 
 	projectDir := t.TempDir()
@@ -102,7 +111,7 @@ func TestTerminalWebSocketCwdAcceptsAbsoluteInsideRoots(t *testing.T) {
 
 	// The cwd validation happens before the WebSocket upgrade, so an accepted
 	// path proceeds to the handshake and fails there (not with 403).
-	req := httptest.NewRequest(http.MethodGet, "/api/terminal/ws?cwd=/tmp", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/terminal/ws?cwd="+url.QueryEscape(absCwd), http.NoBody)
 	withProjectCookie(req, projectDir)
 	w := callHandler(TerminalWebSocket, req)
 

@@ -169,11 +169,15 @@ func TestHandleIncomingWithMedia_NoTargetRepliesHint(t *testing.T) {
 	}
 }
 
-// A media message whose explicitly named session no longer exists must report
-// the failure instead of downloading and then failing to send.
-func TestHandleIncomingWithMedia_SessionUnavailable(t *testing.T) {
+// A media message whose explicitly named session does not exist must report the
+// failure instead of downloading and then failing to send.
+//
+// The short ID is deliberately absent from stickySessions so ResolveTarget fails
+// deterministically; a name that happens to exist would fall through to the
+// download/send path (the failure there is environmental, not the branch under
+// test).
+func TestHandleIncomingWithMedia_UnresolvableTargetNotSent(t *testing.T) {
 	mediaTestServer(t, "image-bytes")
-	// Sticky exists so routing resolves, but the named short ID does not.
 	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", stickySessions)
 	mgr.cachedToken = "test-tenant-token"
 	mgr.cachedExp = time.Now().Add(2 * time.Hour)
@@ -184,12 +188,12 @@ func TestHandleIncomingWithMedia_SessionUnavailable(t *testing.T) {
 		return nil
 	}
 
-	mgr.handleIncomingWithMedia(context.Background(), "ou_user1", "@deadbeef hi", "@deadbeef hi",
+	mgr.handleIncomingWithMedia(context.Background(), "ou_user1", "@99999999 hi", "@99999999 hi",
 		[]mediaRef{{key: "img_1", resType: msgTypeImage, filename: "image.png"}}, "om_msg_1")
 
 	select {
 	case msg := <-sent:
-		t.Fatalf("media for an unavailable session must not be sent, got %q", msg)
+		t.Fatalf("media for an unresolvable target must not be sent, got %q", msg)
 	case <-time.After(300 * time.Millisecond):
 	}
 }
