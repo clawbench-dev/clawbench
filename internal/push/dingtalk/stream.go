@@ -74,23 +74,77 @@ func (m *Manager) onChatBotMessage(ctx context.Context, data *chatbot.BotCallbac
 		}
 	}
 
-	// Media messages carry no text to route on, so they always use the sticky
-	// session. Downloading must not block the ack — run it in the background.
-	if _, _, ok := extractMedia(data.Msgtype, data.Content); ok {
-		go m.handleIncomingMedia(context.WithoutCancel(ctx), data, staffID)
+	// Parse the inbound message into the text the user composed and the media
+	// it carried, then route on THAT TEXT. A richText message (text + images)
+	// has an empty data.Text.Content, so routing on it would lose both the
+	// "@{shortID}" target and the images.
+	text, media := parseInbound(data.Msgtype, data)
+
+	// A message we could neither read text from nor download anything from
+	// (audio, video, unknown types) must not become an empty send. Tell the
+	// user instead of silently posting a blank message.
+	if strings.TrimSpace(text) == "" && len(media) == 0 {
+		m.replyUnsupported(ctx, data)
 		return []byte(""), nil
 	}
 
-	m.handleIncomingText(ctx, data, staffID)
+	// Anything with media needs a download, which must not block the ack —
+	// DingTalk re-sends a frame it does not get acknowledged promptly, and a
+	// download is two round trips plus the transfer.
+	if len(media) > 0 {
+		go m.handleIncomingWithMedia(context.WithoutCancel(ctx), data, staffID, text, media)
+		return []byte(""), nil
+	}
+
+	m.handleIncomingText(ctx, data, staffID, text)
 	return []byte(""), nil
+}
+
+// mediaRef is one attachment to download: the downloadCode plus the filename to
+// save it under. The name travels with the code because only the parser knows
+// what the source message type implies (a picture has no name of its own).
+type mediaRef struct {
+	code     string
+	filename string
+}
+
+// parseInbound extracts the user's text and the attachments to download from an
+// inbound callback. It is the single place that knows how each DingTalk message
+// type is shaped, so routing always sees real text.
+//
+// The text body normally lives in data.Text.Content; a richText message is the
+// exception, carrying it inside data.Content instead. Both are handled here so
+// the caller never has to know which.
+func parseInbound(msgType string, data *chatbot.BotCallbackDataModel) (text string, media []mediaRef) {
+	// file/picture: the attachment IS the whole message.
+	if code, filename, ok := extractMedia(msgType, data.Content); ok {
+		return "", []mediaRef{{code: code, filename: filename}}
+	}
+	if msgType == msgTypeRichText {
+		rtText, codes, ok := parseRichText(data.Content)
+		if !ok {
+			return "", nil
+		}
+		refs := make([]mediaRef, 0, len(codes))
+		for _, c := range codes {
+			// A richText picture element carries no name; use the same derived
+			// default the picture message type uses.
+			refs = append(refs, mediaRef{code: c, filename: "image.png"})
+		}
+		return rtText, refs
+	}
+	// Text, and any type we do not model: the body is here when there is one,
+	// and empty for types that carry no text (audio/video/unknown), which the
+	// caller's guard turns into an "unsupported" hint.
+	return data.Text.Content, nil
 }
 
 // handleIncomingText routes a text message. It is synchronous because the
 // session-list and error replies are cheap (the send itself is fire-and-forget
 // into the queue), so the ack is not delayed meaningfully.
-func (m *Manager) handleIncomingText(ctx context.Context, data *chatbot.BotCallbackDataModel, staffID string) {
+func (m *Manager) handleIncomingText(ctx context.Context, data *chatbot.BotCallbackDataModel, staffID, text string) {
 	sticky := m.lastSessionID(staffID)
-	route := common.ClassifyIncoming(data.Text.Content, sticky)
+	route := common.ClassifyIncoming(text, sticky)
 
 	switch route.Kind {
 	case common.RouteListSessions:
@@ -102,57 +156,173 @@ func (m *Manager) handleIncomingText(ctx context.Context, data *chatbot.BotCallb
 	}
 }
 
-// handleIncomingMedia downloads the attached file/picture and sends it to the
-// user's sticky session. Runs in its own goroutine (see onChatBotMessage).
-func (m *Manager) handleIncomingMedia(ctx context.Context, data *chatbot.BotCallbackDataModel, staffID string) {
+// handleIncomingWithMedia downloads the message's attachments and sends them,
+// together with any accompanying text, to the resolved target session. Runs in
+// its own goroutine (see onChatBotMessage).
+//
+// The route is resolved from the parsed text first so an "@{shortID}" works for
+// a media message exactly as it does for a text one; the resolved session also
+// supplies ProjectPath, which is where the downloads land.
+func (m *Manager) handleIncomingWithMedia(ctx context.Context, data *chatbot.BotCallbackDataModel, staffID, text string, media []mediaRef) {
 	replier := chatbot.NewChatbotReplier()
 	sticky := m.lastSessionID(staffID)
 
-	route := common.ClassifyIncomingAttachment(sticky)
+	// ClassifyIncoming also handles "/ls" and the no-target hint, so a media
+	// message that is only "@{shortID}" or "/ls" behaves like its text twin.
+	route := common.ClassifyIncoming(text, sticky)
+	if route.Kind == common.RouteListSessions {
+		m.handleSessionList(ctx, data)
+		return
+	}
 	if route.Kind == common.RouteNoTarget {
 		m.replyNoTarget(ctx, data)
 		return
 	}
+
 	if sessionMessenger == nil {
 		slog.Warn("dingtalk: no session messenger for attachment")
 		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("会话服务不可用，文件未发送。"))
 		return
 	}
 
-	// One lookup serves both the download target (ProjectPath) and the reply
-	// label — resolving the route would repeat the same query.
-	info, err := sessionMessenger.GetSessionInfo(sticky)
+	sessionID, sessionTitle, err := common.ResolveTarget(sessionMessenger, route, sticky)
 	if err != nil {
-		slog.Warn("dingtalk: sticky session unavailable", "error", err, "staff_id", staffID)
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("最近会话不可用，请用 /ls 重新选择会话。"))
-		return
-	}
-	sessionID := info.ID
-
-	entry, err := m.downloadMedia(ctx, data.Msgtype, data.Content, info.ProjectPath)
-	if err != nil {
-		slog.Warn("dingtalk: media download failed", "error", err, "session_id", sessionID)
-		msg := "文件下载失败，未发送。"
-		if errors.Is(err, common.ErrAttachmentTooLarge) {
-			msg = fmt.Sprintf("文件超过大小上限（%d MB），未发送。", common.AttachmentMaxBytes()/(1024*1024))
-		}
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(msg))
+		slog.Warn("dingtalk: session command resolve failed", "error", err, "short_id", route.ShortID)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
 		return
 	}
 
-	// An attachment-only message: no text, the file is the whole content.
-	if err := sessionMessenger.SendMessageToSession(sessionID, "", []model.FileEntry{entry}); err != nil {
+	// ProjectPath decides where the downloads land, so it must come from the
+	// resolved session — not the sticky one, which may differ when the user
+	// named a target explicitly.
+	info, err := sessionMessenger.GetSessionInfo(sessionID)
+	if err != nil {
+		slog.Warn("dingtalk: session unavailable", "error", err, "session_id", sessionID)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("会话不可用，文件未发送。"))
+		return
+	}
+
+	entries, dl := m.downloadAll(ctx, media, info.ProjectPath)
+	if len(entries) == 0 {
+		// Nothing downloadable: report why rather than sending an empty message.
+		slog.Warn("dingtalk: all media downloads failed",
+			"session_id", sessionID, "requested", len(media), "failed", dl.failed)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(m.downloadFailureText(dl)))
+		return
+	}
+
+	// One send carrying the text and every successfully downloaded file, so the
+	// AI sees the question and its attachments as a single turn.
+	if err := sessionMessenger.SendMessageToSession(sessionID, route.Message, entries); err != nil {
 		slog.Warn("dingtalk: send attachment to session failed", "error", err, "session_id", sessionID)
 		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送文件失败: "+err.Error()))
 		return
 	}
 
+	// Only a successful send moves the sticky target (mirrors deliverToSession),
+	// so a failed one does not silently redirect the user's next message.
+	m.rememberSession(staffID, sessionID)
+
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		paths = append(paths, e.Path)
+	}
 	slog.Info("dingtalk: attachment sent to session",
-		"session_id", sessionID, "path", entry.Path, "staff_id", staffID)
+		"session_id", sessionID, "count", len(entries), "paths", paths, "staff_id", staffID)
+
 	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
 		[]byte("文件已发送"),
-		[]byte(fmt.Sprintf("### 文件已发送\n已发送到会话 **%s**，AI 正在处理",
-			common.FormatSessionLabel(sessionID, info.Title))))
+		[]byte(m.attachmentSentMarkdown(sessionID, sessionTitle, len(entries), dl)))
+}
+
+// downloadOutcome summarizes a batch download for the user-facing reply.
+type downloadOutcome struct {
+	sent      int  // files that downloaded and were handed to the session
+	failed    int  // files that could not be downloaded
+	truncated bool // the request exceeded the per-message count cap
+	tooLarge  bool // at least one failure was the size limit
+}
+
+// downloadAll downloads every code into projectPath.
+//
+// A partial failure is not fatal: the caller still sends what did download, so
+// one bad image cannot discard a message that also carried a valid one.
+func (m *Manager) downloadAll(ctx context.Context, media []mediaRef, projectPath string) (entries []model.FileEntry, out downloadOutcome) {
+	maxFiles := common.AttachmentMaxFiles()
+	if len(media) > maxFiles {
+		slog.Warn("dingtalk: truncating attachments to the configured cap",
+			"requested", len(media), "max", maxFiles)
+		media = media[:maxFiles]
+		out.truncated = true
+	}
+
+	for _, ref := range media {
+		entry, err := m.downloadRef(ctx, ref, projectPath)
+		if err != nil {
+			slog.Warn("dingtalk: media download failed", "error", err, "filename", ref.filename)
+			out.failed++
+			if errors.Is(err, common.ErrAttachmentTooLarge) {
+				out.tooLarge = true
+			}
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	out.sent = len(entries)
+	return entries, out
+}
+
+// downloadRef resolves one media reference and saves it under its filename.
+func (m *Manager) downloadRef(ctx context.Context, ref mediaRef, projectPath string) (model.FileEntry, error) {
+	url, err := m.resolveDownloadURL(ctx, ref.code)
+	if err != nil {
+		return model.FileEntry{}, err
+	}
+	entry, err := common.DownloadAttachment(m.httpClient, url, projectPath, ref.filename)
+	if err != nil {
+		return model.FileEntry{}, fmt.Errorf("dingtalk: %w", err)
+	}
+	return entry, nil
+}
+
+// downloadFailureText explains why nothing could be sent. The size-limit case
+// names the configured cap, which is the actionable part for the user.
+func (m *Manager) downloadFailureText(out downloadOutcome) string {
+	if out.tooLarge {
+		return fmt.Sprintf("文件超过大小上限（%d MB），未发送。", common.AttachmentMaxBytes()/(1024*1024))
+	}
+	if out.failed > 1 {
+		return fmt.Sprintf("文件下载失败，未发送（%d 个）。", out.failed)
+	}
+	return "文件下载失败，未发送。"
+}
+
+// attachmentSentMarkdown builds the success reply, noting any partial failure
+// or truncation so the user knows the message was not delivered in full.
+func (m *Manager) attachmentSentMarkdown(sessionID, sessionTitle string, sent int, out downloadOutcome) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "### 文件已发送\n已发送到会话 **%s**，AI 正在处理",
+		common.FormatSessionLabel(sessionID, sessionTitle))
+	if sent > 1 {
+		fmt.Fprintf(&sb, "（共 %d 个文件）", sent)
+	}
+	if out.failed > 0 {
+		fmt.Fprintf(&sb, "\n\n⚠️ 有 %d 个文件下载失败，未发送。", out.failed)
+	}
+	if out.truncated {
+		fmt.Fprintf(&sb, "\n\n⚠️ 附件数量超过上限（%d），仅发送前 %d 个。",
+			common.AttachmentMaxFiles(), sent)
+	}
+	return sb.String()
+}
+
+// replyUnsupported tells the user the message type is not handled, instead of
+// posting an empty message to the session (which is what used to happen).
+func (m *Manager) replyUnsupported(ctx context.Context, data *chatbot.BotCallbackDataModel) {
+	slog.Info("dingtalk: unsupported message type", "msgtype", data.Msgtype)
+	replier := chatbot.NewChatbotReplier()
+	_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(
+		fmt.Sprintf("暂不支持该消息类型（%s）。请发送文字、图片或文件。", data.Msgtype)))
 }
 
 // deliverToSession resolves the route's target and sends the message, then

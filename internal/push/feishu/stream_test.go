@@ -1014,3 +1014,302 @@ func waitForReplyText(t *testing.T, box *replyBox) string {
 	t.Fatal("timed out waiting for a reply")
 	return ""
 }
+
+// --- parsePost ---
+
+// TestParsePost covers Feishu's "post" (rich text) payload, which is how a
+// message mixing text and images arrives. Before this parser the text was sent
+// but every embedded image was silently dropped.
+func TestParsePost(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		wantText string
+		wantBody string
+		wantKeys []string
+		wantOK   bool
+	}{
+		{
+			name:     "title text and image",
+			content:  `{"zh_cn":{"title":"My Title","content":[[{"tag":"text","text":"look"}],[{"tag":"img","image_key":"img_1"}]]}}`,
+			wantText: "My Title\nlook",
+			wantBody: "look",
+			wantKeys: []string{"img_1"},
+			wantOK:   true,
+		},
+		{
+			name:     "no title",
+			content:  `{"zh_cn":{"title":"","content":[[{"tag":"text","text":"@deadbeef hi"}]]}}`,
+			wantText: "@deadbeef hi",
+			wantBody: "@deadbeef hi",
+			wantOK:   true,
+		},
+		{
+			// A title would prefix the body, and SessionCmdRe is ^-anchored, so
+			// routing must use the body-only variant for an @id to match.
+			name:     "titled body still exposes the raw body for routing",
+			content:  `{"zh_cn":{"title":"Title","content":[[{"tag":"text","text":"@deadbeef hi"}]]}}`,
+			wantText: "Title\n@deadbeef hi",
+			wantBody: "@deadbeef hi",
+			wantOK:   true,
+		},
+		{
+			name:     "multiple images across rows",
+			content:  `{"zh_cn":{"content":[[{"tag":"img","image_key":"a"}],[{"tag":"img","image_key":"b"}]]}}`,
+			wantKeys: []string{"a", "b"},
+			wantOK:   true,
+		},
+		{
+			name:     "duplicate image keys deduped",
+			content:  `{"zh_cn":{"content":[[{"tag":"img","image_key":"a"},{"tag":"img","image_key":"a"}]]}}`,
+			wantKeys: []string{"a"},
+			wantOK:   true,
+		},
+		{
+			// Other tags (a/at/emotion/hr/code_block) contribute no text and no
+			// image, and must not break the walk.
+			name:     "non-text non-image tags are ignored",
+			content:  `{"zh_cn":{"content":[[{"tag":"at","user_id":"u1"},{"tag":"text","text":"hi"},{"tag":"emotion","emoji_type":"SMILE"}]]}}`,
+			wantText: "hi",
+			wantBody: "hi",
+			wantOK:   true,
+		},
+		{
+			name:     "image without a key is skipped",
+			content:  `{"zh_cn":{"content":[[{"tag":"img"}]]}}`,
+			wantText: "",
+			wantBody: "",
+			wantOK:   true,
+		},
+		{
+			name:    "malformed JSON",
+			content: `{"zh_cn":`,
+			wantOK:  false,
+		},
+		{
+			name:    "empty content",
+			content: "",
+			wantOK:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text, body, keys, ok := parsePost(tt.content)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if text != tt.wantText {
+				t.Errorf("text = %q, want %q", text, tt.wantText)
+			}
+			if body != tt.wantBody {
+				t.Errorf("bodyText = %q, want %q", body, tt.wantBody)
+			}
+			if len(keys) != len(tt.wantKeys) {
+				t.Fatalf("imageKeys = %v, want %v", keys, tt.wantKeys)
+			}
+			for i := range keys {
+				if keys[i] != tt.wantKeys[i] {
+					t.Errorf("imageKeys[%d] = %q, want %q", i, keys[i], tt.wantKeys[i])
+				}
+			}
+		})
+	}
+}
+
+// TestParseInbound_PostCollectsImages pins the reported defect for Feishu: a
+// post with an image must yield both the text and the image reference.
+func TestParseInbound_PostCollectsImages(t *testing.T) {
+	content := `{"zh_cn":{"title":"","content":[[{"tag":"text","text":"@deadbeef 看看"}],[{"tag":"img","image_key":"img_1"}]]}}`
+
+	text, body, media := parseInbound("post", content)
+
+	if text != "@deadbeef 看看" {
+		t.Errorf("text = %q", text)
+	}
+	if body != "@deadbeef 看看" {
+		t.Errorf("bodyText = %q", body)
+	}
+	if len(media) != 1 {
+		t.Fatalf("media = %d, want the embedded image", len(media))
+	}
+	if media[0].key != "img_1" {
+		t.Errorf("media key = %q, want img_1", media[0].key)
+	}
+	if media[0].resType != "image" {
+		t.Errorf("media resType = %q, want image", media[0].resType)
+	}
+}
+
+// postEvent builds a p2p "post" (rich text) message event.
+func postEvent(content string) *larkim.P2MessageReceiveV1 {
+	chatType := "p2p"
+	senderType := "user"
+	return &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				ChatId:      strPtr("chat1"),
+				MessageId:   strPtr("om_msg_1"),
+				MessageType: strPtr("post"),
+				Content:     strPtr(content),
+			},
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: strPtr("ou_user1")},
+				SenderType: &senderType,
+			},
+		},
+	}
+}
+
+// The reported bug for Feishu: "@session-id" plus an image in one rich-text
+// message. Before the fix the text was delivered but the image was dropped.
+func TestOnMessageReceive_PostWithImageDownloadsAndSends(t *testing.T) {
+	mediaTestServer(t, "image-bytes")
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
+	}
+	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", sessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sentCh := make(chan struct {
+		sid   string
+		msg   string
+		files []model.FileEntry
+	}, 2)
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(sid, msg string, files []model.FileEntry) error {
+		sentCh <- struct {
+			sid   string
+			msg   string
+			files []model.FileEntry
+		}{sid, msg, files}
+		return nil
+	}
+
+	event := postEvent(`{"zh_cn":{"title":"","content":[[{"tag":"text","text":"看看这张图"}],[{"tag":"img","image_key":"img_1"}]]}}`)
+
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sentCh:
+		if got.msg != "看看这张图" {
+			t.Errorf("message = %q, want the post text", got.msg)
+		}
+		if len(got.files) != 1 {
+			t.Fatalf("files = %d, want the embedded image", len(got.files))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out: the post was never delivered")
+	}
+}
+
+// A titled post whose body names a session must still resolve that session: the
+// title would otherwise prefix the body and defeat the ^-anchored @id match.
+func TestOnMessageReceive_PostTitledBodyRoutesExplicitTarget(t *testing.T) {
+	const named = "deadbeef-2222-2222-2222-222222222222"
+	mediaTestServer(t, "image-bytes")
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
+		{ID: named, Title: "Named Session", ProjectPath: project},
+	}
+	// Sticky points elsewhere, so only a correctly parsed @id reaches `named`.
+	mgr, setCalls := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", sessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sentCh := make(chan struct {
+		sid   string
+		msg   string
+		files []model.FileEntry
+	}, 2)
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(sid, msg string, files []model.FileEntry) error {
+		sentCh <- struct {
+			sid   string
+			msg   string
+			files []model.FileEntry
+		}{sid, msg, files}
+		return nil
+	}
+
+	event := postEvent(`{"zh_cn":{"title":"My Title","content":[[{"tag":"text","text":"@deadbeef 看这个"}]]}}`)
+
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sentCh:
+		if got.sid != named {
+			t.Errorf("sent to %q, want the explicitly named session", got.sid)
+		}
+		// The delivered message keeps the title; only routing drops it.
+		if !strings.Contains(got.msg, "看这个") {
+			t.Errorf("message = %q, want the body text", got.msg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the post to be delivered")
+	}
+
+	if len(*setCalls) != 1 || (*setCalls)[0] != named {
+		t.Errorf("sticky target updates = %v, want one write of the named session", *setCalls)
+	}
+}
+
+// An unsupported type (no text, nothing downloadable) must produce a hint
+// rather than an empty send.
+func TestOnMessageReceive_UnsupportedTypeRepliesInsteadOfEmptySend(t *testing.T) {
+	box := replyCapture(t)
+	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", stickySessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sentCh := make(chan string, 1)
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(sid, msg string, files []model.FileEntry) error {
+		sentCh <- msg
+		return nil
+	}
+
+	chatType := "p2p"
+	senderType := "user"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				ChatId:      strPtr("chat1"),
+				MessageId:   strPtr("om_msg_1"),
+				MessageType: strPtr("audio"),
+				Content:     strPtr(`{}`),
+			},
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: strPtr("ou_user1")},
+				SenderType: &senderType,
+			},
+		},
+	}
+
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case msg := <-sentCh:
+		t.Fatalf("nothing must be sent to the session, got msg=%q", msg)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && box.get() == "" {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(box.get(), "暂不支持") {
+		t.Errorf("reply should explain the unsupported type, got %q", box.get())
+	}
+}

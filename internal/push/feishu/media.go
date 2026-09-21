@@ -26,6 +26,10 @@ var larkCliMu sync.Mutex
 const (
 	msgTypeFile  = "file"
 	msgTypeImage = "image"
+	// msgTypePost is Feishu's rich text: a title plus rows of elements that can
+	// mix text and images. It is the only inbound type that carries text and
+	// media TOGETHER, so it needs both a text and a media parse.
+	msgTypePost = "post"
 )
 
 // feishuMediaContent is the "content" object of a file or image callback.
@@ -110,6 +114,14 @@ func (m *Manager) downloadMedia(ctx context.Context, msgType, content, messageID
 	if !ok {
 		return model.FileEntry{}, fmt.Errorf("feishu: not a downloadable media message")
 	}
+	return m.downloadResource(ctx, key, resType, filename, messageID, projectPath)
+}
+
+// downloadResource fetches one attachment by its key and saves it. It is the
+// shared core of the single-attachment (file/image) and multi-attachment
+// (post with embedded images) paths, which differ only in how the key, its
+// resource type and the filename are determined.
+func (m *Manager) downloadResource(ctx context.Context, key, resType, filename, messageID, projectPath string) (model.FileEntry, error) {
 	if messageID == "" {
 		return model.FileEntry{}, fmt.Errorf("feishu: missing message_id for resource download")
 	}
@@ -139,6 +151,6 @@ func (m *Manager) downloadMedia(ctx context.Context, msgType, content, messageID
 	if err != nil {
 		return model.FileEntry{}, fmt.Errorf("feishu: %w", err)
 	}
-	slog.Debug("feishu: attachment saved", "path", entry.Path, "msgtype", msgType)
+	slog.Debug("feishu: attachment saved", "path", entry.Path, "res_type", resType)
 	return entry, nil
 }

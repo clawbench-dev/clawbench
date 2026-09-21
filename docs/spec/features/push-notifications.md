@@ -121,7 +121,9 @@ sequenceDiagram
 - **DB Outbox 可靠投递**：`PushSessionEvent()` / `PushTaskEvent()`（`internal/push/dingtalk/push.go`）遍历 DB 订阅者列表逐个发送。**当 WS 客户端在线时抑制推送**——避免重复通知。订阅者数据由 `internal/service/dingtalk_subscribers.go` 管理
 - **交互式命令**：用户在钉钉单聊中发 `@{短ID} 消息内容` 即可向对应会话发送消息。`handleSessionCommand()`（`internal/push/dingtalk/session_command.go`）解析短 ID、匹配运行中会话、入队消息。`handleSessionList()` 列出最近会话按项目分组。消息正文**保留多行**——解析正则使用 `(?s)` 内联标志使 `.` 匹配换行，否则 `@会话ID` 后的多行消息会被截断为第一行；钉钉与飞书共用 `ParseSessionCommand`，一处修复两边生效
 - **粘性会话（无 ID 默认发送）**：不带 `@{短ID}` 的文本、以及文件/图片消息，一律发往该用户**最近一次成功发送过的会话**（`last_session_id`，见下）。首次使用（无记录）回复「发送 /ls 查看会话列表」。`/ls` 是显式列出会话列表的命令，取代了旧的隐式行为（任何无 `@` 前缀的消息都回列表）。用户显式 `@{短ID}` 发送成功后会把粘性目标切换到该会话；**发送失败不切换**，否则用户的下一条无前缀消息会静默进入一个刚拒绝过它的会话
-- **收发文件与图片**：用户向机器人发送文件（`msgtype=file`）或图片（`msgtype=picture`）时，机器人下载并以**纯附件消息**（`content=""`、`files=[entry]`）发往粘性会话。下载为两步：先用 `downloadCode` 换临时下载链接（`POST /v1.0/robot/messageFiles/download`），再 GET 该链接。落盘到该会话项目的 `.clawbench/uploads/`，与网页上传同目录；大小上限复用 `upload.max_size_mb`（超限回复提示并丢弃，不留半截文件）。回调**立即 ack**，下载在 goroutine 中异步执行——钉钉会重投未及时 ack 的帧，同步下载会造成重复消息
+- **收发文件与图片**：用户向机器人发送文件（`msgtype=file`）或图片（`msgtype=picture`）时，机器人下载并以**纯附件消息**（`content=""`、`files=[entry]`）发往目标会话。下载为两步：先用 `downloadCode` 换临时下载链接（`POST /v1.0/robot/messageFiles/download`），再 GET 该链接。落盘到该会话项目的 `.clawbench/uploads/`，与网页上传同目录；大小上限复用 `upload.max_size_mb`（超限回复提示并丢弃，不留半截文件）。回调**立即 ack**，下载在 goroutine 中异步执行——钉钉会重投未及时 ack 的帧，同步下载会造成重复消息
+- **富文本（文字 + 图片同发）**：用户在同一条消息里既写文字又贴图时，钉钉投递为 `msgtype=richText`，其内容在 `content.richText` 数组里（`{"text":"..."}` 与 `{"downloadCode":"...","type":"picture"}` 混合），而 **`data.Text.Content` 为空**。因此不能拿 `data.Text.Content` 去路由：那样既丢掉 `@{短ID}` 目标、也丢掉图片，还会把**空消息**发进会话（历史缺陷）。`parseInbound`（`internal/push/dingtalk/stream.go`）统一解析各类型：文本片段**直接拼接不加分隔符**（它们是同一行的分段），有 `downloadCode` 的元素即为待下载图片（不依赖 `type` 字段，官方只定义 `picture`），并去重。`extractMedia` 的单附件语义保持不变
+- **未知类型不再发空消息**：`audio`/`video`/`unknownMsgType` 等既无文本也无可下载内容时，回复「暂不支持该消息类型」，而不是向会话发送空字符串
 - **热重载**：`hotReloadDingTalk()`（`cmd/server/main.go`）检测凭证变更后原地重配置或重启 Manager，无需重启服务
 
 ### 初始化桥接
@@ -138,8 +140,20 @@ sequenceDiagram
 - **交互式卡片（Interactive Card）**：`SendPostMessage()`（`internal/push/feishu/sender.go`）调用 `/open-apis/im/v1/messages` API，使用 `msg_type="interactive"` 发送交互式卡片消息，支持 Markdown 渲染（飞书 Post 消息不支持 Markdown 渲染，需用交互式卡片）。4000 字符截断（`truncateForFeishu`）
 - **DB Outbox 可靠投递**：`PushSessionEvent()` / `PushTaskEvent()`（`internal/push/feishu/push.go`）遍历 DB 订阅者列表逐个发送。**当 WS 客户端在线时抑制推送**——避免重复通知。订阅者数据由 `internal/service/feishu_subscribers.go` 管理，存储在 `feishu_subscribers` 表（`user_id`、`chat_id`、`user_name`、`source`）
 - **交互式命令**：用户在飞书单聊中发 `@{短ID} 消息内容` 即可向对应会话发送消息。`handleSessionCommand()`（`internal/push/feishu/stream.go`）解析短 ID、匹配运行中会话、入队消息。`handleSessionList()` 列出最近会话按项目分组
-- **粘性会话与收发文件**：与钉钉行为对齐——不带 `@{短ID}` 的文本和文件/图片消息发往该用户最近成功发送过的会话；`/ls` 显式列出会话；无记录时回复选择提示。文件（`message_type=file`，`file_key`）与图片（`message_type=image`，`image_key`）通过 `GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file|image` 下载（`type` 按消息类型取 `file` 或 `image`），以纯附件消息发往粘性会话。落盘目录与大小上限同钉钉；回调同样立即 ack、下载异步
+- **粘性会话与收发文件**：与钉钉行为对齐——不带 `@{短ID}` 的文本和文件/图片消息发往该用户最近成功发送过的会话；`/ls` 显式列出会话；无记录时回复选择提示。文件（`message_type=file`，`file_key`）与图片（`message_type=image`，`image_key`）通过 `GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file|image` 下载（`type` 按消息类型取 `file` 或 `image`），以纯附件消息发往目标会话。落盘目录与大小上限同钉钉；回调同样立即 ack、下载异步
+- **富文本（文字 + 图片同发）**：飞书对应 `msgtype=post`，内容在 `{"zh_cn":{"title":...,"content":[[{"tag":"text",...},{"tag":"img","image_key":...}]]}}`。`extractTextContent` 只取文本，因此内嵌 `<img>` 会被静默丢弃（历史缺陷）。`parsePost`（`internal/push/feishu/stream.go`）同时收集 `tag=="img"` 的 `image_key` 与正文；`extractTextContent` 的输出保持原样（它前置 title，且有测试固化），路由改用**不含 title 的正文**
 - **热重载**：`hotReloadFeishu()`（`cmd/server/main.go`）检测凭证变更后原地重配置或重启 Manager，无需重启服务。`Reconfigure()` 返回 `NeedsRestart` 标志区分可原地更新与需重启的变更
+
+### 两端共用的分发与路由语义
+
+两个后端的分发结构一致：**先解析 → 再路由 → 再下载 → 一次发送**。
+
+- **用解析出的文本路由，而非原始字段**：钉钉 richText 与飞书 post 的文本都不在「裸文本字段」里，直接拿原始字段会丢目标、丢附件、并发出空消息。这是「`@会话id` + 图片同发」失效的根因
+- **路由变体与投递变体分离**：飞书 post 的 title 会前置到正文，而 `SessionCmdRe` 是 `^` 锚定且**没有** `(?m)`（实测 `"My Title\n@deadbeef hi"` 匹配失败、`"@deadbeef hi"` 成功）。因此路由用去 title 的正文，**投递仍用含 title 的完整文本**（用户写的标题不该被吞）
+- **媒体路径同样尊重 `@{短ID}`**：此前媒体只认粘性会话。现在与文本路径一致，并在发送成功后 `rememberSession` 移动粘性目标（与文本路径的「失败不切换」一致）
+- **附件数量上限**：`common.AttachmentMaxFiles()` 读 `model.UploadMaxFiles`（默认 20），与 `AttachmentMaxBytes()` 同源复用 web 上传设置。一条富文本可内嵌任意张图，每张都是一次 API 调用加一个落盘文件，故需要独立的条数上限；超限截断并在回复里说明
+- **部分失败不吞**：多附件下载时成功的照发、失败的在回复里点名；全部失败则只回错误提示，**不发送空消息**
+- **单附件路径行为不变**：`file`/`picture`/`image` 仍走原有单附件逻辑，避免影响既有行为与测试
 
 ### 初始化桥接
 

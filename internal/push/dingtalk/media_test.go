@@ -493,3 +493,142 @@ func TestResolveDownloadURLOnce_GetTokenFailure(t *testing.T) {
 		t.Errorf("error should mention the token step, got %v", err)
 	}
 }
+
+// --- parseRichText ---
+
+// TestParseRichText covers the richText payload, which is how DingTalk delivers
+// a message that mixes text and images (e.g. "@abc look at this" + a
+// screenshot). Before this parser existed the whole message was dropped: the
+// text lived in content rather than data.Text.Content, so the bot routed an
+// empty string and posted a blank message to the session.
+func TestParseRichText(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   any
+		wantText  string
+		wantCodes []string
+		wantOK    bool
+	}{
+		{
+			name: "text and picture",
+			content: map[string]any{"richText": []any{
+				map[string]any{"text": "@abc look at this"},
+				map[string]any{"downloadCode": "code-1", "type": "picture"},
+			}},
+			wantText:  "@abc look at this",
+			wantCodes: []string{"code-1"},
+			wantOK:    true,
+		},
+		{
+			name: "picture only",
+			content: map[string]any{"richText": []any{
+				map[string]any{"downloadCode": "code-1", "type": "picture"},
+			}},
+			wantText:  "",
+			wantCodes: []string{"code-1"},
+			wantOK:    true,
+		},
+		{
+			name: "text only",
+			content: map[string]any{"richText": []any{
+				map[string]any{"text": "just words"},
+			}},
+			wantText:  "just words",
+			wantCodes: nil,
+			wantOK:    true,
+		},
+		{
+			// Fragments are runs of one line, so they must join with no
+			// separator — a space would corrupt the text and could break an
+			// "@{shortID}" prefix match.
+			name: "fragments concatenate without a separator",
+			content: map[string]any{"richText": []any{
+				map[string]any{"text": "@deadbeef "},
+				map[string]any{"text": "please review"},
+			}},
+			wantText:  "@deadbeef please review",
+			wantCodes: nil,
+			wantOK:    true,
+		},
+		{
+			// The docs only define "picture", so a present downloadCode is the
+			// reliable signal rather than the type field.
+			name: "missing type field is still media",
+			content: map[string]any{"richText": []any{
+				map[string]any{"downloadCode": "code-1"},
+			}},
+			wantCodes: []string{"code-1"},
+			wantOK:    true,
+		},
+		{
+			name: "duplicate codes are deduped",
+			content: map[string]any{"richText": []any{
+				map[string]any{"downloadCode": "code-1"},
+				map[string]any{"downloadCode": "code-1"},
+				map[string]any{"downloadCode": "code-2"},
+			}},
+			wantCodes: []string{"code-1", "code-2"},
+			wantOK:    true,
+		},
+		{
+			name:      "multiple pictures keep order",
+			content:   map[string]any{"richText": []any{map[string]any{"downloadCode": "a"}, map[string]any{"downloadCode": "b"}}},
+			wantCodes: []string{"a", "b"},
+			wantOK:    true,
+		},
+		{
+			name:      "empty richText list",
+			content:   map[string]any{"richText": []any{}},
+			wantText:  "",
+			wantCodes: nil,
+			wantOK:    true,
+		},
+		{
+			// The SDK types Content as interface{}, but a JSON-encoded string is
+			// also possible; it must be unwrapped rather than treated as text.
+			name:      "content as a JSON string",
+			content:   `{"richText":[{"text":"hi"},{"downloadCode":"code-9"}]}`,
+			wantText:  "hi",
+			wantCodes: []string{"code-9"},
+			wantOK:    true,
+		},
+		{
+			name:    "malformed JSON string is rejected",
+			content: `{"richText":`,
+			wantOK:  false,
+		},
+		{
+			name:    "unrelated object is not richText",
+			content: map[string]any{"downloadCode": "code-1"},
+			wantOK:  true, // decodes fine; simply has no richText entries
+		},
+		{
+			name:    "nil content",
+			content: nil,
+			wantOK:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text, codes, ok := parseRichText(tt.content)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if text != tt.wantText {
+				t.Errorf("text = %q, want %q", text, tt.wantText)
+			}
+			if len(codes) != len(tt.wantCodes) {
+				t.Fatalf("codes = %v, want %v", codes, tt.wantCodes)
+			}
+			for i := range codes {
+				if codes[i] != tt.wantCodes[i] {
+					t.Errorf("codes[%d] = %q, want %q", i, codes[i], tt.wantCodes[i])
+				}
+			}
+		})
+	}
+}
