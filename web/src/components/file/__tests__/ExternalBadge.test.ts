@@ -60,4 +60,21 @@ describe('ExternalBadge', () => {
     expect(wrapper.find('.external-badge svg').exists()).toBe(true)
     expect(wrapper.find('.external-badge').text().trim()).toBe('External')
   })
+
+  it('picks a different icon for a directory than for a file', () => {
+    // The two kinds share one word, so the icon is the ONLY thing telling them
+    // apart. If both branches ever collapsed to the same component the badge
+    // would still render — and silently stop distinguishing anything.
+    const dirIcon = mountBadge({ kind: 'dir' }).find('.external-badge svg').classes()
+    const fileIcon = mountBadge({ kind: 'file' }).find('.external-badge svg').classes()
+    expect(dirIcon).toContain('lucide-folder-open')
+    expect(fileIcon).toContain('lucide-file-text')
+    expect(dirIcon).not.toEqual(fileIcon)
+  })
+
+  it('defaults to the file icon when no kind is given', () => {
+    // Callers drop the badge next to a filename in the common case, so a
+    // forgotten `kind` must read as a file rather than as a directory.
+    expect(mountBadge().find('.external-badge svg').classes()).toContain('lucide-file-text')
+  })
 })
