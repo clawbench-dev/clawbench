@@ -312,7 +312,11 @@ jobs:
       - name: Build debug APK
         working-directory: android
         run: |
-          VERSION_CODE=$(git rev-list --count HEAD)
+          # Nearest version tag, not `git rev-list --count HEAD`: the default
+          # depth=1 checkout makes the commit count collapse to 1.
+          # $GITHUB_WORKSPACE because this step runs with working-directory=android.
+          # See scripts/lib/version-code.sh.
+          VERSION_CODE=$("$GITHUB_WORKSPACE/scripts/lib/version-code.sh")
           VERSION_NAME=$(git describe --tags --always 2>/dev/null || echo "dev")
           ./gradlew assembleDebug -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
 

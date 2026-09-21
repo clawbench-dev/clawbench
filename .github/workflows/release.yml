@@ -494,7 +494,15 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          VERSION_CODE=$(git rev-list --count HEAD)
+          # versionCode comes from the nearest version tag, not the commit count:
+          # actions/checkout defaults to depth=1, so `git rev-list --count HEAD`
+          # returns 1 here and every release APK shipped versionCode=1 — unable
+          # to replace an older dev build. --assert turns a recurrence into a
+          # failed release instead of a silently un-installable APK.
+          # $GITHUB_WORKSPACE, not a relative path: this step runs with
+          # working-directory=android.
+          # See scripts/lib/version-code.sh.
+          VERSION_CODE=$("$GITHUB_WORKSPACE/scripts/lib/version-code.sh" --assert)
           VERSION_NAME=$(git describe --tags --always 2>/dev/null || echo "dev")
           ./gradlew assembleRelease -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
 

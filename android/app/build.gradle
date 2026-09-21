@@ -21,14 +21,41 @@ def autoVersionName() {
 
 /**
  * Auto-generate versionCode when not provided via -PversionCode.
- * Uses `git rev-list --count HEAD` (total commit count) for a monotonically
- * increasing integer, matching the strategy used by build.sh and CI.
+ *
+ * Mirrors scripts/lib/version-code.sh — that script is the single source of
+ * truth; this is only the fallback for a bare `./gradlew assembleRelease` that
+ * does not pass -PversionCode (build.sh and CI always pass it).
+ *
+ *     versionCode = major*100000000 + minor*100000 + patch*1000 + distance
+ *
+ * derived from `git describe --tags --long --match 'v[0-9]*'`. The previous
+ * implementation used `git rev-list --count HEAD`, which silently collapses to
+ * 1 under a shallow clone — and actions/checkout defaults to depth=1, so every
+ * released APK shipped versionCode=1 and could not replace an older dev build.
+ *
+ * Fail-open to 1 when no version tag is reachable; a version outside the
+ * supported range is a hard error (see version-code.sh for the rationale).
  */
 def autoVersionCode() {
     if (project.hasProperty('versionCode')) return project.property('versionCode').toInteger()
     try {
-        def code = 'git rev-list --count HEAD'.execute([], rootDir).text.trim()
-        return code ? code.toInteger() : 1
+        def desc = 'git describe --tags --long --match v[0-9]*'.execute([], rootDir).text.trim()
+        def m = desc =~ /^v(\d+)\.(\d+)\.(\d+)-(\d+)-g[0-9a-f]+$/
+        if (!m.matches()) return 1
+        int major = m[0][1] as int
+        int minor = m[0][2] as int
+        int patch = m[0][3] as int
+        int distance = m[0][4] as int
+        if (major > 20) throw new GradleException("versionCode: major=$major exceeds the supported maximum (20)")
+        if (minor > 999) throw new GradleException("versionCode: minor=$minor exceeds the supported maximum (999)")
+        if (patch > 99) throw new GradleException("versionCode: patch=$patch exceeds the supported maximum (99)")
+        if (distance > 999) {
+            logger.warn("versionCode: distance=$distance since $desc clamped to 999")
+            distance = 999
+        }
+        return major * 100000000 + minor * 100000 + patch * 1000 + distance
+    } catch (GradleException e) {
+        throw e
     } catch (Exception e) {
         return 1
     }
