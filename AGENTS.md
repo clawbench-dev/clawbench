@@ -107,17 +107,18 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 | `bridge.ts` | IPC 桥：服务器列表/凭据、SSH 端口映射、文件下载、分享、系统通知、主题、语言、日志捕获、屏幕常亮 |
 | `tunnel.ts` | ssh2 客户端，读取 `/api/ssh/info` 建立 SSH 端口映射 |
 | `download.ts` | 文件下载（保存对话框 + 下载后定位）、URL/Blob 下载 |
-| `notification.ts` | 原生系统通知，点击导航到会话/任务/仓库（冷启动挂起派发，`rendererReady` 握手后才放行）。窗口**可见且未最小化**时**抑制通知**（刻意不看焦点：窗口开着就不打扰）——用户开着应用，通知只会重复应用内完成卡片；判定必须在主进程做，渲染层的 `document.hasFocus()` 在最小化/隐藏窗口里仍可能为真 |
+| `notification.ts` | 原生系统通知，点击导航到会话/任务/仓库（冷启动挂起派发，`navReady` 握手后才放行）。窗口**可见且未最小化**时**抑制通知**（刻意不看焦点：窗口开着就不打扰）——用户开着应用，通知只会重复应用内完成卡片；判定必须在主进程做，渲染层的 `document.hasFocus()` 在最小化/隐藏窗口里仍可能为真 |
 | `clientLog.ts` | 主进程日志回传：缓冲 POST `/api/client-log`（`source="electron"`）+ 写 `{userData}/desktop.log`；镜像渲染进程 console，`recordError` 上报未捕获异常 |
 | `identity.ts` | `APP_USER_MODEL_ID`（Windows toast 身份），**必须与 `electron-builder.yml` 的 `appId` 一致**——该 yml 不随包分发，运行时读不到，漂移会让 Windows 通知静默消失；`identity.test.ts` 守住 |
 | `urlPolicy.ts` / `contextMenu.ts` | 外部链接判定（以服务器 Origin 为边界）与原生右键菜单（标准项走 OS role 本地化） |
 | `navReady.ts` / `session.ts` | 渲染进程就绪握手、会话缓存强刷 |
+| `shortcuts.ts` | 应用级快捷键决策表（`before-input-event` 只认领 Ctrl+Shift+R / F12，F5 等一律放行给页面），不 import electron 便于单测 |
 | `updater.ts` | 升级检查：请求**服务端** `/api/desktop/latest`（不查 npm）；语义化版本比较，降级不误报 |
 | `install.ts` | 自升级安装：多候选 URL 依次降级下载 → SRI 校验 → 解压 zip（剥顶层包装目录、拒绝路径穿越、**恢复可执行位**）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针 |
 | `secrets.ts` / `store.ts` | safeStorage 加密存密码、electron-store 持久化服务器列表/主题/语言 |
 | `powersave.ts` | 屏幕常亮（powerSaveBlocker） |
 
-**自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；`npm/desktop-main/bin/clawbench-desktop.js` 启动时读该指针决定运行哪个版本（指针缺失/目录不存在则回退到 npm 包自带版本），因此失败可回滚、旧版本保留。
+**自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；**应用自己**在 `whenReady` 最前面读该指针决定运行哪个版本（`selectStartupVersion` + `handOffToPointedVersion`）——指针缺失、目标目录不存在或指向自身都清指针并继续用当前版本启动，因此失败可回滚、旧版本保留，被删坏或写坏的升级永远不会让应用打不开。必须由应用自己读：原先读指针的 npm 启动器已随 npm 渠道一并移除，双击 Release 解压出的旧 exe 时若无人读指针，会静默退回旧版。
 
 **全量包以 GitHub Release 为准，载荷包只走 npm**：桌面端与服务端同版本发布，`/api/desktop/latest` 直接返回服务端自身版本 + 资产地址，**不查询任何外部服务**（不查 npm、不查 GitHub API）。每个平台返回**候选 URL 列表**（国内镜像优先、直连 github.com 兜底），客户端与前端都取首个可用项。
 
@@ -127,7 +128,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 **桌面壳不是"手机 App 模式"**：两者都经原生桥被识别为原生环境，但省电策略相反——Android 退到后台会被系统挂起，故隐藏时主动断开 WebSocket；桌面窗口只是最小化、进程仍在跑，断开 WS 等于自断通知来源（通知全部由 WS 事件产生）。前端用 `isDesktopApp`（preload 注入 → `useAppMode` → 消费点三层打通）区分，门控写成 `isAppMode && !isDesktopApp`。任何一层漏掉都会让最小化后的推送静默失效。端口映射同理要按"期望状态"而非快照管理：重连后必须重建全部 listener，`ensureTunnel` 需单飞守卫（并发调用会互相拆台）。
 
-构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job 打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 发三个 `@xulongzhe/clawbench-desktop-<plat>-payload` 包（linux-x64 / linux-arm64 / win32-x64；darwin 从不发 npm）。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。
+构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job（linux / linux-arm64 / windows / macos）打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 发三个 `@xulongzhe/clawbench-desktop-<plat>-payload` 包（linux-x64 / linux-arm64 / win32-x64；darwin 从不发 npm）；`publish-npm` 只发服务端 CLI `@xulongzhe/clawbench`。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。`win.signAndEditExecutable` **不要**在 electron-builder.yml 里禁用——CI 的 windows job 原生可用 rcedit，禁用会跳过向 exe 写入图标与版本元数据；本地无 wine 交叉编译时才用命令行临时覆盖。
 
 ## 开发规则
 

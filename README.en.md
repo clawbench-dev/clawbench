@@ -121,8 +121,8 @@ clawbench
 | 🔀 **SSH Tunnel** | Transparent for all protocols (HTTP/HTTPS/WS/SSE/gRPC), arbitrary target hosts, automatic port allocation, health check & reconnect, one-tap localhost URL |
 | 🎨 **Themes** | **36 named themes**, live system-follow, **custom wallpaper** (upload or local path + opacity/blur), custom fonts, quick theme picker |
 | 📱 **Multi-Device** | Android App (native bridge, **floating status window**, **Live Updates / Dynamic Island**, self-update, version-mismatch detection, full i18n), installable PWA, full local run on a phone via Termux |
-| 🖥️ **Desktop Client** | Electron shell hosting the same Web UI; native system notifications (click to open session/task, **still delivered while minimized**), native context menu, external links to default browser, **SSH port mapping**, multi-server management (safeStorage-encrypted credentials), **self-update** (side-by-side install + pointer switch, rollback-capable; GitHub mirror in CN), Ctrl+F5 hard refresh |
-| 🔔 **Notifications** | Sound + haptics, browser push, task-completion push, **DingTalk / Feishu bot push** (browse sessions and send messages from IM) |
+| 🖥️ **Desktop Client** | Electron shell hosting the same Web UI; native system notifications (click to open session/task/repo, **still delivered while minimized**), native context menu, external links to default browser, **SSH port mapping** (keepalive + auto-reconnect), multi-server management (safeStorage-encrypted credentials), **self-update** (side-by-side install + pointer switch, rollback-capable; GitHub mirror in CN), `Ctrl+Shift+R` hard refresh / `F12` DevTools |
+| 🔔 **Notifications** | Sound + haptics, desktop system notifications, task-completion push, **DingTalk / Feishu bot push** (browse sessions and send messages from IM) |
 | 🔒 **Security** | Salted SHA-256 password, path-traversal protection, Git argument-injection guards, XSS sanitization (DOMPurify), **short-lived HMAC tokens** (local requests no longer trusted by address alone), TLS auto-discovery, per-instance cookie isolation |
 
 ---
