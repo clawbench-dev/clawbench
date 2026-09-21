@@ -705,21 +705,26 @@ function handleCopyMessage() {
     max-width: 100%;
     box-sizing: border-box;
     contain: style;
-    /* Skip layout/paint for messages scrolled out of view.
-       A heavy session holds hundreds of messages in the DOM (no virtual
-       scroller), and a Chrome trace of one showed a single 417ms Layout with
-       689/909 dirty objects — i.e. the whole document relaid out because one
-       message changed. `content-visibility: auto` lets the browser skip
-       offscreen subtrees entirely.
-       `contain-intrinsic-size: auto <h>` gives offscreen messages a remembered
-       (once-measured) height instead of a bare guess, which keeps scrollHeight
-       stable enough for the pin-to-bottom / prepend-restore logic in
-       ChatMessageList to keep working. It MUST stay: without it, offscreen
-       messages collapse to 0 height and `scrollTop = scrollHeight` overshoots.
-       NOTE: jsdom has no layout engine, so tests cannot observe the scroll
-       consequences of this rule — it needs real-device verification. */
-    content-visibility: auto;
-    contain-intrinsic-size: auto 240px;
+    /* DO NOT reintroduce `content-visibility: auto` here.
+       It was tried (16382ef31) to skip layout/paint for offscreen messages, but
+       it makes scrollHeight depend on a per-ELEMENT remembered height: an
+       offscreen message is laid out from `contain-intrinsic-size: auto 240px`
+       until it has been measured once. Message heights range from ~66px to
+       several thousand (code blocks, thinking), so that guess is wildly wrong.
+
+       ChatMessageList remounts the whole list on every structural change
+       (`:key="listKey"`, which includes the message COUNT — so every send).
+       Remounting creates fresh elements, discarding the remembered heights, so
+       at that instant scrollHeight collapses to the estimate. The browser then
+       clamps scrollTop up to the shrunken maximum (the "jumps to the middle"
+       half) and followToBottom pins against that same wrong height; as the
+       browser re-measures, the ResizeObserver backstop re-pins and the view
+       lurches down again (the second half). Both hops are instant scrollTop
+       writes, so it reads as a flicker rather than a scroll.
+
+       Measured on a real 20-message/12.7MB session: scrollTop 5018 → 4050
+       (up 968px) → 5710 (down 1660px). Isolated to this rule — with it
+       removed, or with no remount, the jump is 0px. */
 }
 
 /* ── Leaked form/XML control wrapping guard ──
