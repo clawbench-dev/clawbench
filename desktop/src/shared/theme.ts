@@ -12,6 +12,9 @@
 /** Theme used when nothing is persisted or the ID is unknown. */
 export const DEFAULT_THEME_ID = 'github-dark'
 
+/** Light counterpart of {@link DEFAULT_THEME_ID}, used for legacy 'light'. */
+export const DEFAULT_LIGHT_THEME_ID = 'github-light'
+
 /**
  * Dark theme IDs, mirroring `web/src/utils/themeMeta.ts` (the authoritative
  * registry) and the `DARK_IDS` list inlined in `desktop/assets/login.html`.
@@ -47,4 +50,20 @@ export const DARK_THEME_IDS: readonly string[] = [
 /** Returns true when the theme ID denotes a dark colour scheme. */
 export function isDarkThemeId(themeId: string): boolean {
   return DARK_THEME_IDS.includes(themeId)
+}
+
+/**
+ * Normalise a stored theme value to a real theme ID.
+ *
+ * Older builds persisted a collapsed 'dark' / 'light' instead of the full ID.
+ * Such a value matches no `[data-theme="..."]` rule, so the login page renders
+ * with every colour variable undefined (transparent inputs and buttons). Map
+ * those two legacy values onto the default for their colour scheme so an
+ * existing install recovers without the user touching settings.
+ */
+export function normalizeThemeId(stored: string | undefined | null): string {
+  if (!stored) return DEFAULT_THEME_ID
+  if (stored === 'dark') return DEFAULT_THEME_ID
+  if (stored === 'light') return DEFAULT_LIGHT_THEME_ID
+  return stored
 }

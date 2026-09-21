@@ -1,5 +1,5 @@
 import { app, ipcMain, shell, clipboard, nativeTheme } from 'electron'
-import { DEFAULT_THEME_ID, isDarkThemeId } from '../shared/theme'
+import { DEFAULT_THEME_ID, isDarkThemeId, normalizeThemeId } from '../shared/theme'
 import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
@@ -136,7 +136,10 @@ export function registerBridge(): void {
   ipcMain.on('native:set-push-enabled', (_e, enabled: boolean) => getStore().set('nativePushEnabled', enabled))
   ipcMain.on('native:update-last-seen', (_e, id: string) => { /* desktop has no SharedPreferences */ })
   ipcMain.on('native:keep-screen-on', (_e, on: boolean) => setKeepScreenOnImpl(on))
-  ipcMain.on('native:get-theme', (e) => { e.returnValue = getStore().get('theme') || DEFAULT_THEME_ID })
+  // Normalise on read: an older build may have persisted a collapsed
+  // 'dark'/'light', which matches no [data-theme] rule and would leave the
+  // login page with every colour variable undefined.
+  ipcMain.on('native:get-theme', (e) => { e.returnValue = normalizeThemeId(getStore().get('theme')) })
   ipcMain.on('native:set-theme', (_e, theme: string) => {
     // Persist the full theme ID (e.g. 'github-dark', 'nord'), NOT a collapsed
     // 'dark'/'light'. The login page resolves colours from

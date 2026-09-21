@@ -1,12 +1,23 @@
 import Store from 'electron-store'
 import type { ServerEntry } from './types'
+import { DEFAULT_THEME_ID } from '../shared/theme'
 
 export interface ServerListSchema {
   servers: ServerEntry[]
   serverUrl: string
   sshPasswordEncrypted: string | null
   nativePushEnabled: boolean
-  theme: 'dark' | 'light'
+  /**
+   * Full theme ID (e.g. 'github-dark', 'nord'), never a collapsed
+   * 'dark'/'light'. The login page resolves its colours from
+   * `[data-theme="<id>"]` blocks and has no rule for a bare 'dark', so a
+   * collapsed value leaves every colour variable undefined and the page renders
+   * with transparent inputs and buttons.
+   *
+   * This default matters on a FRESH INSTALL: nothing has called setTheme yet,
+   * so this value is what the first login page renders with.
+   */
+  theme: string
   // Language selected in the web UI, mirrored here so the native surfaces that
   // render OUTSIDE the web page (context-menu labels, the first-run login page)
   // follow the user's choice instead of the OS locale.
@@ -18,7 +29,7 @@ const defaults: ServerListSchema = {
   serverUrl: '',
   sshPasswordEncrypted: null,
   nativePushEnabled: true,
-  theme: 'dark',
+  theme: DEFAULT_THEME_ID,
   language: '',
 }
 
