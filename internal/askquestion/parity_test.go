@@ -23,6 +23,13 @@ type corpus struct {
 		WantParsed   []bool   `json:"wantParsed"`
 		WantItems    [][]Item `json:"wantItems"`
 		WantStripped string   `json:"wantStripped"`
+		// WantFallbacks pins the text an unparsed span degrades to. It is what
+		// a legacy span renders as, so a regression there is a user-visible
+		// defect (leaked `false`, a lost separator) rather than a test detail.
+		WantFallbacks []string `json:"wantFallbacks"`
+		// WantReasons pins the reason code of every span, so a legacy span
+		// cannot silently become a parse failure (or vice versa).
+		WantReasons []string `json:"wantReasons"`
 	} `json:"extract"`
 }
 
@@ -78,6 +85,17 @@ func TestParityCorpus_Extract(t *testing.T) {
 				if !reflect.DeepEqual(ms[i].Items, tc.WantItems[i]) {
 					t.Errorf("match %d items mismatch\n got: %+v\nwant: %+v",
 						i, ms[i].Items, tc.WantItems[i])
+				}
+			}
+			for i := range tc.WantFallbacks {
+				if ms[i].Fallback != tc.WantFallbacks[i] {
+					t.Errorf("match %d fallback mismatch\n got: %q\nwant: %q",
+						i, ms[i].Fallback, tc.WantFallbacks[i])
+				}
+			}
+			for i := range tc.WantReasons {
+				if ms[i].Reason != tc.WantReasons[i] {
+					t.Errorf("match %d reason = %q, want %q", i, ms[i].Reason, tc.WantReasons[i])
 				}
 			}
 			if got := Strip(tc.Text, ms); got != tc.WantStripped {

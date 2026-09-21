@@ -8,6 +8,7 @@ import {
   parseItems,
   stripAskMatches,
   unparsedReasons,
+  ReasonLegacyFormat,
   type AskItem,
 } from '@/utils/askQuestion.ts'
 
@@ -364,5 +365,132 @@ describe('helpers', () => {
     expect(q.question).toBe('Q?')
     expect(q.options[0]).toEqual({ label: 'A', description: 'd' })
     expect(q.options[1]).toEqual({ label: 'B' })
+  })
+})
+
+// ─── Legacy <ask-question> degradation ──────────────────────────────────
+//
+// The pre-rename tag is no longer read as a card. It degrades to readable
+// Markdown instead, so a parser-only field value (`false`) and a lost
+// label/description separator cannot reach the message body. Mirrors
+// internal/askquestion/legacy_test.go.
+
+const legacy = (payload: string) => `<ask-question>\n${payload}\n</ask-question>`
+
+describe('legacy <ask-question> degradation', () => {
+  it('never becomes a card', () => {
+    const text = legacy('<item><header>H</header><question>Q?</question><option><label>A</label></option></item>')
+    const ms = extractAskMatches(text)
+    expect(ms).toHaveLength(1)
+    expect(ms[0].parsed).toBeNull()
+    expect(ms[0].reason).toBe(ReasonLegacyFormat)
+    expect(hasParsedMatches(ms)).toBe(false)
+  })
+
+  it('drops the multi-select value instead of leaking `false`', () => {
+    const text = legacy(
+      '<item>\n<header>下一步</header>\n<multi-select>false</multi-select>\n' +
+      '<question>你想怎么做？</question>\n' +
+      '<option><label>只修本地能用</label><description>先保证自己 iOS 上传恢复</description></option>\n</item>',
+    )
+    const fb = extractAskMatches(text)[0].fallback ?? ''
+    expect(fb).not.toContain('false')
+    expect(fb).toBe('**下一步**\n你想怎么做？\n- 只修本地能用 — 先保证自己 iOS 上传恢复')
+  })
+
+  it('keeps the separator between label and description', () => {
+    const text = legacy('<item><question>Q?</question><option><label>Option A</label><description>Fast</description></option></item>')
+    expect(extractAskMatches(text)[0].fallback).toContain('Option A — Fast')
+  })
+
+  it('prefers the option body text over its attribute', () => {
+    // Production has 320 options shaped `<option value="A">A. ...</option>`.
+    const text = legacy('<item><question>Q?</question><option value="A">A. 只读可见性</option><option value="B">B. 双向同步</option></item>')
+    const fb = extractAskMatches(text)[0].fallback ?? ''
+    expect(fb).toContain('- A. 只读可见性')
+    expect(fb).toContain('- B. 双向同步')
+  })
+
+  it('falls back to the attribute when the body is empty', () => {
+    const text = legacy('<item><question>Q?</question><option value="only"></option></item>')
+    expect(extractAskMatches(text)[0].fallback).toContain('- only')
+  })
+
+  it('bounds an unclosed payload at its last child close', () => {
+    const text = '前言\n<ask-question>\n<item><header>H</header><question>Q?</question>' +
+      '<option><label>A</label></option></item>\n\n后续正文必须保留。'
+    const ms = extractAskMatches(text)
+    expect(ms).toHaveLength(1)
+    expect(ms[0].fallback).not.toContain('后续正文必须保留。')
+    expect(stripAskMatches(text, ms)).toContain('后续正文必须保留。')
+  })
+
+  it('does not let an unclosed payload swallow a sibling', () => {
+    const text = '<ask-question>\n<item><header>Q1</header><question>A?</question><option><label>X</label></option></item>\n' +
+      '<ask-question>\n<item><header>Q2</header><question>B?</question><option><label>Y</label></option></item>\n</ask-question>'
+    const ms = extractAskMatches(text)
+    expect(ms).toHaveLength(2)
+    expect(ms[0].fallback).not.toContain('Q2')
+    expect(ms[1].fallback).toContain('Q2')
+  })
+
+  it('leaves a prose mention untouched', () => {
+    for (const text of [
+      '要发起提问，就用 <ask-question> 标签包起来。',
+      'the fix stripped <ask-question> tags from e.blocks, then Finalize ran',
+    ]) {
+      expect(extractAskMatches(text)).toHaveLength(0)
+    }
+  })
+
+  it('ignores the tag inside code contexts', () => {
+    for (const text of [
+      '用 `<ask-question>` 标签来提问。',
+      '示例：\n\n```\n<ask-question>\n<item><question>Q?</question></item>\n</ask-question>\n```\n\n完毕。',
+    ]) {
+      expect(extractAskMatches(text)).toHaveLength(0)
+    }
+  })
+
+  it('salvages broken JSON by field name', () => {
+    const text = legacy('{"questions":[{"header":"文件命名","multiSelect":false,"options":[{"label":"claude_tool.go","description":"Claude 协议族"}],"question":"工具解析文件命名？"}]}}')
+    const fb = extractAskMatches(text)[0].fallback ?? ''
+    expect(fb).not.toContain('{')
+    expect(fb).toContain('文件命名')
+    expect(fb).toContain('工具解析文件命名？')
+    expect(fb).toContain('claude_tool.go — Claude 协议族')
+  })
+
+  it('drops DSML harness artifacts', () => {
+    const text = '<ask-question>\n  <item>\n    <header>图标颜色</｜parameter>\n' +
+      '</｜invoke>\n</｜tool_calls>'
+    const fb = extractAskMatches(text)[0].fallback ?? ''
+    expect(fb).not.toContain('DSML')
+    expect(fb).toContain('图标颜色')
+  })
+
+  it('keeps a truncated payload readable', () => {
+    const fb = extractAskMatches('<ask-question>\n  <item>\n    <header>下一步')[0].fallback
+    expect(fb).toBe('下一步')
+  })
+
+  it('does not affect the current tag', () => {
+    const ms = extractAskMatches(`<${TAG}>\n**H**\nQ?\n- A\n</${TAG}>`)
+    expect(ms).toHaveLength(1)
+    expect(ms[0].parsed).not.toBeNull()
+  })
+
+  it('keeps both tags in source order in one block', () => {
+    const text = '旧：\n<ask-question>\n<item><header>Old</header><question>Q?</question>' +
+      '<option><label>A</label></option></item>\n</ask-question>\n新：\n' +
+      `<${TAG}>\n**New**\nQ?\n- B\n</${TAG}>`
+    const ms = extractAskMatches(text)
+    expect(ms).toHaveLength(2)
+    expect(ms[0].start).toBeLessThan(ms[1].start)
+    expect(ms[0].parsed).toBeNull()
+    expect(ms[1].parsed).not.toBeNull()
+    const stripped = stripAskMatches(text, ms)
+    expect(stripped).toContain('**Old**')
+    expect(stripped).not.toContain('Old</header>')
   })
 })
