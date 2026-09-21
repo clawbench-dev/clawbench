@@ -98,12 +98,21 @@ describe('handleShortcut', () => {
 
   describe('keys that must fall through to the page', () => {
     it('leaves a bare F5 to the renderer', () => {
-      // The terminal sends F5 (ESC[15~) to the TUI and the file manager
-      // refreshes its listing on F5. Claiming it here would break both.
+      // F5 must reach the page, which decides what it means: the terminal
+      // forwards it to the TUI, the file manager refreshes its listing, and
+      // otherwise the renderer reloads (useF5Reload). Claiming it in the main
+      // process would suppress the page's keydown entirely and break all three.
       expect(handleShortcut(key({ key: 'F5' }), false, handlers)).toBe(false)
       expect(handleShortcut(key({ key: 'F5' }), true, handlers)).toBe(false)
       expect(hardReloadSpy).not.toHaveBeenCalled()
       expect(devToolsSpy).not.toHaveBeenCalled()
+    })
+
+    it('leaves Ctrl+R to the renderer as well', () => {
+      // The file manager also refreshes on Ctrl+R. Only the Ctrl+Shift+R
+      // variant (cache-clearing) belongs to the main process.
+      expect(handleShortcut(key({ key: 'r', control: true }), false, handlers)).toBe(false)
+      expect(hardReloadSpy).not.toHaveBeenCalled()
     })
 
     it('leaves other function keys to the renderer', () => {
