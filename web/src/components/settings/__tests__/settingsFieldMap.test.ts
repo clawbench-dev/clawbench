@@ -256,11 +256,25 @@ describe('settingsFieldMap', () => {
     const cfg = panels[0]
     expect(cfg.enableKey).toBe('terminal.enabled')
     expect(cfg.enableLabelKey).toBe('settings.items.terminalEnabled')
-    expect(cfg.commonFields.length).toBe(5)
+    expect(cfg.commonFields.length).toBe(6)
     expect(cfg.commonFields[0].key).toBe('terminalTheme')
     expect(cfg.commonFields[0].source).toBe('local')
     expect(cfg.commonFields[1].key).toBe('terminalFontSize')
     expect(cfg.commonFields[1].source).toBe('local')
+  })
+
+  it('terminal panel exposes copy-on-select as a local switch', () => {
+    const cfg = getCategoryPanels('terminal')[0]
+    const item = cfg.commonFields.find(f => f.key === 'terminalCopyOnSelect')
+
+    expect(item).toBeDefined()
+    expect(item!.type).toBe('switch')
+    // Local-only: it is a pure frontend behaviour, so it must not appear in the
+    // server field map (a server source would require a backend whitelist entry).
+    expect(item!.source).toBe('local')
+    expect(item!.labelKey).toBe('settings.items.terminalCopyOnSelect')
+    expect(item!.descriptionKey).toBe('settings.items.terminalCopyOnSelectDesc')
+    expect(getServerFieldToLabelKey()['terminalCopyOnSelect']).toBeUndefined()
   })
 
   // ── TTS panel ──

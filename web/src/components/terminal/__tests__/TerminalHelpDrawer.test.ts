@@ -19,6 +19,8 @@ const i18n = createI18n({
         helpGesturePinchDesc: '缩放字号',
         helpShortcutCtrlC: 'Ctrl+C',
         helpShortcutCtrlCDesc: '中断',
+        helpCommonCopyOnSelect: '选中即复制',
+        helpCommonCopyOnSelectDesc: '自动复制',
         helpCommonCopy: '复制文本',
         helpCommonCopyDesc: '选区复制',
         helpCommonCopyInsert: 'Ctrl+Insert',
@@ -140,6 +142,33 @@ describe('TerminalHelpDrawer', () => {
       const labels = copyLabels()
       expect(labels).toContain('Cmd+C')
       expect(labels).not.toContain('Ctrl+C / Ctrl+Shift+C')
+    })
+
+    it('lists copy-on-select first while it is enabled', async () => {
+      wrapper = mount(TerminalHelpDrawer, {
+        props: { open: true, gestures: false, appMode: false, mac: false, copyOnSelect: true },
+        global: { plugins: [i18n] },
+      })
+      await new Promise((r) => setTimeout(r, 50))
+
+      const labels = copyLabels()
+      expect(labels).toContain('选中即复制')
+      // It is the default path, so it leads the copy entries rather than
+      // trailing the chords most users never need.
+      expect(labels.indexOf('选中即复制')).toBeLessThan(labels.indexOf('Ctrl+C / Ctrl+Shift+C'))
+    })
+
+    it('hides copy-on-select once the setting is off', async () => {
+      wrapper = mount(TerminalHelpDrawer, {
+        props: { open: true, gestures: false, appMode: false, mac: false, copyOnSelect: false },
+        global: { plugins: [i18n] },
+      })
+      await new Promise((r) => setTimeout(r, 50))
+
+      const labels = copyLabels()
+      expect(labels).not.toContain('选中即复制')
+      // The explicit chords must remain documented as the fallback.
+      expect(labels).toContain('Ctrl+C / Ctrl+Shift+C')
     })
   })
 })

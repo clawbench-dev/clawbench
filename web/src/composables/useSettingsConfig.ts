@@ -332,6 +332,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   filePreviewMode: false,
   messageDisplayMode: 'mixed',
   terminalFontSize: 12,
+  // Copy-on-select is ON by default, matching mainstream terminals (GNOME
+  // Terminal / Windows Terminal / Termius). Only the PC floating-copy-bar
+  // fallback is gated by it — the explicit copy chords always work.
+  terminalCopyOnSelect: true,
   logCapture: false,
   swipeSession: false,
   preventScreenLock: true,

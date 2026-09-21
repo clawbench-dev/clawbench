@@ -56,6 +56,38 @@ describe('SHORTCUT_TIPS', () => {
     expect(terminalKeys).toEqual(expect.arrayContaining(['Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Ctrl+Z']))
   })
 
+  // Regression guard: copy-on-select and the copy chords were implemented in
+  // TerminalPanelContent.vue / TerminalHelpDrawer.vue before they were listed
+  // here, so a rename or deletion silently re-introduces the "implemented but
+  // undiscoverable" gap this dialog exists to close.
+  it('lists every terminal copy path', () => {
+    const byLeaf = (leaf: string) => SHORTCUT_TIPS.find(t => t.contextKey.endsWith(`.${leaf}`))
+    expect(byLeaf('contextTermCopy')?.keys).toEqual(['Ctrl+C', 'Ctrl+Shift+C'])
+    expect(byLeaf('contextTermCopyInsert')?.keys).toEqual(['Ctrl+Insert'])
+    expect(byLeaf('contextTermZoom')?.keys).toEqual(['Ctrl+Wheel'])
+    // Copy-on-select and right-click have no key chord — they are gestures, so
+    // they carry a description instead. Assert the ROW exists (not just that
+    // its keys are undefined, which a missing row would also satisfy): these
+    // are the two paths users cannot discover by reading a key table, so a
+    // silently dropped row is exactly the regression to catch.
+    for (const leaf of ['contextTermCopyOnSelect', 'contextTermRightClick']) {
+      const tip = byLeaf(leaf)
+      expect(tip, `${leaf} row missing`).toBeDefined()
+      expect(tip?.keys).toBeUndefined()
+      expect(tip?.actionKey.endsWith(leaf.replace('context', 'action'))).toBe(true)
+    }
+  })
+
+  it('keeps the interrupt tip scoped to "no selection" now that Ctrl+C also copies', () => {
+    // Ctrl+C is overloaded: it interrupts without a selection and copies with
+    // one. Both rows exist, so each must state its precondition or the table
+    // reads as a contradiction.
+    const interrupt = SHORTCUT_TIPS.find(t => t.contextKey.endsWith('.contextTermInterrupt'))
+    const copy = SHORTCUT_TIPS.find(t => t.contextKey.endsWith('.contextTermCopy'))
+    expect(interrupt?.contextKey).not.toBe(copy?.contextKey)
+    expect(interrupt?.actionKey).not.toBe(copy?.actionKey)
+  })
+
   it('getShortcutTipsForContext always includes common and chat tips', () => {
     for (const ctx of SHORTCUT_CONTEXT_ORDER) {
       const result = getShortcutTipsForContext(ctx)

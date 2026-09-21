@@ -97,9 +97,12 @@
     </div>
 
     <Transition name="copy-bar">
-      <!-- PC 模式用键盘/右键复制（Ctrl+C 有选区时复制、Ctrl+Shift+C、Ctrl+Insert、右键），
-           不需要弹出复制栏；移动端保留悬浮复制栏 -->
-      <div v-if="selectionActive && !isPC" class="selection-copy-bar">
+      <!-- PC 模式用键盘/右键复制（Ctrl+C 有选区时复制、Ctrl+Shift+C、Ctrl+Insert、右键）。
+           开启「选中即复制」后选区已自动进剪贴板，此时再弹复制栏是多余的第二道确认，
+           故一并隐藏；关闭该设置时 PC 仍不显示（原生选区右键即可复制），移动端显示。
+           例外：自动复制写剪贴板失败时（WebView 可能拿不到用户激活）必须把复制栏放回来，
+           否则移动端将完全失去复制入口。 -->
+      <div v-if="selectionActive && !isPC && (!copyOnSelect || autoCopyFailed)" class="selection-copy-bar">
         <span class="selection-copy-count">{{ t('terminal.selectedChars', { n: selectedText.length }) }}</span>
         <button class="selection-copy-btn" @click="handleCopySelection" @contextmenu.prevent>{{ t('common.copy') }}</button>
         <button class="selection-copy-close" @click="handleDismissSelection" @contextmenu.prevent :aria-label="t('terminal.close')">✕</button>
@@ -191,6 +194,7 @@
       :gestures="!isPC"
       :app-mode="isAppMode"
       :mac="isMacDesktopUA"
+      :copy-on-select="copyOnSelect"
       @close="helpDrawer.close()"
     />
 
@@ -277,6 +281,7 @@ import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs
 import type { Terminal as TerminalType, ITheme } from '@xterm/xterm'
 import { copyText } from '@/utils/clipboard.ts'
 import { isCopySelectionShortcut } from '@/utils/terminalClipboardUtils'
+import { useTerminalCopyOnSelect } from '@/composables/useTerminalCopyOnSelect'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys'
@@ -591,10 +596,44 @@ const terminalKeys = useTerminalKeys((data: string) => {
   activeTab.value?.session.sendInput(data)
 })
 
+// 选中即复制 — read the setting at copy time so toggling it in Settings takes
+// effect on already-open terminals without a remount.
+const copyOnSelect = computed(() => localConfig.terminalCopyOnSelect !== false)
+
+// The auto-copy is a deferred clipboard write (see the settle delay in
+// useTerminalCopyOnSelect), so it runs outside the gesture that produced the
+// selection. Browsers gate clipboard writes behind transient user activation,
+// which *should* still be live — but if it is not, the write fails silently and
+// the hidden floating bar would leave the user with no way to copy at all.
+// Track the failure so the bar can come back as the fallback.
+const autoCopyFailed = ref(false)
+
+const autoCopy = useTerminalCopyOnSelect({
+  isEnabled: () => copyOnSelect.value,
+  // Deliberately silent on success, like every mainstream terminal: the paste
+  // is the confirmation, and a toast on each selection would pop up over the
+  // output the user is reading. Discoverability lives in the settings toggle,
+  // the help drawer and the all-shortcuts dialog instead.
+  //
+  // The highlight is also kept: the user still needs to see what was copied,
+  // and the right-click menu operates on the live selection.
+  copy: (text: string) => {
+    copyText(
+      text,
+      () => { autoCopyFailed.value = false },
+      () => { autoCopyFailed.value = true },
+    )
+  },
+})
+
 function updateSelectionFromTerm(term: TerminalType) {
   const text = term.getSelection() ?? ''
   selectionActive.value = text.length > 0
   selectedText.value = text
+  // A new selection is a fresh copy attempt, so clear the previous failure
+  // before the deferred write reports back.
+  if (text) autoCopyFailed.value = false
+  autoCopy.onSelectionChanged(text)
 }
 
 /** Read the real CSS cell height from xterm's renderer, falling back to font-size×line-height. */
@@ -802,6 +841,8 @@ watch(() => gestures.mode.value, (m) => {
 // Re-bind gesture listeners when switching/creating tabs (container element changes).
 // Use double nextTick to ensure mountTabToContainer has already run.
 watch(activeTabId, () => {
+  // Drop a copy still waiting to settle — it belongs to the previous tab.
+  autoCopy.dispose()
   activeTab.value?.xterm?.clearSelection()
   selectionActive.value = false
   selectedText.value = ''
@@ -1255,6 +1296,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   themeObserver?.disconnect()
+  autoCopy.dispose()
   viewport.stopWatching()
   gestures.detach()
   disableVolumeKeys()
