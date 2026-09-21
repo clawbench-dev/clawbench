@@ -153,3 +153,121 @@ describe('login page DARK_IDS stays in sync', () => {
     })
   }
 })
+
+/**
+ * Parse the `[data-theme="<id>"] { ... }` blocks of a login page into
+ * `{ themeId: { varName: value } }`, preserving declaration order.
+ *
+ * Both login pages inline the whole palette (they must paint before any module
+ * loads), so the two copies can drift. This is the parser both drift checks
+ * below share.
+ */
+function parseLoginThemes(rel: string): Map<string, Array<[string, string]>> {
+  const css = readRepoFile(rel).match(/<style>([\s\S]*?)<\/style>/)?.[1]
+  if (!css) throw new Error(`${rel}: no <style> block found`)
+  const out = new Map<string, Array<[string, string]>>()
+  const blockRe = /\[data-theme="([^"]+)"\]\s*\{([\s\S]*?)\n\s*\}/g
+  for (const m of css.matchAll(blockRe)) {
+    const decls: Array<[string, string]> = []
+    for (const d of m[2].matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)) {
+      decls.push([d[1], d[2].trim().toLowerCase()])
+    }
+    out.set(m[1], decls)
+  }
+  return out
+}
+
+/** `#rrggbb` -> `"r, g, b"`, matching the --accent-rgb literal format. */
+function hexToRgbTriplet(hex: string): string {
+  const h = hex.replace('#', '')
+  return `${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}`
+}
+
+// The two login pages duplicate the entire 36-theme palette. They are separate
+// files that cannot share code (each must resolve colours before any module
+// loads), so the copies can drift silently — and did: six themes had an
+// --accent-rgb that belonged to a DIFFERENT theme, and dracula had none at all.
+// Because --accent-rgb drives the focus ring and button glow, the symptom was a
+// subtly wrong accent on those themes rather than an obvious break.
+describe('login page palettes agree between desktop and Android', () => {
+  const DESKTOP = 'desktop/assets/login.html'
+  const ANDROID = 'android/app/src/main/assets/login.html'
+
+  it('declares the same theme IDs', () => {
+    const d = [...parseLoginThemes(DESKTOP).keys()].sort()
+    const a = [...parseLoginThemes(ANDROID).keys()].sort()
+    expect(d).toEqual(a)
+  })
+
+  it('declares identical values for every variable in every theme', () => {
+    const d = parseLoginThemes(DESKTOP)
+    const a = parseLoginThemes(ANDROID)
+    const mismatches: string[] = []
+    for (const [theme, decls] of d) {
+      const other = new Map(a.get(theme) ?? [])
+      for (const [name, value] of decls) {
+        if (other.get(name) !== value) {
+          mismatches.push(`${theme} ${name}: desktop=${value} android=${other.get(name)}`)
+        }
+      }
+    }
+    expect(mismatches).toEqual([])
+  })
+
+  it('declares the variables in the same order', () => {
+    // Order is not cosmetic here: the six-theme drift happened because an
+    // --accent-rgb line was moved next to the wrong neighbour while editing.
+    const d = parseLoginThemes(DESKTOP)
+    const a = parseLoginThemes(ANDROID)
+    const orderDiffs: string[] = []
+    for (const [theme, decls] of d) {
+      const mine = decls.map(([n]) => n).join(',')
+      const theirs = (a.get(theme) ?? []).map(([n]) => n).join(',')
+      if (mine !== theirs) orderDiffs.push(`${theme}: desktop=[${mine}] android=[${theirs}]`)
+    }
+    expect(orderDiffs).toEqual([])
+  })
+
+  it('declares --accent-rgb exactly once per theme, matching that theme accent', () => {
+    // The value must be the theme's own accent-color in rgb triplet form. This
+    // is the invariant the drift violated: a copied-from-a-neighbour value
+    // still LOOKS plausible, so nothing else would catch it.
+    const problems: string[] = []
+    for (const page of [DESKTOP, ANDROID]) {
+      for (const [theme, decls] of parseLoginThemes(page)) {
+        const map = new Map(decls)
+        const count = decls.filter(([n]) => n === 'accent-rgb').length
+        if (count !== 1) {
+          problems.push(`${page} ${theme}: --accent-rgb declared ${count} time(s)`)
+          continue
+        }
+        const accent = map.get('accent-color')
+        if (!accent) {
+          problems.push(`${page} ${theme}: no --accent-color to check against`)
+          continue
+        }
+        // dark-plus intentionally uses the brand colour, not the accent.
+        if (theme === 'dark-plus') continue
+        const expected = hexToRgbTriplet(accent)
+        if (map.get('accent-rgb') !== expected) {
+          problems.push(`${page} ${theme}: --accent-rgb=${map.get('accent-rgb')} but --accent-color=${accent} (expected ${expected})`)
+        }
+      }
+    }
+    expect(problems).toEqual([])
+  })
+
+  it('declares --accent-rgb inside a theme block, never on a shared rule', () => {
+    // A stray declaration on `body` inherits into every element and silently
+    // overrides the per-theme value for anything that does not set its own.
+    const problems: string[] = []
+    for (const page of [DESKTOP, ANDROID]) {
+      const css = readRepoFile(page).match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? ''
+      const withoutThemes = css.replace(/\[data-theme="[^"]+"\]\s*\{[\s\S]*?\n\s*\}/g, '')
+      for (const line of withoutThemes.split('\n')) {
+        if (line.trim().startsWith('--accent-rgb')) problems.push(`${page}: ${line.trim()}`)
+      }
+    }
+    expect(problems).toEqual([])
+  })
+})
