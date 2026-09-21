@@ -29,6 +29,12 @@ function migrateLegacyKeys() {
     fileView: { key: 'clawbench-file-view', format: 'raw' },
     filePreviewMode: { key: 'clawbench-file-preview-mode', format: 'raw' },
     terminalFontSize: { key: 'clawbench-terminal-font-size', format: 'raw' },
+    // Renamed from browserNotification: the switch is about system notifications
+    // from the desktop shell / this browser, and "browser" misdescribed the
+    // Electron case (where the notification comes from the main process). The
+    // old prefixed key is the legacy source here, so an existing choice carries
+    // over instead of silently resetting to the default.
+    desktopNotification: { key: LOCAL_PREFIX + 'browserNotification', format: 'json' },
   }
   for (const [settingsKey, legacy] of Object.entries(migrations)) {
     const newKey = LOCAL_PREFIX + settingsKey
@@ -348,11 +354,17 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // in-app card itself — the alert sound and system/IM push have their own switches.
   inAppNotification: true,
   notificationSound: true,
-  // Desktop/system notifications from this browser (or the Electron shell).
+  // System notifications (设置 → 推送通知 → 桌面端通知).
+  //
+  // Covers both the Electron shell (native OS notification from the main
+  // process) and the in-page Notification API in a plain browser. Named
+  // "desktop" rather than "browser" because the Electron case is the one that
+  // matters most and is not a browser notification at all.
+  //
   // Independent of the server-side `push_mode`, which selects the MOBILE/IM
-  // channel: a user on DingTalk push still wants the tab to notify them when
-  // they are sitting at the desktop.
-  browserNotification: true,
+  // channel: a user on DingTalk push still wants their desktop to notify them
+  // when they are sitting at it.
+  desktopNotification: true,
   floatingStatusWindow: false,
   liveUpdate: true,
   fontMono: 'default',

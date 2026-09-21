@@ -1247,7 +1247,7 @@ describe('useGlobalEvents', () => {
 
     // ── push_mode is not a gate ──
     //
-    // The system-notification decision belongs to the local `browserNotification`
+    // The system-notification decision belongs to the local `desktopNotification`
     // setting (checked inside showBrowserNotification) and page focus. Gating it
     // here on the server-side push_mode made the switch unreachable for anyone
     // who had picked DingTalk/飞书, and silenced the desktop tab of users whose

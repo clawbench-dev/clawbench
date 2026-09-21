@@ -260,9 +260,9 @@ const i18n = createI18n({
           inAppNotifySection: '应用内通知',
           inAppNotification: '应用内完成通知',
           inAppNotificationDesc: '会话或任务完成时弹出结果卡片',
-          browserNotifySection: '浏览器通知',
-          browserNotification: '浏览器系统通知',
-          browserNotificationDesc: '页面最小化时用系统通知提醒',
+          desktopNotifySection: '桌面端通知',
+          desktopNotification: '桌面端系统通知',
+          desktopNotificationDesc: '页面最小化时用系统通知提醒',
           desktopSystemSection: '桌面与系统',
           mobileNotifySection: '移动端通知',
           notificationSound: '任务完成提示音',
@@ -1002,7 +1002,7 @@ describe('SettingsCategory', () => {
       expect(mockSetLocalConfig).toHaveBeenCalledWith('inAppNotification', false)
     })
 
-    it('renders the browser notification switch in its own card, in BOTH modes', () => {
+    it('renders the desktop notification switch in its own card, in BOTH modes', () => {
       // Deliberately NOT appOnly: the "桌面与系统" card below is app-only and
       // disappears in browser mode, which is exactly where this switch matters.
       // If it ever gets folded into that card, browser users lose the control.
@@ -1010,25 +1010,25 @@ describe('SettingsCategory', () => {
         mockIsAppMode.value = appMode
         const wrapper = mountCategory('notification')
         const titles = wrapper.findAllComponents({ name: 'SettingsCard' }).map(c => c.props().title)
-        expect(titles, `app mode = ${appMode}`).toContain('浏览器通知')
+        expect(titles, `app mode = ${appMode}`).toContain('桌面端通知')
 
         const item = wrapper.findAllComponents({ name: 'SettingsItem' })
-          .find(i => i.props().label === '浏览器系统通知')
+          .find(i => i.props().label === '桌面端系统通知')
         expect(item, `app mode = ${appMode}`).toBeTruthy()
         expect(item!.props().type).toBe('switch')
       }
     })
 
-    it('saves browserNotification locally when toggled off', async () => {
+    it('saves desktopNotification locally when toggled off', async () => {
       const wrapper = mountCategory('notification')
       const item = wrapper.findAllComponents({ name: 'SettingsItem' })
-        .find(i => i.props().label === '浏览器系统通知')
+        .find(i => i.props().label === '桌面端系统通知')
       expect(item).toBeTruthy()
 
       await item!.vm.$emit('update:modelValue', false)
       await wrapper.vm.$nextTick()
 
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('browserNotification', false)
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('desktopNotification', false)
     })
 
     it('groups the flat items into 应用内通知 then 桌面与系统 cards in app mode', () => {
@@ -1037,7 +1037,7 @@ describe('SettingsCategory', () => {
       const titles = wrapper.findAllComponents({ name: 'SettingsCard' })
         .map(c => c.props().title)
 
-      expect(titles).toEqual(['应用内通知', '浏览器通知', '桌面与系统'])
+      expect(titles).toEqual(['应用内通知', '桌面端通知', '桌面与系统'])
     })
 
     it('drops the 桌面与系统 card entirely in browser mode (app-only rows)', () => {
@@ -1046,9 +1046,9 @@ describe('SettingsCategory', () => {
         .map(c => c.props().title)
 
       // Both desktop/system rows are appOnly, so the card must not render as an
-      // empty headed card in browser mode. The browser-notification card stays.
+      // empty headed card in browser mode. The desktop-notification card stays.
       expect(titles).not.toContain('桌面与系统')
-      expect(titles).toEqual(['应用内通知', '浏览器通知'])
+      expect(titles).toEqual(['应用内通知', '桌面端通知'])
     })
   })
 

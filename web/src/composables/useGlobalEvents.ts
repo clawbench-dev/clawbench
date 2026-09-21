@@ -501,7 +501,7 @@ function stopHeartbeat() {
 /**
  * Show a browser notification for a terminal event.
  *
- * The system-notification decision is gated by the local `browserNotification`
+ * The system-notification decision is gated by the local `desktopNotification`
  * setting (inside showBrowserNotification) and by page focus — NOT by the
  * server-side `push_mode`. push_mode selects the mobile/IM channel; a user on
  * DingTalk push still wants their desktop tab to notify them. Gating on it here
