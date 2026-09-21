@@ -7,6 +7,28 @@ import { downloadAndInstall, restartInto } from './install'
 import { clearCacheAndReload } from './session'
 
 /**
+ * Last-resort safety net for the main process.
+ *
+ * Electron's default behaviour for an uncaught exception here is to show a
+ * modal "A JavaScript error occurred in the main process" dialog. That blocks
+ * the app on an error the user can do nothing about, and hides the real one.
+ * The shell is long-lived and its network/SSH plumbing can fail at any time
+ * (an ECONNRESET from a forwarded socket reaching a bare `pipe()` chain is the
+ * case that prompted this), so a stray error must degrade rather than take the
+ * app down.
+ *
+ * Per-operation handlers are still required — this only catches what they miss,
+ * and must not be used to swallow errors deliberately. Registered at module
+ * scope so a failure during startup is covered too.
+ */
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaught exception:', err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] unhandled rejection:', reason)
+})
+
+/**
  * Desktop self-upgrade.
  *
  * The shell owns this end to end (check → confirm → download → install →

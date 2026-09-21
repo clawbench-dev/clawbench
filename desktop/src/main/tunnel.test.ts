@@ -11,7 +11,20 @@ vi.mock('node:net', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:net')>()
   const realCreateServer = actual.createServer as unknown as (...a: unknown[]) => net.Server
   const createServer = (...args: unknown[]) => {
-    const server = realCreateServer(...args)
+    // net.createServer(cb) registers cb INTERNALLY, so overriding server.on()
+    // cannot intercept it — wrap the callback argument instead. This lets a
+    // test emit('error') on the REAL server-side socket tunnel.ts wired its
+    // handlers onto; emitting on the test's own client socket would prove
+    // nothing, since that socket is not the module's.
+    const wrapped = args.map((a, i) =>
+      i === 0 && typeof a === 'function'
+        ? (socket: import('node:net').Socket) => {
+            acceptedSockets.push(socket)
+            ;(a as (s: unknown) => void)(socket)
+          }
+        : a,
+    )
+    const server = realCreateServer(...(wrapped as []))
     const realListen = server.listen.bind(server)
     server.listen = ((...largs: unknown[]) => {
       const cb = typeof largs[largs.length - 1] === 'function'
@@ -45,6 +58,12 @@ const { FakeClient } = vi.hoisted(() => {
     ended = false
     /** targetPorts this client was asked to forward to, in order. */
     forwardedTo: number[] = []
+    /**
+     * The channel streams handed back by forwardOut(), in order. A test can
+     * emit('error') on one to simulate the SSH channel dying mid-transfer —
+     * the case that used to crash the main process.
+     */
+    streams: import('node:stream').PassThrough[] = []
 
     constructor() { FakeClientImpl.instances.push(this) }
 
@@ -67,7 +86,9 @@ const { FakeClient } = vi.hoisted(() => {
       // A real Duplex so the module's `socket.pipe(stream).pipe(socket)` wiring
       // is structurally valid; the tests only assert on listener reachability,
       // not on bytes flowing through.
-      cb(undefined, new PassThrough())
+      const stream = new PassThrough()
+      this.streams.push(stream)
+      cb(undefined, stream)
     }
 
     emit(event: string, ...args: unknown[]): void {
@@ -127,6 +148,12 @@ import {
 const PORT_A = 28901
 const PORT_B = 28902
 
+/**
+ * Server-side sockets accepted by tunnel.ts's listeners, in order. Lets a test
+ * drive an error on the socket the module actually wired up.
+ */
+const acceptedSockets: import('node:net').Socket[] = []
+
 /** Bring the module to a connected state via a single fake client. */
 async function connectOnce() {
   const p = ensureTunnel()
@@ -150,6 +177,7 @@ function resetModule(): void {
 beforeEach(() => {
   initStore()
   resetModule()
+  acceptedSockets.length = 0
   FakeClient.instances = []
   storeData.serverUrl = 'https://127.0.0.1:20000'
   listenDelay.ms = 0
@@ -398,6 +426,74 @@ describe('tunnel: listener bookkeeping', () => {
     await connectOnce()
     await addForwardedPort(PORT_A, 20000, '192.168.1.10')
     expect(getForwardedPorts()).toEqual([{ port: PORT_A, host: '192.168.1.10' }])
+  })
+})
+
+describe('tunnel: a dying forwarded socket must not crash the process', () => {
+  /**
+   * An 'error' event with no listener is re-thrown as an UNCAUGHT exception on
+   * the next tick, so `expect(fn).not.toThrow()` cannot see it — the emit
+   * returns normally and the process blows up afterwards. That is exactly how
+   * this bug reached production, so the assertion has to observe the same
+   * channel the process does: a real uncaughtException.
+   *
+   * Returns the errors that escaped during `action`.
+   */
+  async function collectUncaught(action: () => Promise<void> | void): Promise<Error[]> {
+    const seen: Error[] = []
+    const handler = (e: Error) => { seen.push(e) }
+    process.on('uncaughtException', handler)
+    try {
+      await action()
+      // The throw is scheduled on a later tick; give it a chance to land.
+      await new Promise((r) => setTimeout(r, 20))
+    } finally {
+      process.off('uncaughtException', handler)
+    }
+    return seen
+  }
+
+  /** Bring a forward up and open a real client so the pipe chain is live. */
+  async function openLiveForward() {
+    await connectOnce()
+    await addForwardedPort(PORT_A, 20000, '')
+    const client = net.connect(PORT_A, '127.0.0.1')
+    await new Promise<void>((r) => client.on('connect', () => r()))
+    await vi.waitFor(() => expect(FakeClient.last().streams.length).toBeGreaterThan(0))
+    await vi.waitFor(() => expect(acceptedSockets.length).toBeGreaterThan(0))
+    return client
+  }
+
+  it('handles ECONNRESET on the SSH channel instead of crashing', async () => {
+    // Regression: the wiring was a bare `socket.pipe(stream).pipe(socket)`.
+    // pipe() does not forward errors, so an ECONNRESET from either end (the
+    // SSH channel being torn down mid-transfer) surfaced as an UNCAUGHT
+    // exception. Electron's default handler then showed the modal
+    // "A JavaScript error occurred in the main process" dialog and the app was
+    // stuck on an error the user could do nothing about.
+    const client = await openLiveForward()
+    const stream = FakeClient.last().streams[0]
+
+    const escaped = await collectUncaught(() => {
+      stream.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))
+    })
+
+    expect(escaped.map((e) => e.message)).toEqual([])
+    client.destroy()
+  })
+
+  it('handles an error on the local socket instead of crashing', async () => {
+    // The reverse direction: the browser drops the connection (its own RST)
+    // while the SSH channel is still open. The module's socket is the one the
+    // server accepted — emitting on the test's client would prove nothing.
+    const client = await openLiveForward()
+
+    const escaped = await collectUncaught(() => {
+      acceptedSockets[0].emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+    })
+
+    expect(escaped.map((e) => e.message)).toEqual([])
+    client.destroy()
   })
 })
 

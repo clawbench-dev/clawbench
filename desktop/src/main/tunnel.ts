@@ -278,6 +278,14 @@ function listenForward(localPort: number, targetPort: number, host: string): Pro
       if (!c) { socket.destroy(); return }
       c.forwardOut('127.0.0.1', 0, host || 'localhost', targetPort, (err, stream) => {
         if (err) { socket.destroy(); return }
+        // Both ends need an 'error' handler. A bare `pipe()` chain does not
+        // forward errors, so an ECONNRESET from either side (the SSH channel
+        // being torn down mid-transfer is the common case) becomes an
+        // UNCAUGHT exception and takes the whole main process down with
+        // Electron's "A JavaScript error occurred in the main process" dialog.
+        // Destroying the peer on error is also what makes the pipe clean up.
+        socket.on('error', () => { socket.destroy(); stream.destroy() })
+        stream.on('error', () => { stream.destroy(); socket.destroy() })
         socket.pipe(stream).pipe(socket)
       })
     })
