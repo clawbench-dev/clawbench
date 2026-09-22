@@ -276,7 +276,7 @@ const i18n = createI18n({
           ragRetentionDays: '保留天数',
           aboutServerVersion: '服务器版本',
           aboutServerVersionDesc: '服务器版本',
-          aboutBrandSlogan: '从掌心到桌面',
+          aboutBrandSlogan: '多端一体的 AI 工作台',
           aboutHomepage: '官网',
           aboutHomepageDesc: '在浏览器中打开项目主页',
           aboutFeedback: '问题反馈',

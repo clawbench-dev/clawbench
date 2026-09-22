@@ -2461,7 +2461,7 @@ export default {
       logCaptureDesc: 'Capture client debug logs for troubleshooting',
       reconfigureServer: 'Reconfigure Server',
       reconfigureServerDesc: 'Reconfigure the server address for Android connection',
-      aboutBrandSlogan: 'From Palm to Desktop',
+      aboutBrandSlogan: 'An AI Workbench, United Across Devices',
       aboutServerVersion: 'Server Version',
       aboutServerVersionDesc: 'Current running server version number',
       aboutHomepage: 'Official Site',
