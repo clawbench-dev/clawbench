@@ -39,6 +39,14 @@ interface Corpus {
     wantParsed: boolean[]
     wantItems: AskItem[][]
     wantStripped: string
+    /**
+     * Text an unparsed span degrades to. It is what a legacy span renders as,
+     * so a regression there is a user-visible defect (leaked `false`, a lost
+     * separator) rather than a test detail.
+     */
+    wantFallbacks: string[]
+    /** Reason code of every span, so a legacy span cannot become a parse failure. */
+    wantReasons: string[]
   }>
 }
 
@@ -68,6 +76,10 @@ describe('ask-question parity corpus (shared with internal/askquestion)', () => 
           if (m.parsed) {
             expect(m.parsed, `match ${i} items`).toEqual(tc.wantItems[i])
           }
+        })
+        matches.forEach((m, i) => {
+          expect(m.fallback ?? '', `match ${i} fallback`).toBe(tc.wantFallbacks[i])
+          expect(m.reason ?? '', `match ${i} reason`).toBe(tc.wantReasons[i])
         })
         expect(stripAskMatches(tc.text, matches)).toBe(tc.wantStripped)
       })

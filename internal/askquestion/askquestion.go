@@ -77,6 +77,10 @@ const (
 	ReasonNoStandardClose = "no_standard_close"
 	// ReasonParseFailed means the span was bounded but yielded no question.
 	ReasonParseFailed = "parse_failed"
+	// ReasonLegacyFormat means the span uses the pre-rename <ask-question> tag.
+	// Such a span is always Parsed == false — the format is no longer read as a
+	// card — and its Fallback is the payload degraded to readable Markdown.
+	ReasonLegacyFormat = "legacy_format"
 )
 
 // KeyQuestions is the canonical key for the question array in a tool input. It

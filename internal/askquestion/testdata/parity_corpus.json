@@ -26,7 +26,13 @@
      }
     ]
    ],
-   "wantStripped": "前言\n\n后记"
+   "wantStripped": "前言\n\n后记",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "markdown single select",
@@ -53,7 +59,13 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "markdown multi select",
@@ -78,7 +90,13 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "markdown no header no descriptions",
@@ -103,7 +121,13 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "markdown prose without a list is not a card",
@@ -114,7 +138,13 @@
    "wantItems": [
     []
    ],
-   "wantStripped": "**标题**\n只有说明文字，没有列表"
+   "wantStripped": "**标题**\n只有说明文字，没有列表",
+   "wantFallbacks": [
+    "**标题**\n只有说明文字，没有列表"
+   ],
+   "wantReasons": [
+    "parse_failed"
+   ]
   },
   {
    "name": "markdown two tags are two questions",
@@ -149,7 +179,15 @@
      }
     ]
    ],
-   "wantStripped": "\n中间\n"
+   "wantStripped": "\n中间\n",
+   "wantFallbacks": [
+    "",
+    ""
+   ],
+   "wantReasons": [
+    "",
+    ""
+   ]
   },
   {
    "name": "prose payload degrades to markdown",
@@ -160,21 +198,31 @@
    "wantItems": [
     []
    ],
-   "wantStripped": "前言\n这里没有列表，只是一段说明。\n后记"
+   "wantStripped": "前言\n这里没有列表，只是一段说明。\n后记",
+   "wantFallbacks": [
+    "这里没有列表，只是一段说明。"
+   ],
+   "wantReasons": [
+    "parse_failed"
+   ]
   },
   {
    "name": "tag inside code fence is ignored",
    "text": "你可以这样用：\n\n```\n\u003cclawbench-ask-question\u003e\n**Choice**\nPick one\n- A\n\u003c/clawbench-ask-question\u003e\n```\n\n这就是全部。",
    "wantParsed": [],
    "wantItems": [],
-   "wantStripped": "你可以这样用：\n\n```\n\u003cclawbench-ask-question\u003e\n**Choice**\nPick one\n- A\n\u003c/clawbench-ask-question\u003e\n```\n\n这就是全部。"
+   "wantStripped": "你可以这样用：\n\n```\n\u003cclawbench-ask-question\u003e\n**Choice**\nPick one\n- A\n\u003c/clawbench-ask-question\u003e\n```\n\n这就是全部。",
+   "wantFallbacks": [],
+   "wantReasons": []
   },
   {
    "name": "tag inside inline code is ignored",
    "text": "用 `\u003cclawbench-ask-question\u003e` 标签来提问。",
    "wantParsed": [],
    "wantItems": [],
-   "wantStripped": "用 `\u003cclawbench-ask-question\u003e` 标签来提问。"
+   "wantStripped": "用 `\u003cclawbench-ask-question\u003e` 标签来提问。",
+   "wantFallbacks": [],
+   "wantReasons": []
   },
   {
    "name": "prose mentioning the tag is not swallowed",
@@ -198,7 +246,15 @@
      }
     ]
    ],
-   "wantStripped": "要发起提问，就用 \u003cclawbench-ask-question\u003e 标签包起来。\n\n现在问你：\n"
+   "wantStripped": "要发起提问，就用 \u003cclawbench-ask-question\u003e 标签包起来。\n\n现在问你：\n",
+   "wantFallbacks": [
+    "\u003cclawbench-ask-question\u003e",
+    ""
+   ],
+   "wantReasons": [
+    "no_standard_close",
+    ""
+   ]
   },
   {
    "name": "mention after the payload does not extend the span",
@@ -222,7 +278,15 @@
     ],
     []
    ],
-   "wantStripped": "先看这个：\n\n另外，\u003cclawbench-ask-question\u003e 这个标签还可以嵌套。"
+   "wantStripped": "先看这个：\n\n另外，\u003cclawbench-ask-question\u003e 这个标签还可以嵌套。",
+   "wantFallbacks": [
+    "",
+    "\u003cclawbench-ask-question\u003e"
+   ],
+   "wantReasons": [
+    "",
+    "no_standard_close"
+   ]
   },
   {
    "name": "unclosed tag does not swallow following details block",
@@ -233,7 +297,13 @@
    "wantItems": [
     []
    ],
-   "wantStripped": "分析如下\n\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\n\u003cdetails\u003e\n\u003csummary\u003e更多\u003c/summary\u003e\n正文内容必须保留\n\u003c/details\u003e"
+   "wantStripped": "分析如下\n\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\n\u003cdetails\u003e\n\u003csummary\u003e更多\u003c/summary\u003e\n正文内容必须保留\n\u003c/details\u003e",
+   "wantFallbacks": [
+    "\u003cclawbench-ask-question\u003e"
+   ],
+   "wantReasons": [
+    "no_standard_close"
+   ]
   },
   {
    "name": "outer details close is not consumed",
@@ -244,7 +314,13 @@
    "wantItems": [
     []
    ],
-   "wantStripped": "分析\n\u003cdetails\u003e\n\u003csummary\u003e更多\u003c/summary\u003e\n\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\u003c/details\u003e\n正文"
+   "wantStripped": "分析\n\u003cdetails\u003e\n\u003csummary\u003e更多\u003c/summary\u003e\n\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\u003c/details\u003e\n正文",
+   "wantFallbacks": [
+    "\u003cclawbench-ask-question\u003e"
+   ],
+   "wantReasons": [
+    "no_standard_close"
+   ]
   },
   {
    "name": "entity decoding is shared",
@@ -266,7 +342,13 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "entity outside the shared table is left verbatim",
@@ -288,7 +370,13 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "payload mentioning the tag in its own text still converts",
@@ -310,7 +398,13 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "json payload is no longer recovered",
@@ -321,7 +415,13 @@
    "wantItems": [
     []
    ],
-   "wantStripped": "{\"questions\":[{\"question\":\"你最喜欢哪种水果？\",\"options\":[{\"label\":\"苹果\"}]}]}"
+   "wantStripped": "{\"questions\":[{\"question\":\"你最喜欢哪种水果？\",\"options\":[{\"label\":\"苹果\"}]}]}",
+   "wantFallbacks": [
+    "{\"questions\":[{\"question\":\"你最喜欢哪种水果？\",\"options\":[{\"label\":\"苹果\"}]}]}"
+   ],
+   "wantReasons": [
+    "parse_failed"
+   ]
   },
   {
    "name": "json with unescaped quotes is no longer recovered",
@@ -332,7 +432,13 @@
    "wantItems": [
     []
    ],
-   "wantStripped": "{\"questions\":[{\"question\":\"可以被\"临时分裂\"多久？\",\"options\":[{\"label\":\"数秒\"}]}]}"
+   "wantStripped": "{\"questions\":[{\"question\":\"可以被\"临时分裂\"多久？\",\"options\":[{\"label\":\"数秒\"}]}]}",
+   "wantFallbacks": [
+    "{\"questions\":[{\"question\":\"可以被\"临时分裂\"多久？\",\"options\":[{\"label\":\"数秒\"}]}]}"
+   ],
+   "wantReasons": [
+    "parse_failed"
+   ]
   },
   {
    "name": "legacy item markup is no longer parsed",
@@ -343,7 +449,13 @@
    "wantItems": [
     []
    ],
-   "wantStripped": "\u003citem\u003e\u003cheader\u003eH\u003c/header\u003e\u003cquestion\u003eQ?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e"
+   "wantStripped": "\u003citem\u003e\u003cheader\u003eH\u003c/header\u003e\u003cquestion\u003eQ?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e",
+   "wantFallbacks": [
+    "\u003citem\u003e\u003cheader\u003eH\u003c/header\u003e\u003cquestion\u003eQ?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e"
+   ],
+   "wantReasons": [
+    "parse_failed"
+   ]
   },
   {
    "name": "mention inside a fenced block is not a sibling",
@@ -368,7 +480,13 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "mention indented inside the payload is not a sibling",
@@ -393,7 +511,13 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "mention in a blockquote is not a sibling",
@@ -418,7 +542,13 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
   },
   {
    "name": "empty-label option fails the parse instead of vanishing",
@@ -429,21 +559,31 @@
    "wantItems": [
     []
    ],
-   "wantStripped": "Pick one?\n- A\n- — orphan description text"
+   "wantStripped": "Pick one?\n- A\n- — orphan description text",
+   "wantFallbacks": [
+    "Pick one?\n- A\n- — orphan description text"
+   ],
+   "wantReasons": [
+    "parse_failed"
+   ]
   },
   {
    "name": "fullwidth digit after a bullet is not a list item",
    "text": "Q?\n-１选项",
    "wantParsed": [],
    "wantItems": [],
-   "wantStripped": "Q?\n-１选项"
+   "wantStripped": "Q?\n-１选项",
+   "wantFallbacks": [],
+   "wantReasons": []
   },
   {
    "name": "arabic-indic digit after a bullet is not a list item",
    "text": "Q?\n-١选项",
    "wantParsed": [],
    "wantItems": [],
-   "wantStripped": "Q?\n-١选项"
+   "wantStripped": "Q?\n-١选项",
+   "wantFallbacks": [],
+   "wantReasons": []
   },
   {
    "name": "BOM inside question text is preserved",
@@ -465,7 +605,342 @@
      }
     ]
    ],
-   "wantStripped": ""
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
+  },
+  {
+   "name": "legacy degradation: closed xml payload becomes markdown",
+   "text": "前言\n\u003cask-question\u003e\n\u003citem\u003e\n\u003cheader\u003eApproach\u003c/header\u003e\n\u003cmulti-select\u003efalse\u003c/multi-select\u003e\n\u003cquestion\u003eWhich approach?\u003c/question\u003e\n\u003coption\u003e\n\u003clabel\u003eOption A\u003c/label\u003e\n\u003cdescription\u003eFast but less safe\u003c/description\u003e\n\u003c/option\u003e\n\u003coption\u003e\n\u003clabel\u003eOption B\u003c/label\u003e\n\u003cdescription\u003eSafe but slower\u003c/description\u003e\n\u003c/option\u003e\n\u003c/item\u003e\n\u003c/ask-question\u003e\n后记",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "前言\n**Approach**\nWhich approach?\n- Option A — Fast but less safe\n- Option B — Safe but slower\n后记",
+   "wantFallbacks": [
+    "**Approach**\nWhich approach?\n- Option A — Fast but less safe\n- Option B — Safe but slower"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: multi-select false is dropped, not rendered",
+   "text": "\u003cask-question\u003e\n\u003citem\u003e\n\u003cheader\u003e下一步\u003c/header\u003e\n\u003cmulti-select\u003efalse\u003c/multi-select\u003e\n\u003cquestion\u003e你想怎么做？\u003c/question\u003e\n\u003coption\u003e\u003clabel\u003e只修本地能用\u003c/label\u003e\u003cdescription\u003e先保证自己 iOS 上传恢复\u003c/description\u003e\u003c/option\u003e\n\u003c/item\u003e\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "**下一步**\n你想怎么做？\n- 只修本地能用 — 先保证自己 iOS 上传恢复",
+   "wantFallbacks": [
+    "**下一步**\n你想怎么做？\n- 只修本地能用 — 先保证自己 iOS 上传恢复"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: option attribute style",
+   "text": "\u003cask-question\u003e\n\u003citem\u003e\n\u003cquestion\u003e这个集成用途是什么？\u003c/question\u003e\n\u003coption value=\"A\"\u003eA. 只读可见性\u003c/option\u003e\n\u003coption value=\"B\"\u003eB. 双向同步\u003c/option\u003e\n\u003c/item\u003e\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "这个集成用途是什么？\n- A. 只读可见性\n- B. 双向同步",
+   "wantFallbacks": [
+    "这个集成用途是什么？\n- A. 只读可见性\n- B. 双向同步"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: option with bare text and no label",
+   "text": "\u003cask-question\u003e\n\u003citem\u003e\n\u003cquestion\u003e要改的是会话搜索抽屉？\u003c/question\u003e\n\u003coption\u003e是，就是它\u003c/option\u003e\n\u003coption\u003e不是\u003c/option\u003e\n\u003c/item\u003e\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "要改的是会话搜索抽屉？\n- 是，就是它\n- 不是",
+   "wantFallbacks": [
+    "要改的是会话搜索抽屉？\n- 是，就是它\n- 不是"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: plural options wrapper",
+   "text": "\u003cask-question\u003e\n\u003citem\u003e\n\u003cheader\u003e人月数调整\u003c/header\u003e\n\u003cmulti-select\u003efalse\u003c/multi-select\u003e\n\u003cquestion\u003e是否需要回滚?\u003c/question\u003e\n\u003coptions\u003e\n\u003coption\u003e\u003clabel\u003e回滚\u003c/label\u003e\u003cdescription\u003e恢复到之前\u003c/description\u003e\u003c/option\u003e\n\u003coption\u003e\u003clabel\u003e不回滚\u003c/label\u003e\u003c/option\u003e\n\u003c/options\u003e\n\u003c/item\u003e\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "**人月数调整**\n是否需要回滚?\n- 回滚 — 恢复到之前\n- 不回滚",
+   "wantFallbacks": [
+    "**人月数调整**\n是否需要回滚?\n- 回滚 — 恢复到之前\n- 不回滚"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: several items render in order",
+   "text": "\u003cask-question\u003e\n\u003citem\u003e\n\u003cheader\u003eQ1\u003c/header\u003e\n\u003cquestion\u003e第一个?\u003c/question\u003e\n\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\n\u003c/item\u003e\n\u003citem\u003e\n\u003cheader\u003eQ2\u003c/header\u003e\n\u003cquestion\u003e第二个?\u003c/question\u003e\n\u003coption\u003e\u003clabel\u003eB\u003c/label\u003e\u003c/option\u003e\n\u003c/item\u003e\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "**Q1**\n第一个?\n- A\n**Q2**\n第二个?\n- B",
+   "wantFallbacks": [
+    "**Q1**\n第一个?\n- A\n**Q2**\n第二个?\n- B"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: unclosed option is bounded by the next option",
+   "text": "\u003cask-question\u003e\n\u003citem\u003e\n\u003cquestion\u003e选哪个？\u003c/question\u003e\n\u003coption\u003e\n\u003clabel\u003e甲\u003c/label\u003e\n\u003coption\u003e\n\u003clabel\u003e乙\u003c/label\u003e\n\u003c/item\u003e\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "选哪个？\n- 甲\n- 乙",
+   "wantFallbacks": [
+    "选哪个？\n- 甲\n- 乙"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: closed json payload becomes markdown",
+   "text": "\u003cask-question\u003e\n{\"questions\":[{\"header\":\"Favorite Fruit\",\"multiSelect\":false,\"options\":[{\"label\":\"苹果\",\"description\":\"脆甜多汁\"},{\"label\":\"香蕉\"}],\"question\":\"你最喜欢哪种水果？\"}]}\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "**Favorite Fruit**\n你最喜欢哪种水果？\n- 苹果 — 脆甜多汁\n- 香蕉",
+   "wantFallbacks": [
+    "**Favorite Fruit**\n你最喜欢哪种水果？\n- 苹果 — 脆甜多汁\n- 香蕉"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: json array payload becomes markdown",
+   "text": "\u003cask-question\u003e\n[{\"question\":\"选哪个？\",\"options\":[{\"label\":\"甲\"},{\"label\":\"乙\"}]}]\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "选哪个？\n- 甲\n- 乙",
+   "wantFallbacks": [
+    "选哪个？\n- 甲\n- 乙"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: broken json is salvaged by field name",
+   "text": "\u003cask-question\u003e\n{\"questions\":[{\"header\":\"文件命名\",\"multiSelect\":false,\"options\":[{\"label\":\"claude_tool.go\",\"description\":\"Claude 协议族\"},{\"label\":\"stream_tool.go\",\"description\":\"StreamParser 系\"}],\"question\":\"工具解析文件命名？\"}]}}\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "**文件命名**\n工具解析文件命名？\n- claude_tool.go — Claude 协议族\n- stream_tool.go — StreamParser 系",
+   "wantFallbacks": [
+    "**文件命名**\n工具解析文件命名？\n- claude_tool.go — Claude 协议族\n- stream_tool.go — StreamParser 系"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: unclosed wrapper ends at last child close",
+   "text": "\u003cask-question\u003e\n\u003citem\u003e\n\u003cheader\u003e操作确认\u003c/header\u003e\n\u003cmulti-select\u003efalse\u003c/multi-select\u003e\n\u003cquestion\u003e可以停掉吗？\u003c/question\u003e\n\u003coption\u003e\n\u003clabel\u003e停掉\u003c/label\u003e\n\u003cdescription\u003e然后重启\u003c/description\u003e\n\u003c/option\u003e\n\u003c/item\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "**操作确认**\n可以停掉吗？\n- 停掉 — 然后重启",
+   "wantFallbacks": [
+    "**操作确认**\n可以停掉吗？\n- 停掉 — 然后重启"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: truncated payload keeps the header text",
+   "text": "\u003cask-question\u003e\n  \u003citem\u003e\n    \u003cheader\u003e下一步操作",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "下一步操作",
+   "wantFallbacks": [
+    "下一步操作"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: dsml garbage is dropped",
+   "text": "\u003cask-question\u003e\n  \u003citem\u003e\n    \u003cheader\u003e图标颜色\u003c/｜｜DSML｜｜parameter\u003e\n\u003c/｜｜DSML｜｜invoke\u003e\n\u003c/｜｜DSML｜｜ tool_calls\u003e",
+   "wantParsed": [
+    false
+   ],
+   "wantItems": [
+    []
+   ],
+   "wantStripped": "图标颜色",
+   "wantFallbacks": [
+    "图标颜色"
+   ],
+   "wantReasons": [
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: legacy tag inside inline code is untouched",
+   "text": "用 `\u003cask-question\u003e` 标签来提问。",
+   "wantParsed": [],
+   "wantItems": [],
+   "wantStripped": "用 `\u003cask-question\u003e` 标签来提问。",
+   "wantFallbacks": [],
+   "wantReasons": []
+  },
+  {
+   "name": "legacy degradation: legacy tag inside a code fence is untouched",
+   "text": "可以这样用：\n\n```\n\u003cask-question\u003e\n\u003citem\u003e\u003cquestion\u003eQ?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e\n\u003c/ask-question\u003e\n```\n\n就是全部。",
+   "wantParsed": [],
+   "wantItems": [],
+   "wantStripped": "可以这样用：\n\n```\n\u003cask-question\u003e\n\u003citem\u003e\u003cquestion\u003eQ?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e\n\u003c/ask-question\u003e\n```\n\n就是全部。",
+   "wantFallbacks": [],
+   "wantReasons": []
+  },
+  {
+   "name": "legacy degradation: prose mention is not a payload",
+   "text": "要发起提问，就用 \u003cask-question\u003e 标签包起来。",
+   "wantParsed": [],
+   "wantItems": [],
+   "wantStripped": "要发起提问，就用 \u003cask-question\u003e 标签包起来。",
+   "wantFallbacks": [],
+   "wantReasons": []
+  },
+  {
+   "name": "legacy degradation: sibling payloads each degrade",
+   "text": "\u003cask-question\u003e\n\u003citem\u003e\u003cheader\u003eQ1\u003c/header\u003e\u003cquestion\u003eA?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eX\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e\n\u003c/ask-question\u003e\n中间\n\u003cask-question\u003e\n\u003citem\u003e\u003cheader\u003eQ2\u003c/header\u003e\u003cquestion\u003eB?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eY\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e\n\u003c/ask-question\u003e",
+   "wantParsed": [
+    false,
+    false
+   ],
+   "wantItems": [
+    [],
+    []
+   ],
+   "wantStripped": "**Q1**\nA?\n- X\n中间\n**Q2**\nB?\n- Y",
+   "wantFallbacks": [
+    "**Q1**\nA?\n- X",
+    "**Q2**\nB?\n- Y"
+   ],
+   "wantReasons": [
+    "legacy_format",
+    "legacy_format"
+   ]
+  },
+  {
+   "name": "legacy degradation: current tag is unaffected by legacy support",
+   "text": "\u003cclawbench-ask-question\u003e\n**H**\nQ?\n- A\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+   ],
+   "wantItems": [
+    [
+     {
+      "header": "H",
+      "multiSelect": false,
+      "question": "Q?",
+      "options": [
+       {
+        "label": "A"
+       }
+      ]
+     }
+    ]
+   ],
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+   ],
+   "wantReasons": [
+    ""
+   ]
+  },
+  {
+   "name": "legacy degradation: current and legacy tags coexist in one block",
+   "text": "旧：\n\u003cask-question\u003e\n\u003citem\u003e\u003cheader\u003eOld\u003c/header\u003e\u003cquestion\u003eQ?\u003c/question\u003e\u003coption\u003e\u003clabel\u003eA\u003c/label\u003e\u003c/option\u003e\u003c/item\u003e\n\u003c/ask-question\u003e\n新：\n\u003cclawbench-ask-question\u003e\n**New**\nQ?\n- B\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    false,
+    true
+   ],
+   "wantItems": [
+    [],
+    [
+     {
+      "header": "New",
+      "multiSelect": false,
+      "question": "Q?",
+      "options": [
+       {
+        "label": "B"
+       }
+      ]
+     }
+    ]
+   ],
+   "wantStripped": "旧：\n**Old**\nQ?\n- A\n新：\n",
+   "wantFallbacks": [
+    "**Old**\nQ?\n- A",
+    ""
+   ],
+   "wantReasons": [
+    "legacy_format",
+    ""
+   ]
   }
  ],
  "input": [
