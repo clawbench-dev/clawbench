@@ -40,7 +40,7 @@ const localConfig = reactive<Record<string, any>>({
 const serverConfig = ref<Record<string, any>>({
   version: 'dev',
   default_agent: '',
-  chat: { initial_messages: 20, page_size: 20, system_prompt_interval: 10, recommend_enabled: false, recommend_context_messages: 5 },
+  chat: { initial_messages: 20, page_size: 20, system_prompt_interval: 0, recommend_enabled: false, recommend_context_messages: 5 },
   session: { max_count: 10, archive_retention_enabled: false, archive_retention_days: 0 },
   recent_projects: { max_count: 10 },
   file_search: { display_limit: 50 },
