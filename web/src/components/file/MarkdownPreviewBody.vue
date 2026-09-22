@@ -38,6 +38,7 @@
         :data-file-path="filePath"
         @dragstart="onMarkdownDragStart"
         @dragend="onMarkdownDragEnd"
+        @load.capture="onMediaLoad"
         @click="handleBodyClick"
       >
         <div class="markdown-content" v-html="renderedHtml" />
@@ -69,6 +70,7 @@ import { openFilePath } from '@/composables/useFilePathAnnotation'
 import { useChatContext } from '@/composables/useChatContext'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
+import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
 
 /**
  * Rendered-markdown sibling of CodePreviewBody.
@@ -182,6 +184,11 @@ function onMarkdownDragEnd(e: DragEvent) {
   onMermaidDragEnd(e)
 }
 
+/** Re-stamp SVG media sizing once an SVG file's intrinsic size is known. */
+function onMediaLoad() {
+  stampSvgFigures(scrollEl.value)
+}
+
 // ── Mermaid ────────────────────────────────────────────────────────────────
 // MarkdownPreview.vue renders mermaid diagrams at the DOM level after the HTML
 // string is mounted (v-html is replaced wholesale on each update, so mermaid
@@ -199,6 +206,9 @@ async function renderMermaid() {
   const { renderMermaidInElement } = await import('@/composables/useMarkdownRenderer.ts')
   if (seq !== currentRenderSeq) return
   await renderMermaidInElement(content, 'md-preview-card')
+  // Inline <svg> needs no load, so its proportional sizing resolves here;
+  // SVG files are re-stamped by onMediaLoad once they have decoded.
+  stampSvgFigures(content)
 }
 
 // ── Scroll anchoring across HTML re-renders ──────────────────────────────

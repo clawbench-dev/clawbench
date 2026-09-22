@@ -131,6 +131,57 @@
     height: auto;
 }
 
+/* ─── SVG media: fill the reading column, capped at 60dvh ────────────────
+   A figure is `width: fit-content` by default, so an SVG renders at its
+   intrinsic size and leaves the column mostly empty. SVG media (an `<img>`
+   pointing at a .svg, a bare inline `<svg>`, or a Mermaid diagram — see the
+   dedicated block below) instead GROWS to fill the column while never
+   exceeding 60dvh — the cap raster images already carry
+   (markdown-common.css). Width is driven by the media's aspect ratio so the
+   ratio is preserved:
+
+       width = min(100%, 60dvh × aspect-ratio)  →  height ≤ 60dvh, ratio kept
+
+   CSS cannot read an element's aspect ratio, so `svgMediaFit.ts` derives it
+   and stamps the `.svg-fit` marker class + `--svg-ar` custom property onto the
+   figure. A figure that is never stamped keeps the previous shrink-only
+   behavior, so raster images and unknown media are untouched. Chat is
+   untouched too: the chat pipeline never stamps, and its own
+   `.chat-message .image-block-wrapper { max-width: 200px }` below still
+   clamps the thumbnail. */
+.image-block-wrapper.svg-fit {
+    width: min(100%, calc(60dvh * var(--svg-ar, 1)));
+}
+
+.image-block-wrapper.svg-fit > .lightbox-img-wrap > img,
+.image-block-wrapper.svg-fit > .lightbox-svg-wrap > svg.lightbox-svg {
+    width: 100%;
+    height: auto;
+}
+
+/* Mermaid diagrams join the same treatment: they are SVG media too, but they
+   render through their own path (mermaid.ts → armMermaidFigure) as
+   `.image-block-wrapper > .mermaid > svg` with no `lightbox-svg` marker.
+
+   Two rules are load-bearing here:
+   - The figure's ratio-driven width is DEFINITE (from --svg-ar), which is what
+     lets the diagram's `width="100%"` resolve. Without it the fit-content
+     figure and the child's percentage form a cycle, so the browser falls back
+     to the 300px default replaced-element width and a wide flowchart is
+     squashed (measured 1008px → 300px).
+   - Mermaid writes its natural size as an INLINE `style="max-width: Npx"`.
+     An inline declaration outranks any stylesheet rule, so overriding it to
+     let the diagram grow to the column needs `!important` — this is the one
+     place in this file where that is required rather than sloppy.
+   `max-height` on the cell is not used: the height cap comes from the figure's
+   ratio-driven width (height = width ÷ ratio ≤ 60dvh), which keeps the diagram
+   undistorted instead of clipping it. */
+.image-block-wrapper.svg-fit > .mermaid > svg {
+    width: 100%;
+    height: auto;
+    max-width: 100% !important;
+}
+
 /* ─── Mermaid content cell (container stays a DIRECT child of the figure) ──
    Cancel the standalone .mermaid box styles (content.css gives standalone
    diagrams a padded tile); inside the frame the media fills edge-to-edge. */

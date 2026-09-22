@@ -517,3 +517,52 @@ describe('external links open in a new tab (browser mode)', () => {
     expect(html).toContain('src="https://example.com/song.mp3"')
   })
 })
+
+// --- SVG media in the file preview: inline <svg> is lifted into a figure ---
+
+describe('inline svg in file previews is lifted into a media figure', () => {
+  // The chat pipeline marks bare inline svg (markInlineSvgs) as part of its
+  // enhancement block. The file-preview pipeline skips that block, so before
+  // this change a hand-authored `<svg>` in a markdown file stayed a stray
+  // inline element: no figure frame, no lightbox affordance, and — because the
+  // proportional sizing keys off `.image-block-wrapper` — no fill-width sizing.
+  it('lifts a solo inline svg into a figure with a view button', () => {
+    const md = '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>'
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('class="image-block-wrapper"')
+    expect(html).toContain('lightbox-svg-wrap')
+    expect(html).toContain('class="lightbox-svg"')
+    expect(html).toContain('image-block-view-btn')
+    // The source svg is preserved (not replaced by an error/placeholder).
+    expect(html).toContain('viewBox="0 0 400 100"')
+  })
+
+  it('splits a paragraph that has text around an inline svg', () => {
+    const md = 'before <svg viewBox="0 0 10 10" width="10" height="10"></svg> after'
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('image-block-wrapper')
+    expect(html.indexOf('before')).toBeLessThan(html.indexOf('image-block-wrapper'))
+    expect(html.indexOf('image-block-wrapper')).toBeLessThan(html.indexOf('after'))
+  })
+
+  it('does not lift the lightbox view button icon svg (pipeline UI)', () => {
+    // The button icon carries a viewBox too; the factory must lift only the
+    // content svg. Exactly one figure means the icon was left alone, and the
+    // icon must still be a direct child of the button (not re-wrapped).
+    const md = '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>'
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html.match(/class="image-block-wrapper"/g)).toHaveLength(1)
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const btn = doc.querySelector('.image-block-view-btn')!
+    expect(btn.querySelector('svg')).not.toBeNull()
+    expect(btn.querySelector('.image-block-wrapper')).toBeNull()
+  })
+
+  it('leaves KaTeX stretchy-delimiter svgs inside their formula (issue #473)', () => {
+    const md = '$$\\underbrace{a}_{b}$$'
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).not.toContain('image-block-wrapper')
+    expect(html).toContain('class="katex"')
+    expect(html).not.toContain('katex-error')
+  })
+})
