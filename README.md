@@ -103,7 +103,7 @@ clawbench
 | 模块 | 能力概要 |
 |---|---|
 | 📁 **文件管理** | 递归浏览（120+ 扩展名）、搜索排序、列表/网格视图、多选批量操作、上传与目录树下载、拖放移动、粘贴上传、按 `.gitignore` 灰显、**文件分享链接**（capability token，可撤销）、**OpenAPI/Swagger 交互式预览** |
-| 🎨 **代码预览与编辑** | CodeMirror 浏览/编辑双模式、语法高亮、自动补全（11 种语言）、**Sticky Scroll**、VS Code 风格搜索条、文件改动闪烁高亮、**Excalidraw 画布**、路径跳转与行范围导航 |
+| 🎨 **代码预览与编辑** | CodeMirror 浏览/编辑双模式、语法高亮、自动补全（11 种语言）、**Sticky Scroll**、VS Code 风格搜索条、文件改动闪烁高亮、**Excalidraw 画布**（`.xdraw` / `.excalidraw`）、路径跳转与行范围导航 |
 | 📝 **Markdown** | 渲染/源码切换、TOC 抽屉、LaTeX 公式、Mermaid 图表、图片灯箱、**代码链接预览浮层**、**自包含 HTML 导出**（KaTeX 字体内联） |
 | 📄 **文档与媒体** | Word / Excel / PowerPoint 原生渲染、PDF 分页缩放、图片/音频/视频内联播放、灯箱放大 |
 | 🤖 **AI 智能体** | **15 个后端**（CodeBuddy、Claude Code、OpenCode、Codex、Qoder、VeCLI、CodeWhale、DeepSeek Harness、MiMo、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）、流式响应、思维过程可见、**子智能体内容分组**、深度思考档位、模型选择持久化、ACP 上下文状态持久化、本地技能扫描 |

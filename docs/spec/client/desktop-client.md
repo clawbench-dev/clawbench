@@ -103,6 +103,7 @@ flowchart TD
 
 - **桌面端是壳而非重实现**：桌面端只提供 Web 环境之外的桌面能力（窗口、菜单、通知、隧道、保存对话框），业务逻辑全部复用服务器 + Web 前端。同一套 Vue App 在浏览器、PWA、Android、桌面端共享，桌面端不维护自己的功能副本
 - **桌面壳不是"手机 App 模式"**：桌面端与 Android 都通过原生桥被前端识别为"原生环境"，但两者的省电策略截然相反——Android 窗口退到后台会被系统挂起，因此隐藏时主动断开 WebSocket；桌面窗口只是最小化、进程仍在运行，断开 WS 等于自断通知来源。因此前端必须区分 `isDesktopApp`，门控写成 `isAppMode && !isDesktopApp`。这个区分要从 preload 一路贯通到消费点（preload → `useAppMode` → 各分支），任何一层漏掉都会让最小化后的推送静默失效
+- **`isDesktopApp` 还要参与 `isPC` 判定**：Electron 的 preload 上报 `isNativeApp()=true`，而 `isPC` 原先只看 `isAppMode`，于是整个桌面端被判定为移动端——文件快捷预览弹 BottomSheet 而非桌面浮卡，文件管理器点选语义、终端 PC 工具栏、输入框滑动提示等一并走移动分支。Electron 是有物理键盘鼠标的桌面窗口，必须直接判为 PC；Android/iOS/iPadOS 与 Android 原生 App 仍按移动端处理
 - **菜单文案本地化交给操作系统**：剪切/复制/粘贴等标准操作使用 Electron role，由 OS 按系统语言自动提供文案；仅复制链接/复制图片这类无 role 默认值的自定义项才由应用按语言翻译，避免在非中文系统上显示硬编码中文
 - **通知点击的渲染进程就绪要握手，不能靠加载状态猜**：页面 `did-finish-load` 远早于 App 注册监听器（初始化要先 await 项目加载与会话引导），若以 `webContents.isLoading()` 判断可接收，这个窗口内的点击会被发进无监听器的页面而永久丢失。改为渲染进程显式 `rendererReady()` 握手，未就绪则暂存待取
 - **端口映射是 desired 状态，不是快照**：本地 listener 的存在与否必须由一份"期望映射"集合推导，重连后据此重建全部 listener。曾经 `disconnectTunnel()` 直接清空映射表且不重建，于是点刷新（触发重连）后端口必然不可达——而绿点来自服务端对目标端口的探测，与本地 listener 无关，映射已死仍显绿。同时 `ensureTunnel` 需要单飞守卫：并发调用会互相拆台，先到者挂在被废弃的连接上永不 settle

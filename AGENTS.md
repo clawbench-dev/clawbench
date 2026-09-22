@@ -93,7 +93,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。左侧面板归属（宽屏 Dock 显示哪个页签）是**项目属性**而非代码路径属性，由 `useProjectPanel.ts` 按 `clawbench-project-panel:<项目根>` 记忆；项目切换期间用计数器抑制误写（可并发调用，布尔会被先结束者清掉）。
 
-`web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `.clawbench-web/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。
+`web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `.clawbench-web/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。它**有意不进根 Vite 构建**（否则主 bundle 会膨胀约 8MB），因此根 `npm run build` 不产出它——**所有 CI / release job 都必须显式构建该 vendor bundle**，否则发布二进制内嵌的前端里没有 `vendor/excalidraw/`，`/vendor/excalidraw/index.html` 走 `ServeIndex` 的 `http.NotFound` 返回 Go 的 "404 page not found"（本地用 `build.sh` 构建正常，缺陷只在 release / Docker 产物上暴露）。
 
 `web/src/share/` 是文件分享链接的独立只读 SPA（类型分派渲染 + TOC + 下载），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
 
@@ -107,7 +107,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 | `bridge.ts` | IPC 桥：服务器列表/凭据、SSH 端口映射、文件下载、分享、系统通知、主题、语言、日志捕获、屏幕常亮 |
 | `tunnel.ts` | ssh2 客户端，读取 `/api/ssh/info` 建立 SSH 端口映射 |
 | `download.ts` | 文件下载（保存对话框 + 下载后定位）、URL/Blob 下载 |
-| `notification.ts` | 原生系统通知，点击导航到会话/任务/仓库（冷启动挂起派发，`navReady` 握手后才放行）。窗口**可见且未最小化**时**抑制通知**（刻意不看焦点：窗口开着就不打扰）——用户开着应用，通知只会重复应用内完成卡片；判定必须在主进程做，渲染层的 `document.hasFocus()` 在最小化/隐藏窗口里仍可能为真 |
+| `notification.ts` | 原生系统通知，点击导航到会话/任务/仓库（冷启动挂起派发，经 `navReady` 的 `rendererReady()` 握手后才放行）。窗口**可见且未最小化**时**抑制通知**（刻意不看焦点：窗口开着就不打扰）——用户开着应用，通知只会重复应用内完成卡片；判定必须在主进程做，渲染层的 `document.hasFocus()` 在最小化/隐藏窗口里仍可能为真 |
 | `clientLog.ts` | 主进程日志回传：缓冲 POST `/api/client-log`（`source="electron"`）+ 写 `{userData}/desktop.log`；镜像渲染进程 console，`recordError` 上报未捕获异常 |
 | `identity.ts` | `APP_USER_MODEL_ID`（Windows toast 身份），**必须与 `electron-builder.yml` 的 `appId` 一致**——该 yml 不随包分发，运行时读不到，漂移会让 Windows 通知静默消失；`identity.test.ts` 守住 |
 | `urlPolicy.ts` / `contextMenu.ts` | 外部链接判定（以服务器 Origin 为边界）与原生右键菜单（标准项走 OS role 本地化） |
@@ -126,7 +126,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 `tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、客户端隐藏下载入口——不要把它当错误处理。
 
-**桌面壳不是"手机 App 模式"**：两者都经原生桥被识别为原生环境，但省电策略相反——Android 退到后台会被系统挂起，故隐藏时主动断开 WebSocket；桌面窗口只是最小化、进程仍在跑，断开 WS 等于自断通知来源（通知全部由 WS 事件产生）。前端用 `isDesktopApp`（preload 注入 → `useAppMode` → 消费点三层打通）区分，门控写成 `isAppMode && !isDesktopApp`。任何一层漏掉都会让最小化后的推送静默失效。端口映射同理要按"期望状态"而非快照管理：重连后必须重建全部 listener，`ensureTunnel` 需单飞守卫（并发调用会互相拆台）。
+**桌面壳不是"手机 App 模式"**：两者都经原生桥被识别为原生环境，但省电策略相反——Android 退到后台会被系统挂起，故隐藏时主动断开 WebSocket；桌面窗口只是最小化、进程仍在跑，断开 WS 等于自断通知来源（通知全部由 WS 事件产生）。前端用 `isDesktopApp`（preload 注入 → `useAppMode` → 消费点三层打通）区分，门控写成 `isAppMode && !isDesktopApp`。任何一层漏掉都会让最小化后的推送静默失效。端口映射同理要按"期望状态"而非快照管理：重连后必须重建全部 listener，`ensureTunnel` 需单飞守卫（并发调用会互相拆台）。**`isDesktopApp` 还必须参与 `isPC` 判定**：Electron 的 preload 上报 `isNativeApp()=true`，若 `isPC` 只看 `isAppMode` 就会把整个桌面端判成移动端（文件快捷预览弹 BottomSheet 而非桌面浮卡、点选语义、终端 PC 工具栏、输入框滑动提示全部走移动分支）——Electron 是有物理键盘鼠标的桌面窗口，必须直接判为 PC。
 
 构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job（linux / linux-arm64 / windows / macos）打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 发三个 `@xulongzhe/clawbench-desktop-<plat>-payload` 包（linux-x64 / linux-arm64 / win32-x64；darwin 从不发 npm）；`publish-npm` 只发服务端 CLI `@xulongzhe/clawbench`。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。`win.signAndEditExecutable` **不要**在 electron-builder.yml 里禁用——CI 的 windows job 原生可用 rcedit，禁用会跳过向 exe 写入图标与版本元数据；本地无 wine 交叉编译时才用命令行临时覆盖。
 

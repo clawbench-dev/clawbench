@@ -107,7 +107,7 @@ clawbench
 | Module | Highlights |
 |---|---|
 | 📁 **File Management** | Recursive browsing (120+ extensions), search & sort, list/grid views, multi-select batch ops, upload & directory-tree download, drag-and-drop move, paste upload, `.gitignore`-aware dimming, **file share links** (revocable capability tokens), **interactive OpenAPI/Swagger preview** |
-| 🎨 **Code Preview & Editing** | CodeMirror browse/edit dual mode, syntax highlighting, autocompletion (11 languages), **Sticky Scroll**, VS Code-style search bar, diff flash highlighting, **Excalidraw canvas**, path jumps with line ranges |
+| 🎨 **Code Preview & Editing** | CodeMirror browse/edit dual mode, syntax highlighting, autocompletion (11 languages), **Sticky Scroll**, VS Code-style search bar, diff flash highlighting, **Excalidraw canvas** (`.xdraw` / `.excalidraw`), path jumps with line ranges |
 | 📝 **Markdown** | Render/source toggle, TOC drawer, LaTeX, Mermaid, image lightbox, **code-link preview overlay**, **self-contained HTML export** (KaTeX fonts inlined) |
 | 📄 **Documents & Media** | Native Word / Excel / PowerPoint rendering, paged PDF with zoom, inline image/audio/video players, lightbox |
 | 🤖 **AI Agents** | **15 backends** (CodeBuddy, Claude Code, OpenCode, Codex, Qoder, VeCLI, CodeWhale, DeepSeek Harness, MiMo, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode), streaming responses, visible reasoning, **sub-agent content grouping**, thinking-depth levels, persisted model choice, persisted ACP context state, local skill scanning |
