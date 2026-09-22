@@ -27,6 +27,11 @@ export interface CompletionPopoverItem {
     eventTone: 'success' | 'danger' | 'warning' | 'info'
     /** 主体标题：会话名 / 任务名 / 仓库标识（谁出了事） */
     title: string
+    /**
+     * 类别标识 chip（会话 / 任务 / 议题与合并）。与 eventLabel 并排构成
+     * 「类别 + 事件」两枚 chip：类别定归属、事件定内容。
+     */
+    kindLabel?: string
     /** 单行纯文本正文（超长由 CSS 省略号截断） */
     body: string
     kind: 'session' | 'task' | 'forge'
@@ -61,11 +66,29 @@ const active = ref<CompletionPopoverItem | null>(null)
 // 否则旧计时器会在新条目展示中途把它关掉。
 let autoDismissTimer: ReturnType<typeof setTimeout> | null = null
 
+// 计时器的绝对到期时刻。暂停时用它与当前时间算出剩余量——恢复时只补上
+// 剩余的那部分，而不是重新计满 5 秒（用户移开鼠标不该白送一轮完整时长）。
+let autoDismissDeadline = 0
+
+// 暂停期间保留的剩余毫秒数；null 表示当前未暂停。用 null 而非 0 区分
+// "没暂停"和"暂停时刚好只剩 0ms"。
+let pausedRemainingMs: number | null = null
+
 function clearAutoDismiss(): void {
     if (autoDismissTimer !== null) {
         clearTimeout(autoDismissTimer)
         autoDismissTimer = null
     }
+    pausedRemainingMs = null
+}
+
+/** 启动（或重启）计时器，ms 后自动关闭。 */
+function armAutoDismiss(ms: number): void {
+    autoDismissTimer = setTimeout(() => {
+        autoDismissTimer = null
+        dismiss()
+    }, ms)
+    autoDismissDeadline = Date.now() + ms
 }
 
 function showNext(): void {
@@ -76,10 +99,29 @@ function showNext(): void {
         return
     }
     active.value = next
-    autoDismissTimer = setTimeout(() => {
-        autoDismissTimer = null
-        dismiss()
-    }, AUTO_DISMISS_MS)
+    armAutoDismiss(AUTO_DISMISS_MS)
+}
+
+/**
+ * 暂停自动关闭（鼠标悬停时调用）。记下剩余时间，恢复时从这里接着走。
+ *
+ * 暂停只对**当前展示项**有效：期间若切换到了下一项，`showNext` 会清掉暂停
+ * 状态并重新计满——新条目理应得到完整的展示时长。
+ */
+function pauseAutoDismiss(): void {
+    if (autoDismissTimer === null) return
+    clearTimeout(autoDismissTimer)
+    autoDismissTimer = null
+    // 可能为负（暂停调用晚于到期），钳到 0 让恢复后立即关闭
+    pausedRemainingMs = Math.max(0, autoDismissDeadline - Date.now())
+}
+
+/** 恢复自动关闭（鼠标移出时调用）。未处于暂停态时是空操作。 */
+function resumeAutoDismiss(): void {
+    if (pausedRemainingMs === null) return
+    const remaining = pausedRemainingMs
+    pausedRemainingMs = null
+    armAutoDismiss(remaining)
 }
 
 /**
@@ -129,5 +171,7 @@ export function useCompletionPopover() {
         push,
         dismiss,
         reset,
+        pauseAutoDismiss,
+        resumeAutoDismiss,
     }
 }

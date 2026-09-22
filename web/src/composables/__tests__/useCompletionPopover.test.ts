@@ -130,6 +130,91 @@ describe('useCompletionPopover', () => {
         expect(p.active.value?.sessionId).toBe('s2')
     })
 
+    // ── 悬停暂停（鼠标放上去就不要消失）──
+
+    it('pauseAutoDismiss() keeps the item on screen past the 5s window', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem())
+
+        vi.advanceTimersByTime(2000)
+        p.pauseAutoDismiss()
+
+        // 远超原始窗口，卡片仍在
+        vi.advanceTimersByTime(600000)
+        expect(p.active.value?.sessionId).toBe('s1')
+    })
+
+    it('resumeAutoDismiss() closes after only the REMAINING time, not a fresh 5s', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem())
+
+        // 已过 2s，剩 3s；悬停暂停
+        vi.advanceTimersByTime(2000)
+        p.pauseAutoDismiss()
+        vi.advanceTimersByTime(100000)
+
+        p.resumeAutoDismiss()
+        // 剩余 3s 未走完 → 仍在
+        vi.advanceTimersByTime(2999)
+        expect(p.active.value?.sessionId).toBe('s1')
+        // 走完剩余 3s → 关闭
+        vi.advanceTimersByTime(1)
+        expect(p.active.value).toBeNull()
+    })
+
+    it('resumeAutoDismiss() is a no-op when not paused', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem())
+
+        // 未暂停时恢复：不应重置计时（否则卡片会被无限续命）
+        vi.advanceTimersByTime(3000)
+        p.resumeAutoDismiss()
+        vi.advanceTimersByTime(1999)
+        expect(p.active.value?.sessionId).toBe('s1')
+        vi.advanceTimersByTime(1)
+        expect(p.active.value).toBeNull()
+    })
+
+    it('pauseAutoDismiss() is a no-op after the item already dismissed', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem())
+        vi.advanceTimersByTime(5000)
+        expect(p.active.value).toBeNull()
+
+        // 迟到的事件回调（鼠标移入晚于自动关闭）不应抛错或复活卡片
+        expect(() => p.pauseAutoDismiss()).not.toThrow()
+        expect(() => p.resumeAutoDismiss()).not.toThrow()
+        expect(p.active.value).toBeNull()
+    })
+
+    it('a new item shown while paused gets a FULL window, not the paused remainder', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
+
+        // s1 展示 1s 后暂停，然后手动关闭 → s2 上场
+        vi.advanceTimersByTime(1000)
+        p.pauseAutoDismiss()
+        p.dismiss()
+        expect(p.active.value?.sessionId).toBe('s2')
+
+        // s2 必须拿到完整的 5s，而不是继承 s1 的暂停剩余
+        vi.advanceTimersByTime(4999)
+        expect(p.active.value?.sessionId).toBe('s2')
+        vi.advanceTimersByTime(1)
+        expect(p.active.value).toBeNull()
+    })
+
+    it('manual dismiss() still works while paused', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem())
+
+        p.pauseAutoDismiss()
+        p.dismiss()
+
+        expect(p.active.value).toBeNull()
+    })
+
     it('push() after everything was dismissed shows immediately again', () => {
         const p = useCompletionPopover()
         p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))

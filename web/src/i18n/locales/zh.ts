@@ -744,6 +744,9 @@ export default {
       mergedCount: '{count} 条新变化',
       untitledSession: '未命名会话',
       untitledTask: '未命名任务',
+      categorySession: '会话',
+      categoryTask: '任务',
+      categoryForge: '议题与合并',
     },
     session: {
       aiDialog: 'AI 对话',

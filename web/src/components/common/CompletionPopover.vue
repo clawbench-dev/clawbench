@@ -12,15 +12,22 @@
           @click="activate"
           @keydown.enter.prevent="activate"
           @keydown.space.prevent="activate"
+          @mouseenter="pauseAutoDismiss"
+          @mouseleave="resumeAutoDismiss"
+          @focusin="pauseAutoDismiss"
+          @focusout="resumeAutoDismiss"
         >
           <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-notify-icon" />
           <div class="completion-notify-text">
             <div class="completion-notify-head">
-              <!-- 事件类型标识：通知的"是什么"，与标题的"是谁"分开 -->
+              <!-- 两枚 chip：类别定归属（会话/任务/议题与合并），事件定内容 -->
+              <span v-if="active.kindLabel" class="completion-notify-kind is-category">{{ active.kindLabel }}</span>
               <span class="completion-notify-kind" :class="`is-${active.eventTone}`">{{ displayKind }}</span>
               <span class="completion-notify-title" :title="active.title">{{ active.title }}</span>
             </div>
             <div v-if="active.body" class="completion-notify-body" :title="active.body">{{ active.body }}</div>
+            <!-- 项目路径：仅跨项目时出现（调用方只在与当前项目不同时填充） -->
+            <div v-if="active.projectPath" class="completion-notify-path" :title="active.projectPath">{{ active.projectPath }}</div>
           </div>
           <button
             class="completion-notify-close"
@@ -46,7 +53,7 @@ import { useAgents } from '@/composables/useAgents'
 import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 
-const { active, dismiss } = useCompletionPopover()
+const { active, dismiss, pauseAutoDismiss, resumeAutoDismiss } = useCompletionPopover()
 const { getAgentBackend } = useAgents()
 const { isPC } = usePlatformDetect()
 
@@ -179,7 +186,9 @@ function markRead(item: NonNullable<typeof active.value>): void {
 
 @media (min-width: 768px) {
     .completion-notify {
-        max-width: min(680px, 92vw);
+        /* 桌面端收窄：这是通知不是面板。过宽时一行能塞下整段摘要，读起来
+           像在看正文；窄卡片更贴近系统通知的形态，也让右下角的占用更小。 */
+        max-width: min(420px, 92vw);
     }
 }
 
@@ -220,11 +229,19 @@ function markRead(item: NonNullable<typeof active.value>): void {
     background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
-/* 语义配色：绿=成功、红=失败、黄=中断、蓝=进行中/中性（含 forge 的六类事件）。 */
+/* 语义配色：绿=成功、红=失败、黄=中断、蓝=进行中/中性（含 forge 的六类事件）。
+   这是卡片上唯一的彩色信息——它回答"结果如何"，最需要一眼看到。 */
 .completion-notify-kind.is-success { color: var(--color-success); }
 .completion-notify-kind.is-danger { color: var(--color-red); }
 .completion-notify-kind.is-warning { color: var(--color-yellow); }
 .completion-notify-kind.is-info { color: var(--color-info); }
+
+/* 类别 chip（会话 / 任务 / 议题与合并）保持中性灰：它回答"哪个子系统"，
+   属于分类而非结果，不该和语义色抢注意力。更硬的原因是调色板不够——会话
+   若也用绿色，就会和"成功"那枚并排出现且同色，两枚 chip 反而分不清。 */
+.completion-notify-kind.is-category {
+    color: var(--text-muted);
+}
 
 .completion-notify-title {
     flex: 1;
@@ -238,12 +255,33 @@ function markRead(item: NonNullable<typeof active.value>): void {
     text-overflow: ellipsis;
 }
 
-/* 单行纯文本正文，超长省略号——对标系统通知的 body。 */
+/* 正文：最多 4 行，超出用省略号收尾。单行时摘要几乎读不出信息（"已完成
+   登录流程重构…" 后面全被截掉），放宽到 4 行才能在卡片内判断结果好坏——
+   但仍要封顶，否则一段长回复会把通知撑成面板。
+   用 -webkit-line-clamp 而非固定 max-height：行数由行高自动换算，改字号
+   或行高时不用同步改数值。 */
 .completion-notify-body {
     margin-top: 2px;
     font-size: var(--font-size-sm);
     line-height: var(--line-height-normal);
     color: var(--text-secondary, var(--text-primary));
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+    overflow: hidden;
+    /* 长 URL / 无空格串要能断行，否则会把卡片横向撑破。
+       用 overflow-wrap 而非 word-break: break-word —— 后者已弃用。 */
+    overflow-wrap: break-word;
+}
+
+/* 项目路径行：比正文再小一档、更弱化。只有跨项目通知才出现——它回答
+   "这事不在你正看的项目里"，是点击前的关键判断依据。完整路径放 title。 */
+.completion-notify-path {
+    margin-top: 2px;
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-normal);
+    color: var(--text-hint);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

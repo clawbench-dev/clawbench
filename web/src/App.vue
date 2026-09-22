@@ -1319,6 +1319,7 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
         completionPopover.push({
             groupKey,
             kind: 'forge',
+            kindLabel: gt('chat.popover.categoryForge'),
             // chip 是"发生了什么"（合并请求 #42 · 已合并），标题是"在哪个仓库"。
             eventLabel: [`${kind}${ref}`.trim(), reason].filter(Boolean).join(' · '),
             // forge 六类事件统一用中性色：没有哪一类天然比另一类"更好"或
@@ -1359,7 +1360,10 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
     const body = status === 'permission_pending'
         ? (data.tool_name || '')
         : (plainPreview(data) || data.session_title || '')
-    const projectPath = data.project_path || ''
+    // 跨项目才显示项目路径：本项目不加（用户知道自己在哪）。它回答
+    // "这事不在你正看的项目里"，是点击前的关键判断依据。
+    const isSameProject = !data.project_path || data.project_path === store.state.projectRoot
+    const projectPath = isSameProject ? '' : (data.project_path || '')
 
     if (event === 'task_update') {
         const meta = TASK_STATUS_META[status]
@@ -1367,6 +1371,7 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
         completionPopover.push({
             groupKey: `task:${data.task_id || sessionId}`,
             kind: 'task',
+            kindLabel: gt('chat.popover.categoryTask'),
             eventLabel: gt(meta.label),
             eventTone: meta.tone,
             title: data.session_title || gt('chat.popover.untitledTask'),
@@ -1382,6 +1387,7 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
         completionPopover.push({
             groupKey: `session:${sessionId}`,
             kind: 'session',
+            kindLabel: gt('chat.popover.categorySession'),
             eventLabel: gt(meta.label),
             eventTone: meta.tone,
             title: data.session_title || gt('chat.popover.untitledSession'),

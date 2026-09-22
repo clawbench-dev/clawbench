@@ -741,6 +741,9 @@ export default {
       mergedCount: '{count} new changes',
       untitledSession: 'Untitled session',
       untitledTask: 'Untitled task',
+      categorySession: 'Session',
+      categoryTask: 'Task',
+      categoryForge: 'Issues & PRs',
     },
     session: {
       aiDialog: 'AI Chat',

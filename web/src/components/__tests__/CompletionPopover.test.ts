@@ -12,6 +12,8 @@ const mockState = {
     active: ref(null),
     queue: ref([]),
     dismiss: vi.fn(),
+    pauseAutoDismiss: vi.fn(),
+    resumeAutoDismiss: vi.fn(),
 }
 
 const { mockGetAgentBackend } = vi.hoisted(() => ({
@@ -99,16 +101,29 @@ describe('CompletionPopover', () => {
         expect(document.querySelector('.completion-notify-title')!.textContent).toBe('修复登录超时')
     })
 
-    it('renders the plain-text body on a single line', () => {
+    it('renders the plain-text body clamped to 4 lines', () => {
         mockState.active = ref(makeItem({ body: '已完成登录流程重构' }))
         mountPopover()
 
         const el = document.querySelector('.completion-notify-body')!
         expect(el.textContent).toBe('已完成登录流程重构')
         const styles = window.getComputedStyle(el)
-        expect(styles.whiteSpace).toBe('nowrap')
+        // 多行截断：4 行封顶 + 省略号，而非单行 nowrap
         expect(styles.overflow).toBe('hidden')
-        expect(styles.textOverflow).toBe('ellipsis')
+        expect(styles.whiteSpace).not.toBe('nowrap')
+    })
+
+    it('clamps the body via -webkit-line-clamp so the line count tracks the line height', () => {
+        // 用 clamp 而不是固定 max-height：改字号/行高时行数自动跟随，
+        // 不需要同步改一个 px 数值。jsdom 的 getComputedStyle 不暴露
+        // -webkit-line-clamp，只能查源码声明。
+        const src = readWebFile('src/components/common/CompletionPopover.vue')
+        const rule = src.match(/\.completion-notify-body\s*\{[^}]*\}/)?.[0] || ''
+        expect(rule).toContain('-webkit-line-clamp: 4')
+        expect(rule).toContain('display: -webkit-box')
+        expect(rule).toContain('-webkit-box-orient: vertical')
+        // 不得退化成固定高度（会与行高脱钩）
+        expect(rule).not.toMatch(/max-height:\s*\d+px/)
     })
 
     it('omits the body row entirely when there is no body', () => {
@@ -178,6 +193,35 @@ describe('CompletionPopover', () => {
 
         expect(mockState.dismiss).toHaveBeenCalledTimes(1)
         expect(events.captured).toHaveLength(0)
+    })
+
+    // ── 悬停暂停（鼠标放上去就不要消失）──
+
+    it('pauses the auto-dismiss timer on mouseenter and resumes on mouseleave', () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const card = document.querySelector('.completion-notify')!
+        card.dispatchEvent(new MouseEvent('mouseenter'))
+        expect(mockState.pauseAutoDismiss).toHaveBeenCalledTimes(1)
+        expect(mockState.resumeAutoDismiss).not.toHaveBeenCalled()
+
+        card.dispatchEvent(new MouseEvent('mouseleave'))
+        expect(mockState.resumeAutoDismiss).toHaveBeenCalledTimes(1)
+    })
+
+    it('also pauses while the card holds keyboard focus (not just hover)', () => {
+        // 键盘用户 tab 到卡片上时鼠标并未悬停，若只绑 mouseenter，
+        // 卡片会在他们读内容的过程中消失。
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const card = document.querySelector('.completion-notify')!
+        card.dispatchEvent(new FocusEvent('focusin'))
+        expect(mockState.pauseAutoDismiss).toHaveBeenCalledTimes(1)
+
+        card.dispatchEvent(new FocusEvent('focusout'))
+        expect(mockState.resumeAutoDismiss).toHaveBeenCalledTimes(1)
     })
 
     // ── 跳转（整卡点击） ──
@@ -325,8 +369,74 @@ describe('CompletionPopover', () => {
         mockState.active = ref(makeItem({ eventLabel: '会话已取消', eventTone: 'warning' }))
         mountPopover()
 
-        const chip = document.querySelector('.completion-notify-kind')!
-        expect(chip.textContent).toBe('会话已取消')
+        const chips = document.querySelectorAll('.completion-notify-kind')
+        // 无 kindLabel 时只有事件 chip 一枚
+        expect(chips).toHaveLength(1)
+        expect(chips[0].textContent).toBe('会话已取消')
+    })
+
+    // ── 类别标识（会话 / 任务 / 议题与合并）──
+
+    it('renders the category chip alongside the event chip', () => {
+        mockState.active = ref(makeItem({ kindLabel: '会话', eventLabel: '会话已完成' }))
+        mountPopover()
+
+        const chips = document.querySelectorAll('.completion-notify-kind')
+        expect(chips).toHaveLength(2)
+        expect(chips[0].textContent).toBe('会话')
+        expect(chips[1].textContent).toBe('会话已完成')
+        // 类别 chip 走中性色，不参与语义配色
+        expect(chips[0].className).toContain('is-category')
+    })
+
+    it.each([
+        ['会话', 'session'],
+        ['任务', 'task'],
+        ['议题与合并', 'forge'],
+    ])('renders the "%s" category label regardless of kind', (label) => {
+        mockState.active = ref(makeItem({ kindLabel: label }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-notify-kind.is-category')!.textContent).toBe(label)
+    })
+
+    it('omits the category chip when kindLabel is absent', () => {
+        mockState.active = ref(makeItem({ kindLabel: undefined }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-notify-kind.is-category')).toBeFalsy()
+        // 事件 chip 仍在
+        expect(document.querySelectorAll('.completion-notify-kind')).toHaveLength(1)
+    })
+
+    // ── 项目路径（跨项目标识）──
+
+    it('renders the project path when provided', () => {
+        mockState.active = ref(makeItem({ projectPath: '/home/me/other-project' }))
+        mountPopover()
+
+        const el = document.querySelector('.completion-notify-path')!
+        expect(el.textContent).toBe('/home/me/other-project')
+        expect(el.getAttribute('title')).toBe('/home/me/other-project')
+    })
+
+    it('omits the project path row when empty (same project)', () => {
+        mockState.active = ref(makeItem({ projectPath: '' }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-notify-path')).toBeFalsy()
+    })
+
+    it('truncates a long project path on one line', () => {
+        mockState.active = ref(makeItem({
+            projectPath: '/very/long/path/to/some/deeply/nested/project/directory/name',
+        }))
+        mountPopover()
+
+        const styles = window.getComputedStyle(document.querySelector('.completion-notify-path')!)
+        expect(styles.whiteSpace).toBe('nowrap')
+        expect(styles.overflow).toBe('hidden')
+        expect(styles.textOverflow).toBe('ellipsis')
     })
 
     it.each([
@@ -432,6 +542,16 @@ describe('CompletionPopover', () => {
         const styles = window.getComputedStyle(layer)
         expect(styles.alignItems).toBe('flex-end')
         expect(styles.justifyContent).toBe('flex-end')
+    })
+
+    it('keeps the desktop card narrow (a notification, not a panel)', () => {
+        // 680px 时一行能塞下整段摘要，读起来像在看正文；收窄到 420px 更贴近
+        // 系统通知的形态，右下角占用也更小。
+        const src = readWebFile('src/components/common/CompletionPopover.vue')
+        const desktopRule = src.match(/@media \(min-width: 768px\)\s*\{[\s\S]*?\n\}/)?.[0] || ''
+        expect(desktopRule).toContain('max-width: min(420px, 92vw)')
+        // 防回归：不得再回到 680px
+        expect(desktopRule).not.toContain('680px')
     })
 
     // ── 非模态：不再有遮罩拦截 / 点空白关闭 ──
