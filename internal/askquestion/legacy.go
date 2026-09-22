@@ -336,25 +336,206 @@ func renderLegacyJSON(inner string) string {
 }
 
 // parseLegacyJSONObject decodes the payload, accepting both the object shape
-// ({"questions":[…]}) and a bare array ([{…}]). A malformed payload yields nil,
-// which sends the caller to the salvage path.
+// ({"questions":[…]}) and a bare array ([{…}]).
+//
+// A payload that does not decode is repaired once (see repairLegacyJSON) and
+// retried; a payload that still does not decode yields nil, which sends the
+// caller to the salvage path.
 func parseLegacyJSONObject(inner string) map[string]any {
 	trimmed := strings.TrimSpace(inner)
 	if trimmed == "" {
 		return nil
 	}
-	if trimmed[0] == '[' {
+	if m := decodeLegacyJSON(trimmed); m != nil {
+		return m
+	}
+	if repaired := repairLegacyJSON(trimmed); repaired != trimmed {
+		return decodeLegacyJSON(repaired)
+	}
+	return nil
+}
+
+// decodeLegacyJSON is a strict decode of either accepted top-level shape.
+func decodeLegacyJSON(s string) map[string]any {
+	if s[0] == '[' {
 		var arr []any
-		if json.Unmarshal([]byte(trimmed), &arr) == nil {
+		if json.Unmarshal([]byte(s), &arr) == nil {
 			return map[string]any{KeyQuestions: arr}
 		}
 		return nil
 	}
 	var m map[string]any
-	if json.Unmarshal([]byte(trimmed), &m) == nil {
+	if json.Unmarshal([]byte(s), &m) == nil {
 		return m
 	}
 	return nil
+}
+
+// repairLegacyJSON repairs the two quote defects seen in production. Both make
+// json.Unmarshal reject a payload whose field values are otherwise intact, and
+// both were losing user-visible content before this repair existed:
+//
+//   - a key that lost its opening quote — `{label":"方向三为主"}`. Without the
+//     repair only the first option decoded, so a four-option question rendered
+//     as one option (real: #14752).
+//   - a quote used as ordinary punctuation inside a value —
+//     `"question":"…最多可以被"临时分裂"多久？"`. The value was cut short at the
+//     first interior quote, truncating the question mid-sentence (real: #15064,
+//     #15066, #22538, #22544).
+//
+// This is a repair, not a parser: it only ever adds a missing opening quote or
+// an escape, never structure. If the result still does not decode the caller
+// falls back to salvageLegacyJSON, so a failed repair costs nothing.
+//
+// It is deliberately not a general JSON repairer — it targets exactly these two
+// shapes, which is what the production corpus contains.
+func repairLegacyJSON(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 16)
+
+	inString := false
+	changed := false
+	for i := 0; i < len(s); {
+		c := s[i]
+
+		if !inString {
+			// An object boundary may open a key that lost its opening quote.
+			if c == '{' || c == ',' {
+				if prefix, next, ok := quoteBareLegacyKey(s, i); ok {
+					b.WriteString(prefix)
+					i = next
+					changed = true
+					continue
+				}
+			}
+			b.WriteByte(c)
+			if c == '"' {
+				inString = true
+			}
+			i++
+			continue
+		}
+
+		switch c {
+		case '\\':
+			// Copy the escape pair verbatim.
+			b.WriteByte(c)
+			if i+1 < len(s) {
+				b.WriteByte(s[i+1])
+				i += 2
+			} else {
+				i++
+			}
+		case '"':
+			if legacyQuoteClosesString(s, i) {
+				b.WriteByte(c)
+				inString = false
+			} else {
+				// Interior quote: escape it and stay in the string.
+				b.WriteString(`\"`)
+				changed = true
+			}
+			i++
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+
+	if !changed {
+		return s
+	}
+	return b.String()
+}
+
+// quoteBareLegacyKey reports whether the object boundary at s[i] (`{` or `,`)
+// opens a key whose opening quote is missing, as in `{label":"x"` or the array
+// form `,{label":"x"`. On a match it returns the repaired prefix (the boundary,
+// any intervening brace, the quoted name, and the whitespace between them) plus
+// the offset just past the name's closing quote, so the caller resumes at the
+// `:`.
+func quoteBareLegacyKey(s string, i int) (string, int, bool) {
+	j := i + 1
+	// Whitespace, then — only when the boundary was a comma — one brace: an
+	// array element boundary reads `,{label":`, so the key follows the brace
+	// rather than the comma. A `{` boundary is itself the brace.
+	j = skipLegacyJSONSpace(s, j)
+	if s[i] == ',' && j < len(s) && s[j] == '{' {
+		j++
+	}
+	braceEnd := j
+
+	j = skipLegacyJSONSpace(s, j)
+	if j >= len(s) || !isLegacyKeyStart(s[j]) {
+		return "", 0, false
+	}
+	start := j
+	for j < len(s) && isLegacyKeyChar(s[j]) {
+		j++
+	}
+	name := s[start:j]
+
+	// The key lost its opening quote. Two shapes occur: the closing quote
+	// survives (`label":`) or it was lost too (`label:`). Both are repaired by
+	// quoting the name; in the first case the stray closing quote is consumed.
+	quoteStart := j
+	j = skipLegacyJSONSpace(s, j)
+	next := j
+	switch {
+	case j < len(s) && s[j] == '"':
+		next = j + 1
+	case j < len(s) && s[j] == ':':
+	default:
+		return "", 0, false
+	}
+
+	// s[i:braceEnd] is the boundary plus any brace; s[braceEnd:start] the
+	// whitespace before the name; s[quoteStart:j] the whitespace after it.
+	prefix := s[i:braceEnd] + s[braceEnd:start] + `"` + name + `"` + s[quoteStart:j]
+	return prefix, next, true
+}
+
+// skipLegacyJSONSpace returns the index of the first non-whitespace byte at or
+// after j.
+func skipLegacyJSONSpace(s string, j int) int {
+	for j < len(s) && isLegacyJSONSpace(s[j]) {
+		j++
+	}
+	return j
+}
+
+// legacyQuoteClosesString reports whether the quote at s[i] ends the string it
+// is in. It ends the string when the next non-space byte is structural — a
+// colon (the value just closed was an object key), a comma, or a closing
+// brace/bracket. Anything else means the quote was interior text.
+func legacyQuoteClosesString(s string, i int) bool {
+	for j := i + 1; j < len(s); j++ {
+		switch s[j] {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case ':', ',', '}', ']':
+			return true
+		default:
+			return false
+		}
+	}
+	// A quote at end-of-input closes the string.
+	return true
+}
+
+// isLegacyJSONSpace reports whether c is whitespace JSON permits around tokens.
+func isLegacyJSONSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+// isLegacyKeyStart reports whether c may begin an unquoted JSON key.
+func isLegacyKeyStart(c byte) bool {
+	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// isLegacyKeyChar reports whether c may continue an unquoted JSON key.
+func isLegacyKeyChar(c byte) bool {
+	return isLegacyKeyStart(c) || (c >= '0' && c <= '9')
 }
 
 var (

@@ -469,6 +469,79 @@ describe('legacy <ask-question> degradation', () => {
     expect(fb).toContain('图标颜色')
   })
 
+  it('recovers every option when a JSON key lost its opening quote', () => {
+    // Real payload (#14752): the 2nd..4th keys lost their opening quote
+    // (`{label":` instead of `{"label":`), so JSON.parse rejected the whole
+    // payload and the regex salvage — which required a quoted key — recovered
+    // only the first option. A four-option question rendered as one.
+    const text = legacy(
+      `{"questions":[{"header":"时空方案","multiSelect":false,"options":[` +
+      `{"label":"方向二为主","description":"分片即传播拓扑"},` +
+      `{label":"方向三为主","description":"delta 合并语义"},` +
+      `{label:"二加三组合","description":"从属权防守"},` +
+      `{label:"三个都要","description":"门控前置"}` +
+      `],"question":"你想选哪个方向？"}]}`,
+    )
+    const fb = extractAskMatches(text)[0].fallback ?? ''
+    for (const want of ['方向二为主', '方向三为主', '二加三组合', '三个都要']) {
+      expect(fb).toContain(want)
+    }
+    expect(fb.match(/\n- /g) ?? []).toHaveLength(4)
+  })
+
+  it('does not truncate a value at an interior quote', () => {
+    // Real payloads (#15064/#15066/#22538/#22544): the model used a bare quote
+    // as ordinary punctuation inside a value. JSON.parse stopped at the first
+    // interior quote, so the question was truncated mid-sentence and the
+    // option list was lost.
+    const text = legacy(
+      `{"questions":[{"header":"一致性模型","options":[` +
+      `{"label":"A 最终一致","description":"允许短暂分裂"},` +
+      `{"label":"B 可调一致","description":"核心身份强一致"}` +
+      `],"question":"同一人最多可以被"临时分裂"多久？"}]}`,
+    )
+    const fb = extractAskMatches(text)[0].fallback ?? ''
+    // The whole question must survive, including the quoted word.
+    expect(fb).toContain('"临时分裂"多久？')
+    expect(fb).toContain('A 最终一致')
+    expect(fb).toContain('B 可调一致')
+  })
+
+  it('does not invent structure for a payload it cannot repair', () => {
+    // The repair only adds a missing quote or an escape. A payload that is
+    // still broken falls through to the salvage path rather than being guessed
+    // at. #9661 is truncated (two `[` but one `]`).
+    const text = legacy(
+      `{"questions":[{"header":"时空方案","options":[` +
+      `{"description":"分片即传播拓扑","label":"claude_tool.go"},` +
+      `{"description":"delta 合并语义","label":"stream_tool.go"}]` +
+      `],"question":"你想选哪个方向？"}}`,
+    )
+    const fb = extractAskMatches(text)[0].fallback ?? ''
+    expect(fb).not.toContain('{')
+    expect(fb).not.toContain('"label"')
+    expect(fb).toContain('claude_tool.go')
+    expect(fb).toContain('stream_tool.go')
+  })
+
+  it('leaves a payload with valid keys untouched', () => {
+    const text = legacy(
+      `{"questions":[{"header":"H","options":[{"label":"A","description":"da"},{"label":"B"}]` +
+      `,"question":"Q?"}]}`,
+    )
+    expect(extractAskMatches(text)[0].fallback).toBe('**H**\nQ?\n- A — da\n- B')
+  })
+
+  it('does not treat a colon inside a value as a bare key', () => {
+    // Guards the repair against firing on ordinary content: a time or a
+    // sentence mentioning a key name must not be rewritten.
+    const text = legacy(`{"questions":[{"header":"H","options":[{"label":"12:30"}]` +
+      `,"question":"see label: this"}]}`)
+    const fb = extractAskMatches(text)[0].fallback ?? ''
+    expect(fb).toContain('12:30')
+    expect(fb).toContain('see label: this')
+  })
+
   it('keeps a truncated payload readable', () => {
     const fb = extractAskMatches('<ask-question>\n  <item>\n    <header>下一步')[0].fallback
     expect(fb).toBe('下一步')

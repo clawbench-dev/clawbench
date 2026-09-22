@@ -1082,26 +1082,178 @@ function renderLegacyJSON(inner: string): string {
 
 /**
  * Decode the payload, accepting both the object shape (`{"questions":[…]}`) and
- * a bare array (`[{…}]`). A malformed payload yields `{}`, which sends the
+ * a bare array (`[{…}]`).
+ *
+ * A payload that does not decode is repaired once (see `repairLegacyJSON`) and
+ * retried; a payload that still does not decode yields `{}`, which sends the
  * caller to the salvage path.
  */
 function parseLegacyJSONObject(inner: string): Record<string, unknown> {
   const trimmed = inner.trim()
   if (trimmed === '') return {}
-  if (trimmed[0] === '[') {
-    try {
-      const arr: unknown = JSON.parse(trimmed)
-      return Array.isArray(arr) ? { questions: arr } : {}
-    } catch {
-      return {}
-    }
+  const direct = decodeLegacyJSON(trimmed)
+  if (direct !== null) return direct
+  const repaired = repairLegacyJSON(trimmed)
+  if (repaired !== trimmed) {
+    const retried = decodeLegacyJSON(repaired)
+    if (retried !== null) return retried
   }
+  return {}
+}
+
+/** Strict decode of either accepted top-level shape; null when it does not decode. */
+function decodeLegacyJSON(s: string): Record<string, unknown> | null {
   try {
-    const obj: unknown = JSON.parse(trimmed)
-    return isRecord(obj) ? obj : {}
+    const parsed: unknown = JSON.parse(s)
+    if (Array.isArray(parsed)) return { questions: parsed }
+    return isRecord(parsed) ? parsed : null
   } catch {
-    return {}
+    return null
   }
+}
+
+/**
+ * Repair the two quote defects seen in production. Both make `JSON.parse`
+ * reject a payload whose field values are otherwise intact, and both were
+ * losing user-visible content before this repair existed:
+ *
+ *  - a key that lost its opening quote — `{label":"方向三为主"}`. Without the
+ *    repair only the first option decoded, so a four-option question rendered
+ *    as one option (real: #14752).
+ *  - a quote used as ordinary punctuation inside a value —
+ *    `"question":"…最多可以被"临时分裂"多久？"`. The value was cut short at the
+ *    first interior quote, truncating the question mid-sentence (real: #15064,
+ *    #15066, #22538, #22544).
+ *
+ * This is a repair, not a parser: it only ever adds a missing opening quote or
+ * an escape, never structure. If the result still does not decode the caller
+ * falls back to `salvageLegacyJSON`, so a failed repair costs nothing.
+ *
+ * It is deliberately not a general JSON repairer — it targets exactly these two
+ * shapes, which is what the production corpus contains.
+ */
+function repairLegacyJSON(s: string): string {
+  let out = ''
+  let inString = false
+  let changed = false
+
+  for (let i = 0; i < s.length; ) {
+    const c = s[i]
+
+    if (!inString) {
+      // An object boundary may open a key that lost its opening quote.
+      if (c === '{' || c === ',') {
+        const bare = quoteBareLegacyKey(s, i)
+        if (bare) {
+          out += bare.prefix
+          i = bare.next
+          changed = true
+          continue
+        }
+      }
+      out += c
+      if (c === '"') inString = true
+      i++
+      continue
+    }
+
+    if (c === '\\') {
+      // Copy the escape pair verbatim.
+      out += c
+      if (i + 1 < s.length) {
+        out += s[i + 1]
+        i += 2
+      } else {
+        i++
+      }
+      continue
+    }
+    if (c === '"') {
+      if (legacyQuoteClosesString(s, i)) {
+        out += c
+        inString = false
+      } else {
+        // Interior quote: escape it and stay in the string.
+        out += '\\"'
+        changed = true
+      }
+      i++
+      continue
+    }
+    out += c
+    i++
+  }
+
+  return changed ? out : s
+}
+
+/**
+ * Whether the object boundary at `s[i]` (`{` or `,`) opens a key whose opening
+ * quote is missing, as in `{label":"x"`. On a match returns the repaired prefix
+ * (the boundary, the quoted name, and the whitespace that separated them) plus
+ * the offset just past the name's closing quote, so the caller resumes at `:`.
+ */
+function quoteBareLegacyKey(s: string, i: number): { prefix: string; next: number } | null {
+  let j = i + 1
+  // Whitespace, then — only when the boundary was a comma — one brace: an array
+  // element boundary reads `,{label":`, so the key follows the brace rather
+  // than the comma. A `{` boundary is itself the brace.
+  while (j < s.length && isLegacyJSONSpace(s[j])) j++
+  if (s[i] === ',' && j < s.length && s[j] === '{') j++
+  const braceEnd = j
+  while (j < s.length && isLegacyJSONSpace(s[j])) j++
+  if (j >= s.length || !isLegacyKeyStart(s[j])) return null
+  const start = j
+  while (j < s.length && isLegacyKeyChar(s[j])) j++
+  const name = s.slice(start, j)
+
+  // The key lost its opening quote. Two shapes occur: the closing quote
+  // survives (`label":`) or it was lost too (`label:`). Both are repaired by
+  // quoting the name; in the first case the stray closing quote is consumed.
+  const quoteStart = j
+  while (j < s.length && isLegacyJSONSpace(s[j])) j++
+  let next = j
+  if (j < s.length && s[j] === '"') {
+    next = j + 1
+  } else if (j >= s.length || s[j] !== ':') {
+    return null
+  }
+
+  // s[i:braceEnd] is the boundary plus any brace; s[braceEnd:start] the
+  // whitespace before the name; s[quoteStart:j] the whitespace after it.
+  const prefix = s.slice(i, braceEnd) + s.slice(braceEnd, start) + '"' + name + '"' + s.slice(quoteStart, j)
+  return { prefix, next }
+}
+
+/**
+ * Whether the quote at `s[i]` ends the string it is in. It ends the string when
+ * the next non-space byte is structural — a colon (the value just closed was an
+ * object key), a comma, or a closing brace/bracket. Anything else means the
+ * quote was interior text.
+ */
+function legacyQuoteClosesString(s: string, i: number): boolean {
+  for (let j = i + 1; j < s.length; j++) {
+    const c = s[j]
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') continue
+    return c === ':' || c === ',' || c === '}' || c === ']'
+  }
+  // A quote at end-of-input closes the string.
+  return true
+}
+
+/** Whether `c` is whitespace JSON permits around tokens. */
+function isLegacyJSONSpace(c: string): boolean {
+  return c === ' ' || c === '\t' || c === '\n' || c === '\r'
+}
+
+/** Whether `c` may begin an unquoted JSON key. */
+function isLegacyKeyStart(c: string): boolean {
+  return c === '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+/** Whether `c` may continue an unquoted JSON key. */
+function isLegacyKeyChar(c: string): boolean {
+  return isLegacyKeyStart(c) || (c >= '0' && c <= '9')
 }
 
 const RE_LEGACY_JSON_QUESTION = /"question"\s*:\s*"([^"]*)"/

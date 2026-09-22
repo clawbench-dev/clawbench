@@ -257,6 +257,121 @@ func TestLegacy_CoexistsWithCurrentTagInSourceOrder(t *testing.T) {
 	}
 }
 
+func TestLegacy_JSONKeyMissingOpeningQuoteRecoversAllOptions(t *testing.T) {
+	// Real payload (#14752): the 2nd..4th keys lost their opening quote
+	// (`{label":` instead of `{"label":`), so json.Unmarshal rejected the whole
+	// payload and the regex salvage - which required a quoted key - recovered
+	// only the first option. A four-option question rendered as one.
+	text := "<ask-question>\n" +
+		`{"questions":[{"header":"时空方案","multiSelect":false,"options":[` +
+		`{"label":"方向二为主","description":"分片即传播拓扑"},` +
+		`{label":"方向三为主","description":"delta 合并语义"},` +
+		`{label:"二加三组合","description":"从属权防守"},` +
+		`{label:"三个都要","description":"门控前置"}` +
+		`],"question":"你想选哪个方向？"}]}` +
+		"\n</ask-question>"
+	fb := Extract(text)[0].Fallback
+	for _, want := range []string{"方向二为主", "方向三为主", "二加三组合", "三个都要"} {
+		if !strings.Contains(fb, want) {
+			t.Errorf("option %q was lost: %q", want, fb)
+		}
+	}
+	// Each option line is introduced by "\n- ", so four options means four
+	// occurrences.
+	if n := strings.Count(fb, "\n- "); n != 4 {
+		t.Errorf("expected 4 option lines, got %d in %q", n, fb)
+	}
+}
+
+func TestLegacy_JSONInteriorQuotesDoNotTruncateValues(t *testing.T) {
+	// Real payloads (#15064/#15066/#22538/#22544): the model used a bare quote as
+	// ordinary punctuation inside a value. json.Unmarshal stopped at the first
+	// interior quote, so the question was truncated mid-sentence and the option
+	// list was lost.
+	text := "<ask-question>\n" +
+		`{"questions":[{"header":"一致性模型","options":[` +
+		`{"label":"A 最终一致","description":"允许短暂分裂"},` +
+		`{"label":"B 可调一致","description":"核心身份强一致"}` +
+		`],"question":"同一人最多可以被"临时分裂"多久？"}]}` +
+		"\n</ask-question>"
+	fb := Extract(text)[0].Fallback
+	// The whole question must survive, including the quoted word.
+	if !strings.Contains(fb, `"临时分裂"多久？`) {
+		t.Errorf("question was truncated at the interior quote: %q", fb)
+	}
+	if !strings.Contains(fb, "A 最终一致") || !strings.Contains(fb, "B 可调一致") {
+		t.Errorf("options were lost: %q", fb)
+	}
+}
+
+func TestLegacy_JSONRepairDoesNotInventStructure(t *testing.T) {
+	// The repair only adds a missing quote or an escape. A payload that is still
+	// broken must fall through to the salvage path rather than be guessed at.
+	// #9661 is truncated (two `[` but one `]`), so no repair can decode it.
+	text := "<ask-question>\n" +
+		`{"questions":[{"header":"时空方案","options":[` +
+		`{"description":"分片即传播拓扑","label":"claude_tool.go"},` +
+		`{"description":"delta 合并语义","label":"stream_tool.go"}]` +
+		`],"question":"你想选哪个方向？"}}` +
+		"\n</ask-question>"
+	fb := Extract(text)[0].Fallback
+	// Both options must still be readable, and no raw JSON may leak.
+	if strings.Contains(fb, "{") || strings.Contains(fb, `"label"`) {
+		t.Errorf("raw JSON leaked: %q", fb)
+	}
+	if !strings.Contains(fb, "claude_tool.go") || !strings.Contains(fb, "stream_tool.go") {
+		t.Errorf("salvage lost an option: %q", fb)
+	}
+}
+
+func TestLegacy_JSONWithQuotedKeysIsUnchanged(t *testing.T) {
+	// The repair must be a no-op on a payload that already decodes: every option
+	// and the question survive verbatim.
+	text := "<ask-question>\n" +
+		`{"questions":[{"header":"H","options":[{"label":"A","description":"da"},{"label":"B"}]` +
+		`,"question":"Q?"}]}` +
+		"\n</ask-question>"
+	fb := Extract(text)[0].Fallback
+	want := "**H**\nQ?\n- A — da\n- B"
+	if fb != want {
+		t.Errorf("fallback = %q, want %q", fb, want)
+	}
+}
+
+func TestLegacy_JSONRepairDoesNotTouchValuesWithColons(t *testing.T) {
+	// The bare-key repair fires at a `{`/`,` boundary. A colon that is ordinary
+	// content — a time, or a sentence naming a key — must not be rewritten,
+	// and a payload that already decodes must come out byte-identical.
+	text := "<ask-question>\n" +
+		`{"questions":[{"header":"H","options":[{"label":"12:30","description":"see label: this"}]` +
+		`,"question":"Q?"}]}` +
+		"\n</ask-question>"
+	fb := Extract(text)[0].Fallback
+	for _, want := range []string{"12:30", "see label: this"} {
+		if !strings.Contains(fb, want) {
+			t.Errorf("repair rewrote ordinary content, lost %q: %q", want, fb)
+		}
+	}
+}
+
+func TestLegacy_JSONRepairIsIdentityOnValidInput(t *testing.T) {
+	// Every byte of a payload that already decodes must survive: the repair runs
+	// on the same string the decoder sees, so any spurious edit would corrupt a
+	// valid payload.
+	payloads := []string{
+		`{"questions":[{"header":"H","options":[{"label":"A"},{"label":"B"}],"question":"Q?"}]}`,
+		`[{"question":"Q?","options":[{"label":"A"}]}]`,
+		`{"questions":[{"header":"中文","options":[{"label":"甲","description":"乙"}]}]}`,
+		`{"questions":[{"options":[{"label":"a:b"},{"label":"c,d"}]}]}`,
+	}
+	for _, p := range payloads {
+		got := repairLegacyJSON(p)
+		if got != p {
+			t.Errorf("repair changed a valid payload\n got: %q\nwant: %q", got, p)
+		}
+	}
+}
+
 func TestLegacy_NoContentIsLost(t *testing.T) {
 	// Every user-visible field must survive the degradation.
 	text := "<ask-question>\n<item>\n<header>H</header>\n<multi-select>true</multi-select>\n" +
