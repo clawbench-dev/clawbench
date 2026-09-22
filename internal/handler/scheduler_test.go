@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -1015,4 +1016,116 @@ func TestServeTaskByID_DeleteOnUnknownSubPath_DoesNotDeleteTask(t *testing.T) {
 
 	assertStatus(t, w, http.StatusNotFound)
 	requireTaskExists(t, taskID, "DELETE on a sub-path must never delete the parent task")
+}
+
+// ========== Script fields (Phase 2) ==========
+
+// TestServeTasks_PostWithScript asserts the create handler maps the script
+// fields through to the persisted task using the exact JSON tag names.
+func TestServeTasks_PostWithScript(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":           "Scripted Task",
+		"cron_expr":      "0 * * * *",
+		"agent_id":       "coder",
+		"prompt":         "Do something",
+		"script":         "echo hi",
+		"script_timeout": 42,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	task, _ := result["task"].(map[string]any)
+	require.NotNil(t, task)
+	taskID := int64(task["id"].(float64))
+
+	persisted, err := service.GetTaskByID(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "echo hi", persisted.Script)
+	assert.Equal(t, 42, persisted.ScriptTimeout)
+}
+
+// TestServeTaskByID_PutWithScript asserts the update handler maps script fields.
+func TestServeTaskByID_PutWithScript(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	taskID := setupTaskForSubRoute(t, env, "ScriptUpdate")
+
+	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", taskID), map[string]any{
+		"action":         "update",
+		"script":         "printf done",
+		"script_timeout": 7,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+	assertOK(t, w)
+
+	persisted, err := service.GetTaskByID(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "printf done", persisted.Script)
+	assert.Equal(t, 7, persisted.ScriptTimeout)
+}
+
+// TestServeTaskByID_DetailRunningCount_ScriptPhaseExcluded asserts the detail
+// enrichment counts only the AI phase, matching the list endpoint.
+func TestServeTaskByID_DetailRunningCount_ScriptPhaseExcluded(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	taskID := setupTaskForSubRoute(t, env, "PhaseCount")
+
+	// A script-phase entry only: RunningExecutions must list it, RunningCount 0.
+	s.AddRunningExecution(&service.RunningExecution{
+		ID: "script-" + fmt.Sprintf("%d", taskID), TaskID: taskID,
+		CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto",
+		Phase: service.RunningPhaseScript,
+	})
+
+	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d", taskID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+	assertOK(t, w)
+
+	var task map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &task)
+	// runningCount carries omitempty, so 0 is absent rather than present-and-0.
+	count, present := task["runningCount"]
+	if present {
+		assert.Equal(t, float64(0), count, "the script phase must not be counted")
+	}
+	execs, _ := task["runningExecutions"].([]any)
+	require.Len(t, execs, 1, "the script-phase entry must still be listed")
+	first, _ := execs[0].(map[string]any)
+	assert.Equal(t, "script", first["phase"])
 }

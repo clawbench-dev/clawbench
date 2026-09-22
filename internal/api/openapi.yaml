@@ -3327,6 +3327,14 @@ paths:
                 event_types:
                   type: string
                   description: 逗号分隔的事件订阅，`trigger_mode=event` 时必填。
+                script:
+                  type: string
+                  description: |
+                    可选预执行脚本，AI 调用前执行，工作目录为项目路径；仅 cron 任务生效。
+                    退出码 0 且无输出 → 跳过 AI 且不发通知；有输出或非 0/超时 → 注入 prompt 后照常调用 AI。
+                script_timeout:
+                  type: integer
+                  description: 脚本超时秒数；0 表示默认 300 秒。
       responses:
         "200":
           description: 新任务
@@ -3371,6 +3379,12 @@ paths:
                 executionId:
                   type: string
                   description: 仅 `deleteExecution` 需要（字符串形式）。
+                script:
+                  type: string
+                  description: "可选预执行脚本（仅 cron）。action=update 时生效；传空字符串表示清除。"
+                script_timeout:
+                  type: integer
+                  description: "脚本超时秒数；0 表示默认 300 秒。action=update 时生效。"
       responses:
         "200":
           description: 结果

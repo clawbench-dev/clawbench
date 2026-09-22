@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	cron_expr TEXT NOT NULL,
 	agent_id TEXT NOT NULL,
 	prompt TEXT NOT NULL,
+	script TEXT NOT NULL DEFAULT '',
+	script_timeout INTEGER NOT NULL DEFAULT 0,
 	session_id TEXT DEFAULT '',
 	trigger_mode TEXT NOT NULL DEFAULT 'cron',
 	event_types TEXT NOT NULL DEFAULT '',

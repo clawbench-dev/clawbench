@@ -22,7 +22,14 @@ type ScheduledTask struct {
 	// An event task always watches its own project's bound repository, so there
 	// is deliberately no repository field: the binding is the single source of
 	// truth and cannot drift from the task configuration.
-	EventTypes        string                 `json:"eventTypes,omitempty"`
+	EventTypes string `json:"eventTypes,omitempty"`
+	// Script is an optional shell script run BEFORE the AI call. When it exits
+	// 0 with no output the run is skipped entirely (no session, no
+	// notification); otherwise its output is injected into the prompt.
+	// Only meaningful for cron tasks.
+	Script string `json:"script,omitempty"`
+	// ScriptTimeout bounds Script in seconds; 0 means DefaultScriptTimeout.
+	ScriptTimeout     int                    `json:"scriptTimeout,omitempty"`
 	SessionID         string                 `json:"sessionId,omitempty"`
 	Status            string                 `json:"status"`     // active / paused / completed
 	RepeatMode        string                 `json:"repeatMode"` // once / limited / unlimited
@@ -70,4 +77,7 @@ type RunningExecutionView struct {
 	ID          string    `json:"id"`
 	StartedAt   time.Time `json:"startedAt"`
 	TriggerType string    `json:"triggerType"` // "auto" | "manual"
+	// Phase distinguishes the pre-AI script stage ("script") from the AI turn
+	// ("ai"), so the UI can label the row and runningCount can stay AI-only.
+	Phase string `json:"phase"`
 }

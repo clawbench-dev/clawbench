@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	cron_expr TEXT NOT NULL,
 	agent_id TEXT NOT NULL,
 	prompt TEXT NOT NULL,
+	script TEXT NOT NULL DEFAULT '',
+	script_timeout INTEGER NOT NULL DEFAULT 0,
 	session_id TEXT,
 	trigger_mode TEXT NOT NULL DEFAULT 'cron',
 	event_types TEXT NOT NULL DEFAULT '',
@@ -1421,6 +1423,38 @@ func TestHasUnreadTasks_RunningExecutionNotUnread(t *testing.T) {
 	assert.True(t, hasUnread, "completed execution should count as unread")
 }
 
+// TestHasUnreadTasks_SkippedExecutionNotUnread guards the Phase 2 exclusion: a
+// content-free skip produced nothing to read, so it must not raise the badge.
+func TestHasUnreadTasks_SkippedExecutionNotUnread(t *testing.T) {
+	_, cleanup := setupScheduler(t)
+	defer cleanup()
+
+	now := time.Now()
+	result, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?)",
+		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+	)
+	assert.NoError(t, err)
+	taskID, _ := result.LastInsertId()
+
+	// A skipped execution has an empty session_id and must not count as unread.
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, '', 'auto', 'skipped', ?)",
+		taskID, now,
+	)
+	assert.NoError(t, err)
+
+	hasUnread, err := service.HasUnreadTasks("/proj")
+	assert.NoError(t, err)
+	assert.False(t, hasUnread, "a skipped execution must not count as unread")
+
+	// The task's own unread count must agree.
+	tasks, err := service.GetTasks("/proj")
+	assert.NoError(t, err)
+	require.Len(t, tasks, 1)
+	assert.Zero(t, tasks[0].UnreadCount, "a skipped execution must not inflate the task's unread count")
+}
+
 // ---------- dbRead initialization ----------
 
 func TestDBRead_Initialized_SchedulerDB(t *testing.T) {
@@ -1562,13 +1596,13 @@ func TestGetRunningCounts_MultipleTasks(t *testing.T) {
 	defer cleanup()
 
 	s.AddRunningExecution(&service.RunningExecution{
-		ID: "exec-1", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto",
+		ID: "exec-1", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto", Phase: service.RunningPhaseAI,
 	})
 	s.AddRunningExecution(&service.RunningExecution{
-		ID: "exec-2", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "manual",
+		ID: "exec-2", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "manual", Phase: service.RunningPhaseAI,
 	})
 	s.AddRunningExecution(&service.RunningExecution{
-		ID: "exec-3", TaskID: 2, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto",
+		ID: "exec-3", TaskID: 2, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto", Phase: service.RunningPhaseAI,
 	})
 
 	counts := s.GetRunningCounts()
