@@ -181,6 +181,25 @@ describe('getLineInfo', () => {
     const sel = mockSelection(textNode, focus)
     expect(getLineInfo(sel)).toEqual({ startLine: 12, endLine: 15 })
   })
+
+  it('resolves a selection inside a table ROW to that row, not the table start', () => {
+    // Regression: only <table> carried data-source-line, so selecting any row
+    // reported the table's first line. Each <tr> now carries its own line.
+    const table = document.createElement('table')
+    table.setAttribute('data-source-line', '10')
+    table.setAttribute('data-source-end', '13')
+    table.innerHTML = [
+      '<thead><tr data-source-line="10"><th>列A</th></tr></thead>',
+      '<tbody>',
+      '<tr data-source-line="12"><td id="row1">1</td></tr>',
+      '<tr data-source-line="13"><td id="row2">3</td></tr>',
+      '</tbody>',
+    ].join('')
+    const row1 = table.querySelector('#row1')!
+    const row2 = table.querySelector('#row2')!
+    const sel = mockSelection(row1.firstChild, row2.firstChild)
+    expect(getLineInfo(sel)).toEqual({ startLine: 12, endLine: 13 })
+  })
 })
 
 // --- getFileInfo ---

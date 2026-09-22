@@ -238,6 +238,19 @@ describe('buildMarkdownPreviewDom', () => {
     expect(html).toContain('data-row-idx="0"')
   })
 
+  it('keeps per-row source lines through DOMPurify + table-wrap + row attrs', () => {
+    // A selection inside a table row resolves its source line via the nearest
+    // [data-source-line] ancestor, so each <tr> must carry its own line or every
+    // row reports the table's first line.
+    const md = ['| a | b |', '|---|---|', '| 1 | 2 |', '| 3 | 4 |'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('<tr data-source-line="1">') // header row
+    // Data rows also carry data-row-idx (row-expand modal), so match the line
+    // attribute anywhere in the opening tag.
+    expect(html).toMatch(/<tr [^>]*data-source-line="3"/) // first data row
+    expect(html).toMatch(/<tr [^>]*data-source-line="4"/) // second data row
+  })
+
   it('annotates code blocks with headers (language + copy/wrap)', () => {
     const md = '```ts\nconst x: number = 1\n```'
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
