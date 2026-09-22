@@ -309,10 +309,21 @@ jobs:
       - name: Install Android SDK components
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
+      - name: Fetch version tags only
+        # The versionCode needs a version tag, not the commit graph. Explicit
+        # refspec because actions/checkout runs `fetch --no-tags` when
+        # fetch-depth=1, and git's tag auto-follow does NOT pick up a tag
+        # pointing at a commit outside the fetched slice.
+        run: git fetch --depth=1 --no-tags origin '+refs/tags/v*:refs/tags/v*'
+
       - name: Build debug APK
         working-directory: android
         run: |
-          VERSION_CODE=$(git rev-list --count HEAD)
+          # Newest version tag, not `git rev-list --count HEAD`: the default
+          # depth=1 checkout makes the commit count collapse to 1.
+          # $GITHUB_WORKSPACE because this step runs with working-directory=android.
+          # See scripts/lib/version-code.sh.
+          VERSION_CODE=$("$GITHUB_WORKSPACE/scripts/lib/version-code.sh" --tag-only)
           VERSION_NAME=$(git describe --tags --always 2>/dev/null || echo "dev")
           ./gradlew assembleDebug -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
 
