@@ -1165,14 +1165,13 @@ export default {
       repeatLimited: '限制次数',
       repeatUnlimited: '不限次数',
       maxRuns: '最大执行次数',
-      // Optional pre-AI script (cron tasks only). The hint must convey three
-      // things the UI cannot show by itself: where it runs, why it is absent
-      // from the list's "running" state, and what a silent exit 0 does.
+      // Optional pre-AI script (cron tasks only). The skip semantics live in
+      // the placeholder now (the long hint paragraph was removed as too
+      // verbose); the timeout's 300s default is a placeholder, not a value.
       script: '自定义脚本',
-      scriptPlaceholder: '可选：在 AI 之前执行的 Shell 脚本，留空则不执行',
+      scriptPlaceholder: '可选：在 AI 之前执行的 Shell 脚本，留空则不执行。脚本以 0 退出且无输出时会跳过 AI。',
       scriptTimeout: '脚本超时（秒）',
       scriptTimeoutInvalid: '请输入非负整数秒数（0 表示使用默认值）',
-      scriptHint: '脚本在 AI 之前执行，工作目录为任务所在项目路径。脚本运行期间不会在任务列表显示为「执行中」（它不算一次 AI 执行），但会出现在执行记录中，可在那里中止。脚本以 0 退出且无输出时会跳过 AI 且不发送任何通知；有输出、非 0 退出或超时则照常调用 AI，并将脚本输出注入提示词。',
       prompt: '提示词 (Prompt)',
       promptPlaceholder: '输入要发送给AI的提示词...',
       promptRequired: '请输入提示词',

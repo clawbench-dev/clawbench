@@ -225,9 +225,11 @@
 
         <div class="form-group">
           <label class="form-label">{{ t('task.form.scriptTimeout') }}</label>
-          <input type="number" class="form-input" v-model.number="form.scriptTimeout" min="0" />
+          <!-- Left empty by default: the 300s backend default is shown as a
+               placeholder, so an untouched field submits 0 (= "use default")
+               rather than reading as "no timeout". -->
+          <input type="number" class="form-input" v-model.number="form.scriptTimeout" min="0" placeholder="300" />
           <div v-if="errors.scriptTimeout" class="form-error">{{ errors.scriptTimeout }}</div>
-          <div class="form-hint">{{ t('task.form.scriptHint') }}</div>
         </div>
         </template>
       </div>

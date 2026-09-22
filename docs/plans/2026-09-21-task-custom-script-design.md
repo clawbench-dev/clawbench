@@ -21,7 +21,8 @@ stdout 与 stderr 均为空时，跳过 AI 调用，并且不发送任何成功�
 7. 脚本输出注入后会话历史可见（因复用 `renderedPrompt`）
 8. 脚本执行期间用户点取消 → 立即中止脚本，任务标记 cancelled
 9. 脚本运行期间不作为任务「运行中」显示（列表 `runningCount` 不计数），但会出现在
-   执行历史里且可取消；界面需有说明备注解释这一语义
+   执行历史里且可取消；该语义由脚本输入框的 placeholder 说明（见下「界面文案」），
+   不再使用独立的长备注段落
 
 ## 数据模型
 
@@ -101,9 +102,12 @@ unix/windows 各一）：
 ## 前端
 
 - `web/src/components/task/TaskFormPage.vue`：新增 cron-only 的脚本 textarea 与超时
-  输入，附说明备注（见下）
+  输入；超时输入默认留空、以 placeholder `300` 呈现后端默认值（不再渲染字面 `0`），
+  不提供独立的长备注段落（见下「界面文案」）
 - `web/src/composables/useTaskForm.ts`：`form`（:33-46）、`init`（:51-80）、`submit`
-  payload（:98-109）加 `script` / `script_timeout`（snake_case）
+  payload（:98-109）加 `script` / `script_timeout`（snake_case）；`scriptTimeout` 初值为
+  `''`（空串），`submit()` 时 `Number(...) || 0` 强制为数字 `0`（后端「用默认值」哨兵），
+  与 `maxRuns` 的空/零处理一致
 - `web/src/composables/useTaskHistory.ts`：RunningExecution 加 `phase`；
   `TaskHistoryTab.vue` 的独立 `prevRunningCount`（:210，基于
   `runningExecutions.length`）只数 ai
@@ -112,16 +116,22 @@ unix/windows 各一）：
   （:187-191）排除 `skipped`（空 sessionId 会让「继续对话」报错，见
   `continue_conversation.go:121-122`）
 - i18n `web/src/i18n/locales/zh.ts` 与 `en.ts` 的 `task.exec` 块加 `statusSkipped` 等键；
-  `task.form` 块加脚本字段与说明备注文案
+  `task.form` 块加脚本字段文案（见下）
 - `internal/api/openapi.yaml` 同步（POST `/api/tasks` 请求体 ~3246-3275，PUT ~3313）
 
-### 界面说明备注文案（要点，zh/en 双份）
+### 界面文案（要点，zh/en 双份）
+
+跳过语义（退出码 0 且无输出 → 跳过 AI）写在脚本 textarea 的 placeholder 里，**不再**
+使用独立的 `.form-hint` 长段落（见「实现偏差」第 5 条）。原始长备注曾覆盖三点：
 
 1. 脚本在调用 AI 之前执行，工作目录为任务的项目路径
 2. 脚本运行期间不会在任务列表显示为「运行中」——它不是一次 AI 执行；但会出现在执行
    历史里，可以取消
 3. 退出码 0 且无输出时会跳过 AI 且不发送任何通知；有输出或非 0 / 超时会照常调用 AI，
    内容注入 prompt
+
+其中第 3 点保留在 placeholder 中；第 1、2 点不再在表单里显式说明（执行历史本身已可见
+脚本阶段行）。超时字段的 300 秒默认值以 placeholder 呈现，空值提交为 `0`。
 
 ## 未读统计
 
@@ -170,3 +180,16 @@ unix/windows 各一）：
    永不出现。`useTaskHistory.loadRunningStatus` 额外记录上次的 `runCount`（
    `GET /api/tasks/{id}` 已返回），变化即 reload；runningCount 启发式保留用于 AI 阶段
    的完成动画。
+5. **长备注段落移除，跳过语义并入 placeholder；超时默认值改为 placeholder。**
+   本文档原始「界面说明备注」要求一段独立的长备注解释工作目录 / 不显示为运行中 /
+   跳过并注入三点，实施后用户反馈过于啰嗦，予以撤销：
+   - `TaskFormPage.vue` 删除超时字段下的 `.form-hint` 元素，i18n 键 `task.form.scriptHint`
+     从 `zh.ts` 与 `en.ts` **双双删除**；
+   - 跳过语义保留在脚本 textarea 的 placeholder（`task.form.scriptPlaceholder`）中，
+     在原句后追加「脚本以 0 退出且无输出时会跳过 AI。」（en 为对应英文）；
+   - 超时输入默认留空、以 `placeholder="300"` 呈现后端默认值。原先渲染字面 `0` 会被
+     读成「无超时」；`useTaskForm` 的 `scriptTimeout` 初值改为 `''`，`submit()` 里
+     `Number(...) || 0` 保证提交的是数字 `0`（后端「用默认值」哨兵）而非空串，与
+     `maxRuns` 的空/零处理一致。显式输入（如 `60`）按原样提交；非负整数校验不变。
+   其余脚本相关键（`script`、`scriptPlaceholder`、`scriptTimeout`、`scriptTimeoutInvalid`
+   及 `task.exec.*`）保留；`task.exec.skippedHint` 是执行历史行的**另一个**键，不受影响。

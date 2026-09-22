@@ -1162,14 +1162,13 @@ export default {
       repeatLimited: 'Limited runs',
       repeatUnlimited: 'Unlimited runs',
       maxRuns: 'Max runs',
-      // Optional pre-AI script (cron tasks only). The hint must convey three
-      // things the UI cannot show by itself: where it runs, why it is absent
-      // from the list's "running" state, and what a silent exit 0 does.
+      // Optional pre-AI script (cron tasks only). The skip semantics live in
+      // the placeholder now (the long hint paragraph was removed as too
+      // verbose); the timeout's 300s default is a placeholder, not a value.
       script: 'Custom script',
-      scriptPlaceholder: 'Optional: a shell script that runs before the AI. Leave empty to skip.',
+      scriptPlaceholder: 'Optional: a shell script that runs before the AI. Leave empty to skip. If it exits 0 with no output, the AI is skipped.',
       scriptTimeout: 'Script timeout (seconds)',
       scriptTimeoutInvalid: 'Enter a non-negative whole number of seconds (0 uses the default)',
-      scriptHint: 'The script runs before the AI, with the task\'s project path as its working directory. While it runs it is not shown as "running" in the task list (it is not an AI execution), but it does appear in the execution history and can be cancelled there. If it exits 0 with no output the AI is skipped and no notification is sent; output, a non-zero exit, or a timeout still calls the AI, with the script output injected into the prompt.',
       prompt: 'Prompt',
       promptPlaceholder: 'Enter the prompt to send to AI...',
       promptRequired: 'Prompt is required',

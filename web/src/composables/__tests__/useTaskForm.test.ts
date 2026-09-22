@@ -117,22 +117,24 @@ describe('useTaskForm', () => {
       }))
     })
 
-    it('sends script_timeout 0 (backend default) when the timeout is left empty', async () => {
+    it('sends script_timeout 0 (a number) when the timeout is left untouched', async () => {
       const { form } = createForm({ mode: 'create' })
       form.form.value.name = 'Daily'
       form.form.value.agentId = 'agent-1'
       form.form.value.prompt = 'Report'
       form.form.value.script = 'echo hi'
-      // Clearing a `v-model.number` input yields the empty string, not 0 — it
-      // must reach the server as 0, the backend's "use the default" sentinel.
-      form.form.value.scriptTimeout = '' as unknown as number
+      // The field starts empty (the 300s default is a placeholder, not a
+      // value), so it is deliberately NOT assigned here. The empty state must
+      // reach the server as the number 0 — the backend's "use the default"
+      // sentinel — not as the string ''.
+      expect(form.form.value.scriptTimeout).toBe('')
 
       mockApiPost.mockResolvedValue({ task: { id: 'task-12' } })
       await form.submit()
 
-      expect(mockApiPost).toHaveBeenCalledWith('/api/tasks', expect.objectContaining({
-        script_timeout: 0,
-      }))
+      const payload = mockApiPost.mock.calls[0][1] as { script_timeout: unknown }
+      expect(payload.script_timeout).toBe(0)
+      expect(typeof payload.script_timeout).toBe('number')
       // An empty timeout is the default, not an error.
       expect(form.errors.value.scriptTimeout).toBeFalsy()
     })
@@ -400,7 +402,9 @@ describe('useTaskForm', () => {
       form.init({ id: 8, name: 'Legacy', cronExpr: '0 9 * * *', agentId: 'a', prompt: 'p' })
 
       expect(form.form.value.script).toBe('')
-      expect(form.form.value.scriptTimeout).toBe(0)
+      // No stored timeout means "use the backend default", rendered as an
+      // empty field with the 300s placeholder rather than a literal 0.
+      expect(form.form.value.scriptTimeout).toBe('')
     })
 
     it('clears the script when the task is switched to event mode', async () => {

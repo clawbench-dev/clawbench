@@ -12,7 +12,8 @@ const formRef = ref({
   name: 't', prompt: 'p', agentId: '', cronExpr: '',
   triggerMode: 'cron', eventTypes: '',
   repeatMode: 'unlimited', maxRuns: 0,
-  script: '', scriptTimeout: 0,
+  // The real form leaves this empty; the 300s default is a placeholder.
+  script: '', scriptTimeout: '',
 })
 
 vi.mock('@/composables/useTaskForm', () => ({
@@ -63,10 +64,9 @@ const i18n = createI18n({
           varPipelineLinkedPrs: 'plpr',
           repeatMode: 'Repeat', presets: {},
           script: 'Custom script',
-          scriptPlaceholder: 'Optional shell script',
+          scriptPlaceholder: 'Optional shell script. If it exits 0 with no output, the AI is skipped.',
           scriptTimeout: 'Script timeout (seconds)',
           scriptTimeoutInvalid: 'bad timeout',
-          scriptHint: 'Runs before the AI with the project path as cwd.',
         },
       },
     },
@@ -91,7 +91,7 @@ describe('TaskFormPage custom script section', () => {
   beforeEach(() => {
     formRef.value.triggerMode = 'cron'
     formRef.value.script = ''
-    formRef.value.scriptTimeout = 0
+    formRef.value.scriptTimeout = ''
     mockFetchForgeBinding.mockReset()
     mockFetchForgeBinding.mockResolvedValue({ binding: null })
     resetForgeBindingState()
@@ -119,12 +119,32 @@ describe('TaskFormPage custom script section', () => {
     expect(wrapper.text()).not.toContain('Script timeout (seconds)')
   })
 
-  it('renders the helper text explaining the three script behaviours', () => {
-    // The hint sits below BOTH fields (script + timeout), so it is looked up
-    // across the form rather than inside the textarea's own group.
+  it('shows the 300s default as a placeholder on an empty timeout input', () => {
+    // The field is empty by default and reads as 300 via the placeholder —
+    // rendering a literal 0 would read as "no timeout".
     const wrapper = mountForm()
-    const hints = wrapper.findAll('.form-hint').map(h => h.text())
-    expect(hints).toContain('Runs before the AI with the project path as cwd.')
+    const timeout = wrapper.findAll('.form-input').find(i => i.attributes('type') === 'number')!
+    expect((timeout.element as HTMLInputElement).value).toBe('')
+    expect(timeout.attributes('placeholder')).toBe('300')
+  })
+
+  it('carries the skip explanation in the script textarea placeholder', () => {
+    // The skip semantics moved out of the (now removed) long hint paragraph
+    // and into the placeholder, so the placeholder must mention the skip.
+    const wrapper = mountForm()
+    const textarea = scriptSection(wrapper)!.find('textarea')
+    expect(textarea.attributes('placeholder')).toContain('the AI is skipped')
+  })
+
+  it('no longer renders the verbose script hint paragraph', () => {
+    // The long helper text (which sat under the timeout input) was removed as
+    // too verbose. Its i18n key is gone, so the timeout's form-group must not
+    // render any .form-hint, and the old copy must be absent from the form.
+    const wrapper = mountForm()
+    const timeoutGroup = wrapper.findAll('.form-group').find(g => g.find('.form-label').exists()
+      && g.find('.form-label').text() === 'Script timeout (seconds)')
+    expect(timeoutGroup, 'the timeout field must still render').toBeTruthy()
+    expect(timeoutGroup!.findAll('.form-hint')).toHaveLength(0)
   })
 
   it('sets the script textarea in the monospace face', () => {

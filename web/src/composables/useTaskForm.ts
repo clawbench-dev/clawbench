@@ -46,8 +46,11 @@ export function useTaskForm(options: UseTaskFormOptions) {
     // Optional pre-AI shell script (cron tasks only). Runs before the AI call;
     // exit 0 with no output skips the run entirely.
     script: '',
-    // Script timeout in seconds; 0 means the backend default.
-    scriptTimeout: 0,
+    // Script timeout in seconds. Kept as '' so the input renders empty (the
+    // 300s default is shown as a placeholder instead, mirroring how maxRuns
+    // treats "unset"); '' coerces to 0 in submit(), the backend's "use the
+    // default" sentinel.
+    scriptTimeout: '' as number | string,
   })
 
   const errors = ref<Record<string, string>>({})
@@ -69,7 +72,9 @@ export function useTaskForm(options: UseTaskFormOptions) {
         triggerMode: (taskData.triggerMode as string) || 'cron',
         eventTypes: (taskData.eventTypes as string) || '',
         script: (taskData.script as string) || '',
-        scriptTimeout: (taskData.scriptTimeout as number) || 0,
+        // A stored 0 is the backend default, so it is shown as an empty field
+        // (with the 300s placeholder) rather than a literal "0".
+        scriptTimeout: (taskData.scriptTimeout as number) || '',
       }
     } else {
       form.value = {
@@ -83,7 +88,7 @@ export function useTaskForm(options: UseTaskFormOptions) {
         triggerMode: 'cron',
         eventTypes: '',
         script: '',
-        scriptTimeout: 0,
+        scriptTimeout: '',
       }
     }
   }
