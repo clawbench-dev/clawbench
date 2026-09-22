@@ -213,18 +213,35 @@ export function configureMarkedRenderer(): void {
             },
             table(...args: unknown[]): string {
                 const token = args[0] as TokVal | undefined
+                // Each row carries its OWN source line. The table element is the
+                // nearest [data-source-line] ancestor of any cell, so without
+                // this every selection inside a table resolved to the table's
+                // first line — quoting any row reported the header row's number.
+                // GFM fixes the row layout: header row on the table's start
+                // line, then the delimiter row, then one line per data row.
+                const start0 = (token as TokenPositionMeta | null)?.position?.start?.line
+                const base = typeof start0 === 'number' && start0 >= 0 ? start0 : null
+                // tablerow is typed for { text } only, so the line is stamped on
+                // its returned opening tag. `replace` with a string pattern hits
+                // the leading <tr> (tablerow always emits it first).
+                const annotateRow = (tr: string, offset: number): string =>
+                    base === null ? tr : tr.replace('<tr>', `<tr data-source-line="${base + offset}">`)
+
                 let header = ''
                 for (const cell of (token?.header as Tokens.TableCell[]) || []) {
                     header += this.tablecell(cell)
                 }
-                header = this.tablerow({ text: header })
+                header = annotateRow(this.tablerow({ text: header }), 1)
                 let body = ''
+                let rowIdx = 0
                 for (const row of (token?.rows as Tokens.TableCell[][]) || []) {
                     let cells = ''
                     for (const cell of row) {
                         cells += this.tablecell(cell)
                     }
-                    body += this.tablerow({ text: cells })
+                    // +3 = 1-based table start, then the delimiter row.
+                    body += annotateRow(this.tablerow({ text: cells }), 3 + rowIdx)
+                    rowIdx++
                 }
                 // Match marked v18 default byte-for-byte: thead cells are wrapped
                 // in a <tr>, tbody has no leading newline.

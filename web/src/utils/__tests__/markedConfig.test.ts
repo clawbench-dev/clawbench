@@ -144,10 +144,24 @@ describe('markedConfig', () => {
             const md = '| a | b |\n|---|---|\n| 1 | 2 |'
             const html = marked.parse(md)
             // thead cells are wrapped in <tr> exactly like the default renderer
-            expect(html).toMatch(/<table data-source-line="1" data-source-end="3">\n<thead>\n<tr>\n<th>a<\/th>\n<th>b<\/th>\n<\/tr>\n<\/thead>\n<tbody><tr>/)
+            // (each row also carries its own data-source-line — see below)
+            expect(html).toMatch(/<table data-source-line="1" data-source-end="3">\n<thead>\n<tr data-source-line="1">\n<th>a<\/th>\n<th>b<\/th>\n<\/tr>\n<\/thead>\n<tbody><tr data-source-line="3">/)
             // tbody has NO leading newline after <tbody>
-            expect(html).toContain('<tbody><tr>')
+            expect(html).toContain('<tbody><tr data-source-line="3">')
             expect(html).toContain('</tbody></table>\n')
+        })
+
+        it('annotates each table ROW with its own source line', () => {
+            // GFM fixes the row layout: header row on the table's start line,
+            // then the delimiter row, then one line per data row. A selection
+            // inside a row must resolve to that row, not to the table's first
+            // line (the reported "every row shows the header line number" bug).
+            const md = ['| 列A | 列B |', '|---|---|', '| 1 | 2 |', '| 3 | 4 |'].join('\n')
+            const html = marked.parse(md)
+            expect(html).toContain('<table data-source-line="1" data-source-end="4">')
+            expect(html).toContain('<tr data-source-line="1">') // header
+            expect(html).toContain('<tr data-source-line="3">') // first data row
+            expect(html).toContain('<tr data-source-line="4">') // second data row
         })
     })
 

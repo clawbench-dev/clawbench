@@ -20,7 +20,7 @@ import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { dirName, joinPath, splitPath, isAbsolutePath, normalizeSlashes } from '@/utils/path.ts'
 import { escapeHtml } from '@/utils/html.ts'
-import { isThumbExtension, buildThumbUrl, getThumbWidth } from '@/utils/chatRenderUtils.ts'
+import { isThumbExtension, buildThumbUrl, getThumbWidth, markInlineSvgs } from '@/utils/chatRenderUtils.ts'
 import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { isShareMode, shareApiUrl } from '@/share/shareMode'
@@ -167,6 +167,15 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
                 : `src="${fullSrc}"${attachAttr}`
             return match.replace(`src="${src}"`, replacement)
         })
+        // Mark bare inline <svg> so the media-block factory lifts it into the
+        // unified figure, exactly as the chat pipeline does. This step is
+        // skipped by the chat pipeline's `skipEnhancements`, but the file
+        // preview needs it: an AI-written or hand-authored `<svg>` block in a
+        // markdown file should render as a proper figure (and get the
+        // proportional fill-width sizing), not as a stray inline element.
+        // Runs AFTER the image-path rewrite above and BEFORE the media-block
+        // lift below (the lift is what actually wraps the marked svg).
+        result = markInlineSvgs(result)
         // Lift every <img> (and bare inline svg) into a block-level figure with a
         // header bar. Images are inline-flow in the marked output (inside <p>);
         // blockifying them requires DOM surgery (paragraph promotion / split), so

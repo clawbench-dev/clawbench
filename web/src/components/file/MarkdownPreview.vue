@@ -59,6 +59,7 @@ import { store } from '@/stores/app.ts'
 import { dirName } from '@/utils/path.ts'
 import { flashElement } from '@/utils/domFlash'
 import { buildMarkdownPreviewDom } from '@/composables/useMarkdownRenderPipeline.ts'
+import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import MarkdownSearchBar from '@/components/file/MarkdownSearchBar.vue'
@@ -156,6 +157,9 @@ function captureCurrentScrollState(): FileScrollEntry | null {
 }
 
 function onImageLoad() {
+    // An SVG file's intrinsic size is only known once it has decoded, so the
+    // proportional fill-width sizing is re-stamped on every media load.
+    stampSvgFigures(bodyRef.value)
     window.dispatchEvent(new CustomEvent('realign-file-scroll'))
 }
 
@@ -384,6 +388,10 @@ async function doRender(f: { content: string; path?: string; error?: boolean }) 
     const mermaidTarget = el.querySelector('.markdown-content') as HTMLElement || el
     await renderMermaidInElement(mermaidTarget, 'md-preview')
 
+    // Proportional fill-width sizing for SVG media (inline <svg> needs no load,
+    // so this resolves it immediately; SVG files are re-stamped on load).
+    stampSvgFigures(mermaidTarget)
+
     // Update last block list cache and compute marker positions after rendering completes
     if (renderId === currentRenderId) {
         lastBlockList.value = extractBlocks(el.querySelector('.markdown-content') || el)
@@ -416,6 +424,9 @@ watch(() => props.viewMode, async (mode) => {
     if (!el) return
     const mermaidTarget = el.querySelector('.markdown-content') as HTMLElement || el
     await renderMermaidInElement(mermaidTarget, 'md-preview')
+    // Mermaid re-renders here (returning to the rendered view); the diagrams are
+    // freshly produced, so re-stamp their proportional sizing.
+    stampSvgFigures(mermaidTarget)
     window.dispatchEvent(new CustomEvent('realign-file-scroll'))
 })
 

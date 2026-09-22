@@ -381,50 +381,57 @@ describe('CompletionPopover', () => {
         expect(mockState.dismiss).toHaveBeenCalledTimes(1)
     })
 
-    // ── 事件类型标识 ──
+    // ── 事件类型标题 ──
 
-    it('renders the event-type chip with its label', () => {
+    it('renders exactly one event-type title', () => {
         mockState.active = ref(makeItem({ eventLabel: '会话已取消', eventTone: 'warning' }))
         mountPopover()
 
-        const chips = document.querySelectorAll('.completion-notify-kind')
-        // 无 kindLabel 时只有事件 chip 一枚
-        expect(chips).toHaveLength(1)
-        expect(chips[0].textContent).toBe('会话已取消')
+        const titles = document.querySelectorAll('.completion-notify-kind')
+        expect(titles).toHaveLength(1)
+        expect(titles[0].textContent).toBe('会话已取消')
     })
 
-    // ── 类别标识（会话 / 任务 / 议题与合并）──
+    // ── 主类别徽章（会话 / 任务 / 议题与合并）──
 
-    it('renders the category chip alongside the event chip', () => {
+    it('renders the main category as a badge next to the event title', () => {
         mockState.active = ref(makeItem({ kindLabel: '会话', eventLabel: '会话已完成' }))
         mountPopover()
 
-        const chips = document.querySelectorAll('.completion-notify-kind')
-        expect(chips).toHaveLength(2)
-        expect(chips[0].textContent).toBe('会话')
-        expect(chips[1].textContent).toBe('会话已完成')
-        // 类别 chip 走中性色，不参与语义配色
-        expect(chips[0].className).toContain('is-category')
+        const category = document.querySelector('.completion-notify-category')!
+        expect(category.textContent).toBe('会话')
+        // 类别是徽章（有描边与淡底），事件是纯文字标题——两者形态不同
+        const src = readWebFile('src/components/common/CompletionPopover.vue')
+        const rule = src.match(/\.completion-notify-category\s*\{[^}]*\}/)?.[0] || ''
+        expect(rule).toMatch(/(^|\s)border:/)
+        expect(rule).toMatch(/(^|\s)background:/)
+        expect(rule).toMatch(/border-radius/)
     })
 
-    it.each([
-        ['会话', 'session'],
-        ['任务', 'task'],
-        ['议题与合并', 'forge'],
-    ])('renders the "%s" category label regardless of kind', (label) => {
+    it.each(['会话', '任务', '议题与合并'])('renders the "%s" category label', (label) => {
         mockState.active = ref(makeItem({ kindLabel: label }))
         mountPopover()
 
-        expect(document.querySelector('.completion-notify-kind.is-category')!.textContent).toBe(label)
+        expect(document.querySelector('.completion-notify-category')!.textContent).toBe(label)
     })
 
-    it('omits the category chip when kindLabel is absent', () => {
+    it('omits the category badge when kindLabel is absent', () => {
         mockState.active = ref(makeItem({ kindLabel: undefined }))
         mountPopover()
 
-        expect(document.querySelector('.completion-notify-kind.is-category')).toBeFalsy()
-        // 事件 chip 仍在
-        expect(document.querySelectorAll('.completion-notify-kind')).toHaveLength(1)
+        expect(document.querySelector('.completion-notify-category')).toBeFalsy()
+        // 事件类型标题仍在
+        expect(document.querySelector('.completion-notify-kind')).toBeTruthy()
+    })
+
+    it('keeps the category badge smaller than the event title', () => {
+        // 层级：类别是分类（次要），事件是结果（主）——徽章字号必须小于标题。
+        const src = readWebFile('src/components/common/CompletionPopover.vue')
+        const catRule = src.match(/\.completion-notify-category\s*\{[^}]*\}/)?.[0] || ''
+        const kindRule = src.match(/\.completion-notify-kind\s*\{[^}]*\}/)?.[0] || ''
+        const sizeOf = (r: string) => r.match(/font-size:\s*([^;]+);/)?.[1].trim()
+        expect(sizeOf(catRule)).toBe('var(--font-size-sm)')
+        expect(sizeOf(kindRule)).toBe('var(--font-size-lg)')
     })
 
     // ── 外部项目区隔带（跨项目显著区分）──
@@ -533,22 +540,137 @@ describe('CompletionPopover', () => {
         expect(toneClasses).toEqual([tone])
     })
 
-    it('renders the chip alongside the title, not instead of it', () => {
+    it('keeps the chip in the header and the title in the body, not the same row', () => {
+        // 结构：子类别标签在 header，标题下沉到正文区第一段。
         mockState.active = ref(makeItem({ eventLabel: '任务已启动', title: '每日构建' }))
         mountPopover()
 
-        const head = document.querySelector('.completion-notify-head')!
-        expect(head.querySelector('.completion-notify-kind')!.textContent).toBe('任务已启动')
-        expect(head.querySelector('.completion-notify-title')!.textContent).toBe('每日构建')
+        const header = document.querySelector('.completion-notify-header')!
+        const main = document.querySelector('.completion-notify-main')!
+        expect(header.querySelector('.completion-notify-kind')!.textContent).toBe('任务已启动')
+        expect(main.querySelector('.completion-notify-title')!.textContent).toBe('每日构建')
+        // 两者必须分属不同容器（不再同行）
+        expect(header.querySelector('.completion-notify-title')).toBeFalsy()
+        expect(main.querySelector('.completion-notify-kind')).toBeFalsy()
     })
 
-    it('gives the chip a non-shrinking slot so it is never clipped', () => {
-        // chip 是"要不要点这条通知"的判断依据；标题可以被省略号截断，它不行。
+    it('renders the event type as a plain text title, not a badge', () => {
+        // 用户要求：header 里的「会话已完成」不要徽章样式——无边框、无底色、
+        // 无内边距，只有语义色文字。
+        mockState.active = ref(makeItem({ eventLabel: '会话已完成', eventTone: 'success' }))
+        mountPopover()
+
+        const el = document.querySelector('.completion-notify-kind')!
+        expect(el.textContent).toBe('会话已完成')
+        const src = readWebFile('src/components/common/CompletionPopover.vue')
+        const rule = src.match(/\.completion-notify-kind\s*\{[^}]*\}/)?.[0] || ''
+        // 徽章三件套必须消失
+        expect(rule).not.toMatch(/(^|\s)border:/)
+        expect(rule).not.toMatch(/(^|\s)background:/)
+        expect(rule).not.toMatch(/(^|\s)padding:/)
+        expect(rule).not.toMatch(/border-radius/)
+    })
+
+    it('sizes the event type title larger than the body text', () => {
+        // 它是头部主文字，回答"发生了什么"，应比正文更醒目——用 lg（14px），
+        // 高于正文 md（13px）。此前它是 10px 的徽章文字。
+        const src = readWebFile('src/components/common/CompletionPopover.vue')
+        const rule = src.match(/\.completion-notify-kind\s*\{[^}]*\}/)?.[0] || ''
+        expect(rule).toContain('font-size: var(--font-size-lg)')
+        // 防回归：不得退回标签级字号
+        expect(rule).not.toContain('font-size: var(--font-size-2xs)')
+        expect(rule).not.toContain('font-size: var(--font-size-xs)')
+        expect(rule).not.toContain('font-size: var(--font-size-sm)')
+    })
+
+    it('allows the event type title to truncate with an ellipsis', () => {
+        // 不再是徽章（原来强制完整显示），forge 的「合并请求 #42 · 已合并」
+        // 较长时需要能截断。
+        mockState.active = ref(makeItem({ eventLabel: '合并请求 #42 · 已合并' }))
+        mountPopover()
+
+        const styles = window.getComputedStyle(document.querySelector('.completion-notify-kind')!)
+        expect(styles.textOverflow).toBe('ellipsis')
+        expect(styles.overflow).toBe('hidden')
+        expect(styles.whiteSpace).toBe('nowrap')
+    })
+
+    // ── 头部区（图标 + 主类别徽章 + 事件标题 + 关闭）──
+
+    it('puts the agent icon, category badge, event title and close button together in the header', () => {
+        mockGetAgentBackend.mockReturnValue('codebuddy')
+        mockState.active = ref(makeItem({
+            agentId: 'cb-1', kindLabel: '会话', eventLabel: '会话已完成',
+        }))
+        mountPopover()
+
+        const header = document.querySelector('.completion-notify-header')!
+        expect(header.querySelector('.agent-icon-svg')).toBeTruthy()
+        expect(header.querySelector('.completion-notify-category')!.textContent).toBe('会话')
+        expect(header.querySelector('.completion-notify-kind')!.textContent).toBe('会话已完成')
+        expect(header.querySelector('.completion-notify-close')).toBeTruthy()
+    })
+
+    it('orders the header: icon, category badge, event title, close', () => {
+        // 阅读顺序：谁发的 → 哪个子系统 → 发生了什么 → 关闭。
+        mockGetAgentBackend.mockReturnValue('codebuddy')
+        mockState.active = ref(makeItem({ agentId: 'cb-1', kindLabel: '任务', eventLabel: '任务失败' }))
+        mountPopover()
+
+        const header = document.querySelector('.completion-notify-header')!
+        const order = [...header.children].map(el => {
+            if (el.classList.contains('completion-notify-icon')) return 'icon'
+            if (el.classList.contains('completion-notify-category')) return 'category'
+            if (el.classList.contains('completion-notify-kind')) return 'event'
+            if (el.classList.contains('completion-notify-close')) return 'close'
+            return 'other'
+        })
+        expect(order).toEqual(['icon', 'category', 'event', 'close'])
+    })
+
+    it('pushes the close button to the far right of the header', () => {
+        // 事件类型标题带 flex:1 撑开剩余空间，关闭按钮因此被推到头行最右。
         mockState.active = ref(makeItem())
         mountPopover()
 
-        const chip = document.querySelector('.completion-notify-kind')!
-        expect(window.getComputedStyle(chip).flexShrink).toBe('0')
+        const title = document.querySelector('.completion-notify-kind')!
+        expect(window.getComputedStyle(title).flexGrow).toBe('1')
+    })
+
+    it('renders the header even when there is no agent icon', () => {
+        mockGetAgentBackend.mockReturnValue('')
+        mockState.active = ref(makeItem({ agentId: '' }))
+        mountPopover()
+
+        const header = document.querySelector('.completion-notify-header')!
+        expect(header).toBeTruthy()
+        expect(header.querySelector('.agent-icon-svg')).toBeFalsy()
+        // 类型标签与关闭按钮仍在
+        expect(header.querySelector('.completion-notify-kind')).toBeTruthy()
+        expect(header.querySelector('.completion-notify-close')).toBeTruthy()
+    })
+
+    // ── 正文两段（标题段 + 内容段）──
+
+    it('separates the body into a title segment and a content segment', () => {
+        mockState.active = ref(makeItem({ title: '每日构建', body: '构建失败于第 3 步' }))
+        mountPopover()
+
+        const main = document.querySelector('.completion-notify-main')!
+        const title = main.querySelector('.completion-notify-title')!
+        const body = main.querySelector('.completion-notify-body')!
+        expect(title.textContent).toBe('每日构建')
+        expect(body.textContent).toBe('构建失败于第 3 步')
+        // 两段是兄弟节点，标题在前
+        expect(title.nextElementSibling).toBe(body)
+    })
+
+    it('keeps the title segment when there is no content', () => {
+        mockState.active = ref(makeItem({ title: '每日构建', body: '' }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-notify-title')!.textContent).toBe('每日构建')
+        expect(document.querySelector('.completion-notify-body')).toBeFalsy()
     })
 
     // ── 合并展示 ──
