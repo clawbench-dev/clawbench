@@ -18,6 +18,14 @@ const (
 // Files larger than this are skipped to avoid expensive parsing.
 const maxSpecSniffSize = 1 << 20
 
+// excalidrawExts lists the extensions that identify an Excalidraw scene.
+// Two sites must agree on this list: IsTextFile decides whether the file is
+// served at all, and DetectSubtype routes it to the canvas editor. If they
+// drift, a file is either served but never opens in the editor, or rejected
+// before it is ever sniffed — so both read from this single slice.
+// .xdraw is the short alias; .excalidraw is what Excalidraw itself writes.
+var excalidrawExts = []string{".excalidraw", ".xdraw"}
+
 // IsSupportedFile returns true if the filename has a supported file extension
 // (text, image, audio, video, or office document).
 func IsSupportedFile(name string) bool {
@@ -69,8 +77,9 @@ func IsTextFile(name string) bool {
 		".tex",
 		".pem", ".crt", ".key", ".pub",
 		".regex", ".regexp",
-		".excalidraw",
 	}
+	// Excalidraw extensions are shared with DetectSubtype (see excalidrawExts).
+	exts = append(exts, excalidrawExts...)
 	lower := strings.ToLower(name)
 	for _, ext := range exts {
 		if strings.HasSuffix(lower, ext) {
@@ -139,15 +148,18 @@ func IsOfficeFile(name string) bool {
 // DetectSubtype examines file content to determine its subtype (e.g., "openapi").
 // Returns ("", "") for unrecognized or malformed content.
 // Files larger than maxSpecSniffSize are skipped for performance — but the
-// .excalidraw extension is recognized BEFORE that check, because diagrams with
+// Excalidraw extensions are recognized BEFORE that check, because diagrams with
 // embedded images easily exceed 1MB yet must still open in the editor.
 func DetectSubtype(filename, content string) (subtype string) {
 	lower := strings.ToLower(filename)
-	if strings.HasSuffix(lower, ".excalidraw") {
-		// The .excalidraw extension alone is sufficient — the file is an
-		// Excalidraw scene even when empty (a brand-new blank diagram). Content
-		// sniffing would reject empty/large files and fall back to plain text.
-		return SubtypeExcalidraw
+	for _, ext := range excalidrawExts {
+		if strings.HasSuffix(lower, ext) {
+			// The extension alone is sufficient — the file is an Excalidraw
+			// scene even when empty (a brand-new blank diagram). Content
+			// sniffing would reject empty/large files and fall back to plain
+			// text.
+			return SubtypeExcalidraw
+		}
 	}
 	if len(content) > maxSpecSniffSize {
 		return ""
