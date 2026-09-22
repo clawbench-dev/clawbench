@@ -4257,6 +4257,99 @@ func TestSchema_FileSharesRootMigration_AddsColumnToLegacyTable(t *testing.T) {
 	assert.Empty(t, root)
 }
 
+// TestSchema_ScriptColumnMigration verifies scheduled_tasks.script and
+// scheduled_tasks.script_timeout are added to a database created before the
+// columns existed, that a pre-existing row keeps its data and reads back the
+// column defaults, and that the migration is idempotent.
+//
+// This is the highest-risk untested path of the custom-script feature: the
+// columns are added by the idempotent ALTER loop in InitDB, and if that loop
+// regressed, existing installs would break silently at boot rather than at
+// test time. Building the current schema first (so every other table and
+// migration is already in place) and then dropping the two columns isolates
+// the migration under test.
+func TestSchema_ScriptColumnMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Phase 1: build the current schema, then drop the two script columns to
+	// simulate a database created before they existed.
+	require.NoError(t, InitDB())
+	CloseDB()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE scheduled_tasks DROP COLUMN script")
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE scheduled_tasks DROP COLUMN script_timeout")
+	require.NoError(t, err)
+
+	// A legacy task row with history that must survive the migration.
+	_, err = raw.Exec(
+		`INSERT INTO scheduled_tasks
+		 (project_path, name, cron_expr, agent_id, prompt, run_count)
+		 VALUES ('/p', 'Legacy task', '0 9 * * *', 'default', 'do work', 7)`)
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds both columns.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "scheduled_tasks")
+	assert.Contains(t, columns, "script", "script column must be restored")
+	assert.Contains(t, columns, "script_timeout", "script_timeout column must be restored")
+
+	// The pre-existing row survives and reads back the column defaults while
+	// keeping its original run_count.
+	var script string
+	var scriptTimeout, runCount int
+	require.NoError(t, db.QueryRow(
+		`SELECT script, script_timeout, run_count FROM scheduled_tasks WHERE name = 'Legacy task'`,
+	).Scan(&script, &scriptTimeout, &runCount))
+	assert.Equal(t, "", script, "a legacy row must default script to empty")
+	assert.Equal(t, 0, scriptTimeout, "a legacy row must default script_timeout to 0")
+	assert.Equal(t, 7, runCount, "run_count must be preserved across the migration")
+
+	// Phase 3: idempotency — two more migrations must not error, duplicate, or
+	// alter the columns.
+	var colsBefore int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks')").Scan(&colsBefore))
+	require.NoError(t, InitDB())
+	require.NoError(t, InitDB())
+	columns = getTableColumns(t, UnsafeDBForTest(), "scheduled_tasks")
+	assert.Contains(t, columns, "script")
+	assert.Contains(t, columns, "script_timeout")
+
+	var scriptCount, timeoutCount, colsAfter int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='script'").Scan(&scriptCount))
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='script_timeout'").Scan(&timeoutCount))
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks')").Scan(&colsAfter))
+	assert.Equal(t, 1, scriptCount, "repeated migrations must not duplicate the script column")
+	assert.Equal(t, 1, timeoutCount, "repeated migrations must not duplicate the script_timeout column")
+	assert.Equal(t, colsBefore, colsAfter, "repeated migrations must not change the column set")
+
+	// The legacy row is still intact after the repeat runs.
+	require.NoError(t, db.QueryRow(
+		`SELECT script, script_timeout, run_count FROM scheduled_tasks WHERE name = 'Legacy task'`,
+	).Scan(&script, &scriptTimeout, &runCount))
+	assert.Equal(t, "", script)
+	assert.Equal(t, 0, scriptTimeout)
+	assert.Equal(t, 7, runCount)
+}
+
 // TestSchema_ForgeSyncStatePerTypeWatermarkMigration covers the split of the
 // single `watermark` column into one cursor per item type.
 //

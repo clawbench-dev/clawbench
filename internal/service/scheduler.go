@@ -1592,17 +1592,6 @@ func UpdateExecutionStatus(sessionID string, status string) error {
 	return err
 }
 
-// UpdateExecutionStatusByID updates a single execution row by its ID. The
-// script skip/cancel paths have no session to key on, so they must target the
-// row returned by AddTaskExecutionWithStatus directly.
-func UpdateExecutionStatusByID(executionID int64, status string) error {
-	_, err := WriteExec(
-		"UPDATE task_executions SET status = ? WHERE id = ?",
-		status, executionID,
-	)
-	return err
-}
-
 // SetTaskExecutionEventPayload records the forge event that triggered an
 // execution, so a notification can deep-link back to the originating item and
 // the run can be traced to its cause.
