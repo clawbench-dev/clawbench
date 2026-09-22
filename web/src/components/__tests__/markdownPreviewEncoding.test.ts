@@ -314,3 +314,66 @@ describe('MarkdownPreview — Chinese image path encoding (component level)', ()
         expect(html).toContain('https://example.com')
     })
 })
+
+// ── SVG media: proportional fill-width sizing re-stamped on media load ──
+//
+// This is the full-document host (MarkdownPreview.vue) rather than the
+// slice host (MarkdownPreviewBody.vue). Both mount the same pipeline, but each
+// owns its own `@load.capture` handler; the SVG-file ratio is only resolvable
+// after decode, so this wiring is the sole route that sizes SVG *files*.
+
+describe('MarkdownPreview — svg file sizing on media load', () => {
+    /** jsdom never loads images, so the decoded intrinsic size must be injected. */
+    function injectNaturalSize(img: Element, w: number, h: number): void {
+        Object.defineProperty(img, 'naturalWidth', { value: w, configurable: true })
+        Object.defineProperty(img, 'naturalHeight', { value: h, configurable: true })
+    }
+
+    async function mountWithSvgFile() {
+        const wrapper = mount(MarkdownPreview, {
+            props: {
+                file: { path: 'docs/README.md', content: '![chart](chart.svg)' },
+                viewMode: 'rendered',
+            },
+            global: { plugins: [i18n] },
+        })
+        await nextTick()
+        await nextTick()
+        await nextTick()
+        return wrapper
+    }
+
+    it('stamps the figure with its ratio once the SVG image has loaded', async () => {
+        const wrapper = await mountWithSvgFile()
+        const figure = wrapper.find('.image-block-wrapper')
+        expect(figure.exists()).toBe(true)
+        // Not yet decoded → no ratio, so the figure keeps its previous sizing.
+        expect(figure.classes()).not.toContain('svg-fit')
+
+        const img = wrapper.find('img.lightbox-img')
+        injectNaturalSize(img.element, 400, 100)
+        await img.trigger('load')
+
+        expect(figure.classes()).toContain('svg-fit')
+        expect((figure.element as HTMLElement).style.getPropertyValue('--svg-ar')).toBe('4')
+    })
+
+    it('leaves a raster image figure unsized on load', async () => {
+        const wrapper = mount(MarkdownPreview, {
+            props: {
+                file: { path: 'docs/README.md', content: '![photo](photo.png)' },
+                viewMode: 'rendered',
+            },
+            global: { plugins: [i18n] },
+        })
+        await nextTick()
+        await nextTick()
+        await nextTick()
+
+        const img = wrapper.find('img.lightbox-img')
+        injectNaturalSize(img.element, 400, 100)
+        await img.trigger('load')
+
+        expect(wrapper.find('.image-block-wrapper').classes()).not.toContain('svg-fit')
+    })
+})
