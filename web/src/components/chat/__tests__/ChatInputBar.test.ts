@@ -115,7 +115,7 @@ const i18n = createI18n({
 
 // Mock all composables
 vi.mock('@/composables/useAppMode.ts', () => ({
-  useAppMode: () => ({ isAppMode: { value: false } }),
+  useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
 
 vi.mock('@/composables/useToast.ts', () => ({

@@ -1,5 +1,4 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { ref } from 'vue'
 import {
   formatToolInput,
   formatToolOutput,
@@ -23,9 +22,16 @@ import {
 } from '@/utils/askQuestionState.ts'
 
 // ── Mock for useAppMode (controlled via mutable ref) ──
-const mockIsAppMode = ref(false)
+// `vi.hoisted` is required: vi.mock calls are hoisted above ordinary const
+// declarations, so a plain `const mockIsAppMode = ref(false)` would still be in
+// the temporal dead zone when the factory first runs.
+const mockIsAppMode = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { ref } = require('vue')
+  return ref(false)
+})
 vi.mock('@/composables/useAppMode.ts', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
 // ── Helpers ──
@@ -1109,7 +1115,7 @@ describe('AskUserQuestion action handler', () => {
       Object.defineProperty(clickSubmit, 'target', { value: submitBtn, writable: false })
       handleToolAction('AskUserQuestion', clickSubmit, emit)
 
-      expect(emit).toHaveBeenCalledWith('send-message', 'Option A')
+      expect(emit).toHaveBeenCalledWith('send-message', '- Option A')
       cleanup(container)
     })
 
@@ -1131,7 +1137,7 @@ describe('AskUserQuestion action handler', () => {
       Object.defineProperty(clickSubmit, 'target', { value: submitBtn, writable: false })
       handleToolAction('AskUserQuestion', clickSubmit, emit)
 
-      expect(emit).toHaveBeenCalledWith('send-message', 'Option A\nextra context')
+      expect(emit).toHaveBeenCalledWith('send-message', '- Option A\n\nextra context')
       cleanup(container)
     })
 
@@ -3307,7 +3313,7 @@ describe('AskUserQuestion action handler (uncovered branches)', () => {
     Object.defineProperty(clickSubmit, 'target', { value: submitBtn, writable: false })
     handleToolAction('AskUserQuestion', clickSubmit, emit)
 
-    expect(emit).toHaveBeenCalledWith('send-message', 'Option A\nsome extra details')
+    expect(emit).toHaveBeenCalledWith('send-message', '- Option A\n\nsome extra details')
     cleanup(container)
   })
 
@@ -4022,7 +4028,7 @@ describe('AskUserQuestion submit carries the card key', () => {
     clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
     clickOn(view.querySelector('.ask-question-submit')!, emit)
 
-    expect(emit).toHaveBeenCalledWith('send-message', 'Option A', 'sess-1|tool:ask-1')
+    expect(emit).toHaveBeenCalledWith('send-message', '- Option A', 'sess-1|tool:ask-1')
     container.remove()
   })
 
@@ -4046,7 +4052,7 @@ describe('AskUserQuestion submit carries the card key', () => {
     clickOn(view.querySelectorAll('.ask-question-option')[0], emit)
     clickOn(view.querySelector('.ask-question-submit')!, emit)
 
-    expect(emit).toHaveBeenCalledWith('send-message', 'Option A')
+    expect(emit).toHaveBeenCalledWith('send-message', '- Option A')
     expect(emit.mock.calls[0]).toHaveLength(2)
     container.remove()
   })

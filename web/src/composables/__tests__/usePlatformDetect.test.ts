@@ -3,7 +3,7 @@ import { _setIsPCForTest, _resetPlatformForTest, usePlatformDetect, isAndroidUA,
 
 // Mock useAppMode to control isAppMode in tests
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: { value: false } }),
+  useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
 
 beforeEach(() => {
@@ -53,7 +53,7 @@ describe('usePlatformDetect', () => {
 describe('isPC logic', () => {
   it('isPC = false when isAppMode is true (Android native app)', async () => {
     vi.doMock('@/composables/useAppMode', () => ({
-      useAppMode: () => ({ isAppMode: { value: true } }),
+      useAppMode: () => ({ isAppMode: { value: true }, isDesktopApp: { value: false } }),
     }))
     vi.resetModules()
     const mod = await import('@/composables/usePlatformDetect')
@@ -61,6 +61,22 @@ describe('isPC logic', () => {
     // so isAndroidUA/isIOSUA/isIPadOSUA are all false. Only isAppMode blocks isPC.
     const { isPC } = mod.usePlatformDetect()
     expect(isPC.value).toBe(false)
+  })
+
+  it('isPC = true for the Electron desktop shell (isAppMode + isDesktopApp)', async () => {
+    // The Electron shell is a native host (isAppMode = true) but has a physical
+    // keyboard and mouse. Before isDesktopApp was consulted it fell into every
+    // mobile branch — most visibly the bottom-sheet file quick-preview.
+    vi.doMock('@/composables/useAppMode', () => ({
+      useAppMode: () => ({ isAppMode: { value: true }, isDesktopApp: { value: true } }),
+    }))
+    vi.resetModules()
+    const mod = await import('@/composables/usePlatformDetect')
+    const { isPC } = mod.usePlatformDetect()
+    expect(isPC.value).toBe(true)
+    // doMock registrations outlive resetModules and would otherwise leak this
+    // isDesktopApp=true into every later UA case (making them read as PC).
+    vi.doUnmock('@/composables/useAppMode')
   })
 
   it('isPC = false for Android browser UA', async () => {
@@ -105,7 +121,7 @@ describe('isPC logic', () => {
     Object.defineProperty(navigator, 'userAgent', { configurable: true, value: macUA })
     Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 })
     vi.doMock('@/composables/useAppMode', () => ({
-      useAppMode: () => ({ isAppMode: { value: false } }),
+      useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
     }))
     vi.resetModules()
     const mod = await import('@/composables/usePlatformDetect')
@@ -120,7 +136,7 @@ describe('isPC logic', () => {
     const winUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     Object.defineProperty(navigator, 'userAgent', { configurable: true, value: winUA })
     vi.doMock('@/composables/useAppMode', () => ({
-      useAppMode: () => ({ isAppMode: { value: false } }),
+      useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
     }))
     vi.resetModules()
     const mod = await import('@/composables/usePlatformDetect')

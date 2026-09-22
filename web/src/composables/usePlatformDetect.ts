@@ -34,10 +34,14 @@ let platformInitialized = false
  * Detects whether the device is a PC (desktop/laptop with physical keyboard).
  *
  * isPC = true when:
- * - NOT Android UA (mobile phone/tablet browser)
- * - NOT iOS UA (iPhone/iPad classic)
- * - NOT iPadOS 13+ desktop-mode (touch-only device, no physical keyboard)
- * - NOT Android App mode (native WebView)
+ * - The Electron desktop shell (isDesktopApp) — a native host, but a desktop
+ *   window with a physical keyboard and mouse. Without this the Electron app
+ *   inherited every mobile branch (bottom-sheet file preview, tap-to-enter file
+ *   manager, mobile terminal toolbar) purely because it reports isAppMode.
+ * - OR: NOT Android UA (mobile phone/tablet browser)
+ *   AND NOT iOS UA (iPhone/iPad classic)
+ *   AND NOT iPadOS 13+ desktop-mode (touch-only device, no physical keyboard)
+ *   AND NOT Android App mode (native WebView)
  *
  * All conditions are static — UA doesn't change during a session and isAppMode
  * is initialized once — so isPC is computed once at init, not a reactive computed.
@@ -51,8 +55,9 @@ let platformInitialized = false
 export function usePlatformDetect() {
   if (!platformInitialized) {
     platformInitialized = true
-    const { isAppMode } = useAppMode()
-    isPC.value = !isAppMode.value && !isAndroidUA && !isIOSUA && !isIPadOSUA
+    const { isAppMode, isDesktopApp } = useAppMode()
+    isPC.value = isDesktopApp.value
+      || (!isAppMode.value && !isAndroidUA && !isIOSUA && !isIPadOSUA)
   }
   return { isPC }
 }

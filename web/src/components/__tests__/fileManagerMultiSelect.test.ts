@@ -254,7 +254,7 @@ const i18n = createI18n({
 })
 
 vi.mock('@/composables/useAppMode.ts', () => ({
-  useAppMode: () => ({ isAppMode: { value: false } }),
+  useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
 
 vi.mock('@/composables/useDialog.ts', () => ({

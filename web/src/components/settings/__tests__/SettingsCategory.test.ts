@@ -107,7 +107,7 @@ vi.mock('@/composables/useAgents', () => ({
 // reads the intended value without needing reactivity.
 const mockIsAppMode = vi.hoisted(() => ({ value: false }))
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
 const mockCanInstallPwa = ref(false)

@@ -30,7 +30,7 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: { value: false } }),
+  useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
 
 vi.mock('@/utils/fileType', () => ({
