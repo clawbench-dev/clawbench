@@ -91,6 +91,14 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 		if req.RepeatMode == "" {
 			req.RepeatMode = "unlimited"
 		}
+		// A negative timeout is not a value the executor can honor: it would be
+		// stored as-is and silently collapse to the 300s default at run time, so
+		// the API would accept a value it does not actually apply. 0 is valid —
+		// the contract defines it as "use the default".
+		if req.ScriptTimeout < 0 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskScriptTimeoutInvalid")
+			return
+		}
 
 		task := &model.ScheduledTask{
 			ProjectPath:   projectPath,
@@ -402,6 +410,13 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// "leave unchanged".
 		task.Script = req.Script
 		if req.ScriptTimeout != nil {
+			// Negative is rejected rather than stored-and-ignored: the executor
+			// treats a non-positive timeout as the default, so persisting -1
+			// would silently disagree with what the API accepted. 0 is valid.
+			if *req.ScriptTimeout < 0 {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskScriptTimeoutInvalid")
+				return
+			}
 			task.ScriptTimeout = *req.ScriptTimeout
 		}
 		// Only update MaxRuns if explicitly provided in the request (ISS-043).

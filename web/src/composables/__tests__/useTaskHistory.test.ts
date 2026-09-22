@@ -520,6 +520,56 @@ describe('useTaskHistory', () => {
       expect(history.runningExecutions.value[0].phase).toBe('script')
       expect(history.isScriptPhase(history.runningExecutions.value[0])).toBe(true)
     })
+
+    it('refreshes the list when runCount changes without any observed running entry', async () => {
+      const { history } = createHistory()
+
+      // First poll: nothing running, runCount 5.
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) return Promise.resolve({ executions: [], hasMore: false })
+        return Promise.resolve({ runningExecutions: [], runCount: 5 })
+      })
+      await history.loadRunningStatus()
+      mockApiGet.mockClear()
+
+      // Second poll: still nothing running — the skip started AND finished
+      // between ticks — but runCount advanced to 6.
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) {
+          return Promise.resolve({
+            executions: [
+              { id: 41, sessionId: '', status: 'skipped', content: '', createdAt: '2026-01-01T00:05:00Z', isUnread: false },
+            ],
+            hasMore: false,
+          })
+        }
+        return Promise.resolve({ runningExecutions: [], runCount: 6 })
+      })
+      await history.loadRunningStatus()
+
+      // The count heuristic can never see this run, so runCount must drive the
+      // reload — otherwise the `skipped` row stays invisible.
+      const execCalls = mockApiGet.mock.calls.filter((c: any[]) => String(c[0]).includes('/executions?limit=10'))
+      expect(execCalls.length).toBeGreaterThanOrEqual(1)
+      expect(history.executions.value.some(e => e.status === 'skipped')).toBe(true)
+    })
+
+    it('does not reload when runCount is unchanged and nothing was running', async () => {
+      const { history } = createHistory()
+
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) return Promise.resolve({ executions: [], hasMore: false })
+        return Promise.resolve({ runningExecutions: [], runCount: 5 })
+      })
+      await history.loadRunningStatus()
+      mockApiGet.mockClear()
+
+      // Nothing changed at all: a steady poll must not churn the history list.
+      await history.loadRunningStatus()
+
+      const execCalls = mockApiGet.mock.calls.filter((c: any[]) => String(c[0]).includes('/executions?limit=10'))
+      expect(execCalls.length).toBe(0)
+    })
   })
 
   describe('cancelExecution', () => {

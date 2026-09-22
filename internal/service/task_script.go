@@ -48,6 +48,46 @@ type ScriptResult struct {
 	Err      error // non-nil for ScriptFailed/ScriptTimedOut/ScriptCanceled when there is a cause
 }
 
+// cappedBuffer is an io.Writer that retains at most cap bytes and discards the
+// rest, recording that it had to.
+//
+// The cap is enforced WHILE the process writes, not after cmd.Run() returns:
+// the downstream truncation (truncateScriptOutput) only runs once the whole
+// output is already in memory, so a runaway script (`yes`, `find /`) would grow
+// the server heap without bound and can OOM the process long before the 300s
+// timeout fires. Bounding the buffer itself is what makes the capture safe.
+//
+// Write always reports the full len(p) even when it discards bytes. A short
+// count would surface to the script as a broken pipe and change its exit
+// status — and with it the outcome classification. os/exec writes each stream
+// from a single goroutine, and stdout/stderr use separate writers, so no lock
+// is needed.
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	cap       int
+	truncated bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if n == 0 {
+		return 0, nil
+	}
+	if remaining := c.cap - c.buf.Len(); remaining > 0 {
+		if n > remaining {
+			c.buf.Write(p[:remaining])
+			c.truncated = true
+		} else {
+			c.buf.Write(p)
+		}
+	} else {
+		c.truncated = true
+	}
+	return n, nil
+}
+
+func (c *cappedBuffer) String() string { return c.buf.String() }
+
 // RunTaskScript executes script in workDir through the platform shell.
 // timeout <= 0 means DefaultScriptTimeout (300 * time.Second).
 // ctx cancellation and timeout must both terminate the whole process group.
@@ -79,8 +119,14 @@ func RunTaskScript(ctx context.Context, script string, workDir string, timeout t
 	}
 
 	// Capture stdout and stderr separately: the skip decision requires both to
-	// be empty independently, so they must not be merged.
-	var stdout, stderr bytes.Buffer
+	// be empty independently, so they must not be merged. Both are capped at
+	// scriptOutputCap bytes while the script writes (see cappedBuffer) so a
+	// runaway producer cannot exhaust the heap before the timeout fires. The
+	// same constant bounds the downstream truncation in truncateScriptOutput,
+	// so the two caps cannot drift.
+	var stdout, stderr cappedBuffer
+	stdout.cap = scriptOutputCap
+	stderr.cap = scriptOutputCap
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

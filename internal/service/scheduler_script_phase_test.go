@@ -379,6 +379,77 @@ func TestExecuteTask_ScriptPhase_Cancel(t *testing.T) {
 	assert.Equal(t, 1, after.RunCount)
 }
 
+// TestExecuteTask_ScriptPhase_CancelWithoutExecutionRow asserts the emitted
+// cancelled event carries no execution id when the execution row could not be
+// written. Emitting the zero-value "0" would deep-link the notification to a
+// row that does not exist.
+func TestExecuteTask_ScriptPhase_CancelWithoutExecutionRow(t *testing.T) {
+	skipOnWindows(t)
+	setupSchedulerScriptDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"script-agent": {ID: "script-agent", Name: "Script Agent", Backend: "nonexistent-backend-xyz"},
+	}
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(nil) })
+
+	s := NewScheduler()
+	t.Cleanup(s.Stop)
+
+	task := &model.ScheduledTask{
+		ProjectPath: t.TempDir(),
+		Name:        "Cancel No Row",
+		CronExpr:    "0 * * * *",
+		AgentID:     "script-agent",
+		Prompt:      "do work",
+		RepeatMode:  "unlimited",
+		Script:      "sleep 30",
+		Status:      "active",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "script-cancel-norow", "")
+
+	// Drop the execution table so AddTaskExecutionWithStatus fails while the
+	// task row itself survives (the scheduler needs it to advance the run).
+	_, err := WriteExec("ALTER TABLE task_executions RENAME TO task_executions_hidden")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = WriteExec("ALTER TABLE task_executions_hidden RENAME TO task_executions")
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.executeTask(task, task.ProjectPath, "auto", nil)
+	}()
+
+	require.Eventually(t, func() bool {
+		return s.CancelExecution("script-"+strconv.FormatInt(task.ID, 10)) == nil
+	}, 2*time.Second, 10*time.Millisecond, "the script execution must be cancellable")
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run did not terminate after cancelling the script phase")
+	}
+
+	// The cancelled event still fires, but must not claim an execution id.
+	var cancelled *ws.TaskUpdateData
+	for _, ev := range sub.GetBufferedEvents() {
+		if data, ok := ev.Data.(*ws.TaskUpdateData); ok && data.Status == "cancelled" {
+			cancelled = data
+		}
+	}
+	require.NotNil(t, cancelled, "the cancel path must still emit a cancelled task_update")
+	assert.Empty(t, cancelled.ExecutionID, "no execution row was written, so no id may be advertised")
+}
+
 // TestExecuteTask_ScriptOutput_InjectedIntoPrompt asserts that a script which
 // prints something has its output injected into the prompt, visible in the
 // persisted user chat message.
@@ -460,6 +531,14 @@ func TestBuildScriptPromptBlock_Outcomes(t *testing.T) {
 		Outcome: ScriptProduced, Stdout: string(make([]byte, scriptOutputCap+100)),
 	})
 	assert.Contains(t, big, "output truncated")
+
+	// A stream that reached exactly the cap was also cut at capture time
+	// (cappedBuffer retains at most cap bytes), so the marker must still appear
+	// — otherwise the model is handed a silently-truncated output.
+	atCap := buildScriptPromptBlock(ScriptResult{
+		Outcome: ScriptProduced, Stdout: strings.Repeat("x", scriptOutputCap),
+	})
+	assert.Contains(t, atCap, "output truncated")
 }
 
 // TestExecuteTask_EventTask_IgnoresScript asserts the guard: an event task

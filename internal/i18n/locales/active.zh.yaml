@@ -75,6 +75,7 @@ TaskNotFound: 任务未找到
 TaskFieldsRequired: 名称、cron表达式、智能体ID和提示词为必填项
 TaskEventTypesInvalid: 按事件触发时至少需订阅一个有效事件类型
 TaskCronRequired: 任务需提供 cron 表达式
+TaskScriptTimeoutInvalid: 脚本超时时间不能为负数
 TaskAlreadyRunning: 任务正在执行中，请等待完成后再触发
 TaskEventTriggerUnsupported: 事件触发的任务无法手动执行，需等待匹配的事件触发
 TaskExecutionIdRequired: 执行实例ID为必填项

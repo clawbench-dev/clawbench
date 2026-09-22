@@ -3334,7 +3334,10 @@ paths:
                     退出码 0 且无输出 → 跳过 AI 且不发通知；有输出或非 0/超时 → 注入 prompt 后照常调用 AI。
                 script_timeout:
                   type: integer
-                  description: 脚本超时秒数；0 表示默认 300 秒。
+                  minimum: 0
+                  description: |
+                    脚本超时秒数；0 表示默认 300 秒。负数为非法值，返回 400
+                    `TaskScriptTimeoutInvalid`。
       responses:
         "200":
           description: 新任务
@@ -3384,7 +3387,10 @@ paths:
                   description: "可选预执行脚本（仅 cron）。action=update 时生效；传空字符串表示清除。"
                 script_timeout:
                   type: integer
-                  description: "脚本超时秒数；0 表示默认 300 秒。action=update 时生效。"
+                  minimum: 0
+                  description: |
+                    脚本超时秒数；0 表示默认 300 秒。action=update 时生效。
+                    负数为非法值，返回 400 `TaskScriptTimeoutInvalid`。
       responses:
         "200":
           description: 结果

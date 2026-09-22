@@ -891,7 +891,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			}
 			s.finishScriptOnlyRun(task, status)
 			if status == "cancelled" {
-				emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", execID), "", projectPath, task.Name)
+				// When the row was not written, execID is 0: emitting "0" would
+				// make the notification deep-link to a non-existent execution.
+				// An empty id tells the client there is nothing to open.
+				execIDArg := ""
+				if err == nil {
+					execIDArg = fmt.Sprintf("%d", execID)
+				}
+				emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", execIDArg, "", projectPath, task.Name)
 			}
 			// Skipped emits nothing: a content-free skip must not notify.
 			return
@@ -1380,8 +1387,13 @@ func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask) (string, *tim
 }
 
 // scriptOutputCap bounds how much of the script's stdout/stderr is injected
-// into the prompt, so a runaway script cannot blow up the context.
+// into the prompt, so a runaway script cannot blow up the context. It is also
+// the cap applied at capture time by cappedBuffer, so the two cannot drift.
 const scriptOutputCap = 64 * 1024
+
+// scriptTruncationMarker is appended in place of the dropped tail when a
+// stream is cut, so the model knows the output it sees is incomplete.
+const scriptTruncationMarker = "\n…[output truncated]"
 
 // finishScriptOnlyRun applies the bookkeeping for a run that ended in the
 // script phase and never reached the AI. The execution row is recorded by the
@@ -1441,11 +1453,16 @@ func buildScriptPromptBlock(res ScriptResult) string {
 
 // truncateScriptOutput caps a script stream at scriptOutputCap bytes, appending
 // a marker when it was cut so the model knows the output is incomplete.
+//
+// This is a second line of defense only: cappedBuffer already bounds the
+// capture. A stream that reached exactly the cap was cut at capture time, so
+// the >= comparison is what keeps the marker in that case — a plain > would
+// let a capped-but-full stream through silently.
 func truncateScriptOutput(s string) string {
-	if len(s) <= scriptOutputCap {
+	if len(s) < scriptOutputCap {
 		return strings.TrimRight(s, "\n")
 	}
-	return strings.TrimRight(s[:scriptOutputCap], "\n") + "\n…[output truncated]"
+	return strings.TrimRight(s[:scriptOutputCap], "\n") + scriptTruncationMarker
 }
 
 // GetTasks retrieves all tasks for a project path. If projectPath is empty, retrieves all tasks.

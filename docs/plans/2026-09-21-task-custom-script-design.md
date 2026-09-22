@@ -47,7 +47,8 @@ stdout 与 stderr 均为空时，跳过 AI 调用，并且不发送任何成功�
 仅当 `!task.IsEventTriggered() && task.Script != ""` 时执行脚本阶段：
 
 1. 在 `runningExecutions` 登记合成条目（ID `script-<taskID>`、TaskID、Phase `script`、
-   CancelFunc = ctx 的 cancel、StartedAt、TriggerType），emit `running`
+   CancelFunc = ctx 的 cancel、StartedAt、TriggerType），**不 emit `running`**
+   （理由见下方「实现偏差」第 1 条；`emit` 会在实现中造成通知噪音）
 2. 执行脚本，工作目录 = projectPath，超时 = ScriptTimeout
    - **exit 0 且 stdout+stderr 皆空** → 写 execution（status `skipped`、session_id `''`）、
      UpdateTaskStats + 重算 next_run_at、移除合成条目、**不 emit 任何事件**、return
@@ -81,7 +82,8 @@ unix/windows 各一）：
 
 - shell 解析用 `platform.ResolveLoginShell()`，Windows 兜底 `cmd /C`
   （参照 `internal/ai/acp_terminal.go:73-79`）
-- stdout / stderr 分开捕获（`bytes.Buffer`），不合并
+- stdout / stderr 分开捕获（**cappedBuffer**，捕获时即按 `scriptOutputCap` 截断，不合并；
+  见「实现偏差」第 3 条）
 - `SysProcAttr` 设置进程组，`cmd.Cancel` 杀整个进程组，`cmd.WaitDelay = 5s`
   （避免孙进程持有管道导致挂死）
 - 用 `context.WithTimeout` 实现超时
@@ -91,8 +93,10 @@ unix/windows 各一）：
 ## Prompt 注入
 
 在 `renderedPrompt`（`scheduler.go:871`）上追加定界块，位于事件上下文之后、
-`task.Prompt` 之前。stdout 与 stderr 各限 64 KiB 防撑爆。该变量同时供
-`AddChatMessage`（`:885`）与 `ai.ChatRequest.Prompt`（`:912`），因此会话历史可见。
+`task.Prompt` 之前。stdout 与 stderr 各限 `scriptOutputCap`（64 KiB）防撑爆；该上限在
+**捕获时**由 `cappedBuffer` 施加（见「实现偏差」第 3 条），`truncateScriptOutput` 只做
+二次收尾。该变量同时供 `AddChatMessage`（`:885`）与 `ai.ChatRequest.Prompt`（`:912`），
+因此会话历史可见。
 
 ## 前端
 
@@ -137,5 +141,32 @@ unix/windows 各一）：
 
 ## 待实现期验证
 
-脚本阶段取消时 `emitTaskEvent` 传入空 sessionID，`scheduler.go:728-741` 会去查会话标题
-与预览，需确认其容错；若不安全则加守卫。
+- **已确认安全**：脚本阶段取消时 `emitTaskEvent` 传入空 sessionID，`scheduler.go:728-741`
+  对会话标题与预览的查询都以 `if sessionID != ""` 守卫（标题另有 `if taskName != ""`），
+  空 sessionID 不会触发无效查询。无需额外守卫。
+
+## 实现偏差
+
+实施后与本文档原始设计的差异，以下为**已发布行为**，文档以本节为准：
+
+1. **脚本阶段不 emit `running`。** 原设计第 1 步要求登记合成条目并 emit `running`，
+   但 `running` 的 task_update 是用户可见通知（浏览器通知、钉钉/飞书的「任务已启动」，
+   经 `IsNotifiableEvent` 与前端 `useGlobalEvents` 门控）。脚本阶段的目的是安静跳过，
+   而「任务已启动」之后再无结果正是本功能要消除的噪音。因此实现只在
+   `runningExecutions` 登记合成条目（保留可取消性与执行历史可见性），**不发任何
+   task_update**；脚本行通过 `GetRunningExecutions`（`GET /api/tasks/{id}`）供 UI 标注。
+   见 `internal/service/scheduler.go:836-842` 的注释。
+2. **渲染体积预算 7000 → 8000。** `TestRenderCommand_SizeBudget`（`internal/api/render_test.go`）
+   的 `CommandTask` 预算从 7000 上调至 8000：原基线已是 6885/7000，任何新增的已文档化
+   字段都会顶破预算，故放宽而非删除校验。
+3. **输出上限改在捕获时施加。** 原设计的 `bytes.Buffer` 只在 `cmd.Run()` 返回后才由
+   `truncateScriptOutput` 截断；一个输出 GB 级的脚本（`yes`、`find /`）会在超时触发前
+   就把服务端堆撑爆并 OOM。实现改用 `cappedBuffer`，写入时即按 `scriptOutputCap`
+   （64 KiB，与 `truncateScriptOutput` 共用同一常量）截断并丢弃多余部分，仍返回完整
+   写入长度以免脚本收到 broken pipe 而改变退出码/结论。见
+   `internal/service/task_script.go` 的 `cappedBuffer`。
+4. **前端轮询以 `runCount` 变化触发历史刷新。** 仅靠 runningCount 增减会漏掉两次 5s
+   轮询之间「刚启动即结束」的快速跳过（`git diff --quiet`、`test -f`），其 `skipped` 行
+   永不出现。`useTaskHistory.loadRunningStatus` 额外记录上次的 `runCount`（
+   `GET /api/tasks/{id}` 已返回），变化即 reload；runningCount 启发式保留用于 AI 阶段
+   的完成动画。

@@ -1129,3 +1129,105 @@ func TestServeTaskByID_DetailRunningCount_ScriptPhaseExcluded(t *testing.T) {
 	first, _ := execs[0].(map[string]any)
 	assert.Equal(t, "script", first["phase"])
 }
+
+// TestServeTasks_PostRejectsNegativeScriptTimeout asserts the API contract
+// matches the executor: a negative timeout is refused instead of being stored
+// and silently collapsing to the default. 0 stays valid ("use the default").
+func TestServeTasks_PostRejectsNegativeScriptTimeout(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":           "Bad Timeout",
+		"cron_expr":      "0 * * * *",
+		"agent_id":       "coder",
+		"prompt":         "Do something",
+		"script":         "echo hi",
+		"script_timeout": -5,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	assert.Contains(t, w.Body.String(), "TaskScriptTimeoutInvalid")
+
+	// Nothing may have been persisted by the rejected request.
+	tasks, err := service.GetTasks(env.ProjectDir)
+	require.NoError(t, err)
+	assert.Empty(t, tasks)
+}
+
+// TestServeTasks_PostAcceptsZeroScriptTimeout asserts 0 is not rejected: the
+// contract defines it as "use the default".
+func TestServeTasks_PostAcceptsZeroScriptTimeout(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":           "Default Timeout",
+		"cron_expr":      "0 * * * *",
+		"agent_id":       "coder",
+		"prompt":         "Do something",
+		"script":         "echo hi",
+		"script_timeout": 0,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+
+	assertOK(t, w)
+}
+
+// TestServeTaskByID_PutRejectsNegativeScriptTimeout asserts the update path
+// enforces the same contract, and that the stored value is left untouched.
+func TestServeTaskByID_PutRejectsNegativeScriptTimeout(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	taskID := setupTaskForSubRoute(t, env, "BadTimeoutUpdate")
+
+	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", taskID), map[string]any{
+		"action":         "update",
+		"script":         "printf done",
+		"script_timeout": -1,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	assert.Contains(t, w.Body.String(), "TaskScriptTimeoutInvalid")
+
+	persisted, err := service.GetTaskByID(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, 0, persisted.ScriptTimeout, "a rejected update must not change the stored value")
+	assert.NotEqual(t, "printf done", persisted.Script, "a rejected update must not persist any field")
+}

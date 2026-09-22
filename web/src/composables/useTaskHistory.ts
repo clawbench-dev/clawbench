@@ -95,6 +95,12 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
   // gained a row — a finished script leaves a `skipped`/`cancelled` record that
   // would otherwise never be fetched.
   let prevTotalRunning = 0
+  // Last-seen task runCount. A fast skip (`git diff --quiet`, `test -f`) can
+  // start AND finish between two 5s ticks, so it is never observed as running
+  // and the count heuristic above misses it entirely. runCount is bumped by the
+  // backend for every finished run, including script-only skips, so a change
+  // is a precise "the DB history gained a row" signal.
+  let prevRunCount: number | null = null
 
   // Track just-completed execution IDs for entry animation
   const justCompletedIds = reactive(new Set<string>())
@@ -121,6 +127,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     abortController = new AbortController()
     prevRunningCount = 0
     prevTotalRunning = 0
+    prevRunCount = null
     loadExecutionsInFlight = false
     // Clear just-completed tracking
     for (const timer of justCompletedTimers.values()) {
@@ -222,7 +229,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
   async function loadRunningStatus(): Promise<void> {
     if (!task.value?.id) return
     try {
-      const data = await apiGet<{ runningExecutions: TaskExecution[] }>(
+      const data = await apiGet<{ runningExecutions: TaskExecution[]; runCount?: number }>(
         `/api/tasks/${task.value.id}`,
         { signal: abortController.signal },
       )
@@ -231,6 +238,11 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       // execution, so it must never fire the "just completed" flash/refresh.
       const newCount = newRunning.filter(exec => !isScriptPhase(exec)).length
       const newTotal = newRunning.length
+      // A runCount change means a run finished and wrote a history row — the
+      // only reliable signal for a script that started and finished between
+      // two ticks (never observed as running). The count heuristics below
+      // still handle the AI phase, whose completion drives the flash.
+      const runCountChanged = prevRunCount !== null && data.runCount !== undefined && data.runCount !== prevRunCount
       // When running count decreases, an execution just completed — refresh the completed list
       if (prevRunningCount > 0 && newCount < prevRunningCount) {
         // Mark previous running executions as just-completed for entry animation
@@ -250,6 +262,11 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
           }
         }
         reloadExecutions()
+      } else if (runCountChanged) {
+        // No running entry was ever seen, but the run count moved: a fast skip
+        // (or any run that came and went inside one poll interval) left a DB
+        // row that no task_update event will announce for the script phase.
+        reloadExecutions()
       } else if (prevTotalRunning > 0 && newTotal < prevTotalRunning) {
         // A script-phase run ended without an AI phase ever starting (it was
         // skipped or cancelled). No completion effect — the run never notified
@@ -259,6 +276,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       }
       prevRunningCount = newCount
       prevTotalRunning = newTotal
+      if (data.runCount !== undefined) prevRunCount = data.runCount
       runningExecutions.value = newRunning
     } catch {
       // Silently ignore — polling will retry
