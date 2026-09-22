@@ -140,6 +140,8 @@ func buildLines(cfg BannerConfig) []string {
 	}
 
 	// --- Password ---
+	// Blank line separates the credential line from the address list above.
+	lines = append(lines, "")
 	if cfg.AutoPassword != "" {
 		lines = append(lines, label("🔑 Password:", cfg.AutoPassword))
 	} else {
