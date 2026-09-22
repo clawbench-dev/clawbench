@@ -44,10 +44,21 @@ export function resolveBinName(platform) {
 //
 // Signals are still forwarded explicitly by the launcher, so Ctrl+C and
 // `kill <launcher-pid>` keep stopping the server.
-export function resolveSpawnOptions(env) {
+//
+// Windows is excluded: there `detached` means DETACHED_PROCESS (libuv
+// src/win/process.c), i.e. the child inherits no console, while `stdio:
+// "inherit"` still hands it the launcher's console handles. The server writes
+// everything through them (slog -> stderr, startup banner -> stdout), so its
+// entire console output — including the auto-generated password banner — was
+// silently discarded. Nothing about the SIGHUP rationale applies there, so
+// Windows keeps the default non-detached spawn and the output stays visible.
+// The cost is that libuv assigns the child to a job object
+// (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE), so closing the terminal window also
+// stops the server; use the Windows service path for unattended runs.
+export function resolveSpawnOptions(env, platform = process.platform) {
   return {
     stdio: "inherit",
     env,
-    detached: true,
+    detached: platform !== "win32",
   };
 }
