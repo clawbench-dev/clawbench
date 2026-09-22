@@ -5,6 +5,15 @@ on:
     tags:
       - 'v*'
 
+# Every published asset carries the release tag in its filename, so a file
+# sitting in someone's Downloads folder says which version it is. Defined once
+# here (not per step) so the zip step and the upload's `files:` cannot drift —
+# a mismatch uploads nothing and the release silently ships without that
+# platform. Note this is the TAG (v0.99.1), not the bare version: the npm
+# packages in publish-npm strip the "v" themselves.
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+
 jobs:
   golangci-lint:
     name: Lint (Go)
@@ -145,16 +154,20 @@ jobs:
           ldd clawbench-linux
 
       - name: Package Linux
+        # The release tag is part of the asset name so a downloaded file is
+        # self-identifying. The zip step and the upload's `files:` use the same
+        # $RELEASE_TAG value, so they cannot drift apart — a mismatch silently
+        # uploads nothing and the release ships without that platform.
         run: |
           mkdir -p pkg-linux/clawbench
           cp clawbench-linux pkg-linux/clawbench/clawbench
           chmod +x pkg-linux/clawbench/clawbench
-          cd pkg-linux && zip -r clawbench-linux-amd64.zip clawbench/
+          cd pkg-linux && zip -r "clawbench-linux-amd64-${RELEASE_TAG}.zip" clawbench/
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: pkg-linux/clawbench-linux-amd64.zip
+          files: pkg-linux/clawbench-linux-amd64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -211,12 +224,12 @@ jobs:
           mkdir -p pkg-linux-arm64/clawbench
           cp clawbench-linux-arm64 pkg-linux-arm64/clawbench/clawbench
           chmod +x pkg-linux-arm64/clawbench/clawbench
-          cd pkg-linux-arm64 && zip -r clawbench-linux-arm64.zip clawbench/
+          cd pkg-linux-arm64 && zip -r "clawbench-linux-arm64-${RELEASE_TAG}.zip" clawbench/
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: pkg-linux-arm64/clawbench-linux-arm64.zip
+          files: pkg-linux-arm64/clawbench-linux-arm64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -274,12 +287,12 @@ jobs:
           mkdir -p pkg-android-arm64/clawbench
           cp clawbench-android-arm64 pkg-android-arm64/clawbench/clawbench
           chmod +x pkg-android-arm64/clawbench/clawbench
-          cd pkg-android-arm64 && zip -r clawbench-android-arm64.zip clawbench/
+          cd pkg-android-arm64 && zip -r "clawbench-android-arm64-${RELEASE_TAG}.zip" clawbench/
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: pkg-android-arm64/clawbench-android-arm64.zip
+          files: pkg-android-arm64/clawbench-android-arm64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -331,12 +344,12 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path pkg-windows/clawbench
           Copy-Item clawbench.exe pkg-windows/clawbench/
-          Compress-Archive -Path pkg-windows/clawbench -DestinationPath pkg-windows/clawbench-windows-amd64.zip
+          Compress-Archive -Path pkg-windows/clawbench -DestinationPath "pkg-windows/clawbench-windows-amd64-$env:RELEASE_TAG.zip"
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: pkg-windows/clawbench-windows-amd64.zip
+          files: pkg-windows/clawbench-windows-amd64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -386,12 +399,12 @@ jobs:
           mkdir -p pkg-mac-arm64/clawbench
           cp clawbench-darwin-arm64 pkg-mac-arm64/clawbench/clawbench
           chmod +x pkg-mac-arm64/clawbench/clawbench
-          cd pkg-mac-arm64 && zip -r clawbench-darwin-arm64.zip clawbench/
+          cd pkg-mac-arm64 && zip -r "clawbench-darwin-arm64-${RELEASE_TAG}.zip" clawbench/
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: pkg-mac-arm64/clawbench-darwin-arm64.zip
+          files: pkg-mac-arm64/clawbench-darwin-arm64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -444,12 +457,12 @@ jobs:
           mkdir -p pkg-mac-amd64/clawbench
           cp clawbench-darwin-amd64 pkg-mac-amd64/clawbench/clawbench
           chmod +x pkg-mac-amd64/clawbench/clawbench
-          cd pkg-mac-amd64 && zip -r clawbench-darwin-amd64.zip clawbench/
+          cd pkg-mac-amd64 && zip -r "clawbench-darwin-amd64-${RELEASE_TAG}.zip" clawbench/
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: pkg-mac-amd64/clawbench-darwin-amd64.zip
+          files: pkg-mac-amd64/clawbench-darwin-amd64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -517,16 +530,27 @@ jobs:
           ./gradlew assembleRelease -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
 
       - name: Upload APK artifact (for inclusion in platform packages)
+        # Keeps the unversioned name: build.sh and internal/handler/apk.go embed
+        # it at the fixed path assets/clawbench-android.apk, and every Go binary
+        # job below copies it from there.
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
           path: android/app/build/outputs/apk/release/clawbench-android.apk
 
+      - name: Stage versioned APK for the release
+        # The published asset carries the tag, but Gradle's output filename and
+        # the go:embed path are both fixed — so the versioned copy is staged
+        # here instead of renaming the build output.
+        run: |
+          cp android/app/build/outputs/apk/release/clawbench-android.apk \
+             "android/app/build/outputs/apk/release/clawbench-android-${RELEASE_TAG}.apk"
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
           files: |
-            android/app/build/outputs/apk/release/clawbench-android.apk
+            android/app/build/outputs/apk/release/clawbench-android-${{ env.RELEASE_TAG }}.apk
 
   docker:
     name: Build & Push Docker Image
@@ -646,12 +670,12 @@ jobs:
         # before "fixing" it the same way.
         run: |
           cd desktop/release/linux-unpacked
-          zip -r ../clawbench-desktop-linux-x64.zip .
+          zip -r "../clawbench-desktop-linux-x64-${RELEASE_TAG}.zip" .
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: desktop/release/clawbench-desktop-linux-x64.zip
+          files: desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -698,12 +722,12 @@ jobs:
         # Contents, not the directory — see the x64 step above.
         run: |
           cd desktop/release/linux-arm64-unpacked
-          zip -r ../clawbench-desktop-linux-arm64.zip .
+          zip -r "../clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip" .
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: desktop/release/clawbench-desktop-linux-arm64.zip
+          files: desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -756,12 +780,12 @@ jobs:
         # Unlike `zip -r`, this is not an equivalent-command swap: it changes
         # what the archive looks like, which is exactly the point.
         shell: pwsh
-        run: Compress-Archive -Path desktop/release/win-unpacked/* -DestinationPath desktop/release/clawbench-desktop-windows-x64.zip
+        run: Compress-Archive -Path desktop/release/win-unpacked/* -DestinationPath "desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip"
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: desktop/release/clawbench-desktop-windows-x64.zip
+          files: desktop/release/clawbench-desktop-windows-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -839,17 +863,17 @@ jobs:
         # which strips the wrapper unconditionally.
         run: |
           cd desktop/release
-          zip -r clawbench-desktop-darwin-arm64.zip mac-arm64
+          zip -r "clawbench-desktop-darwin-arm64-${RELEASE_TAG}.zip" mac-arm64
           # electron-builder outputs the x64 (default-arch) build to `mac/`,
           # not `mac-x64/` — only non-default archs get an arch suffix.
-          zip -r clawbench-desktop-darwin-x64.zip mac
+          zip -r "clawbench-desktop-darwin-x64-${RELEASE_TAG}.zip" mac
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
           files: |
-            desktop/release/clawbench-desktop-darwin-arm64.zip
-            desktop/release/clawbench-desktop-darwin-x64.zip
+            desktop/release/clawbench-desktop-darwin-arm64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-darwin-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:

@@ -52,18 +52,19 @@ func TestFetchDesktopLatest_ReleaseBuildOffersEveryPlatform(t *testing.T) {
 
 func TestFetchDesktopLatest_AssetNamesMatchCI(t *testing.T) {
 	// The asset filenames must match the `zip -r` steps in release.yml exactly,
-	// or every download 404s.
+	// or every download 404s. Since those steps interpolate the release tag,
+	// the expected names are versioned too.
 	withVersion(t, "v0.98.0")
 
 	res, err := FetchDesktopLatest()
 	require.NoError(t, err)
 
 	want := map[string]string{
-		"linux-x64":    "clawbench-desktop-linux-x64.zip",
-		"linux-arm64":  "clawbench-desktop-linux-arm64.zip",
-		"darwin-x64":   "clawbench-desktop-darwin-x64.zip",
-		"darwin-arm64": "clawbench-desktop-darwin-arm64.zip",
-		"win32-x64":    "clawbench-desktop-windows-x64.zip",
+		"linux-x64":    "clawbench-desktop-linux-x64-v0.98.0.zip",
+		"linux-arm64":  "clawbench-desktop-linux-arm64-v0.98.0.zip",
+		"darwin-x64":   "clawbench-desktop-darwin-x64-v0.98.0.zip",
+		"darwin-arm64": "clawbench-desktop-darwin-arm64-v0.98.0.zip",
+		"win32-x64":    "clawbench-desktop-windows-x64-v0.98.0.zip",
 	}
 	for key, asset := range want {
 		urls := res.Downloads[key]
@@ -73,10 +74,23 @@ func TestFetchDesktopLatest_AssetNamesMatchCI(t *testing.T) {
 	}
 }
 
+func TestDesktopAssetName_CarriesTheTag(t *testing.T) {
+	// The regression this guards: an unversioned asset name. release.yml names
+	// every asset with the tag, so a name built without one would 404 for every
+	// user even though the URL itself is well-formed.
+	name := desktopAssetName("linux/amd64", "v0.99.1")
+	assert.Equal(t, "clawbench-desktop-linux-x64-v0.99.1.zip", name)
+	assert.Contains(t, name, "v0.99.1", "the tag must appear in the asset name")
+
+	// An unknown platform has no asset — the empty string lets callers skip it
+	// rather than build a URL from a zero value.
+	assert.Empty(t, desktopAssetName("plan9/386", "v0.99.1"))
+}
+
 func TestReleaseAssetURLs_AlwaysIncludesDirectGitHub(t *testing.T) {
 	// Whatever the region, the canonical github.com URL must be among the
 	// candidates — mirrors are community-run and may disappear.
-	urls := releaseAssetURLs("v0.98.0", "clawbench-desktop-linux-x64.zip")
+	urls := releaseAssetURLs("v0.98.0", "clawbench-desktop-linux-x64-v0.98.0.zip")
 	require.NotEmpty(t, urls)
 
 	var hasDirect bool
@@ -89,11 +103,12 @@ func TestReleaseAssetURLs_AlwaysIncludesDirectGitHub(t *testing.T) {
 }
 
 func TestReleaseAssetURLs_MirrorPrefixesAreWellFormed(t *testing.T) {
-	urls := releaseAssetURLs("v0.98.0", "clawbench-desktop-linux-x64.zip")
+	const asset = "clawbench-desktop-linux-x64-v0.98.0.zip"
+	urls := releaseAssetURLs("v0.98.0", asset)
 	for _, u := range urls {
 		assert.Truef(t, strings.HasPrefix(u, "https://"),
 			"candidate URL must be https: %q", u)
-		assert.Containsf(t, u, "https://github.com/clawbench-dev/clawbench/releases/download/v0.98.0/clawbench-desktop-linux-x64.zip",
+		assert.Containsf(t, u, "https://github.com/clawbench-dev/clawbench/releases/download/v0.98.0/"+asset,
 			"mirror must wrap the canonical URL verbatim: %q", u)
 	}
 }

@@ -54,8 +54,11 @@ clawbench
 从 [GitHub Releases](https://github.com/xulongzhe/clawbench/releases) 下载最新版 ZIP 包，解压即可运行，无需安装：
 
 ```bash
-wget https://github.com/xulongzhe/clawbench/releases/latest/download/clawbench-linux-amd64.zip
-unzip clawbench-linux-amd64.zip
+# 资产文件名带版本号，所以先解析最新 tag 再拼下载地址
+TAG=$(curl -sI https://github.com/xulongzhe/clawbench/releases/latest \
+  | grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r\n')
+wget "https://github.com/xulongzhe/clawbench/releases/download/${TAG}/clawbench-linux-amd64-${TAG}.zip"
+unzip "clawbench-linux-amd64-${TAG}.zip"
 cd clawbench
 ./clawbench
 ```

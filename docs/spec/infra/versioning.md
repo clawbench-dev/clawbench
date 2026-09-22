@@ -152,6 +152,31 @@ versionName 参与的下游判断：
 - 服务端 `/api/health` 返回的 `version`，供[应用自升级](self-upgrade.md)做版本检查
 - Android 原生层在加载 WebView **之前**用 `VersionCompare.shouldShowMismatch` 对比 APK 与服务器版本（走 versionName，任一侧不可解析则 fail-open）
 
+## 发布资产文件名
+
+**每个 GitHub Release 资产的文件名都带 release tag**（如 `clawbench-linux-amd64-v0.99.1.zip`），这样下载到本地的文件自身就说明了版本，无需回到 Release 页对照。
+
+tag 在 `release.yml` 顶层定义一次，全流程复用：
+
+```yaml
+env:
+  RELEASE_TAG: ${{ github.ref_name }}   # tag，形如 v0.99.1（非裸版本号）
+```
+
+两条纪律：
+
+- **打包步骤与上传步骤必须用同一个变量**。`zip -r "...-${RELEASE_TAG}.zip"` 与 `files: ...-${{ env.RELEASE_TAG }}.zip` 是两处独立插值；一旦拼写不一致，`files:` 匹配不到任何文件，`action-gh-release` **什么都不上传且 job 保持绿色** —— release 静默少一个平台。
+- **版本号在文件名末尾、扩展名之前**（`<base>-<tag>.<ext>`），便于按前缀通配（`clawbench-linux-amd64-*.zip`）。
+
+### 唯一例外：APK
+
+`clawbench-android.apk` 的**构建产物名不可改**——Gradle 的 `outputFileName` 与 `go:embed` 路径（`assets/clawbench-android.apk`）都固定在无版本名上。因此发布时是**复制一份带版本副本**（`clawbench-android-${RELEASE_TAG}.apk`）上传，而非重命名构建产物；`/api/apk` 依旧读无版本名。
+
+### 下游影响
+
+- **桌面端下载 URL 必须带 tag**：`internal/service/desktop_upgrade.go` 的 `desktopAssetBase` 只存基名，`desktopAssetName(osArch, tag)` 拼上 tag。因为名字含版本，**不存在** `releases/latest/download/<名>` 这种稳定链接，URL 一律由服务端上报的 tag 拼出。
+- **README 的手工下载命令**：稳定链接已不可用，改为先解析最新 tag（`curl -sI .../releases/latest` 取 `Location`）再拼 URL；`docs/timer/deploy.md` 用 `--pattern "clawbench-linux-amd64-*.zip"` 通配。
+
 ## 发布版本号递增规则
 
 由 `docs/timer/release.md` 的发布流程决定，与本文件的 versionCode 公式正交：
@@ -171,6 +196,17 @@ versionName 参与的下游判断：
 - **Groovy 一致性**：用**真实 Gradle** 执行 `build.gradle` 里的 `autoVersionCode()`，与 shell 实现在同一仓库上逐值比对（未安装 Gradle 时跳过）
 
 变异验证（均需有测试变红，否则是同义反复）：窄位宽 / Gradle 副本改回 `rev-list` / 删 `--assert` / fail-open 改 0 / 字典序排序 / 去掉 `--tag-only` / 给 APK job 加 `fetch-depth: 0`。
+
+资产名的漂移守护在 `scripts/__tests__/releaseAssets.test.ts`（8 用例），按步骤边界扫描 `release.yml`（非整文件正则，故注释里提到资产名不会误判通过）：
+
+- 顶层必须有 `RELEASE_TAG` 定义（单一来源）
+- 每个 `action-gh-release` 的 `files:` 都含 `RELEASE_TAG`（覆盖行内与 `|` 块两种写法）
+- 每个 `zip -r` / `Compress-Archive` 的产出名都含 `RELEASE_TAG`
+- 两侧变量拼写一致（`${RELEASE_TAG}` / `$env:RELEASE_TAG` 对 `${{ env.RELEASE_TAG }}`）
+- APK 例外：无版本 embed 路径仍在，且带版本的复制与上传两半都在
+- Go 侧 `desktopAssetName` 由 base+tag 拼出，且源码里不再有裸 `clawbench-desktop-*.zip` 字面量
+
+变异验证 4/4（均实测变红）：改回无版本归档名 / 上传 pattern 去掉 tag / 删掉 APK 版本化复制 / Go 资产名丢 tag。
 
 ## 历史遗留
 

@@ -207,12 +207,12 @@ gh release view $NEW_TAG
 gh release view $NEW_TAG
 ```
 
-确认产物文件都存在：
-- clawbench-linux-amd64.zip
-- clawbench-windows-amd64.zip
-- clawbench-darwin-arm64.zip
-- clawbench-darwin-amd64.zip
-- clawbench-android.apk
+确认产物文件都存在（资产文件名均带版本 tag，`$NEW_TAG` 形如 `v0.99.1`）：
+- clawbench-linux-amd64-$NEW_TAG.zip
+- clawbench-windows-amd64-$NEW_TAG.zip
+- clawbench-darwin-arm64-$NEW_TAG.zip
+- clawbench-darwin-amd64-$NEW_TAG.zip
+- clawbench-android-$NEW_TAG.apk
 
 ## 重要注意事项
 

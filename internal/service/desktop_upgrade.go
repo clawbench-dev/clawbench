@@ -12,14 +12,31 @@ import (
 // assets produced by release.yml's build-desktop-* jobs.
 const desktopReleaseRepo = "clawbench-dev/clawbench"
 
-// desktopAssetName maps GOOS/GOARCH to the release asset filename. Keep in sync
-// with the `zip -r` / `Compress-Archive` steps in release.yml.
-var desktopAssetName = map[string]string{
-	"linux/amd64":   "clawbench-desktop-linux-x64.zip",
-	"linux/arm64":   "clawbench-desktop-linux-arm64.zip",
-	"darwin/amd64":  "clawbench-desktop-darwin-x64.zip",
-	"darwin/arm64":  "clawbench-desktop-darwin-arm64.zip",
-	"windows/amd64": "clawbench-desktop-windows-x64.zip",
+// desktopAssetBase maps GOOS/GOARCH to the release asset basename, without the
+// version. The tag is appended by desktopAssetName. Keep in sync with the
+// `zip -r` / `Compress-Archive` steps in release.yml.
+var desktopAssetBase = map[string]string{
+	"linux/amd64":   "clawbench-desktop-linux-x64",
+	"linux/arm64":   "clawbench-desktop-linux-arm64",
+	"darwin/amd64":  "clawbench-desktop-darwin-x64",
+	"darwin/arm64":  "clawbench-desktop-darwin-arm64",
+	"windows/amd64": "clawbench-desktop-windows-x64",
+}
+
+// desktopAssetName builds the published asset filename for a platform, e.g.
+// "clawbench-desktop-linux-x64-v0.99.1.zip".
+//
+// The tag is part of the name because release.yml puts it there, so a file in a
+// Downloads folder is self-identifying. That makes the URL version-specific:
+// there is no stable ".../latest/download/<name>" form for these assets, which
+// is why the download URLs are always built from the tag the server reports
+// rather than from a constant.
+func desktopAssetName(osArch, tag string) string {
+	base, ok := desktopAssetBase[osArch]
+	if !ok {
+		return ""
+	}
+	return base + "-" + tag + ".zip"
 }
 
 // desktopDownloadKey is the response key for each platform. It matches the
@@ -90,7 +107,8 @@ func FetchDesktopLatest() (*DesktopLatestResult, error) {
 		// than links that would 404.
 		return res, nil
 	}
-	for osArch, asset := range desktopAssetName {
+	for osArch := range desktopAssetBase {
+		asset := desktopAssetName(osArch, tag)
 		res.Downloads[desktopDownloadKey[osArch]] = releaseAssetURLs(tag, asset)
 	}
 	return res, nil
