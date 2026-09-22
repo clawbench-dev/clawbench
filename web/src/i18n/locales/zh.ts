@@ -1919,6 +1919,13 @@ export default {
       debug: '调试',
       about: '关于',
     },
+    groups: {
+      appearanceFiles: '外观与文件',
+      aiChat: 'AI 与对话',
+      connectivity: '连接与集成',
+      notifySecurity: '通知与安全',
+      systemAbout: '系统与关于',
+    },
     items: {
       themeSection: '主题',
       theme: '主题',

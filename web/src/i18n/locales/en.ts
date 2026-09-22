@@ -1916,6 +1916,13 @@ export default {
       debug: 'Debug',
       about: 'About',
     },
+    groups: {
+      appearanceFiles: 'Appearance & Files',
+      aiChat: 'AI & Chat',
+      connectivity: 'Connectivity & Integrations',
+      notifySecurity: 'Notifications & Security',
+      systemAbout: 'System & About',
+    },
     items: {
       themeSection: 'Theme',
       theme: 'Theme',

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import SettingsIndex from '@/components/settings/SettingsIndex.vue'
@@ -24,6 +24,13 @@ const i18n = createI18n({
           security: '安全',
           debug: '调试',
           about: '关于',
+        },
+        groups: {
+          appearanceFiles: '外观与文件',
+          aiChat: 'AI 与对话',
+          connectivity: '连接与集成',
+          notifySecurity: '通知与安全',
+          systemAbout: '系统与关于',
         },
       },
     },
@@ -77,6 +84,26 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('关于')
   })
 
+  it('groups categories into 5 titled cards', () => {
+    const wrapper = mountIndex()
+
+    const cards = wrapper.findAll('.settings-card')
+    expect(cards.length).toBe(5)
+
+    const titles = wrapper.findAll('.settings-card__header').map(el => el.text())
+    expect(titles).toEqual(['外观与文件', 'AI 与对话', '连接与集成', '通知与安全', '系统与关于'])
+  })
+
+  it('distributes every category into exactly one group', () => {
+    const wrapper = mountIndex()
+
+    const perCard = wrapper.findAll('.settings-card').map(card =>
+      card.findAll('.settings-index__row').length,
+    )
+    expect(perCard).toEqual([2, 6, 4, 2, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(16)
+  })
+
   it('emits navigate with categoryId when row clicked', async () => {
     const wrapper = mountIndex()
 
@@ -91,11 +118,15 @@ describe('SettingsIndex', () => {
     const wrapper = mountIndex()
 
     const expectedIds = [
-      'appearance', 'projectFiles', 'chat', 'agents', 'terminal',
-      'tts', 'stt', 'aiSummary', 'rag', 'portForward', 'frp', 'forgeIntegration', 'notification', 'security', 'debug', 'about',
+      'appearance', 'projectFiles',
+      'chat', 'agents', 'aiSummary', 'rag', 'tts', 'stt',
+      'terminal', 'portForward', 'frp', 'forgeIntegration',
+      'notification', 'security',
+      'debug', 'about',
     ]
 
     const rows = wrapper.findAll('.settings-index__row')
+    expect(rows.length).toBe(expectedIds.length)
     for (let i = 0; i < expectedIds.length; i++) {
       await rows[i].trigger('click')
       expect(wrapper.emitted('navigate')![i]).toEqual([expectedIds[i]])
