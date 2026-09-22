@@ -2764,6 +2764,12 @@ public class MainActivity extends AppCompatActivity {
             activity.runOnUiThread(() -> {
                 AppLog.i(TAG, "WebView requested BackgroundService stop (no ports on server)");
                 activity.forwardedPorts.clear();
+                // Must also drop the Service's own map + the persisted list.
+                // Clearing only the Activity cache left forwarded_ports in
+                // SharedPreferences, so restoreBackgroundServiceIfNeeded() would
+                // restart the service on the next cold start with ports it can
+                // never forward — it then shows "后台服务即将停止" indefinitely.
+                BackgroundService.forgetForwardedPorts(activity);
                 BackgroundService.stop(activity);
             });
         }
@@ -2874,6 +2880,39 @@ public class MainActivity extends AppCompatActivity {
                 Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 activity.startActivity(intent);
+            });
+        }
+
+        /**
+         * Open an http(s) URL outside the app in the system browser.
+         * Called from the settings "About" page (project homepage / issue tracker).
+         *
+         * window.open(url, "_blank") cannot be used for this: the WebView never
+         * calls setSupportMultipleWindows, so the popup is silently dropped —
+         * neither navigated nor handed to shouldOverrideUrlLoading.
+         */
+        @JavascriptInterface
+        public void openExternalUrl(String url) {
+            if (url == null || url.isEmpty()) return;
+            Uri uri = Uri.parse(url);
+            // Only http(s) — anything else would be handed straight to an
+            // arbitrary OS protocol handler by the page's content.
+            String scheme = uri.getScheme();
+            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                AppLog.w(TAG, "openExternalUrl: rejected scheme " + scheme);
+                return;
+            }
+            AppLog.i(TAG, "openExternalUrl: " + url);
+            activity.runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    activity.startActivity(intent);
+                } catch (Exception e) {
+                    // No browser installed / activity not exported — nothing else
+                    // we can do, but the failure must be visible in the logs.
+                    AppLog.e(TAG, "openExternalUrl failed: " + e.getMessage());
+                }
             });
         }
 

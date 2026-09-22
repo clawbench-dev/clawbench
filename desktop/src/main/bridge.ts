@@ -14,6 +14,7 @@ import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification
 import { markRendererReady } from './navReady'
 import { clearCacheAndReload } from './session'
 import { record, recordError, startClientLog, stopClientLog } from './clientLog'
+import { classifyUrl } from './urlPolicy'
 
 export function registerBridge(): void {
   initStore()
@@ -78,6 +79,17 @@ export function registerBridge(): void {
   ipcMain.handle('native:download-blob', (_e, b64: string, fileName: string) => downloadBlob(b64, fileName))
   ipcMain.handle('native:open-in-browser', (_e, port: number, protocol: string, host: string, p: string) => {
     shell.openExternal(`${protocol}://localhost:${port}${p || '/'}`)
+  })
+  // Open an http(s) URL in the default browser. The renderer routes the
+  // settings "About" links (project homepage / issue tracker) through here.
+  // The scheme is re-checked in the main process: `shell.openExternal` hands
+  // the URL to the OS, so a renderer-side check alone would make any future
+  // injection an arbitrary protocol-handler launcher. Only 'block' is refused
+  // — an allow-list of origins here would silently swallow the link.
+  ipcMain.handle('native:open-external-url', (_e, url: string) => {
+    if (classifyUrl(url, getStore().get('serverUrl')) !== 'block') {
+      void shell.openExternal(url)
+    }
   })
   ipcMain.handle('native:open-in-sandbox', (_e, port: number, protocol: string, host: string, p: string, sessionId?: string) => {
     openSandboxWindow(port, protocol, host, p)

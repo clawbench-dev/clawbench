@@ -1,8 +1,12 @@
 <template>
   <div class="settings-index">
-    <SettingsCard>
+    <SettingsCard
+      v-for="group in groups"
+      :key="group.id"
+      :title="t(`settings.groups.${group.id}`)"
+    >
       <div
-        v-for="cat in categories"
+        v-for="cat in group.items"
         :key="cat.id"
         class="settings-index__row"
         @click="$emit('navigate', cat.id)"
@@ -47,29 +51,65 @@ defineEmits<{
 
 const { t } = useI18n()
 
-const categoryDefs = computed(() => [
-  { id: 'appearance', icon: Palette },
-  { id: 'projectFiles', icon: FolderTree },
-  { id: 'chat', icon: MessageSquare },
-  { id: 'agents', icon: Bot },
-  { id: 'terminal', icon: SquareTerminal },
-  { id: 'tts', icon: Volume2 },
-  { id: 'stt', icon: Mic },
-  { id: 'aiSummary', icon: Sparkles },
-  { id: 'rag', icon: Brain },
-  { id: 'portForward', icon: ArrowLeftRight },
-  { id: 'frp', icon: Globe },
-  { id: 'forgeIntegration', icon: Github },
-  { id: 'notification', icon: Bell },
-  { id: 'security', icon: Shield },
-  { id: 'debug', icon: Bug },
-  { id: 'about', icon: Info },
-])
+/**
+ * Category → group layout for the settings home page. Grouping is purely
+ * presentational: the category IDs (and their i18n labels) are unchanged, so
+ * deep links and the navigation stack keep working.
+ *
+ * Keep this list in sync with `categoryItems` in settingsFieldMap.ts — every
+ * category defined there must appear here exactly once.
+ */
+const groupDefs = [
+  {
+    id: 'appearanceFiles',
+    items: [
+      { id: 'appearance', icon: Palette },
+      { id: 'projectFiles', icon: FolderTree },
+    ],
+  },
+  {
+    id: 'aiChat',
+    items: [
+      { id: 'chat', icon: MessageSquare },
+      { id: 'agents', icon: Bot },
+      { id: 'aiSummary', icon: Sparkles },
+      { id: 'rag', icon: Brain },
+      { id: 'tts', icon: Volume2 },
+      { id: 'stt', icon: Mic },
+    ],
+  },
+  {
+    id: 'connectivity',
+    items: [
+      { id: 'terminal', icon: SquareTerminal },
+      { id: 'portForward', icon: ArrowLeftRight },
+      { id: 'frp', icon: Globe },
+      { id: 'forgeIntegration', icon: Github },
+    ],
+  },
+  {
+    id: 'notifySecurity',
+    items: [
+      { id: 'notification', icon: Bell },
+      { id: 'security', icon: Shield },
+    ],
+  },
+  {
+    id: 'systemAbout',
+    items: [
+      { id: 'debug', icon: Bug },
+      { id: 'about', icon: Info },
+    ],
+  },
+]
 
-const categories = computed(() =>
-  categoryDefs.value.map(cat => ({
-    ...cat,
-    label: t(`settings.categories.${cat.id}`),
+const groups = computed(() =>
+  groupDefs.map(group => ({
+    ...group,
+    items: group.items.map(cat => ({
+      ...cat,
+      label: t(`settings.categories.${cat.id}`),
+    })),
   }))
 )
 </script>
@@ -79,6 +119,11 @@ const categories = computed(() =>
   padding: var(--space-4);
   background: var(--bg-secondary);
   min-height: 100%;
+}
+
+/* The trailing gap after the last card is redundant page padding. */
+.settings-index > :deep(.settings-card:last-child) {
+  margin-bottom: 0;
 }
 
 .settings-index__row {

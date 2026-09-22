@@ -35,9 +35,11 @@ if (process.env.CLAWBENCH_BINARY_PATH) {
   }
 }
 
-// detached: true makes the server a session leader in its own process group,
-// so a terminal hangup cannot reach it. See resolveSpawnOptions for the full
-// rationale. Signals are forwarded explicitly below, so Ctrl+C still stops it.
+// detached: true (POSIX only — see resolveSpawnOptions) makes the server a
+// session leader in its own process group, so a terminal hangup cannot reach
+// it. Windows deliberately opts out: there detached means DETACHED_PROCESS,
+// which strips the console and silently swallowed all server output. Signals
+// are forwarded explicitly below, so Ctrl+C still stops it.
 const child = spawn(binPath, process.argv.slice(2), resolveSpawnOptions({ ...process.env }));
 
 // 转发信号到子进程

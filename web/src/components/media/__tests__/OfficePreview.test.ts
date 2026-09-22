@@ -56,7 +56,7 @@ const { mockIsAppMode, mockDownloadFileByPath } = vi.hoisted(() => ({
 
 // Mock useAppMode
 vi.mock('@/composables/useAppMode.ts', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
 // Mock download utils

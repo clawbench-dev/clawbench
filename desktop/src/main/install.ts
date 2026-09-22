@@ -75,10 +75,19 @@ const ZIP_EOCD_MAX = ZIP_EOCD_MIN + 0xffff
 /**
  * Extract a zip archive into `destDir`.
  *
- * Release assets are zips whose entries all share a single top-level directory
- * (`linux-unpacked/`, `win-unpacked/`, `mac/`, `mac-arm64/`). That wrapper is
- * stripped so the result is the app root the launcher expects — the same
- * normalization the npm tarball path did with its `package/` prefix.
+ * Two release layouts exist, and both must land the app root in `destDir`:
+ *
+ *   - macOS keeps a wrapper directory (`mac/`, `mac-arm64/`), which is stripped
+ *     so the result is the app root the launcher expects — the same
+ *     normalization the npm tarball path did with its `package/` prefix.
+ *   - Windows and Linux are archived from inside the unpacked directory, so
+ *     their entries already ARE the app root and nothing is stripped.
+ *
+ * macOS must keep its wrapper. Without it every entry would share the top level
+ * `ClawBench.app/`, and the stripping below would remove the app bundle itself
+ * — after which executableIn() would find no binary. Keeping the wrapper also
+ * means clients that already shipped with it (and therefore run the installer
+ * that strips unconditionally) can still self-upgrade.
  *
  * The archive is read through its central directory rather than by walking
  * local headers: local headers may declare sizes in a trailing data descriptor,

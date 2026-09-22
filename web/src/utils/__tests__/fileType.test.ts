@@ -112,6 +112,22 @@ describe('getFileType', () => {
     expect(ft.isExcalidraw).toBe(true)
   })
 
+  it('detects the .xdraw short alias', () => {
+    // .xdraw must map to the same FileType entry as .excalidraw, so it gets the
+    // DRAW label, the Excalidraw colour and the canvas editor rather than
+    // falling through to the generic plaintext default.
+    const ft = getFileType('diagram.xdraw')
+    expect(ft.isExcalidraw).toBe(true)
+    expect(ft.lang).toBe('plaintext')
+    expect(ft.label).toBe('DRAW')
+    expect(ft).toEqual(getFileType('diagram.excalidraw'))
+  })
+
+  it('detects the .xdraw alias case-insensitively', () => {
+    const ft = getFileType('DIAGRAM.XDRAW')
+    expect(ft.isExcalidraw).toBe(true)
+  })
+
   it('does not flag .json as Excalidraw', () => {
     const ft = getFileType('data.json')
     expect(ft.isExcalidraw).toBeUndefined()

@@ -24,6 +24,7 @@ func TestIsSupportedFile(t *testing.T) {
 		{"office xlsx", "data.xlsx", true},
 		{"office pptx", "slides.pptx", true},
 		{"excalidraw file", "diagram.excalidraw", true},
+		{"xdraw file", "diagram.xdraw", true},
 		{"unsupported file", "data.bin", false},
 		{"empty string", "", false},
 	}
@@ -108,6 +109,39 @@ func TestDetectSubtype(t *testing.T) {
 			strings.Repeat("A", 1<<20) + `"}}}`
 		got := model.DetectSubtype("big.excalidraw", big)
 		assert.Equal(t, model.SubtypeExcalidraw, got)
+	})
+
+	t.Run("xdraw short alias", func(t *testing.T) {
+		got := model.DetectSubtype("diagram.xdraw", `{"type":"excalidraw","version":2,"elements":[]}`)
+		assert.Equal(t, model.SubtypeExcalidraw, got)
+	})
+
+	t.Run("xdraw extension suffices regardless of content", func(t *testing.T) {
+		// Mirrors the .excalidraw contract: a blank new .xdraw file must still
+		// open in the editor rather than falling back to plain text.
+		assert.Equal(t, model.SubtypeExcalidraw, model.DetectSubtype("diagram.xdraw", ""))
+		assert.Equal(t, model.SubtypeExcalidraw, model.DetectSubtype("diagram.xdraw", `{type: invalid}`))
+	})
+
+	t.Run("xdraw case insensitive extension", func(t *testing.T) {
+		got := model.DetectSubtype("DIAGRAM.XDRAW", `{}`)
+		assert.Equal(t, model.SubtypeExcalidraw, got)
+	})
+
+	t.Run("xdraw large file with embedded image", func(t *testing.T) {
+		// The alias must share the .excalidraw behavior of being detected
+		// before the size gate, not just for small files.
+		big := `{"type":"excalidraw","files":{"img":{"dataURL":"data:image/png;base64,` +
+			strings.Repeat("A", 1<<20) + `"}}}`
+		got := model.DetectSubtype("big.xdraw", big)
+		assert.Equal(t, model.SubtypeExcalidraw, got)
+	})
+
+	t.Run("xdraw-looking name is not a false positive", func(t *testing.T) {
+		// Guard the suffix match: a filename that merely ends in the letters
+		// must not be treated as a diagram.
+		assert.Equal(t, "", model.DetectSubtype("notes.aboutxdraw", "hello"))
+		assert.Equal(t, "", model.DetectSubtype("xdraw", "hello"))
 	})
 
 	t.Run("Non YAML/JSON file", func(t *testing.T) {
@@ -354,6 +388,8 @@ func TestIsTextFile(t *testing.T) {
 		// Excalidraw
 		{"excalidraw", "diagram.excalidraw", true},
 		{"excalidraw case insensitive", "DIAGRAM.EXCALIDRAW", true},
+		{"xdraw short alias", "diagram.xdraw", true},
+		{"xdraw case insensitive", "DIAGRAM.XDRAW", true},
 
 		// Case insensitivity
 		{"case insensitive .GO", "main.GO", true},

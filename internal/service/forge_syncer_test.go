@@ -21,7 +21,15 @@ type fakeProvider struct {
 	comments map[int][]forge.Comment
 	// errOnPage, when set, fails the fetch of that page for that type.
 	errOnPage map[forge.ItemType]int
-	calls     []forge.ListOptions
+	// itemsByNumber backs GetItem, which the syncer calls to fill in fields the
+	// listing cannot supply (the PR head branch).
+	itemsByNumber map[int]forge.Item
+	// getItemErr, when set, fails every GetItem call.
+	getItemErr error
+	// getItemCalls counts GetItem calls, so a test can assert the per-item
+	// lookup only happens when an event is actually dispatched.
+	getItemCalls int
+	calls        []forge.ListOptions
 }
 
 func (f *fakeProvider) CurrentUser(context.Context) (forge.Author, error) {
@@ -43,8 +51,17 @@ func (f *fakeProvider) ListItems(_ context.Context, opts forge.ListOptions) (for
 	return forge.ListResult{}, nil
 }
 
-func (f *fakeProvider) GetItem(context.Context, forge.ItemType, int) (forge.Item, error) {
-	return forge.Item{}, nil
+func (f *fakeProvider) GetItem(_ context.Context, typ forge.ItemType, number int) (forge.Item, error) {
+	f.getItemCalls++
+	if f.getItemErr != nil {
+		return forge.Item{}, f.getItemErr
+	}
+	if f.itemsByNumber != nil {
+		if it, ok := f.itemsByNumber[number]; ok {
+			return it, nil
+		}
+	}
+	return forge.Item{Type: typ, Number: number}, nil
 }
 
 func (f *fakeProvider) ListComments(_ context.Context, _ forge.ItemType, number, page, perPage int) ([]forge.Comment, error) {
@@ -54,13 +71,16 @@ func (f *fakeProvider) ListComments(_ context.Context, _ forge.ItemType, number,
 	return f.comments[number], nil
 }
 
-// fakeSink records dispatched events.
+// fakeSink records dispatched events, plus the item each was dispatched with so
+// a test can assert the fields an event's prompt depends on.
 type fakeSink struct {
 	events []forge.Change
+	items  []forge.Item
 }
 
-func (s *fakeSink) HandleChange(_ context.Context, _ service.ForgeRepoRef, _ forge.Item, ch forge.Change) {
+func (s *fakeSink) HandleChange(_ context.Context, _ service.ForgeRepoRef, item forge.Item, ch forge.Change) {
 	s.events = append(s.events, ch)
+	s.items = append(s.items, item)
 }
 
 func testBinding() service.ProjectForge {
@@ -205,6 +225,7 @@ func TestForgeSyncer_FirstSyncEstablishesBaselineWithoutEvents(t *testing.T) {
 
 	wm, err := service.GetForgeSyncWatermark(
 		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"},
+		forge.ItemTypeIssue,
 	)
 	require.NoError(t, err)
 	assert.False(t, wm.IsZero())
@@ -256,6 +277,7 @@ func TestForgeSyncer_WatermarkNotAdvancedWhenPaginationFails(t *testing.T) {
 	// The watermark must remain unset so the next run retries the same window.
 	wm, werr := service.GetForgeSyncWatermark(
 		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"},
+		forge.ItemTypeIssue,
 	)
 	require.NoError(t, werr)
 	assert.True(t, wm.IsZero(), "watermark must not advance when the window was not fully read")
@@ -397,4 +419,245 @@ func TestForgeSyncer_StateOnlyFirstPassDoesNotReplayComments(t *testing.T) {
 		context.Background(), binding, service.SyncOptions{IncludeComments: true}))
 	require.Len(t, sink.events, 1)
 	assert.Equal(t, forge.EventCommented, sink.events[0].Type)
+}
+
+// prItem builds a change request, mirroring issue() for the PR side. CreatedAt
+// is left zero (unknown), which DeriveChanges treats as "new" — the same
+// convention CreatedAt already documents.
+func prItem(state string, updated time.Time) forge.Item {
+	return forge.Item{
+		Platform: forge.PlatformGitHub, Type: forge.ItemTypeChangeRequest, Number: 2,
+		State: forge.State(state), Title: "t", URL: "u", UpdatedAt: updated,
+	}
+}
+
+// TestForgeSyncer_PRPassDoesNotSkipIssues is the regression for the issue that
+// silently vanished from a real install.
+//
+// The two item types are fetched from endpoints with different time-filtering
+// capabilities: GitHub's issue list honors `since`, its PR list cannot (there
+// is no such parameter), so the PR half re-reads the whole history and can take
+// minutes. When both halves fed ONE cursor, a PR seen later in the same pass
+// pushed the cursor past an issue the issue half had already finished looking
+// for — and that issue was never fetched again.
+//
+// Concretely: the issue pass ran at 14:44 and saw nothing new; the PR pass then
+// ran until it observed a PR updated at 15:14, moving the shared cursor to
+// 15:14; an issue created at 15:13 fell outside every subsequent window.
+func TestForgeSyncer_PRPassDoesNotSkipIssues(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repoKey := testRepoKey()
+
+	// A baseline exists for both types, so neither pass is a first sync.
+	base := time.Date(2026, 9, 21, 14, 0, 0, 0, time.UTC)
+	require.NoError(t, service.SetForgeSyncWatermark(repoKey, forge.ItemTypeIssue, base))
+	require.NoError(t, service.SetForgeSyncWatermark(repoKey, forge.ItemTypeChangeRequest, base))
+
+	// The issue the user filed at 15:13 — one minute BEFORE the PR timestamp,
+	// which is exactly why a shared cursor loses it.
+	issueCreatedAt := time.Date(2026, 9, 21, 15, 13, 36, 0, time.UTC)
+	// The PR the PR pass observes, updated a minute later.
+	prUpdatedAt := time.Date(2026, 9, 21, 15, 14, 26, 0, time.UTC)
+
+	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
+		forge.ItemTypeIssue: {
+			1: {Items: []forge.Item{issueCreated("open", issueCreatedAt, issueCreatedAt)}},
+		},
+		forge.ItemTypeChangeRequest: {
+			1: {Items: []forge.Item{prItem("open", prUpdatedAt)}},
+		},
+	}}
+	sink := &fakeSink{}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+
+	// The issue was fetched, so it must have been reported.
+	require.Len(t, sink.events, 2, "the new issue and the new PR must both be dispatched")
+	assert.Equal(t, forge.EventOpened, sink.events[0].Type)
+	assert.Equal(t, 1, sink.events[0].Number, "the issue must not be skipped by the PR pass")
+
+	// The issue cursor must sit at the ISSUE's timestamp, not the PR's.
+	issueWM, err := service.GetForgeSyncWatermark(repoKey, forge.ItemTypeIssue)
+	require.NoError(t, err)
+	assert.Equal(t, issueCreatedAt.UTC(), issueWM.UTC(),
+		"the issue cursor must not be dragged forward by the PR pass")
+
+	prWM, err := service.GetForgeSyncWatermark(repoKey, forge.ItemTypeChangeRequest)
+	require.NoError(t, err)
+	assert.Equal(t, prUpdatedAt.UTC(), prWM.UTC(),
+		"the PR cursor advances independently")
+
+	// And the next pass, with no new activity, must be silent rather than
+	// re-reporting or losing anything.
+	sink.events = nil
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+	assert.Empty(t, sink.events, "an unchanged repo must produce no further events")
+}
+
+// TestForgeSyncer_MergedOutsideWindowIsSilent is the guard for the flood that
+// enabling merge-state visibility would otherwise cause.
+//
+// Every historical PR currently sits in the snapshot table as "closed,
+// unmerged", because GitHub's PR list endpoint never reported merge state. The
+// moment that state becomes visible, a naive derivation sees closed→merged for
+// each of them and announces a merge — hundreds of events and notifications for
+// merges nobody just performed. The merge timestamp is what separates a merge
+// that happened inside this window from one that predates the baseline.
+func TestForgeSyncer_MergedOutsideWindowIsSilent(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repoKey := testRepoKey()
+
+	base := time.Date(2026, 9, 21, 14, 0, 0, 0, time.UTC)
+	require.NoError(t, service.SetForgeSyncWatermark(repoKey, forge.ItemTypeChangeRequest, base))
+
+	// An old PR, first seen as closed/unmerged — the state the flood starts from.
+	oldCreated := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	closed := prItem("closed", base.Add(time.Minute))
+	closed.CreatedAt = oldCreated
+
+	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
+		forge.ItemTypeChangeRequest: {1: {Items: []forge.Item{closed}}},
+	}}
+	sink := &fakeSink{}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+
+	// Baseline pass: silent, because the PR was created long before the window.
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+	require.Empty(t, sink.events, "a first-seen old PR is baselined silently")
+
+	// Merge state becomes visible, and the PR was in fact merged months ago.
+	oldMerge := time.Date(2026, 5, 3, 6, 50, 39, 0, time.UTC)
+	merged := prItem("merged", base.Add(2*time.Minute))
+	merged.CreatedAt = oldCreated
+	merged.MergedAt = &oldMerge
+	provider.pages[forge.ItemTypeChangeRequest] = map[int]forge.ListResult{
+		1: {Items: []forge.Item{merged}},
+	}
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+	assert.Empty(t, sink.events,
+		"a PR merged before the window must be baselined, not announced")
+
+	// The merge is still recorded, so the state is not lost.
+	got, err := service.GetForgeItemSnapshot(repoKey, "pr", 2)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Merged, "the merge must still be recorded in the snapshot")
+
+	// And it stays silent rather than re-firing on every later pass.
+	sink.events = nil
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+	assert.Empty(t, sink.events, "the suppression must be stable, not a one-pass reprieve")
+}
+
+// TestForgeSyncer_MergedInsideWindowIsReported is the complement: a merge that
+// really did happen in this window must still be announced.
+func TestForgeSyncer_MergedInsideWindowIsReported(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repoKey := testRepoKey()
+
+	base := time.Date(2026, 9, 21, 14, 0, 0, 0, time.UTC)
+	require.NoError(t, service.SetForgeSyncWatermark(repoKey, forge.ItemTypeChangeRequest, base))
+
+	// First pass: an old PR, open, baselined silently.
+	oldCreated := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	open := prItem("open", base.Add(time.Minute))
+	open.CreatedAt = oldCreated
+
+	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
+		forge.ItemTypeChangeRequest: {1: {Items: []forge.Item{open}}},
+	}}
+	sink := &fakeSink{}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+	require.Empty(t, sink.events, "a first-seen old PR is baselined silently")
+
+	// Second pass: it was merged just now, so the merge is inside the window.
+	mergeTime := time.Now().UTC().Add(time.Minute)
+	merged := prItem("merged", mergeTime)
+	merged.CreatedAt = oldCreated
+	merged.MergedAt = &mergeTime
+	provider.pages[forge.ItemTypeChangeRequest] = map[int]forge.ListResult{
+		1: {Items: []forge.Item{merged}},
+	}
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+
+	require.Len(t, sink.events, 1)
+	assert.Equal(t, forge.EventMerged, sink.events[0].Type,
+		"a merge inside the window must be reported")
+}
+
+// TestForgeSyncer_PRSourceBranchIsEnrichedOnDispatch pins the head branch on a
+// dispatched PR event.
+//
+// The windowed PR listing goes through the issues endpoint — the only one that
+// accepts a time bound — and the issue shape carries no head ref. Without an
+// explicit fill-in, every PR event task would silently lose its SOURCE_BRANCH
+// prompt variable (RenderEventContext skips empty values), which is a change
+// nobody would notice until a task that relied on the branch misbehaved.
+func TestForgeSyncer_PRSourceBranchIsEnrichedOnDispatch(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repoKey := testRepoKey()
+
+	base := time.Date(2026, 9, 21, 14, 0, 0, 0, time.UTC)
+	require.NoError(t, service.SetForgeSyncWatermark(repoKey, forge.ItemTypeChangeRequest, base))
+
+	// The listing (issues endpoint) has no head branch…
+	listed := prItem("open", base.Add(time.Minute))
+	listed.SourceBranch = ""
+	// …but the item detail does.
+	detail := listed
+	detail.SourceBranch = "feature/x"
+
+	provider := &fakeProvider{
+		pages: map[forge.ItemType]map[int]forge.ListResult{
+			forge.ItemTypeChangeRequest: {1: {Items: []forge.Item{listed}}},
+		},
+		itemsByNumber: map[int]forge.Item{2: detail},
+	}
+
+	sink := &fakeSink{}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+	require.Len(t, sink.events, 1, "the new PR must be dispatched")
+
+	got := sink.items[0]
+	assert.Equal(t, "feature/x", got.SourceBranch,
+		"a dispatched PR event must carry the head branch for the SOURCE_BRANCH variable")
+	assert.Equal(t, 1, provider.getItemCalls, "the branch must be looked up once per dispatched event")
+
+	// A pass that derives no events must not pay for the lookup.
+	provider.getItemCalls = 0
+	sink.events = nil
+	sink.items = nil
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
+	assert.Empty(t, sink.events)
+	assert.Zero(t, provider.getItemCalls,
+		"a pass with no events must not fetch item details")
+}
+
+// TestForgeSyncer_SourceBranchLookupFailureIsNotFatal: losing the branch degrades
+// one prompt variable, whereas failing the sync would lose the event entirely —
+// and the snapshot is already written, so it would never be re-derived.
+func TestForgeSyncer_SourceBranchLookupFailureIsNotFatal(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repoKey := testRepoKey()
+
+	base := time.Date(2026, 9, 21, 14, 0, 0, 0, time.UTC)
+	require.NoError(t, service.SetForgeSyncWatermark(repoKey, forge.ItemTypeChangeRequest, base))
+
+	listed := prItem("open", base.Add(time.Minute))
+	provider := &fakeProvider{
+		pages: map[forge.ItemType]map[int]forge.ListResult{
+			forge.ItemTypeChangeRequest: {1: {Items: []forge.Item{listed}}},
+		},
+		getItemErr: assert.AnError,
+	}
+	sink := &fakeSink{}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+
+	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()),
+		"a failed branch lookup must not fail the sync")
+	require.Len(t, sink.events, 1, "the event must still be dispatched")
 }

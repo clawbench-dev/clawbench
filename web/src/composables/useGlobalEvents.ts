@@ -208,8 +208,13 @@ function truncateForPush(s: string): string {
  * Get plain-text notification body from response preview data.
  * Prefers response_preview_plain (server-stripped), falls back to
  * stripMarkdownPreview on response_preview for older server versions.
+ *
+ * Exported because the in-app completion notification needs the exact same
+ * "title + one plain line" body as the system notification — if the two
+ * diverged, the same completion would read differently depending on whether
+ * the page happened to be focused.
  */
-function plainPreview(data: ServerEvent['data']): string {
+export function plainPreview(data: ServerEvent['data']): string {
     if (!data) return ''
     if (data.response_preview_plain) return truncateForPush(data.response_preview_plain)
     if (data.response_preview) return stripMarkdownPreview(data.response_preview, PUSH_ALERT_MAX_CODE_POINTS)

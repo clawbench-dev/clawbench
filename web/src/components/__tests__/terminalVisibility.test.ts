@@ -8,7 +8,7 @@ const mockTerminalRuntimeEnabled = ref<boolean | null>(true)
 const mockPlatformSupported = ref<boolean | null>(true)
 
 vi.mock('@/composables/useAppMode.ts', () => ({
-  useAppMode: () => ({ isAppMode: { value: false } }),
+  useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
 
 vi.mock('@/composables/useDialog.ts', () => ({

@@ -51,8 +51,11 @@ Supports Linux (x64/arm64), macOS (Intel/Apple Silicon), and Windows (x64). npm 
 Download the latest ZIP package from [GitHub Releases](https://github.com/xulongzhe/clawbench/releases), extract and you're ready:
 
 ```bash
-wget https://github.com/xulongzhe/clawbench/releases/latest/download/clawbench-linux-amd64.zip
-unzip clawbench-linux-amd64.zip
+# Asset names carry the version, so resolve the latest tag before building the URL
+TAG=$(curl -sI https://github.com/xulongzhe/clawbench/releases/latest \
+  | grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r\n')
+wget "https://github.com/xulongzhe/clawbench/releases/download/${TAG}/clawbench-linux-amd64-${TAG}.zip"
+unzip "clawbench-linux-amd64-${TAG}.zip"
 cd clawbench
 ./clawbench
 ```

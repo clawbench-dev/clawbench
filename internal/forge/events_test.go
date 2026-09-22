@@ -265,3 +265,63 @@ func TestParsePipelineRunID(t *testing.T) {
 		assert.Zero(t, got)
 	}
 }
+
+// TestDeriveChanges_MergedGatedOnMergeTime pins the window gate on `merged`.
+//
+// A merge is only evidence of something that just happened if the merge
+// timestamp falls inside the queried window. Without the gate, any pass that
+// starts reporting merge state announces a merge for every PR that was already
+// merged before the baseline existed — on a real repository that is hundreds of
+// events and notifications for merges nobody just performed.
+func TestDeriveChanges_MergedGatedOnMergeTime(t *testing.T) {
+	window := time.Date(2026, 9, 21, 14, 0, 0, 0, time.UTC)
+	prev := &Snapshot{State: "closed", Merged: false}
+
+	// Merged before the window: silent. This is the historical-PR case.
+	old := window.Add(-24 * time.Hour)
+	changes := DeriveChanges(prev, ItemState{
+		State: "closed", Merged: true, MergedAt: old,
+	}, 1, window)
+	assert.Empty(t, changes, "a merge before the window must not be announced")
+
+	// Merged inside the window: reported.
+	fresh := window.Add(time.Minute)
+	changes = DeriveChanges(prev, ItemState{
+		State: "closed", Merged: true, MergedAt: fresh,
+	}, 1, window)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventMerged, changes[0].Type, "a merge inside the window must be announced")
+
+	// Exactly at the boundary counts as inside, matching isNewWithinWindow.
+	changes = DeriveChanges(prev, ItemState{
+		State: "closed", Merged: true, MergedAt: window,
+	}, 1, window)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventMerged, changes[0].Type)
+
+	// An unknown merge time is treated as new: silence would drop a real event.
+	changes = DeriveChanges(prev, ItemState{State: "closed", Merged: true}, 1, window)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventMerged, changes[0].Type,
+		"an unknown merge time must be treated as new, like an unknown CreatedAt")
+
+	// A zero window imposes no restriction, preserving the pre-window semantics.
+	changes = DeriveChanges(prev, ItemState{
+		State: "closed", Merged: true, MergedAt: old,
+	}, 1, time.Time{})
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventMerged, changes[0].Type)
+}
+
+// TestDeriveChanges_ClosedUnaffectedByMergeGate: the gate applies to `merged`
+// only. A PR closed without being merged has no merge time, and gating it on one
+// would silence every close.
+func TestDeriveChanges_ClosedUnaffectedByMergeGate(t *testing.T) {
+	window := time.Date(2026, 9, 21, 14, 0, 0, 0, time.UTC)
+	prev := &Snapshot{State: "open", Merged: false}
+
+	changes := DeriveChanges(prev, ItemState{State: "closed"}, 1, window)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventClosed, changes[0].Type,
+		"a plain close has no merge time and must not be gated")
+}

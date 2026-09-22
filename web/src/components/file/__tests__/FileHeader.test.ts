@@ -76,7 +76,7 @@ vi.mock('@/composables/useFileRefresh', () => ({
 
 // Mock useAppMode
 vi.mock('@/composables/useAppMode.ts', () => ({
-  useAppMode: () => ({ isAppMode: { value: false } }),
+  useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
 
 // Mock wide-screen state — drag-to-chat (draggable file name) is gated on it

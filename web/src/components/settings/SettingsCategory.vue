@@ -111,6 +111,8 @@ import { getNative } from '@/utils/clawbenchNative'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useDesktopDownload } from '@/composables/useDesktopDownload'
 import { downloadByUrl } from '@/utils/download'
+import { openExternalUrl } from '@/utils/externalLink'
+import { PROJECT_FEEDBACK_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
@@ -429,6 +431,12 @@ function handleClick(item: ItemSpec) {
   }
   if (item.key === 'downloadDesktopApp') {
     desktopDownload.downloadDesktop()
+  }
+  if (item.key === 'openProjectHomepage') {
+    openExternalUrl(PROJECT_HOMEPAGE_URL)
+  }
+  if (item.key === 'openProjectFeedback') {
+    openExternalUrl(PROJECT_FEEDBACK_URL)
   }
   if (item.navigateTo) {
     emit('navigate', item.navigateTo)

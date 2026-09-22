@@ -835,6 +835,46 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			return fmt.Errorf("failed to create forge sync tables: %w", err)
 		}
 	}
+	// forge_sync_state split the single `watermark` column into one cursor per
+	// item type. The split is what stops the PR half of a sync (which cannot be
+	// time-filtered on GitHub and therefore walks the whole history every pass)
+	// from pushing the shared cursor past issues the issue half had not fetched
+	// yet — those issues were then permanently skipped.
+	//
+	// This runs AFTER the DDL above, and that ordering is load-bearing: on a
+	// fresh database the CREATE TABLE already declares both new columns, so both
+	// guards below find the column and skip. On an existing database the CREATE
+	// TABLE IF NOT EXISTS is a no-op (the old table, with the old column, is
+	// kept), so the guards see the old shape and migrate it. Running this before
+	// the DDL would make the guards misread an empty pragma_table_info on a
+	// fresh database as "column missing" and try to rename a nonexistent table.
+	//
+	// `watermark` is not part of the primary key, so RENAME COLUMN is safe here
+	// (the repo already relies on this for chat_sessions.deleted → archived).
+	{
+		var hasOld, hasNew int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='watermark'").Scan(&hasOld)
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='issue_watermark'").Scan(&hasNew)
+		if hasOld > 0 && hasNew == 0 {
+			if _, err := WriteExec("ALTER TABLE forge_sync_state RENAME COLUMN watermark TO issue_watermark"); err != nil {
+				return fmt.Errorf("failed to rename forge_sync_state.watermark: %w", err)
+			}
+		}
+	}
+	{
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='pr_watermark'").Scan(&exists)
+		if exists == 0 {
+			// Deliberately NOT backfilled from the old shared watermark. A NULL
+			// pr_watermark means "no PR baseline yet", so the first PR pass
+			// baselines silently instead of dispatching an event for every
+			// already-merged historical PR. Copying the old value here would
+			// open a window over the repository's whole PR history.
+			if _, err := WriteExec("ALTER TABLE forge_sync_state ADD COLUMN pr_watermark DATETIME"); err != nil {
+				return fmt.Errorf("failed to add forge_sync_state.pr_watermark column: %w", err)
+			}
+		}
+	}
 	// forge_items.comments_baselined: distinguishes "comments fetched, none
 	// exist" from "comments never fetched". Without it, a first pass that
 	// skipped comments leaves a zero baseline and the next pass replays every

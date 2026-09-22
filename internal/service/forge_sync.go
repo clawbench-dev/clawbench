@@ -194,33 +194,70 @@ func ListForgeItemSnapshots(repo ForgeRepoKey) ([]ForgeItemSnapshot, error) {
 	return out, rows.Err()
 }
 
-// SetForgeSyncWatermark records the sync watermark for a repository. It is a
-// separate table so the watermark can advance only after a complete paginated
-// fetch (see the design's watermark-correctness rule).
-func SetForgeSyncWatermark(repo ForgeRepoKey, watermark time.Time) error {
+// forgeWatermarkColumn maps an item type to its watermark column.
+//
+// The cursor is per item type because the two types are fetched from endpoints
+// with different time-filtering capabilities: GitHub's issue list honors a
+// `since` parameter, its pull request list does not. A single shared cursor let
+// the PR half — which walks the entire history every pass, and can take minutes
+// — push the watermark past issues the issue half had not fetched yet, silently
+// skipping them forever. Two cursors make that impossible by construction.
+//
+// The second return is false for a type with no cursor of its own (a pipeline
+// derives its baseline from its own per-run ledger, not from a watermark).
+func forgeWatermarkColumn(typ forge.ItemType) (string, bool) {
+	switch typ {
+	case forge.ItemTypeIssue:
+		return "issue_watermark", true
+	case forge.ItemTypeChangeRequest:
+		return "pr_watermark", true
+	default:
+		return "", false
+	}
+}
+
+// SetForgeSyncWatermark records the sync watermark for one item type of a
+// repository. It is a separate table so the watermark can advance only after a
+// complete paginated fetch (see the design's watermark-correctness rule).
+//
+// A type with no cursor of its own is a silent no-op: callers pass the types
+// they drained, and the only such type (pipeline) is tracked elsewhere.
+func SetForgeSyncWatermark(repo ForgeRepoKey, typ forge.ItemType, watermark time.Time) error {
 	if db == nil {
 		return nil
 	}
+	column, ok := forgeWatermarkColumn(typ)
+	if !ok {
+		return nil
+	}
 	_, err := WriteExec(
-		`INSERT INTO forge_sync_state (platform, host, owner, repo, watermark, updated_at)
+		`INSERT INTO forge_sync_state (platform, host, owner, repo, `+column+`, updated_at)
 		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(platform, host, owner, repo) DO UPDATE SET
-		   watermark = excluded.watermark,
+		   `+column+` = excluded.`+column+`,
 		   updated_at = CURRENT_TIMESTAMP`,
 		repo.Platform, repo.Host, repo.Owner, repo.Repo, watermark.UTC(),
 	)
 	return err
 }
 
-// GetForgeSyncWatermark returns the stored watermark for a repository, or the
-// zero time when none is recorded (a first sync).
-func GetForgeSyncWatermark(repo ForgeRepoKey) (time.Time, error) {
+// GetForgeSyncWatermark returns the stored watermark for one item type of a
+// repository, or the zero time when none is recorded (a first sync).
+//
+// A NULL column reads back as the zero time, which is what makes a repository
+// migrated from the single-cursor schema start its PR cursor fresh: NULL means
+// "no PR baseline yet", so the first PR pass baselines instead of replaying.
+func GetForgeSyncWatermark(repo ForgeRepoKey, typ forge.ItemType) (time.Time, error) {
 	if dbRead == nil {
+		return time.Time{}, nil
+	}
+	column, ok := forgeWatermarkColumn(typ)
+	if !ok {
 		return time.Time{}, nil
 	}
 	var watermark sql.NullTime
 	err := dbRead.QueryRow(
-		`SELECT watermark FROM forge_sync_state
+		`SELECT `+column+` FROM forge_sync_state
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?`,
 		repo.Platform, repo.Host, repo.Owner, repo.Repo,
 	).Scan(&watermark)
@@ -237,14 +274,19 @@ func GetForgeSyncWatermark(repo ForgeRepoKey) (time.Time, error) {
 }
 
 // ForgeSyncStateDDL creates the per-repo sync watermark table.
+//
+// One row per repository holding one cursor PER ITEM TYPE. They are separate
+// columns rather than separate rows so the row's identity stays the repository,
+// which is what the ON CONFLICT target and every reader assume.
 const ForgeSyncStateDDL = `
 CREATE TABLE IF NOT EXISTS forge_sync_state (
-	platform   TEXT NOT NULL,
-	host       TEXT NOT NULL,
-	owner      TEXT NOT NULL,
-	repo       TEXT NOT NULL,
-	watermark  DATETIME,
-	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	platform        TEXT NOT NULL,
+	host            TEXT NOT NULL,
+	owner           TEXT NOT NULL,
+	repo            TEXT NOT NULL,
+	issue_watermark DATETIME,
+	pr_watermark    DATETIME,
+	updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY (platform, host, owner, repo)
 );
 `

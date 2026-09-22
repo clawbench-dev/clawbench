@@ -122,23 +122,62 @@ func TestForgeSyncWatermark_RoundTrip(t *testing.T) {
 	repo := testRepoKey()
 
 	// Unset watermark is the zero time.
-	wm, err := service.GetForgeSyncWatermark(repo)
+	wm, err := service.GetForgeSyncWatermark(repo, forge.ItemTypeIssue)
 	require.NoError(t, err)
 	assert.True(t, wm.IsZero(), "an unsynced repo has a zero watermark")
 
 	set := time.Date(2026, 9, 10, 8, 30, 0, 0, time.UTC)
-	require.NoError(t, service.SetForgeSyncWatermark(repo, set))
+	require.NoError(t, service.SetForgeSyncWatermark(repo, forge.ItemTypeIssue, set))
 
-	wm, err = service.GetForgeSyncWatermark(repo)
+	wm, err = service.GetForgeSyncWatermark(repo, forge.ItemTypeIssue)
 	require.NoError(t, err)
 	assert.Equal(t, set, wm.UTC())
 
 	// Advancing replaces.
 	later := set.Add(time.Hour)
-	require.NoError(t, service.SetForgeSyncWatermark(repo, later))
-	wm, err = service.GetForgeSyncWatermark(repo)
+	require.NoError(t, service.SetForgeSyncWatermark(repo, forge.ItemTypeIssue, later))
+	wm, err = service.GetForgeSyncWatermark(repo, forge.ItemTypeIssue)
 	require.NoError(t, err)
 	assert.Equal(t, later, wm.UTC())
+}
+
+// TestForgeSyncWatermark_TypesAreIndependent is the storage-level half of the
+// skipped-issue regression: the two item types must never share a cursor.
+//
+// They are fetched from endpoints with different time-filtering capabilities, so
+// one pass can legitimately see a much newer timestamp for PRs than for issues.
+// With a shared cursor that newer value would move the issue window past issues
+// that were never fetched, and they would never be fetched again.
+func TestForgeSyncWatermark_TypesAreIndependent(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repo := testRepoKey()
+
+	issueWM := time.Date(2026, 9, 21, 14, 44, 53, 0, time.UTC)
+	prWM := time.Date(2026, 9, 21, 15, 14, 26, 0, time.UTC)
+
+	// The PR cursor starts NULL (no baseline) even when the issue cursor is set.
+	require.NoError(t, service.SetForgeSyncWatermark(repo, forge.ItemTypeIssue, issueWM))
+	got, err := service.GetForgeSyncWatermark(repo, forge.ItemTypeChangeRequest)
+	require.NoError(t, err)
+	assert.True(t, got.IsZero(), "setting the issue cursor must not seed the PR cursor")
+
+	// Advancing one leaves the other untouched.
+	require.NoError(t, service.SetForgeSyncWatermark(repo, forge.ItemTypeChangeRequest, prWM))
+
+	got, err = service.GetForgeSyncWatermark(repo, forge.ItemTypeIssue)
+	require.NoError(t, err)
+	assert.Equal(t, issueWM, got.UTC(), "advancing the PR cursor must not move the issue cursor")
+
+	got, err = service.GetForgeSyncWatermark(repo, forge.ItemTypeChangeRequest)
+	require.NoError(t, err)
+	assert.Equal(t, prWM, got.UTC())
+
+	// A type with no cursor of its own is a silent no-op, not an error: the
+	// pipeline baseline comes from its own per-run ledger.
+	require.NoError(t, service.SetForgeSyncWatermark(repo, forge.ItemTypePipeline, prWM))
+	got, err = service.GetForgeSyncWatermark(repo, forge.ItemTypePipeline)
+	require.NoError(t, err)
+	assert.True(t, got.IsZero(), "a type without a cursor must report the zero time")
 }
 
 func TestForgeEvents_InsertDedupesAndCountsUnread(t *testing.T) {
@@ -388,9 +427,9 @@ func TestForgeSync_NilDBGuards(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, list)
 
-	assert.NoError(t, service.SetForgeSyncWatermark(repo, time.Now()))
+	assert.NoError(t, service.SetForgeSyncWatermark(repo, forge.ItemTypeIssue, time.Now()))
 
-	wm, err := service.GetForgeSyncWatermark(repo)
+	wm, err := service.GetForgeSyncWatermark(repo, forge.ItemTypeIssue)
 	require.NoError(t, err)
 	assert.True(t, wm.IsZero())
 
@@ -428,7 +467,7 @@ func TestForgeSync_QueryErrors(t *testing.T) {
 	_, err = service.ListForgeItemSnapshots(repo)
 	require.Error(t, err)
 
-	_, err = service.GetForgeSyncWatermark(repo)
+	_, err = service.GetForgeSyncWatermark(repo, forge.ItemTypeIssue)
 	require.Error(t, err)
 
 	_, err = service.CountUnreadForgeEvents(repo)
@@ -437,7 +476,7 @@ func TestForgeSync_QueryErrors(t *testing.T) {
 	_, err = service.PruneForgeItems(repo, time.Now())
 	require.Error(t, err)
 
-	assert.Error(t, service.SetForgeSyncWatermark(repo, time.Now()))
+	assert.Error(t, service.SetForgeSyncWatermark(repo, forge.ItemTypeIssue, time.Now()))
 	assert.Error(t, service.MarkForgeEventsRead(repo, ""))
 }
 

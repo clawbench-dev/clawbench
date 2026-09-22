@@ -9,7 +9,7 @@ const mockOpenPort = vi.fn()
 const mockToastShow = vi.fn()
 
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
 vi.mock('@/composables/usePortForward', () => ({

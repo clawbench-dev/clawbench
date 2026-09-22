@@ -94,7 +94,7 @@ const FILE_TYPES: FileType[] = [
     { exts: ['.xlsx'], lang: 'xlsx', label: 'XLSX', color: '#217346', isMarkdown: false, isOffice: true },
     { exts: ['.pptx'], lang: 'pptx', label: 'PPTX', color: '#d24726', isMarkdown: false, isOffice: true },
     { exts: ['.xls'], lang: 'xls', label: 'XLS', color: '#217346', isMarkdown: false, isOffice: true },
-    { exts: ['.excalidraw'], lang: 'plaintext', label: 'DRAW', color: '#6965db', isMarkdown: false, isExcalidraw: true },
+    { exts: ['.excalidraw', '.xdraw'], lang: 'plaintext', label: 'DRAW', color: '#6965db', isMarkdown: false, isExcalidraw: true },
 ]
 
 export function getFileType(name: string): FileType {

@@ -80,12 +80,12 @@ fi
 DEPLOY_DIR="/opt/clawbench-green"
 mkdir -p "$DEPLOY_DIR"
 
-# 从 GitHub Release 下载 Linux amd64 绿色版
+# 从 GitHub Release 下载 Linux amd64 绿色版（资产名带版本 tag）
 TMP_DIR=$(mktemp -d)
-gh release download $NEW_TAG --pattern "clawbench-linux-amd64.zip" --dir "$TMP_DIR"
+gh release download $NEW_TAG --pattern "clawbench-linux-amd64-*.zip" --dir "$TMP_DIR"
 
 cd "$TMP_DIR"
-unzip -o clawbench-linux-amd64.zip
+unzip -o clawbench-linux-amd64-*.zip
 # 复制到部署目录（保留 data-dir 等已有数据）
 cp clawbench/clawbench "$DEPLOY_DIR/clawbench"
 chmod +x "$DEPLOY_DIR/clawbench"

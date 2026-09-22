@@ -172,9 +172,15 @@ if [[ -n "$RESTART_SKIP_BUILD" ]]; then
 elif command -v go >/dev/null 2>&1; then
     echo "[3/5] Building Go backend..."
     if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
-        BINARY_NAME="$NAME"
+        # Platform-suffixed output (clawbench-linux-amd64, clawbench-darwin-arm64, …).
+        # The suffix is not shared with release.yml, which builds each target in
+        # its own job and names the intermediate binary itself; it exists purely
+        # to keep cross-compiles from clobbering the host binary — a
+        # `./build.sh --linux-arm64` in a checkout whose ./clawbench was serving
+        # traffic replaced the running server's file with a foreign-arch build.
+        BINARY_NAME="${NAME}-${TARGET_OS}-${TARGET_ARCH}"
         if [ "$TARGET_OS" = "windows" ]; then
-            BINARY_NAME="${NAME}.exe"
+            BINARY_NAME="${NAME}-windows-${TARGET_ARCH}.exe"
         fi
         GOOS=$TARGET_OS GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go cross-compile failed" >&2; exit 1; }
         echo "  Cross-compiled: $BINARY_NAME ($TARGET_OS/$TARGET_ARCH)"
@@ -183,8 +189,11 @@ elif command -v go >/dev/null 2>&1; then
         # GOOS=android emits PIE automatically. wlynxg/anet (via frp -> pion) uses
         # go:linkname to net.zoneCache, which Go >= 1.23 rejects at link time, so
         # disable linkname checks for this target only.
-        GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-checklinkname=0 $LDFLAGS" -o "$NAME" ./cmd/server || { echo "ERROR: Go Android build failed" >&2; exit 1; }
-        echo "  Go Android binary: ./$NAME (GOOS=android/arm64, PIE)"
+        # Named clawbench-android-arm64 (not the bare "$NAME") so building the
+        # APK never overwrites the host server binary in the working tree.
+        BINARY_NAME="${NAME}-android-arm64"
+        GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-checklinkname=0 $LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go Android build failed" >&2; exit 1; }
+        echo "  Go Android binary: ./$BINARY_NAME (GOOS=android/arm64, PIE)"
     else
         go build -ldflags "$LDFLAGS" -o "$NAME" ./cmd/server || { echo "ERROR: Go build failed" >&2; exit 1; }
         echo "  Go binary: ./$NAME"
@@ -202,9 +211,12 @@ echo "[4/5] Skipped (embedded agent download removed)"
 echo ""
 echo "=== Build complete ==="
 if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
-    BINARY_NAME="$NAME"
-    [ "$TARGET_OS" = "windows" ] && BINARY_NAME="${NAME}.exe"
+    BINARY_NAME="${NAME}-${TARGET_OS}-${TARGET_ARCH}"
+    [ "$TARGET_OS" = "windows" ] && BINARY_NAME="${NAME}-windows-${TARGET_ARCH}.exe"
     echo "  ./$BINARY_NAME       # Go binary ($TARGET_OS/$TARGET_ARCH, frontend+APK embedded)"
+elif [ -n "$BUILD_ANDROID" ]; then
+    echo "  ./${NAME}-android-arm64  # Go binary (android/arm64, frontend+APK embedded)"
+    echo "  ./$NAME              # Host server binary (unchanged by --android)"
 else
     echo "  ./$NAME              # Go binary (frontend+APK embedded)"
 fi

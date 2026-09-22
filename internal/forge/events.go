@@ -49,6 +49,11 @@ type ItemState struct {
 	// genuinely new item from a pre-existing one that merely surfaced for the
 	// first time — see DeriveChanges. Zero when the provider does not report it.
 	CreatedAt time.Time
+	// MergedAt is when the change request was merged, and it plays the same
+	// role for `merged` that CreatedAt plays for `opened`: it distinguishes a PR
+	// merged inside this window from one that was already merged when the
+	// baseline was established. Zero when unknown or not merged.
+	MergedAt time.Time
 }
 
 // Change is a derived event ready to be persisted and dispatched.
@@ -129,7 +134,7 @@ func DeriveChanges(prev *Snapshot, cur ItemState, number int, windowStart time.T
 	}
 
 	var changes []Change
-	if c, ok := deriveStateChange(prev, cur); ok {
+	if c, ok := deriveStateChange(prev, cur, windowStart); ok {
 		changes = append(changes, c)
 	}
 	if deriveCommentChange(prev, cur) {
@@ -184,12 +189,19 @@ func deriveNewItemChange(cur ItemState) (Change, bool) {
 // deriveStateChange picks the most informative state transition, if any.
 // merged takes precedence so a multi-step interval (closed→reopened→merged)
 // collapses to the single event worth reporting.
-func deriveStateChange(prev *Snapshot, cur ItemState) (Change, bool) {
+//
+// A merge is gated on windowStart for the same reason a new item is: the merge
+// timestamp is the only evidence that the merge happened NOW rather than before
+// the baseline existed. Without the gate, a provider that starts reporting merge
+// state (or a snapshot table whose `merged` column was never populated) turns
+// every historical merged PR into a fresh `merged` event at once — hundreds of
+// events and notifications for merges nobody just performed.
+func deriveStateChange(prev *Snapshot, cur ItemState, windowStart time.Time) (Change, bool) {
 	if prev.State == cur.State && (prev.Merged || !cur.Merged) {
 		return Change{}, false
 	}
 	switch {
-	case cur.Merged:
+	case cur.Merged && isNewWithinWindow(cur.MergedAt, windowStart):
 		return Change{Type: EventMerged, PrevState: prev.State, NewState: string(StateMerged)}, true
 	case cur.State == string(StateClosed) && prev.State != string(StateClosed):
 		return Change{Type: EventClosed, PrevState: prev.State, NewState: cur.State}, true

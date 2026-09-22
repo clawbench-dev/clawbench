@@ -703,3 +703,70 @@ func TestBanner_FrontendMode(t *testing.T) {
 		t.Error("banner should contain frontend mode")
 	}
 }
+
+// ---------- blank line before credential line ----------
+
+func TestBanner_BlankLineBeforePassword(t *testing.T) {
+	cfg := BannerConfig{
+		Version:         "v1.0.0",
+		Scheme:          "http",
+		Port:            20000,
+		LocalIPs:        []string{"192.168.1.100"},
+		AutoPassword:    "a1b2c3d4",
+		DataDir:         "/tmp/.clawbench",
+		TTSEngine:       "edge",
+		TaskCount:       0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	lines := buildLines(cfg)
+
+	idx := -1
+	for i, l := range lines {
+		if strings.Contains(l, "Password:") {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("banner should contain a Password line")
+	}
+	if idx == 0 || lines[idx-1] != "" {
+		t.Errorf("line before Password should be blank, got %q", lines[idx-1])
+	}
+	// The blank line must not be the header gap: the line before it is an address.
+	if idx < 2 || !strings.Contains(lines[idx-2], "http://") {
+		t.Errorf("blank line should directly follow the address lines, got %q", lines[idx-2])
+	}
+}
+
+func TestBanner_BlankLineBeforeAuthConfigured(t *testing.T) {
+	// Same separation must hold for the "password configured" variant.
+	cfg := BannerConfig{
+		Version:         "v1.0.0",
+		Scheme:          "https",
+		Port:            20000,
+		AutoPassword:    "",
+		DataDir:         "/tmp/.clawbench",
+		TTSEngine:       "edge",
+		TaskCount:       0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	lines := buildLines(cfg)
+
+	idx := -1
+	for i, l := range lines {
+		if strings.Contains(l, "Auth:") {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("banner should contain an Auth line")
+	}
+	if idx == 0 || lines[idx-1] != "" {
+		t.Errorf("line before Auth should be blank, got %q", lines[idx-1])
+	}
+	if idx < 2 || !strings.Contains(lines[idx-2], "https://localhost:20000") {
+		t.Errorf("blank line should directly follow the local URL, got %q", lines[idx-2])
+	}
+}

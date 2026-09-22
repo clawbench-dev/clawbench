@@ -600,3 +600,132 @@ func TestListItems_SinceIsForwarded(t *testing.T) {
 	assert.NotEmpty(t, gotSince, "Since must be forwarded as the since query parameter")
 	assert.Contains(t, gotSince, "2026-09-01")
 }
+
+// TestListPulls_SinceUsesIssuesEndpoint pins the fix for the pull request list
+// endpoint having no time filter at all.
+//
+// go-github's PullRequestListOptions has no Since field and the API rejects
+// unknown parameters, so a windowed PR query cannot be answered there. Walking
+// the unfiltered list instead re-reads the repository's entire PR history on
+// every poll — tens of megabytes, which on a busy repository exceeds the client
+// timeout, so the pass never completes and the sync cursor never advances.
+//
+// The issues endpoint accepts `since` and returns pull requests too, so it is
+// what a windowed query must use.
+func TestListPulls_SinceUsesIssuesEndpoint(t *testing.T) {
+	since := time.Date(2026, 9, 21, 14, 44, 53, 0, time.UTC)
+	var gotPath, gotSince string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotSince = r.URL.Query().Get("since")
+		w.Header().Set("Content-Type", "application/json")
+		// The issues endpoint mixes issues and PRs; only the PR survives.
+		_, _ = w.Write([]byte(`[
+			{"number":1,"title":"an issue","state":"open","user":{"login":"alice"},
+			 "html_url":"https://github.com/acme/widgets/issues/1","updated_at":"2026-09-21T15:00:00Z"},
+			{"number":2,"title":"a merged pr","state":"closed","draft":false,"user":{"login":"bob"},
+			 "pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/2","merged_at":"2026-09-21T15:10:00Z"},
+			 "html_url":"https://github.com/acme/widgets/pull/2","updated_at":"2026-09-21T15:10:00Z"},
+			{"number":3,"title":"a draft pr","state":"open","draft":true,"user":{"login":"carol"},
+			 "pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/3"},
+			 "html_url":"https://github.com/acme/widgets/pull/3","updated_at":"2026-09-21T15:20:00Z"}
+		]`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, State: "all", Since: since, Page: 1, PerPage: 100,
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, gotPath, "/issues", "a windowed PR query must use the issues endpoint")
+	assert.NotContains(t, gotPath, "/pulls", "the unfiltered PR list cannot express a window")
+	assert.NotEmpty(t, gotSince, "Since must be forwarded as the since query parameter")
+	assert.Contains(t, gotSince, "2026-09-21")
+
+	// The genuine issue is filtered out; the two PRs are kept.
+	require.Len(t, res.Items, 2, "only pull requests belong in a change-request listing")
+	assert.Equal(t, 2, res.Items[0].Number)
+	assert.Equal(t, forge.ItemTypeChangeRequest, res.Items[0].Type)
+	// Merge state comes from the nested pull_request link, which is the only
+	// place the issues endpoint exposes it.
+	assert.Equal(t, forge.StateMerged, res.Items[0].State, "a merged PR must report merged")
+	assert.NotNil(t, res.Items[0].MergedAt)
+	assert.Equal(t, 3, res.Items[1].Number)
+	// Draft is carried on the issue shape; without reading it a draft PR would
+	// look ready for review.
+	assert.True(t, res.Items[1].Draft, "the draft flag must survive the conversion")
+}
+
+// TestListPulls_NoSinceUsesPullsEndpoint guards the other half: without a window
+// the richer pull request listing is kept, because it is the only source of the
+// head branch the CI lookup needs.
+func TestListPulls_NoSinceUsesPullsEndpoint(t *testing.T) {
+	var gotPath string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"number":2,"title":"a pr","state":"open","user":{"login":"bob"},
+			 "head":{"ref":"feature/x"},
+			 "html_url":"https://github.com/acme/widgets/pull/2","updated_at":"2026-09-21T15:10:00Z"}
+		]`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, State: "all", Page: 1, PerPage: 100,
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, gotPath, "/pulls", "an unfiltered PR query keeps the pull request endpoint")
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, "feature/x", res.Items[0].SourceBranch,
+		"the head branch is only available from the pull request endpoint")
+}
+
+// TestSearchItems_ForwardsSinceAsQualifier: the search API has no `since`
+// parameter, so a windowed query routed to it must express the lower bound as
+// an `updated:>=` qualifier. Without one, combining a state filter or a text
+// query with a sync window would walk the repository's entire matching history
+// — the same unbounded read the issues-endpoint path exists to avoid.
+func TestSearchItems_ForwardsSinceAsQualifier(t *testing.T) {
+	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	var gotQuery string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":0,"items":[]}`))
+	}))
+
+	// A closed-PR query with a window is the combination that would otherwise be
+	// unbounded.
+	_, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, State: "closed", Since: since,
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, gotQuery, "updated:>=2026-09-01T00:00:00Z",
+		"a windowed search must carry the lower bound as a qualifier")
+	// The existing partitioning qualifiers must survive alongside it.
+	assert.Contains(t, gotQuery, "is:pr")
+	assert.Contains(t, gotQuery, "state:closed")
+	assert.Contains(t, gotQuery, "is:unmerged")
+}
+
+// TestSearchItems_NoSinceOmitsQualifier: the UI's own queries carry no window, so
+// the qualifier must not appear and change what the user sees.
+func TestSearchItems_NoSinceOmitsQualifier(t *testing.T) {
+	var gotQuery string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":0,"items":[]}`))
+	}))
+
+	_, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, State: "all", Query: "crash",
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, gotQuery, "updated:",
+		"a query without a window must not be time-bounded")
+	assert.Contains(t, gotQuery, "crash")
+}

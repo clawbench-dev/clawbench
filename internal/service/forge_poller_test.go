@@ -235,7 +235,7 @@ func TestForgeSyncer_ListErrorAbortsAndKeepsWatermark(t *testing.T) {
 
 	// Seed a watermark so the run is not a first sync.
 	seeded := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, service.SetForgeSyncWatermark(repoKey, seeded))
+	require.NoError(t, service.SetForgeSyncWatermark(repoKey, forge.ItemTypeIssue, seeded))
 
 	provider := &failingProvider{err: &forge.Error{Kind: forge.ErrKindServer, Message: "boom"}}
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, nil)
@@ -244,7 +244,7 @@ func TestForgeSyncer_ListErrorAbortsAndKeepsWatermark(t *testing.T) {
 	err := syncer.SyncRepoWithOptions(context.Background(), binding, service.SyncOptions{})
 	require.Error(t, err, "a list failure must surface to the caller")
 
-	got, err := service.GetForgeSyncWatermark(repoKey)
+	got, err := service.GetForgeSyncWatermark(repoKey, forge.ItemTypeIssue)
 	require.NoError(t, err)
 	assert.WithinDuration(t, seeded, got, time.Second,
 		"a failed run must not advance the watermark")
@@ -298,7 +298,7 @@ func TestForgeSyncer_FirstSyncWithNoItemsInitializesWatermark(t *testing.T) {
 
 	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), binding, service.SyncOptions{}))
 
-	wm, err := service.GetForgeSyncWatermark(repoKey)
+	wm, err := service.GetForgeSyncWatermark(repoKey, forge.ItemTypeIssue)
 	require.NoError(t, err)
 	assert.False(t, wm.IsZero(), "an empty first sync must still seed the watermark")
 }

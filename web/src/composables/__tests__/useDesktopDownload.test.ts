@@ -12,7 +12,7 @@ function setUA(ua: string, arch?: string) {
 
 const mockIsAppMode = ref(false)
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
 vi.mock('@/composables/usePlatformDetect', () => ({

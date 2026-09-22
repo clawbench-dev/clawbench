@@ -56,7 +56,7 @@ vi.mock('@/composables/useToast', () => ({
 
 const mockIsAppMode = ref(false)
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
 const mockDialogConfirm = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))

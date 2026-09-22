@@ -4,7 +4,7 @@ import PdfPreview from '../PdfPreview.vue'
 
 // Mock useAppMode
 vi.mock('@/composables/useAppMode.ts', () => ({
-  useAppMode: () => ({ isAppMode: { value: false } }),
+  useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
 
 // Mock download utils

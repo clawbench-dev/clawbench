@@ -61,22 +61,39 @@ describe('resolveSpawnOptions', () => {
   // shields the launcher — Node resets SIG_IGN to SIG_DFL for itself, so the
   // SIGHUP still reaches the Go binary. The directly-installed binary has no
   // launcher layer, which is why only the npm install was affected.
-  it('detaches the server so a terminal hangup cannot kill it', () => {
-    expect(resolveSpawnOptions({}).detached).toBe(true)
+  it('detaches the server on POSIX so a terminal hangup cannot kill it', () => {
+    expect(resolveSpawnOptions({}, 'linux').detached).toBe(true)
+    expect(resolveSpawnOptions({}, 'darwin').detached).toBe(true)
+    expect(resolveSpawnOptions({}, 'android').detached).toBe(true)
+  })
+
+  // Regression guard: on Windows detached maps to DETACHED_PROCESS, which
+  // strips the child's console while `stdio: "inherit"` still passes the
+  // launcher's console handles. The server writes all of its console output
+  // (slog -> stderr, startup banner -> stdout) through those handles, so the
+  // combination silently discarded every line — including the first-run
+  // password banner. Windows must spawn without detached.
+  it('does not detach on Windows, where it would silently discard all output', () => {
+    expect(resolveSpawnOptions({}, 'win32').detached).toBe(false)
+  })
+
+  it('defaults to the running platform', () => {
+    expect(resolveSpawnOptions({}).detached).toBe(process.platform !== 'win32')
   })
 
   it('passes the environment through to the server', () => {
     const env = { PATH: '/usr/bin', CLAWBENCH_CHILD: '1' }
-    expect(resolveSpawnOptions(env).env).toEqual(env)
+    expect(resolveSpawnOptions(env, 'linux').env).toEqual(env)
   })
 
   it('keeps stdio inherited so the server logs stay visible', () => {
-    expect(resolveSpawnOptions({}).stdio).toBe('inherit')
+    expect(resolveSpawnOptions({}, 'linux').stdio).toBe('inherit')
+    expect(resolveSpawnOptions({}, 'win32').stdio).toBe('inherit')
   })
 
   it('returns a fresh object so callers cannot mutate shared state', () => {
-    const first = resolveSpawnOptions({ A: '1' })
-    const second = resolveSpawnOptions({ A: '2' })
+    const first = resolveSpawnOptions({ A: '1' }, 'linux')
+    const second = resolveSpawnOptions({ A: '2' }, 'linux')
     expect(first).not.toBe(second)
     expect(first.env).not.toBe(second.env)
   })

@@ -170,6 +170,15 @@ func (p *Provider) searchItems(ctx context.Context, opts forge.ListOptions, isPR
 	case "open":
 		q += " state:open"
 	}
+	// The search API has no `since` parameter either, but it can express the
+	// same lower bound as a qualifier. Without this, a windowed query routed here
+	// (a state filter or a text query combined with a sync window) would return
+	// the repository's whole matching history — the same unbounded walk the
+	// issues-endpoint path exists to avoid. The poller never combines the two
+	// today, so this is a guard rather than a live fix.
+	if !opts.Since.IsZero() {
+		q += " updated:>=" + opts.Since.UTC().Format(time.RFC3339)
+	}
 
 	so := &gogithub.SearchOptions{
 		Sort:  searchSortParam(opts.Sort),
@@ -232,6 +241,23 @@ func (p *Provider) listPulls(ctx context.Context, opts forge.ListOptions) (forge
 		opts.Query != "" {
 		return p.searchItems(ctx, opts, true)
 	}
+	// An incremental window cannot be served by the pull request list endpoint
+	// at all: it has no time filter (go-github's PullRequestListOptions has no
+	// Since field, and the API rejects unknown parameters). Walking it anyway
+	// means re-reading the repository's entire PR history on every poll — which
+	// on a busy repository is tens of megabytes and can exceed the client
+	// timeout, so the pass never completes and the cursor never advances.
+	//
+	// The issues endpoint DOES accept `since` and returns pull requests too
+	// (they are issues with a `pull_request` link), so it answers the query in
+	// one cheap page. It is used only when a window was actually requested:
+	// the unfiltered path keeps the richer pull request shape, which carries
+	// the head branch that the CI lookup needs. (A windowed listing therefore
+	// has no head branch, which the syncer fills in per item before dispatch —
+	// see ForgeSyncer.enrichForDispatch.)
+	if !opts.Since.IsZero() {
+		return p.listPullsSince(ctx, opts)
+	}
 	lo := &gogithub.PullRequestListOptions{
 		State:     stateParam(opts.State),
 		Sort:      pullSortParam(opts.Sort),
@@ -248,6 +274,43 @@ func (p *Provider) listPulls(ctx context.Context, opts forge.ListOptions) (forge
 	items := make([]forge.Item, 0, len(pulls))
 	for _, pr := range pulls {
 		items = append(items, convertPull(pr))
+	}
+	return listResult(items, resp), nil
+}
+
+// listPullsSince serves a time-windowed pull request query through the issues
+// endpoint, which is the only one that accepts a lower bound.
+//
+// The response mixes issues and pull requests; only the pull requests are kept,
+// since the caller asked for one type. Each is converted through
+// convertIssueAsPull, which recovers the merge state from the nested
+// pull_request link. The head branch is NOT available on this endpoint, so
+// SourceBranch is empty here — acceptable because this path exists for change
+// DETECTION, and the CI lookup that needs the branch resolves it from
+// GetItem (/pulls/{n}) instead.
+func (p *Provider) listPullsSince(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
+	lo := &gogithub.IssueListByRepoOptions{
+		State:     stateParam(opts.State),
+		Sort:      opts.Sort,
+		Direction: opts.Direction,
+		ListOptions: gogithub.ListOptions{
+			Page:    pageOrDefault(opts.Page),
+			PerPage: perPageOrDefault(opts.PerPage),
+		},
+		Since: opts.Since,
+	}
+	issues, resp, err := p.client.Issues.ListByRepo(ctx, p.owner, p.repo, lo)
+	if err != nil {
+		return forge.ListResult{}, wrapErr(err)
+	}
+	items := make([]forge.Item, 0, len(issues))
+	for _, iss := range issues {
+		// The issues endpoint also returns genuine issues; the caller asked for
+		// change requests, so the two lists stay disjoint.
+		if !iss.IsPullRequest() {
+			continue
+		}
+		items = append(items, convertIssueAsPull(iss))
 	}
 	return listResult(items, resp), nil
 }
@@ -361,19 +424,22 @@ func convertPull(pr *gogithub.PullRequest) forge.Item {
 	return item
 }
 
-// convertIssueAsPull adapts a search-result Issue that is actually a PR. The
-// search API returns both under the issue shape, which omits the merged flag,
-// so a merged PR surfaces as "closed" here — acceptable for list rendering,
-// and the detail view re-fetches via GetItem for exact state.
 // convertIssueAsPull re-types an issue-shaped payload as a change request.
 //
-// The search API returns pull requests through the Issue shape, where the merge
-// state lives in the nested pull_request object (the list endpoint's PullRequest
-// type has no equivalent here). Without reading it, a merged PR found via search
-// would normalize to "closed" and be indistinguishable from an unmerged one.
+// The search API and the issues list endpoint both return pull requests through
+// the Issue shape, where the merge state lives in the nested pull_request object
+// (the list endpoint's PullRequest type has no equivalent here). Without reading
+// it, a merged PR found this way would normalize to "closed" and be
+// indistinguishable from an unmerged one.
+//
+// The head branch is not part of the issue shape, so SourceBranch stays empty.
+// Callers that need it (the CI lookup) resolve the PR through GetItem instead.
 func convertIssueAsPull(iss *gogithub.Issue) forge.Item {
 	item := convertIssue(iss)
 	item.Type = forge.ItemTypeChangeRequest
+	// The issue shape does carry `draft` for pull requests; convertIssue does
+	// not read it, so without this a draft PR would report as ready for review.
+	item.Draft = iss.GetDraft()
 	if links := iss.PullRequestLinks; links != nil && links.MergedAt != nil {
 		merged := links.MergedAt.Time
 		item.State = forge.StateMerged

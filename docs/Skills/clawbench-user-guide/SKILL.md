@@ -54,7 +54,7 @@ localStorage.setItem('clawbench-settings-theme', JSON.stringify('github-dark'));
 
 现有 `clawbench-screenshot` skill 里的 `!!document.querySelector('.up-overlay')?.offsetParent` **是无效检查**——三个浮层全是 `position: fixed`，而 **fixed 元素的 `offsetParent` 恒为 `null`**。实测：弹窗正盖在画面上，该表达式仍返回 `false`。
 
-可靠判据（`web/src/components/UpgradePromptOverlay.vue:83`、`WelcomeOverlay.vue:237`、`CompletionPopover.vue:304` 均为 fixed）：
+可靠判据（`web/src/components/UpgradePromptOverlay.vue:83`、`WelcomeOverlay.vue:237`、`CompletionPopover.vue` 的定位层均为 fixed）：
 
 ```js
 const vis = (e) => {
@@ -75,18 +75,18 @@ const vis = (e) => {
 |---|---|
 | `.welcome-overlay` | `localStorage['clawbench_welcome_dismissed']='true'`（reload 前写） |
 | `.up-overlay` | `localStorage['clawbench-upgrade-skip']=<latest_version>`；版本升级后旧值失效，须重新取。也可点 `.up-skip` |
-| `.completion-popover-backdrop` | **先 `page.reload()`**（首选，见下）；点「标记已读」循环清空只作兜底 |
+| `.completion-notify` | **先 `page.reload()`**（首选，见下）。卡片已是纯通知，点空白关不掉、关闭按钮会被队列补位，reload 是唯一可靠手段 |
 
 ### 完成通知卡片：**截图前必须 reload**（用户明确要求）
 
-**这是清除卡片的第一手段，不是兜底。** 循环点「标记已读」只清当前队列，仍有三个漏网场景：脚本没写清队列逻辑、清完又有新会话完成、以及最坑的——**整轮 setup 从未执行**（见下文「登录判定」）。
+**这是清除卡片的第一手段，不是兜底。** 卡片已改为纯通知：**点空白处关不掉**（定位层 `pointer-events: none`），只能等它 5 秒自动消失或点自己的关闭按钮——而它有队列，关掉一条会立刻补上下一条。因此手动清队列这条路已经不可行，reload 是唯一可靠手段。
 
 为什么 reload 可靠（已核源码）：
 
 - `useCompletionPopover` 的 `queue` / `active` 是**模块级内存状态**（`web/src/composables/useCompletionPopover.ts:29-30`），reload 即清零。
-- 刷新后的 WS replay 会补发历史 `completed` 事件，但 `web/src/App.vue:1209` 有显式拦截：
+- 刷新后的 WS replay 会补发历史事件，但 `App.vue` 的 `handleCompletionEvent` 有显式拦截：
   ```js
-  if (skipReplay && isReplayingEvents.value) return   // 重放阶段不弹窗
+  if (skipReplay && isReplayingEvents.value) return   // 重放阶段不弹
   ```
   → **卡片不会复活**。
 
@@ -236,7 +236,7 @@ localStorage.setItem('clawbench-widescreen-split-ratio', String(441 / 1232));
 
 4. **Node 作用域没有 `document`**。`run-code` 的函数体在 Node 里跑，所有 DOM 访问必须包进 `page.evaluate`。典型错误：把 dock 查找写在 `run-code` 顶层 → `ReferenceError: document is not defined`。
 
-5. **浮层遮罩拦截点击。** 完成通知卡的 `.completion-popover-backdrop` 是全屏 fixed 遮罩，Playwright 报 `intercepts pointer events` 并重试。解法：`el.click({ force: true })` 或先清空通知队列。
+5. **完成通知卡片会持续涌入。** 通知是队列且可能持续新增（同时有别的 agent 在完成任务时会不断补位）。卡片本身已不拦截点击（定位层 `pointer-events: none`），但会盖住画面内容，所以截图前应 reload。
 
 6. **完成通知是队列且可能持续涌入。** 若同时有别的 agent 在完成任务，通知会不断新增。清 15 个后可能又冒出新的。
 
@@ -300,7 +300,7 @@ if (!document.querySelector('.settings-index')) {
 | `test/images/` | 多张 jpg + svg |
 | `test/markdown/` | `table-demo.md`、`formula-demo.md`（LaTeX）、`mermaid-demo.md`、`images-demo.md`、`code-block-demo.md` |
 | `test/openapi/` | `petstore.yaml` 等 |
-| `test/excalidraw/` | `demo.excalidraw` |
+| `test/excalidraw/` | `demo.xdraw` |
 
 **这些是人工测试文件，只读使用，绝对不要删除或修改。**
 
@@ -330,7 +330,7 @@ if (!document.querySelector('.settings-index')) {
 
 顶栏的项目切换、分支切换用 `AppMenuPanel` 渲染，类名是 **`.app-menu`**，**不是** `.bs-overlay`。用 `.bs-overlay` 判可见性会永远为 false。
 
-另外顶栏按钮常被**完成通知遮罩挡住**——实测 `document.elementFromPoint()` 在项目按钮坐标处返回 `completion-popover-backdrop`。此时 `el.click()` 无效，需 `el.click({ force: true })`。
+另外顶栏按钮**不会再被完成通知挡住**——通知定位层已改为 `pointer-events: none`（不再有全屏遮罩）。若仍遇到点击无效，先查 `ctx-overlay` / `modal-overlay` 这两类真正的遮罩。
 
 ## 十六、快捷发送 / 快捷指令（两处易混淆的入口）
 
@@ -343,7 +343,7 @@ if (!document.querySelector('.settings-index')) {
 
 **踩坑：**
 
-1. **发送按钮常被浮层挡住**——实测 `elementFromPoint` 在按钮坐标返回 `ctx-overlay`（右键菜单遮罩）、`modal-overlay`（如「设置标签」弹窗）、`completion-popover-backdrop`（完成通知）。**必须先清这些遮罩**，否则点击静默无效。
+1. **发送按钮常被浮层挡住**——实测 `elementFromPoint` 在按钮坐标返回 `ctx-overlay`（右键菜单遮罩）、`modal-overlay`（如「设置标签」弹窗）。**必须先清这些遮罩**，否则点击静默无效。（完成通知已不再拦截点击，见前文。）
 2. **`page.evaluate` 里调 `.click()` 有时能开菜单（快捷指令），有时不能（快捷发送）**——不确定时两条路都试：先试 `page.evaluate` 内的 `.click()`，不行再试 Playwright 的 `el.click()`。
 3. **不要点菜单项后立刻断言**——菜单是 Teleport 渲染，需 `waitForTimeout(1500+)`。
 4. **终端快捷指令按钮在页面里有 3 个同名 `button[title="快捷指令"]`**（顶栏 + 工具栏重复渲染），取 `[0]` 即可。
@@ -453,7 +453,7 @@ SESSION=sh ./snap.sh "share-page"
 
 ### 撤销分享（必做，恢复数据）
 
-**UI 上的「取消分享」按钮经常点不动**——实测 `element.click()` 无效，Playwright `el.click()` 报 `intercepts pointer events`。查 `document.elementFromPoint()` 发现是 **`.completion-popover-backdrop`（完成通知遮罩）** 挡着。
+**UI 上的「取消分享」按钮经常点不动**——实测 `element.click()` 无效，Playwright `el.click()` 报 `intercepts pointer events`。查 `document.elementFromPoint()` 发现是 `ctx-overlay` / `modal-overlay` 这类遮罩挡着。（完成通知的定位层已改为 `pointer-events: none`，不再是原因。）
 
 **可靠做法是直接调 API**（与 UI 同一端点）：
 
@@ -524,7 +524,7 @@ await page.evaluate(async () => {
 19. **PC 布局下终端没有「工具栏配置」和「终端操作帮助」按钮**（仅移动端布局有），不要照文档硬找
 20. **视觉模型（mmx）在小尺寸整图上频繁误判** —— 实测把已渲染的 Mermaid 报成「聊天内容」、把视频播放器报成「静态图片」、把提交详情报成「文件树」。**以 DOM 实测为准**，mmx 只用于「整体观感是否协调」这类定性判断。
 21. **聊天快捷发送入口是「空输入时点发送按钮」**，不是单独的按钮；终端快捷指令按钮有 3 个同名元素
-22. **点菜单/抽屉前先清 `ctx-overlay`、`modal-overlay`、`completion-popover-backdrop` 三种遮罩**，否则点击静默失败
+22. **点菜单/抽屉前先清 `ctx-overlay`、`modal-overlay` 两种遮罩**，否则点击静默失败（完成通知已不拦截点击）
 
 ### 第二版补充（返工实测）
 

@@ -209,6 +209,55 @@ describe('extractZip', () => {
   })
 })
 
+/**
+ * The macOS release archive is the one platform that keeps a wrapper
+ * directory, and the two halves of that decision live in different files:
+ * release.yml produces the wrapper, and the extraction above relies on it to
+ * be the stripped prefix.
+ *
+ * The trap is that dropping the wrapper looks like a harmless cleanup — it is
+ * what Windows and Linux do. On macOS it is not: every entry would then share
+ * the top level `ClawBench.app/`, which the stripper would remove, and the
+ * installer would go looking for an executable inside a bundle it had just
+ * thrown away. Keeping the wrapper is also what lets clients that shipped
+ * before this change (and run the unconditional-strip installer) upgrade.
+ */
+describe('macOS archive keeps its wrapper directory', () => {
+  it('extracts the .app bundle, not its contents, when the wrapper is present', () => {
+    const zip = makeZip([
+      { name: 'mac-arm64/' },
+      { name: 'mac-arm64/ClawBench.app/Contents/MacOS/clawbench-desktop', content: 'BIN' },
+      { name: 'mac-arm64/ClawBench.app/Contents/Info.plist', content: 'PLIST' },
+    ])
+
+    extractZip(zip, tmpRoot)
+
+    // The wrapper is gone, but the bundle survived intact — this is the shape
+    // executableIn() expects on darwin.
+    expect(fs.existsSync(path.join(tmpRoot, 'mac-arm64'))).toBe(false)
+    expect(
+      fs.readFileSync(path.join(tmpRoot, 'ClawBench.app/Contents/MacOS/clawbench-desktop'), 'utf8'),
+    ).toBe('BIN')
+  })
+
+  it('documents what goes wrong if the wrapper is dropped', () => {
+    // Same payload, archived from inside the wrapper the way Windows/Linux are.
+    // This is the layout that must NOT be produced for macOS: the stripper
+    // removes the single shared top level, which here is the bundle itself.
+    const zip = makeZip([
+      { name: 'ClawBench.app/Contents/MacOS/clawbench-desktop', content: 'BIN' },
+      { name: 'ClawBench.app/Contents/Info.plist', content: 'PLIST' },
+    ])
+
+    extractZip(zip, tmpRoot)
+
+    // Asserting the loss explicitly: this is why release.yml does not flatten
+    // the macOS archive, and the test fails loudly if someone does.
+    expect(fs.existsSync(path.join(tmpRoot, 'ClawBench.app'))).toBe(false)
+    expect(fs.existsSync(path.join(tmpRoot, 'Contents/MacOS/clawbench-desktop'))).toBe(true)
+  })
+})
+
 describe('downloadFirstAvailable', () => {
   it('reports every failed candidate so a broken mirror is diagnosable', async () => {
     await expect(

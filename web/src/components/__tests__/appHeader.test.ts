@@ -59,6 +59,7 @@ vi.mock('@/composables/useAppMode', () => {
   return {
     useAppMode: () => ({
       isAppMode: vue.ref(isAppModeConfig.value),
+      isDesktopApp: vue.ref(false),
     }),
   }
 })

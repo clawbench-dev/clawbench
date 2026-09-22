@@ -2,7 +2,6 @@ import { ref, type Ref } from 'vue'
 import { store } from '@/stores/app'
 import { playNotificationSound } from '@/composables/useNotificationSound'
 import { showBrowserNotification } from '@/composables/useNotification'
-import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
 
 interface TaskItem {
@@ -83,22 +82,6 @@ function onTaskCompleted(task: TaskItem) {
             onClick: () => {
                 if (switchTabCallback) switchTabCallback('tasks')
             },
-        })
-    } catch {
-        // Non-critical
-    }
-    // Navigate to the tasks tab on click
-    const navigateToHistory = () => {
-        if (switchTabCallback) switchTabCallback('tasks')
-    }
-    // Toast — include task name, icon, and click-to-navigate
-    try {
-        const taskName = task.name || gt('task.title')
-        useToast().show(`${taskName} — ${gt('task.exec.completed')}`, {
-            icon: '✅',
-            type: 'success',
-            duration: 5000,
-            onClick: navigateToHistory,
         })
     } catch {
         // Non-critical
