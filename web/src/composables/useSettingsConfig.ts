@@ -444,7 +444,7 @@ const serverDefaults: Record<string, unknown> = {
   'chat.page_size': 20,
   'chat.system_prompt_interval': 0,
   'chat.recommend_enabled': false,
-  'chat.recommend_context_messages': 3,
+  'chat.recommend_context_messages': 10,
   'chat.fork_context_budget': 100000,
   'chat.auto_continue_enabled': false,
   'chat.auto_continue_max_retries': 3,

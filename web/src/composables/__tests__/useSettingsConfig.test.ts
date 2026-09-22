@@ -155,6 +155,15 @@ describe('useSettingsConfig', () => {
     expect(getServerValueWithDefault('chat.system_prompt_interval')).toBe(0)
   })
 
+  it('serverDefaults mirrors the backend default for chat.recommend_context_messages', () => {
+    // Same contract as above. The backend default is 10 (defaults.go rewrites any
+    // <= 0 to 10), not 3 — a stale 3 makes the settings panel understate how much
+    // conversation the recommender reads until /api/config resolves.
+    const { getServerValueWithDefault } = useSettingsConfig()
+
+    expect(getServerValueWithDefault('chat.recommend_context_messages')).toBe(10)
+  })
+
   it('localConfig has markdownCodeLinkPreview defaulting to true', () => {
     const { localConfig } = useSettingsConfig()
     localStorage.removeItem('clawbench-settings-markdownCodeLinkPreview')
