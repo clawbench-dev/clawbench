@@ -50,6 +50,20 @@ export const test = base.extend({
     // Navigate to the app root
     const response = await page.goto('/')
 
+    // The SPA renders NOTHING until its async /api/me check resolves (App.vue's
+    // `isAuthenticated === null` branch renders an empty, display:none div), and
+    // the server serves the SPA shell with 200 whether or not the request is
+    // authenticated. Probing for .login-page immediately after goto() therefore
+    // races that request: on a machine where the round-trip loses, the probe
+    // reads false, the fixture skips login entirely, and the test then runs
+    // against the login screen. Wait for the app to settle into one of its two
+    // terminal states first.
+    await page
+      .locator('.login-page, .app-container')
+      .first()
+      .waitFor({ state: 'visible', timeout: 20000 })
+      .catch(() => {})
+
     // Check if we need to log in
     // The server returns 401 for unauthenticated requests, or the SPA
     // shows the LoginView component when not authenticated
