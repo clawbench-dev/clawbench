@@ -2,6 +2,7 @@ package rag
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/service"
 )
 
 // ---------- RAGSearch strategy selection ----------
@@ -680,4 +683,332 @@ func sessionIDs(sessions []*SessionSearchResult) []string {
 		out[i] = s.SessionID
 	}
 	return out
+}
+
+// ---------- title channel ----------
+
+// insertTitleSession adds a chat_sessions row so the title channel has
+// something to match. created_at is explicit so ordering assertions are stable.
+func insertTitleSession(t *testing.T, db *sql.DB, id, title, createdAt string, archived bool, sessionType string) {
+	t.Helper()
+	archivedInt := 0
+	if archived {
+		archivedInt = 1
+	}
+	if sessionType == "" {
+		sessionType = "chat"
+	}
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_path, backend, title, session_type, archived, created_at, updated_at)
+		 VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)`,
+		id, testProjectPath, title, sessionType, archivedInt, createdAt, createdAt,
+	)
+	require.NoError(t, err)
+}
+
+// A session reachable only by its title must be found, and title matches must
+// rank ahead of content matches: the user typed a name they remembered.
+func TestRAGSessionSearch_TitleMatchRanksFirst(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	// sess-title matches on its name only; its message body has no "database".
+	insertTitleSession(t, serviceDB, "sess-title", "数据库优化讨论", "2024-01-01 10:00:00", false, "")
+	// sess-content matches on message content only.
+	insertTitleSession(t, serviceDB, "sess-content", "无关标题", "2024-02-01 10:00:00", false, "")
+	chunk := makeTestChunk("sess-content", 1, 0, "database query optimization")
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+
+	result, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "数据库",
+		ProjectPath: testProjectPath,
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, result.Sessions, 1)
+	assert.Equal(t, "sess-title", result.Sessions[0].SessionID)
+	assert.True(t, result.Sessions[0].TitleMatch)
+	assert.True(t, result.Sessions[0].TitleOnly, "no content search matched this session")
+	assert.Equal(t, "数据库优化讨论", result.Sessions[0].SessionTitle)
+	assert.NotEmpty(t, result.Sessions[0].TitleMatchPositions, "title offsets drive the highlight")
+}
+
+// A session matching on both channels is emitted once, keeping its chunks so the
+// detail view still shows the message hits, while also carrying the title badge.
+func TestRAGSessionSearch_MergesTitleAndContentMatch(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	// Both the title and the message body contain the query term, so the session
+	// is found by both channels.
+	insertTitleSession(t, serviceDB, "sess-both", "数据库优化方案", "2024-01-01 10:00:00", false, "")
+	chunk := makeTestChunk("sess-both", 1, 0, "数据库 query optimization")
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+
+	result, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "数据库",
+		ProjectPath: testProjectPath,
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, result.Sessions, 1, "one session matching both channels must appear once")
+	s := result.Sessions[0]
+	assert.Equal(t, "sess-both", s.SessionID)
+	assert.True(t, s.TitleMatch)
+	assert.False(t, s.TitleOnly, "chunks were found, so the detail view has content")
+	assert.NotEmpty(t, s.Chunks)
+	assert.Equal(t, 1, s.MatchCount)
+	assert.Equal(t, "数据库优化方案", s.SessionTitle)
+}
+
+// Content-only results carry no title text from the content query, so the merge
+// must fill it in — the client renders and highlights it.
+func TestRAGSessionSearch_ContentOnlyResultsGetTitleFilledIn(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	insertTitleSession(t, serviceDB, "sess-c", "无关标题", "2024-01-01 10:00:00", false, "")
+	chunk := makeTestChunk("sess-c", 1, 0, "database query optimization")
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+
+	result, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, result.Sessions, 1)
+	assert.Equal(t, "无关标题", result.Sessions[0].SessionTitle)
+	assert.False(t, result.Sessions[0].TitleMatch)
+	assert.False(t, result.Sessions[0].TitleOnly)
+}
+
+// With no RAG store the title channel is still the whole answer: an install that
+// never configured RAG can search sessions by name instead of getting an error.
+func TestRAGSessionSearch_NilStoreStillSearchesTitles(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+
+	insertTitleSession(t, serviceDB, "sess-title", "数据库优化讨论", "2024-01-01 10:00:00", false, "")
+	insertTitleSession(t, serviceDB, "sess-other", "前端重构", "2024-01-02 10:00:00", false, "")
+
+	result, err := RAGSessionSearch(context.Background(), nil, nil, SearchParams{
+		Query:       "数据库",
+		ProjectPath: testProjectPath,
+	}, 10, 20)
+	require.NoError(t, err, "a nil store must not fail the title channel")
+	require.Len(t, result.Sessions, 1)
+	assert.Equal(t, "sess-title", result.Sessions[0].SessionID)
+	assert.True(t, result.Sessions[0].TitleMatch)
+	// "title" reports that only the name channel ran — distinct from "recent"
+	// (browse), which the client would render as a paginated browse list.
+	assert.Equal(t, SearchModeTitle, result.Mode)
+}
+
+func TestRAGSessionSearch_NilStoreEmptyQueryStillEmpty(t *testing.T) {
+	// Browse mode is the handler's job; an empty query here stays empty.
+	result, err := RAGSessionSearch(context.Background(), nil, nil, SearchParams{}, 10, 20)
+	require.NoError(t, err)
+	assert.Empty(t, result.Sessions)
+}
+
+// The title channel honors the same filters as the content channel, so both
+// sets of results come from the same population.
+func TestRAGSessionSearch_TitleChannelHonorsFilters(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	insertTitleSession(t, serviceDB, "sess-active", "数据库优化", "2024-01-01 10:00:00", false, "")
+	insertTitleSession(t, serviceDB, "sess-archived", "数据库归档", "2024-02-01 10:00:00", true, "")
+	insertTitleSession(t, serviceDB, "sess-task", "数据库任务", "2024-03-01 10:00:00", false, "scheduled")
+
+	active, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query: "数据库", ProjectPath: testProjectPath, Archived: "active",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, active.Sessions, 1)
+	assert.Equal(t, "sess-active", active.Sessions[0].SessionID)
+
+	archived, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query: "数据库", ProjectPath: testProjectPath, Archived: "archived",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, archived.Sessions, 1)
+	assert.Equal(t, "sess-archived", archived.Sessions[0].SessionID)
+
+	// Type filter switches to task executions instead of conversations.
+	tasks, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query: "数据库", ProjectPath: testProjectPath, SessionType: "task",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, tasks.Sessions, 1)
+	assert.Equal(t, "sess-task", tasks.Sessions[0].SessionID)
+
+	// A time range that excludes every session's creation time yields nothing.
+	windowed, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query: "数据库", ProjectPath: testProjectPath, FromTime: "2025-01-01 00:00:00",
+	}, 10, 20)
+	require.NoError(t, err)
+	assert.Empty(t, windowed.Sessions)
+}
+
+// Time sort overrides the title-first ordering: the user asked for a
+// chronological list, so the blocks are not preserved.
+func TestRAGSessionSearch_TimeSortOverridesTitleFirst(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	insertTitleSession(t, serviceDB, "sess-new", "数据库新", "2024-03-01 10:00:00", false, "")
+	insertTitleSession(t, serviceDB, "sess-old", "数据库旧", "2024-01-01 10:00:00", false, "")
+
+	newest, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query: "数据库", ProjectPath: testProjectPath, SortOrder: "newest",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, newest.Sessions, 2)
+	assert.Equal(t, "sess-new", newest.Sessions[0].SessionID)
+
+	oldest, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query: "数据库", ProjectPath: testProjectPath, SortOrder: "oldest",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, oldest.Sessions, 2)
+	assert.Equal(t, "sess-old", oldest.Sessions[0].SessionID)
+}
+
+// The title channel honors the exclude scope too. This is what keeps the
+// current conversation out of its own /cb-chatsearch results: the command sets
+// exclude_session_id, and a title match must not bypass it.
+func TestRAGSessionSearch_TitleChannelHonorsExcludeSession(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	insertTitleSession(t, serviceDB, "sess-current", "数据库优化讨论", "2024-02-01 10:00:00", false, "")
+	insertTitleSession(t, serviceDB, "sess-other", "数据库迁移记录", "2024-01-01 10:00:00", false, "")
+
+	result, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:            "数据库",
+		ProjectPath:      testProjectPath,
+		ExcludeSessionID: "sess-current",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, result.Sessions, 1)
+	assert.Equal(t, "sess-other", result.Sessions[0].SessionID)
+}
+
+// searchLimit caps the merged list, and a title match cannot push the count over.
+func TestRAGSessionSearch_TitleMatchesRespectSearchLimit(t *testing.T) {
+	serviceDB := setupIndexerServiceDB(t)
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	for i, id := range []string{"sess-1", "sess-2", "sess-3"} {
+		insertTitleSession(t, serviceDB, id, "数据库优化", fmt.Sprintf("2024-01-0%d 10:00:00", i+1), false, "")
+	}
+
+	result, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query: "数据库", ProjectPath: testProjectPath,
+	}, 2, 20)
+	require.NoError(t, err)
+	assert.Len(t, result.Sessions, 2)
+}
+
+// ---------- titleSearchTerms ----------
+
+func TestTitleSearchTerms(t *testing.T) {
+	if segmenter == nil {
+		require.NoError(t, InitSegmenter())
+	}
+
+	// Segmentation splits CJK into words, and every word is a term.
+	assert.Equal(t, []string{"数据库", "优化"}, titleSearchTerms("数据库优化"))
+
+	// Single-character segmentation noise (spaces, punctuation, lone chars) is
+	// dropped: matching them would return nearly every session.
+	assert.Equal(t, []string{"session", "search"}, titleSearchTerms("session search"))
+	assert.Equal(t, []string{"bge", "m3", "模型"}, titleSearchTerms("bge-m3 模型"))
+
+	// Nothing survives → the trimmed query is used literally, so a
+	// one-character title is still findable rather than matching everything.
+	assert.Equal(t, []string{"库"}, titleSearchTerms("库"))
+	assert.Equal(t, []string{"..."}, titleSearchTerms("..."))
+
+	// An empty query has no terms at all.
+	assert.Empty(t, titleSearchTerms(""))
+	assert.Empty(t, titleSearchTerms("   "))
+}
+
+// ---------- mergeTitleAndContentMatches ----------
+
+func TestMergeTitleAndContentMatches_OrderAndDedup(t *testing.T) {
+	titleMatches := []service.RecentSession{
+		{ID: "t1", Title: "数据库甲", CreatedAt: time.Date(2024, 3, 1, 10, 0, 0, 0, time.UTC)},
+		{ID: "shared", Title: "数据库乙", CreatedAt: time.Date(2024, 2, 1, 10, 0, 0, 0, time.UTC)},
+	}
+	contentMatches := []*SessionSearchResult{
+		{SessionID: "shared", Score: 0.9, MatchCount: 2, Chunks: []ChunkHit{{ChunkID: 1}}},
+		{SessionID: "c1", Score: 0.5},
+	}
+
+	merged := mergeTitleAndContentMatches(titleMatches, contentMatches, "数据库")
+
+	// Title matches first (as the title query ordered them), then content-only.
+	require.Len(t, merged, 3)
+	assert.Equal(t, []string{"t1", "shared", "c1"}, sessionIDs(merged))
+
+	// The shared session keeps its chunks and is no longer title-only.
+	shared := merged[1]
+	assert.True(t, shared.TitleMatch)
+	assert.False(t, shared.TitleOnly)
+	assert.Equal(t, 2, shared.MatchCount)
+	assert.Len(t, shared.Chunks, 1)
+	assert.InDelta(t, 0.9, shared.Score, 1e-9)
+	assert.NotEmpty(t, shared.TitleMatchPositions)
+}
+
+func TestMergeTitleAndContentMatches_ContentOnlyHasNoTitleFlag(t *testing.T) {
+	contentMatches := []*SessionSearchResult{{SessionID: "c1", Score: 0.5}}
+	merged := mergeTitleAndContentMatches(nil, contentMatches, "query")
+	require.Len(t, merged, 1)
+	assert.False(t, merged[0].TitleMatch)
+	assert.False(t, merged[0].TitleOnly)
+}
+
+// Title matches lead even when a content match has a far higher score.
+func TestSortSessionResults_TitleMatchBeatsHigherScore(t *testing.T) {
+	sessions := []*SessionSearchResult{
+		{SessionID: "content", Score: 99.0},
+		{SessionID: "title", Score: 0.0, TitleMatch: true},
+	}
+	sortSessionResults(sessions, "")
+	assert.Equal(t, []string{"title", "content"}, sessionIDs(sessions))
+}
+
+// Ties are broken on session id so equal-scoring rows keep a stable order —
+// sort.Slice is not stable, and all title-only matches score 0.
+func TestSortSessionResults_RelevanceTieBreakIsStable(t *testing.T) {
+	at := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	sessions := []*SessionSearchResult{
+		{SessionID: "sess-c", TitleMatch: true, CreatedAt: at},
+		{SessionID: "sess-a", TitleMatch: true, CreatedAt: at},
+		{SessionID: "sess-b", TitleMatch: true, CreatedAt: at},
+	}
+	sortSessionResults(sessions, "")
+	assert.Equal(t, []string{"sess-a", "sess-b", "sess-c"}, sessionIDs(sessions))
+}
+
+// Equal scores prefer the newer session. Title matches all score 0, so this is
+// what keeps them in the newest-first order the title query returned instead of
+// falling through to a UUID comparison.
+func TestSortSessionResults_EqualScorePrefersNewest(t *testing.T) {
+	base := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	sessions := []*SessionSearchResult{
+		{SessionID: "sess-old", TitleMatch: true, CreatedAt: base},
+		{SessionID: "sess-new", TitleMatch: true, CreatedAt: base.Add(2 * time.Hour)},
+		{SessionID: "sess-mid", TitleMatch: true, CreatedAt: base.Add(time.Hour)},
+	}
+	sortSessionResults(sessions, "")
+	assert.Equal(t, []string{"sess-new", "sess-mid", "sess-old"}, sessionIDs(sessions))
 }

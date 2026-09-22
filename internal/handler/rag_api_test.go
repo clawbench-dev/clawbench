@@ -1141,7 +1141,10 @@ func TestServeRAGSessionSearch_RemoteNoProjectDenied(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-func TestServeRAGSessionSearch_NilStoreReturns503(t *testing.T) {
+// A nil store means RAG is not configured, not that search is impossible: the
+// title channel is plain SQL and still answers, so the request succeeds with
+// title matches instead of a 503.
+func TestServeRAGSessionSearch_NilStoreFallsBackToTitleSearch(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -1154,10 +1157,82 @@ func TestServeRAGSessionSearch_NilStoreReturns503(t *testing.T) {
 	rag.GlobalStore = nil
 	rag.GlobalEmbedder = nil
 
-	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "test"})
+	insertSession(t, env.ProjectDir, "sess-named", "数据库优化讨论", "2024-01-01 10:00:00", false, "")
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "数据库"})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Sessions []struct {
+			SessionID  string `json:"session_id"`
+			TitleMatch bool   `json:"title_match"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(t, result.Sessions, 1)
+	assert.Equal(t, "sess-named", result.Sessions[0].SessionID)
+	assert.True(t, result.Sessions[0].TitleMatch)
+}
+
+// A query matching no title still succeeds (empty result), rather than erroring.
+func TestServeRAGSessionSearch_NilStoreNoTitleMatchIsEmpty(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+	rag.GlobalStore = nil
+	rag.GlobalEmbedder = nil
+
+	insertSession(t, env.ProjectDir, "sess-named", "数据库优化讨论", "2024-01-01 10:00:00", false, "")
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "前端重构"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Sessions []any `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Empty(t, result.Sessions)
+}
+
+// The title channel must respect the project cookie: a session in another
+// project is never returned, even when its title matches.
+func TestServeRAGSessionSearch_TitleMatchRespectsProjectScope(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+	rag.GlobalStore = nil
+	rag.GlobalEmbedder = nil
+
+	otherProject := filepath.Join(filepath.Dir(env.ProjectDir), "other-title-search")
+	_ = os.MkdirAll(otherProject, 0o755)
+	insertSession(t, otherProject, "sess-elsewhere", "数据库优化讨论", "2024-01-01 10:00:00", false, "")
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "数据库"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Sessions []any `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Empty(t, result.Sessions, "another project's session must not leak in")
 }
 
 func TestServeRAGSessionSearch_EmptyResultsArray(t *testing.T) {

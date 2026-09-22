@@ -2170,6 +2170,117 @@ func GetRecentSessions(projectPath string, limit int, archiveFilter, typeFilter,
 	return sessions, hasMore, nil
 }
 
+// SearchSessionsByTitle matches sessions whose title contains every term, newest
+// first.
+//
+// Session search indexes message content, so a session the user renamed — or
+// one whose auto-title was truncated to 50 runes — is unreachable by the words
+// in its name. This is the name channel that runs alongside the content
+// channel; callers merge the two.
+//
+// terms are matched with AND: each must appear somewhere in the title, so a
+// multi-term query narrows instead of widening. Terms are supplied by the
+// caller rather than derived here because segmentation lives in the rag package
+// (which imports this one), and both channels must split a query identically.
+// An empty terms slice returns no matches — callers that want the whole project
+// use GetRecentSessions.
+//
+// The filters mirror the content channel's (project, archive, type, time range,
+// plus the single-session and excluded-session scopes) so both channels draw
+// from the same population. sessionID narrows to one session, excludeSessionID
+// drops one — the latter is how the /cb-chatsearch command keeps the current
+// conversation out of its own results.
+//
+// The match is case-insensitive for ASCII and literal for everything else:
+// SQLite's LIKE folds A-Z only, and a Chinese title has no case.
+// limit <= 0 returns every match.
+func SearchSessionsByTitle(projectPath string, terms []string, limit int, archiveFilter, typeFilter, fromTime, toTime, sessionID, excludeSessionID string) ([]RecentSession, error) {
+	if len(terms) == 0 {
+		return []RecentSession{}, nil
+	}
+	// No service DB (RAG running standalone, or early startup): there are no
+	// titles to search, and querying would dereference a nil handle.
+	if !DBReady() {
+		return []RecentSession{}, nil
+	}
+
+	sessionType := "chat"
+	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
+		sessionType = "scheduled"
+	}
+	query := `SELECT s.id, s.title, s.backend, s.project_path, s.archived, s.created_at, s.session_type
+		FROM chat_sessions s
+		WHERE s.session_type = ?`
+	args := []interface{}{sessionType}
+	if projectPath != "" {
+		query += " AND s.project_path = ?"
+		args = append(args, projectPath)
+	}
+	switch NormalizeSessionArchiveFilter(archiveFilter) {
+	case SessionArchiveFilterActive:
+		query += " AND s.archived = 0"
+	case SessionArchiveFilterArchived:
+		query += " AND s.archived = 1"
+	}
+	if fromTime != "" {
+		query += " AND s.created_at >= ?"
+		args = append(args, fromTime)
+	}
+	if toTime != "" {
+		query += " AND s.created_at <= ?"
+		args = append(args, toTime)
+	}
+	if sessionID != "" {
+		query += " AND s.id = ?"
+		args = append(args, sessionID)
+	}
+	if excludeSessionID != "" {
+		query += " AND s.id != ?"
+		args = append(args, excludeSessionID)
+	}
+	// One LIKE per term, ANDed: every term must appear somewhere in the title.
+	// ESCAPE '\' keeps a literal % / _ in the query from acting as a wildcard.
+	for _, term := range terms {
+		query += " AND s.title LIKE ? ESCAPE '\\'"
+		args = append(args, "%"+escapeLikePattern(term)+"%")
+	}
+	query += " ORDER BY s.created_at DESC, s.id DESC"
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+
+	rows, err := dbRead.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sessions := []RecentSession{}
+	for rows.Next() {
+		var s RecentSession
+		var archived int
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.ProjectPath, &archived, &s.CreatedAt, &s.SessionType); err != nil {
+			return nil, err
+		}
+		s.Archived = archived != 0
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
+// escapeLikePattern escapes the SQL LIKE wildcards in s so it matches
+// literally. Callers must pair it with `ESCAPE '\'` — without the clause the
+// backslashes are treated as ordinary characters and the escape is inert.
+func escapeLikePattern(s string) string {
+	r := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_")
+	return r.Replace(s)
+}
+
+// EscapeLikePatternForTest exposes escapeLikePattern so the external test
+// package can assert the escaping directly. Must only be called from _test.go.
+func EscapeLikePatternForTest(s string) string { return escapeLikePattern(s) }
+
 // FirstMessage is the earliest message of a session, used to lazily populate
 // the browse-mode detail preview without loading the whole session.
 type FirstMessage struct {
