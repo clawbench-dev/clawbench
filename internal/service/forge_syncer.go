@@ -91,52 +91,67 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 		return fmt.Errorf("build provider: %w", err)
 	}
 
-	watermark, err := GetForgeSyncWatermark(repoKey)
-	if err != nil {
-		return fmt.Errorf("read watermark: %w", err)
-	}
-	firstSync := watermark.IsZero()
-
-	// Query from the watermark minus the overlap window so boundary items are
-	// not skipped. On a first sync the baseline is "now", NOT the beginning of
-	// time: the snapshot exists only to diff one pass against the next, so
-	// backfilling a repository's entire history buys nothing and is not even
-	// possible for large repos — GitHub rejects offset pagination past 10k
-	// items, so a full fetch would abort mid-pagination, never advance the
-	// watermark, and re-walk every page on every tick.
-	//
-	// Pre-existing items that surface later (created before the baseline, first
-	// updated after it) are baselined silently — see DeriveChanges.
-	since := s.now().UTC().Add(-s.overlapWindow)
-	if !firstSync {
-		since = watermark.Add(-s.overlapWindow)
+	// Read one cursor per item type. They advance independently, so a slow or
+	// unfilterable pass over one type cannot move the other's window.
+	watermarks := make(map[forge.ItemType]time.Time, 2)
+	for _, typ := range []forge.ItemType{forge.ItemTypeIssue, forge.ItemTypeChangeRequest} {
+		// werr, not err: the outer err is reused by the pipeline pass below, and
+		// shadowing it here would hide that pass's failure.
+		wm, werr := GetForgeSyncWatermark(repoKey, typ)
+		if werr != nil {
+			return fmt.Errorf("read watermark: %w", werr)
+		}
+		watermarks[typ] = wm
 	}
 
 	// Drain both item types. The issues endpoint excludes PRs (github adapter)
-	// and GitLab serves them separately, so both must be fetched.
-	maxUpdated, itemsSeen, err := s.drainAllTypes(ctx, provider, repoKey, repoRef, remote, since, firstSync, opts)
+	// and GitLab serves them separately, so both must be fetched. Each type
+	// computes its own window: a zero cursor means that type has no baseline
+	// yet, so its window is "now", NOT the beginning of time — the snapshot
+	// exists only to diff one pass against the next, so backfilling a
+	// repository's entire history buys nothing and is not even possible for
+	// large repos (GitHub rejects offset pagination past 10k items, so a full
+	// fetch would abort mid-pagination, never advance the cursor, and re-walk
+	// every page on every tick).
+	//
+	// Pre-existing items that surface later (created before the baseline, first
+	// updated after it) are baselined silently — see DeriveChanges.
+	maxUpdated, itemsSeen, err := s.drainAllTypes(ctx, provider, repoKey, repoRef, remote, watermarks, opts)
 	if err != nil {
 		return err
 	}
 
-	// Advance the item watermark before touching CI: the two are independent
+	// Advance each type's cursor before touching CI: the two are independent
 	// (CI has its own per-run ledger), so a pipeline failure must not roll back
-	// the item watermark and vice versa.
+	// the item cursors and vice versa.
 	//
 	// Note the assignment (not `:=`): the outer `err` is reused below for the
 	// pipeline pass, so shadowing it here would hide that pass's error.
-	err = s.advanceWatermark(repoKey, watermark, maxUpdated)
-	if err != nil {
-		return err
+	for _, typ := range []forge.ItemType{forge.ItemTypeIssue, forge.ItemTypeChangeRequest} {
+		err = s.advanceWatermark(repoKey, typ, watermarks[typ], maxUpdated[typ])
+		if err != nil {
+			return err
+		}
 	}
 
-	// CI runs are fetched after the items and independently of the watermark:
+	// CI runs are fetched after the items and independently of the cursors:
 	// they derive their own baseline from their own ledger, and a pipeline
-	// failure must not roll back the item watermark (or vice versa).
+	// failure must not roll back the item cursors (or vice versa).
 	// A platform without CI support simply does not implement PipelineLister.
+	//
+	// The window is the EARLIER of the two cursors, minus the overlap. Taking the
+	// earlier one can only over-fetch, which the per-run ledger absorbs; taking
+	// the later one could skip runs. A type with no cursor contributes nothing,
+	// and when neither has one the window is "now" — the same first-sync
+	// baseline the item passes use, so a fresh install does not ask for a
+	// repository's whole CI history.
+	pipelineSince := s.now().UTC().Add(-s.overlapWindow)
+	if earliest := earliestWatermark(watermarks); !earliest.IsZero() {
+		pipelineSince = earliest.Add(-s.overlapWindow)
+	}
 	pipelinesSeen := 0
 	if opts.IncludePipelines {
-		pipelinesSeen, err = s.syncPipelines(ctx, provider, repoKey, repoRef, remote, since)
+		pipelinesSeen, err = s.syncPipelines(ctx, provider, repoKey, repoRef, remote, pipelineSince)
 		if err != nil {
 			return err
 		}
@@ -147,9 +162,25 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 		slog.String("repo", repoRef.Key()),
 		slog.Int("items", itemsSeen),
 		slog.Int("pipelines", pipelinesSeen),
-		slog.Bool("first_sync", firstSync),
+		slog.Bool("first_sync", watermarks[forge.ItemTypeIssue].IsZero()),
 	)
 	return nil
+}
+
+// earliestWatermark returns the oldest non-zero cursor, or the zero time when
+// there is none. It is the safe window for a pass shared across item types: an
+// earlier bound only re-reads, a later one could skip.
+func earliestWatermark(watermarks map[forge.ItemType]time.Time) time.Time {
+	earliest := time.Time{}
+	for _, wm := range watermarks {
+		if wm.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || wm.Before(earliest) {
+			earliest = wm
+		}
+	}
+	return earliest
 }
 
 // syncPipelines fetches CI runs, records terminal ones, and dispatches the
@@ -271,21 +302,37 @@ func pipelineEvent(remote forge.Remote, run forge.PipelineRun) (forge.Item, forg
 }
 
 // drainAllTypes pages through every item type, processing each item and
-// tracking the newest updated_at seen. The watermark is NOT advanced here: the
-// caller only advances it once every page has been consumed, so a mid-pagination
-// failure leaves the window intact for the next run.
+// tracking the newest updated_at seen PER TYPE. The watermarks are NOT advanced
+// here: the caller only advances them once every page has been consumed, so a
+// mid-pagination failure leaves the window intact for the next run.
+//
+// Each type keeps its own window and its own high-water mark. That separation is
+// the point: the two endpoints have different time-filtering capabilities (the
+// GitHub issue list honors `since`, the PR list cannot), so the PR pass can take
+// minutes and see items far newer than anything the issue pass saw. Folding both
+// into one cursor let the PR half drag the issue cursor past unfetched issues,
+// which were then never fetched again.
 func (s *ForgeSyncer) drainAllTypes(
 	ctx context.Context,
 	provider forge.Provider,
 	repoKey ForgeRepoKey,
 	repoRef ForgeRepoRef,
 	remote forge.Remote,
-	since time.Time,
-	firstSync bool,
+	watermarks map[forge.ItemType]time.Time,
 	opts SyncOptions,
-) (maxUpdated time.Time, itemsSeen int, err error) {
-	maxUpdated = since
+) (map[forge.ItemType]time.Time, int, error) {
+	maxUpdated := make(map[forge.ItemType]time.Time, len(watermarks))
+	itemsSeen := 0
+
 	for _, typ := range []forge.ItemType{forge.ItemTypeIssue, forge.ItemTypeChangeRequest} {
+		watermark := watermarks[typ]
+		firstSync := watermark.IsZero()
+		since := s.now().UTC().Add(-s.overlapWindow)
+		if !firstSync {
+			since = watermark.Add(-s.overlapWindow)
+		}
+		maxUpdated[typ] = since
+
 		page := 1
 		for {
 			res, err := provider.ListItems(ctx, forge.ListOptions{
@@ -298,16 +345,16 @@ func (s *ForgeSyncer) drainAllTypes(
 				Direction: "asc",
 			})
 			if err != nil {
-				return time.Time{}, itemsSeen, fmt.Errorf("list %s page %d: %w", typ, page, err)
+				return nil, itemsSeen, fmt.Errorf("list %s page %d: %w", typ, page, err)
 			}
 
 			for _, item := range res.Items {
 				itemsSeen++
-				if item.UpdatedAt.After(maxUpdated) {
-					maxUpdated = item.UpdatedAt
+				if item.UpdatedAt.After(maxUpdated[typ]) {
+					maxUpdated[typ] = item.UpdatedAt
 				}
 				if err := s.processItem(ctx, provider, repoKey, repoRef, remote, typ, item, since, firstSync, opts); err != nil {
-					return time.Time{}, itemsSeen, err
+					return nil, itemsSeen, err
 				}
 			}
 
@@ -323,16 +370,16 @@ func (s *ForgeSyncer) drainAllTypes(
 	return maxUpdated, itemsSeen, nil
 }
 
-// advanceWatermark moves the stored watermark forward. The caller only reaches
-// this after every page was consumed, so a mid-pagination failure leaves the
-// window intact for the next run.
+// advanceWatermark moves one item type's stored cursor forward. The caller only
+// reaches this after every page of that type was consumed, so a mid-pagination
+// failure leaves the window intact for the next run.
 //
 // maxUpdated is seeded with the queried window start, so it is never zero and
 // always strictly after a zero prev — a first sync therefore initializes the
-// watermark here rather than through a separate "nothing seen" fallback.
-func (s *ForgeSyncer) advanceWatermark(repoKey ForgeRepoKey, prev, maxUpdated time.Time) error {
+// cursor here rather than through a separate "nothing seen" fallback.
+func (s *ForgeSyncer) advanceWatermark(repoKey ForgeRepoKey, typ forge.ItemType, prev, maxUpdated time.Time) error {
 	if !maxUpdated.IsZero() && maxUpdated.After(prev) {
-		if err := SetForgeSyncWatermark(repoKey, maxUpdated); err != nil {
+		if err := SetForgeSyncWatermark(repoKey, typ, maxUpdated); err != nil {
 			return fmt.Errorf("advance watermark: %w", err)
 		}
 	}
@@ -375,6 +422,14 @@ func (s *ForgeSyncer) processItem(
 		Author:                 item.Author.Login,
 		CreatedAt:              item.CreatedAt,
 	}
+	// MergedAt is the window gate for a `merged` event: a PR that was already
+	// merged before this pass must be baselined, not announced. Item.MergedAt is
+	// a pointer (absent for non-merged items), so an absent value stays zero and
+	// DeriveChanges treats an unknown merge time as "new" — the same convention
+	// CreatedAt uses, since silence would silently drop a real event.
+	if item.MergedAt != nil {
+		cur.MergedAt = *item.MergedAt
+	}
 
 	// Derive events only when this is not the first sync. On the first sync the
 	// snapshot is being established, so nothing is dispatched; on every later
@@ -413,12 +468,49 @@ func (s *ForgeSyncer) processItem(
 	if s.sink == nil {
 		return nil
 	}
+	if len(changes) > 0 {
+		item = s.enrichForDispatch(ctx, provider, repoRef, typ, item)
+	}
 	for _, ch := range changes {
 		if err := s.persistAndDispatch(ctx, repoRef, remote, item, ch); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// enrichForDispatch fills in the fields an event's prompt needs but the listing
+// that produced the event cannot supply.
+//
+// Only the head branch qualifies today. The windowed PR listing goes through the
+// issues endpoint (the only one that accepts a time bound), and the issue shape
+// has no head ref — so without this every PR event task would silently lose its
+// SOURCE_BRANCH line. The value is fetched per item via GetItem, which costs a
+// request, so it is gated on a derived change: a poll that finds nothing new
+// pays nothing.
+//
+// A fetch failure is deliberately not fatal. Losing the branch degrades one
+// prompt variable; failing the sync would instead lose the event entirely, and
+// the snapshot has already been written so it would not be re-derived.
+func (s *ForgeSyncer) enrichForDispatch(
+	ctx context.Context,
+	provider forge.Provider,
+	repoRef ForgeRepoRef,
+	typ forge.ItemType,
+	item forge.Item,
+) forge.Item {
+	if typ != forge.ItemTypeChangeRequest || item.SourceBranch != "" {
+		return item
+	}
+	full, err := provider.GetItem(ctx, typ, item.Number)
+	if err != nil {
+		slog.Warn("forge: head branch lookup failed",
+			slog.String("repo", repoRef.Key()),
+			slog.Int("number", item.Number), slog.String("err", err.Error()))
+		return item
+	}
+	item.SourceBranch = full.SourceBranch
+	return item
 }
 
 // persistAndDispatch is the single persist→dispatch path for derived events,

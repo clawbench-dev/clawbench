@@ -4256,3 +4256,73 @@ func TestSchema_FileSharesRootMigration_AddsColumnToLegacyTable(t *testing.T) {
 		"SELECT root FROM file_shares WHERE token = 'legacy'").Scan(&root))
 	assert.Empty(t, root)
 }
+
+// TestSchema_ForgeSyncStatePerTypeWatermarkMigration covers the split of the
+// single `watermark` column into one cursor per item type.
+//
+// Two things must hold on upgrade, and they pull in opposite directions:
+//
+//   - the existing cursor must be PRESERVED, renamed to issue_watermark, so the
+//     issue side does not re-read its whole history;
+//   - the PR cursor must start EMPTY, not copied. A NULL pr_watermark means "no
+//     PR baseline yet", so the first PR pass baselines silently. Copying the old
+//     shared value would instead open a window over the repository's entire PR
+//     history and announce a `merged`/`closed` event for every PR in it.
+//
+// It drives the REAL migration (InitDB) against a legacy on-disk database, so a
+// deleted migration, an inverted guard, or a missing DDL column all fail it.
+func TestSchema_ForgeSyncStatePerTypeWatermarkMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Build a LEGACY forge_sync_state table with the single shared cursor, and
+	// seed a repository that had already been synced.
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	legacy, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = legacy.Exec(`
+		CREATE TABLE forge_sync_state (
+			platform TEXT NOT NULL, host TEXT NOT NULL, owner TEXT NOT NULL,
+			repo TEXT NOT NULL, watermark DATETIME,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (platform, host, owner, repo));`)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`INSERT INTO forge_sync_state
+		(platform,host,owner,repo,watermark) VALUES ('github','github.com','acme','widgets','2026-09-21 14:44:53')`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	// Run the real migration.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "forge_sync_state")
+	assert.Contains(t, columns, "issue_watermark",
+		"the migration must rename the old watermark column")
+	assert.NotContains(t, columns, "watermark",
+		"the old shared column must not survive the rename")
+	assert.Contains(t, columns, "pr_watermark",
+		"the migration must add a PR cursor")
+
+	// The issue cursor carries the old value forward.
+	var issueWM time.Time
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		`SELECT issue_watermark FROM forge_sync_state WHERE owner = 'acme'`).Scan(&issueWM))
+	assert.Equal(t, "2026-09-21 14:44:53", issueWM.UTC().Format("2006-01-02 15:04:05"),
+		"the existing cursor must be preserved as the issue cursor")
+
+	// The PR cursor is deliberately left NULL — no baseline.
+	var prWM sql.NullTime
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		`SELECT pr_watermark FROM forge_sync_state WHERE owner = 'acme'`).Scan(&prWM))
+	assert.False(t, prWM.Valid,
+		"the PR cursor must start empty so the first PR pass baselines instead of replaying")
+}

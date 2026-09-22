@@ -263,7 +263,7 @@ func TestSyncPipelines_ThreadsTheWatermarkThrough(t *testing.T) {
 	watermark := now.Add(-time.Hour)
 	require.NoError(t, service.SetForgeSyncWatermark(service.ForgeRepoKey{
 		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
-	}, watermark))
+	}, forge.ItemTypeIssue, watermark))
 
 	provider := &pipelineProvider{runs: []forge.PipelineRun{
 		pipelineRun(100, forge.PipelineSuccess, now),
@@ -309,7 +309,7 @@ func TestSyncPipelines_BaselineComesFromLedgerNotWatermark(t *testing.T) {
 	// The repo has been polled before (watermark set), but CI has never run.
 	require.NoError(t, service.SetForgeSyncWatermark(service.ForgeRepoKey{
 		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
-	}, now.Add(-time.Hour)))
+	}, forge.ItemTypeIssue, now.Add(-time.Hour)))
 
 	provider := &pipelineProvider{runs: []forge.PipelineRun{
 		pipelineRun(100, forge.PipelineFailure, now),
