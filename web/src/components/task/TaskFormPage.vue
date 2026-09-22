@@ -210,6 +210,25 @@
           <label class="form-label">{{ t('task.form.maxRuns') }}</label>
           <input type="number" class="form-input" v-model.number="form.maxRuns" min="1" />
         </div>
+
+        <!-- Custom script (pre-AI precondition). Cron tasks only: an event
+             task's prompt is driven by the injected event context, and the
+             backend ignores a script on an event task. -->
+        <div class="form-group">
+          <label class="form-label">{{ t('task.form.script') }}</label>
+          <textarea
+            class="form-textarea script-textarea font-mono"
+            v-model="form.script"
+            :placeholder="t('task.form.scriptPlaceholder')"
+          ></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">{{ t('task.form.scriptTimeout') }}</label>
+          <input type="number" class="form-input" v-model.number="form.scriptTimeout" min="0" />
+          <div v-if="errors.scriptTimeout" class="form-error">{{ errors.scriptTimeout }}</div>
+          <div class="form-hint">{{ t('task.form.scriptHint') }}</div>
+        </div>
         </template>
       </div>
 
@@ -650,6 +669,14 @@ onMounted(() => {
 
 .form-input.font-mono {
   font-family: var(--font-mono);
+}
+
+/* A shell script is code, so it is set in the monospace face and given more
+   room than a one-line input. */
+.script-textarea {
+  min-height: 120px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
 }
 
 .form-input:focus,

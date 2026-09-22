@@ -49,6 +49,7 @@
         @render-flush="scrollToBottom"
       />
       <div v-else-if="execDetail?.status === 'cancelled'" class="exec-cancelled-notice">{{ t('task.exec.cancelledNotice') }}</div>
+      <div v-else-if="execDetail?.status === 'skipped'" class="exec-skipped-notice">{{ t('task.exec.skippedNotice') }}</div>
       <div v-else class="exec-detail-empty">{{ isRunning ? t('task.exec.startingPreview') : t('task.exec.noTextOutput') }}</div>
     </div>
 
@@ -185,9 +186,13 @@ const execStream = useTaskExecStream({
   },
 })
 const showContinueBtn = computed(() => {
-  // Show button for completed or cancelled executions, not for running ones
+  // Show button for completed or cancelled executions, not for running ones.
+  // A skipped run has an empty sessionId (the script exited 0 with no output,
+  // so no session was ever created), and continuing from it would fail
+  // server-side with "source session not found".
   const status = props.execDetail?.status
-  return status && status !== 'running' && props.taskId && props.execDetail?.id
+  if (status === 'running' || status === 'skipped') return false
+  return status && props.taskId && props.execDetail?.id
 })
 
 async function onTerminate() {
@@ -842,6 +847,16 @@ onUnmounted(() => {
 }
 
 .exec-cancelled-notice {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--text-muted, #999);
+  font-style: italic;
+  font-size: var(--font-size-lg);
+}
+
+/* A skipped run is a deliberate no-op, not an error — same treatment as the
+   cancelled notice, but kept as its own class so the two can diverge. */
+.exec-skipped-notice {
   padding: 3rem 1rem;
   text-align: center;
   color: var(--text-muted, #999);

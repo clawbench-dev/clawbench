@@ -1165,6 +1165,14 @@ export default {
       repeatLimited: '限制次数',
       repeatUnlimited: '不限次数',
       maxRuns: '最大执行次数',
+      // Optional pre-AI script (cron tasks only). The hint must convey three
+      // things the UI cannot show by itself: where it runs, why it is absent
+      // from the list's "running" state, and what a silent exit 0 does.
+      script: '自定义脚本',
+      scriptPlaceholder: '可选：在 AI 之前执行的 Shell 脚本，留空则不执行',
+      scriptTimeout: '脚本超时（秒）',
+      scriptTimeoutInvalid: '请输入非负整数秒数（0 表示使用默认值）',
+      scriptHint: '脚本在 AI 之前执行，工作目录为任务所在项目路径。脚本运行期间不会在任务列表显示为「执行中」（它不算一次 AI 执行），但会出现在执行记录中，可在那里中止。脚本以 0 退出且无输出时会跳过 AI 且不发送任何通知；有输出、非 0 退出或超时则照常调用 AI，并将脚本输出注入提示词。',
       prompt: '提示词 (Prompt)',
       promptPlaceholder: '输入要发送给AI的提示词...',
       promptRequired: '请输入提示词',
@@ -1188,6 +1196,7 @@ export default {
       title: '执行记录',
       noExecutions: '暂无执行记录',
       noTextOutput: '无文本输出',
+      skippedHint: '已跳过，无输出',
       startingPreview: '正在连接预览…',
       manual: '手动',
       auto: '自动',
@@ -1203,7 +1212,13 @@ export default {
       detail: '执行详情',
       statusCancelled: '已取消',
       statusFailed: '失败',
+      statusSkipped: '已跳过',
+      // Label for a running row in the pre-AI script phase: it is preparing the
+      // run, not running the AI, and the task list deliberately shows it as
+      // not-running.
+      statusScriptPhase: '准备中（脚本）',
       cancelledNotice: '此执行已被取消，无输出内容',
+      skippedNotice: '脚本以 0 退出且无输出，本次已跳过 AI 执行',
       confirmDeleteExecution: '确定删除此执行记录？',
       executionDeleted: '执行记录已删除',
       confirmDeleteAll: '确定清除所有执行记录？此操作不可撤销。',

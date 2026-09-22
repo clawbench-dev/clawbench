@@ -44,6 +44,7 @@ vi.mock('@/composables/useTaskHistory.ts', async () => {
       hasMore: false,
       allExecutions: ref([]),
       isRunning: () => false,
+      isScriptPhase: () => false,
       isJustCompleted: () => false,
       loadExecutions: vi.fn().mockResolvedValue(undefined),
       loadMoreExecutions: vi.fn(),
@@ -91,8 +92,8 @@ let wrapper: ReturnType<typeof mount> | null = null
 /** Mount and let the immediate watcher (and its mount-time sync) settle.
  *  The mount-time loadRunningStatus call is expected; callers that count calls
  *  must clear the spy after this returns. */
-async function mountTab(taskId = 2) {
-  wrapper = mount(TaskHistoryTab, { props: { task: { id: taskId } } })
+async function mountTab(taskId = 2, extraProps = {}) {
+  wrapper = mount(TaskHistoryTab, { props: { task: { id: taskId, ...extraProps } } })
   await nextTick()
   return wrapper
 }
@@ -185,6 +186,58 @@ describe('TaskHistoryTab task_update subscription', () => {
     dispatch('task_update', { task_id: '2', status: 'running' })
     window.dispatchEvent(new CustomEvent('clawbench-reconnect'))
     vi.advanceTimersByTime(500)
+
+    expect(mockLoadRunningStatus).not.toHaveBeenCalled()
+  })
+
+  // ── Script-phase fallback poll ──
+  // The backend emits no task_update for the pre-AI script phase, so without
+  // this poll the script-phase row would never appear and its cancel button
+  // would be unreachable.
+
+  it('polls running status for a task that has a script', async () => {
+    await mountTab(2, { script: 'echo hi' })
+    mockLoadRunningStatus.mockClear()
+
+    // No WS event at all — only the poll can surface the script row.
+    vi.advanceTimersByTime(5000)
+    expect(mockLoadRunningStatus).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(5000)
+    expect(mockLoadRunningStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not poll for a task without a script', async () => {
+    // A task with no script keeps the original event-driven design: the WS
+    // events are the only sync source.
+    await mountTab(2)
+    mockLoadRunningStatus.mockClear()
+
+    vi.advanceTimersByTime(30000)
+
+    expect(mockLoadRunningStatus).not.toHaveBeenCalled()
+  })
+
+  it('skips a poll tick while the page is hidden', async () => {
+    await mountTab(2, { script: 'echo hi' })
+    mockLoadRunningStatus.mockClear()
+
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    vi.advanceTimersByTime(5000)
+    expect(mockLoadRunningStatus).not.toHaveBeenCalled()
+
+    hidden.mockRestore()
+    vi.advanceTimersByTime(5000)
+    expect(mockLoadRunningStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops the script poll on unmount', async () => {
+    await mountTab(2, { script: 'echo hi' })
+    wrapper!.unmount()
+    wrapper = null
+
+    mockLoadRunningStatus.mockClear()
+    vi.advanceTimersByTime(30000)
 
     expect(mockLoadRunningStatus).not.toHaveBeenCalled()
   })
