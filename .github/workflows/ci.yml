@@ -29,6 +29,17 @@ jobs:
           node-version: '24'
           cache: 'npm'
 
+      - name: Build Excalidraw vendor bundle (for go:embed)
+        # The isolated React editor is deliberately NOT part of the root Vite
+        # build (see web/vendor-build/excalidraw/vite.config.ts) — it has its own
+        # package.json and writes into .clawbench-web/vendor/excalidraw/. Without
+        # this step the iframe at /vendor/excalidraw/index.html 404s on every
+        # released binary, because ServeIndex finds no such file in the FS.
+        working-directory: web/vendor-build/excalidraw
+        run: |
+          npm ci
+          npm run build
+
       - name: Build frontend (for go:embed)
         run: |
           npm ci
@@ -61,6 +72,17 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+
+      - name: Build Excalidraw vendor bundle (for go:embed)
+        # The isolated React editor is deliberately NOT part of the root Vite
+        # build (see web/vendor-build/excalidraw/vite.config.ts) — it has its own
+        # package.json and writes into .clawbench-web/vendor/excalidraw/. Without
+        # this step the iframe at /vendor/excalidraw/index.html 404s on every
+        # released binary, because ServeIndex finds no such file in the FS.
+        working-directory: web/vendor-build/excalidraw
+        run: |
+          npm ci
+          npm run build
 
       - name: Build frontend (for go:embed)
         run: |
@@ -102,6 +124,17 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+
+      - name: Build Excalidraw vendor bundle (for go:embed)
+        # The isolated React editor is deliberately NOT part of the root Vite
+        # build (see web/vendor-build/excalidraw/vite.config.ts) — it has its own
+        # package.json and writes into .clawbench-web/vendor/excalidraw/. Without
+        # this step the iframe at /vendor/excalidraw/index.html 404s on every
+        # released binary, because ServeIndex finds no such file in the FS.
+        working-directory: web/vendor-build/excalidraw
+        run: |
+          npm ci
+          npm run build
 
       - name: Build frontend (for go:embed)
         run: |
@@ -282,6 +315,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build Excalidraw vendor bundle
+        working-directory: web/vendor-build/excalidraw
+        run: |
+          npm ci
+          npm run build
+
       - name: Build
         run: npm run build
 
@@ -363,6 +402,14 @@ jobs:
 
       - name: Build ACP mock agent
         run: go build -o acp-mock ./cmd/acp-mock
+
+      - name: Build Excalidraw vendor bundle
+        # Same reason as the go:embed steps above: the root `npm run build` does
+        # not produce vendor/excalidraw/, so the server would 404 the iframe.
+        working-directory: web/vendor-build/excalidraw
+        run: |
+          npm ci
+          npm run build
 
       - name: Build frontend
         run: npm run build

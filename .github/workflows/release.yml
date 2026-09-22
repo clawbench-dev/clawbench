@@ -32,6 +32,17 @@ jobs:
           node-version: '24'
           cache: 'npm'
 
+      - name: Build Excalidraw vendor bundle (for go:embed)
+        # The isolated React editor is deliberately NOT part of the root Vite
+        # build (see web/vendor-build/excalidraw/vite.config.ts) — it has its own
+        # package.json and writes into .clawbench-web/vendor/excalidraw/. Without
+        # this step the iframe at /vendor/excalidraw/index.html 404s on every
+        # released binary, because ServeIndex finds no such file in the FS.
+        working-directory: web/vendor-build/excalidraw
+        run: |
+          npm ci
+          npm run build
+
       - name: Build frontend (for go:embed)
         run: |
           npm ci
@@ -61,6 +72,17 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+
+      - name: Build Excalidraw vendor bundle (for go:embed)
+        # The isolated React editor is deliberately NOT part of the root Vite
+        # build (see web/vendor-build/excalidraw/vite.config.ts) — it has its own
+        # package.json and writes into .clawbench-web/vendor/excalidraw/. Without
+        # this step the iframe at /vendor/excalidraw/index.html 404s on every
+        # released binary, because ServeIndex finds no such file in the FS.
+        working-directory: web/vendor-build/excalidraw
+        run: |
+          npm ci
+          npm run build
 
       - name: Build frontend (for go:embed)
         run: |
@@ -96,6 +118,18 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+
+      - name: Build Excalidraw vendor bundle
+        # MUST run before the artifact upload: this job's web-dist artifact is
+        # the frontend embedded into every platform binary, so the vendor bundle
+        # has to be inside .clawbench-web/ before it is captured. The root
+        # `npm run build` does not produce it — the isolated React editor is a
+        # separate build with its own package.json (see
+        # web/vendor-build/excalidraw/vite.config.ts).
+        working-directory: web/vendor-build/excalidraw
+        run: |
+          npm ci
+          npm run build
 
       - name: Build frontend
         run: npm ci && npm run build
