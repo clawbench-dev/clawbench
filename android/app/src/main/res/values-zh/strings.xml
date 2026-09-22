@@ -108,6 +108,7 @@
     <string name="notif_status_separator">，</string>
     <string name="notif_listening">消息监听中</string>
     <string name="notif_service_stopping">后台服务即将停止</string>
+    <string name="notif_service_starting">后台服务启动中…</string>
     <!-- Share feature -->
     <string name="share_file_failed">分享文件失败</string>
     <string name="share_multiple_files">分享多个文件</string>

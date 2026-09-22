@@ -14,6 +14,10 @@ __pycache__/
 # Go build output
 /clawbench
 clawbench.exe
+# Cross-compiled outputs from build.sh (platform-suffixed so they never clobber
+# the host binary — see build.sh step 3). Must stay listed: a stray
+# clawbench-linux-amd64 is ~150MB and would otherwise show as untracked.
+/clawbench-*
 clawbench-dev
 dev-clawbench
 coverage.out

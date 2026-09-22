@@ -1101,6 +1101,29 @@ describe('usePortForward', () => {
             mockIsAppMode.value = false
         })
 
+        /**
+         * The no-ports branch is destructive on Android: it clears the persisted
+         * forwarded_ports list so a cold start cannot restore a service that can
+         * never connect. A transient fetch failure must NOT reach it — otherwise
+         * a flaky network would silently drop the user's port forwards.
+         */
+        it('does not stop native service when the port list fetch fails', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockRejectedValue(new Error('network down'))
+            const mockStop = vi.fn()
+            ;(window as any).ClawBenchNative = { stopBackgroundService: mockStop }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { syncToNative } = usePortForward()
+
+            await expect(syncToNative()).rejects.toThrow('network down')
+
+            expect(mockStop).not.toHaveBeenCalled()
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
         it('registers each port with host to native layer', async () => {
             mockIsAppMode.value = true
             mockApiGet.mockResolvedValue({

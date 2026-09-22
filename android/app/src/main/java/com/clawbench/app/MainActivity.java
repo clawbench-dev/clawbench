@@ -2764,6 +2764,12 @@ public class MainActivity extends AppCompatActivity {
             activity.runOnUiThread(() -> {
                 AppLog.i(TAG, "WebView requested BackgroundService stop (no ports on server)");
                 activity.forwardedPorts.clear();
+                // Must also drop the Service's own map + the persisted list.
+                // Clearing only the Activity cache left forwarded_ports in
+                // SharedPreferences, so restoreBackgroundServiceIfNeeded() would
+                // restart the service on the next cold start with ports it can
+                // never forward — it then shows "后台服务即将停止" indefinitely.
+                BackgroundService.forgetForwardedPorts(activity);
                 BackgroundService.stop(activity);
             });
         }

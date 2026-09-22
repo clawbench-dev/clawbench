@@ -623,11 +623,19 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * Start the port forward service.
+     * Start the port forward service and restore any persisted port forwards.
+     *
+     * The intent MUST carry RESTORE_PORTS: an action-less intent hits none of the
+     * branches in onStartCommand(), so the SSH session is never re-established
+     * while onCreate() has already repopulated forwardedPorts from prefs. The
+     * service then satisfies neither stopSelf() condition (ports non-empty) nor
+     * any work branch, and the foreground notification sits at
+     * "后台服务即将停止" forever.
      */
     public static void start(Context context) {
         if (isRunning) return;
         Intent intent = new Intent(context, BackgroundService.class);
+        intent.setAction("RESTORE_PORTS");
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);
         } else {
@@ -642,6 +650,30 @@ public class BackgroundService extends Service {
         if (!isRunning) return;
         Intent intent = new Intent(context, BackgroundService.class);
         context.stopService(intent);
+    }
+
+    /**
+     * Discard every forwarded port, in memory and in SharedPreferences.
+     *
+     * Called when the server reports zero enabled ports — the frontend knows
+     * those forwards are gone, so nothing should be restored on the next cold
+     * start. Without this, onDestroy() only prunes prefs when its own map is
+     * already empty; a stop issued while ports are still mapped leaves the list
+     * behind, and restoreBackgroundServiceIfNeeded() then resurrects a service
+     * that can never connect (see start()).
+     */
+    public static void forgetForwardedPorts(Context context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .remove(KEY_FORWARDED_PORTS)
+                .apply();
+        BackgroundService svc = instance;
+        if (svc != null) {
+            svc.forwardedPorts.clear();
+            AppLog.i(TAG, "SSH: forgot all forwarded ports (memory + prefs)");
+        } else {
+            AppLog.i(TAG, "SSH: cleared forwarded ports from prefs (service not running)");
+        }
     }
 
     /**
@@ -681,7 +713,11 @@ public class BackgroundService extends Service {
         instance = this;
         jsch = new JSch();
         createNotificationChannel();
-        startForegroundCompat(NOTIFICATION_ID, buildNotification(0, null));
+        // Neutral placeholder: restoreForwardedPorts() runs further down, so at
+        // this point we genuinely cannot tell whether this service has work.
+        // buildNotification(0, null) would fall through to "后台服务即将停止"
+        // and flash a misleading "stopping" text on every cold start.
+        startForegroundCompat(NOTIFICATION_ID, buildNotification(0, getString(R.string.notif_service_starting)));
         AppLog.logMemory(this, TAG, "BackgroundService.onCreate");
 
         // Initialize screen state from PowerManager (may be off if service restarts while screen is off)
@@ -1064,7 +1100,12 @@ public class BackgroundService extends Service {
             } catch (Exception e) {
                 lastError = e.getMessage();
                 AppLog.e(TAG, "SSH: failed to restore connection after service restart", e);
-                // Connection monitor will handle reconnect
+                // Start the monitor so the retry loop actually runs. It is
+                // otherwise only started at the END of a successful
+                // ensureConnection(), so on a first-attempt failure nothing
+                // would ever retry and the service would sit with a non-empty
+                // port list it can never forward.
+                startConnectionMonitor();
             }
         }
     }
@@ -1832,6 +1873,16 @@ public class BackgroundService extends Service {
         // If SSH is down but native WS is active, show that instead of zombie port count
         if (activePortCount == 0 && (nativeWsNeeded || nativeWsActive)) {
             return buildNotification(0, getString(R.string.notif_listening));
+        }
+        // Ports restored from prefs but no session yet: the service has real work
+        // queued, so the "stopping" fallback would be a lie. Do NOT report them
+        // as live mappings either — nothing is forwarding yet (the reason
+        // activePortCount deliberately requires a connected session). The
+        // reconnect wording is the accurate description of this state, and it is
+        // the same string the monitor uses when a session drops with ports
+        // pending. ensureConnection()/the monitor will flip it to the real count.
+        if (activePortCount == 0 && !forwardedPorts.isEmpty()) {
+            return buildNotification(0, getString(R.string.ssh_notification_reconnecting));
         }
         return buildNotification(activePortCount, null);
     }
