@@ -10,7 +10,7 @@ const h = vi.hoisted(() => {
     showMock: vi.fn(),
     clickHandler: { current: null as null | (() => void) },
     sent: [] as Array<{ channel: string; nav: unknown }>,
-    winState: { minimized: false, visible: true, loading: false },
+    winState: { minimized: false, visible: true, loading: false, focused: false, destroyed: false },
     calls: { restore: 0, show: 0, focus: 0 },
     windowAvailable: true,
   }
@@ -37,6 +37,8 @@ vi.mock('./window', () => ({
         },
         isMinimized: () => h.winState.minimized,
         isVisible: () => h.winState.visible,
+        isFocused: () => h.winState.focused,
+        isDestroyed: () => h.winState.destroyed,
         restore: () => { h.calls.restore++; h.winState.minimized = false },
         show: () => { h.calls.show++; h.winState.visible = true },
         focus: () => { h.calls.focus++ },
@@ -90,8 +92,14 @@ describe('showTerminalNotification', () => {
     h.showMock.mockReset()
     h.windowAvailable = true
     h.winState.minimized = false
-    h.winState.visible = true
     h.winState.loading = false
+    // Default to a window that is NOT on screen: these cases are about
+    // notification delivery and click routing, and a visible window now
+    // suppresses the notification entirely. The suppression cases below set
+    // visibility explicitly.
+    h.winState.visible = false
+    h.winState.focused = false
+    h.winState.destroyed = false
     h.calls.restore = 0
     h.calls.show = 0
     h.calls.focus = 0
@@ -211,5 +219,80 @@ describe('showTerminalNotification', () => {
     showTerminalNotification('plain', 'body')
     expect(() => clickLatest()).not.toThrow()
     expect(h.sent).toHaveLength(0)
+  })
+
+  // ── 可见即抑制：窗口开着就不弹系统通知 ──
+
+  it('suppresses the notification when the window is visible and focused', () => {
+    // 用户正看着 ClawBench，系统通知只会重复应用内完成卡片已经展示的内容。
+    markRendererReady()
+    h.winState.visible = true
+    h.winState.minimized = false
+    h.winState.focused = true
+
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+
+    expect(h.showMock).not.toHaveBeenCalled()
+    expect(h.clickHandler.current).toBeNull()
+  })
+
+  it('also suppresses when the window is visible but NOT focused', () => {
+    // 判定只看可见性、不看焦点：窗口开在副屏或被别的应用盖住时，用户仍是
+    // "开着这个应用"，弹系统通知反而打扰他正在做的事。若按焦点判定，随手点
+    // 一下别的窗口就会开始收到通知，行为会变得难以预期。
+    markRendererReady()
+    h.winState.visible = true
+    h.winState.minimized = false
+    h.winState.focused = false
+
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+
+    expect(h.showMock).not.toHaveBeenCalled()
+    expect(h.clickHandler.current).toBeNull()
+  })
+
+  it('still notifies when the window is minimized, even if it reports focus', () => {
+    // 最小化 = 屏幕上没有它，用户不可能看到任何东西。渲染层的
+    // document.hasFocus() 在这种状态下仍可能为真，所以判定必须看主进程的
+    // 窗口状态而不是信任渲染层。
+    markRendererReady()
+    h.winState.minimized = true
+    h.winState.visible = false
+    h.winState.focused = true
+
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+
+    expect(h.showMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('still notifies when the window is hidden, even if it reports focus', () => {
+    markRendererReady()
+    h.winState.visible = false
+    h.winState.minimized = false
+    h.winState.focused = true
+
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+
+    expect(h.showMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('still notifies when the window is destroyed (no window on screen)', () => {
+    markRendererReady()
+    h.winState.destroyed = true
+    h.winState.visible = true
+
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+
+    expect(h.showMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not treat a missing window as "user is watching"', () => {
+    // 没有窗口可查时不能误判成"用户在看"而静默丢掉通知。
+    markRendererReady()
+    h.windowAvailable = false
+
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+
+    expect(h.showMock).toHaveBeenCalledTimes(1)
   })
 })

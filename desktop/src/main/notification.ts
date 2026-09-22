@@ -57,9 +57,44 @@ function sendNavToRenderer(channel: NavChannel, nav: NotificationNav): void {
   revealWindow(w)
 }
 
+/**
+ * Whether the app window is open on screen.
+ *
+ * Used to suppress OS notifications while the window is visible: the user has
+ * the app open, so a notification for something it already shows on screen is
+ * pure noise. The renderer tries to make the same call (`document.hasFocus()`),
+ * but only the main process knows the truth — a renderer that is alive inside a
+ * minimized or hidden window still reports itself visible and focused.
+ *
+ * Visibility alone is the criterion, deliberately NOT focus: a window sitting
+ * on a second monitor (or behind another app) still counts as "the user has the
+ * app open", and popping OS notifications on top of whatever they are actually
+ * doing would be the noise this gate exists to prevent. Focus would also make
+ * the behaviour flaky — merely clicking another window would start delivering
+ * notifications again.
+ *
+ * Minimized counts as not-on-screen: the window exists but nothing of it is
+ * displayed. That, and hidden/destroyed windows, are exactly when a
+ * notification is worth showing.
+ */
+function isWindowOnScreen(): boolean {
+  const w = getMainWindow()
+  if (!w) return false
+  if (w.isDestroyed()) return false
+  if (w.isMinimized()) return false
+  return w.isVisible()
+}
+
 /** Show a native OS notification. Clicking navigates to the session/task in the renderer. */
 export function showTerminalNotification(title: string, body: string, nav?: NotificationNav): void {
   if (!Notification.isSupported()) return
+
+  // The window is open on screen — the user already sees the app, so an OS
+  // notification would only duplicate what the in-app completion card (and the
+  // session list) show. This is the authoritative check: the renderer's own
+  // visibility test cannot see a minimized or hidden window.
+  if (isWindowOnScreen()) return
+
   const n = new Notification({ title, body })
   n.on('click', () => {
     if (nav) sendNavToRenderer(channelFor(nav), nav)

@@ -126,6 +126,24 @@ describe('CompletionPopover', () => {
         expect(rule).not.toMatch(/max-height:\s*\d+px/)
     })
 
+    it('sizes the body from the same type scale as chat messages', () => {
+        // 用户反馈"字体有点小"：正文原来比聊天正文低一档（sm/12px），
+        // 现在对齐 .chat-message 的 md + snug。
+        const src = readWebFile('src/components/common/CompletionPopover.vue')
+        const rule = src.match(/\.completion-notify-body\s*\{[^}]*\}/)?.[0] || ''
+        expect(rule).toContain('font-size: var(--font-size-md)')
+        expect(rule).toContain('line-height: var(--line-height-snug)')
+        // 防回归：不得退回更小的一档
+        expect(rule).not.toContain('font-size: var(--font-size-sm)')
+        expect(rule).not.toContain('font-size: var(--font-size-xs)')
+
+        // 与聊天正文的实际声明逐字一致
+        const chatItem = readWebFile('src/components/chat/ChatMessageItem.vue')
+        const chatRule = chatItem.match(/\.chat-message\s*\{[^}]*\}/)?.[0] || ''
+        expect(chatRule).toContain('font-size: var(--font-size-md)')
+        expect(chatRule).toContain('line-height: var(--line-height-snug)')
+    })
+
     it('omits the body row entirely when there is no body', () => {
         mockState.active = ref(makeItem({ body: '' }))
         mountPopover()
@@ -409,34 +427,94 @@ describe('CompletionPopover', () => {
         expect(document.querySelectorAll('.completion-notify-kind')).toHaveLength(1)
     })
 
-    // ── 项目路径（跨项目标识）──
+    // ── 外部项目区隔带（跨项目显著区分）──
 
-    it('renders the project path when provided', () => {
-        mockState.active = ref(makeItem({ projectPath: '/home/me/other-project' }))
+    it('renders the external-project strip with badge, name and path', () => {
+        mockState.active = ref(makeItem({
+            projectPath: '/home/me/other-project',
+            projectName: 'other-project',
+        }))
         mountPopover()
 
-        const el = document.querySelector('.completion-notify-path')!
-        expect(el.textContent).toBe('/home/me/other-project')
-        expect(el.getAttribute('title')).toBe('/home/me/other-project')
+        const strip = document.querySelector('.completion-notify-project')!
+        expect(strip).toBeTruthy()
+        // 「外部」徽章
+        expect(strip.querySelector('.completion-notify-project-badge')).toBeTruthy()
+        // 项目名突出显示（独立元素 + 加粗）
+        const name = strip.querySelector('.completion-notify-project-name')!
+        expect(name.textContent).toBe('other-project')
+        expect(window.getComputedStyle(name).fontWeight).toBe('var(--font-weight-semibold)')
+        // 完整路径弱化展示
+        expect(strip.querySelector('.completion-notify-project-path')!.textContent)
+            .toBe('/home/me/other-project')
     })
 
-    it('omits the project path row when empty (same project)', () => {
-        mockState.active = ref(makeItem({ projectPath: '' }))
+    it('falls back to the path when no project name is provided', () => {
+        mockState.active = ref(makeItem({ projectPath: '/home/me/other-project', projectName: '' }))
         mountPopover()
 
-        expect(document.querySelector('.completion-notify-path')).toBeFalsy()
+        expect(document.querySelector('.completion-notify-project-name')!.textContent)
+            .toBe('/home/me/other-project')
+    })
+
+    it('omits the strip entirely for a same-project event', () => {
+        mockState.active = ref(makeItem({ projectPath: '', projectName: '' }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-notify-project')).toBeFalsy()
+        expect(document.querySelector('.completion-notify.is-external')).toBeFalsy()
+    })
+
+    it('marks the whole card as external (distinct border + background)', () => {
+        // 只靠底部一条区隔带时，卡片主体看起来仍像本项目的通知；
+        // 整卡换色让"不是本项目"在余光里就能分辨。
+        mockState.active = ref(makeItem({
+            projectPath: '/home/me/other-project',
+            projectName: 'other-project',
+        }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-notify')!.className).toContain('is-external')
+        const src = readWebFile('src/components/common/CompletionPopover.vue')
+        const rule = src.match(/\.completion-notify\.is-external\s*\{[^}]*\}/)?.[0] || ''
+        expect(rule).toContain('border-color')
+        expect(rule).toContain('background')
     })
 
     it('truncates a long project path on one line', () => {
         mockState.active = ref(makeItem({
             projectPath: '/very/long/path/to/some/deeply/nested/project/directory/name',
+            projectName: 'name',
         }))
         mountPopover()
 
-        const styles = window.getComputedStyle(document.querySelector('.completion-notify-path')!)
+        const styles = window.getComputedStyle(document.querySelector('.completion-notify-project-path')!)
         expect(styles.whiteSpace).toBe('nowrap')
         expect(styles.overflow).toBe('hidden')
         expect(styles.textOverflow).toBe('ellipsis')
+    })
+
+    it('does not attach native tooltips anywhere on the card', () => {
+        // 悬停卡片时不该再弹原生 tooltip（title 属性）——整卡已是可点击的通知，
+        // 悬浮时冒出浏览器提示框只会和 hover 暂停倒计时的交互打架。
+        mockState.active = ref(makeItem({
+            title: '很长的会话标题',
+            body: '很长的摘要正文',
+            projectPath: '/home/me/other-project',
+            projectName: 'other-project',
+        }))
+        mountPopover()
+
+        const card = document.querySelector('.completion-notify')!
+        expect(card.querySelectorAll('[title]')).toHaveLength(0)
+    })
+
+    it('keeps an aria-label on the close button for screen readers', () => {
+        // 去掉 title 不等于去掉无障碍名称：关闭按钮仍需 aria-label。
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        expect(document.querySelector('.completion-notify-close')!.getAttribute('aria-label')).toBeTruthy()
     })
 
     it.each([

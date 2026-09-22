@@ -5,7 +5,7 @@
         <div
           :key="active.groupKey"
           class="completion-notify"
-          :class="{ 'is-desktop': isPC }"
+          :class="{ 'is-desktop': isPC, 'is-external': !!active.projectPath }"
           role="button"
           tabindex="0"
           :aria-label="navigateLabel"
@@ -17,27 +17,40 @@
           @focusin="pauseAutoDismiss"
           @focusout="resumeAutoDismiss"
         >
-          <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-notify-icon" />
-          <div class="completion-notify-text">
-            <div class="completion-notify-head">
-              <!-- 两枚 chip：类别定归属（会话/任务/议题与合并），事件定内容 -->
-              <span v-if="active.kindLabel" class="completion-notify-kind is-category">{{ active.kindLabel }}</span>
-              <span class="completion-notify-kind" :class="`is-${active.eventTone}`">{{ displayKind }}</span>
-              <span class="completion-notify-title" :title="active.title">{{ active.title }}</span>
+          <div class="completion-notify-main">
+            <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-notify-icon" />
+            <div class="completion-notify-text">
+              <div class="completion-notify-head">
+                <!-- 两枚 chip：类别定归属（会话/任务/议题与合并），事件定内容 -->
+                <span v-if="active.kindLabel" class="completion-notify-kind is-category">{{ active.kindLabel }}</span>
+                <span class="completion-notify-kind" :class="`is-${active.eventTone}`">{{ displayKind }}</span>
+                <span class="completion-notify-title">{{ active.title }}</span>
+              </div>
+              <div v-if="active.body" class="completion-notify-body">{{ active.body }}</div>
             </div>
-            <div v-if="active.body" class="completion-notify-body" :title="active.body">{{ active.body }}</div>
-            <!-- 项目路径：仅跨项目时出现（调用方只在与当前项目不同时填充） -->
-            <div v-if="active.projectPath" class="completion-notify-path" :title="active.projectPath">{{ active.projectPath }}</div>
+            <button
+              class="completion-notify-close"
+              type="button"
+              :aria-label="gt('chat.popover.close')"
+              @click.stop="dismiss"
+            >
+              <X :size="14" />
+            </button>
           </div>
-          <button
-            class="completion-notify-close"
-            type="button"
-            :aria-label="gt('chat.popover.close')"
-            :title="gt('chat.popover.close')"
-            @click.stop="dismiss"
+          <!-- 外部项目区隔带：跨项目通知才出现。负 margin 抵消卡片内边距后铺满
+               整宽，accent 淡底 + 上边框把它从正文里分离出来——塞进正文行会被
+               当成普通弱化信息忽略掉，而"不是本项目"正是点击前的判断依据。 -->
+          <div
+            v-if="active.projectPath"
+            class="completion-notify-project"
           >
-            <X :size="14" />
-          </button>
+            <span class="completion-notify-project-badge">
+              <ExternalLink :size="10" />
+              <span>{{ gt('chat.popover.external') }}</span>
+            </span>
+            <span class="completion-notify-project-name">{{ active.projectName || active.projectPath }}</span>
+            <span class="completion-notify-project-path">{{ active.projectPath }}</span>
+          </div>
         </div>
       </Transition>
     </div>
@@ -46,7 +59,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { X } from 'lucide-vue-next'
+import { X, ExternalLink } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useCompletionPopover } from '@/composables/useCompletionPopover'
 import { useAgents } from '@/composables/useAgents'
@@ -165,11 +178,11 @@ function markRead(item: NonNullable<typeof active.value>): void {
 
 .completion-notify {
     display: flex;
-    align-items: flex-start;
-    gap: var(--space-4);
+    flex-direction: column;
     width: 100%;
     max-width: min(480px, 92vw);
-    padding: var(--space-4) var(--space-5);
+    /* 底部 padding 归零：外部项目区隔带要贴到卡片下沿（用负 margin 出血） */
+    padding: var(--space-4) var(--space-5) 0;
     background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
     color: var(--text-primary);
     /* Sharp-corner geometry, same language as the rest of the app's floating
@@ -182,6 +195,26 @@ function markRead(item: NonNullable<typeof active.value>): void {
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     overflow: hidden;
+}
+
+/* 外部项目：整卡换色。边框与底色都偏向 accent，让"这不是本项目的通知"在
+   余光里就能分辨——只靠底部一条区隔带，卡片主体看起来仍像本项目的。 */
+.completion-notify.is-external {
+    border-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
+    background: color-mix(in srgb, var(--accent-color) 6%, var(--bg-tertiary));
+}
+
+/* 卡片主体行（图标 + 文本 + 关闭），与底部的项目区隔带分开 */
+.completion-notify-main {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    /* 有区隔带时补上被卡片 padding 让出的下边距 */
+    padding-bottom: var(--space-4);
+}
+
+.completion-notify.is-external .completion-notify-main {
+    padding-bottom: var(--space-3);
 }
 
 @media (min-width: 768px) {
@@ -246,9 +279,11 @@ function markRead(item: NonNullable<typeof active.value>): void {
 .completion-notify-title {
     flex: 1;
     min-width: 0;
+    /* 与聊天正文同级（.chat-message 也是 --font-size-md + --line-height-snug），
+       通知读起来应和对话里的文字一样大。 */
     font-size: var(--font-size-md);
-    font-weight: var(--font-weight-semibold);
     line-height: var(--line-height-snug);
+    font-weight: var(--font-weight-semibold);
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
@@ -258,12 +293,13 @@ function markRead(item: NonNullable<typeof active.value>): void {
 /* 正文：最多 4 行，超出用省略号收尾。单行时摘要几乎读不出信息（"已完成
    登录流程重构…" 后面全被截掉），放宽到 4 行才能在卡片内判断结果好坏——
    但仍要封顶，否则一段长回复会把通知撑成面板。
+   字号/行高对齐聊天正文（.chat-message），不再降一档——用户反馈"字体有点小"。
    用 -webkit-line-clamp 而非固定 max-height：行数由行高自动换算，改字号
    或行高时不用同步改数值。 */
 .completion-notify-body {
-    margin-top: 2px;
-    font-size: var(--font-size-sm);
-    line-height: var(--line-height-normal);
+    margin-top: var(--space-2);
+    font-size: var(--font-size-md);
+    line-height: var(--line-height-snug);
     color: var(--text-secondary, var(--text-primary));
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -275,10 +311,54 @@ function markRead(item: NonNullable<typeof active.value>): void {
     overflow-wrap: break-word;
 }
 
-/* 项目路径行：比正文再小一档、更弱化。只有跨项目通知才出现——它回答
-   "这事不在你正看的项目里"，是点击前的关键判断依据。完整路径放 title。 */
-.completion-notify-path {
-    margin-top: 2px;
+/* ── 外部项目区隔带 ──
+   负 margin 抵消卡片内边距后铺满整宽，accent 淡底 + 上边框形成独立区带。
+   与卡片主体用不同底色分层，项目名加粗突出（用户一眼要看到"哪个项目"）。 */
+.completion-notify-project {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-1) calc(-1 * var(--space-5)) 0;
+    padding: var(--space-3) var(--space-5);
+    background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary, #fff));
+    border-top: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+    min-width: 0;
+}
+
+/* "外部"徽章：accent 描边小标签，提示这是其他项目的会话 */
+.completion-notify-project-badge {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 1px 5px;
+    font-size: var(--font-size-2xs);
+    line-height: var(--line-height-snug);
+    font-weight: var(--font-weight-medium);
+    color: var(--accent-color);
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
+    border-radius: var(--radius-xs);
+}
+
+.completion-notify-project-badge svg {
+    flex-shrink: 0;
+}
+
+/* 项目名：突出显示——加粗 + 正文色，是这行的主信息 */
+.completion-notify-project-name {
+    flex-shrink: 0;
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-normal);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary, var(--text-primary));
+}
+
+/* 项目路径：弱化补充，占剩余宽度并尾部省略（flex 容器内 text-overflow
+   不生效，所以省略必须落在这一层） */
+.completion-notify-project-path {
+    flex: 1;
+    min-width: 0;
     font-size: var(--font-size-xs);
     line-height: var(--line-height-normal);
     color: var(--text-hint);

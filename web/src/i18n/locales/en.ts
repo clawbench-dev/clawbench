@@ -744,6 +744,7 @@ export default {
       categorySession: 'Session',
       categoryTask: 'Task',
       categoryForge: 'Issues & PRs',
+      external: 'External',
     },
     session: {
       aiDialog: 'AI Chat',

@@ -1311,7 +1311,11 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
         // 它——渲染 "#0" 看起来像坏引用。
         const num = ev.number || data.item?.number
         const ref = num ? ` #${num}` : ''
-        const projectPath = ev.project_path || ''
+        // 同会话/任务：本项目不显示项目区隔带，只有事件归属别的项目时才显示
+        // （forge 面板是项目作用域的，不知道它来自别的项目会点进一个没有该行
+        // 的面板）。project_path 为空表示没能归属到任何项目绑定。
+        const forgeSameProject = !ev.project_path || ev.project_path === store.state.projectRoot
+        const forgeProjectPath = forgeSameProject ? '' : ev.project_path
         // 同仓库的事件合并成一张"N 条新变化"：一次轮询会派发整批事件，
         // 逐条排队会把队列堵死。groupKey 用仓库标识而非条目——用户关心的是
         // "这个仓库有动静"，不是每一个议题各弹一次。
@@ -1332,7 +1336,8 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
             forgeItemKey: ev.item_type && ev.item_type !== 'pipeline' && num
                 ? `${ev.item_type}/${num}`
                 : undefined,
-            projectPath,
+            projectPath: forgeProjectPath,
+            projectName: forgeProjectPath ? baseName(forgeProjectPath) : '',
         })
         return
     }
@@ -1360,10 +1365,11 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
     const body = status === 'permission_pending'
         ? (data.tool_name || '')
         : (plainPreview(data) || data.session_title || '')
-    // 跨项目才显示项目路径：本项目不加（用户知道自己在哪）。它回答
+    // 跨项目才显示项目信息：本项目不加（用户知道自己在哪）。它回答
     // "这事不在你正看的项目里"，是点击前的关键判断依据。
     const isSameProject = !data.project_path || data.project_path === store.state.projectRoot
     const projectPath = isSameProject ? '' : (data.project_path || '')
+    const projectName = projectPath ? baseName(projectPath) : ''
 
     if (event === 'task_update') {
         const meta = TASK_STATUS_META[status]
@@ -1378,6 +1384,7 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
             body,
             agentId: data.agent_id || '',
             projectPath,
+            projectName,
             taskId: data.task_id,
             executionId: data.execution_id,
         })
@@ -1395,6 +1402,7 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
             sessionId,
             agentId: data.agent_id || '',
             projectPath,
+            projectName,
         })
     }
 }

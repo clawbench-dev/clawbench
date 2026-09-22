@@ -747,6 +747,7 @@ export default {
       categorySession: '会话',
       categoryTask: '任务',
       categoryForge: '议题与合并',
+      external: '外部',
     },
     session: {
       aiDialog: 'AI 对话',

@@ -46,7 +46,10 @@ export interface CompletionPopoverItem {
     forgeItemKey?: string
     /** 运行会话/任务的 agent id（渲染后端图标用） */
     agentId?: string
+    /** 项目路径。仅跨项目时填充（本项目留空）——它是"外部"视觉区分的开关 */
     projectPath?: string
+    /** 项目显示名（路径 basename）。仅跨项目时填充，在卡片底部突出展示 */
+    projectName?: string
 }
 
 /** 队列上限：超出丢弃最旧的排队项，保证卡片不落后于现实（active 不受影响）。 */
