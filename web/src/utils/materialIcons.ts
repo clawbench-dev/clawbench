@@ -25,6 +25,24 @@ const iconUrlCache = new Map<string, string>()
 const iconUrlPending = new Map<string, Promise<string | undefined>>()
 
 /**
+ * Extensions ClawBench supports that material-icon-theme does not know about,
+ * mapped to the icon of the equivalent format.
+ *
+ * `.xdraw` is the short alias for `.excalidraw` (see web/src/utils/fileType.ts).
+ * The icon package has an `excalidraw` entry but no `xdraw` one, so without this
+ * the same scene would show the proper icon as `.excalidraw` and the generic
+ * file icon as `.xdraw` — the alias would look like a second-class format.
+ *
+ * Keyed by extension, valued by icon name. A manifest entry always wins (see
+ * the lookup below), so this stays correct if the package later ships `xdraw`.
+ *
+ * Exported for the test that verifies every target is a real icon in the theme.
+ */
+export const EXT_ICON_ALIASES: Record<string, string> = {
+  xdraw: 'excalidraw',
+}
+
+/**
  * Lookup maps built from the material-icon-theme manifest.
  *
  * Built LAZILY, not at module init. `generateManifest()` walks the whole
@@ -106,6 +124,11 @@ export function getFileIconName(path: string): string {
     const fullExt = baseName.slice(dotIndex + 1).toLowerCase()
     const fullHit = extMap.get(fullExt)
     if (fullHit) return fullHit
+
+    // ClawBench-specific aliases for extensions the icon package lacks.
+    // Checked after the manifest so a real entry would take precedence.
+    const alias = EXT_ICON_ALIASES[fullExt]
+    if (alias) return alias
 
     // Try double extension (e.g., ".tar.gz" → "gz" already tried, try "tar.gz")
     if (dotIndex > 0) {

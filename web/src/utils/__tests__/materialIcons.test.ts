@@ -9,6 +9,7 @@ import {
   getIconUrl,
   getFileIconUrl,
   getFolderIconUrl,
+  EXT_ICON_ALIASES,
 } from '@/utils/materialIcons'
 
 function stubFetch(ok: boolean) {
@@ -84,6 +85,28 @@ describe('getFileIconName', () => {
 
   it('resolves SVG files', () => {
     expect(getFileIconName('logo.svg')).toBe('svg')
+  })
+
+  it('resolves Excalidraw files', () => {
+    expect(getFileIconName('diagram.excalidraw')).toBe('excalidraw')
+  })
+
+  it('resolves the .xdraw alias to the same icon as .excalidraw', () => {
+    // .xdraw is ClawBench's short alias for .excalidraw. The icon package has
+    // an `excalidraw` entry but no `xdraw` one, so without an explicit alias
+    // the same scene would render a real icon as .excalidraw and the generic
+    // fallback as .xdraw — making the alias look like a different format.
+    expect(getFileIconName('diagram.xdraw')).toBe('excalidraw')
+    expect(getFileIconName('diagram.xdraw')).toBe(getFileIconName('diagram.excalidraw'))
+  })
+
+  it('resolves the .xdraw alias case-insensitively', () => {
+    expect(getFileIconName('DIAGRAM.XDRAW')).toBe('excalidraw')
+  })
+
+  it('resolves the .xdraw alias inside nested and Windows paths', () => {
+    expect(getFileIconName('/a/b/c/diagram.xdraw')).toBe('excalidraw')
+    expect(getFileIconName('C:\\Users\\dev\\diagram.xdraw')).toBe('excalidraw')
   })
 
   it('resolves image files (png)', () => {
@@ -307,5 +330,33 @@ describe('getFolderIconUrl', () => {
     const openUrl = await getFolderIconUrl('dist', true)
     expect(closedUrl).toBe('/material-icons/folder-dist.svg')
     expect(openUrl).toBe('/material-icons/folder-dist-open.svg')
+  })
+})
+
+describe('extension icon aliases', () => {
+  /**
+   * EXT_ICON_ALIASES maps ClawBench-supported extensions that material-icon-theme
+   * does not know about onto the icon of the equivalent format. A typo in the
+   * target (e.g. 'excalidarw') would silently resolve to the generic icon and
+   * nothing else would fail, so verify each target is a real icon in the theme.
+   *
+   * Note this deliberately does NOT assert that every extension in FILE_TYPES
+   * has a distinct icon: the theme has pre-existing gaps for ~10 of them
+   * (.sum, .3gp, .wast, .regex, …). Requiring a distinct icon for all of them
+   * would mean either fixing all ten here or hard-coding a baseline of known
+   * gaps — both out of scope for adding one alias.
+   */
+  it('points every alias at an icon that exists in the theme', () => {
+    const genericIcon = getFileIconName('file.zzz-unknown-ext')
+    expect(genericIcon).toBe('file') // sentinel must really be the generic icon
+
+    const dangling = Object.entries(EXT_ICON_ALIASES)
+      .filter(([, target]) => getFileIconName(`sample.${target}`) === genericIcon)
+      .map(([ext, target]) => `${ext} → ${target}`)
+
+    expect(
+      dangling,
+      `alias target(s) missing from the icon theme: ${dangling.join(', ')}`
+    ).toEqual([])
   })
 })
