@@ -637,9 +637,16 @@ jobs:
           npm run build
 
       - name: Zip desktop (Linux)
+        # Archive the CONTENTS of the unpacked directory, not the directory
+        # itself. `zip -r ... linux-unpacked` prefixes every entry with
+        # `linux-unpacked/`, so anyone unzipping the release lands in a
+        # pointless extra folder before reaching the binary.
+        #
+        # The macOS step is the deliberate exception — read the comment there
+        # before "fixing" it the same way.
         run: |
-          cd desktop/release
-          zip -r clawbench-desktop-linux-x64.zip linux-unpacked
+          cd desktop/release/linux-unpacked
+          zip -r ../clawbench-desktop-linux-x64.zip .
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -688,9 +695,10 @@ jobs:
           npm run build -- --arm64
 
       - name: Zip desktop (Linux arm64)
+        # Contents, not the directory — see the x64 step above.
         run: |
-          cd desktop/release
-          zip -r clawbench-desktop-linux-arm64.zip linux-arm64-unpacked
+          cd desktop/release/linux-arm64-unpacked
+          zip -r ../clawbench-desktop-linux-arm64.zip .
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -739,8 +747,16 @@ jobs:
           npm run build
 
       - name: Zip desktop (Windows)
+        # The trailing `/*` is load-bearing: `-Path <dir>` would put a
+        # `win-unpacked/` level inside the archive, so unzipping the release
+        # would give users a pointless extra folder. With the wildcard the
+        # directory's contents land at the archive root (subdirectories are
+        # still included recursively).
+        #
+        # Unlike `zip -r`, this is not an equivalent-command swap: it changes
+        # what the archive looks like, which is exactly the point.
         shell: pwsh
-        run: Compress-Archive -Path desktop/release/win-unpacked -DestinationPath desktop/release/clawbench-desktop-windows-x64.zip
+        run: Compress-Archive -Path desktop/release/win-unpacked/* -DestinationPath desktop/release/clawbench-desktop-windows-x64.zip
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -809,6 +825,18 @@ jobs:
           npx electron-builder --dir --x64
 
       - name: Zip desktop (macOS)
+        # DELIBERATELY still wraps the payload in `mac-arm64/` / `mac/` — do
+        # NOT flatten this like the Windows/Linux steps. The wrapper is what
+        # makes the archive distinguishable from one whose top level is
+        # `ClawBench.app/`.
+        #
+        # Why that matters: install.ts's extractZip strips the single
+        # top-level directory every entry shares. Without the wrapper, the
+        # shared top level IS `ClawBench.app/`, so the installer would strip
+        # the app bundle itself and then fail to find the executable inside
+        # it. Flattening this would also break self-upgrade for clients that
+        # already shipped with the wrapper — they run the old installer,
+        # which strips the wrapper unconditionally.
         run: |
           cd desktop/release
           zip -r clawbench-desktop-darwin-arm64.zip mac-arm64
