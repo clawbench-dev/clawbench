@@ -464,7 +464,7 @@ AI 需要你补充信息时会给出**提问卡**（带选项按钮），点选�
 | Excel | `.xlsx` | 表格视图（多 Sheet） |
 | PPT | `.pptx` | 逐页渲染 |
 | OpenAPI | 含 `openapi` 字段的 YAML/JSON | Swagger UI |
-| Excalidraw | `.excalidraw` | 内嵌画布编辑器 |
+| Excalidraw | `.xdraw` `.excalidraw` | 内嵌画布编辑器 |
 | 其他 | 任意 | 文本查看 |
 
 ### 8.2 Markdown

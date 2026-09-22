@@ -656,7 +656,7 @@ AI 还在输出时你能做的事：插话、取消、重置会话。
 | Excel | `.xlsx` | 表格渲染 |
 | PPT | `.pptx` | 幻灯片渲染 |
 | OpenAPI | `.yaml` `.json`（含 openapi 字段） | Swagger UI |
-| Excalidraw | `.excalidraw` `.xdraw` | 内嵌画布编辑器 |
+| Excalidraw | `.xdraw` `.excalidraw` | 内嵌画布编辑器 |
 | HTML | `.html` | iframe 渲染预览 |
 | 其他 | 任意 | 文本查看（超大文件按窗口取数） |
 
@@ -781,13 +781,13 @@ PDF 分页渲染，可以滚动翻页、缩放、切换页码。
 
 ### 8.12 Excalidraw 画布
 
-用内嵌的画布编辑器打开 `.excalidraw` 文件，可编辑并保存回原文件。
+用内嵌的画布编辑器打开 `.xdraw` 文件，可编辑并保存回原文件。
 
 ![Excalidraw 编辑器](screenshots/preview-excalidraw.png)
 
-`.excalidraw` 文件在内嵌的 Excalidraw 编辑器中打开（独立 React 构建，通过 iframe 加载），可直接编辑并保存回原文件。
+`.xdraw` 文件在内嵌的 Excalidraw 编辑器中打开（独立 React 构建，通过 iframe 加载），可直接编辑并保存回原文件。
 
-不想打那么长的扩展名时，可以用等价的短别名 `.xdraw`，行为与 `.excalidraw` 完全一致（同样识别为画布、同样可编辑保存）。两者只是扩展名不同，文件内容格式相同，改扩展名即可互换。
+`.xdraw` 是本应用推荐使用的短扩展名。从 Excalidraw 官网导出、或由其他工具生成的文件扩展名是 `.excalidraw`，同样可以直接打开——两者行为完全一致（同样识别为画布、同样可编辑保存），文件内容格式相同，改扩展名即可互换。不想打那么长的扩展名时用 `.xdraw` 就行。
 
 ### 8.13 查看器工具栏
 

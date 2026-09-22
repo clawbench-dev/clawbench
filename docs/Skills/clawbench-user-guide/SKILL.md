@@ -300,7 +300,7 @@ if (!document.querySelector('.settings-index')) {
 | `test/images/` | 多张 jpg + svg |
 | `test/markdown/` | `table-demo.md`、`formula-demo.md`（LaTeX）、`mermaid-demo.md`、`images-demo.md`、`code-block-demo.md` |
 | `test/openapi/` | `petstore.yaml` 等 |
-| `test/excalidraw/` | `demo.excalidraw` |
+| `test/excalidraw/` | `demo.xdraw` |
 
 **这些是人工测试文件，只读使用，绝对不要删除或修改。**
 
