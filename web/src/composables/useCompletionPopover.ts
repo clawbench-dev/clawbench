@@ -28,8 +28,8 @@ export interface CompletionPopoverItem {
     /** 主体标题：会话名 / 任务名 / 仓库标识（谁出了事） */
     title: string
     /**
-     * 类别标识 chip（会话 / 任务 / 议题与合并）。与 eventLabel 并排构成
-     * 「类别 + 事件」两枚 chip：类别定归属、事件定内容。
+     * 主类别标签（会话 / 任务 / 议题与合并）。在 header 里以徽章形式出现，
+     * 与后面的事件类型标题构成「类别徽章 + 事件标题」。
      */
     kindLabel?: string
     /** 单行纯文本正文（超长由 CSS 省略号截断） */

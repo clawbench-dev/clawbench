@@ -34,7 +34,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [快捷操作](features/quick-actions.md) | 聊天 Quick Send、终端 Quick Commands、CRUD 与排序 |
 | [RAG 检索](features/rag.md) | 文档分块（含 chunk_overlap 配置）、向量化（可独立开关）、SQLite vec0 向量索引、混合检索（含 search_mode 配置）、三级索引重建（向量重建 + 全量重建 + 独立 FTS 重建）、可配置批次大小（`rag.batch_size`）、索引磁盘占用展示、会话聚合搜索、消息聚类分析、索引进度跟踪 |
 | [推送通知](features/push-notifications.md) | WebSocket 实时推送、通知音效开关（防止蓝牙耳机中断）、权限待审推送、离线事件持久化与游标拉取、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊 + 会话交互命令） |
-| [应用内完成通知](features/completion-popup.md) | 后台事件时滑入纯通知卡片：类别 chip + 事件类型 chip（语义配色）+ 主体名称 + 最多 4 行摘要 + 跨项目路径行 + 跳转（顺带标记已读）+ 关闭，5 秒自动关闭；事件覆盖与系统通知完全对齐（会话/任务/仓库），队列上限 3 + 同仓库合并 |
+| [应用内完成通知](features/completion-popup.md) | 后台事件时滑入纯通知卡片：头部区（图标 + 主类别徽章 + 事件类型纯文字标题 + 关闭）+ 正文区（标题段 + 最多 4 行摘要）+ 跨项目整卡换色与区隔带 + 跳转（顺带标记已读），5 秒自动关闭；事件覆盖与系统通知完全对齐（会话/任务/仓库），队列上限 3 + 同仓库合并 |
 | [智能体用量统计](features/usage-stats.md) | 按项目聚合 `chat_metadata` 用量行（独立台账，不随会话删除丢失）的数据统计：用量总览环形图 + 缓存命中下钻、按指标拆分的图表（bar/pie/trend 可切换）、24h/7d/30d/自定义时间窗与 model/backend/agent 筛选、费用两位小数统一、移动端纵向堆叠；数据统计页签另含代码存量/代码增量双子页（见 [Git 管理](features/git-management.md)） |
 | [系统资源监控](features/system-resources.md) | gopsutil 采集 CPU/内存/磁盘/网络/负载、500ms 采样缓存、WS 按订阅需求推送（`metrics_preference` 声明速率）、可见性感知、WS 断线时显示连接状态 |
 
