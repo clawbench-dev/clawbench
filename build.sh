@@ -172,9 +172,10 @@ if [[ -n "$RESTART_SKIP_BUILD" ]]; then
 elif command -v go >/dev/null 2>&1; then
     echo "[3/5] Building Go backend..."
     if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
-        # Platform-suffixed output, matching the naming release.yml already uses
-        # (clawbench-linux, clawbench-darwin-arm64, clawbench-android-arm64, …).
-        # Writing to the bare "$NAME" clobbered the host binary — a
+        # Platform-suffixed output (clawbench-linux-amd64, clawbench-darwin-arm64, …).
+        # The suffix is not shared with release.yml, which builds each target in
+        # its own job and names the intermediate binary itself; it exists purely
+        # to keep cross-compiles from clobbering the host binary — a
         # `./build.sh --linux-arm64` in a checkout whose ./clawbench was serving
         # traffic replaced the running server's file with a foreign-arch build.
         BINARY_NAME="${NAME}-${TARGET_OS}-${TARGET_ARCH}"
