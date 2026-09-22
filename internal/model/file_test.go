@@ -129,7 +129,7 @@ func TestDetectSubtype(t *testing.T) {
 	})
 
 	t.Run("xdraw large file with embedded image", func(t *testing.T) {
-		// The alias must share the .excalidraw behaviour of being detected
+		// The alias must share the .excalidraw behavior of being detected
 		// before the size gate, not just for small files.
 		big := `{"type":"excalidraw","files":{"img":{"dataURL":"data:image/png;base64,` +
 			strings.Repeat("A", 1<<20) + `"}}}`

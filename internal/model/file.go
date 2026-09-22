@@ -32,56 +32,64 @@ func IsSupportedFile(name string) bool {
 	return IsTextFile(name) || IsImageFile(name) || IsAudioFile(name) || IsVideoFile(name) || IsOfficeFile(name)
 }
 
+// textExts lists the extensions IsTextFile accepts, excluding the Excalidraw
+// ones (see excalidrawExts). Package-level rather than a per-call literal so the
+// slice is not rebuilt on every call.
+var textExts = []string{
+	".md", ".markdown",
+	".json", ".jsonc", ".json5",
+	".yaml", ".yml",
+	".toml",
+	".xml", ".plist",
+	".ini", ".properties", ".conf", ".cfg",
+	".go", ".mod", ".sum",
+	".py", ".pyi",
+	".rs",
+	".js", ".mjs", ".cjs",
+	".ts", ".tsx", ".mts", ".cts",
+	".java",
+	".cs",
+	".rb",
+	".php",
+	".swift",
+	".kt", ".kts",
+	".scala",
+	".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
+	".lua",
+	".r", ".R",
+	".pl", ".pm",
+	".sh", ".bash", ".zsh", ".fish", ".ksh", ".ash",
+	".ps1", ".psm1",
+	".sql",
+	".graphql", ".gql",
+	".html", ".htm", ".xhtml",
+	".css", ".scss", ".sass", ".less", ".styl",
+	".vue", ".svelte",
+	".dockerfile", ".dockerignore",
+	".makefile", ".mak",
+	".nginx",
+	".gitignore", ".gitattributes", ".gitconfig",
+	".editorconfig",
+	".ignore",
+	".txt", ".text",
+	".log",
+	".diff", ".patch",
+	".csv", ".tsv",
+	".tex",
+	".pem", ".crt", ".key", ".pub",
+	".regex", ".regexp",
+}
+
 // IsTextFile returns true if the filename has a supported text file extension.
 func IsTextFile(name string) bool {
-	exts := []string{
-		".md", ".markdown",
-		".json", ".jsonc", ".json5",
-		".yaml", ".yml",
-		".toml",
-		".xml", ".plist",
-		".ini", ".properties", ".conf", ".cfg",
-		".go", ".mod", ".sum",
-		".py", ".pyi",
-		".rs",
-		".js", ".mjs", ".cjs",
-		".ts", ".tsx", ".mts", ".cts",
-		".java",
-		".cs",
-		".rb",
-		".php",
-		".swift",
-		".kt", ".kts",
-		".scala",
-		".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
-		".lua",
-		".r", ".R",
-		".pl", ".pm",
-		".sh", ".bash", ".zsh", ".fish", ".ksh", ".ash",
-		".ps1", ".psm1",
-		".sql",
-		".graphql", ".gql",
-		".html", ".htm", ".xhtml",
-		".css", ".scss", ".sass", ".less", ".styl",
-		".vue", ".svelte",
-		".dockerfile", ".dockerignore",
-		".makefile", ".mak",
-		".nginx",
-		".gitignore", ".gitattributes", ".gitconfig",
-		".editorconfig",
-		".ignore",
-		".txt", ".text",
-		".log",
-		".diff", ".patch",
-		".csv", ".tsv",
-		".tex",
-		".pem", ".crt", ".key", ".pub",
-		".regex", ".regexp",
+	lower := strings.ToLower(name)
+	for _, ext := range textExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
 	}
 	// Excalidraw extensions are shared with DetectSubtype (see excalidrawExts).
-	exts = append(exts, excalidrawExts...)
-	lower := strings.ToLower(name)
-	for _, ext := range exts {
+	for _, ext := range excalidrawExts {
 		if strings.HasSuffix(lower, ext) {
 			return true
 		}
