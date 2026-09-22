@@ -1,9 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
-
-const LucideStub = { template: '<span class="lucide-stub" />' }
 
 const i18n = createI18n({
   legacy: false,
@@ -12,8 +10,8 @@ const i18n = createI18n({
     en: {
       file: {
         nav: {
-          externalDir: 'Directory outside project',
-          externalFile: 'File outside project',
+          external: 'External',
+          externalTip: 'Outside the project directory',
         },
       },
     },
@@ -23,29 +21,60 @@ const i18n = createI18n({
 function mountBadge(props: Record<string, any> = {}) {
   return mount(ExternalBadge, {
     props,
-    global: { stubs: { 'lucide-vue-next': LucideStub }, plugins: [i18n] },
+    global: { plugins: [i18n] },
   })
 }
 
 describe('ExternalBadge', () => {
-  it('labels a directory as outside the project', () => {
+  it('shows the short label for a directory', () => {
+    expect(mountBadge({ kind: 'dir' }).text()).toContain('External')
+  })
+
+  it('shows the short label for a file', () => {
+    expect(mountBadge({ kind: 'file' }).text()).toContain('External')
+  })
+
+  it('keeps the label to a single short word', () => {
+    // Regression guard: the badge sits inline in dense rows, so a phrase like
+    // "file outside the project" pushed the row's own content aside. The icon
+    // carries the file-vs-dir distinction instead.
+    for (const kind of ['dir', 'file']) {
+      const text = mountBadge({ kind }).find('.external-badge').text().trim()
+      expect(text).toBe('External')
+      expect(text.split(/\s+/)).toHaveLength(1)
+    }
+  })
+
+  it('spells the full meaning out in the tooltip', () => {
+    // The short label alone is ambiguous, so the explanation has to live here.
+    expect(mountBadge({ kind: 'dir' }).find('.external-badge').attributes('title'))
+      .toBe('Outside the project directory')
+  })
+
+  it('renders an icon alongside the label', () => {
+    // The icon carries the file-vs-directory distinction, which the single
+    // shared label deliberately does not. It renders as an inline <svg> — a
+    // module-level `lucide-vue-next` stub would NOT apply here, since the
+    // component imports FolderOpen/FileText as named bindings.
     const wrapper = mountBadge({ kind: 'dir' })
-    expect(wrapper.text()).toContain('Directory outside project')
+    expect(wrapper.find('.external-badge svg').exists()).toBe(true)
+    expect(wrapper.find('.external-badge').text().trim()).toBe('External')
   })
 
-  it('labels a file as outside the project', () => {
-    const wrapper = mountBadge({ kind: 'file' })
-    expect(wrapper.text()).toContain('File outside project')
+  it('picks a different icon for a directory than for a file', () => {
+    // The two kinds share one word, so the icon is the ONLY thing telling them
+    // apart. If both branches ever collapsed to the same component the badge
+    // would still render — and silently stop distinguishing anything.
+    const dirIcon = mountBadge({ kind: 'dir' }).find('.external-badge svg').classes()
+    const fileIcon = mountBadge({ kind: 'file' }).find('.external-badge svg').classes()
+    expect(dirIcon).toContain('lucide-folder-open')
+    expect(fileIcon).toContain('lucide-file-text')
+    expect(dirIcon).not.toEqual(fileIcon)
   })
 
-  it('defaults to the file wording', () => {
-    // The badge is dropped next to a filename in the common case, so a caller
-    // that forgets `kind` should still read correctly rather than showing dir.
-    expect(mountBadge().text()).toContain('File outside project')
-  })
-
-  it('exposes the label as a title for the icon-only reading', () => {
-    const wrapper = mountBadge({ kind: 'dir' })
-    expect(wrapper.find('.external-badge').attributes('title')).toBe('Directory outside project')
+  it('defaults to the file icon when no kind is given', () => {
+    // Callers drop the badge next to a filename in the common case, so a
+    // forgotten `kind` must read as a file rather than as a directory.
+    expect(mountBadge().find('.external-badge svg').classes()).toContain('lucide-file-text')
   })
 })

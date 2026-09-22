@@ -942,7 +942,7 @@ describe('FileHeader — project-external badge', () => {
         chat: { actions: { attachToChat: 'Attach' }, attach: { removeFromChat: 'Remove', addedToChat: 'Added', removedFromChat: 'Removed' } },
         file: {
           header: { toc: 'TOC', search: 'Search', fitWidth: 'Fit', quoteInChat: 'Quote', sourceView: 'Source', renderedView: 'Rendered', finishEditing: 'Done', edit: 'Edit', more: 'More' },
-          nav: { externalFile: 'File outside project' },
+          nav: { external: 'External', externalTip: 'Outside the project directory' },
         },
       },
     },

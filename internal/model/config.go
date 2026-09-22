@@ -359,7 +359,7 @@ var (
 	ChatInitialMessages      int  // Default: 20
 	ChatPageSize             int  // Default: 20
 	ChatSessionPageSize      int  // Default: 10
-	ChatSystemPromptInterval int  // Re-inject system prompt every N assistant turns (0=never, default: 10)
+	ChatSystemPromptInterval int  // Re-inject system prompt every N assistant turns (0=never, default: 0)
 	ChatRecommendEnabled     bool // 推荐回复: generate next-step recommendation after each assistant reply (default: false)
 	// ChatForkContextBudget bounds the history text re-injected on fork/rewind
 	// (default: DefaultForkContextBudget). Read by service.BuildForkContext.

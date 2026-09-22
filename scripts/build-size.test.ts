@@ -14,8 +14,9 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
 import { resolve, join } from 'path'
+import { parseEntryChunkName } from './lib/entryChunk'
 
 const PROJECT_ROOT = resolve(__dirname, '..')
 const BUILD_DIR = join(PROJECT_ROOT, '.clawbench-web')
@@ -45,16 +46,6 @@ const EXPECTED_SPLIT_CHUNKS = [
 ]
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-
-function findFile(dir: string, prefix: string, suffix = '.js'): string | null {
-    try {
-        const files = readdirSync(dir)
-        const match = files.find(f => f.startsWith(prefix) && f.endsWith(suffix))
-        return match ? join(dir, match) : null
-    } catch {
-        return null
-    }
-}
 
 function getFileSize(filePath: string): number {
     return statSync(filePath).size
@@ -94,10 +85,13 @@ describe('Build output verification (Issue #328)', () => {
     describe('Index chunk size', () => {
         it('index chunk should be under size threshold', () => {
             if (!buildExists) return
-            const indexPath = findFile(BUILD_DIR, 'main-', '.js')
-            expect(indexPath, 'main-*.js not found in .clawbench-web/').not.toBeNull()
+            const html = readFileSync(indexHtmlPath, 'utf-8')
+            const entryName = parseEntryChunkName(html)
+            expect(entryName, 'entry script tag not found in index.html').not.toBeNull()
+            const indexPath = join(BUILD_DIR, entryName!)
+            expect(existsSync(indexPath), `${entryName} referenced by index.html but missing`).toBe(true)
 
-            const size = getFileSize(indexPath!)
+            const size = getFileSize(indexPath)
             console.log(`  Index chunk size: ${formatBytes(size)} (threshold: ${formatBytes(INDEX_CHUNK_MAX_BYTES)})`)
 
             expect(size).toBeLessThan(INDEX_CHUNK_MAX_BYTES)
@@ -147,8 +141,8 @@ describe('Build output verification (Issue #328)', () => {
             // Files that must be loaded on first screen:
             // 1. main-*.js (main entry, referenced in <script>)
             // 2. modulepreload links (eagerly loaded by browser)
-            const scriptMatch = html.match(/src="([^"]*main-[^"]+\.js)"/)
-            expect(scriptMatch, 'entry script tag not found').not.toBeNull()
+            const entryName = parseEntryChunkName(html)
+            expect(entryName, 'entry script tag not found in index.html').not.toBeNull()
 
             const modulepreloadLinks = [...html.matchAll(/rel="modulepreload"[^>]*href="([^"]+)"/g)]
                 .map(m => m[1])
@@ -157,10 +151,12 @@ describe('Build output verification (Issue #328)', () => {
             let totalBytes = 0
             const details: string[] = []
 
-            // Main entry chunk
-            const entryFile = findFile(BUILD_DIR, 'main-', '.js')
-            if (entryFile) {
-                const size = getFileSize(entryFile)
+            // Main entry chunk — resolved from index.html, never guessed from a
+            // directory listing (stale chunks accumulate; see parseEntryChunkName).
+            const entryPath = join(BUILD_DIR, entryName!)
+            expect(existsSync(entryPath), `${entryName} referenced by index.html but missing`).toBe(true)
+            {
+                const size = getFileSize(entryPath)
                 totalBytes += size
                 details.push(`entry: ${formatBytes(size)}`)
             }

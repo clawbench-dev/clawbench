@@ -34,15 +34,54 @@ var (
 // span is a half-open byte range.
 type span struct{ start, end int }
 
-// Extract locates every clawbench-ask-question span outside a code context.
+// Extract locates every ask-question span outside a code context.
+//
+// Two tag names are recognized: the current <clawbench-ask-question> (whose
+// Markdown payload becomes a card) and the pre-rename <ask-question>, which is
+// no longer read as a card and instead degrades to readable Markdown — see
+// legacy.go. Matches are returned in source order, which Strip requires.
 //
 // A returned Match with Parsed == false could not be understood; its Raw must
 // be kept in the visible text.
 func Extract(text string) []Match {
+	code := codeSpans(text)
+	matches := extractCurrent(text, code)
+	legacy := extractLegacy(text, code)
+	if len(legacy) == 0 {
+		return matches
+	}
+	if len(matches) == 0 {
+		return legacy
+	}
+	// Both tag names occur in one block: merge in source order. Strip and the
+	// frontend both walk the matches linearly, so an out-of-order slice would
+	// drop spans.
+	return mergeByStart(matches, legacy)
+}
+
+// mergeByStart merges two start-ordered slices into one start-ordered slice.
+func mergeByStart(a, b []Match) []Match {
+	out := make([]Match, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i].Start <= b[j].Start {
+			out = append(out, a[i])
+			i++
+		} else {
+			out = append(out, b[j])
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
+	return out
+}
+
+// extractCurrent locates every <clawbench-ask-question> span.
+func extractCurrent(text string, code []span) []Match {
 	if !strings.Contains(text, "<"+tagName) {
 		return nil
 	}
-	code := codeSpans(text)
 	opens := reOpenTag.FindAllStringIndex(text, -1)
 	if len(opens) == 0 {
 		return nil

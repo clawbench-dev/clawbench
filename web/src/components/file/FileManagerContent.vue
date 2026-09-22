@@ -185,7 +185,15 @@
       <!-- Breadcrumb (multi-select info is merged into the bottom bar so the
            directory context is never obscured) -->
       <div v-if="currentDir" class="dir-nav-bottom">
-        <button class="dir-up-btn" :title="t('file.nav.parentDir')" @click="goToParentDir">
+        <!-- Disabled at a filesystem root: dirName("/") is "/", so the walk-up
+             is a no-op. Leaving it enabled there offers an affordance that
+             silently does nothing. -->
+        <button
+          class="dir-up-btn"
+          :disabled="!hasParentDir"
+          :title="hasParentDir ? t('file.nav.parentDir') : t('file.nav.fsRoot')"
+          @click="goToParentDir"
+        >
           <ArrowLeft :size="14" />
         </button>
         <DirBreadcrumb :path="currentDir" @navigate="$emit('navigateDir', $event)" />
@@ -1520,6 +1528,18 @@ const displayEntries = computed(() => {
  * so the absolute form of currentDir is exactly the external signal.
  */
 const isExternalDir = computed(() => isAbsolutePath(props.currentDir || ''))
+
+/**
+ * Whether "up one level" can actually go anywhere. False at the project root
+ * (empty currentDir) and at a filesystem root, where dirName is self-referential
+ * — the same predicate the back state machine uses, so the button and Back
+ * agree about when the action is a no-op.
+ */
+const hasParentDir = computed(() => {
+  const dir = props.currentDir || ''
+  if (dir === '') return false
+  return dirName(dir) !== dir
+})
 
 function currentDirPath() {
     const dir = props.currentDir || ''
@@ -2909,6 +2929,20 @@ function scrollSelectedIntoView(path) {
     }
 }
 
+/* At a filesystem root there is nowhere to go up to; keep the button present so
+   the bar's layout does not shift, but make the dead affordance read as dead. */
+.dir-up-btn:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+@media (hover: hover) {
+    .dir-up-btn:disabled:hover {
+        background: transparent;
+        color: var(--text-muted, #999);
+    }
+}
+
 .dir-nav-bottom :deep(.dir-breadcrumb) {
     padding: 0;
     min-height: 0;
@@ -3610,7 +3644,7 @@ function scrollSelectedIntoView(path) {
     flex-shrink: 0;
     border-top: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-tertiary, #f5f5f5);
-    padding:5px var(--space-5) var(--space-2);
+    padding: 3px var(--space-5);
     gap: var(--space-1);
 }
 
@@ -3624,18 +3658,34 @@ function scrollSelectedIntoView(path) {
 .fs-input-row :deep(.search-pill) {
     flex: 1;
     min-width: 0;
-    /* Match the dock material (--bg-tertiary) instead of SearchInput's shared
-       default (--bg-primary) — the pill is the only control on the dock, so a
-       contrasting fill would read as a nested box rather than one bar. */
-    background: var(--bg-tertiary, #f5f5f5);
+    /* Flat field: the dock itself is the only surface, so the pill contributes
+       neither a fill nor an outline of its own. SearchInput's shared defaults
+       (--bg-primary fill + 1px border) would read as a nested box inside the
+       bar. The vertical padding is only there to give the text room to breathe
+       — with the default font the row lands at ~26px, matching the toggle
+       buttons beside it. */
+    background: transparent;
+    border: none;
+    padding: var(--space-2) var(--space-5);
+}
+
+/* Focus is deliberately invisible: the dock is a flat bar, so an accent outline
+   or a tinted fill would reintroduce exactly the box this field just shed. The
+   caret is the indicator. `:deep()` carries the parent's data-v onto
+   .fs-input-row, which keeps this rule specific enough to beat the child's own
+   .focused rule regardless of the order rollup emits the two style blocks in. */
+.fs-input-row :deep(.search-pill.focused) {
+    border: none;
+    box-shadow: none;
+    background: transparent;
 }
 
 .fs-toggle-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     border: none;
     border-radius: var(--radius-sm);
     background: transparent;

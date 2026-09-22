@@ -2,7 +2,7 @@
   <span class="external-badge" :title="title">
     <FolderOpen v-if="kind === 'dir'" :size="11" />
     <FileText v-else :size="11" />
-    <span class="external-badge-label">{{ label }}</span>
+    <span>{{ t('file.nav.external') }}</span>
   </span>
 </template>
 
@@ -20,16 +20,21 @@ import { useI18n } from 'vue-i18n'
  * by the browse list, the directory preview, the file preview and the directory
  * breadcrumb bar so the four surfaces cannot drift into four different looks.
  *
+ * The label stays a single short word: the badge sits inline in dense rows, and
+ * a phrase like "file outside the project" pushed the row's own content aside.
+ * The icon already carries the file-vs-directory distinction, and the tooltip
+ * spells out the full meaning for anyone who needs it.
+ *
  * Orange is the colour already used for project-external paths in chat
  * annotations and the code viewer (see annotation-buttons.css).
  */
-const props = defineProps({
+// `kind` is read in the template (icon choice), so no script-side binding.
+defineProps({
   kind: { type: String, default: 'file' },
 })
 
 const { t } = useI18n()
-const label = computed(() => (props.kind === 'dir' ? t('file.nav.externalDir') : t('file.nav.externalFile')))
-const title = computed(() => label.value)
+const title = computed(() => t('file.nav.externalTip'))
 </script>
 
 <style scoped>
@@ -48,12 +53,5 @@ const title = computed(() => label.value)
   white-space: nowrap;
   flex-shrink: 0;
   user-select: none;
-}
-
-.external-badge-label {
-  /* The icon alone reads as a decoration; the label is what actually says
-     "outside the project", so it must survive truncation of the host row. */
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 </style>

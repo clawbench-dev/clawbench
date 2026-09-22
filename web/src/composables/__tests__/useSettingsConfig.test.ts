@@ -144,6 +144,26 @@ describe('useSettingsConfig', () => {
     expect(getServerValueWithDefault('appearance.bing.mkt')).toBe('zh-CN')
   })
 
+  it('serverDefaults mirrors the backend default for chat.system_prompt_interval', () => {
+    // serverDefaults claims to mirror ApplyDefaults() in internal/model/defaults.go.
+    // The backend default is 0 ("never re-inject"), not 10: defaults.go keeps 0
+    // expressible on purpose so a user who disables periodic re-injection is not
+    // silently switched back to every-10-turns. A stale 10 here would make the
+    // settings panel show 10 until /api/config resolves, contradicting the server.
+    const { getServerValueWithDefault } = useSettingsConfig()
+
+    expect(getServerValueWithDefault('chat.system_prompt_interval')).toBe(0)
+  })
+
+  it('serverDefaults mirrors the backend default for chat.recommend_context_messages', () => {
+    // Same contract as above. The backend default is 10 (defaults.go rewrites any
+    // <= 0 to 10), not 3 — a stale 3 makes the settings panel understate how much
+    // conversation the recommender reads until /api/config resolves.
+    const { getServerValueWithDefault } = useSettingsConfig()
+
+    expect(getServerValueWithDefault('chat.recommend_context_messages')).toBe(10)
+  })
+
   it('localConfig has markdownCodeLinkPreview defaulting to true', () => {
     const { localConfig } = useSettingsConfig()
     localStorage.removeItem('clawbench-settings-markdownCodeLinkPreview')
@@ -358,7 +378,7 @@ describe('useSettingsConfig', () => {
 
       // Initialize serverConfig with chat sub-object
       mockedApiGet.mockResolvedValue({
-        chat: { page_size: 20, initial_messages: 20, system_prompt_interval: 10 },
+        chat: { page_size: 20, initial_messages: 20, system_prompt_interval: 0 },
       })
       await loadConfig()
 

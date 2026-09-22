@@ -68,6 +68,12 @@ export interface AskMatch {
 /** Reason codes for an unparsed span (mirrors the Go constants). */
 export const ReasonNoStandardClose = 'no_standard_close'
 export const ReasonParseFailed = 'parse_failed'
+/**
+ * The span uses the pre-rename `<ask-question>` tag. Such a span is always
+ * `parsed === null` — the old format is no longer read as a card — and its
+ * `fallback` is the payload degraded to readable Markdown.
+ */
+export const ReasonLegacyFormat = 'legacy_format'
 
 // ────────────────────────────────────────────────────────────
 // Key normalization (Path A)
@@ -580,14 +586,43 @@ function inAnySpan(spans: Span[], idx: number): boolean {
 }
 
 /**
- * Locate every clawbench-ask-question span outside a code context.
+ * Locate every ask-question span outside a code context.
+ *
+ * Two tag names are recognized: the current `<clawbench-ask-question>` (whose
+ * Markdown payload becomes a card) and the pre-rename `<ask-question>`, which
+ * is no longer read as a card and instead degrades to readable Markdown — see
+ * the legacy section below. Matches are returned in source order, which
+ * `stripAskMatches` requires.
  *
  * A returned match with `parsed === null` could not be understood; its `raw`
  * must be kept visible.
  */
 export function extractAskMatches(text: string): AskMatch[] {
-  if (!text.includes('<' + TAG_NAME)) return []
   const code = codeSpans(text)
+  const current = extractCurrentMatches(text, code)
+  const legacy = extractLegacyMatches(text, code)
+  if (legacy.length === 0) return current
+  if (current.length === 0) return legacy
+  return mergeByStart(current, legacy)
+}
+
+/** Merge two start-ordered slices into one start-ordered slice. */
+function mergeByStart(a: AskMatch[], b: AskMatch[]): AskMatch[] {
+  const out: AskMatch[] = []
+  let i = 0
+  let j = 0
+  while (i < a.length && j < b.length) {
+    if (a[i].start <= b[j].start) out.push(a[i++])
+    else out.push(b[j++])
+  }
+  while (i < a.length) out.push(a[i++])
+  while (j < b.length) out.push(b[j++])
+  return out
+}
+
+/** Locate every `<clawbench-ask-question>` span. */
+function extractCurrentMatches(text: string, code: Span[]): AskMatch[] {
+  if (!text.includes('<' + TAG_NAME)) return []
   const opens = allMatches(text, RE_OPEN_TAG)
   const matches: AskMatch[] = []
   let consumedTo = 0
@@ -743,6 +778,519 @@ export function stripAskMatches(text: string, matches: AskMatch[]): string {
 /** Whether at least one match was understood. */
 export function hasParsedMatches(matches: AskMatch[]): boolean {
   return matches.some(m => m.parsed !== null)
+}
+
+// ────────────────────────────────────────────────────────────
+// Legacy tag degradation (pre-rename <ask-question>)
+//
+// The tag was renamed to <clawbench-ask-question> and its payload changed from
+// bespoke XML (later also JSON) to native Markdown. The rename deliberately
+// dropped every compatibility reader: an old payload no longer becomes a card.
+//
+// That left a rendering defect. An old payload is *not* markup a renderer
+// ignores — the wrapper is stripped and the inner text is handed to the
+// Markdown renderer, where DOMPurify removes the unknown XML elements but
+// keeps their text nodes. So the field values survive as prose:
+//
+//   <header>下一步</header><multi-select>false</multi-select>
+//   <question>…</question><option><label>只修本地能用</label>…
+//
+// renders as "下一步 false … 只修本地能用 先保证自己 iOS 上传恢复" — the
+// parser-only field `false` is shown to the user, and a label runs into its
+// description because the tags that separated them are gone.
+//
+// This section degrades an old span to readable Markdown instead: the header
+// becomes a bold line, the question a paragraph, each option a list item, and
+// the parser-only multi-select flag is dropped. It never produces a card —
+// `allMatchItems` only reports parsed spans, and a legacy span is never parsed.
+//
+// Measured on the production database: of 431 structured legacy spans, the old
+// behaviour leaked `false`/`true` in 68.5% and lost the label/description
+// separator in 62.0%; this degradation renders 100% of them with no field
+// leakage.
+// ────────────────────────────────────────────────────────────
+
+/** The pre-rename tag, without the angle brackets. */
+const LEGACY_TAG_NAME = 'ask-question'
+
+const RE_LEGACY_OPEN = /<ask-question\b[^>]*>/g
+const RE_LEGACY_CLOSE = /<\/ask-question\s*>/
+/** An open tag at the start of a line — a sibling payload, not a mention. */
+const RE_LEGACY_SIBLING_OPEN = /(?:^|\n)[ \t]*<ask-question\b/g
+/**
+ * A payload that lost its wrapper close ends at its last child element close.
+ */
+const RE_LEGACY_CHILD_CLOSE =
+  /<\/(?:item|options|option|label|description|question|header|multi[_-]?select)\s*>/gi
+/**
+ * A payload that starts immediately with a structural element. It separates a
+ * real payload from prose that merely mentions the tag ("…stripped
+ * <ask-question> tags from e.blocks").
+ */
+const RE_LEGACY_STRUCT_HEAD =
+  /^\s*(?:<(?:item|options|header|question|option|label|description|multi[_-]?select)\b|[[{])/i
+/** Whether a payload carries any child element. */
+const RE_LEGACY_CHILD_OPEN =
+  /<(item|header|question|option|options|label|description|multi[_-]?select)\b/i
+/** A JSON payload parked inside the tag. */
+const RE_LEGACY_JSON_BODY = /^\s*[[{]/
+
+// Element readers. Every one tolerates the malformations seen in production:
+// unclosed elements (24% of payloads), attributes instead of child elements
+// (`<option value="A">`, 12%), a plural <options> wrapper, bare text inside
+// <option>, and raw & / < / > characters.
+const RE_LEGACY_HEADER_EL = /<header\b[^>]*>([\s\S]*?)<\/header>/i
+const RE_LEGACY_QUESTION_EL = /<question\b[^>]*>([\s\S]*?)<\/question>/i
+const RE_LEGACY_LABEL_EL = /<label\b[^>]*>([\s\S]*?)<\/label>/i
+const RE_LEGACY_DESC_EL = /<description\b[^>]*>([\s\S]*?)<\/description>/i
+const RE_LEGACY_ITEM_OPEN = /<item\b[^>]*>/gi
+const RE_LEGACY_OPTION_OPEN = /<option\b([^>]*)>/gi
+/** Attribute text of one `<option …>` open tag (non-global: no lastIndex state). */
+const RE_LEGACY_OPTION_ATTRS = /<option\b([^>]*)>/i
+const RE_LEGACY_OPTIONS_WRAP = /<\/?options\s*>/gi
+const RE_LEGACY_ATTR_VALUE = /\b(?:value|label)\s*=\s*["']([^"']*)["']/i
+const RE_LEGACY_ANY_TAG = /<\/?[a-zA-Z][^>]*>/g
+/**
+ * Leaked model-harness markup: a closing tag whose name was mangled with
+ * the DSML sentinel, and a bare `</>`. 12297 of these occur in the
+ * production database, always as garbage inside a payload — never as
+ * prose a reader would want — so they are dropped rather than shown. The
+ * fullwidth vertical bar is the sentinel’s delimiter.
+ */
+const RE_LEGACY_ARTIFACT = /<\/?[^<>\n]*\uFF5C\uFF5C[^<>\n]*>|<\/>/g
+
+/**
+ * Locate every pre-rename `<ask-question>` span outside a code context and
+ * render each to readable Markdown.
+ *
+ * The returned matches always have `parsed: null`: an old payload degrades to
+ * text and never becomes a card.
+ */
+function extractLegacyMatches(text: string, code: Span[]): AskMatch[] {
+  if (!text.includes('<' + LEGACY_TAG_NAME)) return []
+  const opens = allMatches(text, RE_LEGACY_OPEN)
+  const matches: AskMatch[] = []
+  let consumedTo = 0
+  for (const open of opens) {
+    if (open.index < consumedTo) continue
+    if (inAnySpan(code, open.index)) continue
+
+    const bound = boundLegacy(text, open.end)
+    if (bound === null) continue
+    const inner = text.slice(open.end, bound.payloadEnd)
+    if (!isLegacyPayload(inner)) continue
+
+    matches.push({
+      start: open.index,
+      end: bound.spanEnd,
+      raw: text.slice(open.index, bound.spanEnd),
+      parsed: null,
+      reason: ReasonLegacyFormat,
+      fallback: fallbackText(renderLegacy(inner)),
+    })
+    consumedTo = bound.spanEnd
+  }
+  return matches
+}
+
+interface LegacyBound { payloadEnd: number; spanEnd: number }
+
+/**
+ * Find where the payload opened at `openEnd` ends, or null when no payload is
+ * present.
+ *
+ * The span is clamped at the next line-start sibling open tag, so it can never
+ * reach past its own payload. Within that region the payload ends at:
+ *
+ *  - the standard `</ask-question>`, when present — the close tag itself is
+ *    part of the span (so stripping removes it) but not of the payload;
+ *  - else the last child element close (an unclosed wrapper, 13% of real
+ *    payloads);
+ *  - else the whole region, when it starts with a structural element (a payload
+ *    truncated mid-stream).
+ *
+ * A region that starts with ordinary prose is not a payload: the tag was
+ * mentioned in a sentence, so it is left untouched in the visible text.
+ */
+function boundLegacy(text: string, openEnd: number): LegacyBound | null {
+  let region = text.slice(openEnd)
+  RE_LEGACY_SIBLING_OPEN.lastIndex = 0
+  const sib = RE_LEGACY_SIBLING_OPEN.exec(region)
+  if (sib) region = region.slice(0, sib.index)
+  if (region.trim() === '') return null
+
+  const close = RE_LEGACY_CLOSE.exec(region)
+  if (close) {
+    // The close tag is removed with the span, so it must not be parsed as part
+    // of the payload: keeping it would feed a stray "</ask-question>" into the
+    // JSON decoder and defeat the strict parse.
+    return { payloadEnd: openEnd + close.index, spanEnd: openEnd + close.index + close[0].length }
+  }
+
+  RE_LEGACY_CHILD_CLOSE.lastIndex = 0
+  let last: RegExpExecArray | null
+  let lastEnd = -1
+  while ((last = RE_LEGACY_CHILD_CLOSE.exec(region)) !== null) {
+    lastEnd = last.index + last[0].length
+  }
+  if (lastEnd >= 0) {
+    const end = openEnd + lastEnd
+    return { payloadEnd: end, spanEnd: end }
+  }
+
+  if (RE_LEGACY_STRUCT_HEAD.test(region)) {
+    const end = openEnd + region.length
+    return { payloadEnd: end, spanEnd: end }
+  }
+  return null
+}
+
+/**
+ * Whether `inner` carries a structured old-format payload (XML children or
+ * JSON) rather than ordinary prose.
+ */
+function isLegacyPayload(inner: string): boolean {
+  return RE_LEGACY_CHILD_OPEN.test(inner) || RE_LEGACY_JSON_BODY.test(inner.trim())
+}
+
+/**
+ * Convert an old payload into readable Markdown.
+ *
+ * Nothing user-visible is discarded: the header, question, option labels and
+ * descriptions all survive, and the parser-only multi-select flag is dropped
+ * because it has no meaning in prose.
+ */
+function renderLegacy(inner: string): string {
+  if (RE_LEGACY_JSON_BODY.test(inner.trim())) return renderLegacyJSON(inner)
+  if (!RE_LEGACY_ANY_TAG.test(inner)) {
+    // Plain text payload (an old tag wrapped around ordinary prose).
+    return inner.trim()
+  }
+
+  const stripped = inner.replace(RE_LEGACY_OPTIONS_WRAP, '')
+  const items = splitLegacyItems(stripped)
+  let out = ''
+  for (const item of items) out += renderLegacyItem(item)
+  if (out.trim() === '') {
+    // No element carried text (e.g. a payload that is only a stray tag): fall
+    // back to the tag-stripped text so nothing disappears.
+    return cleanLegacyText(inner)
+  }
+  return out.trim()
+}
+
+/**
+ * Split a payload on `<item>` opens. An unclosed `<item>` is bounded by the
+ * next `<item>` open rather than swallowing the rest.
+ */
+function splitLegacyItems(payload: string): string[] {
+  const opens = allMatches(payload, RE_LEGACY_ITEM_OPEN)
+  if (opens.length === 0) return [payload]
+  const items: string[] = []
+  for (let i = 0; i < opens.length; i++) {
+    const end = i + 1 < opens.length ? opens[i + 1].index : payload.length
+    items.push(payload.slice(opens[i].end, end))
+  }
+  return items
+}
+
+/** Render one `<item>` body: header, question, then options. */
+function renderLegacyItem(item: string): string {
+  let out = ''
+  const header = legacyElementText(RE_LEGACY_HEADER_EL, item)
+  if (header !== '') out += `**${header}**\n`
+  // <multi-select> carries no user-facing content, so it is dropped: it is the
+  // field whose raw `false` used to leak into the message.
+  const question = legacyElementText(RE_LEGACY_QUESTION_EL, item)
+  if (question !== '') out += `${question}\n`
+  for (const opt of legacyOptions(item)) out += `- ${opt}\n`
+  return out
+}
+
+/**
+ * Read every `<option>` in an item body. Like `<item>`, an unclosed `<option>`
+ * is bounded by the next `<option>` open or the item's end.
+ */
+function legacyOptions(body: string): string[] {
+  const opens = allMatches(body, RE_LEGACY_OPTION_OPEN)
+  if (opens.length === 0) return []
+  const out: string[] = []
+  for (let i = 0; i < opens.length; i++) {
+    const end = i + 1 < opens.length ? opens[i + 1].index : body.length
+    const openTag = opens[i].text
+    const content = body.slice(opens[i].end, end)
+    const attrs = RE_LEGACY_OPTION_ATTRS.exec(openTag)?.[1] ?? ''
+
+    // Precedence: an explicit <label> child, then the element’s own body
+    // text, then the attribute. Production data has 320 options in the
+    // `<option value="A">A. …</option>` shape, where the attribute carries
+    // only the key and the body carries the real label — preferring the
+    // attribute would show "A" and discard the sentence.
+    let label = legacyElementText(RE_LEGACY_LABEL_EL, content)
+    if (label === '') label = cleanLegacyText(content)
+    if (label === '') label = RE_LEGACY_ATTR_VALUE.exec(attrs)?.[1]?.trim() ?? ''
+    // Nothing is invented: an option with no text is dropped.
+    if (label === '') continue
+
+    const desc = legacyElementText(RE_LEGACY_DESC_EL, content)
+    // A description identical to the label adds nothing.
+    out.push(desc !== '' && desc !== label ? `${label} — ${desc}` : label)
+  }
+  return out
+}
+
+/** Trimmed text of the first matching element, with nested tags removed. */
+function legacyElementText(re: RegExp, s: string): string {
+  const m = re.exec(s)
+  return m ? cleanLegacyText(m[1]) : ''
+}
+
+/**
+ * Strip nested tags, decode entities, and collapse whitespace. Only
+ * tag-shaped constructs are removed, so a literal "< 5" in question text
+ * survives.
+ */
+function cleanLegacyText(s: string): string {
+  const stripped = s.replace(RE_LEGACY_ARTIFACT, ' ').replace(RE_LEGACY_ANY_TAG, ' ')
+  return unescapeEntities(stripped).replace(GO_SPACE, ' ').trim()
+}
+
+/**
+ * Render a JSON payload as Markdown.
+ *
+ * JSON inside the tag was never the documented format, but models emitted it
+ * and the field values are perfectly readable. The normalizer is reused so the
+ * same key synonyms and malformations are tolerated as on the tool-call path; a
+ * payload that does not decode falls back to a regex salvage, because the
+ * alternative is leaking raw JSON braces into the message.
+ */
+function renderLegacyJSON(inner: string): string {
+  const items = normalizeAskInput(parseLegacyJSONObject(inner))
+  if (items.length === 0) return salvageLegacyJSON(inner)
+  let out = ''
+  for (const it of items) {
+    if (it.header) out += `**${it.header}**\n`
+    if (it.question) out += `${it.question}\n`
+    for (const o of it.options) {
+      out += o.description && o.description !== o.label
+        ? `- ${o.label} — ${o.description}\n`
+        : `- ${o.label}\n`
+    }
+  }
+  return out.trim()
+}
+
+/**
+ * Decode the payload, accepting both the object shape (`{"questions":[…]}`) and
+ * a bare array (`[{…}]`).
+ *
+ * A payload that does not decode is repaired once (see `repairLegacyJSON`) and
+ * retried; a payload that still does not decode yields `{}`, which sends the
+ * caller to the salvage path.
+ */
+function parseLegacyJSONObject(inner: string): Record<string, unknown> {
+  const trimmed = inner.trim()
+  if (trimmed === '') return {}
+  const direct = decodeLegacyJSON(trimmed)
+  if (direct !== null) return direct
+  const repaired = repairLegacyJSON(trimmed)
+  if (repaired !== trimmed) {
+    const retried = decodeLegacyJSON(repaired)
+    if (retried !== null) return retried
+  }
+  return {}
+}
+
+/** Strict decode of either accepted top-level shape; null when it does not decode. */
+function decodeLegacyJSON(s: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(s)
+    if (Array.isArray(parsed)) return { questions: parsed }
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Repair the two quote defects seen in production. Both make `JSON.parse`
+ * reject a payload whose field values are otherwise intact, and both were
+ * losing user-visible content before this repair existed:
+ *
+ *  - a key that lost its opening quote — `{label":"方向三为主"}`. Without the
+ *    repair only the first option decoded, so a four-option question rendered
+ *    as one option (real: #14752).
+ *  - a quote used as ordinary punctuation inside a value —
+ *    `"question":"…最多可以被"临时分裂"多久？"`. The value was cut short at the
+ *    first interior quote, truncating the question mid-sentence (real: #15064,
+ *    #15066, #22538, #22544).
+ *
+ * This is a repair, not a parser: it only ever adds a missing opening quote or
+ * an escape, never structure. If the result still does not decode the caller
+ * falls back to `salvageLegacyJSON`, so a failed repair costs nothing.
+ *
+ * It is deliberately not a general JSON repairer — it targets exactly these two
+ * shapes, which is what the production corpus contains.
+ */
+function repairLegacyJSON(s: string): string {
+  let out = ''
+  let inString = false
+  let changed = false
+
+  for (let i = 0; i < s.length; ) {
+    const c = s[i]
+
+    if (!inString) {
+      // An object boundary may open a key that lost its opening quote.
+      if (c === '{' || c === ',') {
+        const bare = quoteBareLegacyKey(s, i)
+        if (bare) {
+          out += bare.prefix
+          i = bare.next
+          changed = true
+          continue
+        }
+      }
+      out += c
+      if (c === '"') inString = true
+      i++
+      continue
+    }
+
+    if (c === '\\') {
+      // Copy the escape pair verbatim.
+      out += c
+      if (i + 1 < s.length) {
+        out += s[i + 1]
+        i += 2
+      } else {
+        i++
+      }
+      continue
+    }
+    if (c === '"') {
+      if (legacyQuoteClosesString(s, i)) {
+        out += c
+        inString = false
+      } else {
+        // Interior quote: escape it and stay in the string.
+        out += '\\"'
+        changed = true
+      }
+      i++
+      continue
+    }
+    out += c
+    i++
+  }
+
+  return changed ? out : s
+}
+
+/**
+ * Whether the object boundary at `s[i]` (`{` or `,`) opens a key whose opening
+ * quote is missing, as in `{label":"x"`. On a match returns the repaired prefix
+ * (the boundary, the quoted name, and the whitespace that separated them) plus
+ * the offset just past the name's closing quote, so the caller resumes at `:`.
+ */
+function quoteBareLegacyKey(s: string, i: number): { prefix: string; next: number } | null {
+  let j = i + 1
+  // Whitespace, then — only when the boundary was a comma — one brace: an array
+  // element boundary reads `,{label":`, so the key follows the brace rather
+  // than the comma. A `{` boundary is itself the brace.
+  while (j < s.length && isLegacyJSONSpace(s[j])) j++
+  if (s[i] === ',' && j < s.length && s[j] === '{') j++
+  const braceEnd = j
+  while (j < s.length && isLegacyJSONSpace(s[j])) j++
+  if (j >= s.length || !isLegacyKeyStart(s[j])) return null
+  const start = j
+  while (j < s.length && isLegacyKeyChar(s[j])) j++
+  const name = s.slice(start, j)
+
+  // The key lost its opening quote. Two shapes occur: the closing quote
+  // survives (`label":`) or it was lost too (`label:`). Both are repaired by
+  // quoting the name; in the first case the stray closing quote is consumed.
+  const quoteStart = j
+  while (j < s.length && isLegacyJSONSpace(s[j])) j++
+  let next = j
+  if (j < s.length && s[j] === '"') {
+    next = j + 1
+  } else if (j >= s.length || s[j] !== ':') {
+    return null
+  }
+
+  // s[i:braceEnd] is the boundary plus any brace; s[braceEnd:start] the
+  // whitespace before the name; s[quoteStart:j] the whitespace after it.
+  const prefix = s.slice(i, braceEnd) + s.slice(braceEnd, start) + '"' + name + '"' + s.slice(quoteStart, j)
+  return { prefix, next }
+}
+
+/**
+ * Whether the quote at `s[i]` ends the string it is in. It ends the string when
+ * the next non-space byte is structural — a colon (the value just closed was an
+ * object key), a comma, or a closing brace/bracket. Anything else means the
+ * quote was interior text.
+ */
+function legacyQuoteClosesString(s: string, i: number): boolean {
+  for (let j = i + 1; j < s.length; j++) {
+    const c = s[j]
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') continue
+    return c === ':' || c === ',' || c === '}' || c === ']'
+  }
+  // A quote at end-of-input closes the string.
+  return true
+}
+
+/** Whether `c` is whitespace JSON permits around tokens. */
+function isLegacyJSONSpace(c: string): boolean {
+  return c === ' ' || c === '\t' || c === '\n' || c === '\r'
+}
+
+/** Whether `c` may begin an unquoted JSON key. */
+function isLegacyKeyStart(c: string): boolean {
+  return c === '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+/** Whether `c` may continue an unquoted JSON key. */
+function isLegacyKeyChar(c: string): boolean {
+  return isLegacyKeyStart(c) || (c >= '0' && c <= '9')
+}
+
+const RE_LEGACY_JSON_QUESTION = /"question"\s*:\s*"([^"]*)"/
+const RE_LEGACY_JSON_HEADER = /"header"\s*:\s*"([^"]*)"/
+const RE_LEGACY_JSON_LABEL = /"label"\s*:\s*"([^"]*)"/g
+const RE_LEGACY_JSON_DESC = /"description"\s*:\s*"([^"]*)"/g
+
+/**
+ * Render a JSON payload that does not decode (production data contains a stray
+ * `}` and a bare token). Its field values are still intact, so they are pulled
+ * out by name rather than left as raw JSON.
+ *
+ * Returns '' when no field could be recovered.
+ */
+function salvageLegacyJSON(inner: string): string {
+  const labels = [...inner.matchAll(RE_LEGACY_JSON_LABEL)].map(m => cleanLegacyText(m[1]))
+  const descs = [...inner.matchAll(RE_LEGACY_JSON_DESC)].map(m => cleanLegacyText(m[1]))
+  const question = firstLegacySubmatch(RE_LEGACY_JSON_QUESTION, inner)
+  const header = firstLegacySubmatch(RE_LEGACY_JSON_HEADER, inner)
+  if (question === '' && labels.length === 0) return ''
+
+  let out = ''
+  if (header !== '') out += `**${header}**\n`
+  if (question !== '') out += `${question}\n`
+  for (let i = 0; i < labels.length; i++) {
+    const label = labels[i]
+    if (label === '') continue
+    const desc = descs[i] ?? ''
+    out += desc !== '' && desc !== label ? `- ${label} — ${desc}\n` : `- ${label}\n`
+  }
+  return out.trim()
+}
+
+/** Cleaned first capture group of `re`, or ''. */
+function firstLegacySubmatch(re: RegExp, s: string): string {
+  const m = re.exec(s)
+  return m ? cleanLegacyText(m[1]) : ''
 }
 
 /** Flatten the items of every parsed match, preserving order. */

@@ -1461,9 +1461,8 @@ export default {
       projectRoot: 'Project root',
       backToProject: 'Back to project root',
       fsRoot: 'Filesystem root',
-      external: 'Outside project',
-      externalDir: 'Directory outside project',
-      externalFile: 'File outside project',
+      external: 'External',
+      externalTip: 'Outside the project directory',
     },
     recent: {
       title: 'Recent Files',

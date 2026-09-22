@@ -8,6 +8,7 @@ ASSETS="assets"
 # Load shared shell utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/scripts/common.sh"
+source "$SCRIPT_DIR/scripts/lib/version-code.sh"
 
 # Parse arguments
 TARGET_OS=""
@@ -88,8 +89,11 @@ else
     FULL_VERSION="$VERSION-$BUILD_TIME_SUFFIX"
 fi
 LDFLAGS="-X 'clawbench/internal/version.Version=$FULL_VERSION'"
-# Derive versionCode from git commit count (monotonically increasing for Play Store)
-VERSION_CODE=$(git rev-list --count HEAD 2>/dev/null || echo "1")
+# Derive versionCode from the nearest version tag (see scripts/lib/version-code.sh).
+# Not `git rev-list --count HEAD`: that silently collapses to 1 under a shallow
+# clone, which is what CI does — every release APK shipped versionCode=1 and so
+# could not replace an older dev build.
+VERSION_CODE=$(clawbench_version_code "$SCRIPT_DIR")
 echo "  Version: $FULL_VERSION (code: $VERSION_CODE, release: $IS_RELEASE)"
 
 # 1. Build Vue frontend (must come before Go build so embed dir is populated)
