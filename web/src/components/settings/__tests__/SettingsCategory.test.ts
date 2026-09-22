@@ -277,6 +277,10 @@ const i18n = createI18n({
           aboutServerVersion: '服务器版本',
           aboutServerVersionDesc: '服务器版本',
           aboutBrandSlogan: '从掌心到桌面',
+          aboutHomepage: '官网',
+          aboutHomepageDesc: '在浏览器中打开项目主页',
+          aboutFeedback: '问题反馈',
+          aboutFeedbackDesc: '前往 GitHub 提交问题或建议',
           aboutAppVersion: 'APP版本',
           aboutAppVersionDesc: 'APP版本',
           serverRestart: '重启服务器',
@@ -334,6 +338,7 @@ const i18n = createI18n({
           fileDisplaySection: '文件显示',
           uploadSection: '上传',
           aboutVersionSection: '版本',
+          aboutProjectSection: '项目',
           aboutActionsSection: '操作',
           securitySection: '安全',
           debugSection: '调试',
@@ -615,6 +620,71 @@ describe('SettingsCategory', () => {
       // SettingsAboutBrand is keyed off the category id; a missing guard would
       // put the logo on every settings page.
       expect(mountCategory('chat').findComponent({ name: 'SettingsAboutBrand' }).exists()).toBe(false)
+    })
+
+    it('renders the homepage and feedback entries in their own card', () => {
+      const wrapper = mountCategory('about')
+      const labels = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .map(i => i.props().label)
+      expect(labels).toContain('官网')
+      expect(labels).toContain('问题反馈')
+
+      const card = wrapper.findAllComponents({ name: 'SettingsCard' })
+        .find(c => c.props().title === '项目')
+      expect(card, 'the project links need their own card, not the actions card').toBeTruthy()
+      const cardLabels = card!.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
+      expect(cardLabels).toEqual(['官网', '问题反馈'])
+    })
+
+    it('opens the project homepage in the browser on click', async () => {
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'openProjectHomepage' })
+      await nextTick()
+
+      // The web fallback is an anchor click; jsdom records the element only
+      // while it is still attached (it is removed after 1s).
+      const anchors = document.body.querySelectorAll('a[href]')
+      const hrefs = Array.from(anchors).map(a => a.getAttribute('href'))
+      expect(hrefs).toContain('https://github.com/xulongzhe/clawbench')
+      anchors.forEach(a => a.remove())
+    })
+
+    it('opens the issue template chooser for feedback, not the bare issue list', async () => {
+      // The repository ships bug/feature/question issue templates; the chooser
+      // page is what lets a reporter pick one. Pointing at /issues would drop
+      // them on a list with no obvious way to file.
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'openProjectFeedback' })
+      await nextTick()
+
+      const anchors = Array.from(document.body.querySelectorAll('a[href]'))
+      const hrefs = anchors.map(a => a.getAttribute('href'))
+      expect(hrefs).toContain('https://github.com/xulongzhe/clawbench/issues/new/choose')
+      anchors.forEach(a => a.remove())
+    })
+
+    it('hands the URL to the native bridge when one is present', async () => {
+      // window.open(url, '_blank') is silently swallowed by the Android
+      // WebView (no multi-window support), so app mode must go through the
+      // bridge instead of the anchor fallback.
+      const mockOpenExternalUrl = vi.fn().mockResolvedValue(undefined)
+      ;(window as any).ClawBenchNative = { openExternalUrl: mockOpenExternalUrl }
+      try {
+        const wrapper = mountCategory('about')
+        const vm = wrapper.vm as any
+        vm.$.setupState.handleClick({ key: 'openProjectFeedback' })
+        await nextTick()
+
+        expect(mockOpenExternalUrl).toHaveBeenCalledWith(
+          'https://github.com/xulongzhe/clawbench/issues/new/choose',
+        )
+        // No anchor fallback may fire alongside the bridge call.
+        expect(document.body.querySelectorAll('a[href^="https://github.com"]').length).toBe(0)
+      } finally {
+        delete (window as any).ClawBenchNative
+      }
     })
   })
 

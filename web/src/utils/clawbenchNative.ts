@@ -95,6 +95,14 @@ export interface ClawBenchNative {
   shareText(text: string): Promise<void>
   shareFile(path: string, mime: string): Promise<void>
   shareFiles(paths: string, mimes: string): Promise<void>
+  /**
+   * Open an http(s) URL outside the app (system browser / default handler).
+   *
+   * Optional: older hosts lack the method, and the caller falls back to an
+   * anchor click — which the Electron and browser hosts handle fine, and which
+   * is only broken on Android, so the Android shell must implement it.
+   */
+  openExternalUrl?(url: string): Promise<void>
 
   /** Optional (Electron/Android): clear the HTTP cache and hard-reload the page. Used after upgrades. */
   reloadApp?(): void | Promise<void>

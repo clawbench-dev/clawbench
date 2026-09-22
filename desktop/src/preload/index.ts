@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   shareText: (text: string) => invoke('native:share-text', text),
   shareFile: (path: string, mime: string) => invoke('native:share-file', path, mime),
   shareFiles: (paths: string, mimes: string) => invoke('native:share-files', paths, mimes),
+  openExternalUrl: (url: string) => invoke('native:open-external-url', url),
   nativeNotify: (title: string, body: string, nav?: unknown) => invoke('native:notify', title, body, nav),
   reloadApp: () => invoke('native:reload-app'),
   setTheme: (theme: string, bg?: string, text?: string, textSecondary?: string, accent?: string) => {

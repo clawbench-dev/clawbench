@@ -2884,6 +2884,39 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Open an http(s) URL outside the app in the system browser.
+         * Called from the settings "About" page (project homepage / issue tracker).
+         *
+         * window.open(url, "_blank") cannot be used for this: the WebView never
+         * calls setSupportMultipleWindows, so the popup is silently dropped —
+         * neither navigated nor handed to shouldOverrideUrlLoading.
+         */
+        @JavascriptInterface
+        public void openExternalUrl(String url) {
+            if (url == null || url.isEmpty()) return;
+            Uri uri = Uri.parse(url);
+            // Only http(s) — anything else would be handed straight to an
+            // arbitrary OS protocol handler by the page's content.
+            String scheme = uri.getScheme();
+            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                AppLog.w(TAG, "openExternalUrl: rejected scheme " + scheme);
+                return;
+            }
+            AppLog.i(TAG, "openExternalUrl: " + url);
+            activity.runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    activity.startActivity(intent);
+                } catch (Exception e) {
+                    // No browser installed / activity not exported — nothing else
+                    // we can do, but the failure must be visible in the logs.
+                    AppLog.e(TAG, "openExternalUrl failed: " + e.getMessage());
+                }
+            });
+        }
+
+        /**
          * Open a forwarded port in the sandbox browser (BrowserActivity).
          * Runs in a separate process for full Cookie/Storage isolation from the main app.
          * Called from the port forwarding panel "open" button (preferred over openInBrowser).

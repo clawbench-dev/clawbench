@@ -7,6 +7,7 @@ import { gt } from '@/composables/useLocale'
 import { getNative } from '@/utils/clawbenchNative'
 import { appLog } from '@/utils/appLog'
 import { compareVersions } from '@/utils/version'
+import { GITHUB_REPO_URL } from '@/utils/projectLinks'
 
 const TAG = 'Upgrade'
 const MAX_POLL_DURATION = 5 * 60 * 1000 // 5 minutes
@@ -16,7 +17,7 @@ const RELOAD_DELAY_MS = 1500
 /** sessionStorage flag preventing duplicate refreshes after the first upgrade. */
 const RELOAD_SESSION_KEY = 'clawbench-upgrade-reloaded'
 
-const RELEASES_BASE_URL = 'https://github.com/xulongzhe/clawbench/releases/tag/'
+const RELEASES_BASE_URL = `${GITHUB_REPO_URL}/releases/tag/`
 
 export interface UpgradeState {
   phase: string
