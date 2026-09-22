@@ -10,8 +10,10 @@ import { resolve } from 'node:path'
  * opens with `#`, that margin is pure waste — the container already supplies
  * its own inset, and `1.5em` is scaled by the heading's OWN (largest) font
  * size, so the gap is the biggest one on the page. Measured on the 13px
- * completion-popover container, an opening h1 sat 33px down (25% of the
- * popover's 132px collapsed budget); the file preview wasted 41px.
+ * completion card this rule was written for, an opening h1 sat 33px down (25%
+ * of its 132px collapsed budget); the file preview wasted 41px. (That card has
+ * since become a plain notification, but the reset still serves the file
+ * preview, the share page and the task prompt.)
  *
  * The trap this guards — and the reason it is asserted rather than trusted:
  * `.markdown-body` is built in TWO DOM shapes. Most call sites put rendered
@@ -97,9 +99,11 @@ describe('markdown-body first block has no leading margin', () => {
     const preview = readFromRepo('src/components/file/MarkdownPreview.vue')
     expect(preview).toMatch(/class="markdown-body"[\s\S]{0,400}?class="markdown-content"/)
 
-    const popover = readFromRepo('src/components/common/CompletionPopover.vue')
-    // The popover renders blocks straight into the markdown-body element.
-    expect(popover).toMatch(/class="completion-popover-summary markdown-body"/)
-    expect(popover).not.toContain('markdown-content')
+    // The other shape: blocks rendered straight into the markdown-body element.
+    // (The completion card used to be the witness here; it is now a plain
+    // notification with no Markdown, so the task prompt takes over the role.)
+    const taskPrompt = readFromRepo('src/components/task/TaskOverviewTab.vue')
+    expect(taskPrompt).toMatch(/class="prompt-body markdown-body"/)
+    expect(taskPrompt).not.toContain('markdown-content')
   })
 })

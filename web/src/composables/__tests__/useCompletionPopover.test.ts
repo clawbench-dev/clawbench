@@ -3,7 +3,7 @@ import { useCompletionPopover } from '@/composables/useCompletionPopover'
 
 // Module-level singleton state persists between tests within the file.
 // Reset it before each test so each case starts from a clean queue.
-// Date.now 也纳入 fake timers，保证最小停留时长保护可被计时推进。
+// Date.now 也纳入 fake timers，保证自动关闭计时可被推进。
 beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(0)
@@ -15,11 +15,11 @@ afterEach(() => {
 
 function makeItem(overrides = {}) {
     return {
+        groupKey: 'session:s1',
         sessionId: 's1',
         title: '会话标题',
-        summary: '**加粗摘要**',
+        body: '完成摘要',
         kind: 'session',
-        projectPath: '',
         ...overrides,
     }
 }
@@ -37,34 +37,75 @@ describe('useCompletionPopover', () => {
 
     it('push() queues subsequent items while one is showing', () => {
         const p = useCompletionPopover()
-        p.push(makeItem({ sessionId: 's1' }))
-        p.push(makeItem({ sessionId: 's2' }))
-        p.push(makeItem({ sessionId: 's3' }))
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
+        p.push(makeItem({ groupKey: 'session:s3', sessionId: 's3' }))
 
         expect(p.active.value?.sessionId).toBe('s1')
         expect(p.queue.value.map((i) => i.sessionId)).toEqual(['s2', 's3'])
     })
 
-    it('does NOT auto-hide or auto-advance over time — stays until dismissed', () => {
+    it('auto-dismisses the active item after 5s', () => {
         const p = useCompletionPopover()
-        p.push(makeItem({ sessionId: 's1' }))
-        p.push(makeItem({ sessionId: 's2' }))
+        p.push(makeItem())
 
-        // Far past any reasonable auto-dismiss duration
-        vi.advanceTimersByTime(600000)
+        // 4999ms 仍在展示
+        vi.advanceTimersByTime(4999)
         expect(p.active.value?.sessionId).toBe('s1')
-        expect(p.queue.value.map((i) => i.sessionId)).toEqual(['s2'])
+
+        // 到 5s 自动关闭
+        vi.advanceTimersByTime(1)
+        expect(p.active.value).toBeNull()
+    })
+
+    it('auto-dismiss advances to the next queued item', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
+
+        vi.advanceTimersByTime(5000)
+        expect(p.active.value?.sessionId).toBe('s2')
+        expect(p.queue.value).toHaveLength(0)
+    })
+
+    it('the auto-dismiss timer restarts for each newly shown item', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
+
+        // s1 展示 5s 后进入 s2 —— s2 必须重新计满 5s，不能沿用 s1 的剩余时间
+        vi.advanceTimersByTime(5000)
+        expect(p.active.value?.sessionId).toBe('s2')
+
+        vi.advanceTimersByTime(4999)
+        expect(p.active.value?.sessionId).toBe('s2')
+
+        vi.advanceTimersByTime(1)
+        expect(p.active.value).toBeNull()
     })
 
     it('dismiss() hides the active item and advances to the next one', () => {
         const p = useCompletionPopover()
-        p.push(makeItem({ sessionId: 's1' }))
-        p.push(makeItem({ sessionId: 's2' }))
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
 
         p.dismiss()
 
         expect(p.active.value?.sessionId).toBe('s2')
         expect(p.queue.value).toHaveLength(0)
+    })
+
+    it('dismiss() cancels the pending auto-dismiss timer', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
+
+        p.dismiss()
+        expect(p.active.value?.sessionId).toBe('s2')
+
+        // 推进超过 s1 的计时窗口：若旧计时器未清掉，s2 会被提前关闭
+        vi.advanceTimersByTime(4999)
+        expect(p.active.value?.sessionId).toBe('s2')
     })
 
     it('dismiss() with an empty queue leaves active null', () => {
@@ -76,21 +117,32 @@ describe('useCompletionPopover', () => {
         expect(p.active.value).toBeNull()
     })
 
+    it('reset() clears the pending auto-dismiss timer', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.reset()
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
+
+        // s2 应在自己的 5s 窗口结束时关闭，而不是被 reset 前的计时器提前关掉
+        vi.advanceTimersByTime(4999)
+        expect(p.active.value?.sessionId).toBe('s2')
+    })
+
     it('push() after everything was dismissed shows immediately again', () => {
         const p = useCompletionPopover()
-        p.push(makeItem({ sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
         p.dismiss()
-        p.push(makeItem({ sessionId: 's2' }))
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
 
         expect(p.active.value?.sessionId).toBe('s2')
         expect(p.queue.value).toHaveLength(0)
     })
 
-    it('push() while active replaces nothing and keeps queue order FIFO', () => {
+    it('push() while active keeps queue order FIFO', () => {
         const p = useCompletionPopover()
-        p.push(makeItem({ sessionId: 's1' }))
-        p.push(makeItem({ sessionId: 's2' }))
-        p.push(makeItem({ sessionId: 's3' }))
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
+        p.push(makeItem({ groupKey: 'session:s3', sessionId: 's3' }))
 
         expect(p.active.value?.sessionId).toBe('s1')
         expect(p.queue.value.map((i) => i.sessionId)).toEqual(['s2', 's3'])
@@ -104,61 +156,66 @@ describe('useCompletionPopover', () => {
         expect(p.queue.value).toHaveLength(0)
     })
 
-    it('dismissOnBackdrop() ignores clicks within the first second (误触保护)', () => {
+    it('merges a same-group forge item into the queued one instead of adding a row', () => {
         const p = useCompletionPopover()
-        p.push(makeItem({ sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web', title: '第一次' }))
+        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web', title: '第二次', body: '新评论' }))
 
-        // 弹出瞬间点击空白处：不关闭
-        expect(p.dismissOnBackdrop()).toBe(false)
+        // 两次 forge 事件合并成一条排队项
+        expect(p.queue.value).toHaveLength(1)
+        expect(p.queue.value[0].count).toBe(2)
+        // 合并采用最新事件的正文
+        expect(p.queue.value[0].title).toBe('第二次')
+        expect(p.queue.value[0].body).toBe('新评论')
+    })
+
+    it('does not merge different repositories', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web' }))
+        p.push(makeItem({ groupKey: 'forge:acme/api', kind: 'forge', repoLabel: 'acme/api' }))
+
+        expect(p.queue.value).toHaveLength(2)
+        expect(p.queue.value.map(i => i.count)).toEqual([undefined, undefined])
+    })
+
+    it('merging does not mutate the active item on screen', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web', title: '首次' }))
+        // active 就是首次那条；再来一条同仓库的应进 queue，而不是改动 active
+        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web', title: '再次' }))
+
+        expect(p.active.value?.title).toBe('首次')
+        expect(p.active.value?.count).toBeUndefined()
+        // 合并只作用于 queue；active 命中同键时不合并，而是作为独立排队项
+        expect(p.queue.value).toHaveLength(1)
+        expect(p.queue.value[0].title).toBe('再次')
+        expect(p.queue.value[0].count).toBeUndefined()
+    })
+
+    it('drops the oldest queued item when the queue exceeds 3', () => {
+        const p = useCompletionPopover()
+        // 第 1 条成为 active，其余进 queue
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        p.push(makeItem({ groupKey: 'session:s2', sessionId: 's2' }))
+        p.push(makeItem({ groupKey: 'session:s3', sessionId: 's3' }))
+        p.push(makeItem({ groupKey: 'session:s4', sessionId: 's4' }))
+        // 第 4 条排队项进队时超限，丢最旧的排队项 s2
+        p.push(makeItem({ groupKey: 'session:s5', sessionId: 's5' }))
+
         expect(p.active.value?.sessionId).toBe('s1')
+        expect(p.queue.value.map(i => i.sessionId)).toEqual(['s3', 's4', 's5'])
+    })
 
-        // 499ms 仍不关闭
-        vi.advanceTimersByTime(499)
-        expect(p.dismissOnBackdrop()).toBe(false)
+    it('queue cap never drops the item currently on screen', () => {
+        const p = useCompletionPopover()
+        p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
+        for (let i = 2; i <= 8; i++) {
+            p.push(makeItem({ groupKey: `session:s${i}`, sessionId: `s${i}` }))
+        }
+
         expect(p.active.value?.sessionId).toBe('s1')
-
-        // 到达 1s 边界（从弹出起已满 1s）后可关闭
-        vi.advanceTimersByTime(501)
-        expect(p.dismissOnBackdrop()).toBe(true)
-        expect(p.active.value).toBeNull()
-    })
-
-    it('dismissOnBackdrop() advances to the next queued item after the guard window', () => {
-        const p = useCompletionPopover()
-        p.push(makeItem({ sessionId: 's1' }))
-        p.push(makeItem({ sessionId: 's2' }))
-
-        vi.advanceTimersByTime(1000)
-        expect(p.dismissOnBackdrop()).toBe(true)
-        expect(p.active.value?.sessionId).toBe('s2')
-        expect(p.queue.value).toHaveLength(0)
-    })
-
-    it('dismissOnBackdrop() guard restarts for each newly shown item', () => {
-        const p = useCompletionPopover()
-        p.push(makeItem({ sessionId: 's1' }))
-        p.push(makeItem({ sessionId: 's2' }))
-
-        // s1 展示满 1s 后通过 backdrop 关闭，进入 s2
-        vi.advanceTimersByTime(1000)
-        expect(p.dismissOnBackdrop()).toBe(true)
-        expect(p.active.value?.sessionId).toBe('s2')
-
-        // s2 刚展示：同样的误触保护重新生效
-        expect(p.dismissOnBackdrop()).toBe(false)
-        expect(p.active.value?.sessionId).toBe('s2')
-
-        vi.advanceTimersByTime(1000)
-        expect(p.dismissOnBackdrop()).toBe(true)
-        expect(p.active.value).toBeNull()
-    })
-
-    it('dismiss() (按钮/发送等关闭) 不受最小停留时长限制', () => {
-        const p = useCompletionPopover()
-        p.push(makeItem({ sessionId: 's1' }))
-
-        // 刚展示就 dismiss：应直接关闭（与 backdrop 保护无关）
-        p.dismiss()
-        expect(p.active.value).toBeNull()
+        expect(p.queue.value).toHaveLength(3)
     })
 })

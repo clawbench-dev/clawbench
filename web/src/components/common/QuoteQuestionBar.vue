@@ -570,7 +570,7 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   cursor: not-allowed;
 }
 
-/* ===== Transitions (对齐 CompletionPopover 滑下+淡入动效) ===== */
+/* ===== Transitions (对齐完成通知卡片的滑下+淡入动效) ===== */
 .quote-bar-enter-active {
   transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }

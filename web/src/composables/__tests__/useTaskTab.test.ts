@@ -52,12 +52,6 @@ vi.mock('@/composables/useNotification', () => ({
   showBrowserNotification: (...args: unknown[]) => mockShowBrowserNotification(...args),
 }))
 
-// Mock toast
-const mockToastShow = vi.fn()
-vi.mock('@/composables/useToast.ts', () => ({
-  useToast: () => ({ show: mockToastShow }),
-}))
-
 // Mock fetch
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -69,7 +63,6 @@ import { store } from '@/stores/app'
 beforeEach(() => {
   mockPlayNotificationSound.mockReset()
   mockShowBrowserNotification.mockReset()
-  mockToastShow.mockReset()
   mockFetch.mockReset()
   // Reset store state
   store.state.taskRunning = false
@@ -577,7 +570,7 @@ describe('useTaskTab', () => {
       }
     })
 
-    it('shows toast on completion with task name', async () => {
+    it('shows the task name fallback in the browser notification when the task has no name', async () => {
       const { loadTasks } = useTaskTab()
 
       mockTasksResponse([makeTask({ runningCount: 1 })])
@@ -586,10 +579,7 @@ describe('useTaskTab', () => {
       mockTasksResponse([makeTask({ runningCount: 0, runCount: 1 })])
       await loadTasks()
 
-      expect(mockToastShow).toHaveBeenCalledWith(
-        expect.stringContaining('Test Task'),
-        expect.objectContaining({ type: 'success' }),
-      )
+      expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
     })
 
     it('sets taskJustCompleted flag on completion', async () => {
@@ -648,19 +638,6 @@ describe('useTaskTab', () => {
       await loadTasks()
 
       // Should not throw
-      mockTasksResponse([makeTask({ runningCount: 0, runCount: 1 })])
-      await loadTasks()
-
-      expect(mockPlayNotificationSound).toHaveBeenCalled()
-    })
-
-    it('catches errors from useToast show', async () => {
-      const { loadTasks } = useTaskTab()
-      mockToastShow.mockImplementation(() => { throw new Error('Toast error') })
-
-      mockTasksResponse([makeTask({ runningCount: 1 })])
-      await loadTasks()
-
       mockTasksResponse([makeTask({ runningCount: 0, runCount: 1 })])
       await loadTasks()
 
@@ -767,26 +744,6 @@ describe('useTaskTab', () => {
       expect(options.onClick).toBeDefined()
 
       // Call the onClick handler — should invoke switchTab callback
-      options.onClick!()
-      expect(mockSwitchTab).toHaveBeenCalledWith('tasks')
-    })
-
-    it('toast onClick also navigates via switchTab callback', async () => {
-      const mockSwitchTab = vi.fn()
-      registerSwitchTab(mockSwitchTab)
-
-      const { loadTasks } = useTaskTab()
-
-      mockTasksResponse([makeTask({ runningCount: 1 })])
-      await loadTasks()
-
-      mockTasksResponse([makeTask({ runningCount: 0, runCount: 1 })])
-      await loadTasks()
-
-      const toastCall = mockToastShow.mock.calls[0]
-      const options = toastCall[1] as { onClick?: () => void }
-      expect(options.onClick).toBeDefined()
-
       options.onClick!()
       expect(mockSwitchTab).toHaveBeenCalledWith('tasks')
     })

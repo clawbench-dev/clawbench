@@ -22,7 +22,7 @@ allowed-tools: Bash(playwright-cli:*), Bash(curl:*)
    - `theme` = `github-dark`（配合 `clawbench-settings-theme` = `JSON.stringify('github-dark')`）
    - `clawbench_welcome_dismissed` = `'true'`（抑制「欢迎使用 ClawBench / 智能体扫描」面板）
    - `clawbench-upgrade-skip` = **服务器最新版本号**（抑制「发现新版本」弹窗）。⚠️ 该值必须等于 `/api/upgrade/check` 返回的 `latest_version`，版本升级后旧 skip 值会失效，需重新查再写。弹窗文本里可直接读到版本号。
-3. 画面里若出现右上角「文件链接分享…」完成卡片 / 顶部「AI 任务完成」浮层，是另一个 agent 的 CompletionPopover：点击 `.completion-popover-backdrop` 的空白处可关闭，但会排队重现——最稳的办法是清理后立刻截图。
+3. 画面里若出现右上角「文件链接分享…」完成卡片 / 顶部「AI 任务完成」浮层，是另一个 agent 的 CompletionPopover：它 5 秒后自动消失，**点空白处关不掉**（定位层已 `pointer-events: none`，不再支持点空白关闭）。要么等它自己消失，要么点它自己的关闭按钮（`.completion-notify-close`）——但它有队列，关掉一条会立刻补上下一条，所以最稳的办法仍是清理后立刻截图。
 4. UI 缩放（可选放大 1.25 让元素更大更清晰）直接改 DOM：`document.documentElement.style.zoom = '1.25'`。**reload 会丢失**，需在截图前重新设置。
 5. 桌面端桌面模式：PC 单击文件只选中，**双击才打开**。用 `dispatchEvent(new MouseEvent('dblclick', {bubbles:true}))` 最可靠。
 
@@ -62,7 +62,7 @@ playwright-cli -s=shot eval "() => ({
   theme: document.documentElement.getAttribute('data-theme'),
   wel: !!document.querySelector('.welcome-overlay')?.offsetParent,
   up: !!document.querySelector('.up-overlay')?.offsetParent,
-  pop: !!document.querySelector('.completion-popover-backdrop')?.offsetParent
+  pop: !!document.querySelector('.completion-notify')?.offsetParent
 })"
 # 期望：theme=github-dark，wel/up/pop 全 false
 ```
@@ -113,11 +113,12 @@ playwright-cli -s=shot run-code "async page => {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1080, deviceScaleFactor: 2, mobile: false });
   await page.waitForTimeout(1500);
-  await page.evaluate(() => { const p = document.querySelector('.completion-popover-backdrop'); if (p && p.offsetParent) p.click(); });
-  await page.waitForTimeout(500);
+  // 完成通知不再支持点空白关闭（定位层 pointer-events: none），只能等它 5s
+  // 自动消失或 reload；这里先等它自然过期。
+  await page.waitForTimeout(5200);
   await page.screenshot({ path: '/tmp/clawbench_shot.png' });
   return await page.evaluate(() => ({
-    pop: !!document.querySelector('.completion-popover-backdrop')?.offsetParent,
+    pop: !!document.querySelector('.completion-notify')?.offsetParent,
     up: !!document.querySelector('.up-overlay')?.offsetParent,
     toc: !!document.querySelector('.toc-dock')?.offsetParent,
     md: !!document.querySelector('.markdown-body')?.offsetParent,

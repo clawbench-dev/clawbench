@@ -863,9 +863,9 @@ onUnmounted(() => {
 .lightbox {
     position: fixed;
     inset: 0;
-    /* Above all overlays/dialogs (CompletionPopover z 9998, etc.): the popover's
-       expanded markdown summary renders lightbox-able images, and the full-screen
-       viewer must sit on top when opened from there. */
+    /* Above all overlays/dialogs (the in-app completion notification's layer
+       sits at z 9998, etc.): the full-screen viewer must sit on top when opened
+       from a chat message or file preview. */
     z-index: var(--z-lightbox);
     display: flex;
     align-items: center;

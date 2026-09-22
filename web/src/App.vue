@@ -533,7 +533,8 @@ import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { flashElement } from './utils/domFlash'
-import { useGlobalEvents, type ServerEvent } from './composables/useGlobalEvents'
+import { useGlobalEvents, plainPreview, type ServerEvent } from './composables/useGlobalEvents'
+import { eventKindLabel, unreadReasonLabel } from './utils/forgeEventLabels'
 
 /** Payload carried by a server event (see useGlobalEvents). */
 type ServerEventData = ServerEvent['data']
@@ -1249,69 +1250,115 @@ const removeTaskHandler = onEvent((event, data) => {
     }
 })
 
-// 取路径 basename 作为项目显示名（跨项目弹窗用）
-function projectBaseName(path: string) {
-    const trimmed = (path || '').replace(/[\\/]+$/, '')
-    const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-    return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
-}
-
-// AI 完成弹窗：任何会话/任务完成时，若用户当前未在查看该会话，入队弹出。
-// 后端 session_update/task_update 的 completed 事件已携带 session_title 与
-// response_preview（Markdown 原文）；useGlobalEvents 已按事件 ID 全局去重。
+// 应用内完成通知：会话/任务/仓库事件到达时，若用户当前未在查看该会话，
+// 入队弹出一张纯通知卡片（标题 + 单行摘要 + 跳转 + 关闭，5 秒自动消失）。
+//
+// 事件覆盖与浏览器/桌面系统通知**完全对齐**（见 useGlobalEvents 的
+// showEventBrowserNotification），使同一事件在页面聚焦与失焦时都有一致的提醒：
+//   session_update  completed / cancelled / permission_pending
+//   task_update     running / completed / failed / cancelled
+//   forge_event     opened / closed / merged / reopened / commented / pipeline_done
+// 唯一不对齐的是焦点条件——系统通知要求页面失焦才弹，而应用内卡片保留
+// 「用户没在看该会话就弹」。否则两者场景完全重合，卡片就失去存在意义了。
 //
 // 关键：重放事件（fetchPendingEvents 断线补偿 / WS 重连 replay buffer）必须跳过。
 // 页面刷新时 lastSeenEventId 内存游标为空，useGlobalEvents 会跳过历史事件，
-// 但服务端 replay buffer 里的旧 completed 事件仍会通过 WS 重放送达——
-// 那些是补发的历史通知，不是用户正在观看的实时完成，绝不能再弹窗。
+// 但服务端 replay buffer 里的旧事件仍会通过 WS 重放送达——那些是补发的历史，
+// 不是实时发生，绝不能再弹。
 const completionPopover = useCompletionPopover()
+
+/** 各事件类型允许弹通知的状态集合。不在集合内的一律忽略。 */
+const SESSION_NOTIFY_STATUSES = ['completed', 'cancelled', 'permission_pending']
+const TASK_NOTIFY_STATUSES = ['running', 'completed', 'failed', 'cancelled']
+
 function handleCompletionEvent(event: string, data: ServerEventData, skipReplay = false) {
-    if (!data || data.status !== 'completed') return
-    if (event !== 'session_update' && event !== 'task_update') return
-    // 重放阶段（页面刷新/断线重连补发的历史完成）不弹窗：
+    if (!data) return
+    // 重放阶段（页面刷新/断线重连补发的历史）不弹：
     // isReplayingEvents 在 fetchPendingEvents 与 WS replay 窗口期间为 true。
     if (skipReplay && isReplayingEvents.value) return
-    // 应用内通知开关（本地设置，默认开）：关闭后不再弹完成卡片。
-    // 只拦新的完成事件——已经在屏幕上的卡片保留，等它自己关掉（用户预期：
+    // 应用内通知开关（本地设置，默认开）：关闭后不再弹新卡片。
+    // 只拦新事件——已经在屏幕上的卡片保留，等它自己关掉（用户预期：
     // 关开关不该把正在看的内容突然抽走）。提示音与系统/IM 推送各有自己的
     // 开关，不受这里影响。
     if (localConfig.inAppNotification === false) return
+
+    if (event === 'forge_event') {
+        // forge 事件没有会话概念，只受上面的开关门控。
+        const ev = data.event
+        if (!ev?.event_type) return
+        const slug = [ev.owner, ev.repo].filter(Boolean).join('/')
+        const kind = eventKindLabel(ev.item_type || data.item?.type || '')
+        const reason = unreadReasonLabel(ev.event_type)
+        // 流水线没有条目编号（syncer 以 Number 0 构建），falsy 检查天然过滤掉
+        // 它——渲染 "#0" 看起来像坏引用。
+        const num = ev.number || data.item?.number
+        const ref = num ? ` #${num}` : ''
+        const projectPath = ev.project_path || ''
+        // 同仓库的事件合并成一张"N 条新变化"：一次轮询会派发整批事件，
+        // 逐条排队会把队列堵死。groupKey 用仓库标识而非条目——用户关心的是
+        // "这个仓库有动静"，不是每一个议题各弹一次。
+        const groupKey = `forge:${slug}`
+        completionPopover.push({
+            groupKey,
+            kind: 'forge',
+            title: [slug, `${kind}${ref}`.trim(), reason].filter(Boolean).join(' · '),
+            body: data.item?.title || reason,
+            repoLabel: slug,
+            // 条目级已读键。流水线没有可派生的 run id（真实 id 未下发），
+            // 故留空 → 该条只跳转不标记已读。
+            forgeItemKey: ev.item_type && ev.item_type !== 'pipeline' && num
+                ? `${ev.item_type}/${num}`
+                : undefined,
+            projectPath,
+        })
+        return
+    }
+
+    const status = data.status || ''
+    if (event === 'session_update') {
+        if (!SESSION_NOTIFY_STATUSES.includes(status)) return
+    } else if (event === 'task_update') {
+        if (!TASK_NOTIFY_STATUSES.includes(status)) return
+    } else {
+        return
+    }
+
     const sessionId = data.session_id
     if (!sessionId) return
     // 聊天界面在前台激活且正是当前会话时，用户正看着结果，不弹；
-    // 否则（看别的 Tab、或完成的是其他会话）都弹。
+    // 否则（看别的 Tab、或事件属于其他会话）都弹。
     // 注意：PC 宽屏下聊天面板常驻右侧（ChatPanelContent :active 恒为 true），
     // 此时 activeTab 可能是 browse/terminal 但聊天仍在前台——必须用同一判断。
     const chatPanelActive = isWideScreen || activeTab.value === 'chat'
     if (chatPanelActive && sessionId === sessionIdentity.currentSessionId.value) return
-    // 跨项目才展示项目名/路径（本项目不加）——判断弹窗会话项目与当前项目是否相同
-    const isSameProject = !data.project_path || data.project_path === store.state.projectRoot
-    const projectName = isSameProject ? '' : projectBaseName(data.project_path || '')
+
+    // 正文与系统通知用同一份纯文本：同一事件不该因为页面是否聚焦而读起来不同。
+    // permission_pending 的 response_preview 为空，用工具名代替（同系统通知）。
+    const body = status === 'permission_pending'
+        ? (data.tool_name || '')
+        : (plainPreview(data) || data.session_title || '')
+    const projectPath = data.project_path || ''
+
     if (event === 'task_update') {
         completionPopover.push({
-            sessionId,
+            groupKey: `task:${data.task_id || sessionId}`,
             kind: 'task',
-            title: data.session_title || '未命名任务',
-            summary: data.response_preview || '',
-            userMessage: data.last_user_message || '',
-            userHasFiles: !!data.last_user_has_files,
+            title: data.session_title || gt('chat.popover.untitledTask'),
+            body,
             agentId: data.agent_id || '',
-            projectPath: data.project_path || '',
-            projectName,
+            projectPath,
             taskId: data.task_id,
             executionId: data.execution_id,
         })
     } else {
         completionPopover.push({
-            sessionId,
+            groupKey: `session:${sessionId}`,
             kind: 'session',
-            title: data.session_title || '未命名会话',
-            summary: data.response_preview || '',
-            userMessage: data.last_user_message || '',
-            userHasFiles: !!data.last_user_has_files,
+            title: data.session_title || gt('chat.popover.untitledSession'),
+            body,
+            sessionId,
             agentId: data.agent_id || '',
-            projectPath: data.project_path || '',
-            projectName,
+            projectPath,
         })
     }
 }

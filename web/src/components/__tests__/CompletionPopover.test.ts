@@ -1,7 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, ref } from 'vue'
 import CompletionPopover from '@/components/common/CompletionPopover.vue'
+import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 // Mock the singleton composable so each test controls state directly.
 // Hoisted vi.mock factories cannot reference outer variables, so the mock
@@ -10,20 +12,14 @@ const mockState = {
     active: ref(null),
     queue: ref([]),
     dismiss: vi.fn(),
-    dismissOnBackdrop: vi.fn(),
 }
 
-const { mockGetAgentBackend, mockToastShow } = vi.hoisted(() => ({
+const { mockGetAgentBackend } = vi.hoisted(() => ({
     mockGetAgentBackend: vi.fn(() => ''),
-    mockToastShow: vi.fn(),
 }))
 
 vi.mock('@/composables/useCompletionPopover', () => ({
     useCompletionPopover: () => mockState,
-}))
-
-vi.mock('@/composables/useToast', () => ({
-    useToast: () => ({ show: mockToastShow }),
 }))
 
 vi.mock('@/composables/useAgents', async (importOriginal) => {
@@ -36,13 +32,38 @@ vi.mock('@/composables/useAgents', async (importOriginal) => {
 
 function makeItem(overrides = {}) {
     return {
+        groupKey: 'session:s1',
         sessionId: 's1',
         title: '这是一个很长的会话标题用于测试溢出省略号的显示效果',
-        summary: '**加粗的摘要内容** 以及普通文本',
+        body: '**加粗的摘要内容** 以及普通文本',
         kind: 'session',
-        projectPath: '',
         ...overrides,
     }
+}
+
+/** Collect window CustomEvents of the given types for the duration of one test. */
+function captureEvents(types: string[]) {
+    const captured: CustomEvent[] = []
+    const listeners = types.map((type) => {
+        const fn = (e: Event) => captured.push(e as CustomEvent)
+        window.addEventListener(type, fn)
+        return [type, fn] as const
+    })
+    return {
+        captured,
+        stop() {
+            for (const [type, fn] of listeners) window.removeEventListener(type, fn)
+        },
+    }
+}
+
+function cssText(): string {
+    return Array.from(document.styleSheets)
+        .map((s) => {
+            try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+            catch { return '' }
+        })
+        .join('\n')
 }
 
 describe('CompletionPopover', () => {
@@ -52,317 +73,59 @@ describe('CompletionPopover', () => {
         mockState.active = ref(null)
         mockState.queue = ref([])
         mockGetAgentBackend.mockReturnValue('')
+        _resetPlatformForTest()
     })
+    afterEach(() => {
+        _resetPlatformForTest()
+    })
+
     function mountPopover() {
         return mount(CompletionPopover, { attachTo: document.body })
     }
 
     it('renders nothing when no item is active', () => {
         mountPopover()
-        expect(document.querySelector('.completion-popover')).toBeFalsy()
+
+        expect(document.querySelector('.completion-notify')).toBeFalsy()
+        expect(document.querySelector('.completion-notify-layer')).toBeFalsy()
     })
 
     it('renders the session title', () => {
-        mockState.active = ref(makeItem({ title: '修复登录 bug' }))
+        mockState.active = ref(makeItem({ title: '修复登录超时' }))
         mountPopover()
 
-        const el = document.querySelector('.completion-popover-title')!
-        expect(el.textContent).toContain('修复登录 bug')
+        expect(document.querySelector('.completion-notify-title')!.textContent).toBe('修复登录超时')
     })
 
-    it('renders the last user message as a single line quote block', () => {
-        mockState.active = ref(makeItem({ userMessage: '请帮我修复登录 bug' }))
+    it('renders the plain-text body on a single line', () => {
+        mockState.active = ref(makeItem({ body: '已完成登录流程重构' }))
         mountPopover()
 
-        const el = document.querySelector('.completion-popover-user-quote')!
-        const text = el.querySelector('.completion-popover-user-quote-text')!
-        // 左侧消息图标（lucide 组件直接渲染为 svg，class 即元素本身）
-        const icon = el.querySelector('.completion-popover-user-quote-icon')
-        expect(icon).toBeTruthy()
-        expect(icon!.tagName.toLowerCase()).toBe('svg')
-        expect(text.textContent).toContain('请帮我修复登录 bug')
-        // 折叠态单行省略逻辑在内层文本 span（flex 容器内 text-overflow 不生效）
-        const styles = window.getComputedStyle(text)
-        expect(styles.textOverflow).toBe('ellipsis')
-        expect(styles.overflow).toBe('hidden')
-        expect(styles.whiteSpace).toBe('nowrap')
-    })
-
-    it('shows an attachment chip alongside the user message text when the message has files', () => {
-        mockState.active = ref(makeItem({ userMessage: '看图', userHasFiles: true }))
-        mountPopover()
-
-        const row = document.querySelector('.completion-popover-meta-user')!
-        const quote = row.querySelector('.completion-popover-user-quote')!
-        const chip = row.querySelector('.completion-popover-attachment-chip')!
-        expect(quote).toBeTruthy()
-        expect(chip).toBeTruthy()
-        // chip 文案 + 图标（当前测试环境默认 en：Attachment）
-        expect(chip.textContent).toContain('Attachment')
-        expect(chip.querySelector('svg')).toBeTruthy()
-    })
-
-    it('shows the attachment chip alone for an attachment-only user message (no text)', () => {
-        mockState.active = ref(makeItem({ userMessage: '', userHasFiles: true }))
-        mountPopover()
-
-        const row = document.querySelector('.completion-popover-meta-user')!
-        const chip = row.querySelector('.completion-popover-attachment-chip')!
-        expect(chip).toBeTruthy()
-        // 无文字时不渲染引用块，只保留附件 chip
-        expect(row.querySelector('.completion-popover-user-quote')).toBeFalsy()
-        expect(chip.textContent).toContain('Attachment')
-    })
-
-    it('hides the attachment chip when the user message has no files', () => {
-        mockState.active = ref(makeItem({ userMessage: '没有附件', userHasFiles: false }))
-        mountPopover()
-
-        const row = document.querySelector('.completion-popover-meta-user')!
-        expect(row.querySelector('.completion-popover-user-quote')).toBeTruthy()
-        expect(row.querySelector('.completion-popover-attachment-chip')).toBeFalsy()
-    })
-
-    it('does not render the user message row when neither text nor files present', () => {
-        mockState.active = ref(makeItem({ userMessage: '', userHasFiles: false }))
-        mountPopover()
-
-        expect(document.querySelector('.completion-popover-meta-user')).toBeFalsy()
-    })
-
-    it('styles the user message as a quote block (left accent border, no radius, tinted bg)', () => {
-        mockState.active = ref(makeItem({ userMessage: '请帮我修复登录 bug' }))
-        mountPopover()
-
-        const row = document.querySelector('.completion-popover-meta-user')!
-        const el = document.querySelector('.completion-popover-user-quote')!
-        const rowStyles = window.getComputedStyle(row)
-        // 行容器靠左对齐
-        expect(rowStyles.justifyContent).toBe('flex-start')
-        // 引用块：inline-flex 布局容纳图标 + 文本，宽度随内容自适应（max-width: 100% 仅作上限）
+        const el = document.querySelector('.completion-notify-body')!
+        expect(el.textContent).toBe('已完成登录流程重构')
         const styles = window.getComputedStyle(el)
-        expect(styles.display).toBe('inline-flex')
-        expect(styles.maxWidth).toBe('100%')
-        // jsdom 不解析 var()，断言 token 名（值为 12px，见 variables.css）
-        expect(styles.fontSize).toBe('var(--font-size-sm)')
-
-        // 元信息行无负 margin（引用块不铺满卡片宽度）
-        const cssRow = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const metaRule = cssRow.split('\n').filter((line) => line.includes('.completion-popover-meta-user')).join('\n')
-        expect(metaRule).not.toContain('margin-left: -10px')
-        expect(metaRule).not.toContain('margin-right: -10px')
-
-        // jsdom 无法解析 color-mix()/var() 与 border-radius 计算值，
-        // 这些改为断言组件注入的 CSS 规则文本（其余走计算值）
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const quoteRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-user-quote')).join('\n')
-        // 左侧 accent 竖线描边、无圆角、淡色底
-        expect(quoteRule).toContain('border-left: 2px solid var(--accent-color)')
-        expect(quoteRule).toContain('border-radius: 0')
-        expect(quoteRule).toContain('background: color-mix(in srgb, var(--accent-color) 10%')
-        // 折叠态不应保留胶囊气泡样式
-        expect(quoteRule).not.toContain('999px')
-        expect(quoteRule).not.toContain('var(--user-msg-color)')
-    })
-
-    it('expands the user message quote block on click and collapses on second click', async () => {
-        mockState.active = ref(makeItem({ userMessage: '请帮我修复登录 bug' }))
-        mountPopover()
-
-        const el = document.querySelector('.completion-popover-user-quote')!
-        const text = el.querySelector('.completion-popover-user-quote-text')!
-
-        // 初始折叠：单行省略、未展开态
-        expect(el.classList.contains('is-expanded')).toBe(false)
-        expect(el.getAttribute('aria-expanded')).toBe('false')
-        expect(window.getComputedStyle(text).whiteSpace).toBe('nowrap')
-
-        // 无展开提示图标（用户点击即可展开，不展示额外提示）
-        expect(el.querySelector('.completion-popover-user-quote-chevron')).toBeFalsy()
-
-        // 点击展开：文本换行显示完整内容
-        el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await nextTick()
-        expect(el.classList.contains('is-expanded')).toBe(true)
-        expect(el.getAttribute('aria-expanded')).toBe('true')
-        expect(window.getComputedStyle(text).whiteSpace).toBe('pre-wrap')
-
-        // 再次点击收起
-        el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await nextTick()
-        expect(el.classList.contains('is-expanded')).toBe(false)
-        expect(el.getAttribute('aria-expanded')).toBe('false')
-        expect(window.getComputedStyle(text).whiteSpace).toBe('nowrap')
-    })
-
-    it('removes the divider between the user message quote block and the assistant summary', () => {
-        mockState.active = ref(makeItem({ userMessage: '请帮我修复登录 bug' }))
-        mountPopover()
-
-        // 用户消息行自身不应有 border（引用块自身已带左侧描边分层）
-        const metaRow = document.querySelector('.completion-popover-meta-user')!
-        const rowStyles = window.getComputedStyle(metaRow)
-        expect(rowStyles.borderTopStyle).toBe('none')
-        expect(rowStyles.borderBottomStyle).toBe('none')
-
-        // 分隔线规则存在，但被限定为"非用户消息行"的元信息——
-        // 用户消息行紧跟摘要时选择器不匹配，即用户消息与助手消息之间无分隔线
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const dividerRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-summary')).join('\n')
-        expect(dividerRule).toContain('.completion-popover-meta:not(.completion-popover-meta-user) + .completion-popover-summary')
-        expect(dividerRule).toContain('border-top')
-    })
-
-    it('keeps the divider between the project row and the assistant summary', () => {
-        mockState.active = ref(makeItem({ projectName: 'my-app', userMessage: '' }))
-        mountPopover()
-
-        // jsdom 不解析 color-mix()，border 计算值不可靠；
-        // 改为断言分隔线规则仍存在于样式表中且选择器覆盖项目行
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const dividerRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-meta:not(.completion-popover-meta-user)')).join('\n')
-        expect(dividerRule).toContain('border-top: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent)')
-    })
-
-    it('hides the user message row when empty', () => {
-        mockState.active = ref(makeItem({ userMessage: '' }))
-        mountPopover()
-
-        expect(document.querySelector('.completion-popover-user-quote')).toBeFalsy()
-    })
-
-    it('keeps a long user message on a single line and expands to full content on click', async () => {
-        const longMessage = '这是一个非常非常非常非常非常非常非常非常非常非常非常非常长的用户消息，用来验证引用块内的文本超出宽度时保持单行并显示省略号'
-        mockState.active = ref(makeItem({ userMessage: longMessage }))
-        mountPopover()
-
-        const el = document.querySelector('.completion-popover-user-quote')!
-        const text = el.querySelector('.completion-popover-user-quote-text')!
-        // 完整文本仍在 DOM（省略号只是视觉裁剪，点击可展开查看完整内容）
-        expect(text.textContent).toBe(longMessage)
-        // 折叠态：单行不换行 + 溢出隐藏 + 省略号
-        const styles = window.getComputedStyle(text)
         expect(styles.whiteSpace).toBe('nowrap')
         expect(styles.overflow).toBe('hidden')
         expect(styles.textOverflow).toBe('ellipsis')
-        // 文本 span 可收缩（min-width: 0），否则长文本会撑破引用块容器
-        expect(styles.minWidth).toBe('0px')
-        // 点击后展开为完整可读内容
-        el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await nextTick()
-        expect(window.getComputedStyle(text).whiteSpace).toBe('pre-wrap')
     })
 
-    it('renders the project name and path when provided', () => {
-        mockState.active = ref(makeItem({ projectName: 'my-app', projectPath: '/home/user' }))
+    it('omits the body row entirely when there is no body', () => {
+        mockState.active = ref(makeItem({ body: '' }))
         mountPopover()
 
-        const nameEl = document.querySelector('.completion-popover-project-name')!
-        expect(nameEl.textContent).toBe('my-app')
-        const pathEl = document.querySelector('.completion-popover-project-path')!
-        expect(pathEl.textContent).toBe('/home/user')
-        // 项目行位于底部 footer：无外边距、横向铺满卡片的独立区隔带
-        const footer = document.querySelector('.completion-popover-footer')!
-        expect(footer).toBeTruthy()
-        expect(footer.querySelector('.completion-popover-project')).toBeTruthy()
-        // jsdom 不解析 color-mix()，改断言 CSS 规则文本
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const footerRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-footer')).join('\n')
-        expect(footerRule).toContain('background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary')
-        // 贴边区隔：负 margin 铺满卡片宽度、顶部描边、无圆角
-        // 水平 -10px 仍是字面量（负间距不入 token 体系），垂直两档走 --space-*
-        expect(footerRule).toContain('margin: var(--space-4) -10px -8px')
-        expect(footerRule).toContain('border-top: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent)')
-        expect(footerRule).not.toContain('border-radius')
-        // "外部"徽章：图标 + 文字，提示这是其他项目的会话
-        const badge = document.querySelector('.completion-popover-project-badge')!
-        expect(badge).toBeTruthy()
-        expect(badge.querySelector('svg')).toBeTruthy()
-        expect(badge.textContent!.trim().length).toBeGreaterThan(0)
-        // 路径 span 承担单行省略（flex 容器内 text-overflow 不生效，
-        // 省略逻辑须落在路径上，保证图标/项目名不被截断）
-        const pathStyles = window.getComputedStyle(pathEl)
-        expect(pathStyles.whiteSpace).toBe('nowrap')
-        expect(pathStyles.overflow).toBe('hidden')
-        expect(pathStyles.textOverflow).toBe('ellipsis')
-        // 徽章与项目名不收缩，保持完整
-        const nameStyles = window.getComputedStyle(nameEl)
-        expect(nameStyles.flexShrink).toBe('0')
-        const badgeStyles = window.getComputedStyle(badge)
-        expect(badgeStyles.flexShrink).toBe('0')
+        expect(document.querySelector('.completion-notify-body')).toBeFalsy()
     })
 
-    it('hides the project path span when projectPath is empty', () => {
-        mockState.active = ref(makeItem({ projectName: 'my-app', projectPath: '' }))
+    it('does NOT render markdown markup for the body (plain text only)', () => {
+        // The old card rendered summary Markdown. The notification must not:
+        // a plain body means the same string reads identically here and in the
+        // OS notification.
+        mockState.active = ref(makeItem({ body: '**加粗摘要**' }))
         mountPopover()
 
-        expect(document.querySelector('.completion-popover-project-name')).toBeTruthy()
-        expect(document.querySelector('.completion-popover-project-path')).toBeFalsy()
-    })
-
-    it('hides the project row when projectName is empty (same project)', () => {
-        mockState.active = ref(makeItem({ projectName: '', projectPath: '' }))
-        mountPopover()
-
-        expect(document.querySelector('.completion-popover-project')).toBeFalsy()
-    })
-
-    it('animates with Android-notification style slide-down enter transition', () => {
-        mockState.active = ref(makeItem())
-        mountPopover()
-
-        // jsdom cannot observe <Transition> class lifecycle, so assert the
-        // injected stylesheet contains the Android-notification style slide-down.
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        expect(cssText).toContain('.completion-popover-card-enter-from')
-        expect(cssText).toContain('translateY(-120%)')
-        expect(cssText).toContain('cubic-bezier(0.4, 0, 0.2, 1)')
-    })
-
-    it('wraps the card in a Transition inside the static backdrop (animation layer guard)', () => {
-        mockState.active = ref(makeItem())
-        mountPopover()
-
-        // The card must be a direct child of a <Transition> that sits inside the
-        // backdrop — this layer structure is what makes enter/leave animations
-        // actually play. Regression guard for the animation-layer fix.
-        const backdrop = document.querySelector('.completion-popover-backdrop')!
-        const card = document.querySelector('.completion-popover')!
-        const transitionEl = card.parentElement!
-        // Card's direct parent is the Transition's rendered slot root
-        expect(transitionEl.parentElement).toBe(backdrop)
-        // The Transition wraps exactly one conditional element (the card)
-        expect(transitionEl.querySelectorAll('.completion-popover')).toHaveLength(1)
+        const el = document.querySelector('.completion-notify-body')!
+        expect(el.querySelector('strong')).toBeFalsy()
+        expect(el.textContent).toBe('**加粗摘要**')
     })
 
     it('renders the agent backend icon when agentId resolves', () => {
@@ -382,517 +145,293 @@ describe('CompletionPopover', () => {
         expect(document.querySelector('.agent-icon-svg')).toBeFalsy()
     })
 
-    it('renders the summary as markdown HTML', () => {
-        mockState.active = ref(makeItem({ summary: '**加粗摘要**' }))
-        mountPopover()
-
-        const el = document.querySelector('.completion-popover-summary')!
-        expect(el.querySelector('strong')).toBeTruthy()
-        expect(el.querySelector('strong')!.textContent).toBe('加粗摘要')
-    })
-
-    it('clamps summary headings so a reply cannot outshout the card title', () => {
-        // The summary renders through the global .markdown-body rules, whose
-        // heading scale targets long-form reading: h1 = 1.6em, which on this
-        // 13px container computes to 20.8px — LARGER than the card's own title
-        // (14px). A reply opening with `#` therefore made the body louder than
-        // the heading labelling it. The popover clamps the three levels to the
-        // same values ChatMessageItem uses for chat bubbles.
-        mockState.active = ref(makeItem())
-        mountPopover()
-
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-
-        // jsdom does not resolve var(), so assert the token names (16px/14px/
-        // 13px per variables.css — pinned by designTokens.css.test.ts).
-        const h1 = cssText.split('\n').filter((l) => l.includes('.completion-popover-summary.markdown-body h1')).join('\n')
-        const h2 = cssText.split('\n').filter((l) => l.includes('.completion-popover-summary.markdown-body h2')).join('\n')
-        const h3 = cssText.split('\n').filter((l) => l.includes('.completion-popover-summary.markdown-body h3')).join('\n')
-        expect(h1).toContain('font-size: var(--font-size-2xl)')
-        expect(h2).toContain('font-size: var(--font-size-lg)')
-        expect(h3).toContain('font-size: var(--font-size-md)')
-
-        // Specificity guard: the clamp must OUTRANK the global
-        // `.markdown-body h1` (0,1,1). The scoped selector here is (0,3,0)
-        // because it carries both classes — dropping either class would leave
-        // the rule losing to content.css and silently restore the 20.8px h1.
-        expect(h1).toMatch(/\.completion-popover-summary\.markdown-body h1/)
-    })
-
-    it('leaves the leading gap above an opening heading to the global first-block reset', () => {
-        // The popover deliberately does NOT re-declare margin-top here: the
-        // reset lives in css/content.css (`.markdown-body > :first-child`), so
-        // it also fixes the file preview and share page. Re-adding a margin
-        // rule in this component would be the wrong layer.
-        mockState.active = ref(makeItem())
-        mountPopover()
-
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const headingRules = cssText
-            .split('\n')
-            .filter((l) => l.includes('.completion-popover-summary.markdown-body h'))
-            .join('\n')
-        expect(headingRules).not.toContain('margin-top')
-    })
-
-    it('collapses by default: no scroll (clipped preview) and no visible input', () => {
-        mockState.active = ref(makeItem())
-        mountPopover()
-
-        const el = document.querySelector('.completion-popover-summary')!
-        const styles = window.getComputedStyle(el)
-        // 默认折叠态：富文本预览固定高度裁剪、不滚动
-        expect(el.classList.contains('is-collapsed')).toBe(true)
-        expect(styles.overflowY).toBe('hidden')
-        expect(styles.maxHeight).toBe('132px')
-        // 无 -webkit-box line clamp（用 max-height + 淡出裁剪，而非文字行截断）
-        expect(styles.webkitLineClamp).not.toBe('10')
-        // 输入框隐藏（v-show）
-        const input = document.querySelector('.completion-popover-input')!
-        expect(window.getComputedStyle(input).display).toBe('none')
-        // 不存在收起按钮（一旦展开不回折叠）
-        expect(document.querySelector('.completion-popover-collapse')).toBeFalsy()
-        // 折叠态按钮行的负 margin 抬升仅作用于摘要溢出（summary-overflow）场景；
-        // 内容很少时 actions 保持在摘要下方的正常文档流，避免盖住内容。
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const overlapRule = cssText.split('\n').filter((line) => line.includes('.summary-overflow:not(.is-expanded) .completion-popover-actions')).join('\n')
-        expect(overlapRule).toContain('margin-top: -34px')
-        // 规则必须限定在 summary-overflow 下：无前缀的折叠态 actions 不抬升
-        const plainRule = cssText.split('\n').filter((line) => line.includes('.completion-popover:not(.is-expanded) .completion-popover-actions')).join('\n')
-        expect(plainRule).not.toContain('margin-top: -34px')
-    })
-
-    it('collapses without a fade mask when the summary is short (no overflow)', async () => {
-        mockState.active = ref(makeItem({ summary: '很短的一行' }))
-        mountPopover()
-
-        // jsdom 中 scrollHeight/clientHeight 均为 0：内容不满折叠高度 → 不溢出
-        const card = document.querySelector('.completion-popover')!
-        expect(card.classList.contains('summary-overflow')).toBe(false)
-        // 折叠摘要基础规则保留裁剪（max-height + overflow hidden）
-        const el = document.querySelector('.completion-popover-summary.is-collapsed')!
-        expect(window.getComputedStyle(el).maxHeight).toBe('132px')
-        expect(window.getComputedStyle(el).overflowY).toBe('hidden')
-        // mask 淡出与 actions 抬升都由 .summary-overflow 门控，短内容不触发
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const maskRule = cssText.split('\n').filter((line) => line.includes('.summary-overflow .completion-popover-summary.markdown-body.is-collapsed')).join('\n')
-        expect(maskRule).toContain('mask-size: 100% 132px')
-        // 短内容不应用负 margin 抬升（actions 自然排在摘要下方）
-        // jsdom 不解析 var()，断言 token 名（6px 由 --space-3 保证）
-        const actions = document.querySelector('.completion-popover-actions')!
-        expect(window.getComputedStyle(actions).marginTop).toBe('var(--space-3)')
-    })
-
-    it('adds the overflow mask and actions overlap once the collapsed summary actually overflows', async () => {
-        mockState.active = ref(makeItem({ summary: '短内容', sessionId: 's-overflow' }))
-        mountPopover()
-
-        // 模拟摘要内容超出折叠高度：jsdom 不布局，需手工指定 scrollHeight。
-        // clientHeight 被 max-height 132px 钳制 → scrollHeight > clientHeight 即溢出。
-        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
-        Object.defineProperty(summary, 'scrollHeight', { configurable: true, value: 320 })
-        Object.defineProperty(summary, 'clientHeight', { configurable: true, value: 132 })
-        // 变更 active 内容使 summaryHtml 变化 → 溢出测量重新运行
-        mockState.active.value = makeItem({ summary: '变成足够长的摘要内容'.repeat(20), sessionId: 's-overflow' })
-        await nextTick()
-        await nextTick()
-
-        const card = document.querySelector('.completion-popover')!
-        expect(card.classList.contains('summary-overflow')).toBe(true)
-    })
-
-    it('clips the collapsed summary with a bottom fade and hides images', () => {
-        mockState.active = ref(makeItem({ summary: '![pic](img/a.png)\n\n正文内容' }))
-        mountPopover()
-
-        // 折叠态摘要容器：mask 渐变淡出底部 + overflow hidden
-        const el = document.querySelector('.completion-popover-summary.is-collapsed')!
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        // jsdom 将 #000 序列化为 rgb(0, 0, 0)，此处只断言渐变 mask 的存在
-        expect(cssText).toContain('-webkit-mask-image: linear-gradient(rgb')
-        expect(cssText).toContain('transparent 100%)')
-        // 回归保护：mask 渐变坐标固定到 132px（mask-size）而非内容实际高度——
-        // 否则短内容（一两行）会被按百分比淡出，表现为只露出半行。
-        // mask top 对齐使短内容完全落在不透明区，仅接近占满 132px 时才淡出底部。
-        expect(cssText).toContain('-webkit-mask-size: 100% 132px')
-        expect(cssText).toContain('mask-size: 100% 132px')
-        expect(cssText).toContain('-webkit-mask-position: top center')
-        expect(cssText).toContain('mask-position: top center')
-        // 图片在折叠态不展示（CSS display:none），避免裂图占位
-        expect(cssText).toContain('.completion-popover-summary.is-collapsed img')
-        const img = el.querySelector('img')!
-        expect(window.getComputedStyle(img).display).toBe('none')
-    })
-
-    it('expands with a fade + slight scale-in animation to mask the layout jump', async () => {
-        mockState.active = ref(makeItem())
-        mountPopover()
-
-        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
-        // 点击折叠摘要 → 展开态
-        summary.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await nextTick()
-
-        const expanded = document.querySelector('.completion-popover.is-expanded')!
-        expect(expanded).toBeTruthy()
-        // jsdom 不跑 CSS 动画，改为断言样式表注入的动画规则：
-        // 展开动画只挂在 .is-expanded 卡片上（折叠态无动画），从轻微缩小 +
-        // 透明开始，到完整大小 + 不透明结束，ease-out 缓出。
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const expandRule = cssText.split('\n').filter((line) => line.includes('.completion-popover.is-expanded')).join('\n')
-        expect(expandRule).toContain('animation: completion-popover-expand')
-        expect(cssText).toContain('@keyframes completion-popover-expand')
-        expect(cssText).toContain('scale(0.96)')
-        expect(cssText).toContain('scale(1)')
-        expect(expandRule).toContain('ease-out')
-        // prefers-reduced-motion 时关闭展开动画
-        expect(cssText).toContain('prefers-reduced-motion: reduce')
-    })
-
-    it('expands to a near-fullscreen panel on content click: input visible, no collapse button, summary scrolls', async () => {
-        mockState.active = ref(makeItem({ summary: '很长'.repeat(200) }))
-        mountPopover()
-
-        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
-        // 点击折叠摘要正文 → 展开
-        summary.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await nextTick()
-
-        // 输入框出现
-        const input = document.querySelector('.completion-popover-input')!
-        expect(window.getComputedStyle(input).display).not.toBe('none')
-        expect(document.querySelector('.completion-popover-textarea')).toBeTruthy()
-        // 展开后不再提供"收起"按钮（回到折叠态无意义）
-        expect(document.querySelector('.completion-popover-collapse')).toBeFalsy()
-        // 展开态摘要可滚动（无 max-height 钳制）
-        const expanded = document.querySelector('.completion-popover-summary.is-expanded-summary')!
-        expect(expanded).toBeTruthy()
-        const styles = window.getComputedStyle(expanded)
-        expect(styles.overflowY).toBe('auto')
-        // 展开态已无折叠裁剪 class
-        expect(expanded.classList.contains('is-collapsed')).toBe(false)
-    })
-
-    it('auto-expands the user message quote block when the panel expands', async () => {
-        mockState.active = ref(makeItem({ summary: '正文', userMessage: '一个非常长的用户消息'.repeat(10) }))
-        mountPopover()
-
-        // 初始折叠：用户消息单行省略、未展开
-        const quote = document.querySelector('.completion-popover-user-quote')!
-        expect(quote.classList.contains('is-expanded')).toBe(false)
-        const text = quote.querySelector('.completion-popover-user-quote-text')!
-        expect(window.getComputedStyle(text).whiteSpace).toBe('nowrap')
-
-        // 点击折叠摘要正文 → 展开面板
-        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
-        summary.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await nextTick()
-
-        // 用户消息引用块随面板展开而展开，确保能看全问题
-        expect(quote.classList.contains('is-expanded')).toBe(true)
-        expect(quote.getAttribute('aria-expanded')).toBe('true')
-        expect(window.getComputedStyle(text).whiteSpace).toBe('pre-wrap')
-    })
-
-    it('stays expanded once opened — clicking the expanded content does not collapse it', async () => {
-        mockState.active = ref(makeItem({ summary: '很长'.repeat(200) }))
-        mountPopover()
-
-        const collapsed = document.querySelector('.completion-popover-summary.is-collapsed')!
-        collapsed.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await nextTick()
-
-        // 展开态点击正文不收起
-        const expanded = document.querySelector('.completion-popover-summary.is-expanded-summary')!
-        expanded.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await nextTick()
-        expect(document.querySelector('.completion-popover-summary.is-expanded-summary')).toBeTruthy()
-        expect(document.querySelector('.completion-popover-input')!).toBeTruthy()
-        expect(document.querySelector('.completion-popover-collapse')).toBeFalsy()
-    })
-
-    it('renders rewritten images (bordered figure), hidden when collapsed and shown when expanded', async () => {
-        mockState.active = ref(makeItem({ summary: '![pic](img/a.png)', projectPath: '/proj' }))
-        mountPopover()
-
-        // 折叠态：HTML 已完全渲染（图片已按归属项目重写为缩略图），但 CSS 隐藏整个 figure
-        const collapsed = document.querySelector('.completion-popover-summary.is-collapsed')!
-        const collapsedFig = collapsed.querySelector('.image-block-wrapper')!
-        const collapsedImg = collapsed.querySelector('img')!
-        expect(window.getComputedStyle(collapsedImg).display).toBe('none')
-        // 折叠态下图片同样完成 src 重写（与展开态共用同一份渲染）
-        expect(collapsedImg.src).toContain('/api/file/thumb?path=img/a.png')
-
-        // 点击展开：同一 DOM 元素切换 class，图片变为可见
-        collapsed.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await nextTick()
-
-        const expanded = document.querySelector('.completion-popover-summary.is-expanded-summary')!
-        const img = expanded.querySelector('img')!
-        // 仍是同一个摘要元素（折叠/展开共用渲染，无重复解析）
-        expect(expanded).toBe(collapsed)
-        expect(window.getComputedStyle(img).display).not.toBe('none')
-        // rewriteImageUrls 按路径段逐个 encodeURIComponent（'/' 保留），
-        // src 是缩略图端点，data-full-src 保留原图供 lightbox 使用
-        expect(img.src).toContain('/api/file/thumb?path=img/a.png')
-        expect(img.src).toContain('w=')
-        expect(img.getAttribute('data-full-src')).toContain('/api/local-file/img/a.png')
-        // 图片被提升进统一边框 figure，且 header 带 view 按钮
-        expect(collapsedFig).toBeTruthy()
-        const figure = img.closest('.image-block-wrapper')!
-        expect(figure).toBeTruthy()
-        expect(figure.querySelector('.image-block-view-btn')).toBeTruthy()
-    })
-
     it('truncates the title with ellipsis via CSS', () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
-        const el = document.querySelector('.completion-popover-title')!
+        const el = document.querySelector('.completion-notify-title')!
         const styles = window.getComputedStyle(el)
         expect(styles.textOverflow).toBe('ellipsis')
         expect(styles.overflow).toBe('hidden')
         expect(styles.whiteSpace).toBe('nowrap')
     })
 
-    it('renders an open-session icon button and no close button', () => {
+    // ── 关闭 ──
+
+    it('renders a close button', () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
-        expect(document.querySelector('.completion-popover-open')).toBeTruthy()
-        expect(document.querySelector('.completion-popover-close')).toBeFalsy()
+        expect(document.querySelector('.completion-notify-close')).toBeTruthy()
     })
 
-    it('clicking the open button dispatches clawbench-open-session for session kind', () => {
+    it('clicking the close button dismisses without navigating', () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const events = captureEvents(['clawbench-open-session', 'clawbench-open-task', 'clawbench-open-forge'])
+        const closeBtn = document.querySelector('.completion-notify-close')!
+        closeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        events.stop()
+
+        expect(mockState.dismiss).toHaveBeenCalledTimes(1)
+        expect(events.captured).toHaveLength(0)
+    })
+
+    // ── 跳转（整卡点击） ──
+
+    it('clicking the card dispatches clawbench-open-session for session kind', () => {
         mockState.active = ref(makeItem({ sessionId: 's42', projectPath: '/proj' }))
         mountPopover()
 
-        const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+        const events = captureEvents(['clawbench-open-session'])
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        events.stop()
 
-        const openBtn = document.querySelector('.completion-popover-open')!
-        openBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        expect(dispatchSpy).toHaveBeenCalledTimes(1)
-        const ev = dispatchSpy.mock.calls[0][0] as CustomEvent
-        expect(ev.type).toBe('clawbench-open-session')
-        expect(ev.detail).toEqual({ sessionId: 's42', projectPath: '/proj' })
+        expect(events.captured).toHaveLength(1)
+        expect(events.captured[0].type).toBe('clawbench-open-session')
+        expect(events.captured[0].detail).toEqual({ sessionId: 's42', projectPath: '/proj' })
         expect(mockState.dismiss).toHaveBeenCalledTimes(1)
     })
 
-    it('clicking the open button dispatches clawbench-open-task for task kind', () => {
+    it('clicking the card dispatches clawbench-open-task for task kind', () => {
         mockState.active = ref(makeItem({ kind: 'task', taskId: '7', executionId: 'e9' }))
         mountPopover()
 
-        const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+        const events = captureEvents(['clawbench-open-task'])
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        events.stop()
 
-        const openBtn = document.querySelector('.completion-popover-open')!
-        openBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        expect(dispatchSpy).toHaveBeenCalledTimes(1)
-        const ev = dispatchSpy.mock.calls[0][0] as CustomEvent
-        expect(ev.type).toBe('clawbench-open-task')
-        expect(ev.detail).toEqual({ taskId: '7', executionId: 'e9', projectPath: '' })
+        expect(events.captured).toHaveLength(1)
+        expect(events.captured[0].detail).toEqual({ taskId: '7', executionId: 'e9', projectPath: undefined })
         expect(mockState.dismiss).toHaveBeenCalledTimes(1)
     })
 
-    it('clicking the card body does NOT navigate (only the open button does)', () => {
+    it('clicking the card dispatches clawbench-open-forge for forge kind', () => {
+        mockState.active = ref(makeItem({
+            kind: 'forge',
+            groupKey: 'forge:acme/web',
+            repoLabel: 'acme/web',
+            projectPath: '/proj-b',
+        }))
+        mountPopover()
+
+        const events = captureEvents(['clawbench-open-forge'])
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        events.stop()
+
+        expect(events.captured).toHaveLength(1)
+        expect(events.captured[0].detail).toEqual({ projectPath: '/proj-b' })
+        expect(mockState.dismiss).toHaveBeenCalledTimes(1)
+    })
+
+    // ── 跳转顺带标记已读 ──
+
+    it('navigating a session marks it read via the session read endpoint', () => {
+        mockState.active = ref(makeItem({ sessionId: 's42', projectPath: '/proj' }))
+        mountPopover()
+
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
+        globalThis.fetch = fetchMock
+
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringContaining('/api/ai/chat/read?session_id=s42'),
+            expect.objectContaining({ method: 'POST' }),
+        )
+        // 跨项目会话必须带上归属项目路径，否则后端归属校验会拒绝
+        expect(fetchMock.mock.calls[0][0]).toContain('project_path=%2Fproj')
+    })
+
+    it('navigating a task marks that execution read via the task endpoint', () => {
+        mockState.active = ref(makeItem({ kind: 'task', taskId: '7', executionId: 'e9' }))
+        mountPopover()
+
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
+        globalThis.fetch = fetchMock
+
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tasks/7',
+            expect.objectContaining({
+                method: 'PUT',
+                body: JSON.stringify({ action: 'read', executionId: 'e9' }),
+            }),
+        )
+    })
+
+    it('navigating a forge issue/PR marks that item read', () => {
+        mockState.active = ref(makeItem({
+            kind: 'forge',
+            groupKey: 'forge:acme/web',
+            repoLabel: 'acme/web',
+            forgeItemKey: 'pr/42',
+        }))
+        mountPopover()
+
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
+        globalThis.fetch = fetchMock
+
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/forge/read',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({ itemKey: 'pr/42' }),
+            }),
+        )
+    })
+
+    it('navigating a pipeline forge event does NOT call the forge read endpoint', () => {
+        // 流水线的 run id 未随事件下发，构造不出条目键——只能跳转，不能标记
+        mockState.active = ref(makeItem({
+            kind: 'forge',
+            groupKey: 'forge:acme/web',
+            repoLabel: 'acme/web',
+            forgeItemKey: undefined,
+        }))
+        mountPopover()
+
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
+        globalThis.fetch = fetchMock
+
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('a failed read call does not block navigation', () => {
+        mockState.active = ref(makeItem({ sessionId: 's42' }))
+        mountPopover()
+
+        globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'))
+
+        const events = captureEvents(['clawbench-open-session'])
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        events.stop()
+
+        expect(events.captured).toHaveLength(1)
+        expect(mockState.dismiss).toHaveBeenCalledTimes(1)
+    })
+
+    // ── 合并展示 ──
+
+    it('renders the merged count for a merged forge item', () => {
+        mockState.active = ref(makeItem({
+            kind: 'forge',
+            groupKey: 'forge:acme/web',
+            repoLabel: 'acme/web',
+            title: 'acme/web · 合并请求 #42 · 已合并',
+            count: 3,
+        }))
+        mountPopover()
+
+        const title = document.querySelector('.completion-notify-title')!.textContent || ''
+        expect(title).toContain('acme/web')
+        expect(title).toContain('3')
+        // 合并态不再展示单条标题
+        expect(title).not.toContain('#42')
+    })
+
+    it('shows the single-item title when count is 1 or absent', () => {
+        mockState.active = ref(makeItem({
+            kind: 'forge',
+            groupKey: 'forge:acme/web',
+            repoLabel: 'acme/web',
+            title: 'acme/web · 合并请求 #42 · 已合并',
+            count: 1,
+        }))
+        mountPopover()
+
+        const title = document.querySelector('.completion-notify-title')!.textContent || ''
+        expect(title).toContain('#42')
+    })
+
+    // ── 位置与动效 ──
+
+    it('uses the mobile top slide-down transition by default', () => {
+        // jsdom 的 UA 是桌面 Chrome，usePlatformDetect 会推出 isPC=true；
+        // 这里显式钉成移动端，才能验证默认分支。
+        _setIsPCForTest(false)
         mockState.active = ref(makeItem())
         mountPopover()
 
-        const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+        expect(document.querySelector('.completion-notify-layer')!.className).not.toContain('is-desktop')
+        expect(cssText()).toContain('.completion-notify-mobile-enter-from')
+        expect(cssText()).toContain('translateY(-120%)')
+        expect(cssText()).toContain('cubic-bezier(0.4, 0, 0.2, 1)')
+    })
 
-        const card = document.querySelector('.completion-popover')!
-        card.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    it('uses the desktop bottom-right slide-in transition on a PC', () => {
+        _setIsPCForTest(true)
+        mockState.active = ref(makeItem())
+        mountPopover()
 
-        expect(dispatchSpy).not.toHaveBeenCalled()
+        expect(document.querySelector('.completion-notify-layer')!.className).toContain('is-desktop')
+        expect(document.querySelector('.completion-notify')!.className).toContain('is-desktop')
+        expect(cssText()).toContain('.completion-notify-desktop-enter-from')
+        expect(cssText()).toContain('translateX(120%)')
+    })
+
+    it('pins the desktop layer to the bottom-right corner', () => {
+        _setIsPCForTest(true)
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const layer = document.querySelector('.completion-notify-layer')!
+        const styles = window.getComputedStyle(layer)
+        expect(styles.alignItems).toBe('flex-end')
+        expect(styles.justifyContent).toBe('flex-end')
+    })
+
+    // ── 非模态：不再有遮罩拦截 / 点空白关闭 ──
+
+    it('lets clicks through the layer (pointer-events: none)', () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const layer = document.querySelector('.completion-notify-layer')!
+        expect(window.getComputedStyle(layer).pointerEvents).toBe('none')
+    })
+
+    it('keeps the card itself clickable despite the pass-through layer', () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const card = document.querySelector('.completion-notify')!
+        expect(window.getComputedStyle(card).pointerEvents).toBe('auto')
+    })
+
+    it('clicking the layer outside the card does NOT dismiss', () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const layer = document.querySelector('.completion-notify-layer')!
+        layer.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
         expect(mockState.dismiss).not.toHaveBeenCalled()
     })
 
-    it('clicking outside the card (on the backdrop) goes through the guarded dismiss', () => {
-        mockState.active = ref(makeItem())
-        mockState.dismissOnBackdrop.mockReturnValue(true)
-        mountPopover()
-
-        const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
-
-        const backdrop = document.querySelector('.completion-popover-backdrop')!
-
-        backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        expect(dispatchSpy).not.toHaveBeenCalled()
-        // backdrop 关闭走带防误触保护的 dismissOnBackdrop（最小停留时长在 composable 层拦截）
-        expect(mockState.dismissOnBackdrop).toHaveBeenCalledTimes(1)
-        expect(mockState.dismiss).not.toHaveBeenCalled()
-    })
-
-    it('clicking a code-block copy button inside the summary does not navigate', () => {
-        mockState.active = ref(makeItem({ summary: '```js\nconst a = 1\n```' }))
-        mountPopover()
-
-        const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
-
-        const copyBtn = document.querySelector('.completion-popover-summary .code-block-copy-btn')!
-        copyBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        expect(dispatchSpy).not.toHaveBeenCalled()
-        expect(mockState.dismiss).not.toHaveBeenCalled()
-    })
-
-    it('clicking a code-block wrap button inside the summary does not navigate', () => {
-        mockState.active = ref(makeItem({ summary: '```js\nconst a = 1\n```' }))
-        mountPopover()
-
-        const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
-
-        const wrapBtn = document.querySelector('.completion-popover-summary .code-block-wrap-btn')!
-        wrapBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        expect(dispatchSpy).not.toHaveBeenCalled()
-        expect(mockState.dismiss).not.toHaveBeenCalled()
-    })
-
-    it('renders a quick-reply input box', () => {
+    it('has no backdrop that swallows clicks', () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
-        expect(document.querySelector('.completion-popover-textarea')).toBeTruthy()
-        // 空输入时：发送按钮存在但 disabled；标记已读按钮在底部动作行始终存在
-        const sendBtn = document.querySelector('.completion-popover-send')!
-        expect(sendBtn.classList.contains('disabled')).toBe(true)
-        expect(document.querySelector('.completion-popover-mark-read')).toBeTruthy()
+        expect(document.querySelector('.completion-popover-backdrop')).toBeFalsy()
     })
 
-    it('keeps the mark-as-read and open buttons in the bottom actions row (right-aligned), independent of input', async () => {
+    it('renders the card inside a Transition so enter/leave animations play', () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
-        // 操作按钮不属于标题栏
-        const header = document.querySelector('.completion-popover-header')!
-        const actions = document.querySelector('.completion-popover-actions')!
-        expect(actions).toBeTruthy()
-        const markRead = document.querySelector('.completion-popover-mark-read')!
-        const open = document.querySelector('.completion-popover-open')!
-        expect(markRead).toBeTruthy()
-        expect(open).toBeTruthy()
-        // mark-read 与 open 位于底部动作行，不在 header 内
-        expect(header.contains(markRead)).toBe(false)
-        expect(header.contains(open)).toBe(false)
-        expect(actions.contains(markRead)).toBe(true)
-        expect(actions.contains(open)).toBe(true)
-        // mark-read 位于 open 左边
-        expect(markRead.compareDocumentPosition(open) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-        // 胶囊按钮：图标 + 文字标签（当前测试环境默认 en：Mark as read / Open session）
-        expect(markRead.querySelector('.completion-popover-action-label')!.textContent).toContain('Mark as read')
-        expect(open.querySelector('.completion-popover-action-label')!.textContent).toContain('Open session')
-        // 动作行内容靠右对齐
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const actionsRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-actions')).join('\n')
-        expect(actionsRule).toContain('justify-content: flex-end')
-        // 方形按钮：圆角走 --radius-xs，不再是胶囊
-        const btnRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-action-btn')).join('\n')
-        expect(btnRule).toContain('border-radius: var(--radius-xs)')
-        expect(btnRule).toContain('padding: 0 var(--space-6)')
-
-        // 输入内容后 mark-read 依然存在（不随输入联动）
-        const textarea = document.querySelector('.completion-popover-textarea') as HTMLTextAreaElement
-        textarea.value = '回复内容'
-        textarea.dispatchEvent(new Event('input'))
-        await nextTick()
-
-        expect(document.querySelector('.completion-popover-mark-read')).toBeTruthy()
-        expect(document.querySelector('.completion-popover-send')!.classList.contains('disabled')).toBe(false)
-    })
-
-    it('aligns the input box with the quote bar (sharp corners, chat-body type scale, 26px square send button)', async () => {
-        mockState.active = ref(makeItem())
-        mountPopover()
-
-        // 输入文本使发送按钮变为可点状态
-        const textareaEl = document.querySelector('.completion-popover-textarea') as HTMLTextAreaElement
-        textareaEl.value = '测试'
-        textareaEl.dispatchEvent(new Event('input'))
-        await nextTick()
-
-        expect(document.querySelector('.completion-popover-input')).toBeTruthy()
-        // textarea 与聊天输入框对齐：字号与聊天正文同 token（--font-size-md）；
-        // 行盒用整数 --input-line-height（无单位 1.4 在 WebView 下会让单行文字
-        // 偏上，见该 token 注释），上下 padding 4px
-        // jsdom 不解析 var()：字号/行高断言 token 名，padding 改断言 CSS 规则文本
-        // （简写含两个 var()，computed 值一律解成 0）。4px/8px 由 --space-2/--space-4 保证
-        const ta = document.querySelector('.completion-popover-textarea')!
-        const taStyles = window.getComputedStyle(ta)
-        expect(taStyles.fontSize).toBe('var(--font-size-md)')
-        expect(taStyles.lineHeight).toBe('var(--input-line-height)')
-        const taRule = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-            .split('\n')
-            .filter((line) => line.includes('.completion-popover-textarea'))
-            .join('\n')
-        expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
-        // 高度上限由同一行盒推导（3 行 + 上下 padding），不再写死 px
-        expect(taRule).toContain('max-height: calc(var(--input-line-height) * 3')
-        // 发送按钮：26px 方形（尖角风格里不能有圆形）
-        const btn = document.querySelector('.completion-popover-send')!
-        const btnStyles = window.getComputedStyle(btn)
-        expect(btnStyles.width).toBe('26px')
-        expect(btnStyles.height).toBe('26px')
-        // jsdom 不解析 border-radius 简写计算值，改为断言 CSS 规则
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
-        const inputRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-input')).join('\n')
-        // 输入容器与 QuoteQuestionBar 同为尖角（不再是 20px 胶囊）
-        expect(inputRule).toContain('border-radius: 0')
-        expect(inputRule).not.toContain('20px')
-        // 背景用 --bg-primary，与卡片 tertiary 底色区分（避免融合）
-        expect(inputRule).toContain('background: var(--bg-primary')
-        // focus 用 inset 描边，方形边框不会溢出容器
-        const focusRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-input:focus-within')).join('\n')
-        expect(focusRule).toContain('inset 0 0 0 1px')
-        // 不再使用胶囊圆角 999px
-        expect(inputRule).not.toContain('999px')
+        const card = document.querySelector('.completion-notify')!
+        // The card's direct parent is the Transition's rendered slot root,
+        // which sits inside the positioning layer.
+        const transitionRoot = card.parentElement!
+        expect(transitionRoot.parentElement!.className).toContain('completion-notify-layer')
+        expect(transitionRoot.querySelectorAll('.completion-notify')).toHaveLength(1)
     })
 
     it('keeps every corner on the sharp scale (no rounded controls)', async () => {
@@ -900,22 +439,14 @@ describe('CompletionPopover', () => {
         mountPopover()
         await nextTick()
 
-        const cssText = Array.from(document.styleSheets)
-            .map((s) => {
-                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
-                catch { return '' }
-            })
-            .join('\n')
         // 只看本组件自己的规则：document.styleSheets 里还混着全局 CSS
         // （agent-icon 的 20% 圆角、KaTeX 等），整体扫描会误判成回归。
-        const own = cssText
+        const own = cssText()
             .split('\n')
-            .filter((line) => line.includes('.completion-popover'))
+            .filter((line) => line.includes('.completion-notify'))
             .join('\n')
         // 与 QuoteQuestionBar 同一套硬朗几何：容器 3px、内部块 0/3px。
-        // 曾经容器 14px + 胶囊输入框 20px + 圆形发送键 50% + 胶囊动作按钮，
-        // 方输入框贴在圆卡片上像后拼上去的。任何新元素都不得再引入
-        // --radius-md/lg/full 或 50%/20px。
+        // 任何新元素都不得再引入 --radius-md/lg/full 或 50%/20px。
         expect(own).not.toContain('border-radius: 50%')
         expect(own).not.toContain('border-radius: 20px')
         expect(own).not.toContain('border-radius: var(--radius-md)')
@@ -924,128 +455,20 @@ describe('CompletionPopover', () => {
         expect(own).not.toContain('999px')
     })
 
-    it('sends the message to the session and dismisses on send click', async () => {
-        mockState.active = ref(makeItem({ sessionId: 's42' }))
-        mountPopover()
-
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
-        globalThis.fetch = fetchMock
-
-        const textarea = document.querySelector('.completion-popover-textarea') as HTMLTextAreaElement
-        textarea.value = '继续说说'
-        textarea.dispatchEvent(new Event('input'))
-        // 等待 v-model 更新，canSend 变为 true 后发送按钮出现
-        await nextTick()
-
-        const sendBtn = document.querySelector('.completion-popover-send')!
-        sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        await vi.waitFor(() => {
-            expect(fetchMock).toHaveBeenCalledWith(
-                expect.stringContaining('/api/ai/chat?session_id=s42'),
-                expect.objectContaining({
-                    method: 'POST',
-                    body: expect.stringContaining('继续说说'),
-                })
-            )
-            expect(mockState.dismiss).toHaveBeenCalledTimes(1)
-        })
-        // 发送成功后清空该会话未读（独立 /read 调用）
-        expect(fetchMock).toHaveBeenCalledWith(
-            expect.stringContaining('/api/ai/chat/read?session_id=s42'),
-            expect.objectContaining({ method: 'POST' })
-        )
-        // 发送成功弹出确认气泡（文案随当前语言环境，这里只断言调用发生与类型）
-        expect(mockToastShow).toHaveBeenCalledTimes(1)
-        expect(mockToastShow).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ type: 'success' }))
+    it('gives the close button an explicit border: none (icon-button reuse guard)', () => {
+        // 图标按钮 class 若从 <a> 复用会被 UA 样式带出边框——必须显式清除。
+        // 走源码断言而非 getComputedStyle：jsdom 会把 `border: none` 序列化成
+        // `border: medium`，读样式表拿不到作者写下的那个声明。
+        const src = readWebFile('src/components/common/CompletionPopover.vue')
+        const closeRule = src.match(/\.completion-notify-close\s*\{[^}]*\}/)?.[0] || ''
+        expect(closeRule).toContain('border: none')
     })
 
-    it('does not show a sent toast when sending fails (keeps popover open)', async () => {
-        mockState.active = ref(makeItem({ sessionId: 's42' }))
-        mountPopover()
-
-        const fetchMock = vi.fn().mockResolvedValue({ ok: false })
-        globalThis.fetch = fetchMock
-
-        const textarea = document.querySelector('.completion-popover-textarea') as HTMLTextAreaElement
-        textarea.value = '会失败的回复'
-        textarea.dispatchEvent(new Event('input'))
-        await nextTick()
-
-        const sendBtn = document.querySelector('.completion-popover-send')!
-        sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        await vi.waitFor(() => {
-            // 失败时不得弹出"已发送"气泡，也不关闭弹窗
-            expect(mockToastShow).not.toHaveBeenCalled()
-            expect(mockState.dismiss).not.toHaveBeenCalled()
-        })
-    })
-
-    it('does not send when input is empty', () => {
+    it('resets the enter/leave animation under prefers-reduced-motion', () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
-        const fetchMock = vi.fn()
-        globalThis.fetch = fetchMock
-
-        // 空输入时发送按钮是 disabled 态，点击不发送
-        const sendBtn = document.querySelector('.completion-popover-send')!
-        expect(sendBtn.classList.contains('disabled')).toBe(true)
-        sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        expect(fetchMock).not.toHaveBeenCalledWith(
-            expect.stringContaining('/api/ai/chat?'),
-            expect.objectContaining({ method: 'POST' })
-        )
-    })
-
-    it('marks the session as read via the mark-read button and dismisses', async () => {
-        mockState.active = ref(makeItem({ sessionId: 's99' }))
-        mountPopover()
-
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
-        globalThis.fetch = fetchMock
-
-        const markReadBtn = document.querySelector('.completion-popover-mark-read')!
-        markReadBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        await vi.waitFor(() => {
-            expect(fetchMock).toHaveBeenCalledWith(
-                '/api/ai/chat/read?session_id=s99',
-                expect.objectContaining({ method: 'POST' })
-            )
-            expect(mockState.dismiss).toHaveBeenCalledTimes(1)
-        })
-        // 标记已读成功弹出确认气泡（文案随当前语言环境，这里只断言调用发生与类型）
-        expect(mockToastShow).toHaveBeenCalledTimes(1)
-        expect(mockToastShow).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ type: 'success' }))
-    })
-
-    it('sends cross-project replies with the owning project_path so the reply lands in that project', async () => {
-        // 弹窗里回复的是"另一个项目"的会话：handleSend 必须携带该会话所属
-        // 项目路径（project_path），后端据此覆盖 cookie 项目做归属校验，并把
-        // 消息持久化到会话所属项目下——否则切回原项目后回复会"丢失"（issue #420）。
-        mockState.active = ref(makeItem({ sessionId: 'ext-session', projectPath: '/path/to/project-a' }))
-        mountPopover()
-
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
-        globalThis.fetch = fetchMock
-
-        const textarea = document.querySelector('.completion-popover-textarea') as HTMLTextAreaElement
-        textarea.value = '提交吧'
-        textarea.dispatchEvent(new Event('input'))
-        await nextTick()
-
-        const sendBtn = document.querySelector('.completion-popover-send')!
-        sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        await vi.waitFor(() => {
-            expect(fetchMock).toHaveBeenCalledWith(
-                '/api/ai/chat?session_id=ext-session&project_path=%2Fpath%2Fto%2Fproject-a',
-                expect.objectContaining({ method: 'POST' })
-            )
-            expect(mockState.dismiss).toHaveBeenCalledTimes(1)
-        })
+        const text = cssText()
+        expect(text).toContain('prefers-reduced-motion')
     })
 })
