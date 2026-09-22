@@ -17,6 +17,8 @@ function makeItem(overrides = {}) {
     return {
         groupKey: 'session:s1',
         sessionId: 's1',
+        eventLabel: '会话已完成',
+        eventTone: 'success',
         title: '会话标题',
         body: '完成摘要',
         kind: 'session',
@@ -159,22 +161,28 @@ describe('useCompletionPopover', () => {
     it('merges a same-group forge item into the queued one instead of adding a row', () => {
         const p = useCompletionPopover()
         p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
-        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web', title: '第一次' }))
-        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web', title: '第二次', body: '新评论' }))
+        p.push(makeItem({
+            groupKey: 'forge:acme/web', kind: 'forge', eventTone: 'info',
+            eventLabel: '议题 #1 · 新开', title: 'acme/web',
+        }))
+        p.push(makeItem({
+            groupKey: 'forge:acme/web', kind: 'forge', eventTone: 'info',
+            eventLabel: '合并请求 #2 · 有新评论', title: 'acme/web', body: '新评论',
+        }))
 
         // 两次 forge 事件合并成一条排队项
         expect(p.queue.value).toHaveLength(1)
         expect(p.queue.value[0].count).toBe(2)
-        // 合并采用最新事件的正文
-        expect(p.queue.value[0].title).toBe('第二次')
+        // 合并采用最新事件的标识与正文
+        expect(p.queue.value[0].eventLabel).toBe('合并请求 #2 · 有新评论')
         expect(p.queue.value[0].body).toBe('新评论')
     })
 
     it('does not merge different repositories', () => {
         const p = useCompletionPopover()
         p.push(makeItem({ groupKey: 'session:s1', sessionId: 's1' }))
-        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web' }))
-        p.push(makeItem({ groupKey: 'forge:acme/api', kind: 'forge', repoLabel: 'acme/api' }))
+        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', title: 'acme/web' }))
+        p.push(makeItem({ groupKey: 'forge:acme/api', kind: 'forge', title: 'acme/api' }))
 
         expect(p.queue.value).toHaveLength(2)
         expect(p.queue.value.map(i => i.count)).toEqual([undefined, undefined])
@@ -182,15 +190,15 @@ describe('useCompletionPopover', () => {
 
     it('merging does not mutate the active item on screen', () => {
         const p = useCompletionPopover()
-        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web', title: '首次' }))
+        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', title: 'acme/web', eventLabel: '议题 #1 · 新开' }))
         // active 就是首次那条；再来一条同仓库的应进 queue，而不是改动 active
-        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', repoLabel: 'acme/web', title: '再次' }))
+        p.push(makeItem({ groupKey: 'forge:acme/web', kind: 'forge', title: 'acme/web', eventLabel: '合并请求 #2 · 已合并' }))
 
-        expect(p.active.value?.title).toBe('首次')
+        expect(p.active.value?.eventLabel).toBe('议题 #1 · 新开')
         expect(p.active.value?.count).toBeUndefined()
         // 合并只作用于 queue；active 命中同键时不合并，而是作为独立排队项
         expect(p.queue.value).toHaveLength(1)
-        expect(p.queue.value[0].title).toBe('再次')
+        expect(p.queue.value[0].eventLabel).toBe('合并请求 #2 · 已合并')
         expect(p.queue.value[0].count).toBeUndefined()
     })
 

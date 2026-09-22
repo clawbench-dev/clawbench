@@ -34,6 +34,8 @@ function makeItem(overrides = {}) {
     return {
         groupKey: 'session:s1',
         sessionId: 's1',
+        eventLabel: '会话已完成',
+        eventTone: 'success',
         title: '这是一个很长的会话标题用于测试溢出省略号的显示效果',
         body: '**加粗的摘要内容** 以及普通文本',
         kind: 'session',
@@ -211,7 +213,7 @@ describe('CompletionPopover', () => {
         mockState.active = ref(makeItem({
             kind: 'forge',
             groupKey: 'forge:acme/web',
-            repoLabel: 'acme/web',
+            title: 'acme/web',
             projectPath: '/proj-b',
         }))
         mountPopover()
@@ -266,7 +268,7 @@ describe('CompletionPopover', () => {
         mockState.active = ref(makeItem({
             kind: 'forge',
             groupKey: 'forge:acme/web',
-            repoLabel: 'acme/web',
+            title: 'acme/web',
             forgeItemKey: 'pr/42',
         }))
         mountPopover()
@@ -290,7 +292,7 @@ describe('CompletionPopover', () => {
         mockState.active = ref(makeItem({
             kind: 'forge',
             groupKey: 'forge:acme/web',
-            repoLabel: 'acme/web',
+            title: 'acme/web',
             forgeItemKey: undefined,
         }))
         mountPopover()
@@ -317,37 +319,82 @@ describe('CompletionPopover', () => {
         expect(mockState.dismiss).toHaveBeenCalledTimes(1)
     })
 
+    // ── 事件类型标识 ──
+
+    it('renders the event-type chip with its label', () => {
+        mockState.active = ref(makeItem({ eventLabel: '会话已取消', eventTone: 'warning' }))
+        mountPopover()
+
+        const chip = document.querySelector('.completion-notify-kind')!
+        expect(chip.textContent).toBe('会话已取消')
+    })
+
+    it.each([
+        ['success', '会话已完成'],
+        ['danger', '任务失败'],
+        ['warning', '任务已取消'],
+        ['info', '操作需批准'],
+    ])('applies the %s tone class for "%s"', (tone, label) => {
+        mockState.active = ref(makeItem({ eventLabel: label, eventTone: tone }))
+        mountPopover()
+
+        const chip = document.querySelector('.completion-notify-kind')!
+        expect(chip.className).toContain(`is-${tone}`)
+        // 只应有一个 tone 类，避免多档配色叠加
+        const toneClasses = ['success', 'danger', 'warning', 'info'].filter(t => chip.className.includes(`is-${t}`))
+        expect(toneClasses).toEqual([tone])
+    })
+
+    it('renders the chip alongside the title, not instead of it', () => {
+        mockState.active = ref(makeItem({ eventLabel: '任务已启动', title: '每日构建' }))
+        mountPopover()
+
+        const head = document.querySelector('.completion-notify-head')!
+        expect(head.querySelector('.completion-notify-kind')!.textContent).toBe('任务已启动')
+        expect(head.querySelector('.completion-notify-title')!.textContent).toBe('每日构建')
+    })
+
+    it('gives the chip a non-shrinking slot so it is never clipped', () => {
+        // chip 是"要不要点这条通知"的判断依据；标题可以被省略号截断，它不行。
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const chip = document.querySelector('.completion-notify-kind')!
+        expect(window.getComputedStyle(chip).flexShrink).toBe('0')
+    })
+
     // ── 合并展示 ──
 
-    it('renders the merged count for a merged forge item', () => {
+    it('replaces the chip label with the merged count for a merged forge item', () => {
         mockState.active = ref(makeItem({
             kind: 'forge',
             groupKey: 'forge:acme/web',
-            repoLabel: 'acme/web',
-            title: 'acme/web · 合并请求 #42 · 已合并',
+            eventLabel: '合并请求 #42 · 已合并',
+            eventTone: 'info',
+            title: 'acme/web',
             count: 3,
         }))
         mountPopover()
 
-        const title = document.querySelector('.completion-notify-title')!.textContent || ''
-        expect(title).toContain('acme/web')
-        expect(title).toContain('3')
-        // 合并态不再展示单条标题
-        expect(title).not.toContain('#42')
+        const chip = document.querySelector('.completion-notify-kind')!
+        expect(chip.textContent).toContain('3')
+        // 合并态不再展示单条事件标识
+        expect(chip.textContent).not.toContain('#42')
+        // 主体标题（仓库）保持可见
+        expect(document.querySelector('.completion-notify-title')!.textContent).toBe('acme/web')
     })
 
-    it('shows the single-item title when count is 1 or absent', () => {
+    it('shows the single-item chip label when count is 1 or absent', () => {
         mockState.active = ref(makeItem({
             kind: 'forge',
             groupKey: 'forge:acme/web',
-            repoLabel: 'acme/web',
-            title: 'acme/web · 合并请求 #42 · 已合并',
+            eventLabel: '合并请求 #42 · 已合并',
+            title: 'acme/web',
             count: 1,
         }))
         mountPopover()
 
-        const title = document.querySelector('.completion-notify-title')!.textContent || ''
-        expect(title).toContain('#42')
+        expect(document.querySelector('.completion-notify-kind')!.textContent).toContain('#42')
     })
 
     // ── 位置与动效 ──

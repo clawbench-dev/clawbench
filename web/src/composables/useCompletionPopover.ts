@@ -14,15 +14,24 @@ import { ref } from 'vue'
 export interface CompletionPopoverItem {
     /** 合并键：同键的 forge 条目会合并成一条"N 条新变化"，避免一次轮询刷屏 */
     groupKey: string
-    /** 标题（会话标题 / 任务名 / forge 的 "owner/repo · 合并请求 #42"） */
+    /**
+     * 事件类型标识（卡片顶部的彩色 chip），如「会话已完成」「任务失败」
+     * 「合并请求 #42 · 已合并」。这是卡片上"发生了什么"的唯一载体——标题只
+     * 回答"是谁"，两者分开后通知无需读完整句就能判断要不要点。
+     */
+    eventLabel: string
+    /**
+     * 事件类型的语义分类，决定 chip 配色（成功/失败/中断/进行中）。
+     * 由调用方判定：只有它知道原始的 status / event_type。
+     */
+    eventTone: 'success' | 'danger' | 'warning' | 'info'
+    /** 主体标题：会话名 / 任务名 / 仓库标识（谁出了事） */
     title: string
     /** 单行纯文本正文（超长由 CSS 省略号截断） */
     body: string
     kind: 'session' | 'task' | 'forge'
-    /** 合并条数。>1 时标题显示 "repoLabel · N 条新变化"（仅 forge 会出现） */
+    /** 合并条数。>1 时 chip 改为「N 条新变化」（仅 forge 会出现） */
     count?: number
-    /** 合并标题里用的仓库标识（owner/repo），仅 forge */
-    repoLabel?: string
     /** 会话 id（kind === 'session'） */
     sessionId?: string
     /** 任务 id / 执行 id（kind === 'task'） */
@@ -84,8 +93,10 @@ function showNext(): void {
 function push(item: CompletionPopoverItem): void {
     const existing = queue.value.find(q => q.groupKey === item.groupKey)
     if (existing) {
-        // 合并：累加条数并采用最新事件作为正文（用户关心的是"现在有什么"）
+        // 合并：累加条数并采用最新事件作为标识与正文（用户关心的是"现在有什么"）
         existing.count = (existing.count || 1) + 1
+        existing.eventLabel = item.eventLabel
+        existing.eventTone = item.eventTone
         existing.title = item.title
         existing.body = item.body
         existing.forgeItemKey = item.forgeItemKey

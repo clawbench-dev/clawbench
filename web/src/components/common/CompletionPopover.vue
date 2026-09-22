@@ -15,7 +15,11 @@
         >
           <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-notify-icon" />
           <div class="completion-notify-text">
-            <div class="completion-notify-title" :title="displayTitle">{{ displayTitle }}</div>
+            <div class="completion-notify-head">
+              <!-- 事件类型标识：通知的"是什么"，与标题的"是谁"分开 -->
+              <span class="completion-notify-kind" :class="`is-${active.eventTone}`">{{ displayKind }}</span>
+              <span class="completion-notify-title" :title="active.title">{{ active.title }}</span>
+            </div>
             <div v-if="active.body" class="completion-notify-body" :title="active.body">{{ active.body }}</div>
           </div>
           <button
@@ -55,15 +59,15 @@ const agentBackend = computed(() => {
     return getAgentBackend(agentId)
 })
 
-// 合并后的 forge 条目用"N 条新变化"代替单条标题：一次轮询可能派发几十条，
+// 合并后的 forge 条目 chip 改为"N 条新变化"：一次轮询可能派发几十条，
 // 逐条展示既无意义又堵队列，用户真正需要知道的是"这个仓库有动静"。
-const displayTitle = computed(() => {
+const displayKind = computed(() => {
     const item = active.value
     if (!item) return ''
-    if (item.count && item.count > 1 && item.repoLabel) {
-        return `${item.repoLabel} · ${gt('chat.popover.mergedCount', { count: item.count })}`
+    if (item.count && item.count > 1) {
+        return gt('chat.popover.mergedCount', { count: item.count })
     }
-    return item.title
+    return item.eventLabel
 })
 
 const navigateLabel = computed(() => {
@@ -193,7 +197,38 @@ function markRead(item: NonNullable<typeof active.value>): void {
     min-width: 0;
 }
 
+/* 标识行：事件类型 chip + 主体标题同行。标题占据剩余宽度并省略号截断，
+   chip 永远完整（它是判断"要不要点"的依据，截断它比截断标题更糟）。 */
+.completion-notify-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+/* 事件类型 chip：accent 系描边小标签，与 SessionList 的 session-item-badge、
+   forge 面板的 forge-chip 同一套"细描边 + 淡底 + 小圆角"语言。 */
+.completion-notify-kind {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    font-size: var(--font-size-2xs);
+    line-height: var(--line-height-snug);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+    border-radius: var(--radius-xs);
+    border: 1px solid currentColor;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* 语义配色：绿=成功、红=失败、黄=中断、蓝=进行中/中性（含 forge 的六类事件）。 */
+.completion-notify-kind.is-success { color: var(--color-success); }
+.completion-notify-kind.is-danger { color: var(--color-red); }
+.completion-notify-kind.is-warning { color: var(--color-yellow); }
+.completion-notify-kind.is-info { color: var(--color-info); }
+
 .completion-notify-title {
+    flex: 1;
+    min-width: 0;
     font-size: var(--font-size-md);
     font-weight: var(--font-weight-semibold);
     line-height: var(--line-height-snug);

@@ -1271,6 +1271,24 @@ const completionPopover = useCompletionPopover()
 const SESSION_NOTIFY_STATUSES = ['completed', 'cancelled', 'permission_pending']
 const TASK_NOTIFY_STATUSES = ['running', 'completed', 'failed', 'cancelled']
 
+/**
+ * 会话/任务状态 → 事件类型标识（chip 文案 + 语义配色）。
+ *
+ * 文案复用 `chat.push.*`——系统通知的标题用的就是这一组，同一事件在两处
+ * 必须叫同一个名字。配色只有成功/失败/中断/进行中四档，不随主题漂移。
+ */
+const SESSION_STATUS_META: Record<string, { label: string; tone: 'success' | 'danger' | 'warning' | 'info' }> = {
+    completed: { label: 'chat.push.sessionCompleted', tone: 'success' },
+    cancelled: { label: 'chat.push.sessionCancelled', tone: 'warning' },
+    permission_pending: { label: 'chat.push.actionRequired', tone: 'info' },
+}
+const TASK_STATUS_META: Record<string, { label: string; tone: 'success' | 'danger' | 'warning' | 'info' }> = {
+    running: { label: 'chat.push.taskStarted', tone: 'info' },
+    completed: { label: 'chat.push.taskCompleted', tone: 'success' },
+    failed: { label: 'chat.push.taskFailed', tone: 'danger' },
+    cancelled: { label: 'chat.push.taskCancelled', tone: 'warning' },
+}
+
 function handleCompletionEvent(event: string, data: ServerEventData, skipReplay = false) {
     if (!data) return
     // 重放阶段（页面刷新/断线重连补发的历史）不弹：
@@ -1301,9 +1319,13 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
         completionPopover.push({
             groupKey,
             kind: 'forge',
-            title: [slug, `${kind}${ref}`.trim(), reason].filter(Boolean).join(' · '),
+            // chip 是"发生了什么"（合并请求 #42 · 已合并），标题是"在哪个仓库"。
+            eventLabel: [`${kind}${ref}`.trim(), reason].filter(Boolean).join(' · '),
+            // forge 六类事件统一用中性色：没有哪一类天然比另一类"更好"或
+            // "更糟"（关闭一个议题不等于失败），语义配色在这里会误导。
+            eventTone: 'info',
+            title: slug,
             body: data.item?.title || reason,
-            repoLabel: slug,
             // 条目级已读键。流水线没有可派生的 run id（真实 id 未下发），
             // 故留空 → 该条只跳转不标记已读。
             forgeItemKey: ev.item_type && ev.item_type !== 'pipeline' && num
@@ -1340,9 +1362,13 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
     const projectPath = data.project_path || ''
 
     if (event === 'task_update') {
+        const meta = TASK_STATUS_META[status]
+        if (!meta) return
         completionPopover.push({
             groupKey: `task:${data.task_id || sessionId}`,
             kind: 'task',
+            eventLabel: gt(meta.label),
+            eventTone: meta.tone,
             title: data.session_title || gt('chat.popover.untitledTask'),
             body,
             agentId: data.agent_id || '',
@@ -1351,9 +1377,13 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
             executionId: data.execution_id,
         })
     } else {
+        const meta = SESSION_STATUS_META[status]
+        if (!meta) return
         completionPopover.push({
             groupKey: `session:${sessionId}`,
             kind: 'session',
+            eventLabel: gt(meta.label),
+            eventTone: meta.tone,
             title: data.session_title || gt('chat.popover.untitledSession'),
             body,
             sessionId,
