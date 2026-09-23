@@ -1,0 +1,7 @@
+{
+  "name": "@xulongzhe/clawbench-desktop-linux-arm64-payload",
+  "version": "0.1.0",
+  "description": "ClawBench desktop client — Linux arm64 incremental-upgrade payload (app files only, no Electron runtime)",
+  "files": ["payload.json", "resources/"],
+  "license": "MIT"
+}

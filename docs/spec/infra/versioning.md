@@ -185,6 +185,15 @@ env:
   - **载荷目录是解包目录的兄弟而非子目录**（`<unpacked>-payload`）：若在子目录，全量包的打包步骤会把它一并卷进归档，静默多出约 4MB 冗余副本。
   - macOS 不写该边车：它只装全量包（载荷会破坏签名），永远不读它。
 - **macOS 不发布载荷**。替换已签名 `.app` 内的 `resources/app.asar` 会破坏代码签名封条，Apple Silicon 拒绝运行无效签名，故 macOS 保持全量下载。`desktopPayloadAssetBase` 中 darwin 键**缺席**（而非空数组），客户端据此走全量。
+- **载荷同时发到 npm registry，作为国内镜像加速源**。`/api/desktop/latest` 的 `payloads` 候选列表在国内把 npm tarball 排在前面、GitHub 资产在后（海外相反）。URL 由 tag 确定性拼出，不查询 registry 元数据：
+  - 包名 = `@xulongzhe/` + 载荷资产基名（如 `@xulongzhe/clawbench-desktop-linux-x64-payload`），由 Go 的 `desktopPayloadNpmPkg` 从 `desktopPayloadAssetBase` 派生，不另立一份映射。
+  - **tarball 文件名去掉 scope**：`<base>/@scope/name/-/name-<ver>.tgz`；**版本号不带 `v`**（npm 是语义化版本，tag 不是）。
+  - 只用地区感知的 `getRegistryBase()`，**不用** `registryCandidates()`——后者还带**服务端**的 `~/.npmrc`/`NPM_CONFIG_REGISTRY`，而该 URL 是给**客户端另一台机器**用的，服务端私有 registry 客户端多半不可达。
+  - **npm 永远不是唯一来源**：镜像对新版本有同步滞后，未命中是干净的 404，客户端会走到下一个候选（GitHub 代理），代价一次往返。
+- **全量包不走 npm**。镜像对超大包不可靠：实测历史上 110MB 的桌面 tarball 在 npmmirror 返回 404，而 49MB 的服务端二进制正常返回 200。故 `Downloads` 保持 GitHub 专用。
+- **npm tarball 是 gzip + `package/` 顶层包装**，与 zip 资产不同。客户端 `extractArchive` 按魔数分派（gzip `1f 8b` vs zip `PK`）。实测真实载荷**只需 ustar 的 `name`+`prefix` 拼接**（121 条目全为普通文件、无 PAX 头，最长路径 116 字符由 `prefix` 字段承载），PAX 仅作兜底。`package/` 包装由既有的 `commonTopLevelDir` 剥掉；npm 额外带的根 `package.json` 在安装时删除，使两种来源装出的树逐字节一致。
+- **候选选择内校验魔数**：镜像的限流/错误页可能以 200 返回 HTML；若不校验，npm 在前时该 body 会胜出、解包失败，直接退到 150MB 全量下载，而不是试下一个候选。
+- **npm 的 packlist 默认规则会丢文件**（`.gitignore`、`*.orig`、`.npmrc` 等）。今天载荷里没有这类文件（实测 119/119 逐字节保真），但这是当前树的运气而非流水线的保证，故 CI 用 `npm pack --dry-run --json` 与磁盘清单比对，一旦 npm 会漏掉文件即失败。
 - **失败静默性**：客户端把任何载荷问题（镜像 404、ABI 不符、归档损坏）都降级为全量下载，所以载荷资产名不一致**不会报错**，只会让每次升级又下 150MB。因此资产名由 `scripts/__tests__/releaseAssets.test.ts` 做跨语言比对（`release.yml` ↔ Go `desktopPayloadAssetBase`）。
 
 ### 下游影响
@@ -222,8 +231,11 @@ env:
 - Go 侧 `desktopAssetName` 由 base+tag 拼出，且源码里不再有裸 `clawbench-desktop-*.zip` 字面量
 - 载荷资产名跨语言一致：`release.yml` 打包的三个 basename 与 Go `desktopPayloadAssetBase` 逐项相等，且 macOS 不得出现在该 map 中（载荷失败会静默降级为全量下载，名字不一致不会报错）
 - 壳指纹接线：三个发载荷的 job 都写了 `shell-fingerprint.mjs`，且**在打包全量包之前**（写在 zip 之后则进不了归档）；打包命令不得引用嵌套的 `<unpacked>/payload` 路径；macOS job 不得出现 `stage-payload.mjs`
+- npm 载荷包与 Go 派生一致：三个 `npm/desktop-payloads/*/package.json` 的包名等于 `@xulongzhe/` + Go 的载荷资产基名；`files` 必须含 `payload.json` 与 `resources/`；无 `scripts`；版本为占位 `0.1.0`（由 CI 改写）
+- 载荷 artifact 上传必须带 `include-hidden-files: true`（`upload-artifact@v4` 默认跳过点文件，载荷含 6 个）
+- `publish-npm-desktop` 必须复制 `publish-npm` 的 registry 配置（`rm -f .npmrc` + 写 `NPM_CONFIG_USERCONFIG`，否则会无凭据发往 npmmirror）并带 `npm view` 幂等守卫
 
-变异验证 4/4（均实测变红）：改回无版本归档名 / 上传 pattern 去掉 tag / 删掉 APK 版本化复制 / Go 资产名丢 tag。载荷守护另验：重命名 CI 载荷资产名 → 跨语言比对变红；把壳指纹步骤挪到 zip 之后 → 顺序断言变红。指纹模块自身另验：改成哈希构建产物（模拟每版重编译）→ 稳定性测试变红。
+变异验证 4/4（均实测变红）：改回无版本归档名 / 上传 pattern 去掉 tag / 删掉 APK 版本化复制 / Go 资产名丢 tag。载荷守护另验：重命名 CI 载荷资产名 → 跨语言比对变红；把壳指纹步骤挪到 zip 之后 → 顺序断言变红；去掉 `include-hidden-files` → artifact 断言变红；改 npm 包名 → 与 Go 的 parity 断言变红。指纹模块自身另验：改成哈希构建产物（模拟每版重编译）→ 稳定性测试变红。tar 读取器另验：去掉 `prefix` 拼接 → 长路径测试变红；去掉截断边界检查 → 截断测试变红；不归一化 zip 的 mode → zip 系列测试变红。CI 的 packlist 比对另验：往载荷里放一个 `*.orig` → 比对失败（npm 会静默丢弃它）。
 
 ## 历史遗留
 

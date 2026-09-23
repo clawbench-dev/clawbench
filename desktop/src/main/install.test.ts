@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
-import { deflateRawSync } from 'node:zlib'
+import { deflateRawSync, gzipSync, gunzipSync } from 'node:zlib'
 import { createHash } from 'node:crypto'
 
 // The installer touches `app` only in restartInto(); mock electron so the pure
@@ -86,6 +86,9 @@ vi.mock('node:http', makeGetMock)
 
 import {
   extractZip,
+  extractTarGz,
+  extractArchive,
+  looksLikeArchive,
   writePointer,
   readCurrentVersion,
   pointerPath,
@@ -189,6 +192,104 @@ function crc32(buf: Buffer): number {
   let c = 0xffffffff
   for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8)
   return (c ^ 0xffffffff) >>> 0
+}
+
+/**
+ * Build a gzipped tar archive, the way an npm tarball is shaped.
+ *
+ * Entries are `{ name, content, type?, prefix?, mode? }`. `prefix` exercises the
+ * ustar long-path mechanism npm uses (it splits a long path across the `name`
+ * and `prefix` fields rather than emitting a PAX header).
+ *
+ * This writer exists only to build well-formed fixtures. The malformed-input
+ * tests below build their bytes by hand instead — feeding a corrupt archive to
+ * the same code that wrote it would prove nothing.
+ */
+function makeTarGz(
+  entries: Array<{
+    name: string
+    content?: string | Buffer
+    type?: string
+    prefix?: string
+    mode?: number
+  }>,
+): Buffer {
+  const blocks: Buffer[] = []
+
+  for (const e of entries) {
+    const data = Buffer.isBuffer(e.content) ? e.content : Buffer.from(e.content ?? '')
+    const type = e.type ?? '0'
+    const isDir = type === '5'
+
+    const header = Buffer.alloc(512)
+    header.write(e.name, 0, 100, 'utf8')
+    header.write((e.mode ?? (isDir ? 0o755 : 0o644)).toString(8).padStart(7, '0') + '\0', 100, 8, 'utf8')
+    header.write('0000000\0', 108, 8, 'utf8') // uid
+    header.write('0000000\0', 116, 8, 'utf8') // gid
+    header.write(data.length.toString(8).padStart(11, '0') + '\0', 124, 12, 'utf8')
+    header.write('00000000000\0', 136, 12, 'utf8') // mtime
+    header.write('        ', 148, 8, 'utf8') // checksum placeholder
+    header.write(type, 156, 1, 'utf8')
+    header.write('ustar\0', 257, 6, 'utf8')
+    header.write('00', 263, 2, 'utf8')
+    if (e.prefix) header.write(e.prefix, 345, 155, 'utf8')
+
+    // Checksum: sum of all header bytes with the checksum field treated as spaces.
+    let sum = 0
+    for (const b of header) sum += b
+    header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 8, 'utf8')
+
+    blocks.push(header)
+    if (!isDir && data.length > 0) {
+      blocks.push(data)
+      const pad = (512 - (data.length % 512)) % 512
+      if (pad) blocks.push(Buffer.alloc(pad))
+    }
+  }
+
+  blocks.push(Buffer.alloc(1024)) // two zero blocks terminate the archive
+  return gzipSync(Buffer.concat(blocks))
+}
+
+/** A PAX extended header block carrying the given records, for the next entry. */
+function makePaxBlock(records: Record<string, string>): Buffer {
+  const body = Object.entries(records)
+    .map(([k, v]) => {
+      // Length-prefixed: LEN includes its own digits and the trailing newline.
+      const base = `${k}=${v}\n`
+      let len = base.length + 1
+      while (String(len).length + base.length !== len) len = String(len).length + base.length
+      return `${len} ${base}`
+    })
+    .join('')
+  const header = Buffer.alloc(512)
+  header.write('PaxHeader', 0, 100, 'utf8')
+  header.write('0000644\0', 100, 8, 'utf8')
+  header.write('0000000\0', 108, 8, 'utf8')
+  header.write('0000000\0', 116, 8, 'utf8')
+  header.write(Buffer.byteLength(body).toString(8).padStart(11, '0') + '\0', 124, 12, 'utf8')
+  header.write('00000000000\0', 136, 12, 'utf8')
+  header.write('        ', 148, 8, 'utf8')
+  header.write('x', 156, 1, 'utf8')
+  header.write('ustar\0', 257, 6, 'utf8')
+  header.write('00', 263, 2, 'utf8')
+  let sum = 0
+  for (const b of header) sum += b
+  header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 8, 'utf8')
+
+  const bodyBuf = Buffer.from(body, 'utf8')
+  const pad = (512 - (bodyBuf.length % 512)) % 512
+  return Buffer.concat([header, bodyBuf, Buffer.alloc(pad)])
+}
+
+/** Recursively read a directory into a path → content map, for tree comparison. */
+function readTree(root: string, base = root, out: Record<string, Buffer> = {}): Record<string, Buffer> {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const abs = path.join(root, entry.name)
+    if (entry.isDirectory()) readTree(abs, base, out)
+    else if (entry.isFile()) out[path.relative(base, abs)] = fs.readFileSync(abs)
+  }
+  return out
 }
 
 let tmpRoot: string
@@ -866,5 +967,199 @@ describe('appRoot', () => {
     } finally {
       if (!had) delete (process as { resourcesPath?: string }).resourcesPath
     }
+  })
+})
+
+/**
+ * The tar.gz path exists because the payload is also published to an npm
+ * registry mirror, and npm tarballs are gzipped tars. Two properties matter:
+ * the reader must reject malformed input rather than install a partial tree,
+ * and it must produce the SAME install as the zip of the same tree — otherwise
+ * which mirror won the race would change what the user ends up running.
+ */
+describe('extractTarGz', () => {
+  it('extracts files and strips the npm package/ wrapper', () => {
+    const tar = makeTarGz([
+      { name: 'package/', type: '5' },
+      { name: 'package/resources/app.asar', content: 'ASAR' },
+      { name: 'package/payload.json', content: '{"electron":"44.4.3"}' },
+    ])
+
+    extractTarGz(tar, tmpRoot)
+
+    expect(fs.readFileSync(path.join(tmpRoot, 'resources/app.asar'), 'utf8')).toBe('ASAR')
+    expect(fs.readFileSync(path.join(tmpRoot, 'payload.json'), 'utf8')).toBe('{"electron":"44.4.3"}')
+    expect(fs.existsSync(path.join(tmpRoot, 'package'))).toBe(false)
+  })
+
+  it('joins the ustar prefix and name fields', () => {
+    // npm splits a long path across the 100-byte `name` and 155-byte `prefix`
+    // fields instead of emitting a PAX header, so prefix handling is the common
+    // case, not an edge case. Verified against a real npm pack of the payload.
+    const tar = makeTarGz([
+      {
+        name: 'cpu_features/patches/0001.patch',
+        prefix: 'package/resources/app.asar.unpacked/node_modules/cpu-features/deps',
+        content: 'PATCH',
+      },
+    ])
+
+    extractTarGz(tar, tmpRoot)
+
+    expect(
+      fs.readFileSync(
+        path.join(tmpRoot, 'resources/app.asar.unpacked/node_modules/cpu-features/deps/cpu_features/patches/0001.patch'),
+        'utf8',
+      ),
+    ).toBe('PATCH')
+  })
+
+  it('uses the name as-is when the prefix field is empty', () => {
+    const tar = makeTarGz([{ name: 'package/a.txt', content: 'A' }])
+    extractTarGz(tar, tmpRoot)
+    expect(fs.readFileSync(path.join(tmpRoot, 'a.txt'), 'utf8')).toBe('A')
+  })
+
+  it('applies a PAX path override to the following entry', () => {
+    // npm falls back to PAX when a path cannot be split into name+prefix.
+    const pax = makePaxBlock({ path: 'package/resources/deep.txt' })
+    const tar = gzipSync(
+      Buffer.concat([
+        pax,
+        (() => {
+          const inner = makeTarGz([{ name: 'placeholder', content: 'PAXED' }])
+          return gunzipSync(inner)
+        })(),
+      ]),
+    )
+
+    extractTarGz(tar, tmpRoot)
+
+    expect(fs.readFileSync(path.join(tmpRoot, 'resources/deep.txt'), 'utf8')).toBe('PAXED')
+    expect(fs.existsSync(path.join(tmpRoot, 'placeholder'))).toBe(false)
+  })
+
+  it('restores the executable bit', () => {
+    // Load-bearing on Linux, and the tar header stores the mode directly
+    // (unlike zip, which buries it in the external attributes).
+    const tar = makeTarGz([{ name: 'package/bin/tool', content: 'BIN', mode: 0o755 }])
+    extractTarGz(tar, tmpRoot)
+    expect(fs.statSync(path.join(tmpRoot, 'bin/tool')).mode & 0o111).toBeTruthy()
+  })
+
+  it('rejects an entry that escapes the destination', () => {
+    const tar = makeTarGz([{ name: 'package/../../evil.txt', content: 'pwned' }])
+    expect(() => extractTarGz(tar, tmpRoot)).toThrow(/escapes destination/)
+    expect(fs.existsSync(path.join(tmpRoot, '..', '..', 'evil.txt'))).toBe(false)
+  })
+
+  it('rejects an unsupported entry type instead of silently skipping it', () => {
+    // A symlink or device in the payload means the layout changed; skipping it
+    // would install a quietly incomplete tree.
+    const tar = makeTarGz([{ name: 'package/link', type: '2', content: '' }])
+    expect(() => extractTarGz(tar, tmpRoot)).toThrow(/unsupported entry type/)
+  })
+
+  it('rejects a truncated archive rather than installing what it can', () => {
+    // The dangerous shape: payload.json intact but resources/ cut off. Without
+    // a bounds check the manifest check downstream would pass and the install
+    // would be silently incomplete.
+    const full = makeTarGz([
+      { name: 'package/payload.json', content: '{"electron":"44.4.3"}' },
+      { name: 'package/resources/app.asar', content: 'X'.repeat(4096) },
+    ])
+    const raw = gunzipSync(full)
+    const truncated = gzipSync(raw.subarray(0, raw.length - 2048))
+
+    expect(() => extractTarGz(truncated, tmpRoot)).toThrow(/truncated archive/)
+  })
+
+  it('rejects a malformed size field', () => {
+    const tar = makeTarGz([{ name: 'package/a.txt', content: 'A' }])
+    const raw = gunzipSync(tar)
+    // Corrupt the octal size field of the first header.
+    raw.write('XXXXXXXXXXX\0', 124, 12, 'utf8')
+    expect(() => extractTarGz(gzipSync(raw), tmpRoot)).toThrow(/malformed size field/)
+  })
+
+  it('rejects a body that is neither gzip nor zip', () => {
+    expect(() => extractArchive(Buffer.from('<html>rate limited</html>'), tmpRoot)).toThrow(
+      /unrecognized archive format/,
+    )
+  })
+})
+
+describe('looksLikeArchive', () => {
+  it('recognizes gzip and zip magic bytes', () => {
+    expect(looksLikeArchive(makeTarGz([{ name: 'a', content: 'x' }]))).toBe(true)
+    expect(looksLikeArchive(makeZip([{ name: 'a', content: 'x' }]))).toBe(true)
+  })
+
+  it('rejects an HTML error page served with HTTP 200', () => {
+    // The case this guard exists for: a mirror answering a miss or a rate limit
+    // with a 200 HTML body. Accepting it would fail extraction later and, for a
+    // payload, fall back to the ~150MB full download instead of trying the next
+    // candidate.
+    expect(looksLikeArchive(Buffer.from('<!DOCTYPE html><html>...'))).toBe(false)
+    expect(looksLikeArchive(Buffer.alloc(0))).toBe(false)
+    expect(looksLikeArchive(Buffer.from([0x1f]))).toBe(false)
+  })
+})
+
+describe('zip and tar.gz produce identical installs', () => {
+  it('yields the same tree from the same content, including dotfiles', () => {
+    // Which candidate URL won (a registry mirror or the GitHub release) must not
+    // change what gets installed. The two archives differ in wrapper directory
+    // and in an npm-only root package.json; both are normalized away.
+    const files = [
+      { name: 'resources/app.asar', content: 'ASAR' },
+      { name: 'resources/login.html', content: 'LOGIN' },
+      // A dotfile: the case a glob-based copy silently drops.
+      { name: 'resources/app.asar.unpacked/node_modules/cpu-features/.eslintrc.js', content: 'ESLINT' },
+      { name: 'payload.json', content: '{"electron":"44.4.3"}' },
+    ]
+
+    const zipDir = path.join(tmpRoot, 'from-zip')
+    const tarDir = path.join(tmpRoot, 'from-tar')
+    fs.mkdirSync(zipDir)
+    fs.mkdirSync(tarDir)
+
+    extractArchive(makeZip(files), zipDir)
+    extractArchive(
+      makeTarGz([
+        // npm wraps everything in package/ and adds its own root package.json.
+        { name: 'package/package.json', content: '{"name":"x","version":"1.0.0"}' },
+        ...files.map((f) => ({ name: 'package/' + f.name, content: f.content })),
+      ]),
+      tarDir,
+    )
+
+    // Remove the npm-only wrapper manifest, exactly as installPayload does, and
+    // then the two trees must be byte-identical.
+    fs.rmSync(path.join(tarDir, 'package.json'), { force: true })
+
+    expect(readTree(tarDir)).toEqual(readTree(zipDir))
+  })
+})
+
+describe('downloadFirstAvailable skips non-archive responses', () => {
+  it('falls through to the next candidate when one serves HTML', async () => {
+    const good = makeZip([{ name: 'a.txt', content: 'OK' }])
+    download.impl = (url) => (url.includes('mirror') ? Buffer.from('<html>nope</html>') : good)
+
+    const buf = await downloadFirstAvailable(['https://mirror/x.zip', 'https://github.com/x.zip'])
+
+    expect(buf.equals(good)).toBe(true)
+    expect(downloadSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports every failed candidate when none is an archive', async () => {
+    download.impl = () => Buffer.from('<html>nope</html>')
+    await expect(
+      downloadFirstAvailable(['https://mirror/a.zip', 'https://mirror/b.zip']),
+    ).rejects.toThrow(/all download sources failed/)
+    await expect(
+      downloadFirstAvailable(['https://mirror/a.zip', 'https://mirror/b.zip']),
+    ).rejects.toThrow(/not a zip or tar\.gz archive/)
   })
 })

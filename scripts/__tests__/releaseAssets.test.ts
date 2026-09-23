@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { resolve, join } from 'node:path'
 
 /**
  * Regression guard for release asset filenames.
@@ -38,6 +38,43 @@ const RELEASE_YML = repoPath('.github/workflows/release.yml')
 
 function releaseYml(): string {
   return readFileSync(RELEASE_YML, 'utf8')
+}
+
+/**
+ * Split a workflow into job bodies, keyed by job name.
+ *
+ * Job names sit at two-space indentation directly under `jobs:`; everything
+ * more indented belongs to that job. Scanned as text rather than parsed as
+ * YAML, for the same reason as the rest of this file (js-yaml is only a
+ * transitive dependency).
+ */
+function jobs(src: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  const lines = src.split('\n')
+  let name = ''
+  let body: string[] = []
+  for (const line of lines) {
+    const m = line.match(/^ {2}([a-z0-9-]+):\s*$/)
+    if (m) {
+      if (name) out[name] = body.join('\n')
+      name = m[1]
+      body = []
+    } else if (name) {
+      body.push(line)
+    }
+  }
+  if (name) out[name] = body.join('\n')
+  return out
+}
+
+/** Desktop jobs that publish a payload archive. */
+const PAYLOAD_JOBS = ['build-desktop-linux', 'build-desktop-linux-arm64', 'build-desktop-windows']
+
+/** Payload asset basenames the Go server maps to a platform. */
+function payloadBasesInGo(): string[] {
+  const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
+  const block = /desktopPayloadAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
+  return [...block.matchAll(/"([^"]*payload)"/g)].map((m) => m[1]).sort()
 }
 
 /**
@@ -196,13 +233,6 @@ describe('payload asset names agree between release.yml and the Go server', () =
       .filter((b) => b !== '')
   }
 
-  /** Basenames the Go server maps to a platform. */
-  function payloadBasesInGo(): string[] {
-    const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
-    const block = /desktopPayloadAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
-    return [...block.matchAll(/"([^"]*payload)"/g)].map((m) => m[1]).sort()
-  }
-
   it('publishes a payload for every non-macOS platform, and only those', () => {
     // Three desktop jobs build a payload; macOS deliberately does not (it would
     // break the .app code-signature seal).
@@ -244,29 +274,6 @@ describe('payload asset names agree between release.yml and the Go server', () =
  * an error, so they are asserted structurally here.
  */
 describe('shell fingerprint is wired into the desktop release jobs', () => {
-  /** Job bodies, keyed by job name, as text. */
-  function jobs(src: string): Record<string, string> {
-    const out: Record<string, string> = {}
-    const lines = src.split('\n')
-    let name = ''
-    let body: string[] = []
-    for (const line of lines) {
-      const m = line.match(/^ {2}([a-z0-9-]+):\s*$/)
-      if (m) {
-        if (name) out[name] = body.join('\n')
-        name = m[1]
-        body = []
-      } else if (name) {
-        body.push(line)
-      }
-    }
-    if (name) out[name] = body.join('\n')
-    return out
-  }
-
-  /** Desktop jobs that publish a payload archive. */
-  const PAYLOAD_JOBS = ['build-desktop-linux', 'build-desktop-linux-arm64', 'build-desktop-windows']
-
   it('writes the fingerprint in every job that publishes a payload', () => {
     const all = jobs(releaseYml())
     for (const job of PAYLOAD_JOBS) {
@@ -306,5 +313,98 @@ describe('shell fingerprint is wired into the desktop release jobs', () => {
     // code-signature seal. It therefore needs no fingerprint either.
     const all = jobs(releaseYml())
     expect(all['build-desktop-macos']).not.toContain('stage-payload.mjs')
+  })
+})
+
+/**
+ * The payload is also published to an npm registry mirror, so the client can
+ * fetch ~1.2MB from npmmirror in mainland China instead of only from GitHub.
+ * That adds a second naming contract across three places — the Go URL builder,
+ * the npm package manifests, and the CI job that publishes them — and a
+ * mismatch is silent: the npm candidate 404s, the client falls through to the
+ * GitHub URL, and every upgrade quietly loses the mirror benefit.
+ */
+describe('npm payload packages match the Go URL derivation', () => {
+  /** Package names declared by the checked-in payload manifests. */
+  function payloadPackageNames(): string[] {
+    const dir = repoPath('npm/desktop-payloads')
+    return readdirSync(dir)
+      .map((key) => JSON.parse(readFileSync(join(dir, key, 'package.json'), 'utf8')).name as string)
+      .sort()
+  }
+
+  it('declares one package per non-macOS platform', () => {
+    expect(payloadPackageNames()).toEqual([
+      '@xulongzhe/clawbench-desktop-linux-arm64-payload',
+      '@xulongzhe/clawbench-desktop-linux-x64-payload',
+      '@xulongzhe/clawbench-desktop-windows-x64-payload',
+    ])
+  })
+
+  it('derives those names from the release asset basenames, as Go does', () => {
+    // Go builds the npm name as scope + asset base (desktopPayloadNpmPkg), and
+    // the tarball URL from it. Pinning the relationship here means adding a
+    // platform cannot leave the npm side behind.
+    const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
+    expect(go).toMatch(/desktopNpmScope\s*\+\s*base/)
+
+    const bases = payloadBasesInGo()
+    const expected = bases.map((b) => `@xulongzhe/${b}`).sort()
+    expect(payloadPackageNames()).toEqual(expected)
+  })
+
+  it('declares the manifest version placeholder, not a real release', () => {
+    // CI rewrites the version from the tag. A checked-in real version would be
+    // published as-is if that rewrite ever stopped running.
+    const dir = repoPath('npm/desktop-payloads')
+    for (const key of readdirSync(dir)) {
+      const pkg = JSON.parse(readFileSync(join(dir, key, 'package.json'), 'utf8'))
+      expect(pkg.version, `${key} version`).toBe('0.1.0')
+      // Lifecycle scripts would run on every consumer's install.
+      expect(pkg.scripts, `${key} must declare no scripts`).toBeUndefined()
+    }
+  })
+
+  it('ships the manifest and the app resources', () => {
+    // `files` is a whitelist: omitting payload.json or resources/ publishes an
+    // empty package whose installs all fail the manifest check.
+    const dir = repoPath('npm/desktop-payloads')
+    for (const key of readdirSync(dir)) {
+      const pkg = JSON.parse(readFileSync(join(dir, key, 'package.json'), 'utf8'))
+      expect(pkg.files, `${key} files`).toContain('payload.json')
+      expect(pkg.files, `${key} files`).toContain('resources/')
+    }
+  })
+
+  it('uploads the payload artifacts with hidden files included', () => {
+    // upload-artifact v4 skips dotfiles by default and the payload contains six.
+    // Without this the npm package is silently incomplete — it installs fine and
+    // only breaks at runtime.
+    const all = jobs(releaseYml())
+    for (const job of PAYLOAD_JOBS) {
+      const body = all[job]
+      const upload = body.slice(body.indexOf('upload-artifact'))
+      expect(upload, `${job}: payload artifact upload must set include-hidden-files`).toContain(
+        'include-hidden-files: true',
+      )
+      expect(upload, `${job}: payload dir must be uploaded`).toContain('-payload')
+    }
+  })
+
+  it('publishes from a job that sets up the registry like publish-npm does', () => {
+    // The repo .npmrc points at npmmirror and project config outranks
+    // NPM_CONFIG_USERCONFIG, so without removing it the job publishes to the
+    // mirror with no credentials.
+    const all = jobs(releaseYml())
+    const job = all['publish-npm-desktop']
+    expect(job, 'missing publish-npm-desktop job').toBeTruthy()
+    expect(job).toContain('rm -f .npmrc')
+    expect(job).toContain('NPM_CONFIG_USERCONFIG')
+    expect(job).toContain('npm publish')
+    // A re-run must not republish an immutable version.
+    expect(job).toContain('npm view')
+    for (const dep of PAYLOAD_JOBS) {
+      expect(job, `publish-npm-desktop must depend on ${dep}`).toContain(dep)
+    }
   })
 })

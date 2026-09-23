@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"clawbench/internal/platform"
 	"clawbench/internal/version"
@@ -82,6 +83,79 @@ func desktopPayloadAssetName(osArch, tag string) string {
 		return ""
 	}
 	return desktopAssetNameFromBase(base, tag)
+}
+
+// desktopNpmScope is the npm scope the published packages live under. Keep in
+// sync with the package names in npm/platforms/ and npm/desktop-payloads/.
+const desktopNpmScope = "@xulongzhe/"
+
+// desktopPayloadNpmPkg returns the npm package name carrying the payload
+// archive for a platform, or "" when the platform has no payload (macOS).
+//
+// Derived from the asset base rather than kept as a second map, so the two
+// cannot drift: the npm package for linux-x64 is exactly the release asset
+// basename plus the scope.
+func desktopPayloadNpmPkg(osArch string) string {
+	base, ok := desktopPayloadAssetBase[osArch]
+	if !ok {
+		return ""
+	}
+	return desktopNpmScope + base
+}
+
+// desktopPayloadNpmURLs returns candidate npm tarball URLs for the payload.
+//
+// The URL is constructed from the tag rather than discovered from the registry:
+// the server already knows the exact version it is publishing, so a metadata
+// query would add a network round trip (and a failure mode) to a public
+// endpoint that is otherwise self-contained.
+//
+// Two npm naming rules are easy to get wrong and are pinned by tests:
+//
+//   - the tarball FILENAME drops the scope: the package @xulongzhe/x lives at
+//     <base>/@xulongzhe/x/-/x-<version>.tgz;
+//   - the VERSION has no "v" prefix, because npm versions are semver and a
+//     release tag is not.
+//
+// Only the region-aware base is used — deliberately NOT registryCandidates(),
+// which also carries the server's own ~/.npmrc / NPM_CONFIG_REGISTRY mirror.
+// These URLs are handed to the desktop CLIENT, a different machine, where a
+// server-side private registry is usually unreachable; including it would put
+// a dead candidate in every response.
+func desktopPayloadNpmURLs(osArch, tag string) []string {
+	pkg := desktopPayloadNpmPkg(osArch)
+	version := strings.TrimPrefix(tag, "v")
+	if pkg == "" || version == "" {
+		return nil
+	}
+	// Scope stripped for the filename: "@xulongzhe/foo" -> "foo".
+	name := pkg[strings.LastIndex(pkg, "/")+1:]
+
+	return []string{
+		fmt.Sprintf("%s/%s/-/%s-%s.tgz",
+			strings.TrimRight(getRegistryBase(), "/"), pkg, name, version),
+	}
+}
+
+// desktopPayloadURLs returns every candidate URL for a platform's payload,
+// npm registry first for mainland China (where github.com is unreliable) and
+// the GitHub release assets first elsewhere.
+//
+// npm is never the ONLY source: the mirror lags behind a fresh release and may
+// not have the version yet, in which case the candidate 404s and the client
+// walks on to the GitHub URL. That costs one round trip, not a failed upgrade.
+func desktopPayloadURLs(osArch, tag string) []string {
+	npm := desktopPayloadNpmURLs(osArch, tag)
+	asset := desktopPayloadAssetName(osArch, tag)
+	if asset == "" {
+		return nil
+	}
+	github := releaseAssetURLs(tag, asset)
+
+	if platform.IsChinaMainland() {
+		return append(npm, github...)
+	}
+	return append(github, npm...)
 }
 
 // desktopDownloadKey is the response key for each platform. It matches the
@@ -168,9 +242,12 @@ func FetchDesktopLatest() (*DesktopLatestResult, error) {
 	}
 	// Payloads cover fewer platforms than the full package (see
 	// desktopPayloadAssetBase), so iterate that map rather than Downloads'.
+	//
+	// Payloads get the npm registry as an extra source; Downloads (the ~150MB
+	// full package) deliberately does not — the mirror is unreliable at that
+	// size, and the payload is the path most users take anyway.
 	for osArch := range desktopPayloadAssetBase {
-		asset := desktopPayloadAssetName(osArch, tag)
-		res.Payloads[desktopDownloadKey[osArch]] = releaseAssetURLs(tag, asset)
+		res.Payloads[desktopDownloadKey[osArch]] = desktopPayloadURLs(osArch, tag)
 	}
 	return res, nil
 }

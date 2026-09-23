@@ -743,6 +743,17 @@ jobs:
           name: desktop-linux-package
           path: desktop/release/linux-unpacked/
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-payload
+          path: desktop/release/linux-unpacked-payload/
+          # upload-artifact v4 skips dotfiles/dot-directories by default, and
+          # the payload contains six (cpu-features' .eslintrc.js / .clang-format
+          # / .dockerignore / .grenrc.yml, ssh2's .eslintrc.js / .eslintignore).
+          # Without this the published npm package is silently incomplete: it
+          # installs fine and only fails at runtime. Same reason as web-dist.
+          include-hidden-files: true
+
   build-desktop-linux-arm64:
     name: Build Desktop Linux arm64
     # Gate on lint + tests like every other build job. Without this the
@@ -809,6 +820,13 @@ jobs:
         with:
           name: desktop-linux-arm64-package
           path: desktop/release/linux-arm64-unpacked/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-arm64-payload
+          path: desktop/release/linux-arm64-unpacked-payload/
+          # See the x64 job: dotfiles are skipped by default.
+          include-hidden-files: true
 
   build-desktop-windows:
     name: Build Desktop Windows
@@ -938,6 +956,13 @@ jobs:
         with:
           name: desktop-windows-package
           path: desktop/release/win-unpacked/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-payload
+          path: desktop/release/win-unpacked-payload/
+          # See the Linux job: dotfiles are skipped by default.
+          include-hidden-files: true
 
   build-desktop-macos:
     name: Build Desktop macOS
@@ -1236,6 +1261,152 @@ jobs:
             exit 0
           fi
           npm publish ./npm/main --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Publishes the desktop incremental-upgrade payloads to npm, so the client can
+  # fetch a ~1.2MB archive from an npm mirror (npmmirror in mainland China)
+  # instead of only from GitHub Release. The full ~150MB package deliberately
+  # stays GitHub-only: the mirror is unreliable at that size (a 110MB desktop
+  # tarball 404s while a 49MB one syncs).
+  publish-npm-desktop:
+    name: Publish desktop payloads to npm
+    needs: [build-desktop-linux, build-desktop-linux-arm64, build-desktop-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          # npm versions are semver and must not carry the tag's "v" prefix.
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download Linux x64 payload
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-linux-payload
+          path: npm/desktop-payloads/linux-x64/
+
+      - name: Download Linux arm64 payload
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-linux-arm64-payload
+          path: npm/desktop-payloads/linux-arm64/
+
+      - name: Download Windows payload
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows-payload
+          path: npm/desktop-payloads/win32-x64/
+
+      - name: Verify payloads are complete
+        # The published package must be installable AND complete. A payload
+        # missing files installs cleanly and only breaks at runtime, which is
+        # exactly the failure the hidden-file trap produces — so assert the
+        # files the client requires, including one dotfile.
+        run: |
+          for KEY in linux-x64 linux-arm64 win32-x64; do
+            DIR="npm/desktop-payloads/$KEY"
+            for f in \
+              payload.json \
+              resources/app.asar \
+              resources/login.html \
+              resources/logo.png \
+              resources/app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node \
+              resources/app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node \
+              resources/app.asar.unpacked/node_modules/cpu-features/.eslintrc.js
+            do
+              if [ ! -f "$DIR/$f" ]; then
+                echo "::error::$KEY payload is missing $f (upload-artifact drops dotfiles unless include-hidden-files is set)"
+                exit 1
+              fi
+            done
+            # The manifest must carry the shell fingerprint, or every client
+            # refuses the payload and silently re-downloads the full package.
+            if ! grep -q '"shell"' "$DIR/payload.json"; then
+              echo "::error::$KEY payload.json has no shell fingerprint"
+              exit 1
+            fi
+          done
+          echo "all payloads complete"
+
+      - name: Set payload package versions
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          for KEY in linux-x64 linux-arm64 win32-x64; do
+            node -e "const fs=require('fs');const p='npm/desktop-payloads/$KEY/package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+          done
+
+      - name: Verify npm pack would publish the whole payload
+        # npm applies packlist defaults that DROP files (`.gitignore`, `*.orig`,
+        # `.npmrc`, …). Today nothing in resources/ matches them, but that is a
+        # property of the current tree, not of this pipeline — and a dropped
+        # file installs cleanly and only fails at runtime. Compare what npm
+        # would pack against what is on disk, so a future payload file that npm
+        # silently excludes fails here instead of in the field.
+        run: |
+          for KEY in linux-x64 linux-arm64 win32-x64; do
+            DIR="npm/desktop-payloads/$KEY"
+            node -e "
+              const {execFileSync} = require('child_process');
+              const fs = require('fs'), path = require('path');
+              const dir = '$DIR';
+              const packed = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json', dir], {encoding:'utf8'}))[0].files.map(f => f.path).sort();
+              const walk = (root, base = root, out = []) => {
+                for (const e of fs.readdirSync(root, {withFileTypes:true})) {
+                  const p = path.join(root, e.name);
+                  if (e.isDirectory()) walk(p, base, out);
+                  else if (e.isFile() && path.relative(base, p) !== 'package.json') out.push(path.relative(base, p));
+                }
+                return out;
+              };
+              const onDisk = walk(dir).sort();
+              const missing = onDisk.filter(f => !packed.includes(f));
+              if (missing.length) {
+                console.error('::error::npm would omit files from ' + dir + ': ' + missing.slice(0,5).join(', '));
+                process.exit(1);
+              }
+              console.log(dir + ': npm packs all ' + onDisk.length + ' files');
+            "
+          done
+
+      - name: Configure npm registry for publishing
+        run: |
+          # The project .npmrc sets registry=npmmirror, and project config
+          # outranks even NPM_CONFIG_USERCONFIG. Without removing it this job
+          # would publish to the mirror with no credentials.
+          rm -f .npmrc
+          {
+            echo "registry=https://registry.npmjs.org/"
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
+          } >> "${NPM_CONFIG_USERCONFIG}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish payload packages
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          for KEY in linux-x64 linux-arm64 win32-x64; do
+            PKG=$(node -p "require('./npm/desktop-payloads/$KEY/package.json').name")
+            # A re-run of a partially-failed release must not try to republish
+            # an immutable version (E403).
+            if npm view "$PKG@$VERSION" version >/dev/null 2>&1; then
+              echo "$PKG@$VERSION already published, skipping"
+              continue
+            fi
+            npm publish "./npm/desktop-payloads/$KEY" --access public
+          done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
