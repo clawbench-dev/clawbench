@@ -55,8 +55,12 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 const mockIsAppMode = ref(false)
+// Mutable so a test can flip the desktop-shell flag: the shortcut gate must
+// distinguish "Android WebView" from "Electron desktop shell", and BOTH report
+// isAppMode === true.
+const mockIsDesktopApp = ref(false)
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: mockIsDesktopApp }),
 }))
 
 const mockDialogConfirm = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
@@ -465,6 +469,7 @@ beforeEach(() => {
   mockHandleFolderSelect.mockResolvedValue(undefined)
   mockIsPC.value = false
   mockIsAppMode.value = false
+  mockIsDesktopApp.value = false
   mockIsRefreshing.value = false
   mockToolbarCollapsedIds.length = 0
   mockDirUploading.value = false
@@ -2190,6 +2195,59 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
     expect(wrapper.emitted('delete')).toBeTruthy()
     expect(wrapper.emitted('delete')![0]).toEqual(['test.ts'])
+  })
+
+  /**
+   * Regression: the Android-only skip must NOT disable the desktop shell.
+   *
+   * `isAppMode` is just `isNativeApp()`, so it is true on Electron too. Gating
+   * the whole handler on it (as it was) made EVERY shortcut in this block dead
+   * on the desktop shell, while the identical build worked in a browser — the
+   * regression shipped because the Electron shell had been removed when the
+   * guard was written and was restored later.
+   */
+  describe('app-mode gating', () => {
+    it('keeps shortcuts working in the Electron desktop shell', async () => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = true
+
+      const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+      await nextTick()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+      await nextTick()
+
+      expect(wrapper.emitted('delete')).toBeTruthy()
+      expect(wrapper.emitted('delete')![0]).toEqual(['test.ts'])
+    })
+
+    it('still skips them in the Android WebView shell', async () => {
+      // Android reports isAppMode without isDesktopApp. Its shortcuts are
+      // gesture-driven, so the handler must keep bailing out here.
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = false
+
+      const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+      await nextTick()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+      await nextTick()
+
+      expect(wrapper.emitted('delete')).toBeFalsy()
+    })
+
+    it('keeps shortcuts working in a plain browser', async () => {
+      mockIsAppMode.value = false
+      mockIsDesktopApp.value = false
+
+      const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+      await nextTick()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+      await nextTick()
+
+      expect(wrapper.emitted('delete')).toBeTruthy()
+    })
   })
 
   it('Delete emits delete for the highlighted selection before falling back to the current file', async () => {

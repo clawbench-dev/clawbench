@@ -584,7 +584,7 @@ import { useFileSearch } from '@/composables/useFileSearch'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
 const toast = inject('toast', null)
-const { isAppMode } = useAppMode()
+const { isAppMode, isDesktopApp } = useAppMode()
 const { isPC } = usePlatformDetect()
 const { t, locale } = useI18n()
 const TAG = 'FileManager'
@@ -2491,8 +2491,12 @@ async function handleKeydown(e) {
     if (activeTab.value !== 'browse') return
     // Focus-aware: in wide-screen mode also require the left pane to be focused
     if (props.keyboardActive === false) return
-    // Skip in Android app mode
-    if (isAppMode.value) return
+    // Skip in the Android WebView shell only. `isAppMode` is true for BOTH
+    // native hosts (it is just isNativeApp()), and Electron has a physical
+    // keyboard — keying on isAppMode alone silently disabled every shortcut
+    // below on the desktop shell. Same exclusion as SettingsCategory.vue and
+    // useGlobalEvents.
+    if (isAppMode.value && !isDesktopApp.value) return
     // Skip if a dialog/prompt is open (don't interfere with input fields)
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 

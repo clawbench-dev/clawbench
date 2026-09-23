@@ -2348,6 +2348,14 @@ watch(isWideScreen, (val) => {
   if (val) {
     // Continuity-first (Q1A): adopt activeTab if non-chat, else keep persisted leftTab
     const next = resolveLeftTabOnEnter(activeTab.value, leftTab.value)
+    // Focus continuity is resolved from the tab we ENTERED with, captured before
+    // the block below rewrites `activeTab` to a left-column tab. Passing the
+    // post-rewrite value made resolveActivePaneOnEnter's `chat` branch
+    // unreachable — `activeTab` had already been overwritten with `next` (never
+    // 'chat'), so focus landed on the left pane on every entry into wide-screen
+    // and the chat shortcuts (Ctrl+K/U/←) stayed dead until the user clicked the
+    // chat pane.
+    const enteredTab = activeTab.value
     if (leftTab.value !== next) {
       switchLeftTab(next) // updates leftTab + activeTab + side effects
     } else if (activeTab.value !== next) {
@@ -2363,7 +2371,7 @@ watch(isWideScreen, (val) => {
     // If the chat pane is collapsed (persisted), focus must stay on the left
     // pane — the chat pane is invisible, so right-pane shortcuts would fire
     // against a hidden panel.
-    setActivePane(chatCollapsed.value ? PANE_LEFT : resolveActivePaneOnEnter(activeTab.value))
+    setActivePane(chatCollapsed.value ? PANE_LEFT : resolveActivePaneOnEnter(enteredTab))
     // Wide-screen: the bottom dock is hidden, so bottom-sheet drawers must sit
     // flush with the screen bottom — don't let a stale --dock-height leave a gap.
     document.documentElement.style.setProperty('--dock-height', '0px')
