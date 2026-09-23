@@ -153,7 +153,17 @@ export function useTerminalTabs(
           session.sendReplayDone()
         }, 50)
       },
-      onStatus: (status: { running: boolean; cwd: string }) => {
+      onStatus: (status: { running: boolean; cwd: string; sessionId?: string }) => {
+        // `tab.sessionId` is a separate copy of `session.sessionId` and was only
+        // ever written by explicit syncTabSessionId() calls. On the FIRST
+        // connect those run before the server's status message arrives
+        // (connect() resolves on socket open, while the session id only comes
+        // with this message), so the copy was left empty and stayed that way
+        // until some unrelated path happened to re-sync it. Consumers like the
+        // drag-drop upload and the "open current directory" button read this
+        // copy, so a stale empty value silently broke them. The status message
+        // is the authoritative source — take it here.
+        if (status.sessionId) tab.sessionId = status.sessionId
         if (status.cwd) {
           tab.cwd = status.cwd
           tab.title = cwdToTitle(status.cwd)
