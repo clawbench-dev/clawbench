@@ -183,6 +183,9 @@ function mountInputBar(props = {}, { deep = false }: { deep?: boolean } = {}) {
         Teleport: TeleportStub,
         PopupMenu: true,
         QuickSendDrawer: true,
+        // QuoteCard must render for real: the staged-quote chip assertions below
+        // target the card's own root classes, which a shallow stub would drop.
+        QuoteCard: false,
       },
       plugins: [i18n],
     },

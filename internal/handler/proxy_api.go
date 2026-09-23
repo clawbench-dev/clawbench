@@ -36,10 +36,11 @@ func ServeProxyPortAction(w http.ResponseWriter, r *http.Request) {
 
 func registerPort(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Port     int    `json:"port"`
-		Host     string `json:"host"`
-		Name     string `json:"name"`
-		Protocol string `json:"protocol"`
+		Port      int    `json:"port"`
+		Host      string `json:"host"`
+		Name      string `json:"name"`
+		Protocol  string `json:"protocol"`
+		Direction string `json:"direction"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -50,7 +51,7 @@ func registerPort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	localPort, err := service.ProxyService.RegisterPort(req.Port, req.Host, req.Name, req.Protocol)
+	localPort, err := service.ProxyService.RegisterPort(req.Port, req.Host, req.Name, req.Protocol, req.Direction)
 	if err != nil {
 		writeLocalizedError(w, r, model.Forbidden(err, "AccessDenied"))
 		return
@@ -66,6 +67,7 @@ func updatePort(w http.ResponseWriter, r *http.Request) {
 		Host      string `json:"host"`
 		Name      string `json:"name"`
 		Protocol  string `json:"protocol"`
+		Direction string `json:"direction"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -76,7 +78,7 @@ func updatePort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := service.ProxyService.UpdatePort(req.LocalPort, req.Port, req.Host, req.Name, req.Protocol); err != nil {
+	if err := service.ProxyService.UpdatePort(req.LocalPort, req.Port, req.Host, req.Name, req.Protocol, req.Direction); err != nil {
 		writeLocalizedError(w, r, model.Forbidden(err, "AccessDenied"))
 		return
 	}

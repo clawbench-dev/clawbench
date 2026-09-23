@@ -59,7 +59,13 @@ export function useFileNavStack() {
       return
     }
     // A new navigation after going back starts a new branch, as browser history does.
-    const next = [..._history.value.slice(0, _historyIndex.value + 1), nextLocation]
+    //
+    // An unsaved Untitled buffer's placeholder visit (empty path) is dropped from
+    // the retained prefix: it cannot be reopened by back/forward, so keeping it
+    // would consume a Back press and toast "file not found" instead of landing on
+    // a real file. It is only ever the entry being left, never a destination.
+    const kept = _history.value.slice(0, _historyIndex.value + 1).filter(entry => entry.path !== '')
+    const next = [...kept, nextLocation]
     if (next.length > MAX_STACK_DEPTH) {
       _history.value = next.slice(next.length - MAX_STACK_DEPTH)
     } else {
@@ -108,6 +114,21 @@ export function useFileNavStack() {
     _historyIndex.value = -1
   }
 
+  /**
+   * Re-point the current visit at a different path, without adding history.
+   *
+   * Used when an untitled buffer gets its real path on first save: the visit is
+   * the same one (same scroll position, same view mode), only its identity
+   * changed. Pushing a new entry would leave the empty-path placeholder behind
+   * in the back stack. Records the new path as recent, mirroring openFile().
+   */
+  function replaceCurrentPath(path: string) {
+    const current = _currentLocation.value
+    if (!current) return
+    recordRecentFile(path)
+    _history.value[_historyIndex.value] = { ...current, path }
+  }
+
   function removePath(path: string) {
     const idx = _history.value.map((entry) => entry.path).lastIndexOf(path)
     if (idx === -1) return
@@ -133,6 +154,7 @@ export function useFileNavStack() {
     goForward,
     closeOverlay,
     removePath,
+    replaceCurrentPath,
     snapshot: () => ({
       overlayOpen: _overlayOpen.value,
       history: _history.value.map(entry => ({ ...entry })),

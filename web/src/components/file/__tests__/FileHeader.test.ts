@@ -590,14 +590,17 @@ describe('FileHeader', () => {
     expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
   })
 
-  it('shows the message bubble icon, not the old paperclip', () => {
+  it('shows the quote-bubble icon, not the old paperclip', () => {
     // lucide is not stubbed in this file, so identify the icon by its
     // `lucide-<name>` class rather than a data attribute.
+    // MessageSquareQuote (bubble with quotation marks) is the shared icon for
+    // every quote entry point; the plain MessageSquare belongs to comment
+    // COUNTS, so reusing it here would make the two read alike.
     const wrapper = mountHeader()
     const btn = wrapper.find('[aria-label="file.header.quoteInChat"]')
     expect(btn.exists(), 'the header must expose the quote action').toBe(true)
     const svg = btn.find('svg')
-    expect(svg.classes()).toContain('lucide-message-square')
+    expect(svg.classes()).toContain('lucide-message-square-quote')
     expect(svg.classes()).not.toContain('lucide-paperclip')
   })
 
@@ -790,6 +793,45 @@ describe('FileHeader', () => {
     it('hides the search button for media files without text content', () => {
       const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
       expect((wrapper.vm as any).$.setupState.hasSearch).toBe(false)
+    })
+  })
+
+  describe('untitled buffer', () => {
+    const untitled = { name: '', path: '', content: '', untitled: true, targetDir: 'docs' }
+
+    it('shows the localized placeholder instead of an empty name', () => {
+      const wrapper = mountHeader({ file: untitled })
+      // The test i18n mock echoes the key, so assert on the key being used.
+      expect((wrapper.vm as any).$.setupState.displayName).toBe('file.untitled')
+      expect(wrapper.find('.file-path-hint').text()).toBe('file.untitled')
+    })
+
+    it('hides every path-backed action, keeping only editor preferences', () => {
+      const wrapper = mountHeader({ file: untitled })
+      const vm = wrapper.vm as any
+      const ids = vm.$.setupState.permanentMenuIds
+
+      // No path on disk yet, so none of these can work.
+      for (const id of ['details', 'openDirectory', 'gitHistory', 'shareLink', 'openAsText', 'exportHtml', 'setAsBackground', 'delete']) {
+        expect(ids).not.toContain(id)
+      }
+      // Editor preferences stay available.
+      expect(ids).toContain('wordWrap')
+      expect(ids).toContain('lineNumbers')
+      expect(ids).toContain('stickyScroll')
+    })
+
+    it('hides path-backed inline toolbar buttons', () => {
+      const wrapper = mountHeader({ file: untitled })
+      const ids = (wrapper.vm as any).$.setupState.toolbarInlineIds
+      for (const id of ['refresh', 'attach', 'download']) {
+        expect(ids).not.toContain(id)
+      }
+    })
+
+    it('offers no edit toggle — the buffer is always editable', () => {
+      const wrapper = mountHeader({ file: untitled })
+      expect((wrapper.vm as any).$.setupState.isEditable).toBe(false)
     })
   })
 

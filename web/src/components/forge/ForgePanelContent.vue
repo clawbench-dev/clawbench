@@ -414,9 +414,10 @@ import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
 import ForgeOverviewList from '@/components/forge/ForgeOverviewList.vue'
 import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
-import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
+import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, markForgeRead, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
 import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
 import { useForgeUnread } from '@/composables/useForgeUnread'
+import { consumePendingForgeTarget, pendingForgeTarget } from '@/composables/useForgeNavigation'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ForgePanel'
@@ -554,7 +555,14 @@ function onRefreshClick() {
   void refresh()
 }
 
-onMounted(refresh)
+onMounted(() => {
+  // Deliberately NOT awaited: refresh() loads the visible list, and a failure
+  // there must not abort the deep-link consumption below. Ordering does not
+  // matter for the unbound-card flash either — onMounted runs after the first
+  // paint, so that frame is already committed.
+  void refresh()
+  applyPendingForgeTarget()
+})
 
 // Reload when the project changes or the panel becomes active.
 watch(() => props.projectPath, () => {
@@ -562,12 +570,53 @@ watch(() => props.projectPath, () => {
   void refresh()
 })
 watch(() => props.active, (isActive) => {
-  if (!isActive || !items.isBound.value) return
+  if (!isActive) return
+  // A deep-link that arrived while the panel was mounted but inactive: the tab
+  // is becoming active now, so this is the first moment it is meaningful.
+  applyPendingForgeTarget()
+  if (!items.isBound.value) return
   if (activeTab.value === 'pipeline') {
     if (pipelines.pipelines.value.length === 0 && !pipelines.loading.value) void pipelines.load()
     return
   }
   if (items.items.value.length === 0 && !items.loading.value) void items.load()
+})
+
+/**
+ * Open the item a notification click (or in-app completion card) deep-links to.
+ *
+ * Consumed from three places because the target can land while the panel is in
+ * any of three states:
+ *   - not mounted yet — its TabPanel mounts lazily on first visit -> onMounted;
+ *   - mounted and already active — `switchTab('forge')` is a no-op, so the
+ *     module-level ref change is the ONLY signal -> watch(pendingForgeTarget);
+ *   - mounted but inactive — the tab is about to activate -> watch(active).
+ *
+ * The project gate matters for the instant the target is published: a
+ * cross-project navigation sets it BEFORE switching (so the destination panel
+ * cannot miss it), and the previous project's panel is still mounted at that
+ * moment. That instance must leave the target alone — consuming it would open
+ * the wrong project's repository and mark the wrong item read. The key is
+ * opaque and passed through verbatim — a pipeline's is "pipeline/run:<id>", and
+ * rebuilding it from (type, number) would send "pipeline/0" and mark nothing.
+ */
+function applyPendingForgeTarget() {
+  const target = pendingForgeTarget.value
+  if (!target) return
+  if (target.projectPath && target.projectPath !== props.projectPath) return
+  consumePendingForgeTarget()
+  // Opening a deep-linked item marks it read, exactly as clicking its row does.
+  // Not awaited: the detail opens immediately and the badge settles behind it.
+  void markForgeRead(target.itemKey)
+    .then(() => useForgeUnread().refresh())
+    .catch((err) => appLog.w(TAG, 'deep-link mark read failed', err))
+  openItemDetail(target.type, target.number, target.runId)
+}
+
+// A target that arrives while the forge tab is ALREADY the active one:
+// switchTab() no-ops, so nothing else would ever look at it.
+watch(pendingForgeTarget, () => {
+  if (props.active) applyPendingForgeTarget()
 })
 
 function openDetail(it: ForgeItem) {
@@ -637,21 +686,35 @@ function onOverviewOpenItem(payload: {
   number: number
   runId: number
 }) {
-  if (payload.type === 'pipeline') {
+  openItemDetail(payload.type, payload.number, payload.runId)
+}
+
+/**
+ * Point the panel at one item's detail, whichever tab it belongs to.
+ *
+ * The single implementation behind every way an item can be opened: a list row,
+ * a pipeline's linked PR, a PR's CI run, and a notification deep-link. Each of
+ * those used to spell out its own (activeTab, detailNumber, pipelineDetailId,
+ * load-the-list-behind) sequence, which is four chances to forget the list load
+ * — and forgetting it lands the user on an empty tab when they close the
+ * detail.
+ *
+ * The backing list is always (re)loaded so closing the detail shows the item in
+ * context rather than whatever the previous category left behind. `items.type`
+ * is set directly rather than via setType, which would kick off a second load
+ * for the wrong list.
+ */
+function openItemDetail(type: 'issue' | 'pr' | 'pipeline', number: number, runId: number) {
+  if (type === 'pipeline') {
     activeTab.value = 'pipeline'
     detailNumber.value = 0
-    pipelineDetailId.value = payload.runId
-    // Load the list behind the detail. Without this, closing the detail lands on
-    // the Pipelines tab with nothing in it (its own loader only runs on tab
-    // switch or on activation, neither of which happened).
+    pipelineDetailId.value = runId
     void pipelines.load()
   } else {
-    activeTab.value = payload.type
-    // Keep the item list's own type in sync so closing the detail shows the
-    // matching list rather than the previously-viewed category.
-    items.type.value = payload.type
+    activeTab.value = type
+    items.type.value = type
     pipelineDetailId.value = 0
-    detailNumber.value = payload.number
+    detailNumber.value = number
     void items.load()
   }
   detailOpen.value = true
@@ -664,32 +727,19 @@ function onOverviewOpenItem(payload: {
  * is a first-class item in this panel, so landing in its detail (with comments
  * and the quote action) is the useful destination. The run's own "open in
  * browser" button remains available for the platform page.
- *
- * `items.type` is set directly rather than via `setType`, which would kick off
- * its own load for the wrong list; `items.load()` below fetches the PR list the
- * detail will return to.
  */
 function onOpenLinkedPr(number: number) {
-  activeTab.value = 'pr'
-  items.type.value = 'pr'
-  pipelineDetailId.value = 0
-  detailNumber.value = number
-  void items.load()
+  openItemDetail('pr', number, 0)
 }
 
 /**
  * Open one of a change request's CI runs, from the PR detail's CI section.
  *
  * The reverse of onOpenLinkedPr: switch to the Pipelines tab and point the
- * pipeline detail at that run. The pipeline list is loaded so closing the detail
- * lands on a populated list rather than an empty one (the same reason
- * onOverviewOpenItem loads it).
+ * pipeline detail at that run.
  */
 function onOpenItemPipeline(runId: number) {
-  activeTab.value = 'pipeline'
-  detailNumber.value = 0
-  pipelineDetailId.value = runId
-  void pipelines.load()
+  openItemDetail('pipeline', 0, runId)
 }
 
 // Register the drill-down back handler so the edge-swipe gesture and the Android

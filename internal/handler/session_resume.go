@@ -115,6 +115,13 @@ var clientInjectedStripRules = []stripRule{
 	// Referenced from model so the injected header and its strip rule cannot
 	// drift apart (a header with no rule would become the session title).
 	{model.ReferencedLinkPrefix, stripToNewline, ""},
+	// The quote header is stripped, but the fenced block that follows it is NOT
+	// a known machine prefix, so a title derived from a quote-only turn can
+	// still surface the fence. That is not a new regression: the normal title
+	// path reads content (which no longer carries the fence), and the only
+	// consumer of these rules on a live prompt is the ACP-replay fallback,
+	// which already faced the same fence before quotes were structured.
+	{model.QuotePromptPrefix, stripToNewline, ""},
 }
 
 // claudeNativeStripRules are the claude-code CLI's own machine headers

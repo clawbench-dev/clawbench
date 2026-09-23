@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -45,8 +46,8 @@ func TestServeSSHInfoFull_Enabled(t *testing.T) {
 		service.ProxyService.Stop()
 		service.ProxyService = origProxy
 	}()
-	_, _ = service.ProxyService.RegisterPort(5173, "", "Vite Dev", "http")
-	_, _ = service.ProxyService.RegisterPort(8080, "", "API", "http")
+	_, _ = service.ProxyService.RegisterPort(5173, "", "Vite Dev", "http", "")
+	_, _ = service.ProxyService.RegisterPort(8080, "", "API", "http", "")
 
 	// Create and set an SSH server reference
 	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "test-password", service.ProxyService)
@@ -129,9 +130,9 @@ func TestServeSSHInfoFull_NonLocalhostTarget_UsesReverseProxyRoute(t *testing.T)
 	}()
 
 	// Register a localhost port (direct connection)
-	_, _ = service.ProxyService.RegisterPort(5173, "", "Vite Dev", "http")
+	_, _ = service.ProxyService.RegisterPort(5173, "", "Vite Dev", "http", "")
 	// Register a non-localhost port (routed through reverse proxy)
-	localPort, _ := service.ProxyService.RegisterPort(8080, "192.168.100.1", "Remote Router", "http")
+	localPort, _ := service.ProxyService.RegisterPort(8080, "192.168.100.1", "Remote Router", "http", "")
 
 	// Check if reverse proxy started successfully — it may fail on some platforms
 	// (e.g., Windows CI where the port might be in use by another service)
@@ -439,7 +440,7 @@ func TestServeSSHInfo_MinimalPayloadOnly(t *testing.T) {
 		service.ProxyService.Stop()
 		service.ProxyService = origProxy
 	}()
-	_, _ = service.ProxyService.RegisterPort(5173, "internal-db", "DB", "http")
+	_, _ = service.ProxyService.RegisterPort(5173, "internal-db", "DB", "http", "")
 
 	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "test-password", service.ProxyService)
 	if err := srv.InitHostKey(); err != nil {
@@ -497,4 +498,72 @@ func TestServeSSHInfo_MethodNotAllowed(t *testing.T) {
 	w := httptest.NewRecorder()
 	ServeSSHInfo(w, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeSSHInfoFull_IncludesReverseCommand(t *testing.T) {
+	origProxy := service.ProxyService
+	service.ProxyService = service.NewProxyRegistry(0)
+	defer func() {
+		service.ProxyService.Stop()
+		service.ProxyService = origProxy
+	}()
+
+	// A reverse mapping: expose the client's port 3000 on the server's 9000.
+	serverPort, err := service.ProxyService.RegisterPort(3000, "", "local svc", "http", model.DirectionReverse)
+	require.NoError(t, err)
+
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "test-password", service.ProxyService)
+	require.NoError(t, srv.InitHostKey())
+	origSSH := sshServerRef
+	sshServerRef = srv
+	defer func() { sshServerRef = origSSH }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
+	req.Host = "myserver.com:20000"
+	w := httptest.NewRecorder()
+	ServeSSHInfoFull(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	cmd, _ := result["command"].(string)
+
+	assert.Contains(t, cmd, fmt.Sprintf("-R %d:localhost:3000", serverPort),
+		"reverse mapping must render as -R serverPort:targetHost:clientPort")
+	assert.NotContains(t, cmd, fmt.Sprintf("-L %d", serverPort),
+		"reverse mapping must not render as a local forward")
+}
+
+func TestServeSSHInfoFull_MixedDirectionsRenderBothFlags(t *testing.T) {
+	origProxy := service.ProxyService
+	service.ProxyService = service.NewProxyRegistry(0)
+	defer func() {
+		service.ProxyService.Stop()
+		service.ProxyService = origProxy
+	}()
+
+	fwdPort, err := service.ProxyService.RegisterPort(5173, "", "vite", "http", model.DirectionForward)
+	require.NoError(t, err)
+	revPort, err := service.ProxyService.RegisterPort(3000, "", "local svc", "http", model.DirectionReverse)
+	require.NoError(t, err)
+
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "test-password", service.ProxyService)
+	require.NoError(t, srv.InitHostKey())
+	origSSH := sshServerRef
+	sshServerRef = srv
+	defer func() { sshServerRef = origSSH }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info/full", http.NoBody)
+	req.Host = "myserver.com:20000"
+	w := httptest.NewRecorder()
+	ServeSSHInfoFull(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	cmd, _ := result["command"].(string)
+
+	assert.Contains(t, cmd, fmt.Sprintf("-L %d:localhost:5173", fwdPort))
+	assert.Contains(t, cmd, fmt.Sprintf("-R %d:localhost:3000", revPort))
 }

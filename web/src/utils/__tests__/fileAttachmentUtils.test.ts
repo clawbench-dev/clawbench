@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, buildSendPayload, folderRelPath, isDirUploadFile, isUrlEntry, isSafeExternalUrl } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, buildSendPayload, folderRelPath, isDirUploadFile, isUrlEntry, isQuoteEntry, isSafeExternalUrl } from '@/utils/fileAttachmentUtils.ts'
 
 describe('normalizeFileEntry', () => {
   it('normalizes string to { path, isDir: false } object', () => {
@@ -292,5 +292,71 @@ describe('buildSendPayload', () => {
     const { allFiles, filePaths } = buildSendPayload(uploaded, attached)
     expect(filePaths).toEqual(['/src/dup.go'])
     expect(allFiles).toHaveLength(1)
+  })
+})
+
+describe('quote entries', () => {
+  const quote = { path: '', kind: 'quote' as const, id: 'q1', text: 'x := 1', note: 'why?', language: 'go', startLine: 3, endLine: 3 }
+
+  it('normalizeFileEntry preserves the quote payload', () => {
+    // This function runs on every render and dedupe pass, so dropping these
+    // fields would silently blank the card and starve the AI prompt.
+    // isDir is added by normalization (same as for URL entries) — the backend
+    // rebuilds quote entries and drops it.
+    expect(normalizeFileEntry(quote)).toEqual({ ...quote, isDir: false })
+  })
+
+  it('normalizeFileEntry keeps an empty quote text as a real value', () => {
+    const got = normalizeFileEntry({ path: '', kind: 'quote', id: 'q2', text: '', note: '' })
+    expect(got.text).toBe('')
+    expect(got.note).toBe('')
+  })
+
+  it('buildSendChannels routes a quote to entries, never filePaths', () => {
+    // A chat-message quote has path === '' and no line range, so without an
+    // explicit branch it would be pushed as '' into filePaths and the backend
+    // would reject the whole send resolving "" as a path.
+    const { entries, filePaths } = buildSendChannels([quote])
+
+    expect(filePaths).toEqual([])
+    expect(filePaths).not.toContain('')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].kind).toBe('quote')
+    expect(entries[0].text).toBe('x := 1')
+  })
+
+  it('buildSendChannels keeps a file quote out of filePaths too', () => {
+    const fileQuote = { path: 'src/a.go', kind: 'quote' as const, id: 'q3', text: 'body' }
+    const { entries, filePaths } = buildSendChannels([fileQuote])
+
+    expect(filePaths).toEqual([])
+    expect(entries).toHaveLength(1)
+  })
+
+  it('buildSendPayload carries a quote alongside a plain file', () => {
+    const { allFiles, filePaths } = buildSendPayload([], [{ path: '/src/app.go' }, quote])
+
+    expect(filePaths).toEqual(['/src/app.go'])
+    expect(allFiles.some(f => f.kind === 'quote' && f.text === 'x := 1')).toBe(true)
+  })
+
+  it('dedupeFiles keeps two quotes of the same range with different text', () => {
+    // Two distinct annotations of the same lines are genuinely different
+    // attachments; collapsing them would silently drop one.
+    const a = { path: 'src/a.go', kind: 'quote' as const, id: 'qa', text: 'first', startLine: 1, endLine: 2 }
+    const b = { path: 'src/a.go', kind: 'quote' as const, id: 'qb', text: 'second', startLine: 1, endLine: 2 }
+
+    expect(dedupeFiles([a, b])).toHaveLength(2)
+  })
+
+  it('dedupeFiles collapses an exact duplicate quote', () => {
+    const a = { path: 'src/a.go', kind: 'quote' as const, id: 'qa', text: 'same', startLine: 1, endLine: 2 }
+    expect(dedupeFiles([a, { ...a }])).toHaveLength(1)
+  })
+
+  it('isQuoteEntry distinguishes a quote from a url and a file', () => {
+    expect(isQuoteEntry({ path: '', kind: 'quote' })).toBe(true)
+    expect(isQuoteEntry({ path: 'x', kind: 'url', url: 'https://e.com' })).toBe(false)
+    expect(isQuoteEntry({ path: '/a.go' })).toBe(false)
   })
 })

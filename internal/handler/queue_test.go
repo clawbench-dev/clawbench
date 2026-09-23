@@ -264,6 +264,83 @@ func TestQueueHandler_Enqueue_URLAttachment(t *testing.T) {
 	service.CancelSession(sessionID)
 }
 
+// TestQueueHandler_Enqueue_QuoteAttachment verifies a quote attachment survives
+// the queue endpoint without touching the filesystem.
+//
+// A quote's Path is only a label (and is empty for a quote taken from a chat
+// message), so running it through path resolution would 404 the enqueue and
+// silently drop the quote — exactly the regression the URL branch guards
+// against.
+func TestQueueHandler_Enqueue_QuoteAttachment(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-quote"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	body := map[string]any{
+		"message": "解释一下",
+		"files": []map[string]any{{
+			"path": "src/a.go", "kind": "quote", "id": "quote-1",
+			"text": "x := 1", "note": "为什么这样写？", "language": "go",
+			"startLine": 3, "endLine": 3,
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w)
+
+	// Assert on the persisted row rather than the live queue: the handler starts
+	// a drain goroutine that may consume the queue entry concurrently.
+	messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
+	require.NoError(t, err)
+	require.Len(t, messages, 1, "the message must be persisted")
+	require.Len(t, messages[0].Files, 1, "the quote entry must survive validation")
+	got := messages[0].Files[0]
+	assert.Equal(t, "quote", got.Kind)
+	assert.Equal(t, "quote-1", got.ID)
+	assert.Equal(t, "x := 1", got.Text)
+	assert.Equal(t, "为什么这样写？", got.Note)
+	assert.Equal(t, "go", got.Language)
+	assert.Equal(t, "src/a.go", got.Path, "the label must be preserved verbatim, not resolved")
+	assert.Equal(t, 3, got.StartLine)
+
+	service.CancelSession(sessionID)
+}
+
+// TestQueueHandler_Enqueue_QuoteAttachment_EmptyPath verifies a chat-message
+// quote (no path at all) is accepted. Path resolution on "" would fail.
+func TestQueueHandler_Enqueue_QuoteAttachment_EmptyPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-quote-empty"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	body := map[string]any{
+		"files": []map[string]any{{
+			"kind": "quote", "id": "quote-2", "text": "quoted chat text",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w) // a quote with no path is valid
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Files, 1)
+	assert.Equal(t, "quoted chat text", messages[0].Files[0].Text)
+
+	service.CancelSession(sessionID)
+}
+
 // TestQueueHandler_Enqueue_URLAttachment_RejectsUnsafeScheme verifies the queue
 // endpoint applies the same scheme restriction as the chat endpoint.
 func TestQueueHandler_Enqueue_URLAttachment_RejectsUnsafeScheme(t *testing.T) {

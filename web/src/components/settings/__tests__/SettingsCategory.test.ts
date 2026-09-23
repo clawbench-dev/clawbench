@@ -33,6 +33,7 @@ const localConfig = reactive<Record<string, any>>({
   terminalFontSize: 12,
   androidLogCapture: false,
   uiScale: 1,
+  uiScaleAuto: true,
   notificationSound: true,
   headerShortcutTips: true,
 })
@@ -59,6 +60,7 @@ const mockAgents = [
 ]
 
 vi.mock('@/composables/useSettingsConfig', () => ({
+  getEffectiveUIScale: () => mockEffectiveUIScale.value,
   useSettingsConfig: () => ({
     localConfig,
     serverConfig,
@@ -109,6 +111,11 @@ const mockIsAppMode = vi.hoisted(() => ({ value: false }))
 vi.mock('@/composables/useAppMode', () => ({
   useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
+
+// The scale slider displays the factor actually in effect (auto-derived or
+// manual). Stubbed as a plain holder so cases can control it without depending
+// on the real screen height.
+const mockEffectiveUIScale = vi.hoisted(() => ({ value: 1 }))
 
 const mockCanInstallPwa = ref(false)
 const mockIsIOS = ref(false)
@@ -201,6 +208,8 @@ const i18n = createI18n({
           localeDesc: '语言',
           uiScale: '界面缩放',
           uiScaleDesc: '界面缩放',
+          uiScaleAuto: '自动缩放',
+          uiScaleAutoDesc: '自动缩放',
           headerShortcutTips: '顶栏快捷键提示',
           headerShortcutTipsDesc: '顶栏快捷键提示',
           ttsEngine: 'TTS引擎',
@@ -399,6 +408,10 @@ describe('SettingsCategory', () => {
     vi.clearAllMocks()
     // Reset app mode: individual cases flip it to cover the app-only rows.
     mockIsAppMode.value = false
+    // Reset the scale-related state: cases override it to cover auto/manual.
+    localConfig.uiScaleAuto = true
+    localConfig.uiScale = 1
+    mockEffectiveUIScale.value = 1
     mockDialogConfirm.mockResolvedValue(false)
     mockGetServerValueWithDefault.mockImplementation((key: string) => {
       // Simple flat-dot-path resolver against serverConfig
@@ -587,6 +600,77 @@ describe('SettingsCategory', () => {
       expect(slider.attributes('disabled')).toBeUndefined()
       // The gallery tile for the selected wallpaper renders a thumbnail.
       expect(wallpaper.find('img.wallpaper-gallery__thumb').exists()).toBe(true)
+    })
+
+    it('renders the auto-scale switch', () => {
+      const wrapper = mountCategory('appearance')
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '自动缩放')
+      expect(item).toBeTruthy()
+      expect(item!.props().type).toBe('switch')
+    })
+
+    it('saves the auto-scale toggle locally', async () => {
+      const wrapper = mountCategory('appearance')
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '自动缩放')
+      expect(item).toBeTruthy()
+
+      await item!.vm.$emit('update:modelValue', false)
+      await wrapper.vm.$nextTick()
+
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('uiScaleAuto', false)
+    })
+
+    it('disables the scale slider while auto-scale is on', () => {
+      localConfig.uiScaleAuto = true
+      const wrapper = mountCategory('appearance')
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '界面缩放')
+      expect(item).toBeTruthy()
+      expect(item!.props().disabled).toBe(true)
+    })
+
+    it('enables the scale slider once auto-scale is off', () => {
+      localConfig.uiScaleAuto = false
+      const wrapper = mountCategory('appearance')
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '界面缩放')
+      expect(item).toBeTruthy()
+      expect(item!.props().disabled).toBe(false)
+    })
+
+    it('shows the effective factor on the slider, not the stored manual value', () => {
+      // With auto on the stored manual value is ignored, so displaying it
+      // would read as a bug (200% applied but the slider says 100%).
+      localConfig.uiScaleAuto = true
+      localConfig.uiScale = 1
+      mockEffectiveUIScale.value = 2
+      const wrapper = mountCategory('appearance')
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '界面缩放')
+      expect(item!.props().modelValue).toBe(2)
+    })
+
+    it('widens the slider max when the auto factor exceeds the manual ceiling', () => {
+      // Auto caps at 200% while the manual track ends at 150%; without the
+      // widening the disabled thumb would pin to the edge and disagree with
+      // the displayed value.
+      localConfig.uiScaleAuto = true
+      mockEffectiveUIScale.value = 2
+      const wrapper = mountCategory('appearance')
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '界面缩放')
+      expect(item!.props().max).toBe(2)
+    })
+
+    it('hides the auto-scale switch inside the Android app', () => {
+      mockIsAppMode.value = true
+      const wrapper = mountCategory('appearance')
+      const labels = wrapper.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
+      expect(labels).not.toContain('自动缩放')
+      // The manual slider stays available — Android keeps its existing behaviour.
+      expect(labels).toContain('界面缩放')
     })
   })
 

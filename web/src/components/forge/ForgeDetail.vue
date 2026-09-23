@@ -16,7 +16,7 @@
           @mousedown.prevent
           @click="onQuote"
         >
-          <MessageSquare :size="15" />
+          <MessageSquareQuote :size="15" />
         </button>
         <a
           v-if="detail.item.value"
@@ -54,6 +54,7 @@
         class="forge-detail-body"
         :data-quote-source="quoteSourceLabel"
         :data-quote-language="detail.item.value.type"
+        :data-quote-url="detail.item.value.url"
         @click="handleContentClick"
       >
         <!-- Title + meta -->
@@ -165,7 +166,7 @@
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  ChevronLeft, ChevronRight, ExternalLink, MessageSquare, AlertCircle, Activity,
+  ChevronLeft, ChevronRight, ExternalLink, MessageSquare, MessageSquareQuote, AlertCircle, Activity,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useForgeDetail, useForgeItemPipelines } from '@/composables/useForge'
@@ -243,7 +244,8 @@ const { handleDblClick } = useDoubleClickCopy({
   onCopy(target, text) {
     const el = target as HTMLElement | null
     // Reuse the selection path's label resolution: it walks up to the nearest
-    // `[data-quote-source]` region (the issue/PR body) and reads its identity.
+    // `[data-quote-source]` region (the issue/PR body) and reads its identity,
+    // including the address so the quote can offer a real jump-to-source.
     const source = el ? getQuoteSource(el) : null
     quoteQuestion.showBar({
       text,
@@ -251,6 +253,8 @@ const { handleDblClick } = useDoubleClickCopy({
       language: source?.language || '',
       startLine: 0,
       endLine: 0,
+      sourceKind: source?.url ? 'url' : 'file',
+      ...(source?.url ? { url: source.url } : {}),
     })
   },
 })

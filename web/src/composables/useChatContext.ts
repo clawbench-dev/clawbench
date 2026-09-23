@@ -7,6 +7,12 @@ export interface QuoteData {
   language: string
   startLine: number
   endLine: number
+  /** External address when the quote came from a forge object. */
+  url?: string
+  /** Where the quote came from; drives the drawer's jump affordance. */
+  sourceKind?: 'file' | 'url' | 'message'
+  /** DB message id when the quote was taken from a chat message. */
+  messageId?: number
 }
 
 export interface StagedQuote extends QuoteData {
@@ -131,10 +137,14 @@ function setQuoteData(data: QuoteData | null) {
 }
 
 function sameQuote(a: QuoteData, b: QuoteData): boolean {
+  // messageId is part of the identity: quoting the same sentence out of two
+  // different chat messages produces two genuinely different quotes, and
+  // collapsing them would silently keep only the first.
   return a.filePath === b.filePath
     && a.startLine === b.startLine
     && a.endLine === b.endLine
     && a.text === b.text
+    && (a.messageId ?? 0) === (b.messageId ?? 0)
 }
 
 function addStagedQuote(data: QuoteData, note = ''): StagedQuote {
@@ -157,6 +167,15 @@ function addStagedQuote(data: QuoteData, note = ''): StagedQuote {
 function removeStagedQuote(id: string) {
   const index = stagedQuotes.value.findIndex(item => item.id === id)
   if (index >= 0) stagedQuotes.value.splice(index, 1)
+}
+
+/**
+ * Replace the annotation on a staged quote. No-op when the id is unknown.
+ * Used by the quote detail drawer while the quote is still un-sent.
+ */
+function updateStagedQuoteNote(id: string, note: string) {
+  const item = stagedQuotes.value.find(q => q.id === id)
+  if (item) item.note = note.trim()
 }
 
 function clearQuotes() {
@@ -215,6 +234,7 @@ export function useChatContext() {
     setQuoteData,
     addStagedQuote,
     removeStagedQuote,
+    updateStagedQuoteNote,
     clearQuotes,
     clearAll,
     snapshotAttachments,

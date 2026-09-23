@@ -316,7 +316,7 @@ describe('useTerminalSession', () => {
         running: true,
       })
 
-      expect(onStatus).toHaveBeenCalledWith({ running: true, cwd: '/home' })
+      expect(onStatus).toHaveBeenCalledWith({ running: true, cwd: '/home', sessionId: undefined })
     })
 
     it('calls onExit callback for exit messages', async () => {

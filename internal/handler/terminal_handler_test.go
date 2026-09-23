@@ -169,6 +169,8 @@ func TestTerminalStatus_NilManager(t *testing.T) {
 	decodeRespJSON(t, w.Body, &result)
 	assert.Equal(t, false, result["enabled"])
 	assert.Equal(t, false, result["platform_supported"])
+	// No manager means no probe — the frontend must not offer live-cwd drops.
+	assert.Equal(t, false, result["cwd_probe_supported"])
 }
 
 func TestTerminalStatus_AllSessions(t *testing.T) {
@@ -198,6 +200,10 @@ func TestTerminalStatus_AllSessions(t *testing.T) {
 	assert.Equal(t, true, result["enabled"])
 	// platform_supported mirrors runtimeGOOS != "windows" — on Linux test machines it's true
 	assert.Contains(t, result, "platform_supported")
+	// cwd_probe_supported mirrors the /proc-based live-cwd probe (Linux/Android only).
+	// It is a SERVER-side capability: the browser may run on macOS while the server
+	// runs on Linux, so the frontend must not infer it from navigator.userAgent.
+	assert.Equal(t, terminal.CwdProbeSupported(), result["cwd_probe_supported"])
 	// No active sessions — AllSessionStatus returns nil slice which marshals to null
 	_, ok := result["sessions"]
 	assert.True(t, ok, "sessions field should be present")
@@ -235,6 +241,9 @@ func TestTerminalStatus_WithSessionID(t *testing.T) {
 	assert.Equal(t, "missing-session", result["sessionId"])
 	assert.Equal(t, "", result["cwd"])
 	assert.Equal(t, false, result["running"])
+	// The probe capability is reported even when the session does not exist —
+	// it describes the platform, not the session.
+	assert.Equal(t, terminal.CwdProbeSupported(), result["cwd_probe_supported"])
 }
 
 // ---------- TerminalClose ----------

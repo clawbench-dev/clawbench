@@ -1,5 +1,16 @@
 <template>
   <div v-if="files.length > 0" class="chat-files">
+    <!-- Quoted-snippet cards (shared component — same card as the input chip).
+         Clicking emits the same file-tag-click the parent already routes; the
+         parent branches on kind==='quote' to open the detail drawer instead of
+         a file. -->
+    <QuoteCard
+      v-for="(raw, idx) in quoteFiles"
+      :key="'quote-' + idx"
+      :quote="fromFileEntry(normalizeFileEntry(raw))"
+      @click="$emit('file-tag-click', normalizeFileEntry(raw))"
+    />
+
     <!-- External URL attachment (a forge issue/PR reference from "Analyze with
          AI"). Rendered as a real link so it stays clickable after a reload;
          the label comes from path (owner/repo#123), the target from url. -->
@@ -20,7 +31,7 @@
       @click="$emit('file-tag-click', normalizeFileEntry(raw))"
       :title="t('chat.attach.openFile')">
       <template v-if="normalizeFileEntry(raw).startLine !== undefined">
-        <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
+        <MessageSquareQuote :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
         <span class="attachment-filename">{{ getFileName(normalizeFileEntry(raw).path) }}<span class="attachment-range">{{ rangeLabel(normalizeFileEntry(raw)) }}</span></span>
       </template>
       <template v-else>
@@ -42,11 +53,13 @@
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { baseName } from '@/utils/path.ts'
-import { normalizeFileEntry, isUploadPath, isImageFile, isUrlEntry, isSafeExternalUrl } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, isUrlEntry, isQuoteEntry, isSafeExternalUrl } from '@/utils/fileAttachmentUtils.ts'
+import { fromFileEntry } from '@/utils/quoteItem.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { buildPathThumbUrl } from '@/utils/fileIcon.ts'
 import FileIcon from '@/components/common/FileIcon.vue'
-import { Code2, Link as LinkIcon } from 'lucide-vue-next'
+import QuoteCard from '@/components/chat/QuoteCard.vue'
+import { MessageSquareQuote, Link as LinkIcon } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -57,8 +70,13 @@ defineEmits(['file-tag-click'])
 
 // URL entries must not go through the file-card branch: their path is a label,
 // not a filesystem path, so a thumbnail/preview click would be meaningless.
+// Quotes are likewise not files, and render through the shared QuoteCard.
 const urlFiles = computed(() => (props.files ?? []).filter(f => isUrlEntry(normalizeFileEntry(f))))
-const fileFiles = computed(() => (props.files ?? []).filter(f => !isUrlEntry(normalizeFileEntry(f))))
+const quoteFiles = computed(() => (props.files ?? []).filter(f => isQuoteEntry(normalizeFileEntry(f))))
+const fileFiles = computed(() => (props.files ?? []).filter(f => {
+  const e = normalizeFileEntry(f)
+  return !isUrlEntry(e) && !isQuoteEntry(e)
+}))
 
 /** Chip text: the stored label, falling back to the address itself. */
 function urlLabel(raw) {

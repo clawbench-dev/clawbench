@@ -11,7 +11,9 @@
       <button class="editor-btn icon-btn" :disabled="!canRedo || saving" @mousedown.prevent @click="handleRedo" :title="t('file.editor.redo')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 10H8a4 4 0 0 0 0 8h7"/><path d="M21 10l-5-5M21 10l-5 5"/></svg>
       </button>
-      <button v-if="dirty" class="editor-btn icon-btn primary" :disabled="saving" @mousedown.prevent @click="emit('save', getValue())" :title="t('file.editor.save')">
+      <!-- Untitled buffers always offer Save: an empty (or reverted) new file has
+           nothing dirty to detect, yet still needs its first save to be named. -->
+      <button v-if="dirty || untitled" class="editor-btn icon-btn primary" :disabled="saving" @mousedown.prevent @click="emit('save', getValue())" :title="t('file.editor.save')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       </button>
       <button class="editor-btn icon-btn" @mousedown.prevent @click="handleExit" :title="t('file.editor.exitEdit')">
@@ -52,6 +54,11 @@ const props = defineProps({
     /** false = read-only browse (default); true = source editing */
     editable: { type: Boolean, default: false },
     saving: { type: Boolean, default: false },
+    /**
+     * A new, not-yet-named buffer. Save stays available regardless of the dirty
+     * flag (naming an empty file is the whole point) and Ctrl+S is never a no-op.
+     */
+    untitled: { type: Boolean, default: false },
 })
 const emit = defineEmits(['save', 'saveAndExit', 'cancel', 'exitEdit', 'searchChange'])
 
@@ -687,7 +694,7 @@ function findPrevSafe() {
 // Ctrl/Cmd+S save shortcut (Mod = Ctrl on Windows/Linux, Cmd on Mac). Mirrors
 // the save button: only when editing, dirty, and not already saving.
 function handleSaveShortcut() {
-    if (!props.editable || !dirty.value || props.saving) return false
+    if (!props.editable || (!dirty.value && !props.untitled) || props.saving) return false
     emit('save', getValue())
     return true
 }

@@ -329,6 +329,139 @@ func TestSharePublic_LocalAbsolutePathEtcPasswd_404(t *testing.T) {
 	assert.NotContains(t, w.Body.String(), "root:")
 }
 
+// ─── Referenced-file content endpoint ────────────────────────────────────────
+
+// TestSharePublic_ContentServesReferencedFile covers the endpoint the share SPA
+// uses to render a file the shared document links to: same FileContent JSON
+// shape as /file, but resolved from ?path= within the share's scope.
+func TestSharePublic_ContentServesReferencedFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/readme.md", "[g](guide.md)")
+	target := filepath.Join(env.ProjectDir, "docs", "guide.md")
+	createTestFile(t, env.ProjectDir, "docs/guide.md", "# Guide\n\ntext")
+	token := createShareViaAPI(t, env, absPath)
+
+	req := newRequest(t, http.MethodGet,
+		"/api/share/"+token+"/content?path="+target, nil)
+	w := callHandler(ServeSharePublic, req)
+	assertOK(t, w)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.Equal(t, "# Guide\n\ntext", fc.Content)
+	assert.Equal(t, "guide.md", fc.Name)
+	assert.Equal(t, target, fc.Path)
+}
+
+// TestSharePublic_ContentOutsideScope_404 pins the boundary: ?path= is
+// confined to the share's own root, exactly like /local?path=.
+func TestSharePublic_ContentOutsideScope_404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+
+	secret := filepath.Join(env.WatchDir, "outside.txt")
+	require.NoError(t, os.WriteFile(secret, []byte("TOP_SECRET"), 0o600))
+
+	req := newRequest(t, http.MethodGet,
+		"/api/share/"+token+"/content?path="+secret, nil)
+	w := callHandler(ServeSharePublic, req)
+	assertStatus(t, w, http.StatusNotFound)
+	assert.NotContains(t, w.Body.String(), "TOP_SECRET")
+}
+
+// TestSharePublic_ContentRejectsDirectory_404 — directories have no content and
+// the share API deliberately exposes no listing endpoint, so a directory target
+// must 404 rather than return a FileContent with empty content.
+func TestSharePublic_ContentRejectsDirectory_404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+
+	dir := filepath.Join(env.ProjectDir, "docs")
+	req := newRequest(t, http.MethodGet,
+		"/api/share/"+token+"/content?path="+dir, nil)
+	w := callHandler(ServeSharePublic, req)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// TestSharePublic_ContentMissing_404 — a link to a file that does not exist is a
+// 404, not an empty 200, so the SPA can tell "gone" from "empty".
+func TestSharePublic_ContentMissing_404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+
+	req := newRequest(t, http.MethodGet,
+		"/api/share/"+token+"/content?path="+filepath.Join(env.ProjectDir, "docs", "nope.md"), nil)
+	w := callHandler(ServeSharePublic, req)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// TestSharePublic_ContentWithoutPathServesSharedFile — the endpoint degrades to
+// the shared file when ?path= is absent, so the SPA can use one URL shape.
+func TestSharePublic_ContentWithoutPathServesSharedFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/self.md", "# Self")
+	token := createShareViaAPI(t, env, absPath)
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/content", nil)
+	w := callHandler(ServeSharePublic, req)
+	assertOK(t, w)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.Equal(t, "# Self", fc.Content)
+}
+
+// TestSharePublic_DownloadReferencedFile — ?path= also applies to /download so a
+// referenced file can be downloaded under its own name.
+func TestSharePublic_DownloadReferencedFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
+	target := filepath.Join(env.ProjectDir, "docs", "data.csv")
+	createTestFile(t, env.ProjectDir, "docs/data.csv", "a,b\n1,2")
+	token := createShareViaAPI(t, env, absPath)
+
+	req := newRequest(t, http.MethodGet,
+		"/api/share/"+token+"/download?path="+target, nil)
+	w := callHandler(ServeSharePublic, req)
+	assertOK(t, w)
+	assert.Equal(t, "a,b\n1,2", w.Body.String())
+	assert.Contains(t, w.Header().Get("Content-Disposition"), "data.csv")
+}
+
+// TestSharePublic_DownloadReferencedFileOutsideScope_404 — the download variant
+// honors the same boundary as the content endpoint.
+func TestSharePublic_DownloadReferencedFileOutsideScope_404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/m.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+
+	secret := filepath.Join(env.WatchDir, "outside.txt")
+	require.NoError(t, os.WriteFile(secret, []byte("TOP_SECRET"), 0o600))
+
+	req := newRequest(t, http.MethodGet,
+		"/api/share/"+token+"/download?path="+secret, nil)
+	w := callHandler(ServeSharePublic, req)
+	assertStatus(t, w, http.StatusNotFound)
+	assert.NotContains(t, w.Body.String(), "TOP_SECRET")
+}
+
 func TestSharePublic_NoAuthNeeded(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

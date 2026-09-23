@@ -49,6 +49,7 @@ vi.mock('lucide-vue-next', () => {
     ChevronRight: stub('ChevronRight'),
     ExternalLink: stub('ExternalLink'),
     MessageSquare: stub('MessageSquare'),
+    MessageSquareQuote: stub('MessageSquareQuote'),
     AlertCircle: stub('AlertCircle'),
     Activity: stub('Activity'),
   }

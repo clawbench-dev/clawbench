@@ -38,6 +38,7 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
   { context: 'common', contextKey: 'appHeader.shortcutTip.contextCloseOverlay', keys: ['Esc'], actionKey: 'appHeader.shortcutTip.actionCloseOverlay' },
   { context: 'common', contextKey: 'appHeader.shortcutTip.contextConfirmDialog', keys: ['Enter'], actionKey: 'appHeader.shortcutTip.actionConfirmDialog' },
   { context: 'common', contextKey: 'appHeader.shortcutTip.contextListNav', keys: ['↑', '↓', 'Enter'], actionKey: 'appHeader.shortcutTip.actionListNav' },
+  { context: 'common', contextKey: 'appHeader.shortcutTip.contextPageZoom', keys: ['Ctrl+=', 'Ctrl+-', 'Ctrl+0'], actionKey: 'appHeader.shortcutTip.actionPageZoom' },
 
   // ── chat（常驻，任何 tab 都显示） ──
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextSend', keys: ['Enter', 'Shift+Enter'], actionKey: 'appHeader.shortcutTip.actionSend' },

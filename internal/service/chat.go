@@ -609,6 +609,85 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	return msgID, nil
 }
 
+// ErrChatQuoteNotFound is returned when the addressed quote entry does not
+// exist on the given message (wrong id, or the message carries no quotes).
+var ErrChatQuoteNotFound = errors.New("chat quote not found")
+
+// UpdateChatQuoteNote replaces the annotation on one quote attachment of a
+// user message.
+//
+// Scoped by session_id as well as message id so a caller cannot edit another
+// session's message by guessing an id. Only user rows are eligible: an
+// assistant message never carries user-authored quotes.
+//
+// The entry is addressed by its stable quote id, NOT by array index — the index
+// the client saw can drift (entries are added/removed), and a wrong index would
+// silently rewrite the wrong quote's note.
+//
+// Concurrency: a streaming turn already built its prompt from the in-memory
+// files at launch, so this cannot retroactively change what the AI saw. A
+// still-queued row (queued=1) IS re-read by the drain loop, so the edit lands in
+// its prompt — the user fixing their note before it runs. The UPDATE and the
+// dequeue SELECT serialize on the write mutex, so there is no torn read.
+func UpdateChatQuoteNote(sessionID string, messageID int64, quoteID, note string) ([]model.FileEntry, error) {
+	if sessionID == "" || messageID <= 0 || quoteID == "" {
+		return nil, ErrChatQuoteNotFound
+	}
+
+	// Guard: reject edits to archived sessions, mirroring AddChatMessage.
+	var isArchived int
+	if err := dbRead.QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
+		return nil, fmt.Errorf("cannot edit a message in archived session %s", sessionID)
+	}
+
+	tx, txErr := WriteBegin()
+	if txErr != nil {
+		return nil, txErr
+	}
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+
+	var role, filesJSON string
+	if err := tx.QueryRow(
+		"SELECT role, COALESCE(files, '') FROM chat_history WHERE id = ? AND session_id = ?",
+		messageID, sessionID,
+	).Scan(&role, &filesJSON); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrChatQuoteNotFound
+		}
+		return nil, err
+	}
+	if role != "user" {
+		return nil, ErrChatQuoteNotFound
+	}
+
+	entries := unmarshalFilesJSON(filesJSON)
+
+	found := false
+	for i := range entries {
+		if entries[i].IsQuote() && entries[i].ID == quoteID {
+			entries[i].Note = note
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, ErrChatQuoteNotFound
+	}
+
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec("UPDATE chat_history SET files = ? WHERE id = ? AND session_id = ?", string(data), messageID, sessionID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
 // insertChatMessageTx performs the chat_history INSERT plus the shared
 // session touches (updated_at refresh and first-user-message title generation)
 // inside the caller's transaction. queued/queueID are explicit so callers can
@@ -1022,12 +1101,27 @@ func CancelQueuedMessage(sessionID, queueID string) error {
 
 // titleFromFileEntries builds a session title from file entries by extracting
 // basenames and joining them with commas. Returns empty string if no files.
+//
+// Quote entries have no meaningful basename (their Path is a label, empty for
+// a quote taken from a chat message), so the first line of the quoted text is
+// used instead. Without this a quote-only message would title itself from a
+// bare filename or fall through to the generic fallback, even though the
+// quoted text is right there and far more descriptive.
 func titleFromFileEntries(files []model.FileEntry) string {
 	if len(files) == 0 {
 		return ""
 	}
 	names := make([]string, 0, len(files))
 	for _, f := range files {
+		if f.IsQuote() {
+			if line := firstNonEmptyLine(f.Text); line != "" {
+				names = append(names, line)
+				continue
+			}
+			// Empty quoted text (e.g. a quote staged before typing) still has
+			// the source label to fall back on, which beats no title at all.
+			// Deliberately falls through to the basename below.
+		}
 		name := filepath.Base(f.Path)
 		if name != "" && name != "." {
 			names = append(names, name)
@@ -1038,6 +1132,26 @@ func titleFromFileEntries(files []model.FileEntry) string {
 	}
 	return strings.Join(names, ", ")
 }
+
+// firstNonEmptyLine returns the first line of s that has non-whitespace
+// content, trimmed, capped at maxTitleLineRunes so one long quoted line cannot
+// blow up the title. Empty when every line is blank.
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if runes := []rune(line); len(runes) > maxTitleLineRunes {
+			return string(runes[:maxTitleLineRunes])
+		}
+		return line
+	}
+	return ""
+}
+
+// maxTitleLineRunes caps a title derived from a quote's first line.
+const maxTitleLineRunes = 50
 
 // ConversationProject is a project that has at least one conversation on record.
 type ConversationProject struct {

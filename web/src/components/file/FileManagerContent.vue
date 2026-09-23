@@ -211,15 +211,13 @@
     <input v-if="!isAppMode" type="file" ref="folderInputRef" @change="onFolderUploadSelect" style="display:none" webkitdirectory multiple />
 
     <!-- Upload progress bar (byte-based bar + count progress below) -->
-    <div v-if="dirUploading" class="dir-upload-progress">
-      <div class="dir-upload-progress-main">
-        <div class="dir-upload-progress-bar" :style="{ width: dirUploadProgress + '%' }"></div>
-        <button class="dir-upload-cancel" title="取消" @click="cancelDirUpload">
-          <X :size="12" />
-        </button>
-      </div>
-      <div class="dir-upload-progress-count">{{ dirUploadDone }}/{{ dirUploadTotal }}</div>
-    </div>
+    <UploadProgressBar
+      :visible="dirUploading"
+      :progress="dirUploadProgress"
+      :done="dirUploadDone"
+      :total="dirUploadTotal"
+      @cancel="cancelDirUpload"
+    />
 
     <!-- File list + (optional) docked preview pane. When preview mode is on
          and a file is open, this becomes a draggable top/bottom split; when
@@ -534,12 +532,7 @@
     <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
-    <Transition name="paste-fade">
-      <div v-if="isDragOver" class="drop-overlay">
-        <Upload :size="32" :stroke-width="1.5" />
-        <span>{{ t('file.dropToUpload') }}</span>
-      </div>
-    </Transition>
+    <DropOverlay :visible="isDragOver" :label="t('file.dropToUpload')" />
   </div>
 </template>
 
@@ -577,6 +570,8 @@ import { downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
 import SplitView from '@/components/common/SplitView.vue'
+import DropOverlay from '@/components/common/DropOverlay.vue'
+import UploadProgressBar from '@/components/common/UploadProgressBar.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import ExternalBadge from './ExternalBadge.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
@@ -589,7 +584,7 @@ import { useFileSearch } from '@/composables/useFileSearch'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
 const toast = inject('toast', null)
-const { isAppMode } = useAppMode()
+const { isAppMode, isDesktopApp } = useAppMode()
 const { isPC } = usePlatformDetect()
 const { t, locale } = useI18n()
 const TAG = 'FileManager'
@@ -834,7 +829,7 @@ const props = defineProps({
     keyboardActive: { type: Boolean, default: true }, // focus-aware gating for global file shortcuts
 })
 
-const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
+const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'newFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
 
 
 const sortMenuOpen = ref(false)
@@ -1934,36 +1929,16 @@ async function transferEntries(entries, destDir, isMove) {
     return allOk
 }
 
-async function doNewFile() {
+/**
+ * New file — VSCode-style: no filename is requested up front. The parent opens
+ * an empty "Untitled" editor in the target directory and asks for the name only
+ * when the user saves. Nothing is written to disk here.
+ */
+function doNewFile() {
     const entry = ctxMenu.entry
     closeCtxMenu()
     moreMenuOpen.value = false
-    const name = await dialog.prompt(t('file.prompt.fileName'))
-    if (!name || !name.trim()) return
-    const dir = getDestDir(entry)
-    // Drop the results layer before refreshing: it renders search hits, not the
-    // directory listing, so the new entry would never appear in it — leaving the
-    // row both unselected and unscrolled. exitSearch() also clears selectedPath,
-    // hence it runs before the post-create selection below.
-    exitSearch()
-    try {
-        const resp = await fetch('/api/file/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: dir, name: name.trim() }),
-        })
-        if (resp.ok) {
-            emit('refresh')
-            // Scroll to the new file and select it (without opening it in the viewer)
-            scrollToEntryAndSelect(joinPath(dir, name.trim()))
-            if (toast) toast.show(t('file.toast.fileCreated'), { icon: '📄', type: 'success', duration: 1500 })
-        } else {
-            const err = await resp.json()
-            if (toast) toast.show(t('file.toast.createFailedDetail', { error: err.error || '' }), { icon: '❌', type: 'error', duration: 2000 })
-        }
-    } catch {
-        if (toast) toast.show(t('file.toast.createFailed'), { icon: '❌', type: 'error', duration: 2000 })
-    }
+    emit('newFile', getDestDir(entry))
 }
 
 async function doNewFolder() {
@@ -1973,8 +1948,8 @@ async function doNewFolder() {
     const name = await dialog.prompt(t('file.prompt.folderName'))
     if (!name || !name.trim()) return
     const dir = getDestDir(entry)
-    // See doNewFile: the results layer cannot show the new entry, so collapse it
-    // before the refresh + selection.
+    // The results layer cannot show the new entry, so collapse it before the
+    // refresh + selection.
     exitSearch()
     try {
         const resp = await fetch('/api/dir/create', {
@@ -2496,8 +2471,12 @@ async function handleKeydown(e) {
     if (activeTab.value !== 'browse') return
     // Focus-aware: in wide-screen mode also require the left pane to be focused
     if (props.keyboardActive === false) return
-    // Skip in Android app mode
-    if (isAppMode.value) return
+    // Skip in the Android WebView shell only. `isAppMode` is true for BOTH
+    // native hosts (it is just isNativeApp()), and Electron has a physical
+    // keyboard — keying on isAppMode alone silently disabled every shortcut
+    // below on the desktop shell. Same exclusion as SettingsCategory.vue and
+    // useGlobalEvents.
+    if (isAppMode.value && !isDesktopApp.value) return
     // Skip if a dialog/prompt is open (don't interfere with input fields)
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 
@@ -2560,7 +2539,7 @@ async function handleKeydown(e) {
             e.preventDefault()
             emit('delete', selectedPath.value)
             refreshSearchResults()
-        } else if (props.currentFile) {
+        } else if (props.currentFile?.path) {
             e.preventDefault()
             emit('delete', props.currentFile.path)
         }
@@ -2710,7 +2689,7 @@ async function handleKeydown(e) {
             exitMultiSelect()
         } else if (selectedPath.value) {
             emit('delete', selectedPath.value)
-        } else if (props.currentFile) {
+        } else if (props.currentFile?.path) {
             emit('delete', props.currentFile.path)
         }
         return
@@ -3526,81 +3505,8 @@ function scrollSelectedIntoView(path) {
     background: color-mix(in srgb, white 30%, var(--accent-color, #4a90d9));
 }
 
-/* Upload progress bar */
-.dir-upload-progress {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: var(--space-3) var(--space-6);
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
-    flex-shrink: 0;
-}
-
-.dir-upload-progress-main {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-}
-
-.dir-upload-progress-bar {
-    flex: 1;
-    height: 3px;
-    min-width: 0;
-    background: var(--accent-color, #4a90d9);
-    border-radius: var(--radius-xs);
-    transition: width var(--duration-base) ease;
-}
-
-.dir-upload-cancel {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    border: none;
-    border-radius: 50%;
-    background: var(--bg-tertiary, #f0f0f0);
-    color: var(--text-secondary, #666);
-    cursor: pointer;
-    transition: all var(--duration-base);
-}
-
-@media (hover: hover) {
-    .dir-upload-cancel:hover {
-        background: var(--color-red);
-        color: #fff;
-    }
-}
-
-.dir-upload-progress-count {
-    font-size: var(--font-size-xs);
-    color: var(--text-secondary, #666);
-    white-space: nowrap;
-    line-height: var(--line-height-tight);
-}
-
-/* ── Drop overlay ── */
-.drop-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-5);
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 10%, var(--bg-primary, #fff));
-    color: var(--accent-color, #4a90d9);
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-medium);
-    pointer-events: none;
-    border-radius: var(--radius-xs);
-}
-
-[data-theme-base="dark"] .drop-overlay {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, var(--bg-primary, #1a1a1a));
-}
+/* Upload progress bar and drop overlay styles live in their shared components
+   (components/common/UploadProgressBar.vue and DropOverlay.vue). */
 
 /* ── Paste overlay ── */
 .paste-overlay {

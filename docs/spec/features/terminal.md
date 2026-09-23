@@ -68,6 +68,7 @@ sequenceDiagram
 - **终端主题切换**：内置 157 个 xterm-theme 主题（如 Dracula、Solarized、Catppuccin 等），支持 `auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage，懒加载 xterm-theme 模块避免首屏体积膨胀。选择入口有两个：终端工具栏的主题按钮（带各主题 bg/fg/accent 实时配色预览）和 Settings → 终端面板的"配色主题"下拉。该计数与 `node_modules/xterm-theme` 具名导出数保持一致，升级 xterm-theme 时需同步
 - **终端输入抽屉**：移动端多行文本输入的 BottomSheet，支持从剪贴板粘贴填充、清空和发送。解决移动端虚拟键盘在 xterm 中输入长命令的体验问题
 - **终端帮助抽屉**：`TerminalHelpDrawer` 展示手势操作、快捷键和符号输入的完整说明，按分类组织（手势、快捷键、修饰键、符号），触摸设备仅显示手势相关条目。帮助入口嵌入终端工具栏，一键查看无需记忆
+- **拖拽文件上传到当前目录**：把系统文件管理器里的文件（含整个文件夹，保留嵌套结构与空目录）拖到终端面板上，即上传到 shell **当前所在目录**。复用文件管理器的上传逻辑与 UI（`useFileUpload` 的目录上传模式 + 共享的 `DropOverlay`/`UploadProgressBar` 组件），上传不会附加到聊天会话
 
 ### 设计要点
 
@@ -78,3 +79,7 @@ sequenceDiagram
 - **输出抑制解决重连重复提示**：重连后发送 replay buffer + resize 会触发 shell 重绘提示符，导致用户看到重复的提示符行。抑制机制在 resize 后 50ms 内丢弃输出，既避免了重复又不丢失后续正常输出
 - **标签页数受后端限制**：最大标签数由服务端 `terminal.max_sessions` 配置控制，前端据此禁用"新建标签"按钮——终端标签页的 PTY 是服务端资源，不能无限制创建
 - **尺寸重排挂在容器观察者上，而非只挂键盘**：键盘避让与布局重排都会改变可用尺寸，但触发源不同。观察者回调必须同时覆盖"高度变（键盘）"与"宽度变（分隔条/布局）"两种情形，且观察目标要在 xterm 挂载后才存在——观察者先于挂载创建、或回调只处理高度，都会让重排静默失效（无报错，只是 PTY 一直按旧宽度折行）
+- **cwd 是实时探测的，不是启动目录**：`Session.cwd` 只在 `NewSession` 时写入一次，若直接返回它就永远停在启动目录，`cd` 之后拖入会把文件传到错误位置。`Session.Cwd()` 改为读取 PTY **前台进程组** leader 的 `/proc/<pid>/cwd`（`TIOCGPGRP` + `readlink`），因此能跟随 `cd`，包括在嵌套子 shell（`bash`、`sudo -i`）里的 `cd`——读 PTY 的直接子进程做不到这一点。探测失败（含 macOS 无 `/proc`）时回退启动目录。探测在锁外做：`Cwd()` 内部先取 `ptmx` 快照再 ioctl，调用方不得在持有 `s.mu` 时调用它（会死锁）
+- **拖入上传的 cwd 必须在 dragover 阶段预取**：`expandDataTransfer` 只在**同步段**快照 `dataTransfer.items[].webkitGetAsEntry()`，一旦 drop 处理器 `await` 过（例如先取 cwd），DataTransfer 已被浏览器清空，上传会拿到空文件列表。所以 `useTerminalFileDrop` 在 dragover 时就去查 `/api/terminal/status?session=<id>`（带 in-flight 去重，dragover 每 50–350ms 触发一次），drop 时同步调用上传。缓存按 drag 重置，保证两次拖入之间的 `cd` 能被捕捉
+- **cwd 探测能力由服务端声明**：`/api/terminal/status` 返回 `cwd_probe_supported`（仅 Linux/Android 为 true）。前端**不能**用 `navigator.userAgent` 推断——浏览器可能在 macOS 而服务端在 Linux（SSH 隧道），反之亦然。该值为 false 时前端完全不挂 drop 监听：没有正确的目标目录，拦截拖放只会把文件传到错的地方
+- **终端与文件管理器互斥，故只支持 OS 文件拖入**：两者都是左侧 dock 标签页（单一 `leftPanelActive` 驱动 `v-show`），无法同屏，所以不存在"从应用内文件管理器拖到终端"的路径。终端只接受浏览器外的文件拖入

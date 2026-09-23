@@ -23,18 +23,24 @@
       </template>
       <template v-else-if="type === 'slider'">
         <span class="settings-item__slider-value">{{ sliderDisplayValue }}</span>
+        <!-- `max` MUST be bound before `value`: Vue patches attributes in
+             template order, and a range input clamps an out-of-range value on
+             assignment. With the old order (value, then max) a factor above the
+             current max was clamped and never restored when max was raised —
+             the 4K case showed the label reading 200% while the thumb sat at
+             150% (auto toggled off, then on again). -->
         <input
           type="range"
           class="settings-item__slider"
-          :value="modelValue"
           :min="min"
           :max="max"
           :step="step"
+          :value="modelValue"
           :disabled="disabled"
           @input="onSliderInput"
           @click.stop
         />
-        <button v-if="defaultValue !== undefined && modelValue !== defaultValue" class="settings-item__slider-reset" @click.stop="resetSlider" :title="t('settings.items.resetToDefault')">↺</button>
+        <button v-if="defaultValue !== undefined && modelValue !== defaultValue" class="settings-item__slider-reset" :disabled="disabled" @click.stop="resetSlider" :title="t('settings.items.resetToDefault')">↺</button>
       </template>
       <template v-else-if="type === 'password'">
         <span class="settings-item__value">{{ displayValue }}</span>

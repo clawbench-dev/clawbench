@@ -7,6 +7,7 @@ import { syncServerLanguage } from '@/utils/serverLanguage'
 import { resolveThemeId, applyThemeAttributes, onSystemColorSchemeChange } from '@/utils/themeMeta'
 import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
+import { resolveUIScale, currentScreenHeight } from '@/utils/uiScale'
 import { applyServerLimits } from '@/stores/app.ts'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
@@ -197,11 +198,21 @@ const legacyKeys: Record<string, {
       window.dispatchEvent(new CustomEvent('clawbench-sort-change', { detail: { dir: value } }))
     },
   },
+  uiScaleAuto: {
+    key: '',
+    format: 'raw',
+    sideEffect() {
+      applyEffectiveUIScale()
+    },
+  },
   uiScale: {
     key: '',
     format: 'raw',
-    sideEffect(value: number) {
-      applyUIScale(value)
+    sideEffect() {
+      // The stored manual value only takes effect when auto is off; the
+      // resolver decides. Reading localConfig (not the argument) keeps the
+      // auto and manual paths going through one code path.
+      applyEffectiveUIScale()
     },
   },
   fontMono: {
@@ -281,6 +292,69 @@ export function applyUIScale(scale: number) {
   }
 }
 
+/**
+ * True inside the Android WebView shell. Both native hosts report
+ * isNativeApp() === true; only Electron also reports isDesktopApp().
+ */
+function isAndroidAppMode(): boolean {
+  try {
+    const native = getNative()
+    if (!native?.isNativeApp?.()) return false
+    return native.isDesktopApp?.() !== true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The UI scale factor actually in effect, combining the auto/manual choice.
+ *
+ * Auto ON (default) derives the factor from the screen height (1080p
+ * reference, only scaling up) so high-resolution displays get proportionally
+ * larger UI. Auto OFF uses the manual slider value.
+ *
+ * Android is deliberately excluded from auto: mobile layouts are already
+ * density-adapted by the WebView, so the desktop 1080p reference does not
+ * apply. The auto switch is hidden there too, keeping UI and behaviour in step.
+ */
+export function getEffectiveUIScale(): number {
+  const autoEnabled = localConfig.uiScaleAuto !== false && !isAndroidAppMode()
+  return resolveUIScale(
+    autoEnabled,
+    Number(localConfig.uiScale ?? 1),
+    currentScreenHeight(),
+  )
+}
+
+/**
+ * Apply the effective scale through the mechanism the current host supports.
+ *
+ * - Electron: `webContents.setZoomFactor` (real native zoom). The CSS zoom is
+ *   cleared so the two do not compound.
+ * - Browser / Android: CSS zoom on <html>, which is the only equivalent
+ *   available to a web page.
+ *
+ * Called at startup and whenever either setting changes.
+ */
+export function applyEffectiveUIScale(): void {
+  const factor = getEffectiveUIScale()
+  const native = getNative()
+  // Only the Electron shell implements this; Android and the plain browser
+  // leave the method undefined and take the CSS-zoom path below.
+  if (typeof native?.setZoomFactor === 'function') {
+    try {
+      native.setZoomFactor(factor)
+      // Clear any CSS zoom a previous session (or a pre-upgrade build) left on
+      // <html>, otherwise native zoom and CSS zoom would multiply.
+      document.documentElement.style.zoom = ''
+      return
+    } catch {
+      // Fall through to CSS zoom rather than leaving the UI unscaled.
+    }
+  }
+  applyUIScale(factor)
+}
+
 /** Read the current CSS zoom factor applied to <html>. Returns 1 if not set. */
 export function getUIScale(): number {
   const z = document.documentElement.style.zoom
@@ -348,6 +422,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   sortField: null,
   sortDir: 'asc',
   uiScale: 1,
+  // Auto-scale the UI on screens taller than the 1080p reference. Default ON
+  // so a high-resolution display gets a usable size out of the box; turning it
+  // off hands control back to the uiScale slider.
+  uiScaleAuto: true,
   recentFilesCount: 10,
   headerShortcutTips: true,
   // Default ON so existing users keep seeing the completion card. Only gates the

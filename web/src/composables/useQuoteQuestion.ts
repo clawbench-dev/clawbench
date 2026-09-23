@@ -2,8 +2,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
-import { closestElement, getLineInfo, getFileInfo, getQuoteSource, buildQuoteBlock, buildQuoteFirstMessage, buildMultiQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
-import { injectChatInput } from '@/utils/chatInputInjection.ts'
+import { closestElement, getLineInfo, getFileInfo, getQuoteSource, messageIdFromKey } from '@/utils/quoteQuestionUtils.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
 
@@ -43,12 +42,8 @@ export interface ComposerAttachment {
 // selection never discards snippets the user already added to the chat draft.
 const {
   quoteData,
-  stagedQuotes,
   setQuoteData,
   addStagedQuote,
-  addAttachedFile,
-  addUrlAttachment,
-  clearQuotes,
   clearAll,
 } = useChatContext()
 const barVisible = ref(false)
@@ -60,14 +55,13 @@ const composerContext = ref<QuoteComposerContext | null>(null)
 const composerMode = computed(() => composerContext.value !== null)
 
 /**
- * The attachment the composer would add, derived from its context.
+ * The quote target the composer is about, derived from its context.
  *
- * This is only a *preview*: the real entry lives in useChatContext.attachedFiles
- * and is written on commit (see commitComposerAttachment). Keeping it out of the
- * chat context until then is the whole point — the chat input renders its chips
- * straight from attachedFiles, so attaching on open put the issue/PR/file in the
- * main chat input the moment the button was clicked, and dismissing the bar left
- * it behind.
+ * This is only a *preview*: nothing is staged until the user commits (see
+ * commitComposerQuote). Keeping it out of the chat context until then is the
+ * whole point — the chat input renders its cards straight from stagedQuotes, so
+ * staging on open put the file/issue in the chat the moment the button was
+ * clicked, and dismissing the bar left it behind.
  */
 const composerAttachment = computed<ComposerAttachment | null>(() => {
   const ctx = composerContext.value
@@ -111,8 +105,31 @@ function evaluateSelection() {
   // the bar in parallel with the editor's own handler.
   if (closestElement(sel.anchorNode, '.cm-editor')) return
 
-  // Check if selection is within a code, markdown, or office preview area
-  const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body')
+  // Chat chrome is not message content. The meta bar (timestamps, copy/speak
+  // buttons), tool pills, card strips and attachment chips all live inside
+  // .chat-message, so without this a selection that merely brushes a button
+  // label or a filename would offer to quote it.
+  //
+  // Scoped to CHAT on purpose: in a file preview, `button`/`a` also match real
+  // content (a link inside a markdown body), and excluding those there would
+  // silently stop offering the bar for ordinary prose.
+  const chatMsg = closestElement(sel.anchorNode, '.chat-message')
+  if (chatMsg && closestElement(sel.anchorNode, '.chat-meta-bar, button, a, .chat-file-attachment, .chat-tool-call, .chat-card-strip')) {
+    if (!barPinned.value && !composerContext.value) {
+      barVisible.value = false
+    }
+    return
+  }
+
+  // Check if selection is within a code, markdown, or office preview area, or
+  // inside a chat message's content.
+  //
+  // The chat selector must be `.chat-message .msg-content-wrapper`, NOT bare
+  // `.chat-message`: the row also contains the meta bar, so the wider selector
+  // would surface the bar for selections in the timestamp/action area (the
+  // chrome guard above catches the buttons, but the wrapper is the precise
+  // content boundary).
+  const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper')
   if (!container) {
     if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
@@ -133,7 +150,35 @@ function evaluateSelection() {
   // would be noise in the fence header.
   const source = getQuoteSource(container)
   if (source) {
-    setQuoteData({ text, filePath: source.label, language: source.language, startLine: 0, endLine: 0 })
+    setQuoteData({
+      text,
+      filePath: source.label,
+      language: source.language,
+      startLine: 0,
+      endLine: 0,
+      sourceKind: source.url ? 'url' : 'file',
+      ...(source.url ? { url: source.url } : {}),
+    })
+    barVisible.value = true
+    return
+  }
+
+  // A selection inside a chat message has no file and no line numbers; it is
+  // attributed to the message it came from so the quote can be traced back.
+  // Optimistic messages have no DB id — the quote is still valid, just not
+  // addressable later.
+  const msgEl = container.closest('.chat-message')
+  if (msgEl) {
+    const messageId = messageIdFromKey(msgEl.getAttribute('data-msg-key'))
+    setQuoteData({
+      text,
+      filePath: '',
+      language: '',
+      startLine: 0,
+      endLine: 0,
+      sourceKind: 'message',
+      ...(messageId !== undefined ? { messageId } : {}),
+    })
     barVisible.value = true
     return
   }
@@ -269,16 +314,38 @@ export function useQuoteQuestion() {
   }
 
   /**
-   * Move the composer's pending attachment into the chat context. Called on
-   * commit only — both add* helpers dedupe, so committing twice adds one chip.
+   * Stage the composer's target as a quote card.
+   *
+   * Every entry point (file browser, issue/PR detail, CI run) now behaves
+   * exactly like quoting a text selection: it produces ONE quote card
+   * referencing the object, with the typed text as its annotation. It does NOT
+   * add a separate file/URL attachment chip, and does not inject the text into
+   * the chat input — both of which the old composer did and which made the same
+   * "quote" button behave differently depending on where it was clicked.
+   *
+   * The selection, when there is one, becomes the card's quoted content; with
+   * no selection the card references the whole object (empty text), which the
+   * prompt renders as a path/address for the AI to read.
    */
-  function commitComposerAttachment(ctx: QuoteComposerContext | null) {
+  function commitComposerQuote(ctx: QuoteComposerContext | null, note = '') {
     if (!ctx) return
-    if (ctx.url) {
-      addUrlAttachment(ctx.url, ctx.label)
-    } else if (ctx.filePath) {
-      addAttachedFile(ctx.filePath)
+    const selection = quoteData.value
+    if (selection) {
+      // The user selected part of the object: that snippet is the content, and
+      // it already carries the source label/lines/address.
+      addStagedQuote(selection, note)
+      return
     }
+    // No selection: reference the whole object.
+    addStagedQuote({
+      text: '',
+      filePath: ctx.filePath || ctx.label,
+      language: '',
+      startLine: 0,
+      endLine: 0,
+      sourceKind: ctx.url ? 'url' : 'file',
+      ...(ctx.url ? { url: ctx.url } : {}),
+    }, note)
   }
 
   /** Close the composer without touching unrelated staged quotes. */
@@ -302,11 +369,18 @@ export function useQuoteQuestion() {
   /**
    * Programmatically hide the quote bar (used by CodeMirror-based viewers whose
    * selection is internal and never reaches the global selectionchange handler).
+   *
+   * Only the SELECTION half is torn down. An entry-point-opened composer (file
+   * browser / issue / CI run) has no selection to lose and is still in use: the
+   * editor fires a selectionchange the moment the user clicks into the bar or
+   * types, and clearing composerContext here made the commit a no-op — the
+   * button appeared to do nothing at all. The composer is dismissed by its own
+   * paths (commit, Escape, click outside, or hideComposer).
    */
   function hideBar() {
+    if (composerContext.value) return
     barVisible.value = false
     barPinned.value = false
-    composerContext.value = null
     setQuoteData(null)
   }
 
@@ -323,32 +397,22 @@ export function useQuoteQuestion() {
     }, opts.delay ?? 400)
   }
 
-  /**
-   * Draft text for the composer's "add" action: the quoted block (when the user
-   * selected something) followed by a newline and their typed note, so the
-   * caret lands on the line after the block.
-   */
-  function buildComposerDraft(note: string): string {
-    const q = quoteData.value
-    return buildQuoteFirstMessage(q ? buildQuoteBlock(q) : '', note)
-  }
-
   function addToConversation(note = '') {
     if (composerContext.value) {
-      const draft = buildComposerDraft(note)
-      const onAdd = composerContext.value.onAdd
       const ctx = composerContext.value
+      // Stage the card BEFORE clearing composerContext/quoteData — the staging
+      // reads both (the target from ctx, any selection from quoteData), so
+      // clearing first would silently produce no card at all.
+      commitComposerQuote(ctx, note)
       composerContext.value = null
       setQuoteData(null)
       barVisible.value = false
       barPinned.value = false
-      // The user committed, so the previewed attachment becomes real now. It is
-      // still just a chip in the chat input — the text is only injected below.
-      commitComposerAttachment(ctx)
-      // An empty draft (no selection, no input) still keeps the URL attachment
-      // and still navigates, so the user can type in the chat input directly.
-      if (draft.trim()) injectChatInput(draft)
-      onAdd?.()
+      // The user committed: the target becomes a quote card whose annotation is
+      // whatever they typed. Nothing is injected into the chat input and no
+      // separate attachment chip is created — this is the same "one card"
+      // interaction as quoting a selection.
+      ctx.onAdd?.()
       return
     }
 
@@ -366,13 +430,17 @@ export function useQuoteQuestion() {
    * Send from composer mode. Unlike the file-quote flow this works with NO
    * quote: the message is then just the user's input, carrying the URL
    * attachment that openComposer added.
+   *
+   * The typed text stays the MESSAGE (it is the user's question); the quote
+   * rides along as a card. Only the "+" button folds the text into the card as
+   * an annotation — "send" means send now.
    */
   async function sendComposerMessage(userMessage: string) {
-    const q = quoteData.value
     const input = userMessage.trim()
-    if (!q && !input) return
-
-    const message = q ? buildQuoteFirstMessage(buildQuoteBlock(q), input) : input
+    // "Send" means send now, and a message needs text: the send button is
+    // disabled on empty input, so this only guards a programmatic call. (The
+    // "+" button is the way to stage the card and keep typing.)
+    if (!input) return
 
     // Capture animation coordinates BEFORE any await — the bar's handleSend()
     // collapses synchronously right after emit('send').
@@ -382,18 +450,21 @@ export function useQuoteQuestion() {
     const animTo = dockChatBtn?.getBoundingClientRect() ?? null
 
     const ctx = composerContext.value
+    // Stage the target as a quote card BEFORE clearing anything: the staging
+    // reads both composerContext (the target) and quoteData (any selection), so
+    // clearing first would silently produce no card. The registered ChatPanel
+    // handler reads stagedQuotes synchronously before its first await, so the
+    // card must be in place now.
+    commitComposerQuote(ctx, '')
     composerContext.value = null
-    clearQuotes()
     barVisible.value = false
     barPinned.value = false
-    // Commit the previewed attachment before the send so it rides along; the
-    // registered ChatPanel handler captures attachedFiles synchronously.
-    commitComposerAttachment(ctx)
+    setQuoteData(null)
 
     try {
-      const sendPromise = sessionIdentity.sendMessage(message)
-      // The registered ChatPanel handler captures attachedFiles synchronously
-      // before its first await, so the URL attachment rides along; clear after.
+      const sendPromise = sessionIdentity.sendMessage(input)
+      // The registered ChatPanel handler captures the quotes synchronously
+      // before its first await, so the cards ride along; clear after.
       clearAll()
       await sendPromise
       toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })
@@ -418,15 +489,6 @@ export function useQuoteQuestion() {
     // Reuse the staging dedupe rule so reselecting an already staged range
     // does not include the same quote twice in an immediate send.
     addStagedQuote(q)
-    const quotes = [...stagedQuotes.value]
-
-    for (const quote of quotes) {
-      if (quote.filePath) {
-        addAttachedFile(quote.filePath, false, quote.startLine, quote.endLine)
-      }
-    }
-
-    const message = buildMultiQuoteMessage(userMessage, quotes)
 
     // Capture animation coordinates BEFORE any await — the bar's handleSend()
     // sets expanded=false synchronously right after emit('send'), so the
@@ -436,19 +498,20 @@ export function useQuoteQuestion() {
     const animFrom = sendBtn?.getBoundingClientRect() ?? null
     const animTo = dockChatBtn?.getBoundingClientRect() ?? null
 
-    // Keep attached files long enough for ChatPanelContent to capture them, but
-    // clear quotes before delegating so they are not embedded a second time.
-    clearQuotes()
+    // Keep the staged quotes for ChatPanelContent to materialise into cards.
+    // They are deliberately NOT baked into the message text any more.
     barVisible.value = false
     barPinned.value = false
+    setQuoteData(null)
 
     // Delegate to session identity singleton — it routes to ChatPanel's
     // sendMessage if registered, otherwise falls back to a direct API call.
     try {
-      const sendPromise = sessionIdentity.sendMessage(message)
-      // The registered ChatPanel handler captures files synchronously before its
-      // first await. Clear this batch now so a later response cannot wipe the
-      // next set of quotes the user starts collecting while the request runs.
+      const sendPromise = sessionIdentity.sendMessage(userMessage.trim())
+      // The registered ChatPanel handler captures the quotes synchronously
+      // before its first await. Clear this batch now so a later response cannot
+      // wipe the next set of quotes the user starts collecting while the
+      // request runs.
       clearAll()
       await sendPromise
       toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })

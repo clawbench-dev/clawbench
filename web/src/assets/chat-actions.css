@@ -51,7 +51,7 @@
   white-space: nowrap;
 }
 
-/* Wide variant for buttons with text labels (speak, summary toggle, file changes) */
+/* Wide variant for buttons with text labels (speak, file changes) */
 .chat-action-btn--wide {
   min-width: auto;
   padding:0 var(--space-4);

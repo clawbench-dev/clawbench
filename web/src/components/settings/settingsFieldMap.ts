@@ -10,6 +10,7 @@
  */
 
 import { getNative } from '@/utils/clawbenchNative'
+import { UI_SCALE_STEP } from '@/utils/uiScale'
 import { buildFontStack, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, type FontChoice } from '@/utils/fontConfig'
 
 /** Raw (untranslated) font option descriptor used by the settings pickers. */
@@ -99,6 +100,15 @@ export interface ItemSpec {
   displayFormat?: 'percent' | 'raw'
   /** Only show this item when running inside the Android app */
   appOnly?: boolean
+  /**
+   * Hide this item inside the Android WebView shell (but keep it in the plain
+   * browser and the Electron desktop shell).
+   *
+   * Distinct from `appOnly`, which cannot express this: BOTH native hosts
+   * report isAppMode() === true, so "app only" would hide the row on desktop
+   * too. Used by features whose semantics do not apply to the mobile layout.
+   */
+  hideInAndroidApp?: boolean
   /** For action items: navigate to this category sub-route ID on click */
   navigateTo?: string
   /** Progress bar for info-type items: { value, max }. Bar hidden when value >= max. */
@@ -193,7 +203,8 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.localeZh', value: 'zh' },
       { labelKey: 'settings.items.localeEn', value: 'en' },
     ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: 0.05, defaultValue: 1, displayFormat: 'percent', sectionHeader: 'settings.items.appearanceDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.uiScaleAuto', descriptionKey: 'settings.items.uiScaleAutoDesc', key: 'uiScaleAuto', type: 'switch', source: 'local', hideInAndroidApp: true, sectionHeader: 'settings.items.appearanceDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: UI_SCALE_STEP, defaultValue: 1, displayFormat: 'percent', disableUnless: { key: 'uiScaleAuto', value: false }, sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.headerShortcutTips', descriptionKey: 'settings.items.headerShortcutTipsDesc', key: 'headerShortcutTips', type: 'switch', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.fontMono', descriptionKey: 'settings.items.fontMonoDesc', key: 'fontMono', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(true) }},
     { type: 'item', spec: { labelKey: 'settings.items.fontMonoFallback', descriptionKey: 'settings.items.fontMonoFallbackDesc', key: 'fontMonoFallback', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildMonoFallbackOptions() }},

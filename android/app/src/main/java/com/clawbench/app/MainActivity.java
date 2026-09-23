@@ -343,17 +343,20 @@ public class MainActivity extends AppCompatActivity {
         // Load saved URL or show configuration dialog
         // Migration: clear QR-auth sentinel ("__qr__") from previous QR scan login feature.
         // Treat it as "no password" — rely on session cookie instead.
-        String savedPassword = prefs.getString(KEY_SSH_PASSWORD, null);
-        if ("__qr__".equals(savedPassword)) {
-            prefs.edit().remove(KEY_SSH_PASSWORD).apply();
-            savedPassword = null;
-        }
         String savedUrl = prefs.getString(KEY_SERVER_URL, null);
-        if (savedUrl != null) {
+        if ("__qr__".equals(prefs.getString(KEY_SSH_PASSWORD, null))) {
+            prefs.edit().remove(KEY_SSH_PASSWORD).apply();
+        }
+        if (savedUrl != null && !savedUrl.isEmpty()) {
+            // Resolve the password for THIS server (the list is per-server; the
+            // legacy global slot only counts when it belongs to this URL). A
+            // removed active server leaves savedUrl empty and lands on the
+            // login page instead of reconnecting to a deleted server.
+            String savedPassword = savedPasswordFor(savedUrl);
             // Auto-reconnect: use pre-authentication to verify server is reachable
             // before loading the WebView. This prevents Chrome's built-in error page.
             // WebView is already GONE (set in setupWebView), so no white flash.
-            if (savedPassword != null && !savedPassword.isEmpty()) {
+            if (!savedPassword.isEmpty()) {
                 authenticateAndNavigate(savedUrl, savedPassword);
             } else {
                 // No password: rely on session cookie
@@ -1260,9 +1263,10 @@ public class MainActivity extends AppCompatActivity {
         // language from a cookie scoped to this server URL, so KEY_SERVER_URL
         // must already be set for splash text to follow the in-app language.
         prefs.edit().putString(KEY_SERVER_URL, url).apply();
-        if (password != null && !password.isEmpty()) {
-            BackgroundService.setPassword(this, password);
-        }
+        // Always mirror the active server's password into the tunnel's slot —
+        // including an empty value, which clears a previous server's password
+        // instead of letting the tunnel authenticate with the wrong one.
+        setActivePassword(url, password);
 
         showSplash();
 
@@ -2755,6 +2759,39 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Add a reverse (ssh -R) forward: publish this device's targetPort on the
+         * SERVER's loopback serverPort, so programs running on the server can
+         * reach a service on this device.
+         *
+         * serverPort must be explicit — JSch's setPortForwardingR returns void, so
+         * requesting 0 would leave us unable to learn the bound port.
+         */
+        @JavascriptInterface
+        public void addReverseForwardedPort(int serverPort, int targetPort, String host) {
+            AppLog.i(TAG, "addReverseForwardedPort: serverPort=" + serverPort + ", targetPort=" + targetPort + ", host=" + host);
+            activity.runOnUiThread(() -> {
+                BackgroundService.addReverseForwardedPort(activity, serverPort, targetPort, host != null ? host : "");
+
+                // Same battery-optimization ask as the forward path: a reverse
+                // mapping needs the tunnel alive just as much.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                    if (pm != null && !pm.isIgnoringBatteryOptimizations(activity.getPackageName())) {
+                        requestIgnoreBatteryOptimization();
+                    }
+                }
+            });
+        }
+
+        /**
+         * Remove a reverse (ssh -R) forward. serverPort is the port bound on the server.
+         */
+        @JavascriptInterface
+        public void removeReverseForwardedPort(int serverPort) {
+            activity.runOnUiThread(() -> BackgroundService.removeReverseForwardedPort(activity, serverPort));
+        }
+
+        /**
          * Stop the BackgroundService and disconnect SSH.
          * Called from WebView when server reports no forwarded ports,
          * to avoid running an idle foreground service with no work to do.
@@ -2784,9 +2821,11 @@ public class MainActivity extends AppCompatActivity {
                 // no longer enabled on the server. Fall back to the local cache when
                 // the background service is not running.
                 java.util.Map<Integer, ?> realSet = null;
+                java.util.Map<Integer, ?> reverseSet = null;
                 BackgroundService bs = BackgroundService.getInstance();
                 if (bs != null) {
                     realSet = bs.getForwardedPortsSnapshot();
+                    reverseSet = bs.getReversePortsSnapshot();
                 }
                 JSONArray arr = new JSONArray();
                 if (realSet != null) {
@@ -2798,6 +2837,7 @@ public class MainActivity extends AppCompatActivity {
                             host = ((BackgroundService.PortInfo) entry.getValue()).host;
                         }
                         obj.put("host", host);
+                        obj.put("direction", "forward");
                         arr.put(obj);
                     }
                 } else {
@@ -2805,6 +2845,22 @@ public class MainActivity extends AppCompatActivity {
                         org.json.JSONObject obj = new org.json.JSONObject();
                         obj.put("port", entry.getKey());
                         obj.put("host", entry.getValue());
+                        obj.put("direction", "forward");
+                        arr.put(obj);
+                    }
+                }
+                // Reverse mappings share the list: `port` is the SERVER-side port,
+                // which is the key the frontend reconciliation matches on.
+                if (reverseSet != null) {
+                    for (java.util.Map.Entry<Integer, ?> entry : reverseSet.entrySet()) {
+                        org.json.JSONObject obj = new org.json.JSONObject();
+                        obj.put("port", entry.getKey());
+                        String host = "";
+                        if (entry.getValue() instanceof BackgroundService.PortInfo) {
+                            host = ((BackgroundService.PortInfo) entry.getValue()).host;
+                        }
+                        obj.put("host", host);
+                        obj.put("direction", "reverse");
                         arr.put(obj);
                     }
                 }
@@ -2838,7 +2894,10 @@ public class MainActivity extends AppCompatActivity {
         public String getSavedServerConfig() {
             try {
                 String savedUrl = activity.prefs.getString(KEY_SERVER_URL, "");
-                String savedPassword = activity.prefs.getString(KEY_SSH_PASSWORD, "");
+                // Per-server lookup, not the legacy global slot: with more than
+                // one server saved, the global belongs to whichever was active
+                // last and would prefill the wrong password.
+                String savedPassword = activity.savedPasswordFor(savedUrl);
                 org.json.JSONObject config = new org.json.JSONObject();
                 if (!savedUrl.isEmpty()) {
                     Uri parsed = Uri.parse(savedUrl);
@@ -3033,12 +3092,12 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * Get the saved SSH/web password for auto-login.
+         * Get the saved password for the active server, for auto-login.
          * Returns empty string if no password is saved.
          */
         @JavascriptInterface
         public String getPassword() {
-            return activity.prefs.getString(KEY_SSH_PASSWORD, "");
+            return activity.savedPasswordFor(activity.prefs.getString(KEY_SERVER_URL, ""));
         }
 
         /**
@@ -3243,24 +3302,15 @@ public class MainActivity extends AppCompatActivity {
 
         /**
          * Remove a server entry from the server list by URL.
-         * @param url The server URL to remove
+         *
+         * <p>Also retires the active pointer when the deleted server was the
+         * active one: otherwise the next cold start would auto-connect to a
+         * server the user just deleted. The password goes with the entry, so
+         * re-adding the same URL cannot silently inherit it.
          */
         @JavascriptInterface
         public void removeServer(String url) {
-            try {
-                org.json.JSONArray list = new org.json.JSONArray(
-                        activity.prefs.getString(KEY_SERVER_LIST, "[]"));
-                org.json.JSONArray newList = new org.json.JSONArray();
-                for (int i = 0; i < list.length(); i++) {
-                    org.json.JSONObject entry = list.getJSONObject(i);
-                    if (!url.equals(entry.optString("url", ""))) {
-                        newList.put(entry);
-                    }
-                }
-                activity.prefs.edit().putString(KEY_SERVER_LIST, newList.toString()).apply();
-            } catch (Exception e) {
-                AppLog.e(TAG, "removeServer failed", e);
-            }
+            activity.removeServerInternal(url);
         }
 
         /**
@@ -3788,6 +3838,75 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Resolve the saved password for one server URL from the server list.
+     *
+     * <p>The list is the per-server source of truth (each entry carries its own
+     * password). {@code KEY_SSH_PASSWORD} is the legacy single global slot,
+     * which belonged to whatever server was active when it was written — so it
+     * may only be claimed by the current {@code KEY_SERVER_URL}. Without that
+     * guard, switching to a cookie-only server would make the tunnel and the
+     * cold-start auto-login reuse the previous server's password.
+     *
+     * @return the password, or "" when none is saved for this URL
+     */
+    private String savedPasswordFor(String url) {
+        String fromList = listPasswordFor(url);
+        if (fromList != null) return fromList;
+        // Legacy fallback (read paths only): the global slot belongs to the
+        // active server, so it may be claimed only by that URL.
+        if (url != null && url.equals(prefs.getString(KEY_SERVER_URL, ""))) {
+            return prefs.getString(KEY_SSH_PASSWORD, "");
+        }
+        return "";
+    }
+
+    /**
+     * Password stored in the server LIST for this URL.
+     *
+     * @return the stored password (possibly ""), or null when the URL has no
+     *         entry — which is what distinguishes "stored empty" from "absent"
+     *         for {@link #savedPasswordFor}.
+     */
+    private String listPasswordFor(String url) {
+        if (url == null || url.isEmpty()) return null;
+        try {
+            org.json.JSONArray list = new org.json.JSONArray(
+                    prefs.getString(KEY_SERVER_LIST, "[]"));
+            for (int i = 0; i < list.length(); i++) {
+                org.json.JSONObject entry = list.getJSONObject(i);
+                if (url.equals(entry.optString("url", ""))) {
+                    return entry.optString("password", "");
+                }
+            }
+        } catch (Exception e) {
+            AppLog.w(TAG, "listPasswordFor: server list unreadable", e);
+        }
+        return null;
+    }
+
+    /**
+     * Mirror a server's password into the global slot the SSH tunnel reads
+     * ({@code BackgroundService} has no notion of a server list).
+     *
+     * <p>An empty {@code password} falls back to the server's own list entry,
+     * and when that is also empty the slot is CLEARED rather than left holding
+     * the previous server's credential — the login page passes "" when
+     * connecting to a cookie-only server, and a stale password there makes the
+     * tunnel authenticate with the wrong credential. The legacy global slot is
+     * deliberately NOT consulted here: it may belong to a different server.
+     */
+    private void setActivePassword(String url, String password) {
+        String resolved;
+        if (password != null && !password.isEmpty()) {
+            resolved = password;
+        } else {
+            String fromList = listPasswordFor(url);
+            resolved = fromList != null ? fromList : "";
+        }
+        BackgroundService.setPassword(this, resolved);
+    }
+
+    /**
      * Save (add or update) a server entry in the server list.
      * If the URL already exists, its password is updated and the entry is
      * promoted to the head of the list (most recently used).
@@ -3828,6 +3947,41 @@ public class MainActivity extends AppCompatActivity {
             prefs.edit().putString(KEY_SERVER_LIST, result.toString()).apply();
         } catch (Exception e) {
             AppLog.e(TAG, "saveServerInternal failed", e);
+        }
+    }
+
+    /**
+     * Remove a server entry from the list, retiring the active pointer and the
+     * tunnel's password slot when the deleted server was the active one.
+     *
+     * <p>Leaving {@code KEY_SERVER_URL} pointing at a deleted server made the
+     * next cold start auto-connect to it (and, because the legacy global
+     * password was never cleared, authenticate with its credential).
+     * Thread-safe: only called on the UI thread.
+     */
+    private void removeServerInternal(String url) {
+        try {
+            org.json.JSONArray list = new org.json.JSONArray(
+                    prefs.getString(KEY_SERVER_LIST, "[]"));
+            org.json.JSONArray newList = new org.json.JSONArray();
+            for (int i = 0; i < list.length(); i++) {
+                org.json.JSONObject entry = list.getJSONObject(i);
+                if (!url.equals(entry.optString("url", ""))) {
+                    newList.put(entry);
+                }
+            }
+            SharedPreferences.Editor editor = prefs.edit()
+                    .putString(KEY_SERVER_LIST, newList.toString());
+            if (url.equals(prefs.getString(KEY_SERVER_URL, ""))) {
+                editor.putString(KEY_SERVER_URL, "");
+                editor.putString(KEY_SSH_PASSWORD, "");
+                // The tunnel may still be holding the deleted server's password
+                // in memory; clear it so a running service cannot keep using it.
+                BackgroundService.setPassword(this, "");
+            }
+            editor.apply();
+        } catch (Exception e) {
+            AppLog.e(TAG, "removeServer failed", e);
         }
     }
 

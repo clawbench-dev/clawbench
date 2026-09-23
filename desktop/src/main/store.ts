@@ -5,6 +5,12 @@ import { DEFAULT_THEME_ID } from '../shared/theme'
 export interface ServerListSchema {
   servers: ServerEntry[]
   serverUrl: string
+  /**
+   * Legacy single-slot password (pre per-server storage). Read-only: migrated
+   * into the matching `servers[].passwordEncrypted` at startup and then
+   * cleared. Kept in the schema so an existing install's value is not dropped
+   * by the store's defaults merge.
+   */
   sshPasswordEncrypted: string | null
   nativePushEnabled: boolean
   /**

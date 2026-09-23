@@ -895,16 +895,28 @@ describe('FileManagerContent — doPaste', () => {
 })
 
 describe('FileManagerContent — doNewFile / doNewFolder', () => {
-  it('calls create file API', async () => {
+  it('emits newFile with the target dir instead of prompting (VSCode-style)', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', fetchSpy)
 
     const wrapper = mountContent()
     await wrapper.vm.doNewFile()
 
-    expect(fetchSpy).toHaveBeenCalledWith('/api/file/create', expect.objectContaining({
-      method: 'POST',
-    }))
+    // No filename dialog, no disk write — the parent opens an Untitled editor.
+    expect(wrapper.emitted('newFile')).toBeTruthy()
+    expect(wrapper.emitted('newFile')![0]).toEqual([''])
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('emits newFile targeting the selected directory', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+
+    const wrapper = mountContent({ currentDir: 'docs' })
+    await wrapper.vm.doNewFile()
+
+    expect(wrapper.emitted('newFile')![0]).toEqual(['docs'])
 
     vi.unstubAllGlobals()
   })
@@ -919,22 +931,6 @@ describe('FileManagerContent — doNewFile / doNewFolder', () => {
     expect(fetchSpy).toHaveBeenCalledWith('/api/dir/create', expect.objectContaining({
       method: 'POST',
     }))
-
-    vi.unstubAllGlobals()
-  })
-
-  it('scrolls to and selects the new file after successful creation', async () => {
-    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
-    vi.stubGlobal('fetch', fetchSpy)
-
-    // Selection is applied immediately, independent of DOM scroll readiness
-    const wrapper = mountContent({
-      currentDir: 'docs',
-      entries: [...sampleEntries, { name: 'newfile.txt', type: 'file', modified: '2025-01-01T00:00:00Z', size: 0 }],
-    })
-    await wrapper.vm.doNewFile()
-
-    expect(wrapper.vm.selectedPath).toBe('docs/newfile.txt')
 
     vi.unstubAllGlobals()
   })

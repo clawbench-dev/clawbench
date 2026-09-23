@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { getStore } from './store'
 import { httpGetBuffer } from './install'
+import { normalizeVersion } from '../shared/version'
 
 /**
  * Desktop self-upgrade check.
@@ -19,10 +20,16 @@ import { httpGetBuffer } from './install'
  * Returns a negative number when a < b, 0 when equal, positive when a > b.
  * A plain `!==` check would report "update available" when the server is OLDER
  * than the running build (a downgrade) and offer to install it.
+ *
+ * Segments are parsed from the NORMALIZED form, because the server reports
+ * `v0.99.1` while app.getVersion() reports `0.99.1`, and `parseInt('v1')` is
+ * NaN (coerced to 0). Without normalization `compareVersions('v1.0.0', '0.99.1')`
+ * is negative, so the update check would go permanently silent the moment the
+ * project ships v1.0.0.
  */
 export function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map((n) => parseInt(n, 10) || 0)
-  const pb = b.split('.').map((n) => parseInt(n, 10) || 0)
+  const pa = normalizeVersion(a).split('.').map((n) => parseInt(n, 10) || 0)
+  const pb = normalizeVersion(b).split('.').map((n) => parseInt(n, 10) || 0)
   const len = Math.max(pa.length, pb.length)
   for (let i = 0; i < len; i++) {
     const d = (pa[i] || 0) - (pb[i] || 0)
@@ -34,14 +41,22 @@ export function compareVersions(a: string, b: string): number {
 export interface UpdateInfo {
   hasUpdate: boolean
   version: string
-  /** Candidate download URLs, best-first (mirror first in China, github.com last). */
+  /** Candidate download URLs for the FULL package, best-first (mirror first in China, github.com last). */
   urls: string[]
+  /**
+   * Candidate URLs for the small payload-only archive, best-first. Empty when
+   * the server publishes none for this platform — macOS has no payload, and a
+   * server older than this feature reports no `payloads` field at all. An empty
+   * list means "download the full package", not an error.
+   */
+  payloadUrls: string[]
 }
 
 interface DesktopLatestResponse {
   version?: string
   tag?: string
   downloads?: Record<string, string[]>
+  payloads?: Record<string, string[]>
 }
 
 /** Platform key matching the server's `downloads` map (see detectPlatformKey in the web UI). */
@@ -58,7 +73,7 @@ export function latestInfoUrl(serverUrl: string): string {
 }
 
 export async function checkForUpdate(): Promise<UpdateInfo> {
-  const none: UpdateInfo = { hasUpdate: false, version: '', urls: [] }
+  const none: UpdateInfo = { hasUpdate: false, version: '', urls: [], payloadUrls: [] }
 
   const serverUrl = getStore().get('serverUrl')
   if (!serverUrl) return none
@@ -87,6 +102,10 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
   // there is nothing to install even if the version string differs.
   if (!version || urls.length === 0) return none
 
+  // Absent for platforms the server publishes no payload for (macOS), and for
+  // servers predating the feature — both mean "use the full package".
+  const payloadUrls = info.payloads?.[key] ?? []
+
   const current = app.getVersion()
-  return { hasUpdate: compareVersions(version, current) > 0, version, urls }
+  return { hasUpdate: compareVersions(version, current) > 0, version, urls, payloadUrls }
 }

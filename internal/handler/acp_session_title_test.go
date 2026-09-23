@@ -359,6 +359,17 @@ func TestMachinePrefixesMatchStrip(t *testing.T) {
 			wantOK:  true,
 			wantRem: "这个 issue 怎么修",
 		},
+		{
+			rule:   stripRule{model.QuotePromptPrefix, stripToNewline, ""},
+			input:  "[Quoted from /src/a.go]",
+			wantOK: false, // no newline → no user text
+		},
+		{
+			rule:    stripRule{model.QuotePromptPrefix, stripToNewline, ""},
+			input:   "[Quoted from /src/a.go]\n为什么这样写？",
+			wantOK:  true,
+			wantRem: "为什么这样写？",
+		},
 	}
 
 	// Test whole-turn markers.

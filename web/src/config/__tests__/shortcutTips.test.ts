@@ -78,6 +78,18 @@ describe('SHORTCUT_TIPS', () => {
     }
   })
 
+  // Regression guard for the desktop page-zoom chords: they are claimed in the
+  // Electron main process (desktop/src/main/shortcuts.ts), so nothing in the
+  // web layer would fail if this row were dropped — the feature would just
+  // become undiscoverable.
+  it('lists the desktop page-zoom chords', () => {
+    const zoom = SHORTCUT_TIPS.find(t => t.contextKey.endsWith('.contextPageZoom'))
+    expect(zoom, 'contextPageZoom row missing').toBeDefined()
+    expect(zoom?.context).toBe('common')
+    expect(zoom?.keys).toEqual(['Ctrl+=', 'Ctrl+-', 'Ctrl+0'])
+    expect(zoom?.actionKey.endsWith('.actionPageZoom')).toBe(true)
+  })
+
   it('keeps the interrupt tip scoped to "no selection" now that Ctrl+C also copies', () => {
     // Ctrl+C is overloaded: it interrupts without a selection and copies with
     // one. Both rows exist, so each must state its precondition or the table

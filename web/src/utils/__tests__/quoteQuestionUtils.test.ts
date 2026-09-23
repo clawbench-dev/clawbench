@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage, relativizeProjectPath, buildMultiQuoteMessage, buildQuoteBlock, buildQuoteFirstMessage, getQuoteSource } from '@/utils/quoteQuestionUtils'
+import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage, relativizeProjectPath, buildMultiQuoteMessage, buildQuoteBlock, buildQuoteFirstMessage, getQuoteSource, messageIdFromKey } from '@/utils/quoteQuestionUtils'
 
 // --- closestElement ---
 
@@ -486,7 +486,7 @@ describe('getQuoteSource', () => {
     const inner = document.createElement('div')
     wrap.appendChild(inner)
 
-    expect(getQuoteSource(inner)).toEqual({ label: 'acme/widgets#123', language: 'issue' })
+    expect(getQuoteSource(inner)).toEqual({ label: 'acme/widgets#123', language: 'issue', url: '' })
   })
 
   it('returns null outside a labelled region so callers can fall back', () => {
@@ -508,6 +508,43 @@ describe('getQuoteSource', () => {
     wrap.setAttribute('data-quote-source', 'a/b#1')
     const inner = document.createElement('div')
     wrap.appendChild(inner)
-    expect(getQuoteSource(inner)).toEqual({ label: 'a/b#1', language: '' })
+    expect(getQuoteSource(inner)).toEqual({ label: 'a/b#1', language: '', url: '' })
+  })
+
+  it('reads the source address so a forge quote can offer a jump action', () => {
+    // Without the address the label alone is not openable, and the quote detail
+    // drawer would have no jump target.
+    const wrap = document.createElement('div')
+    wrap.setAttribute('data-quote-source', 'acme/widgets#123')
+    wrap.setAttribute('data-quote-url', 'https://github.com/acme/widgets/issues/123')
+    const inner = document.createElement('div')
+    wrap.appendChild(inner)
+
+    expect(getQuoteSource(inner)?.url).toBe('https://github.com/acme/widgets/issues/123')
+  })
+})
+
+// --- messageIdFromKey ---
+
+describe('messageIdFromKey', () => {
+  it('parses a db-prefixed key', () => {
+    expect(messageIdFromKey('db-42')).toBe(42)
+  })
+
+  it('returns undefined for an absent key (optimistic message)', () => {
+    expect(messageIdFromKey(null)).toBeUndefined()
+    expect(messageIdFromKey(undefined)).toBeUndefined()
+    expect(messageIdFromKey('')).toBeUndefined()
+  })
+
+  it('rejects a key that is not db-prefixed', () => {
+    expect(messageIdFromKey('local-3')).toBeUndefined()
+    expect(messageIdFromKey('42')).toBeUndefined()
+  })
+
+  it('rejects a non-numeric or non-positive id', () => {
+    expect(messageIdFromKey('db-abc')).toBeUndefined()
+    expect(messageIdFromKey('db-0')).toBeUndefined()
+    expect(messageIdFromKey('db--5')).toBeUndefined()
   })
 })

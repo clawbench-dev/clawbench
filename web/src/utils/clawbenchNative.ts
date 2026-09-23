@@ -6,6 +6,7 @@
  * synchronous Android @JavascriptInterface and an asynchronous Electron
  * ipcRenderer.invoke both work under `await`.
  */
+import type { ForgeTarget } from '@/composables/useForgeNavigation'
 
 /** Full bridge contract shared by Android and Electron. */
 export interface ClawBenchNative {
@@ -83,6 +84,16 @@ export interface ClawBenchNative {
    */
   addForwardedPort(localPort: number, targetPort: number, host: string): Promise<boolean | void> | void
   removeForwardedPort(localPort: number): Promise<void>
+  /**
+   * Publish a service running on THIS device on a loopback port of the server
+   * (ssh -R). `serverPort` is the port bound on the server, `targetPort` the
+   * local port to relay to.
+   *
+   * Optional: older hosts predate reverse forwarding, and the caller degrades to
+   * showing the manual `ssh -R` command instead.
+   */
+  addReverseForwardedPort?(serverPort: number, targetPort: number, host: string): Promise<boolean | void> | void
+  removeReverseForwardedPort?(serverPort: number): Promise<void>
   reconnectTunnel(): Promise<boolean>
   reconnectTunnelAsync(): Promise<void>
   downloadFile(path: string): Promise<void>
@@ -112,6 +123,15 @@ export interface ClawBenchNative {
   setTheme?(themeId: string, bg?: string, text?: string, textSecondary?: string, accent?: string): void
   /** Optional (Android): get the persisted app theme ID. */
   getTheme?(): string
+  /**
+   * Optional (Electron): apply real native page zoom via
+   * `webContents.setZoomFactor`. Used by the appearance "auto scale" feature
+   * so the desktop shell zooms natively instead of via CSS zoom.
+   *
+   * Optional because Android and the plain browser have no equivalent — the
+   * caller falls back to CSS zoom when this is absent.
+   */
+  setZoomFactor?(factor: number): void
 }
 
 /** Navigation target for a native notification click. */
@@ -123,9 +143,15 @@ export interface NotificationNav {
   /**
    * Set for forge (GitHub/GitLab) change notifications. They carry no
    * session/task id — only `projectPath` — so the native shell needs this
-   * explicit discriminator to route the click to the Issues & PRs tab.
+   * explicit discriminator to route the click to the forge tab.
    */
   forge?: boolean
+  /**
+   * The forge item to open, so the click deep-links to the item rather than
+   * only raising the tab. Carries the opaque read key because a pipeline's
+   * number is always 0 (its identity is the run id).
+   */
+  forgeTarget?: ForgeTarget
 }
 
 const bridgeWindow = window as unknown as { ClawBenchNative?: ClawBenchNative }
