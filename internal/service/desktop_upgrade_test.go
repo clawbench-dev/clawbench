@@ -242,6 +242,16 @@ func TestDesktopPayloadURLs_OrderingFollowsRegion(t *testing.T) {
 	assert.True(t, strings.HasSuffix(row[len(row)-1], ".tgz"), "elsewhere: npm should be last, got %q", row[len(row)-1])
 }
 
+func TestDesktopPayloadURLs_EmptyWhenPlatformHasNoPayload(t *testing.T) {
+	// macOS has no payload archive, so there is nothing to download. The whole
+	// candidate list must be empty — not "npm only" — otherwise the client would
+	// offer an upgrade whose download can never succeed.
+	withChina(t, false)
+
+	assert.Empty(t, desktopPayloadURLs("darwin/arm64", "v0.98.0"))
+	assert.Empty(t, desktopPayloadURLs("plan9/386", "v0.98.0"))
+}
+
 func TestDesktopPayloadAssetName_CarriesTheTag(t *testing.T) {
 	name := desktopPayloadAssetName("linux/amd64", "v0.99.1")
 	assert.Equal(t, "clawbench-desktop-linux-x64-payload-v0.99.1.zip", name)

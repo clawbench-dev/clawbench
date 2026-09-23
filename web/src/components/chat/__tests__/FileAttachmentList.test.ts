@@ -19,13 +19,20 @@ vi.mock('@/utils/path.ts', () => ({
   baseName: (p: string) => p.split('/').pop() || '',
 }))
 
-vi.mock('@/utils/fileAttachmentUtils.ts', () => ({
-  normalizeFileEntry: (f: any) => typeof f === 'string' ? { path: f } : f,
-  isUploadPath: (p: string) => p.startsWith('/upload/'),
-  isImageFile: (p: string) => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(p),
-  isUrlEntry: (f: any) => f?.kind === 'url' && !!f?.url,
-  isSafeExternalUrl: (u: string | undefined) => !!u && /^https?:\/\//.test(u),
-}))
+// Spread the real module so a newly added export (e.g. isQuoteEntry) does not
+// blow up every test here with "No X export is defined on the mock" — only the
+// handful of predicates this suite needs to control are overridden.
+vi.mock('@/utils/fileAttachmentUtils.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/fileAttachmentUtils.ts')>()
+  return {
+    ...actual,
+    normalizeFileEntry: (f: any) => typeof f === 'string' ? { path: f } : f,
+    isUploadPath: (p: string) => p.startsWith('/upload/'),
+    isImageFile: (p: string) => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(p),
+    isUrlEntry: (f: any) => f?.kind === 'url' && !!f?.url,
+    isSafeExternalUrl: (u: string | undefined) => !!u && /^https?:\/\//.test(u),
+  }
+})
 
 vi.mock('@/utils/fileManager.ts', () => ({
   isThumbableExt: (p: string) => /\.(png|jpg|jpeg|gif|webp)$/i.test(p),

@@ -10,11 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// quoteTestProject is the project path shared by the quote-edit tests. It is a
+// single constant so the helper below need not thread it through every call.
+const quoteTestProject = "/proj"
+
 // insertUserMessageWithFiles persists a user message carrying the given file
 // entries and returns its id.
-func insertUserMessageWithFiles(t *testing.T, projectPath, sessionID string, files []model.FileEntry) int64 {
+func insertUserMessageWithFiles(t *testing.T, sessionID string, files []model.FileEntry) int64 {
 	t.Helper()
-	id, err := service.AddChatMessage(projectPath, "claude", sessionID, "user", "解释一下", files, false, "fallback")
+	id, err := service.AddChatMessage(quoteTestProject, "claude", sessionID, "user", "解释一下", files, false, "fallback")
 	require.NoError(t, err)
 	require.NotZero(t, id)
 	return id
@@ -24,10 +28,10 @@ func insertUserMessageWithFiles(t *testing.T, projectPath, sessionID string, fil
 // written to the entry identified by quoteId, leaving the others untouched.
 func TestUpdateChatQuoteNote_UpdatesOnlyTheAddressedEntry(t *testing.T) {
 	setupDB(t)
-	const project = "/proj"
+	const project = quoteTestProject
 	sid := helperCreateSession(t, project, "claude", "quote-edit")
 
-	msgID := insertUserMessageWithFiles(t, project, sid, []model.FileEntry{
+	msgID := insertUserMessageWithFiles(t, sid, []model.FileEntry{
 		{Path: "src/a.go", Kind: "quote", ID: "q1", Text: "first", Note: "old note"},
 		{Path: "src/b.go", Kind: "quote", ID: "q2", Text: "second", Note: "untouched"},
 		{Path: "src/c.go"}, // a plain file must not be disturbed either
@@ -52,10 +56,10 @@ func TestUpdateChatQuoteNote_UpdatesOnlyTheAddressedEntry(t *testing.T) {
 // rather than a silent no-op or a wrong-entry write.
 func TestUpdateChatQuoteNote_UnknownQuoteID(t *testing.T) {
 	setupDB(t)
-	const project = "/proj"
+	const project = quoteTestProject
 	sid := helperCreateSession(t, project, "claude", "quote-edit")
 
-	msgID := insertUserMessageWithFiles(t, project, sid, []model.FileEntry{
+	msgID := insertUserMessageWithFiles(t, sid, []model.FileEntry{
 		{Path: "src/a.go", Kind: "quote", ID: "q1", Text: "first"},
 	})
 
@@ -72,11 +76,11 @@ func TestUpdateChatQuoteNote_UnknownQuoteID(t *testing.T) {
 // valid message id from another session must not be editable.
 func TestUpdateChatQuoteNote_RejectsCrossSession(t *testing.T) {
 	setupDB(t)
-	const project = "/proj"
+	const project = quoteTestProject
 	sidA := helperCreateSession(t, project, "claude", "session-a")
 	sidB := helperCreateSession(t, project, "claude", "session-b")
 
-	msgID := insertUserMessageWithFiles(t, project, sidA, []model.FileEntry{
+	msgID := insertUserMessageWithFiles(t, sidA, []model.FileEntry{
 		{Path: "src/a.go", Kind: "quote", ID: "q1", Text: "first", Note: "original"},
 	})
 
@@ -92,7 +96,7 @@ func TestUpdateChatQuoteNote_RejectsCrossSession(t *testing.T) {
 // not eligible: they never carry user-authored quotes.
 func TestUpdateChatQuoteNote_RejectsAssistantMessage(t *testing.T) {
 	setupDB(t)
-	const project = "/proj"
+	const project = quoteTestProject
 	sid := helperCreateSession(t, project, "claude", "assistant-quote")
 
 	msgID, err := service.AddChatMessage(project, "claude", sid, "assistant", "reply", []model.FileEntry{
@@ -108,7 +112,7 @@ func TestUpdateChatQuoteNote_RejectsAssistantMessage(t *testing.T) {
 // instead of creating a row or panicking.
 func TestUpdateChatQuoteNote_UnknownMessage(t *testing.T) {
 	setupDB(t)
-	const project = "/proj"
+	const project = quoteTestProject
 	sid := helperCreateSession(t, project, "claude", "no-message")
 
 	_, err := service.UpdateChatQuoteNote(sid, 999999, "q1", "x")
@@ -119,10 +123,10 @@ func TestUpdateChatQuoteNote_UnknownMessage(t *testing.T) {
 // being mangled by the JSON re-marshal (quotes, newlines, CJK, emoji).
 func TestUpdateChatQuoteNote_RoundTripsSpecialCharacters(t *testing.T) {
 	setupDB(t)
-	const project = "/proj"
+	const project = quoteTestProject
 	sid := helperCreateSession(t, project, "claude", "special-chars")
 
-	msgID := insertUserMessageWithFiles(t, project, sid, []model.FileEntry{
+	msgID := insertUserMessageWithFiles(t, sid, []model.FileEntry{
 		{Path: "src/a.go", Kind: "quote", ID: "q1", Text: `he said "hi"`},
 	})
 
@@ -141,10 +145,10 @@ func TestUpdateChatQuoteNote_RoundTripsSpecialCharacters(t *testing.T) {
 // value (clearing the annotation), not a "leave unchanged" signal.
 func TestUpdateChatQuoteNote_CanClearTheNote(t *testing.T) {
 	setupDB(t)
-	const project = "/proj"
+	const project = quoteTestProject
 	sid := helperCreateSession(t, project, "claude", "clear-note")
 
-	msgID := insertUserMessageWithFiles(t, project, sid, []model.FileEntry{
+	msgID := insertUserMessageWithFiles(t, sid, []model.FileEntry{
 		{Path: "src/a.go", Kind: "quote", ID: "q1", Text: "body", Note: "to be cleared"},
 	})
 
@@ -160,7 +164,7 @@ func TestUpdateChatQuoteNote_CanClearTheNote(t *testing.T) {
 // rather than relying on a confusing DB error.
 func TestUpdateChatQuoteNote_RejectsInvalidArguments(t *testing.T) {
 	setupDB(t)
-	sid := helperCreateSession(t, "/proj", "claude", "invalid-args")
+	sid := helperCreateSession(t, quoteTestProject, "claude", "invalid-args")
 
 	for _, tc := range []struct {
 		name      string
@@ -184,10 +188,10 @@ func TestUpdateChatQuoteNote_RejectsInvalidArguments(t *testing.T) {
 // accidentally rewrite URL attachments or plain files sharing the message.
 func TestUpdateChatQuoteNote_LeavesNonQuoteEntriesAlone(t *testing.T) {
 	setupDB(t)
-	const project = "/proj"
+	const project = quoteTestProject
 	sid := helperCreateSession(t, project, "claude", "mixed-entries")
 
-	msgID := insertUserMessageWithFiles(t, project, sid, []model.FileEntry{
+	msgID := insertUserMessageWithFiles(t, sid, []model.FileEntry{
 		{Path: "acme/widgets#7", Kind: "url", URL: "https://github.com/acme/widgets/issues/7"},
 		{Path: "src/a.go", Kind: "quote", ID: "q1", Text: "body"},
 		{Path: "/src/plain.go"},
