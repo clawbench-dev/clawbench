@@ -62,6 +62,18 @@ describe('QuoteQuestionBar', () => {
       expect(wrapper.emitted('send')).toEqual([['why is this broken?']])
     })
 
+    it('emits add (not a chat-input injection) with the typed note', async () => {
+      // The "+" action now produces ONE card carrying the quoted content plus
+      // this text as the annotation — the bar only emits; the composable decides
+      // what to do with it, and must not inject it into the chat textarea.
+      const wrapper = mountBar({ composerMode: true, quoteData: QUOTE })
+      await wrapper.find('.qq-textarea').setValue('please explain')
+      await wrapper.find('.qq-add-btn').trigger('click')
+
+      expect(wrapper.emitted('add')).toEqual([['please explain']])
+      expect(wrapper.emitted('send')).toBeFalsy()
+    })
+
     it('does not render at all when not visible', () => {
       const wrapper = mountBar({ composerMode: true, visible: false })
       expect(wrapper.find('.quote-question-bar').exists()).toBe(false)

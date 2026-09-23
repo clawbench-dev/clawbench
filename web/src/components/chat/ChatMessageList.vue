@@ -80,6 +80,7 @@
       @show-tool-detail="$emit('show-tool-detail', $event)"
       @show-metadata="$emit('show-metadata', $event)"
       @file-tag-click="$emit('file-tag-click', $event)"
+      @quote-message="$emit('quote-message', $event)"
       @task-card-click="$emit('task-card-click', $event)"
       @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
       @render-flush="emit('render-flush')"
@@ -205,7 +206,7 @@ const props = defineProps({
   pendingActionBusy: { type: String, default: '' },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'pending-action', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'pending-action', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
 
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()

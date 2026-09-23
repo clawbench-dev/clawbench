@@ -1678,6 +1678,14 @@ export default {
     newSession: '新会话',
     sentToSession: '已发送到会话',
     sendFailed: '发送失败: {error}',
+    drawerTitle: '引用详情',
+    quotedContent: '引用内容',
+    annotation: '批注',
+    notePlaceholder: '为这段引用添加批注...',
+    jumpToSource: '跳转到来源',
+    messageQuote: '聊天消息',
+    removeQuote: '移除引用',
+    quoteMessage: '引用这条消息',
   },
   git: {
     history: {

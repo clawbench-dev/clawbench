@@ -1305,6 +1305,87 @@ func TestAIChat_URLAttachment_PreservesLabel(t *testing.T) {
 		"the URL label must be preserved so the chip is not blank after a reload")
 }
 
+// TestAIChat_QuoteAttachment_SurvivesValidation verifies a quote entry passes
+// the chat endpoint without being resolved against the filesystem.
+//
+// A quote's Path is only a label (and is empty for a quote taken from a chat
+// message). Resolving it with os.Stat would 404 the whole send — the same trap
+// the URL branch exists to avoid.
+func TestAIChat_QuoteAttachment_SurvivesValidation(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-attach", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "解释一下这段",
+		"files": []model.FileEntry{{
+			Path: "src/a.go", Kind: "quote", ID: "quote-1",
+			Text: "x := 1", Note: "为什么这样写？", Language: "go",
+			StartLine: 3, EndLine: 3,
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w) // a quote must not be resolved as a path
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Files, 1, "the quote entry must survive validation")
+
+	got := messages[0].Files[0]
+	assert.Equal(t, "quote", got.Kind)
+	assert.Equal(t, "quote-1", got.ID)
+	assert.Equal(t, "x := 1", got.Text)
+	assert.Equal(t, "为什么这样写？", got.Note)
+	assert.Equal(t, "go", got.Language)
+	assert.Equal(t, "src/a.go", got.Path, "the label must be preserved verbatim")
+	assert.Equal(t, 3, got.StartLine)
+	assert.Equal(t, 3, got.EndLine)
+}
+
+// TestAIChat_QuoteAttachment_EmptyPathAndTextOnly verifies a chat-message quote
+// (no path, message may even be empty) is accepted: files alone satisfy the
+// "message or files required" guard, and an empty Path never reaches
+// filesystem validation.
+func TestAIChat_QuoteAttachment_EmptyPathAndTextOnly(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-no-path", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"files": []model.FileEntry{{Kind: "quote", ID: "quote-2", Text: "quoted chat text"}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Files, 1)
+	assert.Equal(t, "quoted chat text", messages[0].Files[0].Text)
+	assert.Empty(t, messages[0].Files[0].Path)
+}
+
 // TestAIChat_URLAttachment_RejectsUnsafeScheme verifies a non-http(s) URL is
 // rejected at the boundary.
 //
@@ -4216,4 +4297,86 @@ func TestDrainReplyQueueID_HTTPPath(t *testing.T) {
 		return err == nil
 	}, 10*time.Second, 20*time.Millisecond, "assistant reply anchored to pending-q2 should exist")
 	assert.Equal(t, "pending-q2", qid, "drain reply must record the consumed message's queue_id so the frontend can anchor it")
+}
+
+// TestUpdateChatQuoteNote_Handler verifies the PATCH endpoint updates the
+// annotation on a persisted quote.
+func TestUpdateChatQuoteNote_Handler(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-note", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "解释一下",
+		[]model.FileEntry{{Path: "src/a.go", Kind: "quote", ID: "q1", Text: "x := 1", Note: "old"}}, false, "fallback")
+	require.NoError(t, err)
+
+	body := map[string]any{"messageId": msgID, "quoteId": "q1", "note": "new note"}
+	req := newRequest(t, http.MethodPatch, "/api/ai/chat/quote?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(UpdateChatQuoteNote, req)
+	assertOK(t, w)
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "new note", messages[0].Files[0].Note)
+}
+
+// TestUpdateChatQuoteNote_Handler_WrongMethod verifies only PATCH is accepted.
+func TestUpdateChatQuoteNote_Handler_WrongMethod(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	body := map[string]any{"messageId": 1, "quoteId": "q1", "note": "x"}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat/quote", body)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(UpdateChatQuoteNote, req)
+	assertStatus(t, w, http.StatusMethodNotAllowed)
+}
+
+// TestUpdateChatQuoteNote_Handler_UnknownQuote 404s rather than silently
+// succeeding.
+func TestUpdateChatQuoteNote_Handler_UnknownQuote(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-missing", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "hi",
+		[]model.FileEntry{{Path: "src/a.go", Kind: "quote", ID: "q1", Text: "body"}}, false, "fallback")
+	require.NoError(t, err)
+
+	body := map[string]any{"messageId": msgID, "quoteId": "nope", "note": "x"}
+	req := newRequest(t, http.MethodPatch, "/api/ai/chat/quote?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(UpdateChatQuoteNote, req)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// TestUpdateChatQuoteNote_Handler_RejectsForeignSession verifies a session
+// belonging to another project is refused.
+func TestUpdateChatQuoteNote_Handler_RejectsForeignSession(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-foreign", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "hi",
+		[]model.FileEntry{{Path: "src/a.go", Kind: "quote", ID: "q1", Text: "body"}}, false, "fallback")
+	require.NoError(t, err)
+
+	body := map[string]any{"messageId": msgID, "quoteId": "q1", "note": "x"}
+	req := newRequest(t, http.MethodPatch, "/api/ai/chat/quote?session_id="+sessionID, body)
+	// A different project's cookie must not be able to edit this session.
+	req = withProjectCookie(req, t.TempDir())
+
+	w := callHandler(UpdateChatQuoteNote, req)
+	assertStatus(t, w, http.StatusForbidden)
 }

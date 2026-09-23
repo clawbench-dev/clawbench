@@ -81,12 +81,15 @@
       </Transition>
       <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
       <div v-if="hasAttachmentTags" class="chat-attachment-tags">
-        <!-- Staged quote cards (same size as file cards, accent-colored) -->
-        <span v-for="(quote, quoteIndex) in quoteItems" :key="quote.id || quoteIndex" class="chat-file-attachment attachment-quote" :title="quote.note || quote.filePath" @click="$emit('quote-click', quote)">
-          <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
-          <span class="attachment-filename">{{ quoteFileName(quote) }}{{ quoteLineRange(quote) }}</span>
-          <button class="attachment-close-btn" @click.stop="$emit('remove-quote', quote.id)" :title="t('common.remove')">×</button>
-        </span>
+        <!-- Staged quote cards (shared component — same card as a sent message) -->
+        <QuoteCard
+          v-for="quote in quoteItems"
+          :key="quote.id"
+          :quote="fromStagedQuote(quote)"
+          removable
+          @click="$emit('quote-click', quote)"
+          @remove="$emit('remove-quote', quote.id)"
+        />
         <!-- Attached file reference cards (shared component, includes pending uploads with local Blob preview) -->
         <AttachmentTags :files="attachedFiles" :pending-files="pendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
       </div>
@@ -318,7 +321,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
@@ -331,6 +334,8 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
+import QuoteCard from '@/components/chat/QuoteCard.vue'
+import { fromStagedQuote } from '@/utils/quoteItem'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
 const QuickSendDrawer = defineAsyncComponent({ loader: () => import('@/components/chat/QuickSendDrawer.vue'), loadingComponent: AsyncComponentLoader })
@@ -1416,19 +1421,6 @@ async function handleArchive() {
   }
 }
 
-function quoteFileName(quote) {
-  if (!quote?.filePath) return ''
-  return quote.filePath.split('/').pop() || quote.filePath
-}
-
-function quoteLineRange(quote) {
-  if (!quote?.startLine) return ''
-  const s = quote.startLine
-  const e = quote.endLine
-  if (e && e !== s) return `:${s}-${e}`
-  return `:${s}`
-}
-
 function autoResizeTextarea() {
   const el = textareaRef.value
   if (!el) return
@@ -2458,16 +2450,16 @@ defineExpose({
   }
 }
 
-/* Quote card — accent-colored, same size as file cards */
+/* Quote card — accent-colored, same size as file cards.
+   Only the ROOT is styled from here: QuoteCard is a child component, so a
+   descendant selector like `.attachment-quote .attachment-filename` would not
+   match its internals (the scope attribute lives on QuoteCard's own elements).
+   The filename picks up the accent by INHERITING this `color`. */
 .chat-attachment-tags .attachment-quote {
   background: color-mix(in srgb, var(--accent-color, #4f9cf7) 8%, transparent);
   border: 1px dashed var(--accent-color, #4f9cf7);
   color: var(--accent-color, #4f9cf7);
   cursor: pointer;
-}
-
-.chat-attachment-tags .attachment-quote .attachment-filename {
-  color: var(--accent-color, #4f9cf7);
 }
 
 /* Input row.

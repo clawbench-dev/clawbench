@@ -883,6 +883,54 @@ paths:
         "200":
           description: 已取消
 
+  /api/ai/chat/quote:
+    patch:
+      tags: [Chat]
+      summary: 修改已发送消息中引用的批注
+      description: |
+        引用以结构化条目（`kind=quote`）持久化在消息的 `files` 中，因此发送后修改批注
+        是一次定向写入，而非重写消息文本。
+        引用按其稳定 `quoteId` 定位（见 `FileEntry.id`）；用数组下标在条目增删后会错位。
+        修改只影响**下一轮** AI 看到的提示词（每轮由存储的 `files` 重建），
+        不会追溯改变已在执行中的回合。
+      operationId: chatQuoteUpdateNote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messageId, quoteId]
+              properties:
+                sessionId:
+                  type: string
+                  description: 目标会话；缺省时回退到查询参数 / Cookie。
+                messageId:
+                  type: integer
+                  description: 承载该引用的用户消息 ID。
+                quoteId:
+                  type: string
+                  description: 引用的稳定 ID（`FileEntry.id`）。
+                note:
+                  type: string
+                  description: 新的批注内容（可为空字符串以清空）。
+      responses:
+        "200":
+          description: 已更新，返回该消息更新后的附件条目
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  files:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FileEntry"
+        "404":
+          description: 未找到该引用（消息不存在、非用户消息、或 quoteId 不匹配）
+
   /api/ai/chat/read:
     post:
       tags: [Chat]
@@ -4241,13 +4289,15 @@ components:
     FileEntry:
       type: object
       description: |
-        附件条目，可为本地文件/目录，也可为**外部链接**（`kind=url`）。
+        附件条目，可为本地文件/目录、**外部链接**（`kind=url`），或**引用片段**（`kind=quote`）。
         链接条目不参与文件系统校验，且其地址会以
         `[Referenced external link: <url>]` 前缀注入 AI 的 prompt。
+        引用条目同样不参与文件系统校验，其 `text` 与 `note` 会以
+        `[Quoted from <label>]` + 围栏代码块的形式注入 prompt。
       properties:
         path:
           type: string
-          description: 本地路径；`kind=url` 时为人类可读标签（如 `owner/repo#123`）。
+          description: 本地路径；`kind=url`/`kind=quote` 时为人类可读标签（如 `owner/repo#123`，引用聊天消息时可为空）。
         isDir:
           type: boolean
         startLine:
@@ -4256,11 +4306,23 @@ components:
           type: integer
         kind:
           type: string
-          enum: [file, url]
-          description: 缺省为本地文件；`url` 表示外部地址。
+          enum: [file, url, quote]
+          description: 缺省为本地文件；`url` 表示外部地址；`quote` 表示引用片段。
         url:
           type: string
           description: 外部地址，仅当 `kind=url` 时使用；只接受 http(s)。
+        id:
+          type: string
+          description: 仅 `kind=quote`：引用条目的稳定身份，用于发送后修改批注。
+        text:
+          type: string
+          description: 仅 `kind=quote`：引用原文。
+        note:
+          type: string
+          description: 仅 `kind=quote`：用户对该引用的批注。
+        language:
+          type: string
+          description: 仅 `kind=quote`：围栏代码块的语言标识（如 `go`、`issue`）。
 
     GalleryItem:
       type: object

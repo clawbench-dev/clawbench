@@ -1675,6 +1675,14 @@ export default {
     newSession: 'New session',
     sentToSession: 'Sent to session',
     sendFailed: 'Send failed: {error}',
+    drawerTitle: 'Quote details',
+    quotedContent: 'Quoted content',
+    annotation: 'Annotation',
+    notePlaceholder: 'Add a note about this quote...',
+    jumpToSource: 'Jump to source',
+    messageQuote: 'Chat message',
+    removeQuote: 'Remove quote',
+    quoteMessage: 'Quote this message',
   },
   git: {
     history: {

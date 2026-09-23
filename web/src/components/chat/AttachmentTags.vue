@@ -60,7 +60,7 @@ import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { isThumbableExt } from '@/utils/fileManager'
-import { isImageFile, isUrlEntry, isSafeExternalUrl, type FileEntry } from '@/utils/fileAttachmentUtils'
+import { isImageFile, isUrlEntry, isQuoteEntry, isSafeExternalUrl, type FileEntry } from '@/utils/fileAttachmentUtils'
 import { Link as LinkIcon } from 'lucide-vue-next'
 import { baseName } from '@/utils/path'
 import type { PendingFile } from '@/composables/useFileUpload'
@@ -84,8 +84,10 @@ const thumbUrl = buildPathThumbUrl
 
 // URL attachments render as links; local entries render as file cards. Keeping
 // them in separate lists avoids branching inside the file-card markup.
+// Quotes are excluded entirely: they carry no path, so a file card would render
+// as an empty pill. They have their own card (QuoteCard).
 const urlEntries = computed(() => (props.files ?? []).filter(f => isUrlEntry(f)))
-const fileEntries = computed(() => (props.files ?? []).filter(f => !isUrlEntry(f)))
+const fileEntries = computed(() => (props.files ?? []).filter(f => !isUrlEntry(f) && !isQuoteEntry(f)))
 
 /** Composite key so distinct line-range references of one file stay separate. */
 function entryKey(entry: FileEntry): string {

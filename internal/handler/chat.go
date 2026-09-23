@@ -343,9 +343,14 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	// Validate file entries are within project and determine isDir via os.Stat.
 	// URL entries carry an external address, not a local path: they are passed
-	// through untouched and never resolved against the filesystem.
+	// through untouched and never resolved against the filesystem. Quote
+	// entries carry text, not a path, and are likewise never resolved.
 	validatedFileEntries := make([]model.FileEntry, 0, len(req.Files))
 	for _, fEntry := range req.Files {
+		if fEntry.IsQuote() {
+			validatedFileEntries = append(validatedFileEntries, validatedQuoteEntry(fEntry))
+			continue
+		}
 		if fEntry.IsURL() {
 			entry, ok := validatedURLEntry(w, r, fEntry)
 			if !ok {
@@ -853,6 +858,68 @@ func CancelChat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// UpdateChatQuoteNote handles PATCH to edit the annotation on a quote
+// attachment of an already-sent user message.
+//
+// Quotes are persisted as structured entries on the message's `files`, so
+// editing a note after sending is a targeted write rather than a text rewrite.
+// The quote is addressed by its stable id (see model.FileEntry.ID); an array
+// index would be ambiguous once entries are added or removed.
+//
+// The edit affects what the AI sees on the NEXT turn (the prompt is rebuilt
+// from the stored files each turn), but cannot retroactively change a turn
+// already in flight.
+func UpdateChatQuoteNote(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPatch) {
+		return
+	}
+
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		SessionID string `json:"sessionId"`
+		MessageID int64  `json:"messageId"`
+		QuoteID   string `json:"quoteId"`
+		Note      string `json:"note"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	sessionID := req.SessionID
+	if sessionID == "" {
+		sessionID = r.URL.Query().Get("session_id")
+	}
+	if sessionID == "" {
+		sessionID = getSessionID(r)
+	}
+	if sessionID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
+		return
+	}
+
+	// Verify the session belongs to the requesting project.
+	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	entries, err := service.UpdateChatQuoteNote(sessionID, req.MessageID, req.QuoteID, req.Note)
+	if err != nil {
+		if errors.Is(err, service.ErrChatQuoteNotFound) {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "ChatQuoteNotFound")
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "files": entries})
+}
+
 // MarkChatRead handles POST to mark a session as read (updates last_read_at
 // and broadcasts status="read"). Used by the completion popover's "mark as
 // read" button when the user replies without typing anything.
@@ -956,4 +1023,26 @@ func validatedURLEntry(w http.ResponseWriter, r *http.Request, fEntry model.File
 		return model.FileEntry{}, false
 	}
 	return model.FileEntry{Path: fEntry.Path, Kind: "url", URL: u}, true
+}
+
+// validatedQuoteEntry normalizes one quoted-snippet attachment.
+//
+// Like a URL entry, a quote is NOT a filesystem path: its Path is only a
+// human-readable label (a file path, an "owner/repo#123", or empty for a quote
+// taken from a chat message) and must never be resolved with os.Stat, or the
+// whole send would 404. The payload is the quoted text plus the user's note.
+//
+// Shared by every endpoint that accepts file entries (chat and queue) so the
+// two cannot drift apart.
+func validatedQuoteEntry(fEntry model.FileEntry) model.FileEntry {
+	return model.FileEntry{
+		Path:      fEntry.Path,
+		Kind:      "quote",
+		ID:        fEntry.ID,
+		Text:      fEntry.Text,
+		Note:      fEntry.Note,
+		Language:  fEntry.Language,
+		StartLine: fEntry.StartLine,
+		EndLine:   fEntry.EndLine,
+	}
 }

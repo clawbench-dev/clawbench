@@ -136,6 +136,19 @@
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
+        <!-- Quote this message as a whole. Rendered for BOTH roles: quoting a
+             user message (e.g. to re-ask about it) is as useful as quoting a
+             reply. Gated like the rest of the meta bar, and skipped for queued
+             bubbles which have no settled content yet. -->
+        <button
+          v-if="!msg.streaming && !msg.pending && quotableText"
+          class="chat-action-btn"
+          :title="t('quoteBar.quoteMessage')"
+          :aria-label="t('quoteBar.quoteMessage')"
+          @click="$emit('quote-message', msg)"
+        >
+          <MessageSquareQuote :size="14" />
+        </button>
       </div>
     </div>
 
@@ -169,7 +182,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind, Zap, Square } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind, Zap, Square, MessageSquareQuote } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -214,7 +227,7 @@ const props = defineProps({
   hideSessionActions: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'pending-action', 'fork-from-message', 'rewind-from-message', 'reset-session'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'pending-action', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
@@ -299,6 +312,15 @@ const showMetaBar = computed(() => {
   if (props.msg?.role !== 'user' || props.msg.pending || props.msg.streaming) return false
   return !!(relativeTime.value || copyableUserText.value)
 })
+
+/**
+ * The text a "quote this message" action would capture — deliberately the SAME
+ * text the user reads, not the raw blocks:
+ *   - assistant: `msgText` (extractSpeakableText, which skips tool/thinking noise);
+ *   - user: the message content.
+ * Empty means there is nothing worth quoting, and the button is hidden.
+ */
+const quotableText = computed(() => (props.msg?.role === 'user' ? copyableUserText.value : msgText.value))
 
 // Accessible name/tooltip for the read-aloud button. While audio is playing the
 // button acts as a stop control, so it must not advertise "read aloud".

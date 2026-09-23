@@ -250,18 +250,28 @@ describe('useQuoteQuestion', () => {
       expect(mockSendMessage).not.toHaveBeenCalled()
     })
 
-    it('sends message and adds attached file with line info', async () => {
+    it('sends the typed message and stages the quote as a card', async () => {
       const qq = useQuoteQuestion()
-      mockSendMessage.mockResolvedValue(undefined)
+      // ChatPanelContent reads stagedQuotes synchronously before its first
+      // await, so capture them at send time — clearAll() wipes them afterwards.
+      let atSendTime: unknown[] = []
+      mockSendMessage.mockImplementation(async () => {
+        atSendTime = [...ctx.stagedQuotes.value]
+      })
 
       qq.showBar({ text: 'some code', filePath: '/src/foo.ts', language: 'typescript', startLine: 10, endLine: 20 })
       vi.advanceTimersByTime(400)
 
       await qq.sendMessage('explain this')
 
-      // sendMessage called with buildQuoteMessage result (includes quoted code)
-      expect(mockSendMessage).toHaveBeenCalledWith('explain this\n\n```typescript:/src/foo.ts:10-20\nsome code\n```')
-      expect(ctx.attachedFiles.value).toHaveLength(0) // cleared by clearAll
+      // The quote no longer rides in the message text — it becomes a structured
+      // card (see ChatPanelContent.sendMessage, which materialises stagedQuotes
+      // into files entries). Only the user's own words are the message.
+      expect(mockSendMessage).toHaveBeenCalledWith('explain this')
+      expect(atSendTime).toHaveLength(1)
+      expect(atSendTime[0]).toMatchObject({
+        text: 'some code', filePath: '/src/foo.ts', startLine: 10, endLine: 20,
+      })
     })
 
     it('clears all state after successful send', async () => {
@@ -276,6 +286,7 @@ describe('useQuoteQuestion', () => {
       expect(qq.visible.value).toBe(false)
       expect(ctx.attachedFiles.value).toHaveLength(0)
       expect(ctx.quoteData.value).toBeNull()
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
     })
 
     it('shows error toast on send failure', async () => {
@@ -293,9 +304,12 @@ describe('useQuoteQuestion', () => {
       )
     })
 
-    it('sends staged quotes with notes together with the active selection', async () => {
+    it('stages the active selection alongside existing staged quotes', async () => {
       const qq = useQuoteQuestion()
-      mockSendMessage.mockResolvedValue(undefined)
+      let atSendTime: Array<{ text: string; note: string }> = []
+      mockSendMessage.mockImplementation(async () => {
+        atSendTime = ctx.stagedQuotes.value.map(q => ({ text: q.text, note: q.note }))
+      })
       ctx.addStagedQuote(
         { text: 'first()', filePath: '/first.ts', language: 'ts', startLine: 1, endLine: 2 },
         'Review this first',
@@ -304,24 +318,28 @@ describe('useQuoteQuestion', () => {
 
       await qq.sendMessage('Compare them')
 
-      expect(mockSendMessage).toHaveBeenCalledWith(
-        'Compare them\n\nReview this first\n\n```ts:/first.ts:1-2\nfirst()\n```\n\n```ts:/second.ts:8\nsecond()\n```',
-      )
-      expect(ctx.stagedQuotes.value).toHaveLength(0)
+      expect(mockSendMessage).toHaveBeenCalledWith('Compare them')
+      // Both quotes are now cards (materialised by ChatPanelContent), not text.
+      expect(atSendTime).toHaveLength(2)
+      expect(atSendTime.map(q => q.text)).toEqual(['first()', 'second()'])
+      expect(atSendTime[0].note).toBe('Review this first')
     })
 
     it('deduplicates the active selection against staged quotes', async () => {
       const qq = useQuoteQuestion()
-      mockSendMessage.mockResolvedValue(undefined)
+      let atSendTime: Array<{ text: string; note: string }> = []
+      mockSendMessage.mockImplementation(async () => {
+        atSendTime = ctx.stagedQuotes.value.map(q => ({ text: q.text, note: q.note }))
+      })
       const quote = { text: 'same()', filePath: '/same.ts', language: 'ts', startLine: 4, endLine: 4 }
       ctx.addStagedQuote(quote, 'Keep this note')
       ctx.setQuoteData({ ...quote })
 
       await qq.sendMessage('Explain')
 
-      expect(mockSendMessage).toHaveBeenCalledWith(
-        'Explain\n\nKeep this note\n\n```ts:/same.ts:4\nsame()\n```',
-      )
+      expect(mockSendMessage).toHaveBeenCalledWith('Explain')
+      expect(atSendTime).toHaveLength(1)
+      expect(atSendTime[0].note).toBe('Keep this note')
     })
   })
 
@@ -470,14 +488,21 @@ describe('useQuoteQuestion', () => {
       expect(mockSendMessage).toHaveBeenCalledWith('why is this broken?')
     })
 
-    it('sends the quote block first, then the user input', async () => {
+    it('sends the user input and stages the quote as a card', async () => {
       const qq = useQuoteQuestion()
+      let atSendTime: unknown[] = []
+      mockSendMessage.mockImplementation(async () => {
+        atSendTime = [...ctx.stagedQuotes.value]
+      })
       qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
       ctx.setQuoteData({ text: 'build failed', filePath: 'acme/widgets#7', language: 'issue', startLine: 0, endLine: 0 })
 
       await qq.sendMessage('why?')
 
-      expect(mockSendMessage).toHaveBeenCalledWith('```issue:acme/widgets#7\nbuild failed\n```\nwhy?')
+      // The typed text is the message; the quote is a card.
+      expect(mockSendMessage).toHaveBeenCalledWith('why?')
+      expect(atSendTime).toHaveLength(1)
+      expect((atSendTime[0] as { text: string }).text).toBe('build failed')
     })
 
     it('does nothing when there is neither a quote nor input', async () => {
@@ -514,7 +539,7 @@ describe('useQuoteQuestion', () => {
     })
 
     describe('add to conversation', () => {
-      it('injects the block then a newline then the note, and calls onAdd', () => {
+      it('stages the quote with the typed note instead of injecting text', () => {
         const onAdd = vi.fn()
         const qq = useQuoteQuestion()
         qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7', onAdd })
@@ -522,18 +547,39 @@ describe('useQuoteQuestion', () => {
 
         qq.addToConversation('please fix')
 
-        expect(consumePendingChatInput()).toBe('```issue:acme/widgets#7\nbuild failed\n```\nplease fix')
+        // The typed text becomes the quote's ANNOTATION — one card, exactly
+        // like the file browser / forge selection flow. Nothing is injected
+        // into the chat input.
+        expect(consumePendingChatInput()).toBeNull()
+        expect(ctx.stagedQuotes.value).toHaveLength(1)
+        expect(ctx.stagedQuotes.value[0].note).toBe('please fix')
         expect(onAdd).toHaveBeenCalledTimes(1)
       })
 
-      it('leaves a trailing newline when no note was typed', () => {
+      it('stages the quote with an empty note when nothing was typed', () => {
         const qq = useQuoteQuestion()
         qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
         ctx.setQuoteData({ text: 'build failed', filePath: 'acme/widgets#7', language: 'issue', startLine: 0, endLine: 0 })
 
         qq.addToConversation('')
 
-        expect(consumePendingChatInput()).toBe('```issue:acme/widgets#7\nbuild failed\n```\n')
+        expect(ctx.stagedQuotes.value).toHaveLength(1)
+        expect(ctx.stagedQuotes.value[0].note).toBe('')
+        expect(consumePendingChatInput()).toBeNull()
+      })
+
+      it('keeps the typed text when there is nothing to quote', () => {
+        // Composer opened with no selection: there is no card to hold the note,
+        // so the text is injected rather than silently discarded.
+        const onAdd = vi.fn()
+        const qq = useQuoteQuestion()
+        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7', onAdd })
+
+        qq.addToConversation('please fix')
+
+        expect(consumePendingChatInput()).toBe('please fix')
+        expect(ctx.stagedQuotes.value).toHaveLength(0)
+        expect(onAdd).toHaveBeenCalledTimes(1)
       })
 
       it('injects nothing when there is no quote and no note, but still navigates', () => {
@@ -714,6 +760,194 @@ describe('useQuoteQuestion', () => {
       expect(ctx.quoteData.value).toBeNull()
 
       wrapper.unmount()
+    })
+
+    describe('chat messages', () => {      /**
+       * Build a chat message row: `.chat-message[data-msg-key]` >
+       * `.msg-card` > `.msg-content-wrapper` > text. Mirrors ChatMessageItem's
+       * real structure, including the meta bar sibling that must NOT be
+       * quotable.
+       */
+      function createChatMessage(msgKey: string | null) {
+        const row = document.createElement('div')
+        row.className = 'chat-message assistant'
+        if (msgKey) row.setAttribute('data-msg-key', msgKey)
+
+        const card = document.createElement('div')
+        card.className = 'msg-card'
+        const wrapper = document.createElement('div')
+        wrapper.className = 'msg-content-wrapper'
+        const textNode = document.createElement('span')
+        textNode.textContent = 'the assistant reply'
+        wrapper.appendChild(textNode)
+        card.appendChild(wrapper)
+
+        // Meta bar lives OUTSIDE the content wrapper — a selection here must not
+        // be treated as message content.
+        const metaBar = document.createElement('div')
+        metaBar.className = 'chat-meta-bar'
+        const metaText = document.createElement('span')
+        metaText.textContent = '2m ago'
+        metaBar.appendChild(metaText)
+
+        row.appendChild(card)
+        row.appendChild(metaBar)
+        document.body.appendChild(row)
+        return { row, textNode, metaText }
+      }
+
+      function selectNode(node: Node) {
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        vi.advanceTimersByTime(0)
+        sel?.addRange(range)
+        vi.advanceTimersByTime(0)
+      }
+
+      it('shows the bar for a selection inside a chat message', () => {
+        const wrapper = mountWithComposable()
+        const { textNode } = createChatMessage('db-42')
+        selectNode(textNode)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.visible.value).toBe(true)
+        expect(ctx.quoteData.value?.text).toBe('the assistant reply')
+
+        wrapper.unmount()
+      })
+
+      it('attributes the quote to the message via data-msg-key', () => {
+        const wrapper = mountWithComposable()
+        const { textNode } = createChatMessage('db-42')
+        selectNode(textNode)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(ctx.quoteData.value?.messageId).toBe(42)
+        expect(ctx.quoteData.value?.sourceKind).toBe('message')
+        // A chat quote has no file and no line info.
+        expect(ctx.quoteData.value?.filePath).toBe('')
+        expect(ctx.quoteData.value?.startLine).toBe(0)
+
+        wrapper.unmount()
+      })
+
+      it('quotes an optimistic message without a message id', () => {
+        // Local messages have no data-msg-key. The quote is still valid; it just
+        // cannot be addressed later.
+        const wrapper = mountWithComposable()
+        const { textNode } = createChatMessage(null)
+        selectNode(textNode)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(useQuoteQuestion().visible.value).toBe(true)
+        expect(ctx.quoteData.value?.messageId).toBeUndefined()
+
+        wrapper.unmount()
+      })
+
+      it('does not quote the meta bar (timestamps, buttons)', () => {
+        // The meta bar sits inside .chat-message but is chrome, not content.
+        const wrapper = mountWithComposable()
+        const { metaText } = createChatMessage('db-7')
+        selectNode(metaText)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(useQuoteQuestion().visible.value).toBe(false)
+        expect(ctx.quoteData.value).toBeNull()
+
+        wrapper.unmount()
+      })
+
+      it('does not quote a button inside a chat message', () => {
+        const wrapper = mountWithComposable()
+        const { row } = createChatMessage('db-7')
+        const btn = document.createElement('button')
+        btn.textContent = 'Copy'
+        row.querySelector('.msg-content-wrapper')!.appendChild(btn)
+        selectNode(btn)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(useQuoteQuestion().visible.value).toBe(false)
+
+        wrapper.unmount()
+      })
+
+      it('does not quote an attachment chip', () => {
+        const wrapper = mountWithComposable()
+        const { row } = createChatMessage('db-7')
+        const chip = document.createElement('span')
+        chip.className = 'chat-file-attachment'
+        const chipText = document.createElement('span')
+        chipText.textContent = 'a.go'
+        chip.appendChild(chipText)
+        row.querySelector('.msg-content-wrapper')!.appendChild(chip)
+        selectNode(chipText)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(useQuoteQuestion().visible.value).toBe(false)
+
+        wrapper.unmount()
+      })
+
+      it('carries the forge url through so the quote can be opened', () => {
+        const wrapper = mountWithComposable()
+        const container = document.createElement('div')
+        container.className = 'markdown-body'
+        container.setAttribute('data-quote-source', 'acme/widgets#7')
+        container.setAttribute('data-quote-language', 'issue')
+        container.setAttribute('data-quote-url', 'https://github.com/acme/widgets/issues/7')
+        const textNode = document.createElement('span')
+        textNode.textContent = 'issue body'
+        container.appendChild(textNode)
+        document.body.appendChild(container)
+        selectNode(textNode)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(ctx.quoteData.value?.sourceKind).toBe('url')
+        expect(ctx.quoteData.value?.url).toBe('https://github.com/acme/widgets/issues/7')
+
+        wrapper.unmount()
+      })
+
+      it('still quotes a link selection in a FILE preview (chrome guard is chat-scoped)', () => {
+        // The chrome exclusion matches `a`, which in a file preview is real
+        // content. Scoping it to .chat-message keeps ordinary prose quotable.
+        const wrapper = mountWithComposable()
+        const container = document.createElement('div')
+        container.className = 'markdown-body'
+        container.setAttribute('data-file-path', '/docs/readme.md')
+        const link = document.createElement('a')
+        link.textContent = 'see the guide'
+        container.appendChild(link)
+        document.body.appendChild(container)
+        selectNode(link)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(useQuoteQuestion().visible.value).toBe(true)
+        expect(ctx.quoteData.value?.text).toBe('see the guide')
+        expect(ctx.quoteData.value?.filePath).toBe('/docs/readme.md')
+
+        wrapper.unmount()
+      })
     })
 
     it('keeps bar visible when pinned even if selection is lost', () => {

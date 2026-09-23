@@ -424,6 +424,10 @@ describe('ForgeDetail double-click copy → quote', () => {
       language: 'issue',
       startLine: 0,
       endLine: 0,
+      // The address rides along so the quote's detail drawer can offer a real
+      // jump-to-source action.
+      sourceKind: 'url',
+      url: 'https://example.com/7',
     })
   })
 

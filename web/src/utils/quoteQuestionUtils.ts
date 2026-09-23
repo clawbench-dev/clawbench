@@ -177,14 +177,34 @@ export function buildQuoteFirstMessage(quoteBlock: string, userMessage: string):
  * every code block in the issue body. A dedicated attribute keeps the quote
  * labelled without claiming the content is a file.
  *
+ * `data-quote-url` carries the object's address so a forge quote can offer a
+ * real jump-to-source action. Without it the label alone is not openable.
+ *
  * Returns null when the container is not inside a labelled region, so callers
  * can fall back to the normal file-path handling.
  */
-export function getQuoteSource(container: HTMLElement): { label: string; language: string } | null {
+export function getQuoteSource(container: HTMLElement): { label: string; language: string; url: string } | null {
   const el = container.closest<HTMLElement>('[data-quote-source]')
   const label = el?.getAttribute('data-quote-source') || ''
   if (!label) return null
-  return { label, language: el?.getAttribute('data-quote-language') || '' }
+  return {
+    label,
+    language: el?.getAttribute('data-quote-language') || '',
+    url: el?.getAttribute('data-quote-url') || '',
+  }
+}
+
+/**
+ * Extract the DB message id from a chat row's `data-msg-key`.
+ *
+ * ChatMessageItem sets `data-msg-key="db-<id>"` on `.chat-message`, and leaves
+ * it unset for optimistic/local messages (no DB row yet). Those cannot be
+ * addressed later, so they yield undefined rather than a bogus id.
+ */
+export function messageIdFromKey(key: string | null | undefined): number | undefined {
+  if (!key || !key.startsWith('db-')) return undefined
+  const id = Number(key.slice(3))
+  return Number.isFinite(id) && id > 0 ? id : undefined
 }
 
 /** Build one prompt from an optional overall question and ordered quoted selections. */

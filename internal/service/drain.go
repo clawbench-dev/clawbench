@@ -329,9 +329,15 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 // filePathsFromFiles extracts the file paths from FileEntry list for the
 // queue_drain event payload (the frontend drains by queueId; filePaths keep
 // the legacy field populated).
+//
+// Quote entries are skipped: their Path is a label (often empty), and emitting
+// it would surface a bogus "" path in the legacy channel.
 func filePathsFromFiles(files []model.FileEntry) []string {
 	paths := make([]string, 0, len(files))
 	for _, f := range files {
+		if f.IsQuote() {
+			continue
+		}
 		paths = append(paths, f.Path)
 	}
 	return paths
