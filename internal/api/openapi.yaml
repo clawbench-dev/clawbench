@@ -3140,9 +3140,15 @@ paths:
       tags: [Terminal]
       summary: 终端可用状态
       description: |
-        返回 `enabled`、`platform_supported`、`sessions`、`session_count`；
+        返回 `enabled`、`platform_supported`、`cwd_probe_supported`、`sessions`、`session_count`；
         带 `session` 查询参数时另返回 `hasSession`/`sessionId`/`cwd`/`running`。
         取代已移除的 `/api/terminal/config`。
+
+        `cwd` 是 shell 的**实时**工作目录：由后端读取 PTY 前台进程组的 `/proc/<pid>/cwd`
+        得到，因此会跟随 `cd`（含嵌套子 shell）。`cwd_probe_supported` 表示该探测在当前
+        **服务端**平台是否可用（仅 Linux/Android；macOS 需 cgo libproc，Windows 无 PTY）；
+        为 false 时 `cwd` 退化为会话启动目录。这是服务端能力，前端不可用
+        `navigator.userAgent` 推断（浏览器与服务端可能不同平台）。
       operationId: terminalStatus
       responses:
         "200":
