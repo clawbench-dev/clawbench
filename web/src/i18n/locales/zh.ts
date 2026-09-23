@@ -1064,6 +1064,19 @@ export default {
     clearUnread: '全部标为已读',
     actionFailed: '操作失败',
     actionFailedDetail: '操作失败: {error}',
+    // Advisory hint shown before the manual create form. The example is a
+    // plain everyday request (a daily report) rather than developer jargon, so
+    // it reads as "AI can schedule anything" — and the command shown is the
+    // real built-in "/cb-task" (a "/task" shorthand does not exist and would
+    // be forwarded to the agent as an unknown command).
+    createHint: {
+      title: '使用 AI 管理任务更便捷',
+      desc: '在对话中直接说出你想让 AI 定时做什么，它就会帮你创建好任务，不用逐项填表单。',
+      exampleLabel: '比如在对话中输入：',
+      exampleCommand: '/cb-task 每天下午6点帮我把今天的工作整理成日报',
+      manual: '我要手动创建',
+      dontShowAgain: '不再提示',
+    },
     overview: {
       showPrompt: '展开提示词',
       hidePrompt: '收起提示词',

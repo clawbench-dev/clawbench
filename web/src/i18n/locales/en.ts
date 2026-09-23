@@ -1061,6 +1061,19 @@ export default {
     clearUnread: 'Mark all read',
     actionFailed: 'Action failed',
     actionFailedDetail: 'Action failed: {error}',
+    // Advisory hint shown before the manual create form. The example is a
+    // plain everyday request (a daily report) rather than developer jargon, so
+    // it reads as "AI can schedule anything" — and the command shown is the
+    // real built-in "/cb-task" (a "/task" shorthand does not exist and would
+    // be forwarded to the agent as an unknown command).
+    createHint: {
+      title: 'Managing tasks with AI is easier',
+      desc: 'Just say what you want the AI to do on a schedule — it creates the task for you, no form filling required.',
+      exampleLabel: 'For example, type this in chat:',
+      exampleCommand: '/cb-task turn my work today into a daily report every day at 6pm',
+      manual: 'Create manually',
+      dontShowAgain: "Don't show again",
+    },
     overview: {
       showPrompt: 'Show prompt',
       hidePrompt: 'Collapse prompt',
