@@ -59,6 +59,10 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 			// An event task always watches its project's bound repository, so
 			// there is no repository parameter.
 			EventTypes string `json:"event_types"`
+			// Script is an optional pre-AI shell script (cron tasks only).
+			Script string `json:"script"`
+			// ScriptTimeout bounds Script in seconds; 0 means the default.
+			ScriptTimeout int `json:"script_timeout"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -87,18 +91,28 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 		if req.RepeatMode == "" {
 			req.RepeatMode = "unlimited"
 		}
+		// A negative timeout is not a value the executor can honor: it would be
+		// stored as-is and silently collapse to the 300s default at run time, so
+		// the API would accept a value it does not actually apply. 0 is valid —
+		// the contract defines it as "use the default".
+		if req.ScriptTimeout < 0 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskScriptTimeoutInvalid")
+			return
+		}
 
 		task := &model.ScheduledTask{
-			ProjectPath: projectPath,
-			Name:        req.Name,
-			CronExpr:    req.CronExpr,
-			AgentID:     req.AgentID,
-			Prompt:      req.Prompt,
-			RepeatMode:  req.RepeatMode,
-			MaxRuns:     req.MaxRuns,
-			SessionID:   req.SessionID,
-			TriggerMode: req.TriggerMode,
-			EventTypes:  req.EventTypes,
+			ProjectPath:   projectPath,
+			Name:          req.Name,
+			CronExpr:      req.CronExpr,
+			AgentID:       req.AgentID,
+			Prompt:        req.Prompt,
+			RepeatMode:    req.RepeatMode,
+			MaxRuns:       req.MaxRuns,
+			SessionID:     req.SessionID,
+			TriggerMode:   req.TriggerMode,
+			EventTypes:    req.EventTypes,
+			Script:        req.Script,
+			ScriptTimeout: req.ScriptTimeout,
 		}
 
 		if err := service.GlobalScheduler.AddTask(task); err != nil {
@@ -211,9 +225,17 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 			return
 		}
-		// Enrich with running executions from in-memory map
+		// Enrich with running executions from in-memory map. RunningCount counts
+		// only the AI phase (matching the list's GetRunningCounts): the script
+		// phase is not a user-visible run, but it is still listed so it can be
+		// cancelled.
 		task.RunningExecutions = service.GlobalScheduler.GetRunningExecutions(taskID)
-		task.RunningCount = len(task.RunningExecutions)
+		task.RunningCount = 0
+		for _, re := range task.RunningExecutions {
+			if re.Phase == service.RunningPhaseAI {
+				task.RunningCount++
+			}
+		}
 		writeJSON(w, http.StatusOK, task)
 
 	case http.MethodPut:
@@ -232,6 +254,14 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			// repository is always the project's binding, so it is not a
 			// per-task parameter.
 			EventTypes string `json:"event_types"`
+			// Script is an optional pre-AI shell script (cron tasks only).
+			// A pointer so "not provided" (leave unchanged) is distinguishable
+			// from "set to empty" (clear) — this endpoint is a partial update,
+			// so an unconditional assignment would let any caller that omits
+			// the field silently wipe the task's script.
+			Script *string `json:"script"`
+			// ScriptTimeout bounds Script in seconds; 0 means the default.
+			ScriptTimeout *int `json:"script_timeout"` // pointer to distinguish "not provided" from "set to 0"
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -376,6 +406,26 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		}
 		if req.EventTypes != "" {
 			task.EventTypes = req.EventTypes
+		}
+		// Script is a partial-update field like every other string above: a nil
+		// pointer means "not provided" and leaves the stored script alone, while
+		// an explicit empty string clears it. Assigning unconditionally would
+		// wipe the script for any caller that omits the key — the UI submits the
+		// whole form, but the endpoint (and the AI-facing /cb-task docs) treat
+		// this as a partial update, so a prompt-only edit would silently destroy
+		// the script.
+		if req.Script != nil {
+			task.Script = *req.Script
+		}
+		if req.ScriptTimeout != nil {
+			// Negative is rejected rather than stored-and-ignored: the executor
+			// treats a non-positive timeout as the default, so persisting -1
+			// would silently disagree with what the API accepted. 0 is valid.
+			if *req.ScriptTimeout < 0 {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskScriptTimeoutInvalid")
+				return
+			}
+			task.ScriptTimeout = *req.ScriptTimeout
 		}
 		// Only update MaxRuns if explicitly provided in the request (ISS-043).
 		// Go's JSON decoder leaves pointer fields nil when the key is absent,
@@ -549,7 +599,10 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		// instead of moving a watermark. A watermark could not express "this one
 		// read, that one not", and it would silently absorb a run that finished
 		// after the watermark was written.
-		exec.IsUnread = !readAt.Valid && exec.Status != "running"
+		//
+		// "skipped" is excluded too: a content-free skip produced no result to
+		// read, so counting it would inflate the unread badge.
+		exec.IsUnread = !readAt.Valid && exec.Status != "running" && exec.Status != "skipped"
 		executions = append(executions, exec)
 	}
 	if err := rows.Err(); err != nil {

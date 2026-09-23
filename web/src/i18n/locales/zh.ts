@@ -1165,6 +1165,13 @@ export default {
       repeatLimited: '限制次数',
       repeatUnlimited: '不限次数',
       maxRuns: '最大执行次数',
+      // Optional pre-AI script (cron tasks only). The skip semantics live in
+      // the placeholder now (the long hint paragraph was removed as too
+      // verbose); the timeout's 300s default is a placeholder, not a value.
+      script: '自定义脚本',
+      scriptPlaceholder: '可选：在 AI 之前执行的 Shell 脚本，留空则不执行。脚本以 0 退出且无输出时会跳过 AI。',
+      scriptTimeout: '脚本超时（秒）',
+      scriptTimeoutInvalid: '请输入非负整数秒数（0 表示使用默认值）',
       prompt: '提示词 (Prompt)',
       promptPlaceholder: '输入要发送给AI的提示词...',
       promptRequired: '请输入提示词',
@@ -1188,6 +1195,7 @@ export default {
       title: '执行记录',
       noExecutions: '暂无执行记录',
       noTextOutput: '无文本输出',
+      skippedHint: '已跳过，无输出',
       startingPreview: '正在连接预览…',
       manual: '手动',
       auto: '自动',
@@ -1203,7 +1211,13 @@ export default {
       detail: '执行详情',
       statusCancelled: '已取消',
       statusFailed: '失败',
+      statusSkipped: '已跳过',
+      // Label for a running row in the pre-AI script phase: it is preparing the
+      // run, not running the AI, and the task list deliberately shows it as
+      // not-running.
+      statusScriptPhase: '准备中（脚本）',
       cancelledNotice: '此执行已被取消，无输出内容',
+      skippedNotice: '脚本以 0 退出且无输出，本次已跳过 AI 执行',
       confirmDeleteExecution: '确定删除此执行记录？',
       executionDeleted: '执行记录已删除',
       confirmDeleteAll: '确定清除所有执行记录？此操作不可撤销。',

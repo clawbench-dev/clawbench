@@ -25,6 +25,14 @@ export default defineConfig({
 
   use: {
     baseURL: `http://localhost:${process.env.E2E_PORT || 20100}`,
+    // Block the PWA service worker (web/sw.js). A worker answers its own
+    // fetches, which page.route cannot intercept — and auth.fixture.ts relies
+    // on page.route to stub /api/upgrade/** so the "New Version Available"
+    // overlay never renders. With the worker registered, that stub was bypassed
+    // and the overlay (a dev build always reports has_upgrade=true) covered the
+    // app and swallowed clicks. No e2e spec exercises the worker; it is covered
+    // by unit tests.
+    serviceWorkers: 'block',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

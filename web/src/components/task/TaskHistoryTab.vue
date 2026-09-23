@@ -21,13 +21,18 @@
               <template v-if="isRunning(exec)">
                 <span class="exec-status-badge running">
                   <span class="exec-running-dot"></span>
-                  <span>{{ t('task.exec.running') }}</span>
+                  <!-- A script-phase entry is a precondition, not an AI run:
+                       it is never counted as "running" in the task list, so
+                       labelling it plainly "running" here would contradict the
+                       list. Say what it actually is. -->
+                  <span>{{ isScriptPhase(exec) ? t('task.exec.statusScriptPhase') : t('task.exec.running') }}</span>
                 </span>
                 <span class="exec-start-time">{{ formatDateTime(exec.startedAt) }}</span>
                 <span class="exec-duration" :title="formatDuration(elapsedMs(exec.startedAt))">{{ formatElapsed(exec.startedAt) }}</span>
               </template>
               <template v-else>
                 <span v-if="exec.status === 'cancelled'" class="exec-status-badge cancelled">{{ t('task.exec.statusCancelled') }}</span>
+                <span v-else-if="exec.status === 'skipped'" class="exec-status-badge skipped">{{ t('task.exec.statusSkipped') }}</span>
                 <span v-else-if="exec.status === 'failed'" class="exec-status-badge failed">{{ t('task.exec.statusFailed') }}</span>
                 <span class="exec-start-time">{{ formatDateTime(exec.createdAt) }}</span>
                 <span v-if="exec.metadata?.wallMs" class="exec-duration">{{ formatDuration(exec.metadata.wallMs) }}</span>
@@ -43,6 +48,9 @@
               </div>
               <div class="exec-summary-row">
                 <div v-if="exec.preview" class="exec-summary">{{ exec.preview }}</div>
+                <!-- A skipped run produced no AI output by design, so "no text
+                     output" would read as a failure. Say why it is empty. -->
+                <div v-else-if="exec.status === 'skipped'" class="exec-summary empty">{{ t('task.exec.skippedHint') }}</div>
                 <div v-else class="exec-summary empty">{{ t('task.exec.noTextOutput') }}</div>
               </div>
               <div v-if="exec.metadata && (exec.metadata.model || exec.metadata.inputTokens || exec.metadata.outputTokens)" class="exec-meta-row">
@@ -106,6 +114,7 @@ const {
   hasMore,
   allExecutions,
   isRunning,
+  isScriptPhase,
   isJustCompleted,
   loadExecutions,
   loadMoreExecutions,
@@ -169,6 +178,43 @@ function scheduleRunningStatusSync() {
   }, 200)
 }
 
+// ── Script-phase fallback poll ──
+// The backend emits NO task_update for the pre-AI script phase (a "running"
+// event would fire a "task started" notification for a run that may be skipped
+// silently), so the WS-driven sync above can never learn that a script started
+// or ended. Without a fallback the script-phase row would never appear, making
+// its cancel button unreachable, and a finished script's `skipped` record would
+// not show up until the next unrelated refresh.
+//
+// Gated on the task actually having a script: a task with no script keeps the
+// original event-driven design, and this component is the only poller. It is a
+// low-frequency poll while the task's history is on screen, stops on unmount,
+// and skips a tick while the page is hidden (a background tab has no user to
+// show the row to).
+const SCRIPT_POLL_MS = 5000
+let scriptPollTimer = null
+
+function startScriptPoll() {
+  if (scriptPollTimer !== null) return
+  scriptPollTimer = setInterval(() => {
+    if (document.hidden) return
+    loadRunningStatus()
+  }, SCRIPT_POLL_MS)
+}
+
+function stopScriptPoll() {
+  if (scriptPollTimer !== null) {
+    clearInterval(scriptPollTimer)
+    scriptPollTimer = null
+  }
+}
+
+/** Start the poll only for a task that has a script, stop it otherwise. */
+function syncScriptPoll() {
+  if (props.task?.script) startScriptPoll()
+  else stopScriptPoll()
+}
+
 // ── Live elapsed-time display for running executions ──
 // Ticks every second so running entries show a live "time elapsed" counter.
 const elapsedNow = ref(0)
@@ -216,6 +262,7 @@ watch(
 watch(() => props.task?.id, (newId) => {
   if (!newId) {
     stopElapsedTicker()
+    stopScriptPoll()
     return
   }
   onTaskChange()
@@ -224,7 +271,16 @@ watch(() => props.task?.id, (newId) => {
   // replay (IsNotifiableEvent keeps only completed/failed/cancelled), so the
   // live subscription alone could miss a run that started while we were away.
   loadRunningStatus()
+  // The script phase emits no task_update, so a poll is the only way its row
+  // (and a finished script's `skipped` record) can appear. Only for tasks that
+  // actually have a script. See startScriptPoll.
+  syncScriptPoll()
 }, { immediate: true })
+
+// A task's script can be added/removed by an edit while its detail is open.
+watch(() => props.task?.script, () => {
+  if (props.task?.id) syncScriptPoll()
+})
 
 // Subscribe to this task's updates. A `running` event is emitted by the
 // scheduler's OnStarted hook, so a run started after mount appears without
@@ -261,6 +317,7 @@ onUnmounted(() => {
   }
   window.removeEventListener('clawbench-reconnect', scheduleRunningStatusSync)
   stopElapsedTicker()
+  stopScriptPoll()
   onTaskChange() // Abort in-flight requests (ISS-016)
   if (observer) {
     observer.disconnect()
@@ -429,6 +486,12 @@ defineExpose({
 .exec-status-badge.cancelled {
   background: var(--bg-tertiary, #e5e7eb);
   color: var(--text-secondary, #4b5563);
+}
+/* A skip is a deliberate no-op (the script found nothing to do), not a
+   failure and not a cancellation — a neutral tint, distinct from both. */
+.exec-status-badge.skipped {
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748b;
 }
 .exec-status-badge.failed {
   background: rgba(239, 68, 68, 0.12);

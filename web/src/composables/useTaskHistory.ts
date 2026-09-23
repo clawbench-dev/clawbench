@@ -31,6 +31,12 @@ interface TaskExecution {
   /** Forge event that triggered this run, when it was event-triggered. */
   eventUrl?: string
   eventSummary?: string
+  /**
+   * Running-execution phase: "script" (the optional pre-AI script) or "ai"
+   * (the AI turn). Only present on entries from the in-memory running map
+   * (`runningExecutions`); completed DB rows have no phase.
+   */
+  phase?: string
 }
 
 interface UseTaskHistoryOptions {
@@ -72,8 +78,29 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     return exec.status === 'running'
   }
 
-  // Track previous running count to detect completions
+  /**
+   * A running entry belonging to the pre-AI script phase rather than an AI
+   * turn. The backend keys a script-phase run by a synthetic `script-<taskID>`
+   * id and marks it `phase: "script"`; the AI phase uses the session id.
+   */
+  function isScriptPhase(exec: TaskExecution): boolean {
+    return exec.phase === 'script'
+  }
+
+  // Track previous running count to detect completions.
+  // Counts the AI phase only: a script-phase run is a precondition, not an AI
+  // execution, and its end must not look like a completed AI run.
   let prevRunningCount = 0
+  // Total running count (both phases), used only to know when the DB history
+  // gained a row — a finished script leaves a `skipped`/`cancelled` record that
+  // would otherwise never be fetched.
+  let prevTotalRunning = 0
+  // Last-seen task runCount. A fast skip (`git diff --quiet`, `test -f`) can
+  // start AND finish between two 5s ticks, so it is never observed as running
+  // and the count heuristic above misses it entirely. runCount is bumped by the
+  // backend for every finished run, including script-only skips, so a change
+  // is a precise "the DB history gained a row" signal.
+  let prevRunCount: number | null = null
 
   // Track just-completed execution IDs for entry animation
   const justCompletedIds = reactive(new Set<string>())
@@ -99,6 +126,8 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     abortController.abort()
     abortController = new AbortController()
     prevRunningCount = 0
+    prevTotalRunning = 0
+    prevRunCount = null
     loadExecutionsInFlight = false
     // Clear just-completed tracking
     for (const timer of justCompletedTimers.values()) {
@@ -200,16 +229,27 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
   async function loadRunningStatus(): Promise<void> {
     if (!task.value?.id) return
     try {
-      const data = await apiGet<{ runningExecutions: TaskExecution[] }>(
+      const data = await apiGet<{ runningExecutions: TaskExecution[]; runCount?: number }>(
         `/api/tasks/${task.value.id}`,
         { signal: abortController.signal },
       )
       const newRunning = data.runningExecutions || []
-      const newCount = newRunning.length
+      // Completion bookkeeping is AI-only: a script-phase entry is not an AI
+      // execution, so it must never fire the "just completed" flash/refresh.
+      const newCount = newRunning.filter(exec => !isScriptPhase(exec)).length
+      const newTotal = newRunning.length
+      // A runCount change means a run finished and wrote a history row — the
+      // only reliable signal for a script that started and finished between
+      // two ticks (never observed as running). The count heuristics below
+      // still handle the AI phase, whose completion drives the flash.
+      const runCountChanged = prevRunCount !== null && data.runCount !== undefined && data.runCount !== prevRunCount
       // When running count decreases, an execution just completed — refresh the completed list
       if (prevRunningCount > 0 && newCount < prevRunningCount) {
         // Mark previous running executions as just-completed for entry animation
         for (const exec of runningExecutions.value) {
+          // A script-phase entry has no session to match against a DB row, and
+          // its end is not an AI completion — skip it.
+          if (isScriptPhase(exec)) continue
           const execId = String(exec.id || exec.ID || '')
           if (execId && !justCompletedIds.has(execId)) {
             justCompletedIds.add(execId)
@@ -222,8 +262,21 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
           }
         }
         reloadExecutions()
+      } else if (runCountChanged) {
+        // No running entry was ever seen, but the run count moved: a fast skip
+        // (or any run that came and went inside one poll interval) left a DB
+        // row that no task_update event will announce for the script phase.
+        reloadExecutions()
+      } else if (prevTotalRunning > 0 && newTotal < prevTotalRunning) {
+        // A script-phase run ended without an AI phase ever starting (it was
+        // skipped or cancelled). No completion effect — the run never notified
+        // — but its DB row (`skipped` / `cancelled`) must be pulled in, and no
+        // task_update event is emitted for the script phase to do it for us.
+        reloadExecutions()
       }
       prevRunningCount = newCount
+      prevTotalRunning = newTotal
+      if (data.runCount !== undefined) prevRunCount = data.runCount
       runningExecutions.value = newRunning
     } catch {
       // Silently ignore — polling will retry
@@ -322,6 +375,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     runningExecutions,
     allExecutions,
     isRunning,
+    isScriptPhase,
     isJustCompleted,
     locallyReadIds,
     loadExecutions,

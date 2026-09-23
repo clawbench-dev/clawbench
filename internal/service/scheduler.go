@@ -25,6 +25,14 @@ import (
 // GlobalScheduler is the singleton scheduler instance, set during startup.
 var GlobalScheduler *Scheduler
 
+// Running execution phases. A task run goes through "script" (the optional
+// pre-AI shell script) before "ai" (the AI turn). Only "ai" counts as a
+// user-visible run.
+const (
+	RunningPhaseScript = "script"
+	RunningPhaseAI     = "ai"
+)
+
 // RunningExecution tracks a currently executing task instance.
 type RunningExecution struct {
 	ID          string
@@ -32,6 +40,8 @@ type RunningExecution struct {
 	CancelFunc  context.CancelFunc
 	StartedAt   time.Time
 	TriggerType string // "auto" | "manual"
+	// Phase is RunningPhaseScript or RunningPhaseAI.
+	Phase string
 }
 
 // Scheduler manages cron-scheduled AI tasks.
@@ -64,6 +74,7 @@ func (s *Scheduler) Stop() {
 }
 
 // GetRunningExecutions returns the running execution views for a specific task.
+// All phases are returned so the UI can show a script-phase row too.
 func (s *Scheduler) GetRunningExecutions(taskID int64) []model.RunningExecutionView {
 	var result []model.RunningExecutionView
 	s.runningExecutions.Range(func(key, value any) bool {
@@ -78,6 +89,7 @@ func (s *Scheduler) GetRunningExecutions(taskID int64) []model.RunningExecutionV
 				ID:          exec.ID,
 				StartedAt:   exec.StartedAt,
 				TriggerType: exec.TriggerType,
+				Phase:       exec.Phase,
 			})
 		}
 		return true
@@ -86,6 +98,11 @@ func (s *Scheduler) GetRunningExecutions(taskID int64) []model.RunningExecutionV
 }
 
 // GetRunningCounts returns a map of taskID -> running execution count.
+//
+// Only "ai"-phase entries are counted. The script phase runs before the AI
+// call and is not a user-visible task run: if it were counted, the frontend's
+// useTaskTab.loadTasks would see runningCount go 0 -> 1 -> 0 and fire a false
+// "task completed" toast for a run that produced nothing.
 func (s *Scheduler) GetRunningCounts() map[int64]int {
 	counts := make(map[int64]int)
 	s.runningExecutions.Range(func(key, value any) bool {
@@ -95,7 +112,9 @@ func (s *Scheduler) GetRunningCounts() map[int64]int {
 			s.runningExecutions.Delete(key)
 			return true
 		}
-		counts[exec.TaskID]++
+		if exec.Phase == RunningPhaseAI {
+			counts[exec.TaskID]++
+		}
 		return true
 	})
 	return counts
@@ -802,6 +821,13 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Without this, the task is permanently stuck — no future execution possible (ISS-303).
 	defer s.taskRunning.Delete(task.ID)
 
+	// The context is hoisted to the top because the optional pre-AI script and
+	// the AI turn share it: cancelling the run (CancelExecution /
+	// CancelAllExecutions / graceful shutdown) must terminate whichever phase
+	// is active, including a script still running before the session exists.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	agent, ok := model.Agents[task.AgentID]
 	if !ok {
 		slog.Error(
@@ -817,6 +843,68 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	backendName := agent.Backend
 	if backendName == "" {
 		backendName = "codebuddy"
+	}
+
+	// ── Pre-AI script phase ──────────────────────────────────────────────
+	// An optional script runs BEFORE the session/AI. It lets a cron task bail
+	// out cheaply (e.g. "nothing changed") without spawning an AI turn or
+	// notifying the user. Only cron tasks have a script: an event task's
+	// prompt is driven entirely by the injected event context.
+	var scriptPromptBlock string
+	if !task.IsEventTriggered() && task.Script != "" {
+		// Register the script as a cancellable running execution so a user
+		// cancel reaches the script's context (CancelExecution looks up by the
+		// map key, hence the synthetic "script-<id>" id — there is no session
+		// to key on yet). Phase "script" keeps it out of GetRunningCounts.
+		//
+		// Deliberately NO task_update event here. A "running" task_update is a
+		// user-visible notification (browser notification; DingTalk/Feishu
+		// "任务已启动"), and a skip must emit NOTHING — a "task started" that is
+		// never followed by a result is exactly the noise this feature exists
+		// to avoid. The script row is still discoverable through
+		// GetRunningExecutions (GET /api/tasks/{id}) for the UI to label it.
+		scriptExecID := fmt.Sprintf("script-%d", task.ID)
+		s.runningExecutions.Store(scriptExecID, &RunningExecution{
+			ID:          scriptExecID,
+			TaskID:      task.ID,
+			CancelFunc:  cancel,
+			StartedAt:   time.Now(),
+			TriggerType: triggerType,
+			Phase:       RunningPhaseScript,
+		})
+
+		res := RunTaskScript(ctx, task.Script, projectPath, scriptTimeoutDuration(task.ScriptTimeout))
+		s.runningExecutions.Delete(scriptExecID)
+
+		switch res.Outcome {
+		case ScriptSkipped, ScriptCanceled:
+			status := "skipped"
+			if res.Outcome == ScriptCanceled {
+				status = "cancelled"
+			}
+			// No session exists, so the execution row carries an empty
+			// session_id (AddTaskExecutionWithStatus allows it).
+			execID, err := AddTaskExecutionWithStatus(task.ID, "", triggerType, status)
+			if err != nil {
+				slog.Error("failed to record script-skip execution",
+					slog.Int64("task_id", task.ID), slog.String("err", err.Error()))
+			}
+			s.finishScriptOnlyRun(task, status)
+			if status == "cancelled" {
+				// When the row was not written, execID is 0: emitting "0" would
+				// make the notification deep-link to a non-existent execution.
+				// An empty id tells the client there is nothing to open.
+				execIDArg := ""
+				if err == nil {
+					execIDArg = fmt.Sprintf("%d", execID)
+				}
+				emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", execIDArg, "", projectPath, task.Name)
+			}
+			// Skipped emits nothing: a content-free skip must not notify.
+			return
+		default:
+			scriptPromptBlock = buildScriptPromptBlock(res)
+		}
 	}
 
 	// Create a chat session for this execution, prefixed with clock emoji.
@@ -890,7 +978,9 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 
 	// Render the final prompt. For event-triggered runs the forge event context
 	// is prepended as a fixed, read-only block; the task's own prompt follows as
-	// the user's instruction. Cron runs use the prompt verbatim.
+	// the user's instruction. Cron runs use the prompt verbatim, with any
+	// pre-AI script output injected between the event context (if any) and the
+	// task prompt.
 	renderedPrompt := task.Prompt
 	if eventCtx != nil {
 		renderedPrompt = RenderEventContext(*eventCtx) + "\n\n" + task.Prompt
@@ -902,6 +992,13 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 					slog.Int64("execution_id", executionID), slog.String("err", err.Error()))
 			}
 		}
+	}
+	// The script output is injected before the task prompt so the AI sees the
+	// data it must act on, then the instruction. It also lands in the session
+	// history via AddChatMessage below, which is intended: the user can see
+	// exactly what the script produced.
+	if scriptPromptBlock != "" {
+		renderedPrompt = scriptPromptBlock + "\n\n" + renderedPrompt
 	}
 
 	// Write user message (the prompt)
@@ -944,8 +1041,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		ScheduledExecution: true,
 	}
 
-	// Execute AI backend (no timeout - let AI run indefinitely)
-	ctx, cancel := context.WithCancel(context.Background())
+	// Execute AI backend (no timeout - let AI run indefinitely). ctx/cancel were
+	// created at the top of the function and are shared with the script phase.
 
 	// Adopt this execution into the session registry so a user cancel actually
 	// reaches it, and mark the session running in the same step.
@@ -973,11 +1070,11 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		CancelFunc:  cancel,
 		StartedAt:   time.Now(),
 		TriggerType: triggerType,
+		Phase:       RunningPhaseAI,
 	}
 	s.runningExecutions.Store(sessionID, running)
 	defer func() {
 		s.runningExecutions.Delete(sessionID)
-		cancel()
 	}()
 
 	// Run the turn through the shared implementation. The scheduler emits its
@@ -1186,24 +1283,61 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Update task execution stats
 	// Read current DB status to avoid overwriting user-initiated changes (e.g. pause).
 	// See ISS-013: using task.Status (in-memory snapshot) can revert "paused" back to "active".
-	var currentStatus string
-	if err := dbRead.QueryRow("SELECT status FROM scheduled_tasks WHERE id = ?", task.ID).Scan(&currentStatus); err != nil {
-		slog.Warn("failed to read current task status, falling back to snapshot", "error", err)
-		currentStatus = task.Status
+	newStatus := s.advanceTaskAfterRun(task)
+	if task.IsEventTriggered() {
+		slog.Info("event task execution completed",
+			slog.Int64("task_id", task.ID),
+			slog.String("session_id", sessionID))
+		return
 	}
-	newStatus := currentStatus
 
+	slog.Info(
+		"task execution completed",
+		slog.Int64("task_id", task.ID),
+		slog.String("session_id", sessionID),
+		slog.String("status", newStatus),
+	)
+
+	// Generate summary asynchronously — use the shared summarizeMessage so that
+	// tasks follow the exact same strategy as interactive chat
+	// (respecting chatSummaryMode, AI with simple fallback). Keyed by the
+	// assistant message ID (runResult.MsgID), same as interactive chat sessions.
+	// This unifies the summary storage model so ContinueFromExecution no longer
+	// needs to convert between target_types.
+	if finalRunResult.MsgID > 0 {
+		_ = summarizeMessage(finalRunResult.MsgID, finalRunResult.Blocks, task.ProjectPath, sessionID)
+	}
+}
+
+// advanceTaskAfterRun applies the post-run bookkeeping shared by the AI
+// completion path and the script-only (skipped) path: run_count, last_run_at,
+// next_run_at and the repeat-mode-driven status transition. Sharing it is what
+// keeps a task's schedule from drifting between a run that reached the AI and
+// one that was skipped before it.
+//
+// It returns the resulting task status.
+//
+// Callers that aborted the run before it produced a result (a user cancel)
+// must NOT use this: they record the run with UpdateTaskStats instead, matching
+// the AI-phase cancel path. See the cancel branch in executeTask.
+func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask) string {
 	// Event-triggered tasks do not participate in cron completion semantics:
 	// there is no next cron run and no repeat-mode exhaustion. They simply record
 	// the run and stay active so the next matching event fires again.
 	if task.IsEventTriggered() {
 		_, _ = WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, run_count = run_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			time.Now(), task.ID)
-		slog.Info("event task execution completed",
-			slog.Int64("task_id", task.ID),
-			slog.String("session_id", sessionID))
-		return
+		return task.Status
 	}
+
+	// Read current DB status to avoid overwriting user-initiated changes (e.g. pause).
+	// See ISS-013: using task.Status (in-memory snapshot) can revert "paused" back to "active".
+	var currentStatus string
+	if err := dbRead.QueryRow("SELECT status FROM scheduled_tasks WHERE id = ?", task.ID).Scan(&currentStatus); err != nil {
+		slog.Warn("failed to read current task status, falling back to snapshot", "error", err)
+		currentStatus = task.Status
+	}
+	newStatus := currentStatus
 
 	// Check repeat mode — for "limited", read current DB value to decide completion
 	if task.RepeatMode == "limited" {
@@ -1253,23 +1387,104 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		_, _ = WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, next_run_at = NULL, run_count = run_count + 1, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			time.Now(), newStatus, task.ID)
 	}
+	return newStatus
+}
 
-	slog.Info(
-		"task execution completed",
-		slog.Int64("task_id", task.ID),
-		slog.String("session_id", sessionID),
-		slog.String("status", newStatus),
-	)
+// scriptOutputCap bounds how much of the script's stdout/stderr is injected
+// into the prompt, so a runaway script cannot blow up the context. It is also
+// the cap applied at capture time by cappedBuffer, so the two cannot drift.
+const scriptOutputCap = 64 * 1024
 
-	// Generate summary asynchronously — use the shared summarizeMessage so that
-	// tasks follow the exact same strategy as interactive chat
-	// (respecting chatSummaryMode, AI with simple fallback). Keyed by the
-	// assistant message ID (runResult.MsgID), same as interactive chat sessions.
-	// This unifies the summary storage model so ContinueFromExecution no longer
-	// needs to convert between target_types.
-	if finalRunResult.MsgID > 0 {
-		_ = summarizeMessage(finalRunResult.MsgID, finalRunResult.Blocks, task.ProjectPath, sessionID)
+// scriptTruncationMarker is appended in place of the dropped tail when a
+// stream is cut, so the model knows the output it sees is incomplete.
+const scriptTruncationMarker = "\n…[output truncated]"
+
+// finishScriptOnlyRun applies the bookkeeping for a run that ended in the
+// script phase and never reached the AI.
+//
+// A skip is a completed decision ("nothing to do"), so it advances the
+// schedule exactly as a completed run would and the task keeps ticking. A
+// cancel is an aborted run, not a decision: it records the run via
+// UpdateTaskStats and leaves status and next_run_at alone, matching the
+// AI-phase cancel path (ISS-013) — otherwise cancelling a `once` task during
+// its script would burn the single run and mark the task completed without the
+// AI ever executing.
+func (s *Scheduler) finishScriptOnlyRun(task *model.ScheduledTask, status string) {
+	if status == "cancelled" {
+		UpdateTaskStats(task)
+		slog.Info("task run cancelled in script phase",
+			slog.Int64("task_id", task.ID),
+			slog.String("run_status", status),
+		)
+		return
 	}
+	newStatus := s.advanceTaskAfterRun(task)
+	slog.Info(
+		"task run ended in script phase",
+		slog.Int64("task_id", task.ID),
+		slog.String("run_status", status),
+		slog.String("task_status", newStatus),
+	)
+}
+
+// buildScriptPromptBlock renders the script result into a delimited block that
+// is injected into the prompt. A successful run injects its stdout then stderr;
+// a failure/timeout injects the error text (with whatever output was produced).
+func buildScriptPromptBlock(res ScriptResult) string {
+	var b strings.Builder
+	b.WriteString("<<<TASK_SCRIPT_OUTPUT>>>\n")
+	switch res.Outcome {
+	case ScriptFailed, ScriptTimedOut:
+		if res.Outcome == ScriptTimedOut {
+			b.WriteString("The task script timed out.\n")
+		} else {
+			fmt.Fprintf(&b, "The task script failed (exit code %d).\n", res.ExitCode)
+		}
+		if res.Err != nil {
+			b.WriteString(res.Err.Error())
+			b.WriteString("\n")
+		}
+		if out := truncateScriptOutput(res.Stdout, res.StdoutTruncated); out != "" {
+			b.WriteString("--- stdout ---\n")
+			b.WriteString(out)
+			b.WriteString("\n")
+		}
+		if errOut := truncateScriptOutput(res.Stderr, res.StderrTruncated); errOut != "" {
+			b.WriteString("--- stderr ---\n")
+			b.WriteString(errOut)
+			b.WriteString("\n")
+		}
+	default: // ScriptProduced
+		if out := truncateScriptOutput(res.Stdout, res.StdoutTruncated); out != "" {
+			b.WriteString(out)
+			b.WriteString("\n")
+		}
+		if errOut := truncateScriptOutput(res.Stderr, res.StderrTruncated); errOut != "" {
+			b.WriteString("--- stderr ---\n")
+			b.WriteString(errOut)
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("<<<END_TASK_SCRIPT_OUTPUT>>>")
+	return b.String()
+}
+
+// truncateScriptOutput caps a script stream at scriptOutputCap bytes, appending
+// a marker when it was cut so the model knows the output is incomplete.
+//
+// This is a second line of defense only: cappedBuffer already bounds the
+// capture, and `truncated` is its record of having dropped bytes. Deriving the
+// marker from len(s) >= cap instead would false-positive on a stream that
+// happened to end exactly at the cap, and would also miss the case where the
+// marker is itself part of the retained prefix.
+func truncateScriptOutput(s string, truncated bool) string {
+	if !truncated && len(s) <= scriptOutputCap {
+		return strings.TrimRight(s, "\n")
+	}
+	if len(s) > scriptOutputCap {
+		s = s[:scriptOutputCap]
+	}
+	return strings.TrimRight(s, "\n") + scriptTruncationMarker
 }
 
 // GetTasks retrieves all tasks for a project path. If projectPath is empty, retrieves all tasks.
@@ -1279,20 +1494,20 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 	var args []interface{}
 
 	if projectPath == "" {
-		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
+		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
-			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') AS unread_count
+			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) AS unread_count
 			FROM scheduled_tasks s ORDER BY s.created_at DESC`
 	} else {
-		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
+		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
-			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') AS unread_count
+			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) AS unread_count
 			FROM scheduled_tasks s WHERE s.project_path = ? ORDER BY s.created_at DESC`
 		args = []interface{}{projectPath}
 	}
@@ -1306,7 +1521,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 	for rows.Next() {
 		var t model.ScheduledTask
 		var lastRun, nextRun, lastRead sql.NullTime
-		if err := rows.Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.Script, &t.ScriptTimeout, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRun.Valid {
@@ -1328,15 +1543,15 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 	var t model.ScheduledTask
 	var lastRun, nextRun, lastRead sql.NullTime
 	err := dbRead.QueryRow(
-		`SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
+		`SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 		s.trigger_mode, s.event_types,
 		s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 		s.last_read_at, s.created_at, s.updated_at,
 		(SELECT COUNT(*) FROM task_executions e
-		 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') AS unread_count
+		 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) AS unread_count
 		FROM scheduled_tasks s WHERE s.id = ?`,
 		id,
-	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
+	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.Script, &t.ScriptTimeout, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
 	if err != nil {
 		return nil, err
 	}
@@ -1355,9 +1570,9 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 // insertTask inserts a new task into the database and sets the auto-generated ID.
 func insertTask(task *model.ScheduledTask) error {
 	result, err := WriteExec(
-		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ProjectPath, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
+		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, script, script_timeout, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ProjectPath, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -1373,8 +1588,8 @@ func insertTask(task *model.ScheduledTask) error {
 // updateTask updates an existing task in the database.
 func updateTask(task *model.ScheduledTask) error {
 	_, err := WriteExec(
-		`UPDATE scheduled_tasks SET name=?, cron_expr=?, agent_id=?, prompt=?, session_id=?, trigger_mode=?, event_types=?, status=?, repeat_mode=?, max_runs=?, next_run_at=?, run_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.ID,
+		`UPDATE scheduled_tasks SET name=?, cron_expr=?, agent_id=?, prompt=?, script=?, script_timeout=?, session_id=?, trigger_mode=?, event_types=?, status=?, repeat_mode=?, max_runs=?, next_run_at=?, run_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.ID,
 	)
 	return err
 }
@@ -1385,6 +1600,21 @@ func AddTaskExecution(taskID int64, sessionID string, triggerType string) (int64
 	result, err := WriteExec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status) VALUES (?, ?, ?, 'running')",
 		taskID, sessionID, triggerType,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+// AddTaskExecutionWithStatus records a task execution with an explicit status.
+// Unlike AddTaskExecution it accepts an empty sessionID, which the script
+// skip/cancel paths need: those runs never create a chat session, so the
+// execution row has no session to point at.
+func AddTaskExecutionWithStatus(taskID int64, sessionID, triggerType, status string) (int64, error) {
+	result, err := WriteExec(
+		"INSERT INTO task_executions (task_id, session_id, trigger_type, status) VALUES (?, ?, ?, ?)",
+		taskID, sessionID, triggerType, status,
 	)
 	if err != nil {
 		return 0, err
@@ -1550,14 +1780,14 @@ func HasUnreadTasks(projectPath string) (bool, error) {
 		err = dbRead.QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
 			 WHERE (SELECT COUNT(*) FROM task_executions e
-			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') > 0`,
+			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) > 0`,
 		).Scan(&count)
 	} else {
 		err = dbRead.QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
 			 WHERE s.project_path = ?
 			 AND (SELECT COUNT(*) FROM task_executions e
-			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') > 0`,
+			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) > 0`,
 			projectPath,
 		).Scan(&count)
 	}

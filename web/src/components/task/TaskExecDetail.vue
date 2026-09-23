@@ -49,6 +49,7 @@
         @render-flush="scrollToBottom"
       />
       <div v-else-if="execDetail?.status === 'cancelled'" class="exec-cancelled-notice">{{ t('task.exec.cancelledNotice') }}</div>
+      <div v-else-if="execDetail?.status === 'skipped'" class="exec-skipped-notice">{{ t('task.exec.skippedNotice') }}</div>
       <div v-else class="exec-detail-empty">{{ isRunning ? t('task.exec.startingPreview') : t('task.exec.noTextOutput') }}</div>
     </div>
 
@@ -185,9 +186,14 @@ const execStream = useTaskExecStream({
   },
 })
 const showContinueBtn = computed(() => {
-  // Show button for completed or cancelled executions, not for running ones
-  const status = props.execDetail?.status
-  return status && status !== 'running' && props.taskId && props.execDetail?.id
+  // Continuing needs a source session to fork from. Both script-phase outcomes
+  // — `skipped` and `cancelled` — are recorded with an empty sessionId (the
+  // script ended before any session was created), and a running execution has
+  // nothing to continue yet. Gate on the session id rather than enumerating
+  // statuses: the status list would have to grow with every future terminal
+  // state, and missing one fails server-side with "source session not found".
+  if (isRunning.value || !props.execDetail?.sessionId) return false
+  return !!(props.taskId && props.execDetail?.id)
 })
 
 async function onTerminate() {
@@ -842,6 +848,16 @@ onUnmounted(() => {
 }
 
 .exec-cancelled-notice {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--text-muted, #999);
+  font-style: italic;
+  font-size: var(--font-size-lg);
+}
+
+/* A skipped run is a deliberate no-op, not an error — same treatment as the
+   cancelled notice, but kept as its own class so the two can diverge. */
+.exec-skipped-notice {
   padding: 3rem 1rem;
   text-align: center;
   color: var(--text-muted, #999);

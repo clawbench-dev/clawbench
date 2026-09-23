@@ -1162,6 +1162,13 @@ export default {
       repeatLimited: 'Limited runs',
       repeatUnlimited: 'Unlimited runs',
       maxRuns: 'Max runs',
+      // Optional pre-AI script (cron tasks only). The skip semantics live in
+      // the placeholder now (the long hint paragraph was removed as too
+      // verbose); the timeout's 300s default is a placeholder, not a value.
+      script: 'Custom script',
+      scriptPlaceholder: 'Optional: a shell script that runs before the AI. Leave empty to skip. If it exits 0 with no output, the AI is skipped.',
+      scriptTimeout: 'Script timeout (seconds)',
+      scriptTimeoutInvalid: 'Enter a non-negative whole number of seconds (0 uses the default)',
       prompt: 'Prompt',
       promptPlaceholder: 'Enter the prompt to send to AI...',
       promptRequired: 'Prompt is required',
@@ -1185,6 +1192,7 @@ export default {
       title: 'Execution log',
       noExecutions: 'No executions',
       noTextOutput: 'No text output',
+      skippedHint: 'Skipped — no output',
       startingPreview: 'Connecting preview…',
       manual: 'Manual',
       auto: 'Auto',
@@ -1200,7 +1208,13 @@ export default {
       detail: 'Execution detail',
       statusCancelled: 'Cancelled',
       statusFailed: 'Failed',
+      statusSkipped: 'Skipped',
+      // Label for a running row in the pre-AI script phase: it is preparing the
+      // run, not running the AI, and the task list deliberately shows it as
+      // not-running.
+      statusScriptPhase: 'Preparing (script)',
       cancelledNotice: 'This execution was cancelled. No output available.',
+      skippedNotice: 'The script exited 0 with no output, so the AI was skipped for this run.',
       confirmDeleteExecution: 'Delete this execution record?',
       executionDeleted: 'Execution record deleted',
       confirmDeleteAll: 'Clear all execution records? This cannot be undone.',

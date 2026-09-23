@@ -416,6 +416,162 @@ describe('useTaskHistory', () => {
     })
   })
 
+  describe('loadRunningStatus — script phase', () => {
+    it('does not treat a script-phase end as an AI completion', async () => {
+      const { history } = createHistory()
+
+      // First poll: only the pre-AI script is running.
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) return Promise.resolve({ executions: [], hasMore: false })
+        return Promise.resolve({
+          runningExecutions: [
+            { id: 'script-task-1', startedAt: '2026-01-01T00:00:00Z', triggerType: 'auto', phase: 'script' },
+          ],
+        })
+      })
+      await history.loadRunningStatus()
+
+      // Second poll: the script finished. No AI run ever started.
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) return Promise.resolve({ executions: [], hasMore: false })
+        return Promise.resolve({ runningExecutions: [] })
+      })
+      await history.loadRunningStatus()
+
+      // No AI execution completed, so no "just completed" flash may be set —
+      // a skip is silent by design.
+      expect(history.isJustCompleted({ sessionId: 'script-task-1' })).toBe(false)
+      expect(history.isJustCompleted({ sessionId: 'anything' })).toBe(false)
+    })
+
+    it('counts only the AI phase when detecting a completion', async () => {
+      const { history } = createHistory()
+
+      // First poll: script + AI running together.
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) return Promise.resolve({ executions: [], hasMore: false })
+        return Promise.resolve({
+          runningExecutions: [
+            { id: 'script-task-1', startedAt: '2026-01-01T00:00:00Z', triggerType: 'auto', phase: 'script' },
+            { id: 'session-abc', startedAt: '2026-01-01T00:00:00Z', triggerType: 'auto', phase: 'ai' },
+          ],
+        })
+      })
+      await history.loadRunningStatus()
+
+      // Second poll: the script ended but the AI turn is still going. The
+      // AI-only count is unchanged, so this is not a completion.
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) return Promise.resolve({ executions: [], hasMore: false })
+        return Promise.resolve({
+          runningExecutions: [
+            { id: 'session-abc', startedAt: '2026-01-01T00:00:00Z', triggerType: 'auto', phase: 'ai' },
+          ],
+        })
+      })
+      await history.loadRunningStatus()
+
+      expect(history.isJustCompleted({ sessionId: 'session-abc' })).toBe(false)
+    })
+
+    it('refreshes the completed list when a skipped script leaves a record', async () => {
+      const { history } = createHistory()
+
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) return Promise.resolve({ executions: [], hasMore: false })
+        return Promise.resolve({
+          runningExecutions: [
+            { id: 'script-task-1', startedAt: '2026-01-01T00:00:00Z', triggerType: 'auto', phase: 'script' },
+          ],
+        })
+      })
+      await history.loadRunningStatus()
+      mockApiGet.mockClear()
+
+      // The script ends: no task_update is emitted for the script phase, so the
+      // polling sync must pull in the new `skipped` row itself.
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) {
+          return Promise.resolve({
+            executions: [
+              { id: 40, sessionId: '', status: 'skipped', content: '', createdAt: '2026-01-01T00:05:00Z', isUnread: false },
+            ],
+            hasMore: false,
+          })
+        }
+        return Promise.resolve({ runningExecutions: [] })
+      })
+      await history.loadRunningStatus()
+
+      const execCalls = mockApiGet.mock.calls.filter((c: any[]) => String(c[0]).includes('/executions?limit=10'))
+      expect(execCalls.length).toBeGreaterThanOrEqual(1)
+      expect(history.executions.value.some(e => e.status === 'skipped')).toBe(true)
+    })
+
+    it('exposes the phase on a running entry', async () => {
+      const { history } = createHistory()
+      mockApiGet.mockResolvedValue({
+        runningExecutions: [
+          { id: 'script-task-1', startedAt: '2026-01-01T00:00:00Z', triggerType: 'auto', phase: 'script' },
+        ],
+      })
+      await history.loadRunningStatus()
+
+      expect(history.runningExecutions.value[0].phase).toBe('script')
+      expect(history.isScriptPhase(history.runningExecutions.value[0])).toBe(true)
+    })
+
+    it('refreshes the list when runCount changes without any observed running entry', async () => {
+      const { history } = createHistory()
+
+      // First poll: nothing running, runCount 5.
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) return Promise.resolve({ executions: [], hasMore: false })
+        return Promise.resolve({ runningExecutions: [], runCount: 5 })
+      })
+      await history.loadRunningStatus()
+      mockApiGet.mockClear()
+
+      // Second poll: still nothing running — the skip started AND finished
+      // between ticks — but runCount advanced to 6.
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) {
+          return Promise.resolve({
+            executions: [
+              { id: 41, sessionId: '', status: 'skipped', content: '', createdAt: '2026-01-01T00:05:00Z', isUnread: false },
+            ],
+            hasMore: false,
+          })
+        }
+        return Promise.resolve({ runningExecutions: [], runCount: 6 })
+      })
+      await history.loadRunningStatus()
+
+      // The count heuristic can never see this run, so runCount must drive the
+      // reload — otherwise the `skipped` row stays invisible.
+      const execCalls = mockApiGet.mock.calls.filter((c: any[]) => String(c[0]).includes('/executions?limit=10'))
+      expect(execCalls.length).toBeGreaterThanOrEqual(1)
+      expect(history.executions.value.some(e => e.status === 'skipped')).toBe(true)
+    })
+
+    it('does not reload when runCount is unchanged and nothing was running', async () => {
+      const { history } = createHistory()
+
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('/executions')) return Promise.resolve({ executions: [], hasMore: false })
+        return Promise.resolve({ runningExecutions: [], runCount: 5 })
+      })
+      await history.loadRunningStatus()
+      mockApiGet.mockClear()
+
+      // Nothing changed at all: a steady poll must not churn the history list.
+      await history.loadRunningStatus()
+
+      const execCalls = mockApiGet.mock.calls.filter((c: any[]) => String(c[0]).includes('/executions?limit=10'))
+      expect(execCalls.length).toBe(0)
+    })
+  })
+
   describe('cancelExecution', () => {
     it('calls apiPut with cancel action', async () => {
       const { history } = createHistory()
