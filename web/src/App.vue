@@ -533,7 +533,7 @@ import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { flashElement } from './utils/domFlash'
-import { useGlobalEvents, plainPreview, type ServerEvent } from './composables/useGlobalEvents'
+import { useGlobalEvents, plainPreview, type ServerEvent, type ForgeEventIdentity } from './composables/useGlobalEvents'
 import { eventKindLabel, unreadReasonLabel } from './utils/forgeEventLabels'
 
 /** Payload carried by a server event (see useGlobalEvents). */
@@ -567,6 +567,9 @@ import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
+import { setPendingForgeTarget, clearPendingForgeTarget } from './composables/useForgeNavigation.ts'
+import type { ForgeTarget } from './composables/useForgeNavigation.ts'
+import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
@@ -1009,21 +1012,37 @@ function handleOpenTask(e: Event) {
 }
 
 /** Payload of the `clawbench-open-forge` event (forge system notification tap). */
-interface OpenForgeDetail { projectPath?: string }
+interface OpenForgeDetail { projectPath?: string; target?: ForgeTarget }
 
 /**
  * Handle clawbench-open-forge — dispatched when a forge (GitHub/GitLab) system
- * notification is clicked.
+ * notification is clicked, or when the in-app completion card is tapped.
  *
  * The forge panel is project-scoped: it shows the repository bound to the
  * ACTIVE project. A change in a repository bound by another project must
  * therefore switch projects first, or the user lands on a panel that has no
- * such row (and the notification looks like a lie). The panel has no item-level
- * deep link, so the destination is the Issues & PRs tab either way.
+ * such row (and the notification looks like a lie).
+ *
+ * The item to open is published as a module-level pending target rather than
+ * passed down as a prop: the panel is mounted lazily and, when the forge tab is
+ * already active, `switchTab` is a no-op — so the ref itself is the only signal
+ * that reaches it. See useForgeNavigation.
  */
 function handleOpenForge(e: Event) {
   const detail = (e as CustomEvent<OpenForgeDetail>).detail
   const projectPath = detail?.projectPath
+  const target = detail?.target
+
+  // Publish the target before switching tabs so the panel sees it whichever
+  // path it takes to become visible (mount, activation, or ref change).
+  //
+  // The target is stamped with the project it belongs to. Without a concrete
+  // destination the panel's own project gate has nothing to compare against and
+  // a still-mounted old-project panel would consume a target meant for another
+  // project. `projectPath` here is the attribution the server sent; empty means
+  // "whatever project is active", which is exactly the same-project case.
+  if (target) setPendingForgeTarget({ ...target, projectPath })
+
   if (!projectPath || projectPath === store.state.projectRoot) {
     // Same project (or the event carried no attribution): nothing to switch.
     switchTab('forge')
@@ -1034,8 +1053,17 @@ function handleOpenForge(e: Event) {
   // the attempt settles either way. That is also the right fallback: the user
   // lands on the forge panel they can actually see, instead of nothing happening.
   hotSwitchProject(projectPath)
+    .then(() => {
+      // The switch was refused (project gone / not under the configured roots),
+      // so the panel that is actually on screen is the CURRENT project's — which
+      // cannot hold this item. Drop the target rather than leave it armed: it
+      // would otherwise fire on some later activation whose project happened to
+      // match.
+      if (store.state.projectRoot !== projectPath) clearPendingForgeTarget()
+    })
     .catch(() => {
       appLog.w(TAG, 'clawbench-open-forge: project switch threw, opening current project')
+      clearPendingForgeTarget()
     })
     .finally(() => switchTab('forge'))
 }
@@ -1289,6 +1317,35 @@ const TASK_STATUS_META: Record<string, { label: string; tone: 'success' | 'dange
     cancelled: { label: 'chat.push.taskCancelled', tone: 'warning' },
 }
 
+/**
+ * Build the deep-link target for a forge completion card / system notification.
+ *
+ * The opaque read key is built by forgeTargetItemKey so its shape cannot drift
+ * from the Go side's forge.ItemKey: an issue/PR key is "<type>/<number>", a
+ * pipeline's is "pipeline/run:<id>" (its number is always 0).
+ *
+ * Returns undefined when the event carries no usable item type — the card then
+ * only raises the forge panel, which is the pre-deep-link behaviour.
+ */
+function forgeTargetFromEvent(
+    ev: ForgeEventIdentity,
+    data: NonNullable<ServerEventData>,
+    projectPath: string | undefined,
+    num: number | undefined,
+): ForgeTarget | undefined {
+    const type = ev.item_type || data.item?.type
+    if (type !== 'issue' && type !== 'pr' && type !== 'pipeline') return undefined
+    const number = num || 0
+    const runId = ev.run_id || 0
+    return {
+        projectPath: projectPath || undefined,
+        type,
+        number,
+        runId,
+        itemKey: forgeTargetItemKey(type, number, runId),
+    }
+}
+
 function handleCompletionEvent(event: string, data: ServerEventData, skipReplay = false) {
     if (!data) return
     // 重放阶段（页面刷新/断线重连补发的历史）不弹：
@@ -1320,6 +1377,10 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
         // 逐条排队会把队列堵死。groupKey 用仓库标识而非条目——用户关心的是
         // "这个仓库有动静"，不是每一个议题各弹一次。
         const groupKey = `forge:${slug}`
+        // 条目级已读键与跳转目标由同一个 helper 构造，二者天然一致（都与后端
+        // forge.ItemKey 的格式对齐）。流水线的身份是 run id（number 恒为 0），
+        // 键形如 "pipeline/run:<id>"。
+        const forgeTarget = forgeTargetFromEvent(ev, data, forgeProjectPath, num)
         completionPopover.push({
             groupKey,
             kind: 'forge',
@@ -1331,11 +1392,9 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
             eventTone: 'info',
             title: slug,
             body: data.item?.title || reason,
-            // 条目级已读键。流水线没有可派生的 run id（真实 id 未下发），
-            // 故留空 → 该条只跳转不标记已读。
-            forgeItemKey: ev.item_type && ev.item_type !== 'pipeline' && num
-                ? `${ev.item_type}/${num}`
-                : undefined,
+            // 跳转目标（点击卡片时定位到具体条目，并由面板标记该条已读）。
+            // 事件没带可用 item_type 时为 undefined，卡片退化为"只打开面板"。
+            forgeTarget,
             projectPath: forgeProjectPath,
             projectName: forgeProjectPath ? baseName(forgeProjectPath) : '',
         })
@@ -2980,8 +3039,28 @@ onMounted(async () => {
             const nav = await getNative()?.getPendingNavigation?.()
             if (nav) {
               const parsed = JSON.parse(nav)
-              const { sessionId, taskId, executionId, projectPath } = parsed
-              if (taskId) {
+              const { sessionId, taskId, executionId, projectPath, forge, forgeTarget } = parsed
+              if (forge && forgeTarget) {
+                // Forge notification navigation. The target is published before
+                // any tab switch so the panel picks it up on whichever path it
+                // becomes visible — and stamped with its project so a
+                // still-mounted panel of another project leaves it alone.
+                pollCleared = true
+                setPendingForgeTarget({ ...forgeTarget, projectPath })
+                if (projectPath && projectPath !== store.state.projectRoot) {
+                  hotSwitchProject(projectPath)
+                    .then(() => {
+                      // Refused switch: the panel on screen is the current
+                      // project's and cannot hold this item — drop the target
+                      // rather than leave it armed for a later activation.
+                      if (store.state.projectRoot !== projectPath) clearPendingForgeTarget()
+                    })
+                    .catch(() => clearPendingForgeTarget())
+                    .finally(() => switchTab('forge'))
+                } else {
+                  switchTab('forge')
+                }
+              } else if (taskId) {
                 // Task notification navigation
                 pollCleared = true
                 if (projectPath && projectPath !== store.state.projectRoot) {

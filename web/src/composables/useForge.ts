@@ -39,6 +39,22 @@ export function forgePipelineItemKey(runID: number): string {
     return `pipeline/run:${runID}`
 }
 
+/**
+ * The read key for any forge item, matching forge.ItemKey on the Go side.
+ *
+ * A pipeline's identity is its RUN ID, not a number: every run stores
+ * `number: 0`, so rebuilding the key from (type, number) would produce
+ * "pipeline/0" and match nothing. Taking the run id explicitly is what keeps
+ * that distinction at the call site rather than hidden in a conditional.
+ */
+export function forgeTargetItemKey(
+    type: 'issue' | 'pr' | 'pipeline',
+    number: number,
+    runId: number,
+): string {
+    return type === 'pipeline' ? forgePipelineItemKey(runId) : forgeItemKey({ type, number })
+}
+
 export type ForgeFilter = 'all' | 'assigned' | 'created' | 'review'
 
 /**

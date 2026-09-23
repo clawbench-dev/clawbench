@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import type { ForgeTarget } from '@/composables/useForgeNavigation'
 
 /**
  * 单个应用内完成通知条目。
@@ -9,7 +10,7 @@ import { ref } from 'vue'
  *
  * - kind === 'session': 会话事件，跳转到该会话
  * - kind === 'task':    任务执行事件，跳转到任务执行详情
- * - kind === 'forge':   仓库事件（议题/合并请求/流水线），跳转到议题与合并页签
+ * - kind === 'forge':   仓库事件（议题/合并请求/流水线），跳转到该条目的详情
  */
 export interface CompletionPopoverItem {
     /** 合并键：同键的 forge 条目会合并成一条"N 条新变化"，避免一次轮询刷屏 */
@@ -42,8 +43,8 @@ export interface CompletionPopoverItem {
     /** 任务 id / 执行 id（kind === 'task'） */
     taskId?: string
     executionId?: string
-    /** forge 条目级已读键（`issue/12`、`pr/7`）。流水线没有可派生的 run id，故为空 */
-    forgeItemKey?: string
+    /** forge 跳转目标（点击卡片时交给面板定位到具体条目，并标记该条已读） */
+    forgeTarget?: ForgeTarget
     /** 运行会话/任务的 agent id（渲染后端图标用） */
     agentId?: string
     /** 项目路径。仅跨项目时填充（本项目留空）——它是"外部"视觉区分的开关 */
@@ -144,7 +145,9 @@ function push(item: CompletionPopoverItem): void {
         existing.eventTone = item.eventTone
         existing.title = item.title
         existing.body = item.body
-        existing.forgeItemKey = item.forgeItemKey
+        // 合并后必须采用最新事件的目标：用户点的是"现在这条"，跳到上一个
+        // 事件的条目就错了（同 groupKey 意味着同仓库，但不是同一条）。
+        existing.forgeTarget = item.forgeTarget
         if (!active.value) showNext()
         return
     }

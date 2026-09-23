@@ -142,6 +142,39 @@ describe('showTerminalNotification', () => {
     expect((h.sent[0].nav as NotificationNav).projectPath).toBe('/p')
   })
 
+  it('carries the forge item target through to the renderer', () => {
+    // The click must deep-link to the ITEM, not just raise the tab. The target
+    // is opaque data to the main process — it is forwarded verbatim.
+    markRendererReady()
+    showTerminalNotification('owner/repo · 合并请求 #42 · 已合并', 'title', {
+      projectPath: '/p',
+      forge: true,
+      forgeTarget: { type: 'pr', number: 42, runId: 0, itemKey: 'pr/42', projectPath: '/p' },
+    })
+    clickLatest()
+
+    expect(h.sent[0].channel).toBe('clawbench-open-forge')
+    expect((h.sent[0].nav as NotificationNav).forgeTarget).toEqual({
+      type: 'pr', number: 42, runId: 0, itemKey: 'pr/42', projectPath: '/p',
+    })
+  })
+
+  it('carries a pipeline target keyed by its run id', () => {
+    // A pipeline's number is always 0, so the run id is the only identity —
+    // losing it would leave the click unable to open (or mark read) the run.
+    markRendererReady()
+    showTerminalNotification('owner/repo · 仓库流水线 · 流水线完成', 'title', {
+      projectPath: '/p',
+      forge: true,
+      forgeTarget: { type: 'pipeline', number: 0, runId: 555, itemKey: 'pipeline/run:555', projectPath: '/p' },
+    })
+    clickLatest()
+
+    const nav = h.sent[0].nav as NotificationNav
+    expect(nav.forgeTarget?.itemKey).toBe('pipeline/run:555')
+    expect(nav.forgeTarget?.runId).toBe(555)
+  })
+
   it('restores and shows a minimized window before focusing', () => {
     // Regression: the old code called focus() only, which is a no-op on a
     // minimized window (verified on Linux: isMinimized stays true). Clicking a

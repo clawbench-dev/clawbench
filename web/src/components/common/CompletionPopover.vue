@@ -103,6 +103,10 @@ const navigateLabel = computed(() => {
  *
  * 已读是 fire-and-forget：跳转不该等一个网络往返，且标记失败也不该阻止
  * 用户到达目标位置（角标会由下一次刷新自我修正）。
+ *
+ * forge 的已读不在这里做：条目级已读的前提是"知道是哪一条"，而那需要 run id
+ * 之类的条目身份，统一由面板在打开详情时用不透明的 itemKey 写入。卡片再写一遍
+ * 只会对同一次点击发两次 POST，且两个组件各自持有一份"已读"的真相。
  */
 function activate(): void {
     const item = active.value
@@ -114,7 +118,9 @@ function activate(): void {
         }))
     } else if (item.kind === 'forge') {
         window.dispatchEvent(new CustomEvent('clawbench-open-forge', {
-            detail: { projectPath: item.projectPath },
+            // 带上条目级目标，点击直接落到该条目详情而不是只打开页签。
+            // 目标缺失（事件没带 item_type）时退化为"只打开页签"。
+            detail: { projectPath: item.projectPath, target: item.forgeTarget },
         }))
     } else {
         window.dispatchEvent(new CustomEvent('clawbench-open-session', {
@@ -140,14 +146,8 @@ function markRead(item: NonNullable<typeof active.value>): void {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'read', executionId: item.executionId }),
             }).catch(() => {})
-        } else if (item.kind === 'forge' && item.forgeItemKey) {
-            // 流水线事件没有可派生的条目键（run id 未下发），只跳转不标记。
-            void fetch('/api/forge/read', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ itemKey: item.forgeItemKey }),
-            }).catch(() => {})
         }
+        // forge: 由面板打开详情时标记（见 activate 的注释）。
     } catch {
         // Non-critical
     }

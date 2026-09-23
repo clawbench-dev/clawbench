@@ -79,6 +79,13 @@ func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef
 				"item_type":  event.ItemType,
 				"number":     event.Number,
 				"event_type": event.EventType,
+				// The CI run id, for pipelines only (0 otherwise). A pipeline
+				// event carries Number 0 for every run, so without this the
+				// frontend cannot name which run changed — it could only open
+				// the Pipelines tab and leave the user to find the row. With it,
+				// the notification click can deep-link to that run's detail
+				// (and mark it read, whose key is "pipeline/run:<id>").
+				"run_id": change.PipelineRunID,
 				// The project that has this repository bound. The unread badge
 				// and the forge panel are project-scoped, so a notification
 				// clicked while another project is active must first switch to

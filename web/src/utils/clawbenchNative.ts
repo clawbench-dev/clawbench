@@ -6,6 +6,7 @@
  * synchronous Android @JavascriptInterface and an asynchronous Electron
  * ipcRenderer.invoke both work under `await`.
  */
+import type { ForgeTarget } from '@/composables/useForgeNavigation'
 
 /** Full bridge contract shared by Android and Electron. */
 export interface ClawBenchNative {
@@ -123,9 +124,15 @@ export interface NotificationNav {
   /**
    * Set for forge (GitHub/GitLab) change notifications. They carry no
    * session/task id — only `projectPath` — so the native shell needs this
-   * explicit discriminator to route the click to the Issues & PRs tab.
+   * explicit discriminator to route the click to the forge tab.
    */
   forge?: boolean
+  /**
+   * The forge item to open, so the click deep-links to the item rather than
+   * only raising the tab. Carries the opaque read key because a pipeline's
+   * number is always 0 (its identity is the run id).
+   */
+  forgeTarget?: ForgeTarget
 }
 
 const bridgeWindow = window as unknown as { ClawBenchNative?: ClawBenchNative }

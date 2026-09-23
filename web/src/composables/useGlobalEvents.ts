@@ -7,6 +7,8 @@ import { playNotificationSound } from './useNotificationSound'
 import { gt } from './useLocale'
 import { stripMarkdownPreview } from '@/utils/format'
 import { eventKindLabel, unreadReasonLabel } from '@/utils/forgeEventLabels'
+import { forgeTargetItemKey } from '@/composables/useForge'
+import type { ForgeTarget } from '@/composables/useForgeNavigation'
 import { getNative } from '@/utils/clawbenchNative'
 import { appLog } from '@/utils/appLog'
 
@@ -60,6 +62,13 @@ export interface ForgeEventIdentity {
     /** "issue" | "pr" | "pipeline" */
     item_type?: string
     number?: number
+    /**
+     * The CI run id, for a pipeline event only (0 otherwise). A pipeline's
+     * `number` is always 0, so this is the only value that names which run
+     * changed — without it the frontend cannot deep-link to (or mark read) a
+     * specific run.
+     */
+    run_id?: number
     /** "opened" | "closed" | "merged" | "reopened" | "commented" | "pipeline_done" */
     event_type?: string
     /**
@@ -530,6 +539,10 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
     let title: string
     let alert_: string
     let onClick: (() => void) | undefined
+    // The forge item this event is about, when it is a forge event with a
+    // usable identity. Hoisted out of the branch so the notification payload
+    // below (built after the branch) can carry it to the native shell.
+    let forgeTarget: ForgeTarget | undefined
 
     if (event === 'session_update') {
         const status = data.status
@@ -610,14 +623,29 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
         title = [slug, `${kind}${ref}`.trim(), reason].filter(Boolean).join(' · ')
         alert_ = item?.title || reason
 
-        // Click: open the Issues & PRs tab, switching projects first when the
-        // change belongs to a repository bound by another project. The panel has
-        // no item-level deep link, so the destination is the tab where the row
-        // and its unread badge live.
+        // Click: open THIS item's detail, switching projects first when the
+        // change belongs to a repository bound by another project (the panel is
+        // project-scoped, so the row only exists there).
+        //
+        // The target carries the opaque read key rather than (type, number): a
+        // pipeline's number is always 0, so its identity is the run id
+        // ("pipeline/run:<id>") — which the backend now sends as `run_id`
+        // precisely so a pipeline click can land on the run that changed.
         const projectPath = ev.project_path
+        const itemType = (ev.item_type || item?.type) as ForgeTarget['type'] | undefined
+        const runId = ev.run_id || 0
+        forgeTarget = itemType === 'issue' || itemType === 'pr' || itemType === 'pipeline'
+            ? {
+                projectPath,
+                type: itemType,
+                number: num || 0,
+                runId,
+                itemKey: forgeTargetItemKey(itemType, num || 0, runId),
+            }
+            : undefined
         onClick = () => {
             window.dispatchEvent(new CustomEvent('clawbench-open-forge', {
-                detail: { projectPath },
+                detail: { projectPath, target: forgeTarget },
             }))
         }
     } else {
@@ -638,6 +666,10 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
                 // shell needs an explicit discriminator — otherwise its
                 // sessionId/taskId branches both miss and the click is dropped.
                 forge: event === 'forge_event',
+                // The item to open, so the desktop shell's click deep-links
+                // instead of only raising the tab. Spread (not referenced) so
+                // the object crosses the IPC boundary as plain data.
+                ...(forgeTarget ? { forgeTarget } : {}),
             },
             onClick,
         })

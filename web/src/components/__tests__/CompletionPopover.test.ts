@@ -326,45 +326,51 @@ describe('CompletionPopover', () => {
         )
     })
 
-    it('navigating a forge issue/PR marks that item read', () => {
+    it('navigating a forge item forwards its deep-link target and does NOT mark read here', () => {
+        // 已读由面板在打开详情时写入（它持有不透明 itemKey，且流水线需要 run id）。
+        // 卡片再写一遍只会对同一次点击发两次 POST。
         mockState.active = ref(makeItem({
             kind: 'forge',
             groupKey: 'forge:acme/web',
             title: 'acme/web',
-            forgeItemKey: 'pr/42',
+            forgeTarget: { type: 'pr', number: 42, runId: 0, itemKey: 'pr/42' },
         }))
         mountPopover()
 
         const fetchMock = vi.fn().mockResolvedValue({ ok: true })
         globalThis.fetch = fetchMock
 
+        const events = captureEvents(['clawbench-open-forge'])
         document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        expect(fetchMock).toHaveBeenCalledWith(
-            '/api/forge/read',
-            expect.objectContaining({
-                method: 'POST',
-                body: JSON.stringify({ itemKey: 'pr/42' }),
-            }),
-        )
-    })
-
-    it('navigating a pipeline forge event does NOT call the forge read endpoint', () => {
-        // 流水线的 run id 未随事件下发，构造不出条目键——只能跳转，不能标记
-        mockState.active = ref(makeItem({
-            kind: 'forge',
-            groupKey: 'forge:acme/web',
-            title: 'acme/web',
-            forgeItemKey: undefined,
-        }))
-        mountPopover()
-
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
-        globalThis.fetch = fetchMock
-
-        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        events.stop()
 
         expect(fetchMock).not.toHaveBeenCalled()
+        expect(events.captured).toHaveLength(1)
+        expect(events.captured[0].detail).toEqual({
+            projectPath: undefined,
+            target: { type: 'pr', number: 42, runId: 0, itemKey: 'pr/42' },
+        })
+    })
+
+    it('navigating a pipeline forge event forwards a target keyed by its run id', () => {
+        // 流水线的身份是 run id（number 恒为 0），键形如 "pipeline/run:<id>"。
+        mockState.active = ref(makeItem({
+            kind: 'forge',
+            groupKey: 'forge:acme/web',
+            title: 'acme/web',
+            forgeTarget: { type: 'pipeline', number: 0, runId: 555, itemKey: 'pipeline/run:555' },
+        }))
+        mountPopover()
+
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
+        globalThis.fetch = fetchMock
+
+        const events = captureEvents(['clawbench-open-forge'])
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        events.stop()
+
+        expect(fetchMock).not.toHaveBeenCalled()
+        expect(events.captured[0].detail.target.itemKey).toBe('pipeline/run:555')
     })
 
     it('a failed read call does not block navigation', () => {
