@@ -251,6 +251,7 @@ export default {
     serverUnreachableApp: '无法连接到服务器，可通过设置菜单重新配置',
     serverUnreachableWeb: '无法连接到服务器，请检查后端服务是否启动',
     serverError: '服务器响应异常，后端服务可能未正确启动',
+    authFailed: '自动登录失败，请重新输入密码',
     projectLoadFailed: '项目加载失败，后端服务可能未正确启动',
     initFailed: '应用初始化失败，请重试或检查后端服务',
     fileListLoadFailed: '文件列表加载失败',

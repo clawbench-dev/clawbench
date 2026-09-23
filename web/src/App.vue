@@ -457,6 +457,7 @@ import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, define
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
+import { attemptSavedPasswordLogin } from '@/utils/savedPasswordLogin'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
 import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
@@ -2952,17 +2953,38 @@ onMounted(async () => {
     }
     if (!resp.ok) {
         if (resp.status === 401 || resp.status === 403) {
+            // Saved-password auto-login. Every failure used to fall straight to
+            // the login page with NO message, so a stale/rotated password
+            // looked like the app silently bouncing the user out.
             if (isAppMode.value && getNative()?.getPassword) {
-                const savedPwd = await getNative()?.getPassword?.()
-                if (savedPwd) {
-                    try {
-                        const loginRes = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: savedPwd }) })
-                        if (loginRes.ok) {
-                            await getNative()?.setSSHPassword?.(savedPwd)
-                        } else { isAuthenticated.value = false; dismissSplash(); return }
-                    } catch { isAuthenticated.value = false; dismissSplash(); return }
-                } else { isAuthenticated.value = false; dismissSplash(); return }
-            } else { isAuthenticated.value = false; dismissSplash(); return }
+                const outcome = await attemptSavedPasswordLogin({
+                    getSavedPassword: () => getNative()?.getPassword?.(),
+                    login: (password) => fetch('/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password }),
+                    }),
+                    persistPassword: (password) => getNative()?.setSSHPassword?.(password),
+                })
+                if (outcome === 'authenticated') {
+                    // Fall through to app initialization.
+                } else {
+                    isAuthenticated.value = false
+                    if (outcome === 'auth-failed') {
+                        toast.show(t('toast.authFailed'), { icon: '⚠️', type: 'error', duration: 5000 })
+                    } else if (outcome === 'network-error') {
+                        toast.show(t('toast.serverUnreachableApp'), { icon: '⚠️', type: 'error', duration: 5000 })
+                    }
+                    // 'no-password' needs no toast: the login page IS the
+                    // expected destination, not a failure.
+                    dismissSplash()
+                    return
+                }
+            } else {
+                isAuthenticated.value = false
+                dismissSplash()
+                return
+            }
         } else {
             isAuthenticated.value = false
             if (isAppMode.value) {

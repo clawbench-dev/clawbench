@@ -1740,15 +1740,19 @@
     }
   }
 
-  // Called by native code on connection failure
+  // Called by native code on connection failure.
+  // msg is the Chromium load-error description (e.g. "ERR_CONNECTION_REFUSED")
+  // delivered from the main process's did-fail-load handler; empty when the
+  // failure came from the page's own calls.
   function onConnectError(msg) {
     setConnecting(false);
     setConnecting(false, true);
+    var text = msg ? t('connection_failed') + msg : t('connect_error');
     var addForm = document.getElementById('addServerForm');
     if (addForm.style.display !== 'none') {
-      showError('addErrorMsg', msg || t('connect_error'));
+      showError('addErrorMsg', text);
     } else {
-      showError('errorMsg', msg || t('connect_error'));
+      showError('errorMsg', text);
       // Only show password field on auth errors (wrong password, too many attempts).
       // Network/server errors should NOT reveal the password input — the user can't
       // fix a connection issue by entering a different password.

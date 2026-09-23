@@ -6,6 +6,7 @@ import { contextMenuLabels } from './contextMenu'
 import { classifyUrl } from './urlPolicy'
 import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
+import { shouldFallBackToLogin, buildConnectErrorScript } from './loadFailure'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -116,14 +117,25 @@ export function createMainWindow(): BrowserWindow {
   // server at the configured URL), so the user is never left with a hidden window.
   const showWindow = () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show() }
   mainWindow.once('ready-to-show', showWindow)
-  mainWindow.webContents.on('did-fail-load', (_e, _code, _desc, failedUrl) => {
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDesc, failedUrl, isMainFrame) => {
     showWindow()
+    const loginUrl = pathToFileURL(loginPagePath()).toString()
+    // Subframe failures, cancelled navigations and a failure of the login page
+    // itself must not hijack the window — see shouldFallBackToLogin.
+    if (!shouldFallBackToLogin({ errorCode, failedUrl, loginUrl, isMainFrame })) return
     // Server page failed to load (unreachable) — fall back to the server-selection
     // login page so the user can pick another server instead of a blank page.
-    const loginUrl = pathToFileURL(loginPagePath()).toString()
-    if (failedUrl && failedUrl !== loginUrl) {
-      mainWindow?.loadFile(loginPagePath())
-    }
+    // loadFile resolves once the page is ready, so the failure can then be
+    // handed to the page's onConnectError() — the same hook Android calls.
+    // Without it the fallback was silent: the user got the login page back
+    // with no indication of why the connection failed.
+    void mainWindow?.loadFile(loginPagePath())
+      .then(() => {
+        const wc = mainWindow?.webContents
+        if (!wc) return
+        void wc.executeJavaScript(buildConnectErrorScript(errorDesc || ''), true)
+      })
+      .catch(() => { /* login page itself failed to load; nothing to report to */ })
   })
   setTimeout(showWindow, 2000)
 

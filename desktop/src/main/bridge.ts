@@ -4,7 +4,10 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
 import { getStore, initStore } from './store'
-import { getPassword, savePassword } from './secrets'
+import {
+  getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
+  migratePasswords, getServersForRenderer,
+} from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
 import { getMainWindow, createMainWindow, openSandboxWindow, showLoginPage } from './window'
@@ -18,6 +21,9 @@ import { classifyUrl } from './urlPolicy'
 
 export function registerBridge(): void {
   initStore()
+  // Absorb credentials written by older builds into the per-URL map before any
+  // handler can read them. Idempotent.
+  migratePasswords()
 
   ipcMain.on('native:get-language', (e) => {
     // Prefer the language the user picked in the web UI; fall back to the OS
@@ -29,35 +35,45 @@ export function registerBridge(): void {
     if (typeof lang === 'string' && lang) getStore().set('language', lang.toLowerCase())
   })
   ipcMain.handle('native:get-app-version', () => app.getVersion())
-  ipcMain.handle('native:get-server-list', () => JSON.stringify(getStore().get('servers')))
+  // Passwords are resolved per server so the login page can prefill the right
+  // one; the persisted entries keep only ciphertext (never sent to the renderer).
+  ipcMain.handle('native:get-server-list', () => JSON.stringify(getServersForRenderer()))
   ipcMain.handle('native:get-saved-server-config', () => {
     const u = getStore().get('serverUrl')
     if (!u) return '{}'
     const url = new URL(u)
-    return JSON.stringify({ protocol: url.protocol.replace(':', ''), host: url.hostname, port: url.port || '', password: getPassword() })
+    return JSON.stringify({ protocol: url.protocol.replace(':', ''), host: url.hostname, port: url.port || '', password: getPasswordFor(u) })
   })
   ipcMain.handle('native:get-server-url', () => getStore().get('serverUrl'))
   ipcMain.handle('native:get-password', () => getPassword())
 
   ipcMain.handle('native:save-server', (_e, url: string, password: string) => {
-    const servers = getStore().get('servers')
-    const idx = servers.findIndex(s => s.url === url)
-    if (idx >= 0) servers[idx].password = password
-    else servers.unshift({ url, password })
-    getStore().set('servers', servers)
+    // Writes the credential onto this server's entry (creating it if absent).
+    savePasswordFor(url, password)
   })
   ipcMain.handle('native:remove-server', (_e, url: string) => {
     getStore().set('servers', getStore().get('servers').filter(s => s.url !== url))
+    // Drop the credential with the entry, or re-adding the same URL would
+    // silently inherit a password the user believed was deleted.
+    removePasswordFor(url)
+    // Removing the active server must also retire the pointer: otherwise the
+    // next launch reconnects to a server the user just deleted.
+    if (getStore().get('serverUrl') === url) {
+      getStore().set('serverUrl', '')
+    }
   })
   ipcMain.handle('native:set-ssh-password', (_e, p: string) => savePassword(p))
   ipcMain.handle('native:connect-to-server', (_e, url: string, password: string) => {
     getStore().set('serverUrl', url)
-    if (password) savePassword(password)
+    // Always mirror the password into this URL's slot. An empty value must
+    // CLEAR it: the login page calls this when switching to a cookie-only
+    // server, and keeping the previous server's password would let the tunnel
+    // and startup auto-login authenticate with the wrong credential.
+    savePasswordFor(url, password)
     // Ensure the connected server is in the saved list so the login page shows it.
     const servers = getStore().get('servers')
     if (!servers.some(s => s.url === url)) {
-      servers.unshift({ url, password: password || '' })
-      getStore().set('servers', servers)
+      getStore().set('servers', [{ url }, ...servers])
     }
     const w = getMainWindow()
     if (w) { w.loadURL(url) }

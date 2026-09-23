@@ -248,6 +248,7 @@ export default {
     serverUnreachableApp: 'Cannot connect to server, use Settings to reconfigure',
     serverUnreachableWeb: 'Cannot connect to server, please check if the backend service is running',
     serverError: 'Server error, backend service may not be running properly',
+    authFailed: 'Auto-login failed, please enter your password again',
     projectLoadFailed: 'Project load failed, backend service may not be running properly',
     initFailed: 'App initialization failed, please retry or check the backend service',
     fileListLoadFailed: 'File list load failed',
