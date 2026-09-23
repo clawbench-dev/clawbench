@@ -21,7 +21,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | 模块 | 说明 |
 |------|------|
 | [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；15 个后端规格 |
-| [任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话，运行中流式状态展示，**异常终止自动重试**（与聊天路径共用分类器，跨轮保持 running），执行历史事件驱动（订阅 `task_update`，不再 3s 轮询），执行级逐条已读（不再切 tab 自动清零）；含事件触发任务（GitHub/GitLab 事件唤起，只读事件上下文注入（未选事件时上下文块整块隐藏），列表行与聊天预览卡均展示订阅事件而非空白 cron 字段，见 [Forge 集成](features/forge-integration.md)） |
+| [任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话，运行中流式状态展示，**异常终止自动重试**（与聊天路径共用分类器，跨轮保持 running），执行历史事件驱动（订阅 `task_update`，不再 3s 轮询），执行级逐条已读（不再切 tab 自动清零），**前置自定义脚本**（cron 可选，静默成功则跳过 AI 且不发通知，脚本阶段不计入「运行中」但可见可取消）；含事件触发任务（GitHub/GitLab 事件唤起，只读事件上下文注入（未选事件时上下文块整块隐藏），列表行与聊天预览卡均展示订阅事件而非空白 cron 字段，见 [Forge 集成](features/forge-integration.md)） |
 | [Forge 集成](features/forge-integration.md) | GitHub/GitLab Issue + PR/MR 只读浏览（仓库绑定 + 列表/详情/评论）、面板内「动态」页签（未读/已读/全部条目聚合）、后台轮询感知变化（水位线 + 快照 diff）、CI 完成事件（per-run 去重表 + 按 run 去重 debounce）、流水线 ↔ PR 双向跳转、按条目未读与通知、事件触发 AI 任务、URL 附件「引用到对话」、按 host 凭据隔离与自部署实例 http/https、下拉菜单「打开仓库」 |
 | [会话标签](features/session-tags.md) | 按项目隔离的标签定义（`UNIQUE(name, project_path)`）+ 会话关联、长按菜单打标签、会话行标签行、顶部过滤栏（仅列在用标签，可换行 + 高度封顶）、可读性校准的哈希配色、胶囊即选中控件、失败可见、PATCH 全量替换语义 |
 | [语音合成](features/tts.md) | 多引擎 TTS（云/本地），文本清理，缓存策略 |
