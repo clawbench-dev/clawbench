@@ -314,6 +314,7 @@ import { useTerminalViewport } from '@/composables/useTerminalViewport'
 import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys'
 import { useTerminalFileDrop } from '@/composables/useTerminalFileDrop'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
+import { fetchTerminalCwd } from '@/utils/terminalCwd'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { selectionCellsToSelect, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 import { useToast } from '@/composables/useToast'
@@ -817,16 +818,25 @@ const terminalDropHandlers = computed(() => {
  * `source: 'terminal'` is what makes the return label read "Back to Terminal"
  * instead of falling through to the generic "Back".
  */
-function openCurrentDirInFileManager() {
-  // The button only renders when the server can resolve a live cwd, so `cwd` is
-  // normally present. It can still be empty for a tab whose session has not
-  // connected yet — there is nothing sensible to open, and dispatching '' would
-  // load the project root by accident.
-  const dir = activeTab.value?.cwd
+async function openCurrentDirInFileManager() {
+  // Resolve the cwd LIVE instead of reading tab.cwd. A tab's cwd is written once
+  // from the one-shot WS `status` message at connect time, which carries the
+  // LAUNCH directory — so after a `cd` it is stale, and for a tab created with no
+  // explicit cwd it is the project root. That is why the button used to always
+  // open the project root while drag-drop upload (which fetches live) worked.
+  const live = await fetchTerminalCwd(activeTab.value?.sessionId)
+  // Fall back to the launch directory: when the live probe is unavailable it is
+  // still an honest target, and it matches what the tab title shows. Never fall
+  // back to '': navigateToDir('') opens the project root, which is the bug.
+  const dir = live || activeTab.value?.cwd
   if (!dir) {
     toast.show(t('terminal.cwdUnavailable'), { icon: '⚠️', type: 'info', duration: 2000 })
     return
   }
+  // The tab title comes from that same one-shot status message, so it is stale
+  // too. We already have the live value — refresh cwd + title with it. This
+  // happens on click only; there is no polling.
+  if (live && activeTab.value) tabManager.updateTabCwd(activeTab.value.id, live)
   window.dispatchEvent(new CustomEvent('open-directory-from-context', {
     detail: { path: dir, source: 'terminal' },
   }))

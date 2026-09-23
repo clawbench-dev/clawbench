@@ -196,6 +196,27 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('FolderOpen as FolderOpenIcon')
   })
 
+  it('resolves the cwd live on click instead of reading the stale tab record', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // A tab's `cwd` is written once from the one-shot WS status message at
+    // connect time (the LAUNCH dir), so reading it made the button always open
+    // the project root after a `cd`. It must be fetched on demand — the same
+    // live source the drag-drop upload uses.
+    expect(source).toContain('async function openCurrentDirInFileManager()')
+    expect(source).toContain('await fetchTerminalCwd(activeTab.value?.sessionId)')
+    expect(source).toContain("import { fetchTerminalCwd } from '@/utils/terminalCwd'")
+
+    // Fallback chain: live value, else the launch dir — and never '' (which
+    // would resolve to the project root, i.e. the bug being fixed).
+    expect(source).toContain('const dir = live || activeTab.value?.cwd')
+    expect(source).not.toContain('const dir = activeTab.value?.cwd')
+
+    // The tab title comes from that same one-shot message, so refresh it too
+    // when we happen to have the live value.
+    expect(source).toContain('tabManager.updateTabCwd(activeTab.value.id, live)')
+  })
+
   it('hides the open-directory buttons when the server cannot resolve a live cwd', () => {
     const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
 
