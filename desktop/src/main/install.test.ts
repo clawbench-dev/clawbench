@@ -97,9 +97,17 @@ import {
   cloneTree,
   appRoot,
   electronMajor,
+  readShellFingerprint,
   PayloadIncompatibleError,
   PAYLOAD_MANIFEST,
+  SHELL_FINGERPRINT_FILE,
 } from './install'
+
+/**
+ * Fingerprint the test shells advertise. Its VALUE is irrelevant to these
+ * tests — only whether the two sides agree — so a literal keeps them readable.
+ */
+const SHELL_FP = 'sha256-test-shell-identity'
 
 /**
  * Build a zip archive from entries.
@@ -559,26 +567,43 @@ describe('installPayload', () => {
     else versions.electron = savedElectron
   })
 
-  /** Build the shell the payload will be installed over (no resources/). */
-  function makeShell(name: string): string {
+  /**
+   * Build the shell the payload will be installed over (no resources/).
+   *
+   * Carries the fingerprint sidecar, as a real full install does — without it
+   * the identity gate refuses the payload (which is itself covered below).
+   * Pass `null` to model an install that predates the sidecar.
+   */
+  function makeShell(name: string, fingerprint: string | null = SHELL_FP): string {
     const root = path.join(tmpRoot, name)
     fs.mkdirSync(path.join(root, 'locales'), { recursive: true })
     fs.writeFileSync(path.join(root, 'clawbench-desktop'), 'RUNTIME')
     fs.writeFileSync(path.join(root, 'icudtl.dat'), 'ICU')
     fs.writeFileSync(path.join(root, 'locales/en-US.pak'), 'LOCALE')
+    if (fingerprint !== null) {
+      fs.writeFileSync(path.join(root, SHELL_FINGERPRINT_FILE), fingerprint + '\n')
+    }
     return root
   }
 
-  /** A payload archive carrying `resources/` plus its manifest. */
+  /**
+   * A payload archive carrying `resources/` plus its manifest.
+   *
+   * `shell` of `null` models a payload from a CI that predates the field;
+   * `undefined` keeps the default (matching) fingerprint.
+   */
   function payloadZip(
     electron = '44.4.3',
     resources: Array<{ name: string; content: string }> = [
       { name: 'resources/app.asar', content: 'NEW-ASAR' },
       { name: 'resources/login.html', content: 'NEW-LOGIN' },
     ],
+    shell: string | null = SHELL_FP,
   ): Buffer {
+    const manifest: Record<string, string> = { electron }
+    if (shell !== null) manifest.shell = shell
     return makeZip([
-      { name: PAYLOAD_MANIFEST, content: JSON.stringify({ electron }) },
+      { name: PAYLOAD_MANIFEST, content: JSON.stringify(manifest) },
       ...resources,
     ])
   }
@@ -597,6 +622,56 @@ describe('installPayload', () => {
     expect(fs.readFileSync(path.join(dest, 'resources/login.html'), 'utf8')).toBe('NEW-LOGIN')
     // The manifest is metadata, not part of the install.
     expect(fs.existsSync(path.join(dest, PAYLOAD_MANIFEST))).toBe(false)
+  })
+
+  it('carries the shell fingerprint forward so the next payload can verify', async () => {
+    // The sidecar is part of the SHELL, not the payload: it must survive a
+    // payload install (cloneTree brings it from shellRoot) or the install would
+    // lose its identity and every later payload would be refused.
+    const shell = makeShell('shell-fp-carry')
+    download.impl = () => payloadZip()
+
+    const dest = await installPayload(['https://m/p.zip'], '2.0.0', shell)
+
+    expect(fs.readFileSync(path.join(dest, SHELL_FINGERPRINT_FILE), 'utf8').trim()).toBe(SHELL_FP)
+  })
+
+  it('refuses a payload built against a different shell identity', async () => {
+    // The gap this closes: same Electron major, but the icon / appId /
+    // productName changed. Nothing at runtime can see the stale icon, so
+    // without this gate the payload would install silently and leave it stale.
+    const shell = makeShell('shell-fp-mismatch')
+    download.impl = () => payloadZip('44.4.3', undefined, 'sha256-different-shell')
+
+    await expect(
+      installPayload(['https://m/p.zip'], '2.0.0', shell),
+    ).rejects.toBeInstanceOf(PayloadIncompatibleError)
+
+    expect(fs.existsSync(versionDir('2.0.0'))).toBe(false)
+    expect(readCurrentVersion()).toBe('')
+  })
+
+  it('refuses a payload whose manifest omits the shell fingerprint', async () => {
+    // A payload from a CI predating the field. Refuse rather than assume
+    // compatible: an unverifiable shell is exactly the case this guards.
+    const shell = makeShell('shell-fp-absent')
+    download.impl = () => payloadZip('44.4.3', undefined, null)
+
+    await expect(
+      installPayload(['https://m/p.zip'], '2.0.0', shell),
+    ).rejects.toBeInstanceOf(PayloadIncompatibleError)
+  })
+
+  it('refuses when the installed shell records no fingerprint', async () => {
+    // An install predating the sidecar (every user upgrading from an older
+    // release). It cannot be verified, so the caller falls back to the full
+    // download — which then writes the sidecar and enables payloads afterwards.
+    const shell = makeShell('shell-fp-old', null)
+    download.impl = () => payloadZip()
+
+    await expect(
+      installPayload(['https://m/p.zip'], '2.0.0', shell),
+    ).rejects.toBeInstanceOf(PayloadIncompatibleError)
   })
 
   it('does NOT mutate the shell it cloned from', async () => {
@@ -705,6 +780,7 @@ describe('installPayload', () => {
     fs.mkdirSync(shell, { recursive: true })
     fs.writeFileSync(path.join(shell, 'clawbench-desktop'), 'RUNTIME')
     fs.chmodSync(path.join(shell, 'clawbench-desktop'), 0o755)
+    fs.writeFileSync(path.join(shell, SHELL_FINGERPRINT_FILE), SHELL_FP + '\n')
     download.impl = () => payloadZip()
 
     const dest = await installPayload(['https://m/p.zip'], '2.0.0', shell)

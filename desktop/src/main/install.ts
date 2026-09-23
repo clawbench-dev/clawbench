@@ -308,9 +308,37 @@ export async function downloadFirstAvailable(urls: string[]): Promise<Buffer> {
 /** Name of the manifest a payload archive carries at its root. */
 export const PAYLOAD_MANIFEST = 'payload.json'
 
+/**
+ * Sidecar at an install's app root recording the shell's identity.
+ *
+ * Written by CI into the unpacked build (`desktop/scripts/shell-fingerprint.mjs`)
+ * and shipped inside the full package, so every full install carries it. The
+ * payload archive records the same value in `payload.json`, and an install
+ * compares the two.
+ *
+ * It deliberately sits OUTSIDE `resources/`: that keeps it out of the payload
+ * (so it cannot be forged by one) and means cloneTree copies it from the shell
+ * during a payload install, propagating the identity forward automatically.
+ */
+export const SHELL_FINGERPRINT_FILE = 'shell-fingerprint.txt'
+
 /** The directory the running app's own files live in. */
 export function appRoot(): string {
   return path.dirname(process.resourcesPath)
+}
+
+/**
+ * Read the shell fingerprint an install recorded, or '' when absent.
+ *
+ * '' is expected for installs created before this file existed; callers must
+ * treat that as "cannot verify" and refuse the payload, not as a match.
+ */
+export function readShellFingerprint(dir: string): string {
+  try {
+    return fs.readFileSync(path.join(dir, SHELL_FINGERPRINT_FILE), 'utf8').trim()
+  } catch {
+    return ''
+  }
 }
 
 /**
@@ -425,7 +453,7 @@ export async function installPayload(
     if (!fs.existsSync(manifestPath)) {
       throw new Error(`payload archive has no ${PAYLOAD_MANIFEST}`)
     }
-    let manifest: { electron?: string }
+    let manifest: { electron?: string; shell?: string }
     try {
       manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
     } catch {
@@ -440,8 +468,33 @@ export async function installPayload(
       )
     }
 
+    // The ABI gate above only covers Electron. The shell's IDENTITY — appId,
+    // productName, executableName, the app icon — is baked into the executable
+    // and packaging, so a payload can never update it. Reusing a shell built
+    // with a different identity would silently leave those stale (an unchanged
+    // icon is the visible symptom), with nothing at runtime able to detect it.
+    //
+    // Both sides must be present and equal. An absent side means "cannot
+    // verify" — an install predating the sidecar, or a payload from an older
+    // CI — and is refused rather than assumed compatible.
+    const wanted = String(manifest.shell ?? '')
+    const installed = readShellFingerprint(shellRoot)
+    if (!wanted || !installed) {
+      throw new PayloadIncompatibleError(
+        `shell fingerprint unavailable (payload ${wanted || 'none'}, installed ${installed || 'none'})`,
+      )
+    }
+    if (wanted !== installed) {
+      throw new PayloadIncompatibleError(
+        `payload targets shell ${wanted}, installed ${installed}`,
+      )
+    }
+
     // The manifest is metadata, not part of the app; leaving it behind would
-    // put a stray file in the install root.
+    // put a stray file in the install root. The shell fingerprint sidecar, by
+    // contrast, is NOT removed: it is part of the shell and cloneTree brings it
+    // forward from shellRoot, so this install keeps advertising the same
+    // identity and the next payload install can verify against it.
     fs.rmSync(manifestPath, { force: true })
 
     cloneTree(shellRoot, staging)

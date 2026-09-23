@@ -5,12 +5,19 @@
  * The full desktop package is ~150MB because it bundles the Electron runtime.
  * Our own code is only the `resources/` directory (~3MB), so upgrades can ship
  * just that and reuse the runtime the user already has — provided the Electron
- * ABI matches, which `payload.json` records for the client to check.
+ * ABI matches AND the shell's identity is unchanged, both of which
+ * `payload.json` records for the client to check.
  *
- * Layout produced inside `<unpackedDir>/payload/`:
+ * Layout produced inside `<unpackedDir>-payload/`:
  *
- *   payload.json          { "electron": "44.4.3" }
+ *   payload.json          { "electron": "44.4.3", "shell": "sha256-…" }
  *   resources/…           the app: app.asar, app.asar.unpacked/, login.html, …
+ *
+ * The directory is a SIBLING of the unpacked build, not a child of it. A child
+ * would be swept into the full-package archive by the same `zip -r .` /
+ * `Compress-Archive -Path <dir>/*` step that packages the shell, so the full
+ * package would silently grow a redundant ~4MB copy of the payload — and it
+ * would only be caught by whichever step happened to run first.
  *
  * The archive must be built from INSIDE this directory so its entries are
  * `payload.json` and `resources/…`. Those share no top-level directory, which
@@ -23,6 +30,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { computeShellFingerprint } from './shell-fingerprint.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const desktopDir = path.resolve(here, '..')
@@ -61,9 +69,17 @@ if (!fs.existsSync(electronPkg)) fail(`electron is not installed at ${electronPk
 const electron = JSON.parse(fs.readFileSync(electronPkg, 'utf8')).version
 if (!electron) fail('could not determine the Electron version')
 
-const payloadDir = path.join(unpackedDir, 'payload')
+// Sibling of the unpacked dir, so the full-package packaging step cannot sweep
+// it up (see the header).
+const payloadDir = path.resolve(unpackedDir) + '-payload'
 fs.rmSync(payloadDir, { recursive: true, force: true })
 fs.mkdirSync(payloadDir, { recursive: true })
+
+// The shell's identity, recorded so the client can refuse a payload that was
+// built against a different icon / appId / productName. Those live in the
+// executable and packaging, not in resources/, so a payload cannot update them
+// — reusing the wrong shell would silently leave them stale.
+const shell = computeShellFingerprint()
 
 // Copied with Node rather than `cp -a` / `Copy-Item *`: PowerShell's `*` glob
 // SKIPS hidden items, and resources/ contains dotfiles (cpu-features ships
@@ -72,7 +88,7 @@ fs.mkdirSync(payloadDir, { recursive: true })
 fs.cpSync(resources, path.join(payloadDir, 'resources'), { recursive: true })
 fs.writeFileSync(
   path.join(payloadDir, 'payload.json'),
-  JSON.stringify({ electron }, null, 2) + '\n',
+  JSON.stringify({ electron, shell }, null, 2) + '\n',
   'utf8',
 )
 
@@ -110,5 +126,5 @@ const bytes = listFiles(payloadDir).reduce(
   0,
 )
 console.log(
-  `stage-payload: ${got.length} files, ${(bytes / 1048576).toFixed(2)} MiB, electron ${electron} -> ${payloadDir}`,
+  `stage-payload: ${got.length} files, ${(bytes / 1048576).toFixed(2)} MiB, electron ${electron}, shell ${shell} -> ${payloadDir}`,
 )

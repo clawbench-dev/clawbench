@@ -225,3 +225,86 @@ describe('payload asset names agree between release.yml and the Go server', () =
     expect(block).not.toContain('darwin')
   })
 })
+
+/**
+ * The shell-fingerprint sidecar is what lets a payload install verify that the
+ * shell it is reusing has the same identity (icon / appId / productName) it was
+ * built against. Those live in the executable, not in `resources/`, so a
+ * payload can never update them and nothing at runtime can notice a stale one.
+ *
+ * Two ordering constraints make this easy to get wrong, and both fail silently:
+ *
+ *   - the sidecar must be written BEFORE the full package is zipped, or it is
+ *     not in the archive and every install lacks it;
+ *   - the payload must be built BEFORE the full package is zipped (or its
+ *     directory kept outside it), or the ~4MB payload is swept into the full
+ *     archive.
+ *
+ * Both failures degrade to "every upgrade re-downloads ~150MB" rather than to
+ * an error, so they are asserted structurally here.
+ */
+describe('shell fingerprint is wired into the desktop release jobs', () => {
+  /** Job bodies, keyed by job name, as text. */
+  function jobs(src: string): Record<string, string> {
+    const out: Record<string, string> = {}
+    const lines = src.split('\n')
+    let name = ''
+    let body: string[] = []
+    for (const line of lines) {
+      const m = line.match(/^ {2}([a-z0-9-]+):\s*$/)
+      if (m) {
+        if (name) out[name] = body.join('\n')
+        name = m[1]
+        body = []
+      } else if (name) {
+        body.push(line)
+      }
+    }
+    if (name) out[name] = body.join('\n')
+    return out
+  }
+
+  /** Desktop jobs that publish a payload archive. */
+  const PAYLOAD_JOBS = ['build-desktop-linux', 'build-desktop-linux-arm64', 'build-desktop-windows']
+
+  it('writes the fingerprint in every job that publishes a payload', () => {
+    const all = jobs(releaseYml())
+    for (const job of PAYLOAD_JOBS) {
+      expect(all[job], `missing job ${job}`).toContain('shell-fingerprint.mjs')
+    }
+  })
+
+  it('writes the fingerprint before zipping the full package', () => {
+    // Ordering, not just presence: a sidecar written after the zip never
+    // reaches the archive.
+    const all = jobs(releaseYml())
+    for (const job of PAYLOAD_JOBS) {
+      const body = all[job]
+      const fpAt = body.indexOf('shell-fingerprint.mjs')
+      const zipAt = body.search(/Zip desktop|Compress-Archive.*-DestinationPath/)
+      expect(fpAt, `${job}: no fingerprint step`).toBeGreaterThan(-1)
+      expect(zipAt, `${job}: no packaging step`).toBeGreaterThan(-1)
+      expect(fpAt, `${job}: fingerprint must be written before packaging`).toBeLessThan(zipAt)
+    }
+  })
+
+  it('keeps the payload directory out of the full package', () => {
+    // The payload dir is a sibling of the unpacked build precisely so the
+    // full-package packaging step cannot sweep it up. If it ever moves back
+    // inside, the full package silently gains a redundant payload copy.
+    const all = jobs(releaseYml())
+    for (const job of PAYLOAD_JOBS) {
+      expect(all[job]).toContain('-payload')
+    }
+    // No packaging command may reference a nested `<unpacked>/payload` path.
+    expect(releaseYml()).not.toMatch(/-Path\s+\S*unpacked\/payload\/\*/)
+    expect(releaseYml()).not.toMatch(/cd\s+\S*unpacked\/payload\b/)
+  })
+
+  it('does not add a payload to macOS', () => {
+    // macOS installs the full package only; a payload there would break the
+    // code-signature seal. It therefore needs no fingerprint either.
+    const all = jobs(releaseYml())
+    expect(all['build-desktop-macos']).not.toContain('stage-payload.mjs')
+  })
+})

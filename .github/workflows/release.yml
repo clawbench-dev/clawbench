@@ -694,6 +694,18 @@ jobs:
           npm ci
           npm run build
 
+      - name: Write shell fingerprint (Linux)
+        # Records the shell's IDENTITY (electron-builder.yml + icon sources)
+        # into the build, so a later payload install can verify it is being
+        # applied over a shell of the same identity. The value must be written
+        # BEFORE zipping, since it ships inside the full package.
+        #
+        # Hashing the built binary instead would be wrong: electron-builder
+        # writes the app version into the Windows executable, and the version
+        # is rewritten from the tag on every release, so the fingerprint would
+        # change every time and no payload would ever match.
+        run: node desktop/scripts/shell-fingerprint.mjs desktop/release/linux-unpacked
+
       - name: Zip desktop (Linux)
         # Archive the CONTENTS of the unpacked directory, not the directory
         # itself. `zip -r ... linux-unpacked` prefixes every entry with
@@ -708,15 +720,15 @@ jobs:
 
       - name: Build desktop payload (Linux)
         # The payload is the same app WITHOUT the Electron runtime (~3MB vs
-        # ~150MB), for the incremental-upgrade path. Archived from INSIDE
-        # payload/ so entries are `payload.json` + `resources/…`: those share no
-        # top-level directory, which is what stops install.ts's extractZip from
-        # stripping a prefix (a zip of only `resources/…` would lose it and drop
-        # app.asar at the app root). Read desktop/scripts/stage-payload.mjs.
+        # ~150MB), for the incremental-upgrade path. Archived from INSIDE the
+        # payload dir so entries are `payload.json` + `resources/…`: those share
+        # no top-level directory, which is what stops install.ts's extractZip
+        # from stripping a prefix (a zip of only `resources/…` would lose it and
+        # drop app.asar at the app root). Read desktop/scripts/stage-payload.mjs.
         run: |
           cd desktop
           node scripts/stage-payload.mjs release/linux-unpacked
-          cd release/linux-unpacked/payload
+          cd release/linux-unpacked-payload
           zip -r "../clawbench-desktop-linux-x64-payload-${RELEASE_TAG}.zip" .
 
       - uses: softprops/action-gh-release@v2
@@ -767,6 +779,10 @@ jobs:
           npm ci
           npm run build -- --arm64
 
+      - name: Write shell fingerprint (Linux arm64)
+        # See the x64 job — must run before the zip, since it ships inside it.
+        run: node desktop/scripts/shell-fingerprint.mjs desktop/release/linux-arm64-unpacked
+
       - name: Zip desktop (Linux arm64)
         # Contents, not the directory — see the x64 step above.
         run: |
@@ -774,12 +790,12 @@ jobs:
           zip -r "../clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip" .
 
       - name: Build desktop payload (Linux arm64)
-        # Archived from inside payload/ so the entries share no top-level
+        # Archived from inside the payload dir so the entries share no top-level
         # directory — see the x64 payload step for why that matters.
         run: |
           cd desktop
           node scripts/stage-payload.mjs release/linux-arm64-unpacked
-          cd release/linux-arm64-unpacked/payload
+          cd release/linux-arm64-unpacked-payload
           zip -r "../clawbench-desktop-linux-arm64-payload-${RELEASE_TAG}.zip" .
 
       - uses: softprops/action-gh-release@v2
@@ -830,6 +846,12 @@ jobs:
           npm ci
           npm run build
 
+      - name: Write shell fingerprint (Windows)
+        # See the Linux job. Windows needs it too: it installs the full package
+        # first, and without the sidecar that install could never verify a
+        # payload and would re-download ~150MB on every upgrade.
+        run: node desktop/scripts/shell-fingerprint.mjs desktop/release/win-unpacked
+
       - name: Zip desktop (Windows)
         # The trailing `/*` is load-bearing: `-Path <dir>` would put a
         # `win-unpacked/` level inside the archive, so unzipping the release
@@ -839,6 +861,9 @@ jobs:
         #
         # Unlike `zip -r`, this is not an equivalent-command swap: it changes
         # what the archive looks like, which is exactly the point.
+        #
+        # NOTE: `*` also skips hidden items, which is why the fingerprint
+        # sidecar is NOT dot-prefixed (see shell-fingerprint.mjs).
         shell: pwsh
         run: Compress-Archive -Path desktop/release/win-unpacked/* -DestinationPath "desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip"
 
@@ -849,15 +874,13 @@ jobs:
         # payload on Windows only, and the failure would surface at runtime
         # rather than here.
         #
-        # `-Path payload/*` flattens the directory the same way the full-package
-        # step above does: entries become payload.json + resources/…, which
-        # share no top-level directory. That is what keeps extractZip from
-        # stripping a prefix.
+        # The payload dir is a SIBLING of win-unpacked, so the `-Path
+        # win-unpacked/*` archive above cannot pick it up.
         shell: pwsh
         run: |
           cd desktop
           node scripts/stage-payload.mjs release/win-unpacked
-          Compress-Archive -Path release/win-unpacked/payload/* -DestinationPath "release/clawbench-desktop-windows-x64-payload-$env:RELEASE_TAG.zip"
+          Compress-Archive -Path release/win-unpacked-payload/* -DestinationPath "release/clawbench-desktop-windows-x64-payload-$env:RELEASE_TAG.zip"
 
       - name: Verify payload archive (Windows)
         # Compress-Archive reports success even if it wrote an incomplete
@@ -881,7 +904,27 @@ jobs:
             foreach ($r in $required) {
               if ($names -notcontains $r) { throw "payload archive is missing $r" }
             }
-            Write-Host "payload archive OK: $($names.Count) entries"
+            # The manifest must carry a shell fingerprint, or every client
+            # refuses the payload and silently falls back to the full download.
+            $manifest = ($zip.Entries | Where-Object { $_.FullName -eq 'payload.json' })
+            $json = [System.IO.StreamReader]::new($manifest.Open()).ReadToEnd() | ConvertFrom-Json
+            if (-not $json.shell) { throw 'payload.json has no shell fingerprint' }
+            Write-Host "payload archive OK: $($names.Count) entries, shell $($json.shell)"
+          } finally { $zip.Dispose() }
+
+      - name: Verify full package (Windows)
+        # The fingerprint sidecar must be IN the full package: an install
+        # without it can never verify a payload, so every upgrade would fall
+        # back to the full download. A `*` glob skipping it is the realistic
+        # failure, hence asserting it explicitly.
+        shell: pwsh
+        run: |
+          $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD/desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip")
+          try {
+            $names = $zip.Entries | ForEach-Object { $_.FullName }
+            if ($names -notcontains 'shell-fingerprint.txt') { throw 'full package is missing shell-fingerprint.txt' }
+            if ($names -match 'payload') { throw 'full package contains payload artifacts' }
+            Write-Host "full package OK: $($names.Count) entries"
           } finally { $zip.Dispose() }
 
       - uses: softprops/action-gh-release@v2
@@ -953,6 +996,11 @@ jobs:
           npx electron-builder --dir --x64
 
       - name: Zip desktop (macOS)
+        # No shell-fingerprint sidecar here, unlike the Linux/Windows jobs: it
+        # is only ever read when INSTALLING a payload, and macOS never does
+        # (replacing app.asar inside a signed .app breaks the signature seal),
+        # so the server publishes no macOS payload either.
+        #
         # DELIBERATELY still wraps the payload in `mac-arm64/` / `mac/` — do
         # NOT flatten this like the Windows/Linux steps. The wrapper is what
         # makes the archive distinguishable from one whose top level is
