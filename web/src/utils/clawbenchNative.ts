@@ -123,6 +123,15 @@ export interface ClawBenchNative {
   setTheme?(themeId: string, bg?: string, text?: string, textSecondary?: string, accent?: string): void
   /** Optional (Android): get the persisted app theme ID. */
   getTheme?(): string
+  /**
+   * Optional (Electron): apply real native page zoom via
+   * `webContents.setZoomFactor`. Used by the appearance "auto scale" feature
+   * so the desktop shell zooms natively instead of via CSS zoom.
+   *
+   * Optional because Android and the plain browser have no equivalent — the
+   * caller falls back to CSS zoom when this is absent.
+   */
+  setZoomFactor?(factor: number): void
 }
 
 /** Navigation target for a native notification click. */

@@ -48,11 +48,12 @@
           :description="item.descriptionKey ? t(item.descriptionKey) : ''"
           :type="item.type"
           :model-value="getItemValue(item)"
+          :disabled="getItemDisabled(item)"
           :options="resolveItemOptions(item)"
           :options-filter="resolveOptionsFilter(item)"
           :option-previews="item.key === 'theme' ? themePreviews : undefined"
           :min="item.min"
-          :max="item.max"
+          :max="getItemMax(item)"
           :step="item.step"
           :needs-restart="item.needsRestart"
           :force-close="activeKey !== null && activeKey !== item.key"
@@ -101,7 +102,7 @@ import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
-import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, getEffectiveUIScale } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -134,7 +135,7 @@ const toast = useToast()
 const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
 const { loadAgents } = useAgents()
-const { isAppMode } = useAppMode()
+const { isAppMode, isDesktopApp } = useAppMode()
 const pwaInstall = usePwaInstall()
 const desktopDownload = useDesktopDownload()
 const activeKey = ref<string | null>(null)
@@ -201,6 +202,13 @@ const subPagePanel = computed((): GroupPanelConfig | undefined => {
 
 // ── Render list: mixed items + panels with dependsOn filtering ──
 
+/**
+ * True only in the Android WebView shell. Both native hosts report
+ * isAppMode() === true, so the desktop shell must be excluded explicitly —
+ * `hideInAndroidApp` rows (e.g. auto UI scale) still apply on desktop.
+ */
+const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
+
 const renderList = computed(() => {
   const raw = categoryItems[props.categoryId] ?? []
   const result: CategoryEntry[] = []
@@ -209,6 +217,7 @@ const renderList = computed(() => {
     if (entry.type === 'item') {
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
       if (entry.spec.appOnly && !isAppMode.value) continue
+      if (entry.spec.hideInAndroidApp && isAndroidApp.value) continue
       if (entry.spec.key === 'appVersion' && !isAppMode.value) continue
       if (entry.spec.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
       if (entry.spec.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
@@ -366,6 +375,10 @@ function getItemValue(item: ItemSpec): unknown {
   if ((item as ItemSpec & { modelValue?: unknown }).modelValue !== undefined && item.source === 'local' && item.type === 'info') {
     return (item as ItemSpec & { modelValue?: unknown }).modelValue
   }
+  // The scale slider shows the factor actually in effect, not the stored
+  // manual value: with auto on the stored value is ignored, so displaying it
+  // would read as a bug ("200% applied but the slider says 100%").
+  if (item.key === 'uiScale') return getEffectiveUIScale()
   if (item.key === 'serverVersion') {
     return serverConfig.value?.version ?? '-'
   }
@@ -376,6 +389,31 @@ function getItemValue(item: ItemSpec): unknown {
     return localConfig[item.key]
   }
   return getServerValueWithDefault(item.key)
+}
+
+/**
+ * Widen the scale slider's track when the auto factor exceeds the manual
+ * range's ceiling (auto caps at 200%, the slider at 150%). Without this the
+ * disabled thumb would pin to the right edge while the label read "200%",
+ * showing a position that does not match the value.
+ */
+function getItemMax(item: ItemSpec): number | undefined {
+  if (item.key === 'uiScale' && item.max !== undefined) {
+    return Math.max(item.max, getEffectiveUIScale())
+  }
+  return item.max
+}
+
+/**
+ * Gray out a flat item when its `disableUnless` condition is unmet.
+ *
+ * Mirrors SettingsGroupPanel's isFieldDisabled. The value resolver is the same
+ * one used for visibility, so a condition on a local key (e.g. uiScaleAuto)
+ * reads the live config rather than the server snapshot.
+ */
+function getItemDisabled(item: ItemSpec): boolean {
+  if (!item.disableUnless) return false
+  return !isDependsOnMet(item.disableUnless, resolveConfigValue)
 }
 
 async function handleUpdate(item: ItemSpec, value: unknown) {

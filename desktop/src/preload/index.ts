@@ -103,4 +103,7 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
     ipcRenderer.send('native:set-theme', theme, bg ?? null, text ?? null, textSecondary ?? null, accent ?? null)
   },
   getTheme: () => { try { return ipcRenderer.sendSync('native:get-theme') } catch { return 'dark' } },
+  // Native page zoom (appearance "auto scale"). Fire-and-forget: the main
+  // process validates the factor and applies it to the window.
+  setZoomFactor: (factor: number) => { ipcRenderer.send('native:set-zoom-factor', factor) },
 })

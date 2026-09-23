@@ -463,7 +463,7 @@ import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePane
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
-import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
 import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
@@ -1868,7 +1868,9 @@ async function handleLoginSuccess() {
     // Clean up legacy localStorage keys (no longer used)
     Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
     await nextTick()
-    applyUIScale(Number(localConfig.uiScale ?? 1))
+    // Applies the auto-derived factor on the web/Electron paths; CSS zoom in
+    // the browser, native webContents zoom in the Electron shell.
+    applyEffectiveUIScale()
     applyFontConfig()
     startDockResize()
     // Measure dock height and set --dock-height CSS variable for fixed-position elements
@@ -2295,7 +2297,10 @@ watch(() => inlineOverflowTabs.value.length, () => {
 // ResizeObserver may not fire when CSS zoom on <html> changes, so we
 // must explicitly re-measure to recalculate overflow layout.
 // Use requestAnimationFrame to ensure browser has reflowed after the zoom change.
-watch(() => localConfig.uiScale, () => {
+// uiScaleAuto is watched too: toggling it changes the applied factor without
+// touching uiScale (and on Electron the zoom is applied natively, where no
+// ResizeObserver fires at all).
+watch([() => localConfig.uiScale, () => localConfig.uiScaleAuto], () => {
   requestAnimationFrame(() => {
     startDockResize()
     // Also update --dock-height CSS variable for fixed-position elements
@@ -3014,7 +3019,9 @@ onMounted(async () => {
     })
     if (!initOk) return
     await nextTick()
-    applyUIScale(Number(localConfig.uiScale ?? 1))
+    // Applies the auto-derived factor on the web/Electron paths; CSS zoom in
+    // the browser, native webContents zoom in the Electron shell.
+    applyEffectiveUIScale()
     applyFontConfig()
     startDockResize()
     welcomeOverlay.value?.show()

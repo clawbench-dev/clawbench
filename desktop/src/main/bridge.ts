@@ -17,6 +17,7 @@ import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification
 import { markRendererReady } from './navReady'
 import { clearCacheAndReload } from './session'
 import { record, recordError, startClientLog, stopClientLog } from './clientLog'
+import { applyZoomFactor } from './zoom'
 import { classifyUrl } from './urlPolicy'
 
 export function registerBridge(): void {
@@ -149,6 +150,13 @@ export function registerBridge(): void {
     return Promise.resolve()
   })
 
+  // Native page zoom for the appearance "auto scale" feature. The renderer
+  // computes the factor (it knows the preference and the screen height) and
+  // asks the shell to apply it natively, so the desktop does not fall back to
+  // CSS zoom. Sent, not invoked: the renderer has nothing to wait for.
+  ipcMain.on('native:set-zoom-factor', (_e, factor: number) => {
+    applyZoomFactor(getMainWindow(), Number(factor))
+  })
   ipcMain.on('native:show-server-dialog', () => showLoginPage())
   ipcMain.on('native:open-session', (_e, id: string) => dispatchOpenSession(id))
   // The renderer signals that its notification-click listeners are registered.
