@@ -90,6 +90,21 @@
         <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': msg.role === 'assistant' && msg.metadata?.wallMs }">{{ relativeTime }}</span>
       </span>
       <div class="chat-meta-actions">
+        <!-- Quote this message as a whole. Rendered for BOTH roles: quoting a
+             user message (e.g. to re-ask about it) is as useful as quoting a
+             reply. Gated like the rest of the meta bar, and skipped for queued
+             bubbles which have no settled content yet.
+             Deliberately FIRST in the row: it is the entry point that starts a
+             new action, while the rest are actions on the message itself. -->
+        <button
+          v-if="!msg.streaming && !msg.pending && quotableText"
+          class="chat-action-btn"
+          :title="t('quoteBar.quoteMessage')"
+          :aria-label="t('quoteBar.quoteMessage')"
+          @click="$emit('quote-message', msg)"
+        >
+          <MessageSquareQuote :size="14" />
+        </button>
         <template v-if="msg.role === 'assistant'">
           <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
             <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
@@ -135,19 +150,6 @@
         </template>
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
-        </button>
-        <!-- Quote this message as a whole. Rendered for BOTH roles: quoting a
-             user message (e.g. to re-ask about it) is as useful as quoting a
-             reply. Gated like the rest of the meta bar, and skipped for queued
-             bubbles which have no settled content yet. -->
-        <button
-          v-if="!msg.streaming && !msg.pending && quotableText"
-          class="chat-action-btn"
-          :title="t('quoteBar.quoteMessage')"
-          :aria-label="t('quoteBar.quoteMessage')"
-          @click="$emit('quote-message', msg)"
-        >
-          <MessageSquareQuote :size="14" />
         </button>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteLabel, quoteLineRange, canJumpToSource, isQuoteFileEntry, type QuoteItem } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, isQuoteFileEntry, type QuoteItem } from '@/utils/quoteItem.ts'
 
 describe('fromStagedQuote', () => {
   it('maps a file quote and infers sourceKind=file', () => {
@@ -200,5 +200,46 @@ describe('materializeQuotes', () => {
 
   it('returns an empty array for no quotes', () => {
     expect(materializeQuotes([])).toEqual([])
+  })
+})
+
+describe('quoteItemFromTarget', () => {
+  it('builds a whole-file quote with no content', () => {
+    // The entry-point buttons reference the object; they do not inline content
+    // the user never selected.
+    const got = quoteItemFromTarget({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+
+    expect(got).toMatchObject({
+      filePath: '/proj/src/main.ts', text: '', note: '', sourceKind: 'file',
+    })
+    expect(got.url).toBeUndefined()
+  })
+
+  it('builds a whole-issue quote carrying the address', () => {
+    const got = quoteItemFromTarget({
+      url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7',
+    })
+
+    expect(got).toMatchObject({
+      filePath: 'acme/widgets#7', url: 'https://github.com/acme/widgets/issues/7',
+      text: '', sourceKind: 'url',
+    })
+  })
+
+  it('falls back to the label when there is no path', () => {
+    const got = quoteItemFromTarget({ label: 'acme/widgets#7' })
+    expect(got.filePath).toBe('acme/widgets#7')
+  })
+
+  it('survives the round trip to a send entry', () => {
+    // The whole point of the empty text: it must reach the backend as an entry
+    // with a path and no content, so the prompt renders a path reference rather
+    // than an empty fence.
+    const entry = toFileEntry(quoteItemFromTarget({ filePath: '/proj/src/main.ts' }))
+
+    expect(entry.kind).toBe('quote')
+    expect(entry.path).toBe('/proj/src/main.ts')
+    expect(entry.text).toBe('')
+    expect(entry.startLine).toBeUndefined()
   })
 })

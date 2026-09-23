@@ -89,3 +89,27 @@ describe('QuoteCard', () => {
     expect(wrapper.emitted('click')).toBeFalsy()
   })
 })
+
+describe('QuoteCard — whole-object quote (no content)', () => {
+  it('renders a file reference with no line range', () => {
+    // What the entry-point buttons produce: a card naming the file, with no
+    // content and no line info.
+    const wrapper = mountCard({
+      quote: quote({ text: '', filePath: 'src/main.ts', startLine: 0, endLine: 0, note: 'explain this' }),
+    })
+
+    expect(wrapper.find('.attachment-filename').text()).toBe('main.ts')
+    expect(wrapper.attributes('title')).toBe('explain this')
+  })
+
+  it('renders a forge reference with its label', () => {
+    const wrapper = mountCard({
+      quote: quote({
+        text: '', filePath: 'acme/widgets#7', startLine: 0, endLine: 0,
+        url: 'https://github.com/acme/widgets/issues/7', sourceKind: 'url',
+      }),
+    })
+
+    expect(wrapper.find('.attachment-filename').text()).toBe('acme/widgets#7')
+  })
+})

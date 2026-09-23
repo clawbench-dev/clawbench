@@ -212,8 +212,8 @@ func TestApplyAttachmentPrefixes_QuoteAppendedAfterUserText(t *testing.T) {
 	got := ApplyAttachmentPrefixes("解释一下", nil, nil, parts)
 
 	// Mirrors the pre-refactor buildMultiQuoteMessage ordering:
-	// "prompt\n\nnote\n\nfence", with the quote's source header added.
-	assert.Equal(t, "解释一下\n\n[Quoted from /src/a.go]\nwhy?\n\n```go:/src/a.go:3\nx := 1\n```", got)
+	// "prompt\n\nheader\nnote\n\nfence", with the quote's source header added.
+	assert.Equal(t, "解释一下\n\n[Quoted from /src/a.go:3]\nwhy?\n\n```go:/src/a.go:3\nx := 1\n```", got)
 }
 
 func TestApplyAttachmentPrefixes_QuoteWithoutNote(t *testing.T) {
@@ -223,8 +223,60 @@ func TestApplyAttachmentPrefixes_QuoteWithoutNote(t *testing.T) {
 
 	got := ApplyAttachmentPrefixes("问题", nil, nil, parts)
 
-	assert.Equal(t, "问题\n\n[Quoted from ]\n```:\npicked text\n```", got,
+	assert.Equal(t, "问题\n\n[Quoted from ]\n\n```:\npicked text\n```", got,
 		"an unlabelled quote still gets its header line")
+}
+
+// A whole-file / whole-issue quote references the object instead of inlining
+// it, so it must emit the path (and address) and NO fence. An empty code block
+// would misrepresent "reference this file" as "here is its (empty) content".
+func TestApplyAttachmentPrefixes_WholeFileQuoteHasNoFence(t *testing.T) {
+	parts := ClassifyAttachments([]FileEntry{
+		{Path: "/proj/src/main.ts", Kind: "quote", ID: "q1", Note: "explain this file"},
+	}, nil)
+
+	got := ApplyAttachmentPrefixes("看看", nil, nil, parts)
+
+	assert.Equal(t, "看看\n\n[Quoted from /proj/src/main.ts]\nexplain this file", got)
+	assert.NotContains(t, got, "```", "a quote with no content must not render a fence")
+}
+
+// A forge quote must carry its ADDRESS: the label alone ("acme/widgets#7") does
+// not let the AI reach the issue, and dropping it was a real regression in the
+// handler's validatedQuoteEntry.
+func TestApplyAttachmentPrefixes_ForgeQuoteCarriesItsAddress(t *testing.T) {
+	parts := ClassifyAttachments([]FileEntry{
+		{
+			Path: "acme/widgets#7", Kind: "quote", ID: "q1", Note: "why did this fail?",
+			URL: "https://github.com/acme/widgets/issues/7",
+		},
+	}, nil)
+
+	got := ApplyAttachmentPrefixes("看看这个 issue", nil, nil, parts)
+
+	assert.Equal(t,
+		"看看这个 issue\n\n[Quoted from acme/widgets#7 (https://github.com/acme/widgets/issues/7)]\nwhy did this fail?",
+		got)
+}
+
+// The whole header must stay on ONE line: the title stripper removes it with a
+// strip-to-newline rule, so a wrapped header would leak its tail into the
+// derived session title.
+func TestApplyAttachmentPrefixes_QuoteHeaderIsOneLine(t *testing.T) {
+	parts := ClassifyAttachments([]FileEntry{
+		{
+			Path: "/src/a.go", Kind: "quote", ID: "q1", Note: "note here",
+			URL: "https://example.com/x", StartLine: 10, EndLine: 20,
+		},
+	}, nil)
+
+	got := ApplyAttachmentPrefixes("问题", nil, nil, parts)
+	lines := strings.Split(got, "\n")
+
+	assert.True(t, strings.HasPrefix(lines[2], "[") && strings.HasSuffix(lines[2], "]"),
+		"the header must be one bracketed line, got %q", lines[2])
+	assert.Contains(t, lines[2], "/src/a.go:10-20")
+	assert.Contains(t, lines[2], "https://example.com/x")
 }
 
 // A quote-only message has empty content; the renderer must not open with
@@ -238,6 +290,29 @@ func TestApplyAttachmentPrefixes_QuoteOnlyStartsWithHeader(t *testing.T) {
 
 	assert.True(t, strings.HasPrefix(got, QuotePromptPrefix), "no leading blank lines, got %q", got)
 	assert.NotContains(t, got, "\n\n[Quoted from", "the first quote must not be preceded by a blank line")
+}
+
+// The header must end with "]" even when the label carries line info AND an
+// address, or the stripper's bracket-close rule would not match.
+func TestQuoteHeader_ClosesItsBracket(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		q    QuotePrompt
+		want string
+	}{
+		{"path only", QuotePrompt{Label: "/a.go"}, "[Quoted from /a.go]"},
+		{"line range", QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9}, "[Quoted from /a.go:3-9]"},
+		{"single line", QuotePrompt{Label: "/a.go", StartLine: 3}, "[Quoted from /a.go:3]"},
+		{"address", QuotePrompt{Label: "a/b#1", URL: "https://e.com/1"}, "[Quoted from a/b#1 (https://e.com/1)]"},
+		{"line range and address", QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9, URL: "https://e.com/1"}, "[Quoted from /a.go:3-9 (https://e.com/1)]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := quoteHeader(tc.q)
+			assert.Equal(t, tc.want, got)
+			assert.True(t, strings.HasSuffix(got, "]"), "header must close its bracket")
+			assert.NotContains(t, got, "\n", "header must be a single line")
+		})
+	}
 }
 
 func TestQuotePromptPrefix_IsRegisteredAsStripRule(t *testing.T) {

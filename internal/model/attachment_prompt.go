@@ -59,8 +59,15 @@ type QuotePrompt struct {
 	Language string
 	// Note is the user's annotation.
 	Note string
-	// Text is the quoted content, verbatim.
+	// Text is the quoted content, verbatim. EMPTY for a whole-file or
+	// whole-issue quote: those reference the object rather than inlining it, so
+	// the prompt carries the path/address and the AI reads it itself. A quote
+	// with empty Text must NOT render a fence — an empty code block is noise
+	// and would misrepresent "reference this file" as "here is its content".
 	Text string
+	// URL is the external address for a forge-sourced quote (empty otherwise).
+	// Without it the prompt names an issue/PR the AI cannot reach.
+	URL string
 	// StartLine/EndLine are 1-based file lines, 0 when not applicable.
 	StartLine int
 	EndLine   int
@@ -83,6 +90,7 @@ func ClassifyAttachments(entries []FileEntry, excludePaths map[string]struct{}) 
 				Language:  f.Language,
 				Note:      f.Note,
 				Text:      f.Text,
+				URL:       f.URL,
 				StartLine: f.StartLine,
 				EndLine:   f.EndLine,
 			})
@@ -116,6 +124,28 @@ const ReferencedLinkPrefix = "[Referenced external link: "
 // exact string instead of duplicating a literal that could drift — a header
 // with no strip rule would become the session title.
 const QuotePromptPrefix = "[Quoted from "
+
+// quoteHeader renders a quote's header line, e.g.
+//
+//	[Quoted from /src/a.go:10-20]
+//	[Quoted from acme/widgets#7 (https://github.com/acme/widgets/issues/7)]
+//
+// The address is included for forge quotes: without it the AI knows an
+// issue/PR was referenced but has no way to reach it. Everything stays on ONE
+// line so the session-title stripper's stripToNewline rule consumes the whole
+// header (a second line would leak into the derived title).
+func quoteHeader(q QuotePrompt) string {
+	label := q.Label
+	if q.StartLine > 0 && q.EndLine > 0 && q.StartLine != q.EndLine {
+		label = fmt.Sprintf("%s:%d-%d", q.Label, q.StartLine, q.EndLine)
+	} else if q.StartLine > 0 {
+		label = fmt.Sprintf("%s:%d", q.Label, q.StartLine)
+	}
+	if q.URL != "" {
+		label = fmt.Sprintf("%s (%s)", label, q.URL)
+	}
+	return QuotePromptPrefix + label + "]"
+}
 
 // RenderQuoteBlock renders one quote as a fenced block whose header carries
 // the language, source label and optional line range.
@@ -180,14 +210,20 @@ func ApplyAttachmentPrefixes(prompt string, filePaths, dirPaths []string, parts 
 			if b.Len() > 0 {
 				b.WriteString("\n\n")
 			}
-			b.WriteString(QuotePromptPrefix)
-			b.WriteString(q.Label)
-			b.WriteString("]\n")
+			b.WriteString(quoteHeader(q))
 			if note := strings.TrimSpace(q.Note); note != "" {
+				b.WriteString("\n")
 				b.WriteString(note)
-				b.WriteString("\n\n")
 			}
-			b.WriteString(RenderQuoteBlock(q))
+			// A fence only when there IS quoted content. A whole-file or
+			// whole-issue quote references the object instead of inlining it,
+			// so it emits the path/address above and nothing else — an empty
+			// fence would be noise and would misrepresent "reference this file"
+			// as "here is its (empty) content".
+			if q.Text != "" {
+				b.WriteString("\n\n")
+				b.WriteString(RenderQuoteBlock(q))
+			}
 		}
 		prompt = b.String()
 	}
@@ -198,9 +234,10 @@ func ApplyAttachmentPrefixes(prompt string, filePaths, dirPaths []string, parts 
 // It is the single definition of "this message carries attachments", used to
 // gate the media-handling rules injection.
 //
-// Quote-only messages are NOT counted: they carry no file, image or directory,
-// so injecting the media rules would be noise. This mirrors what the prompt
-// actually contains (a quote's text is inlined, nothing for the AI to open).
+// Quote-only messages are NOT counted. A quote does reference a file or an
+// issue/PR, but it is an explicit "look at this" from the user, whereas the
+// media rules exist to stop the AI from reading media files on an ambiguous
+// request — so injecting them here would contradict the quote itself.
 func HasAttachmentEntries(entries []FileEntry) bool {
 	for _, f := range entries {
 		if !f.IsQuote() {

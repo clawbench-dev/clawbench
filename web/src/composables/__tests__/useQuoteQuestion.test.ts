@@ -426,17 +426,17 @@ describe('useQuoteQuestion', () => {
       expect(qq.composerAttachment.value).toBeNull()
     })
 
-    it('commits the URL attachment to the chat before sending', async () => {
+    it('stages the quoted issue as a card before sending', async () => {
       const qq = useQuoteQuestion()
       qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
-      // The attachment must already be in the chat context when the send runs —
-      // ChatPanelContent reads attachedFiles synchronously before its first
-      // await, so committing any later would drop it. Afterwards the batch is
-      // cleared by the send itself, so it is only observable here.
+      // The card must already be staged when the send runs — ChatPanelContent
+      // reads stagedQuotes synchronously before its first await, so staging any
+      // later would drop it. Afterwards the batch is cleared by the send
+      // itself, so it is only observable here.
       let atSendTime: unknown[] = []
       mockSendMessage.mockImplementation(async () => {
-        atSendTime = [...ctx.attachedFiles.value]
+        atSendTime = [...ctx.stagedQuotes.value]
       })
 
       await qq.sendMessage('why is this broken?')
@@ -444,27 +444,33 @@ describe('useQuoteQuestion', () => {
       expect(mockSendMessage).toHaveBeenCalledWith('why is this broken?')
       expect(atSendTime).toHaveLength(1)
       expect(atSendTime[0]).toMatchObject({
-        kind: 'url', url: 'https://github.com/acme/widgets/issues/7', path: 'acme/widgets#7',
+        sourceKind: 'url', url: 'https://github.com/acme/widgets/issues/7', filePath: 'acme/widgets#7',
+        // Whole-object quote: no content, the AI reads the referenced issue.
+        text: '',
       })
-      // Consumed by the message, not left behind for the next one.
+      // A card, not a separate attachment chip.
       expect(ctx.attachedFiles.value).toHaveLength(0)
+      // Consumed by the message, not left behind for the next one.
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
     })
 
-    it('commits the local file attachment to the chat before sending', async () => {
+    it('stages the quoted file as a card before sending', async () => {
       const qq = useQuoteQuestion()
       qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
 
       let atSendTime: unknown[] = []
       mockSendMessage.mockImplementation(async () => {
-        atSendTime = [...ctx.attachedFiles.value]
+        atSendTime = [...ctx.stagedQuotes.value]
       })
 
       await qq.sendMessage('explain this')
 
       expect(atSendTime).toHaveLength(1)
-      expect(atSendTime[0]).toMatchObject({ path: '/proj/src/main.ts' })
-      // Must not be mistaken for a URL entry.
-      expect((atSendTime[0] as { kind?: string }).kind).toBeUndefined()
+      expect(atSendTime[0]).toMatchObject({
+        filePath: '/proj/src/main.ts', sourceKind: 'file', text: '',
+      })
+      // Not a separate file attachment.
+      expect(ctx.attachedFiles.value).toHaveLength(0)
     })
 
     it('does not attach anything just by opening twice', () => {
@@ -568,17 +574,20 @@ describe('useQuoteQuestion', () => {
         expect(consumePendingChatInput()).toBeNull()
       })
 
-      it('keeps the typed text when there is nothing to quote', () => {
-        // Composer opened with no selection: there is no card to hold the note,
-        // so the text is injected rather than silently discarded.
+      it('uses the typed text as the annotation even with no selection', () => {
+        // The card always exists (it references the file/issue itself), so the
+        // typed text always has somewhere to go — it is the annotation. Nothing
+        // is injected into the chat input.
         const onAdd = vi.fn()
         const qq = useQuoteQuestion()
         qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7', onAdd })
 
         qq.addToConversation('please fix')
 
-        expect(consumePendingChatInput()).toBe('please fix')
-        expect(ctx.stagedQuotes.value).toHaveLength(0)
+        expect(consumePendingChatInput()).toBeNull()
+        expect(ctx.stagedQuotes.value).toHaveLength(1)
+        expect(ctx.stagedQuotes.value[0].note).toBe('please fix')
+        expect(ctx.stagedQuotes.value[0].text).toBe('')
         expect(onAdd).toHaveBeenCalledTimes(1)
       })
 
@@ -593,27 +602,32 @@ describe('useQuoteQuestion', () => {
         expect(onAdd).toHaveBeenCalledTimes(1)
       })
 
-      it('commits the URL attachment to the chat input on add', () => {
+      it('stages the quoted URL as a card on add', () => {
         const qq = useQuoteQuestion()
         qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
         qq.addToConversation('')
 
-        expect(ctx.attachedFiles.value).toHaveLength(1)
-        expect(ctx.attachedFiles.value[0]).toMatchObject({
-          kind: 'url', url: 'https://github.com/acme/widgets/issues/7', path: 'acme/widgets#7',
+        expect(ctx.stagedQuotes.value).toHaveLength(1)
+        expect(ctx.stagedQuotes.value[0]).toMatchObject({
+          sourceKind: 'url', url: 'https://github.com/acme/widgets/issues/7', filePath: 'acme/widgets#7', text: '',
         })
+        // A card, not a separate attachment chip.
+        expect(ctx.attachedFiles.value).toHaveLength(0)
         expect(qq.composerAttachment.value).toBeNull()
       })
 
-      it('commits the local file attachment to the chat input on add', () => {
+      it('stages the quoted file as a card on add', () => {
         const qq = useQuoteQuestion()
         qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
 
         qq.addToConversation('')
 
-        expect(ctx.attachedFiles.value).toHaveLength(1)
-        expect(ctx.attachedFiles.value[0]).toMatchObject({ path: '/proj/src/main.ts' })
+        expect(ctx.stagedQuotes.value).toHaveLength(1)
+        expect(ctx.stagedQuotes.value[0]).toMatchObject({
+          filePath: '/proj/src/main.ts', sourceKind: 'file', text: '',
+        })
+        expect(ctx.attachedFiles.value).toHaveLength(0)
       })
     })
 
@@ -625,6 +639,40 @@ describe('useQuoteQuestion', () => {
 
       expect(qq.composerMode.value).toBe(false)
       expect(qq.visible.value).toBe(false)
+    })
+
+    it('hideBar does NOT tear down an entry-point composer', () => {
+      // CodeMirror viewers call hideBar() whenever their internal selection
+      // becomes empty — which happens the moment the user clicks into the bar or
+      // types. Clearing composerContext there made the commit a no-op, so the
+      // quote button silently did nothing in the file browser.
+      const qq = useQuoteQuestion()
+      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+
+      qq.hideBar()
+
+      expect(qq.composerMode.value).toBe(true)
+      expect(qq.visible.value).toBe(true)
+
+      // And the commit still works afterwards.
+      qq.addToConversation('explain')
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(ctx.stagedQuotes.value[0]).toMatchObject({
+        filePath: '/proj/src/main.ts', note: 'explain',
+      })
+    })
+
+    it('hideBar still hides a plain selection bar', () => {
+      // The selection flow must keep its existing behaviour.
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'code', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 2 }, { delay: 0 })
+      vi.advanceTimersByTime(10)
+      expect(qq.visible.value).toBe(true)
+
+      qq.hideBar()
+
+      expect(qq.visible.value).toBe(false)
+      expect(ctx.quoteData.value).toBeNull()
     })
   })
 

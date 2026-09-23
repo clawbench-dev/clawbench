@@ -590,14 +590,17 @@ describe('FileHeader', () => {
     expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
   })
 
-  it('shows the message bubble icon, not the old paperclip', () => {
+  it('shows the quote-bubble icon, not the old paperclip', () => {
     // lucide is not stubbed in this file, so identify the icon by its
     // `lucide-<name>` class rather than a data attribute.
+    // MessageSquareQuote (bubble with quotation marks) is the shared icon for
+    // every quote entry point; the plain MessageSquare belongs to comment
+    // COUNTS, so reusing it here would make the two read alike.
     const wrapper = mountHeader()
     const btn = wrapper.find('[aria-label="file.header.quoteInChat"]')
     expect(btn.exists(), 'the header must expose the quote action').toBe(true)
     const svg = btn.find('svg')
-    expect(svg.classes()).toContain('lucide-message-square')
+    expect(svg.classes()).toContain('lucide-message-square-quote')
     expect(svg.classes()).not.toContain('lucide-paperclip')
   })
 

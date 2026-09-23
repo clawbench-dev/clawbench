@@ -33,10 +33,11 @@
           </button>
         </div>
 
-        <!-- Pending attachment (composer mode only): the issue/PR URL or file the
-             bar will attach when committed. Read-only — it is not in the chat
+        <!-- Pending quote target (composer mode only): the file or issue/PR the
+             bar will quote when committed. Read-only — it is not in the chat
              context yet, so there is nothing to remove here; closing the bar
-             discards it. -->
+             discards it. On commit it becomes a quote card (same card as a text
+             selection quote), not a separate attachment. -->
         <div v-if="composerAttachment" class="qq-pending-attachment">
           <Link v-if="composerAttachment.kind === 'url'" :size="13" class="qq-pending-icon" />
           <FileIcon v-else :path="composerAttachment.path || composerAttachment.label" :size="13" class="qq-pending-icon" />

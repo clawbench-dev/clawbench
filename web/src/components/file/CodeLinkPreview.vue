@@ -264,7 +264,7 @@
           :title="t('file.codePreview.quoteToChat')"
           @click="handleQuoteToChat"
         >
-          <MessageSquare :size="15" />
+          <MessageSquareQuote :size="15" />
           <span>{{ t('file.codePreview.quoteShort') }}</span>
         </button>
       </div>
@@ -454,7 +454,7 @@
             @pointerleave="hideTooltip()"
             @click="handleQuoteToChat"
           >
-            <MessageSquare :size="12" />
+            <MessageSquareQuote :size="12" />
           </button>
           <button
             v-if="showTextTools && !isRenderedView"
@@ -665,7 +665,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, inject, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Folder, Hash, Link, Maximize2, MessageSquare, Pin, RefreshCw, Search, TextWrap, X } from 'lucide-vue-next'
+import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Folder, Hash, Link, Maximize2, MessageSquareQuote, Pin, RefreshCw, Search, TextWrap, X } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'

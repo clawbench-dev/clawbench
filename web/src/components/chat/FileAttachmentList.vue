@@ -31,7 +31,7 @@
       @click="$emit('file-tag-click', normalizeFileEntry(raw))"
       :title="t('chat.attach.openFile')">
       <template v-if="normalizeFileEntry(raw).startLine !== undefined">
-        <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
+        <MessageSquareQuote :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
         <span class="attachment-filename">{{ getFileName(normalizeFileEntry(raw).path) }}<span class="attachment-range">{{ rangeLabel(normalizeFileEntry(raw)) }}</span></span>
       </template>
       <template v-else>
@@ -59,7 +59,7 @@ import { isThumbableExt } from '@/utils/fileManager.ts'
 import { buildPathThumbUrl } from '@/utils/fileIcon.ts'
 import FileIcon from '@/components/common/FileIcon.vue'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
-import { Code2, Link as LinkIcon } from 'lucide-vue-next'
+import { MessageSquareQuote, Link as LinkIcon } from 'lucide-vue-next'
 
 const { t } = useI18n()
 

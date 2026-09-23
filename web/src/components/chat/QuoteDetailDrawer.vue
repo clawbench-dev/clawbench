@@ -1,7 +1,7 @@
 <template>
   <BottomSheet :open="open" auto @close="$emit('close')">
     <template #header>
-      <Quote :size="16" class="bs-header-icon" />
+      <MessageSquareQuote :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('quoteBar.drawerTitle') }}</span>
     </template>
 
@@ -11,7 +11,7 @@
            rather than rendered as a no-op. -->
       <div class="qd-source-row">
         <span class="qd-source" :title="quote.filePath || quote.text">
-          <Code2 v-if="quote.sourceKind !== 'message'" :size="13" class="qd-source-icon" />
+          <MessageSquareQuote v-if="quote.sourceKind !== 'message'" :size="13" class="qd-source-icon" />
           <MessageSquareText v-else :size="13" class="qd-source-icon" />
           {{ sourceLabel }}
         </span>
@@ -57,9 +57,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Quote, Code2, MessageSquareText, ExternalLink } from 'lucide-vue-next'
+import { MessageSquareQuote, MessageSquareText, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { quoteLabel, quoteLineRange, canJumpToSource, type QuoteItem } from '@/utils/quoteItem'
@@ -86,17 +86,31 @@ const noteRef = ref<HTMLTextAreaElement | null>(null)
 // is not clobbered mid-typing by a parent re-render, and so `dirty` can be
 // computed without mutating the source.
 const note = ref('')
+let focusTimer: ReturnType<typeof setTimeout> | null = null
 
 watch(
   () => [props.open, props.quote?.id] as const,
-  async ([open]) => {
+  ([open]) => {
+    if (focusTimer) { clearTimeout(focusTimer); focusTimer = null }
     if (!open) return
     note.value = props.quote?.note || ''
-    await nextTick()
-    noteRef.value?.focus()
+    // Focus only AFTER the slide-up animation finishes (BottomSheet: 250ms).
+    // Focusing during it makes the browser scroll the still-animating,
+    // overflow-hidden panel to reveal the focused textarea, which fights the
+    // slide and reads as the drawer bouncing. Every other drawer that
+    // auto-focuses an input waits for the same reason (SearchDrawer,
+    // UserMsgIndexDrawer both use 300ms).
+    focusTimer = setTimeout(() => {
+      focusTimer = null
+      noteRef.value?.focus({ preventScroll: true })
+    }, 300)
   },
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  if (focusTimer) { clearTimeout(focusTimer); focusTimer = null }
+})
 
 const dirty = computed(() => note.value !== (props.quote?.note || ''))
 

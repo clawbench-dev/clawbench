@@ -16,7 +16,7 @@
       would make the template a fragment, and the root classes/title would no
       longer be reachable via the component wrapper.
     -->
-    <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
+    <MessageSquareQuote :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
     <span class="attachment-filename">{{ label }}{{ lineRange }}</span>
     <!-- Annotation indicator: tells the user at a glance that this card carries
          a note, without printing the whole note on the chip. -->
@@ -33,7 +33,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Code2, MessageSquareText } from 'lucide-vue-next'
+import { MessageSquareQuote, MessageSquareText } from 'lucide-vue-next'
 import { quoteLabel, quoteLineRange, type QuoteItem } from '@/utils/quoteItem'
 
 const props = withDefaults(defineProps<{

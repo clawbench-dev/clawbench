@@ -4289,11 +4289,13 @@ components:
     FileEntry:
       type: object
       description: |
-        附件条目，可为本地文件/目录、**外部链接**（`kind=url`），或**引用片段**（`kind=quote`）。
+        附件条目，可为本地文件/目录、**外部链接**（`kind=url`），或**引用**（`kind=quote`）。
         链接条目不参与文件系统校验，且其地址会以
         `[Referenced external link: <url>]` 前缀注入 AI 的 prompt。
-        引用条目同样不参与文件系统校验，其 `text` 与 `note` 会以
-        `[Quoted from <label>]` + 围栏代码块的形式注入 prompt。
+        引用条目同样不参与文件系统校验，注入 prompt 的形态取决于是否有 `text`：
+        - 有 `text`（引用片段）：`[Quoted from <label>]` + 批注 + 围栏代码块（含引用正文）；
+        - 无 `text`（引用整个文件/议题）：`[Quoted from <label>]` + 批注，**不渲染围栏**——
+          此时是「引用该对象」，由 AI 自行按路径读取；`url` 非空时地址附在标签后（议题/PR）。
       properties:
         path:
           type: string
@@ -4307,7 +4309,7 @@ components:
         kind:
           type: string
           enum: [file, url, quote]
-          description: 缺省为本地文件；`url` 表示外部地址；`quote` 表示引用片段。
+          description: 缺省为本地文件；`url` 表示外部地址；`quote` 表示引用。
         url:
           type: string
           description: 外部地址，仅当 `kind=url` 时使用；只接受 http(s)。

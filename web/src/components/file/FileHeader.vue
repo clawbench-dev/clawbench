@@ -60,7 +60,7 @@
            single entry point, and an attached file is removed from its chip in
            the chat input. -->
       <button v-if="toolbarInlineIds.includes('attach')" ref="attachBtnRef" class="file-header-btn" @click.stop="handleQuoteInChat" :title="t('file.header.quoteInChat')" :aria-label="t('file.header.quoteInChat')">
-        <MessageSquare :size="14" />
+        <MessageSquareQuote :size="14" />
       </button>
 
       <!-- Lightbox view button (image / svg files only): opens the image full-size
@@ -169,7 +169,7 @@
               {{ t('file.header.fitWidth') }}
             </button>
             <button v-if="toolbarCollapsedIds.includes('attach')" class="dropdown-item" @click="handleQuoteInChat(); menuOpen = false">
-              <MessageSquare :size="14" />
+              <MessageSquareQuote :size="14" />
               {{ t('file.header.quoteInChat') }}
             </button>
             <button v-if="isImageFile && toolbarCollapsedIds.includes('viewImage')" class="dropdown-item" @click="handleViewImage(); menuOpen = false">
@@ -221,7 +221,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquareQuote, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'

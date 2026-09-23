@@ -1032,6 +1032,10 @@ func validatedURLEntry(w http.ResponseWriter, r *http.Request, fEntry model.File
 // taken from a chat message) and must never be resolved with os.Stat, or the
 // whole send would 404. The payload is the quoted text plus the user's note.
 //
+// URL is carried through for a forge-sourced quote. Dropping it left the
+// prompt naming an issue/PR the AI had no way to reach, and the detail drawer
+// unable to offer a jump-to-source.
+//
 // Shared by every endpoint that accepts file entries (chat and queue) so the
 // two cannot drift apart.
 func validatedQuoteEntry(fEntry model.FileEntry) model.FileEntry {
@@ -1042,6 +1046,7 @@ func validatedQuoteEntry(fEntry model.FileEntry) model.FileEntry {
 		Text:      fEntry.Text,
 		Note:      fEntry.Note,
 		Language:  fEntry.Language,
+		URL:       fEntry.URL,
 		StartLine: fEntry.StartLine,
 		EndLine:   fEntry.EndLine,
 	}

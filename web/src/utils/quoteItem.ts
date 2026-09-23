@@ -100,6 +100,39 @@ export function fromFileEntry(f: FileEntry): QuoteItem {
 }
 
 /**
+ * Build a quote that references a whole object (a file or a forge issue/PR)
+ * rather than a text selection.
+ *
+ * This is what the entry-point buttons (file browser, issue/PR detail, CI run)
+ * produce: "quote this file" is the same interaction as quoting selected text,
+ * differing only in that the quoted thing is the object itself. `text` is
+ * therefore EMPTY — the prompt then carries the path/address and the AI reads
+ * it, instead of inlining content the user never selected.
+ *
+ * The id is a preview placeholder; the real id is minted when the quote is
+ * staged (addStagedQuote).
+ */
+export function quoteItemFromTarget(target: {
+  filePath?: string
+  url?: string
+  label?: string
+  language?: string
+}): QuoteItem {
+  const filePath = target.filePath || target.label || ''
+  return {
+    id: '',
+    text: '',
+    note: '',
+    filePath,
+    language: target.language || '',
+    startLine: 0,
+    endLine: 0,
+    url: target.url,
+    sourceKind: inferSourceKind({ url: target.url, filePath }),
+  }
+}
+
+/**
  * Map a normalized quote to the outgoing attachment entry.
  *
  * The id is carried through because the backend needs it to address the entry
