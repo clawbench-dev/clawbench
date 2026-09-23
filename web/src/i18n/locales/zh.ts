@@ -1305,6 +1305,7 @@ export default {
     gitIgnored: '已被 .gitignore 忽略',
     emptyDir: '此目录为空',
     noFiles: '未找到支持的文件',
+    untitled: '未命名',
     viewList: '列表视图',
     viewGrid: '图标视图',
     previewModeOn: '开启预览模式：单击文件快捷预览',
@@ -1354,6 +1355,7 @@ export default {
       fileCreated: '文件已创建',
       createFailedDetail: '创建失败: {error}',
       createFailed: '创建失败',
+      fileExists: '同名文件或文件夹已存在',
       folderCreated: '文件夹已创建',
       switchProjectFailed: '切换项目失败: {error}',
       switchProjectFailedShort: '切换项目失败',
@@ -1372,6 +1374,7 @@ export default {
     },
     prompt: {
       fileName: '输入文件名：',
+      invalidFileName: '文件名不能包含 / 或 \\',
       folderName: '输入文件夹名：',
       newName: '输入新名称：',
     },

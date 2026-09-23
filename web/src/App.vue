@@ -32,7 +32,7 @@
       <AppHeader
         :project-root="projectRoot"
         :home-dir="homeDir"
-        :current-file-name="currentFile?.name"
+        :current-file-name="currentFileNameForHeader"
         :current-file-path="currentFile?.path"
         :recent-files-available="recentFilesCount"
         @open-project-dialog="handleOpenProjectDialog"
@@ -94,6 +94,7 @@
                       @navigate-dir="handleNavigateDir"
                       @navigate-back="handleNavigateBack"
                       @select-file="handleBrowseSelectFile"
+                      @new-file="handleNewFile"
                       @toggle-sort="handleToggleSort"
                       @toggle-hidden="toggleHidden"
                       @rename="handleRename"
@@ -138,6 +139,7 @@
                       @close-git-history="fileHistoryDrawer.close()"
                       @open-file="handleOverlayOpenFile"
                       @overlay-close="handleOverlayClose"
+                      @close-untitled="handleCloseUntitled"
                       @navigate-back="handleFileHistoryBack"
                       @navigate-forward="handleFileHistoryForward"
                       @capture-scroll="handleCaptureFileScroll"
@@ -1927,6 +1929,9 @@ const theme = ref(resolveThemeId(_rawTheme))
 const dirEntries = computed(() => store.state.dirEntries)
 const currentDir = computed(() => store.state.currentDir)
 const currentFile = computed(() => store.state.currentFile)
+// An unsaved Untitled buffer has no name; show the localized placeholder in the
+// app header instead of an empty segment.
+const currentFileNameForHeader = computed(() => (currentFile.value?.untitled ? t('file.untitled') : currentFile.value?.name))
 // The view pane is a CodeMirror-rendered file (code, markdown raw/editing)
 // when it's not the rendered markdown/HTML/OpenAPI preview. Such views use
 // CodeMirror's built-in search; only rendered previews need the SearchDrawer.
@@ -2870,6 +2875,41 @@ provide('openMdImages', (imgs: string[], idx: number) => lightboxRef.value?.open
 
 function handleOpenFileManager() {
     switchTab('browse')
+}
+
+/**
+ * New File from the file manager: open an empty Untitled buffer in the viewer
+ * and enter edit mode. No filename is requested and nothing is written to disk
+ * — the name is asked for on the first save.
+ *
+ * Modelled on handleBrowseSelectFile: this is a browse-initiated visit, so Back
+ * returns to the file manager rather than to whatever file was open before.
+ */
+async function handleNewFile(dir: string) {
+    fileNav.closeOverlay()
+    browseFileSession.value = true
+    // No name yet, so this is never markdown/HTML — it renders as plain source.
+    store.openUntitledFile(dir)
+    await nextTick()
+    // The nav stack entry uses an empty path: currentFile.path is empty too, so
+    // nothing path-backed runs against a file that does not exist yet. Back
+    // leaves the visit (there is no previous file in this browse session).
+    fileNav.openFile('')
+    switchTab('view')
+}
+
+/**
+ * Close an unsaved Untitled buffer.
+ *
+ * A dedicated path rather than handleOverlayClose: that routes through the back
+ * state machine, which is still mid-step (busy) when the viewer's exit flow
+ * settles and would swallow the close. Closing an untitled visit always returns
+ * to the file manager it was created from.
+ */
+function handleCloseUntitled() {
+    closeOverlayAndSync()
+    browseFileSession.value = false
+    switchTab('browse', true)
 }
 
 function handleNavigateToCommit(e: Event) {

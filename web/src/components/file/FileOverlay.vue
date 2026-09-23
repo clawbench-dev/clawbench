@@ -31,6 +31,7 @@
             @refresh="emit('refresh')"
             @open-file="emit('openFile', $event)"
             @overlay-close="emit('overlayClose')"
+            @close-untitled="emit('closeUntitled')"
             @navigate-back="emit('navigateBack')"
             @navigate-forward="emit('navigateForward')"
             @capture-scroll="emit('captureScroll', $event)"
@@ -117,7 +118,7 @@ const emit = defineEmits([
   'delete', 'showDetails', 'openGitHistory',
   'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh',
   'jump', 'jumpPage', 'closeGitHistory', 'openFile',
-  'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink',
+  'overlayClose', 'closeUntitled', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink',
   'setAsBackground',
   'captureScroll',
   'quoteInChat',

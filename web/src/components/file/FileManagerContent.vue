@@ -829,7 +829,7 @@ const props = defineProps({
     keyboardActive: { type: Boolean, default: true }, // focus-aware gating for global file shortcuts
 })
 
-const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
+const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'newFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
 
 
 const sortMenuOpen = ref(false)
@@ -1929,36 +1929,16 @@ async function transferEntries(entries, destDir, isMove) {
     return allOk
 }
 
-async function doNewFile() {
+/**
+ * New file — VSCode-style: no filename is requested up front. The parent opens
+ * an empty "Untitled" editor in the target directory and asks for the name only
+ * when the user saves. Nothing is written to disk here.
+ */
+function doNewFile() {
     const entry = ctxMenu.entry
     closeCtxMenu()
     moreMenuOpen.value = false
-    const name = await dialog.prompt(t('file.prompt.fileName'))
-    if (!name || !name.trim()) return
-    const dir = getDestDir(entry)
-    // Drop the results layer before refreshing: it renders search hits, not the
-    // directory listing, so the new entry would never appear in it — leaving the
-    // row both unselected and unscrolled. exitSearch() also clears selectedPath,
-    // hence it runs before the post-create selection below.
-    exitSearch()
-    try {
-        const resp = await fetch('/api/file/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: dir, name: name.trim() }),
-        })
-        if (resp.ok) {
-            emit('refresh')
-            // Scroll to the new file and select it (without opening it in the viewer)
-            scrollToEntryAndSelect(joinPath(dir, name.trim()))
-            if (toast) toast.show(t('file.toast.fileCreated'), { icon: '📄', type: 'success', duration: 1500 })
-        } else {
-            const err = await resp.json()
-            if (toast) toast.show(t('file.toast.createFailedDetail', { error: err.error || '' }), { icon: '❌', type: 'error', duration: 2000 })
-        }
-    } catch {
-        if (toast) toast.show(t('file.toast.createFailed'), { icon: '❌', type: 'error', duration: 2000 })
-    }
+    emit('newFile', getDestDir(entry))
 }
 
 async function doNewFolder() {
@@ -1968,8 +1948,8 @@ async function doNewFolder() {
     const name = await dialog.prompt(t('file.prompt.folderName'))
     if (!name || !name.trim()) return
     const dir = getDestDir(entry)
-    // See doNewFile: the results layer cannot show the new entry, so collapse it
-    // before the refresh + selection.
+    // The results layer cannot show the new entry, so collapse it before the
+    // refresh + selection.
     exitSearch()
     try {
         const resp = await fetch('/api/dir/create', {
@@ -2559,7 +2539,7 @@ async function handleKeydown(e) {
             e.preventDefault()
             emit('delete', selectedPath.value)
             refreshSearchResults()
-        } else if (props.currentFile) {
+        } else if (props.currentFile?.path) {
             e.preventDefault()
             emit('delete', props.currentFile.path)
         }
@@ -2709,7 +2689,7 @@ async function handleKeydown(e) {
             exitMultiSelect()
         } else if (selectedPath.value) {
             emit('delete', selectedPath.value)
-        } else if (props.currentFile) {
+        } else if (props.currentFile?.path) {
             emit('delete', props.currentFile.path)
         }
         return

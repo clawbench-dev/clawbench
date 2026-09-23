@@ -793,6 +793,45 @@ describe('FileHeader', () => {
     })
   })
 
+  describe('untitled buffer', () => {
+    const untitled = { name: '', path: '', content: '', untitled: true, targetDir: 'docs' }
+
+    it('shows the localized placeholder instead of an empty name', () => {
+      const wrapper = mountHeader({ file: untitled })
+      // The test i18n mock echoes the key, so assert on the key being used.
+      expect((wrapper.vm as any).$.setupState.displayName).toBe('file.untitled')
+      expect(wrapper.find('.file-path-hint').text()).toBe('file.untitled')
+    })
+
+    it('hides every path-backed action, keeping only editor preferences', () => {
+      const wrapper = mountHeader({ file: untitled })
+      const vm = wrapper.vm as any
+      const ids = vm.$.setupState.permanentMenuIds
+
+      // No path on disk yet, so none of these can work.
+      for (const id of ['details', 'openDirectory', 'gitHistory', 'shareLink', 'openAsText', 'exportHtml', 'setAsBackground', 'delete']) {
+        expect(ids).not.toContain(id)
+      }
+      // Editor preferences stay available.
+      expect(ids).toContain('wordWrap')
+      expect(ids).toContain('lineNumbers')
+      expect(ids).toContain('stickyScroll')
+    })
+
+    it('hides path-backed inline toolbar buttons', () => {
+      const wrapper = mountHeader({ file: untitled })
+      const ids = (wrapper.vm as any).$.setupState.toolbarInlineIds
+      for (const id of ['refresh', 'attach', 'download']) {
+        expect(ids).not.toContain(id)
+      }
+    })
+
+    it('offers no edit toggle — the buffer is always editable', () => {
+      const wrapper = mountHeader({ file: untitled })
+      expect((wrapper.vm as any).$.setupState.isEditable).toBe(false)
+    })
+  })
+
   describe('share link button', () => {
     it('is a permanent More-menu item for a regular file', () => {
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })

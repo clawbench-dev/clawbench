@@ -169,7 +169,7 @@
           @save="handleSave"
           @save-and-exit="handleSaveAndExit"
           @cancel="editing = false"
-          @exit-edit="editing = false"
+          @exit-edit="handleExitEdit"
           @search-change="emit('searchChange', $event)"
         />
       </template>
@@ -234,12 +234,13 @@
           :word-wrap="wordWrap"
           :show-line-numbers="showLineNumbers"
           :sticky-scroll="stickyScroll"
-          :editable="editing"
+          :editable="editing || isUntitled"
           :saving="saving"
+          :untitled="isUntitled"
           @save="handleSave"
           @save-and-exit="handleSaveAndExit"
           @cancel="editing = false"
-          @exit-edit="editing = false"
+          @exit-edit="handleExitEdit"
           @search-change="emit('searchChange', $event)"
         />
       </div>
@@ -356,7 +357,7 @@ const props = defineProps({
     canNavigateBack: Boolean,
     backLabel: String,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'closeUntitled', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat'])
 
 const fileNav = useFileNavStack()
 const { active: textSelecting } = useTextSelectionActive()
@@ -394,23 +395,61 @@ const htmlPreviewRef = ref(null)
 // Edit mode (source text editing via CodeEditor).
 // Shared at module level so the global back gesture (App.vue) can exit edit
 // mode first instead of navigating back / closing the file while editing.
+//
+// An unsaved Untitled buffer IS an edit session: it opens in edit mode and stays
+// there, which is what makes the back state machine run the save/discard
+// confirmation before anything leaves it. It has no read-only form to fall back
+// to, though, so every exit ends the visit — VSCode closes the untitled tab. The
+// back-gesture path does that in handleExitEditRequest below; the header/nav
+// paths navigate away through guardExitEdit.
 const fileEditor = useFileEditor()
 const editing = fileEditor.editing
+const isUntitled = computed(() => !!props.file?.untitled)
 const { saving, saveFile } = useCodeEditorSave()
 const cmEditorRef = ref(null)
 const excalidrawViewerRef = ref(null)
 const mdPreviewRef = ref(null)
+/**
+ * Resolves when an in-flight first save of an Untitled buffer finishes (true on
+ * success). The editor's exit flow emits 'saveAndExit' without awaiting the
+ * save, so the close has to wait here — otherwise the viewer, and the filename
+ * prompt it is showing, would be torn down mid-save.
+ */
+let untitledSavePromise = null
 
 // The global back handler calls exitEdit() → run the active editor's exit flow,
 // which confirms save/discard/cancel when there are unsaved changes. For
 // Excalidraw files the iframe editor registers its own flow; otherwise it's
 // CodeMirrorViewer.
+//
+// The state machine's 'edit' step navigates nowhere on its own, so an Untitled
+// buffer — which has no read-only form to fall back to — has to close itself
+// once the flow settles (VSCode closes the untitled tab). It cannot use
+// 'overlayClose' for that: the close would route back into the state machine,
+// which is still busy with this very step and would swallow it. Hence the
+// dedicated 'closeUntitled' event. The other exit paths (header X / nav) already
+// navigate through guardExitEdit's action, so they need nothing extra.
 function handleExitEditRequest() {
     if (props.file?.isExcalidraw) {
         excalidrawViewerRef.value?.requestExit?.()
-    } else {
-        cmEditorRef.value?.handleExit?.()
+        return
     }
+    if (!isUntitled.value) {
+        cmEditorRef.value?.handleExit?.()
+        return
+    }
+    Promise.resolve(cmEditorRef.value?.handleExit?.()).then(async (exited) => {
+        if (exited !== true) return // user cancelled — stay in the buffer
+        // A "save" choice returns before its write (and filename prompt) settle.
+        // Awaiting that promise covers the failure cases too: a cancelled prompt
+        // or a failed write resolves false and leaves the buffer open.
+        if (untitledSavePromise) {
+            const pending = untitledSavePromise
+            untitledSavePromise = null
+            if (!(await pending)) return
+        }
+        emit('closeUntitled')
+    })
 }
 
 let unregisterExitEdit = null
@@ -432,17 +471,41 @@ onBeforeUnmount(() => {
 
 // Save and stay in edit mode. Clicking save / Ctrl+S only persists the file,
 // it does not leave the edit view so the user can keep making edits.
+//
+// The first save of an Untitled buffer names the file and clears its `untitled`
+// flag, which is what kept the editor editable. Edit mode must therefore be
+// entered explicitly, or the buffer would silently turn read-only the moment it
+// was saved — the opposite of what the user just asked for.
 async function handleSave(content) {
-    await saveFile(props.file?.path || '', content)
+    const wasUntitled = isUntitled.value
+    const ok = await saveFile(props.file?.path || '', content)
+    if (ok && wasUntitled) {
+        editing.value = true
+    }
 }
 
 // Save and then exit edit mode. Used by the exit flows (back / toggle view)
 // which confirm save-or-discard; only these paths leave the edit view.
+//
+// An Untitled buffer's first save is asynchronous (it prompts for a filename),
+// so the promise is exposed for handleExitEditRequest to await before closing.
+// The close itself is not emitted here: every caller of this handler navigates
+// away through guardExitEdit's action, and closing here as well would do it
+// twice. Only the back gesture's 'edit' step — which navigates nowhere — closes
+// on its own, in handleExitEditRequest.
 async function handleSaveAndExit(content) {
-    const ok = await saveFile(props.file?.path || '', content)
+    const save = saveFile(props.file?.path || '', content)
+    if (isUntitled.value) untitledSavePromise = save
+    const ok = await save
     if (ok) {
         editing.value = false
     }
+}
+
+// Discard-and-exit, or a plain exit with nothing to save. Pure state change —
+// see handleSaveAndExit for why the close is not emitted here.
+function handleExitEdit() {
+    editing.value = false
 }
 
 function handleToggleSearch() {
@@ -490,7 +553,10 @@ async function guardExitEdit(action) {
         action()
         return true
     }
-    if (editing.value) {
+    // Untitled buffers are always in an editor session, whether or not they are
+    // dirty — an empty new file still needs its save/discard decision before the
+    // visit is closed.
+    if (editing.value || isUntitled.value) {
         const exited = await cmEditorRef.value?.handleExit?.()
         if (exited !== true) return false
         // The "save and exit" path clears editing asynchronously; wait for it so
@@ -623,7 +689,14 @@ onBeforeUnmount(() => {
 watch(() => props.file, (f, oldF) => {
     scrollRestore.onFileWillChange()
 
-    editing.value = false
+    // An unsaved Untitled buffer opens directly in edit mode — there is no
+    // read-only form of a file that does not exist yet. Set here rather than by
+    // the opener because this watcher also runs on mount (immediate), after the
+    // opener has returned, so it is the only place that reliably covers it.
+    editing.value = !!f?.untitled
+    // A pending first-save belongs to the buffer being left; carrying it into the
+    // next file would let a stale success trigger that file's untitled close.
+    untitledSavePromise = null
 
     if (!f) {
         loading.value = true

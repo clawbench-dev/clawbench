@@ -1302,6 +1302,7 @@ export default {
     gitIgnored: 'Ignored by .gitignore',
     emptyDir: 'This directory is empty.',
     noFiles: 'No supported files found.',
+    untitled: 'Untitled',
     viewList: 'List view',
     viewGrid: 'Grid view',
     previewModeOn: 'Enable preview mode: click a file for a quick preview',
@@ -1351,6 +1352,7 @@ export default {
       fileCreated: 'File created',
       createFailedDetail: 'Create failed: {error}',
       createFailed: 'Create failed',
+      fileExists: 'A file or folder with that name already exists',
       folderCreated: 'Folder created',
       switchProjectFailed: 'Switch project failed: {error}',
       switchProjectFailedShort: 'Switch project failed',
@@ -1369,6 +1371,7 @@ export default {
     },
     prompt: {
       fileName: 'Enter file name:',
+      invalidFileName: 'File name cannot contain / or \\',
       folderName: 'Enter folder name:',
       newName: 'Enter new name:',
     },
