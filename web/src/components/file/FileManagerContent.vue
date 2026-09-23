@@ -211,15 +211,13 @@
     <input v-if="!isAppMode" type="file" ref="folderInputRef" @change="onFolderUploadSelect" style="display:none" webkitdirectory multiple />
 
     <!-- Upload progress bar (byte-based bar + count progress below) -->
-    <div v-if="dirUploading" class="dir-upload-progress">
-      <div class="dir-upload-progress-main">
-        <div class="dir-upload-progress-bar" :style="{ width: dirUploadProgress + '%' }"></div>
-        <button class="dir-upload-cancel" title="取消" @click="cancelDirUpload">
-          <X :size="12" />
-        </button>
-      </div>
-      <div class="dir-upload-progress-count">{{ dirUploadDone }}/{{ dirUploadTotal }}</div>
-    </div>
+    <UploadProgressBar
+      :visible="dirUploading"
+      :progress="dirUploadProgress"
+      :done="dirUploadDone"
+      :total="dirUploadTotal"
+      @cancel="cancelDirUpload"
+    />
 
     <!-- File list + (optional) docked preview pane. When preview mode is on
          and a file is open, this becomes a draggable top/bottom split; when
@@ -534,12 +532,7 @@
     <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
-    <Transition name="paste-fade">
-      <div v-if="isDragOver" class="drop-overlay">
-        <Upload :size="32" :stroke-width="1.5" />
-        <span>{{ t('file.dropToUpload') }}</span>
-      </div>
-    </Transition>
+    <DropOverlay :visible="isDragOver" :label="t('file.dropToUpload')" />
   </div>
 </template>
 
@@ -577,6 +570,8 @@ import { downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
 import SplitView from '@/components/common/SplitView.vue'
+import DropOverlay from '@/components/common/DropOverlay.vue'
+import UploadProgressBar from '@/components/common/UploadProgressBar.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import ExternalBadge from './ExternalBadge.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
@@ -3526,81 +3521,8 @@ function scrollSelectedIntoView(path) {
     background: color-mix(in srgb, white 30%, var(--accent-color, #4a90d9));
 }
 
-/* Upload progress bar */
-.dir-upload-progress {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: var(--space-3) var(--space-6);
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
-    flex-shrink: 0;
-}
-
-.dir-upload-progress-main {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-}
-
-.dir-upload-progress-bar {
-    flex: 1;
-    height: 3px;
-    min-width: 0;
-    background: var(--accent-color, #4a90d9);
-    border-radius: var(--radius-xs);
-    transition: width var(--duration-base) ease;
-}
-
-.dir-upload-cancel {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    border: none;
-    border-radius: 50%;
-    background: var(--bg-tertiary, #f0f0f0);
-    color: var(--text-secondary, #666);
-    cursor: pointer;
-    transition: all var(--duration-base);
-}
-
-@media (hover: hover) {
-    .dir-upload-cancel:hover {
-        background: var(--color-red);
-        color: #fff;
-    }
-}
-
-.dir-upload-progress-count {
-    font-size: var(--font-size-xs);
-    color: var(--text-secondary, #666);
-    white-space: nowrap;
-    line-height: var(--line-height-tight);
-}
-
-/* ── Drop overlay ── */
-.drop-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-5);
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 10%, var(--bg-primary, #fff));
-    color: var(--accent-color, #4a90d9);
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-medium);
-    pointer-events: none;
-    border-radius: var(--radius-xs);
-}
-
-[data-theme-base="dark"] .drop-overlay {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, var(--bg-primary, #1a1a1a));
-}
+/* Upload progress bar and drop overlay styles live in their shared components
+   (components/common/UploadProgressBar.vue and DropOverlay.vue). */
 
 /* ── Paste overlay ── */
 .paste-overlay {

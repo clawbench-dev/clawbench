@@ -67,8 +67,18 @@
       </template>
     </div>
 
+    <!-- Upload progress for files dropped onto the terminal (shared state with
+         the file manager, which is never visible at the same time). -->
+    <UploadProgressBar
+      :visible="dirUploading"
+      :progress="dirUploadProgress"
+      :done="dirUploadDone"
+      :total="dirUploadTotal"
+      @cancel="cancelDirUpload"
+    />
+
     <!-- Terminal viewport — one container per tab -->
-    <div class="terminal-viewport">
+    <div class="terminal-viewport" v-on="terminalDropHandlers">
       <div
         v-for="tab in tabs"
         :key="tab.id"
@@ -94,6 +104,10 @@
           <div v-if="gestureHint" class="gesture-hint">{{ gestureHint }}</div>
         </Transition>
       </div>
+
+      <!-- Drop-to-upload overlay. Inside the viewport (not the panel) so it
+           covers the terminal area only, and only exists when a tab is open. -->
+      <DropOverlay :visible="terminalFileDrop.dropActive.value" :label="t('file.dropToUpload')" />
     </div>
 
     <Transition name="copy-bar">
@@ -272,6 +286,8 @@ import '@xterm/xterm/css/xterm.css'
 
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import DropOverlay from '@/components/common/DropOverlay.vue'
+import UploadProgressBar from '@/components/common/UploadProgressBar.vue'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
@@ -285,6 +301,9 @@ import { useTerminalCopyOnSelect } from '@/composables/useTerminalCopyOnSelect'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys'
+import { useTerminalFileDrop } from '@/composables/useTerminalFileDrop'
+import { useTerminalStatus } from '@/composables/useTerminalStatus'
+import { useFileUpload } from '@/composables/useFileUpload'
 import { selectionCellsToSelect, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
@@ -334,6 +353,9 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const { getServerValueWithDefault } = useSettingsConfig()
+// Aggregate upload progress for files dropped onto the terminal. The state is a
+// module-level singleton inside useFileUpload, so the file manager shares it.
+const { dirUploading, dirUploadProgress, dirUploadDone, dirUploadTotal, cancelDirUpload } = useFileUpload()
 
 // Font size with persistence
 const fontSize = ref<number>((localConfig.terminalFontSize as number) || DEFAULT_FONT_SIZE)
@@ -742,6 +764,34 @@ const tabManager = useTerminalTabs(getWsUrl, {
 })
 
 const { tabs, activeTabId, activeTab } = tabManager
+
+// ── Drag-and-drop upload into the shell's live cwd ──
+// Dropped OS files are uploaded into whatever directory the shell is currently
+// in (resolved live by the backend from the PTY's foreground process group).
+// Only mounted when the server can actually resolve that directory — otherwise
+// the drop would silently target the tab's launch directory instead.
+const { cwdProbeSupported } = useTerminalStatus()
+
+const terminalFileDrop = useTerminalFileDrop({
+  getSessionId: () => activeTab.value?.sessionId || undefined,
+  getFallbackDir: () => activeTab.value?.cwd || '',
+})
+
+/**
+ * Bound with `v-on="…"` rather than `@drop`/`@dragover` so the whole listener
+ * set can be omitted. On platforms without a live-cwd probe there is no correct
+ * upload target, so we do not intercept the drop at all.
+ */
+const terminalDropHandlers = computed(() => {
+  if (cwdProbeSupported.value !== true) return {}
+  if (props.platformUnsupported) return {}
+  return {
+    dragenter: terminalFileDrop.onDragEnter,
+    dragover: terminalFileDrop.onDragOver,
+    dragleave: terminalFileDrop.onDragLeave,
+    drop: terminalFileDrop.onDrop,
+  }
+})
 
 // React to mono font changes from the Settings panel: when the chosen font is
 // a self-hosted bundled webfont, wait for it to finish loading BEFORE setting

@@ -160,4 +160,22 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('@close="helpDrawer.close()"')
     expect(source).toContain("const helpDrawer = useTabDrawer('terminal')")
   })
+
+  it('uploads dropped OS files into the shell live cwd', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // The drop listeners are bound as an object so the whole set can be omitted
+    // on platforms where the server cannot resolve a live cwd — with no correct
+    // target directory, intercepting the drop would upload into the wrong place.
+    expect(source).toContain('v-on="terminalDropHandlers"')
+    expect(source).toContain("if (cwdProbeSupported.value !== true) return {}")
+    // The live cwd is fetched per-drag from the status endpoint, not from the
+    // tab's launch directory (which goes stale after `cd`).
+    expect(source).toContain('getSessionId: () => activeTab.value?.sessionId')
+    expect(source).toContain('getFallbackDir: () => activeTab.value?.cwd')
+    // Reuse the shared overlay + progress bar rather than bespoke markup.
+    expect(source).toContain('<DropOverlay :visible="terminalFileDrop.dropActive.value"')
+    expect(source).toContain('<UploadProgressBar')
+    expect(source).toContain('@cancel="cancelDirUpload"')
+  })
 })
