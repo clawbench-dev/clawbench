@@ -74,6 +74,7 @@ import { handleDiffMarkerClick } from '@/composables/useDiffMarkerClick.ts'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { captureMarkdownScroll } from '@/composables/useFileScrollRestore.ts'
 import { setFileScroll, type FileScrollEntry } from '@/utils/fileScrollCache.ts'
+import { handleShareLinkClick } from '@/share/shareLinks'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import '@/assets/diff-marker.css'
 
@@ -214,6 +215,12 @@ function onMarkdownDragEnd(e: DragEvent) {
 }
 
 function handleClick(event: MouseEvent) {
+    // Share mode: a relative link inside the shared document switches the
+    // share view in place. Must run FIRST — the fallback chain below ends in
+    // openFilePath, which resolves against the (empty) project root and hits
+    // auth-protected endpoints that an anonymous reader cannot use.
+    if (handleShareLinkClick(event)) return
+
     // Touch image attach badge — first in the chain so its stopPropagation
     // prevents the click from reaching the image/lightbox handlers below.
     if (handleMdImageAttachClick(event, mdImageAttachActions)) return

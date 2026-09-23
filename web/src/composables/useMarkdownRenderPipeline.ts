@@ -24,6 +24,7 @@ import { isThumbExtension, buildThumbUrl, getThumbWidth, markInlineSvgs } from '
 import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { isShareMode, shareApiUrl } from '@/share/shareMode'
+import { annotateShareLinks } from '@/share/shareLinks.ts'
 
 /**
  * Build the served URL for a project-relative (already normalized, unencoded)
@@ -226,11 +227,14 @@ export function buildMarkdownPreviewDom(
         }),
     })
 
-    // Share mode: render the document read-only. File-path annotation is
-    // skipped entirely — the shared view has no file navigation, and annotated
-    // links would attempt auth-protected opens.
+    // Share mode: render the document read-only. The in-app file-path
+    // annotation is skipped entirely — it resolves paths against the project
+    // root and opens them through the auth-protected viewer, neither of which
+    // exists for an anonymous share. Local relative LINKS are instead rewritten
+    // to deep links into the same share (shareLinks.ts), which ShareView turns
+    // into an in-place document switch.
     if (isShareMode()) {
-        return { html, detectedPaths: [] }
+        return { html: annotateShareLinks(html, currentDir), detectedPaths: [] }
     }
 
     const { html: annotatedHtml, detectedPaths } = annotateFilePaths(html, {

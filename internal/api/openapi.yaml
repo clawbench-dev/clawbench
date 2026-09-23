@@ -2387,18 +2387,20 @@ paths:
       tags: [Share]
       summary: 公开分享数据（token 即凭证）
       description: |
-        免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/download`
-        （强制下载）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
+        免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/content?path=`
+        （文档内引用的文件，同样返回 FileContent JSON）、`{token}/download`（强制下载，
+        支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
         token 不存在一律 404，零信息暴露。
 
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
-        `{token}/file` 需要把内容内联进 JSON，故对超过内联上限（10MB）的文件
-        返回 200 但 `content` 为空、`tooLarge: true`（仅元数据），由分享页降级为
-        下载入口；`{token}/download` 与 `{token}/local/...` 流式返回，无大小上限。
+        `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限
+        （10MB）的文件返回 200 但 `content` 为空、`tooLarge: true`（仅元数据），由分享页
+        降级为下载入口；`{token}/download` 与 `{token}/local/...` 流式返回，无大小上限。
 
         `?path=` 仅接受落在**该分享自身范围**内的绝对路径，范围在创建分享时确定并
         随分享记录持久化（文件在所选项目内 → 项目根；否则 → 该文件所在目录）。
-        范围之外的路径返回 404，与 `RootPaths` 无关。
+        范围之外的路径返回 404，与 `RootPaths` 无关。`{token}/content` 对目录返回 404
+        （token 端点不提供目录列举能力）。
       operationId: sharePublic
       security: []
       responses:

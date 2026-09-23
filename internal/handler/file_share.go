@@ -310,9 +310,59 @@ func parseSharePublicPath(urlPath string) (token, rest string, ok bool) {
 	return rest[:slash], rest[slash+1:], true
 }
 
+// confineSharePath resolves a non-empty ?path= value to an absolute path and
+// checks it lies inside the share's scope. Returns ok=false when the path is
+// relative (never a valid target here) or escapes the root.
+//
+// shareRoot is the boundary captured when the share was created (see
+// resolveShareRoot); an empty value (a row predating the column) falls back to
+// the shared file's own directory, the fail-closed direction. Callers write the
+// uniform 404 themselves so the rejection cannot be told apart from "missing".
+func confineSharePath(queryPath, sharedAbsPath, shareRoot string) (string, bool) {
+	if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
+		return "", false
+	}
+	root := shareRoot
+	if root == "" {
+		root = filepath.Dir(sharedAbsPath)
+	}
+	// filepath.Abs only errors for a drive-relative path whose working
+	// directory is gone (Windows); treat that exactly like an out-of-scope
+	// target so there is a single rejection path.
+	absTarget, err := filepath.Abs(queryPath)
+	if err != nil || !isPathUnderBase(absTarget, root) {
+		return "", false
+	}
+	return absTarget, true
+}
+
+// resolveShareScopePath returns the file a token-scoped endpoint should read:
+// the shared file itself when no ?path= is given, otherwise the absolute target
+// confined to the share's scope.
+//
+// On rejection it writes the uniform 404 and returns ok=false. Callers must not
+// distinguish "outside scope" from "missing": these endpoints are public, so the
+// response must not reveal anything about paths the token does not cover.
+func resolveShareScopePath(w http.ResponseWriter, r *http.Request, sharedAbsPath, shareRoot string) (string, bool) {
+	queryPath := r.URL.Query().Get("path")
+	if queryPath == "" {
+		return sharedAbsPath, true
+	}
+	absTarget, ok := confineSharePath(queryPath, sharedAbsPath, shareRoot)
+	if !ok {
+		http.NotFound(w, r)
+		return "", false
+	}
+	return absTarget, true
+}
+
 // ServeSharePublic serves the unauthenticated token-scoped data endpoints:
-//   - GET /api/share/{token}/file        → FileContent JSON
+//   - GET /api/share/{token}/file        → FileContent JSON (shared file)
+//   - GET /api/share/{token}/content?path= → FileContent JSON for a file the
+//     shared document references (same JSON shape as /file, so the share SPA
+//     can render it in place); directories are refused (no listing endpoint)
 //   - GET /api/share/{token}/download    → raw bytes with Content-Disposition
+//     (?path= downloads a referenced file instead of the shared one)
 //   - GET /api/share/{token}/local/{rel} → raw bytes resolved against the shared
 //     file's directory (or ?path= absolute)
 func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +375,10 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath, name, shareRoot, exists, err := service.GetFileShareByToken(token)
+	// The stored name is unused: /download derives its filename from the
+	// resolved target so that ?path= downloads a referenced file under its own
+	// name rather than the shared file's.
+	absPath, _, shareRoot, exists, err := service.GetFileShareByToken(token)
 	if err != nil {
 		slog.Error("share: public token lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -340,8 +393,20 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case rest == "" || rest == entryTypeFile:
 		serveShareFileContent(w, r, absPath)
+	case rest == "content":
+		// Same JSON payload as /file, but for a path the shared document
+		// references (?path=). The share SPA renders it in place.
+		target, ok := resolveShareScopePath(w, r, absPath, shareRoot)
+		if !ok {
+			return
+		}
+		serveShareFileContent(w, r, target)
 	case rest == "download":
-		serveShareRaw(w, r, absPath, name, true)
+		target, ok := resolveShareScopePath(w, r, absPath, shareRoot)
+		if !ok {
+			return
+		}
+		serveShareRaw(w, r, target, filepath.Base(target), true)
 	case rest == shareLocalSegment || strings.HasPrefix(rest, shareLocalSegment+"/"):
 		serveShareLocal(w, r, absPath, shareRoot, rest)
 	default:
@@ -467,30 +532,13 @@ func serveShareRaw(w http.ResponseWriter, r *http.Request, absPath, name string,
 
 // serveShareLocal serves a file referenced by the shared document (markdown
 // images etc.). Relative paths resolve against the shared file's directory;
-// absolute paths are accepted via ?path= and confined to shareRoot.
-//
-// shareRoot is the directory captured when the share was created (see
-// resolveShareRoot). It is the ONLY boundary here: these endpoints are public
-// and unauthenticated, so a token holder must not be able to reach beyond the
-// share's own scope. An empty shareRoot means a row created before the column
-// existed — fall back to the shared file's own directory, which is the safe
-// direction.
+// absolute paths are accepted via ?path= and confined to the share's scope
+// (see confineSharePath).
 func serveShareLocal(w http.ResponseWriter, r *http.Request, sharedAbsPath, shareRoot, rest string) {
 	// Absolute path via ?path= — referenced outside the shared file's dir.
 	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
-		if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
-			http.NotFound(w, r)
-			return
-		}
-		root := shareRoot
-		if root == "" {
-			root = filepath.Dir(sharedAbsPath)
-		}
-		// filepath.Abs only errors for a drive-relative path whose working
-		// directory is gone (Windows); treat that exactly like an out-of-scope
-		// target so there is a single rejection path.
-		absTarget, aerr := filepath.Abs(queryPath)
-		if aerr != nil || !isPathUnderBase(absTarget, root) {
+		absTarget, ok := confineSharePath(queryPath, sharedAbsPath, shareRoot)
+		if !ok {
 			http.NotFound(w, r)
 			return
 		}

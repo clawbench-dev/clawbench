@@ -72,6 +72,9 @@ const i18n = createI18n({
         tooLarge: 'Too large to preview',
         renderedView: 'Rendered preview',
         sourceView: 'View source',
+        back: 'Back',
+        linkUnavailable: 'This linked file is unavailable or outside the shared scope',
+        linkUnavailableTitle: 'Cannot open this file',
       },
       common: { download: 'Download' },
       imageBlock: { view: 'View image', openFile: 'Open file' },
@@ -98,8 +101,12 @@ afterEach(() => {
   for (const w of mountedWrappers.splice(0)) w.unmount()
 })
 
-async function mountShare(file: Record<string, unknown>) {
+async function mountShare(
+  file: Record<string, unknown>,
+  fetchImpl?: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>
+) {
   ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string | URL | Request) => {
+    if (fetchImpl) return fetchImpl(String(url))
     return {
       ok: true,
       json: async () => file,
@@ -297,6 +304,108 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
       window.removeEventListener('cm-scroll-to-line', listener)
       stopAck()
     }
+  })
+})
+
+describe('ShareView — in-place navigation to referenced files', () => {
+  // Files served by the mocked token endpoints, keyed by the ?path= value.
+  const SHARED = { name: 'README.md', path: '/repo/README.md', content: '# Root\n[Guide](./docs/guide.md)' }
+  const LINKED = { name: 'guide.md', path: '/repo/docs/guide.md', content: '# Guide\nbody' }
+
+  /** Resolve the token endpoint by URL, mimicking the backend's routing. */
+  function endpoint(overrides: Record<string, unknown> = {}) {
+    const calls: string[] = []
+    const impl = async (u: string) => {
+      calls.push(u)
+      const path = u.includes('?path=') ? decodeURIComponent(u.split('?path=')[1]) : ''
+      if (path) {
+        const body = path in overrides ? overrides[path] : (path === LINKED.path ? LINKED : SHARED)
+        return { ok: body !== null, json: async () => body }
+      }
+      return { ok: true, json: async () => SHARED }
+    }
+    return { impl, calls }
+  }
+
+  it('opens a ?path= deep link straight to the referenced file', async () => {
+    window.history.replaceState({}, '', '/share/tokShareTest?path=' + encodeURIComponent(LINKED.path))
+    const { impl, calls } = endpoint()
+    const wrapper = await mountShare(SHARED, impl)
+
+    expect(calls.some(c => c.includes('/content?path='))).toBe(true)
+    expect(wrapper.find('.markdown-preview-stub').text()).toContain('guide.md')
+  })
+
+  it('switches documents in place when a share link is followed', async () => {
+    const { impl } = endpoint()
+    const wrapper = await mountShare(SHARED, impl)
+    expect(wrapper.find('.share-back-btn').exists()).toBe(false)
+
+    window.dispatchEvent(new CustomEvent('share-open-file', { detail: { path: LINKED.path } }))
+    await flushPromises()
+    await nextTick()
+    await flushPromises()
+
+    // The referenced document replaced the shared one, and Back appeared.
+    expect(wrapper.find('.markdown-preview-stub').text()).toContain('guide.md')
+    expect(wrapper.find('.share-back-btn').exists()).toBe(true)
+    // The URL now deep-links to the referenced file (reload/share friendly).
+    expect(decodeURIComponent(window.location.search)).toContain(LINKED.path)
+  })
+
+  it('returns to the shared file via the Back button', async () => {
+    const { impl } = endpoint()
+    const wrapper = await mountShare(SHARED, impl)
+
+    window.dispatchEvent(new CustomEvent('share-open-file', { detail: { path: LINKED.path } }))
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.find('.markdown-preview-stub').text()).toContain('guide.md')
+
+    await wrapper.find('.share-back-btn').trigger('click')
+    // jsdom dispatches popstate asynchronously after history.back().
+    await vi.waitFor(() => {
+      expect(wrapper.find('.markdown-preview-stub').text()).toContain('README.md')
+    })
+    expect(wrapper.find('.share-back-btn').exists()).toBe(false)
+  })
+
+  it('reports an unavailable linked file without losing the share', async () => {
+    // The content endpoint 404s for this target (deleted / out of scope / dir).
+    const { impl } = endpoint({ [LINKED.path]: null })
+    const wrapper = await mountShare(SHARED, impl)
+
+    window.dispatchEvent(new CustomEvent('share-open-file', { detail: { path: LINKED.path } }))
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.find('.share-error-state').exists()).toBe(true)
+    expect(wrapper.find('.share-error-desc').text()).toContain('unavailable')
+    // Back is still offered so the reader is not stranded on the dead link.
+    expect(wrapper.find('.share-error-back').exists()).toBe(true)
+  })
+
+  it('downloads the referenced file (not the shared one) after a switch', async () => {
+    const { impl } = endpoint()
+    const wrapper = await mountShare(SHARED, impl)
+    window.dispatchEvent(new CustomEvent('share-open-file', { detail: { path: LINKED.path } }))
+    await flushPromises()
+    await flushPromises()
+
+    const href = wrapper.find('a.share-btn[download]').attributes('href') || ''
+    expect(href).toContain('/download?path=')
+    expect(decodeURIComponent(href)).toContain(LINKED.path)
+  })
+
+  it('ignores a share-open-file event for the file already on screen', async () => {
+    const { impl, calls } = endpoint()
+    const wrapper = await mountShare(SHARED, impl)
+    const before = calls.length
+
+    window.dispatchEvent(new CustomEvent('share-open-file', { detail: { path: SHARED.path } }))
+    await flushPromises()
+    expect(calls.length).toBe(before)
+    expect(wrapper.find('.share-back-btn').exists()).toBe(false)
   })
 })
 
