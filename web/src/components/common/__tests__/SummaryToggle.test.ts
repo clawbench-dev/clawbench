@@ -37,14 +37,25 @@ describe('SummaryToggle', () => {
       expect(wrapper.find('.chat-action-btn').exists()).toBe(true)
     })
 
-    it('shows "View Summary" label when showingSummary is false', () => {
+    it('renders icon only — no visible text label', () => {
       const wrapper = mountToggle({ mode: 'button', showingSummary: false })
-      expect(wrapper.text()).toContain('View Summary')
+      expect(wrapper.find('.chat-action-btn svg').exists()).toBe(true)
+      expect(wrapper.find('.chat-action-btn span').exists()).toBe(false)
+      expect(wrapper.text()).toBe('')
     })
 
-    it('shows "View Original" label when showingSummary is true', () => {
+    it('uses the summary label as tooltip when showingSummary is false', () => {
+      const wrapper = mountToggle({ mode: 'button', showingSummary: false })
+      const btn = wrapper.find('.chat-action-btn')
+      expect(btn.attributes('title')).toBe('View Summary')
+      expect(btn.attributes('aria-label')).toBe('View Summary')
+    })
+
+    it('uses the original label as tooltip when showingSummary is true', () => {
       const wrapper = mountToggle({ mode: 'button', showingSummary: true })
-      expect(wrapper.text()).toContain('View Original')
+      const btn = wrapper.find('.chat-action-btn')
+      expect(btn.attributes('title')).toBe('View Original')
+      expect(btn.attributes('aria-label')).toBe('View Original')
     })
 
     it('emits toggle when clicked', async () => {
@@ -62,17 +73,17 @@ describe('SummaryToggle', () => {
       expect(wrapper.emitted('toggle')).toHaveLength(1)
     })
 
-    it('uses chat.message i18n prefix for labels', () => {
+    it('uses chat.message i18n prefix for tooltip', () => {
       const wrapper = mountToggle({ mode: 'button', i18nPrefix: 'chat.message' })
-      expect(wrapper.text()).toContain('View Summary')
+      expect(wrapper.find('.chat-action-btn').attributes('title')).toBe('View Summary')
     })
 
-    it('toggles label when showingSummary prop changes', async () => {
+    it('toggles tooltip when showingSummary prop changes', async () => {
       const wrapper = mountToggle({ mode: 'button', showingSummary: false })
-      expect(wrapper.text()).toContain('View Summary')
+      expect(wrapper.find('.chat-action-btn').attributes('title')).toBe('View Summary')
 
       await wrapper.setProps({ showingSummary: true })
-      expect(wrapper.text()).toContain('View Original')
+      expect(wrapper.find('.chat-action-btn').attributes('title')).toBe('View Original')
     })
   })
 
@@ -164,14 +175,14 @@ describe('SummaryToggle', () => {
 
     it('defaults showingSummary to false', () => {
       const wrapper = mount(SummaryToggle)
-      // In button mode, showingSummary=false means "View Summary" label
-      expect(wrapper.text()).toContain('View Summary')
+      // In button mode, showingSummary=false means "View Summary" tooltip
+      expect(wrapper.find('.chat-action-btn').attributes('title')).toBe('View Summary')
     })
 
     it('defaults i18nPrefix to chat.message', () => {
       const wrapper = mount(SummaryToggle)
-      // With default i18nPrefix, button mode shows summaryViewSummary/summaryViewOriginal keys
-      expect(wrapper.text()).toContain('View Summary')
+      // With default i18nPrefix, button mode resolves summaryViewSummary/summaryViewOriginal keys
+      expect(wrapper.find('.chat-action-btn').attributes('title')).toBe('View Summary')
     })
   })
 })
