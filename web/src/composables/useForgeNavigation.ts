@@ -78,3 +78,26 @@ export function clearPendingForgeTarget() {
  * forge tab is already active and switchTab() does not change `active`.
  */
 export { pendingForgeTarget }
+
+/**
+ * Pull the deep-link target out of a `clawbench-open-forge` event detail (or a
+ * native `NotificationNav`), whichever name carries it.
+ *
+ * Two shapes reach the same handler and they do NOT agree on the field name:
+ *
+ *   - the renderer's own producers (in-page notification onClick, completion
+ *     card) dispatch a hand-built `{ projectPath, target }`;
+ *   - the native shell (Electron) forwards its whole `NotificationNav` object
+ *     verbatim through preload as the event detail, and that names the field
+ *     `forgeTarget` (it mirrors the desktop shell's own type).
+ *
+ * Reading only one name silently drops the deep link on the other path. This is
+ * a single resolver rather than an `??` at each call site precisely because
+ * there are two call sites (live click and cold-start replay) and they had
+ * already drifted apart once.
+ */
+export function forgeTargetFromDetail(
+  detail: { target?: ForgeTarget; forgeTarget?: ForgeTarget } | null | undefined,
+): ForgeTarget | undefined {
+  return detail?.target ?? detail?.forgeTarget
+}

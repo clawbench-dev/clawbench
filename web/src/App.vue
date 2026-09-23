@@ -567,7 +567,7 @@ import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
-import { setPendingForgeTarget, clearPendingForgeTarget } from './composables/useForgeNavigation.ts'
+import { setPendingForgeTarget, clearPendingForgeTarget, forgeTargetFromDetail } from './composables/useForgeNavigation.ts'
 import type { ForgeTarget } from './composables/useForgeNavigation.ts'
 import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
@@ -1011,8 +1011,21 @@ function handleOpenTask(e: Event) {
   }
 }
 
-/** Payload of the `clawbench-open-forge` event (forge system notification tap). */
-interface OpenForgeDetail { projectPath?: string; target?: ForgeTarget }
+/**
+ * Payload of the `clawbench-open-forge` event (forge system notification tap).
+ *
+ * `target` and `forgeTarget` are the SAME value under two names, because the
+ * event has two producers with different shapes:
+ *   - the renderer's own paths (in-page notification onClick, completion card)
+ *     dispatch `{ projectPath, target }`;
+ *   - the native shell (Electron) forwards its whole `NotificationNav` verbatim
+ *     through preload as the event detail, and that object names the field
+ *     `forgeTarget`.
+ * Reading only one of them silently drops the deep link on the other path —
+ * which is exactly what happened on Electron (the click opened the tab and
+ * stopped there). Accept both.
+ */
+interface OpenForgeDetail { projectPath?: string; target?: ForgeTarget; forgeTarget?: ForgeTarget }
 
 /**
  * Handle clawbench-open-forge — dispatched when a forge (GitHub/GitLab) system
@@ -1031,7 +1044,9 @@ interface OpenForgeDetail { projectPath?: string; target?: ForgeTarget }
 function handleOpenForge(e: Event) {
   const detail = (e as CustomEvent<OpenForgeDetail>).detail
   const projectPath = detail?.projectPath
-  const target = detail?.target
+  // Accept either name — see forgeTargetFromDetail. The native shell sends the
+  // whole NotificationNav (field `forgeTarget`), the in-page producers `target`.
+  const target = forgeTargetFromDetail(detail)
 
   // Publish the target before switching tabs so the panel sees it whichever
   // path it takes to become visible (mount, activation, or ref change).
@@ -3039,7 +3054,11 @@ onMounted(async () => {
             const nav = await getNative()?.getPendingNavigation?.()
             if (nav) {
               const parsed = JSON.parse(nav)
-              const { sessionId, taskId, executionId, projectPath, forge, forgeTarget } = parsed
+              const { sessionId, taskId, executionId, projectPath, forge } = parsed
+              // Same resolver as the live-click handler: the native shell names
+              // this field `forgeTarget`, and routing both entry points through
+              // one function is what keeps them from drifting apart.
+              const forgeTarget = forgeTargetFromDetail(parsed)
               if (forge && forgeTarget) {
                 // Forge notification navigation. The target is published before
                 // any tab switch so the panel picks it up on whichever path it

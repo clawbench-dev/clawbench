@@ -4,6 +4,7 @@ import {
   setPendingForgeTarget,
   consumePendingForgeTarget,
   clearPendingForgeTarget,
+  forgeTargetFromDetail,
   type ForgeTarget,
 } from '@/composables/useForgeNavigation'
 
@@ -63,5 +64,43 @@ describe('useForgeNavigation', () => {
     setPendingForgeTarget(target({ itemKey: 'pr/1', number: 1 }))
     setPendingForgeTarget(target({ itemKey: 'pr/2', number: 2 }))
     expect(consumePendingForgeTarget()?.itemKey).toBe('pr/2')
+  })
+})
+
+/**
+ * The two producers of `clawbench-open-forge` do NOT agree on the field name,
+ * and reading only one silently drops the deep link on the other path. The
+ * Electron path was broken exactly this way: the native shell forwards its
+ * whole NotificationNav (field `forgeTarget`) as the event detail, while the
+ * in-page producers hand-build `{ target }`.
+ */
+describe('forgeTargetFromDetail', () => {
+  const t = target({ itemKey: 'pr/455', number: 455 })
+
+  it('reads the renderer-produced name', () => {
+    expect(forgeTargetFromDetail({ target: t })).toEqual(t)
+  })
+
+  it('reads the native NotificationNav name', () => {
+    // The Electron live-click path: nav is forwarded verbatim by preload.
+    expect(forgeTargetFromDetail({ forgeTarget: t })).toEqual(t)
+  })
+
+  it('prefers target when both are present', () => {
+    const other = target({ itemKey: 'pr/1', number: 1 })
+    expect(forgeTargetFromDetail({ target: t, forgeTarget: other })).toEqual(t)
+  })
+
+  it('returns undefined when neither is present', () => {
+    expect(forgeTargetFromDetail({})).toBeUndefined()
+    expect(forgeTargetFromDetail(null)).toBeUndefined()
+    expect(forgeTargetFromDetail(undefined)).toBeUndefined()
+  })
+
+  it('carries a pipeline target keyed by run id through the native shape', () => {
+    // The regression the Electron path hit: the field name mismatch meant a
+    // pipeline click opened the tab and stopped there.
+    const pipe = target({ type: 'pipeline', number: 0, runId: 555, itemKey: 'pipeline/run:555' })
+    expect(forgeTargetFromDetail({ forgeTarget: pipe })?.itemKey).toBe('pipeline/run:555')
   })
 })
