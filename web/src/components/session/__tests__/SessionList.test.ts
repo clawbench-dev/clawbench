@@ -233,6 +233,28 @@ describe('SessionList', () => {
     expect(wrapper.emitted('destroy')![0]).toEqual(['s1'])
   })
 
+  it('destroyFromMenu confirms then emits destroy', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+    mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
+    await wrapper.vm.destroyFromMenu('s1')
+    expect(mockDialogHolder.lastOptions?.confirmText).toBe('common.remove')
+    expect(mockDialogHolder.lastOptions?.dangerous).toBe(true)
+    expect(wrapper.emitted('destroy')![0]).toEqual(['s1'])
+  })
+
+  it('destroyFromMenu does not emit when confirmation is declined', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+    mockDialogHolder.confirm = vi.fn().mockResolvedValue(false)
+    await wrapper.vm.destroyFromMenu('s1')
+    expect(wrapper.emitted('destroy')).toBeFalsy()
+  })
+
   it('loadMoreSessions appends sessions when hasMore', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: true }) })
     const wrapper = await mountList()
@@ -904,7 +926,7 @@ describe('SessionList', () => {
       const menu = menus[menus.length - 1]
       expect(menu).toBeTruthy()
       // Reuses the file manager's item class + icon-left layout.
-      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(4)
+      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(5)
       expect(document.body.querySelector('.session-context-menu')).toBeNull()
       wrapper.unmount()
     })
@@ -994,6 +1016,23 @@ describe('SessionList', () => {
       await nextTick()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
       expect(wrapper.emitted('archive')).toBeTruthy()
+
+      // Remove item (index 4) — dismisses, confirms, then emits destroy. Cancel
+      // first: a declined confirm must not destroy anything.
+      mockDialogHolder.confirm = vi.fn().mockResolvedValue(false)
+      openFor(wrapper.vm.sessions[0])
+      await nextTick()
+      clickLastMenu(4)
+      await flushPromises()
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
+      expect(wrapper.emitted('destroy')).toBeFalsy()
+
+      mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
+      openFor(wrapper.vm.sessions[0])
+      await nextTick()
+      clickLastMenu(4)
+      await flushPromises()
+      expect(wrapper.emitted('destroy')![0]).toEqual(['s1'])
       wrapper.unmount()
     })
 

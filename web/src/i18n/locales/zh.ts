@@ -970,6 +970,8 @@ export default {
     running: '运行中',
     confirmArchive: '确定归档此会话及其所有聊天记录？归档后可通过会话搜索恢复。',
     confirmArchiveRunning: '此会话正在运行中，归档将终止运行并清除记录，确定归档？归档后可通过会话搜索恢复。',
+    confirmDestroy: '将会话"{title}"从会话列表中移除？磁盘上的转录文件保持原样，可从外部恢复区重新载入。',
+    confirmDestroyRunning: '此会话正在运行中，移除将终止运行并删除该会话。确定移除"{title}"？磁盘上的转录文件保持原样，可从外部恢复区重新载入。',
     unnamed: '未命名会话',
     queueFailed: '加入队列失败',
     removeFailed: '移除失败',

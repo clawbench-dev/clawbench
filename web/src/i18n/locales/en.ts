@@ -967,6 +967,8 @@ export default {
     running: 'Running',
     confirmArchive: 'Archive this session and all chat history? You can restore archived sessions via session search.',
     confirmArchiveRunning: 'This session is running. Archiving will terminate it and clear the history. Continue? You can restore archived sessions via session search.',
+    confirmDestroy: 'Remove session "{title}" from the session list? The on-disk transcript stays intact and can be reloaded from the recovery zone.',
+    confirmDestroyRunning: 'This session is running. Removing will terminate it and delete the session. Remove "{title}"? The on-disk transcript stays intact and can be reloaded from the recovery zone.',
     unnamed: 'Unnamed session',
     queueFailed: 'Failed to enqueue',
     removeFailed: 'Failed to remove',

@@ -134,6 +134,11 @@
           <Archive :size="14" />
           {{ t('common.archive') }}
         </div>
+        <div class="context-menu-divider" />
+        <div class="context-menu-item danger" @click.stop="destroyFromMenu(contextMenu.sessionId)">
+          <Trash2 :size="14" />
+          {{ t('common.remove') }}
+        </div>
       </div>
       <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu.
            Re-dispatching contextmenu through it keeps right-click-on-another-row
@@ -153,7 +158,7 @@
 <script setup>
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Pin, PinOff, PencilLine, Tags } from 'lucide-vue-next'
+import { Archive, Pin, PinOff, PencilLine, Tags, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -568,6 +573,19 @@ function archiveFromMenu(sessionId) {
   const session = sessions.value.find(s => s.id === sessionId)
   closeContextMenu()
   emit('archive', sessionId, session?.backend)
+}
+
+async function destroyFromMenu(sessionId) {
+  closeContextMenu()
+  const session = sessions.value.find(s => s.id === sessionId)
+  if (!session) return
+  const title = session.title || t('session.unnamed')
+  const isRunning = props.runningSessionIds.has(sessionId)
+  const confirmed = await dialog.confirm(
+    t(isRunning ? 'session.confirmDestroyRunning' : 'session.confirmDestroy', { title }),
+    { confirmText: t('common.remove'), title: t('common.remove'), dangerous: true }
+  )
+  if (confirmed) emit('destroy', sessionId)
 }
 
 // Tag dialog state. `initialTags` seeds the checkboxes from the already-loaded
