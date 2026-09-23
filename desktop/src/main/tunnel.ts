@@ -7,19 +7,24 @@ import { getStore } from './store'
 
 export type TunnelErrorType = 'auth' | 'network' | 'hostkey' | 'unknown' | ''
 
+/** 'forward' = ssh -L (server → local), 'reverse' = ssh -R (local → server). */
+export type ForwardDirection = 'forward' | 'reverse'
+
 export interface TunnelState {
   connected: boolean
   error: string
   errorType: TunnelErrorType
   /**
-   * The DESIRED set of forwards, keyed by local port. This is intent, not
-   * runtime state: it survives a disconnect so a reconnect can rebuild every
-   * listener (Android's BackgroundService does the same — its
+   * The DESIRED set of forwards, keyed by the port the OTHER side listens on:
+   * the local port for a forward, the server-side port for a reverse. This is
+   * intent, not runtime state: it survives a disconnect so a reconnect can
+   * rebuild every listener (Android's BackgroundService does the same — its
    * `disconnectInternal()` deliberately keeps `forwardedPorts`).
    *
-   * The live listeners live in `forwardServers` below.
+   * The live listeners live in `forwardServers` below; reverse forwards have no
+   * local listener (the server binds) and are tracked only here.
    */
-  forwarded: Map<number, { targetPort: number; host: string }>
+  forwarded: Map<number, { targetPort: number; host: string; direction: ForwardDirection }>
 }
 
 const state: TunnelState = { connected: false, error: '', errorType: '', forwarded: new Map() }
@@ -51,6 +56,17 @@ const RECONNECT_DELAYS_MS = [5000, 10000, 30000, 60000, 120000]
 // local port bound forever (a leak that also makes re-adding the same port
 // fail with EADDRINUSE).
 const forwardServers = new Map<number, net.Server>()
+
+/**
+ * Reverse (ssh -R) forwards currently registered with the server, keyed by the
+ * port the SERVER bound. There is no local listener for these — the server owns
+ * the socket — so this map exists to (a) route incoming `tcp connection` events
+ * to the right local target and (b) unforward them on teardown.
+ *
+ * The value's `serverPort` may differ from the key when the server allocated a
+ * port (we requested 0), so callers must use `serverPort` for unforwardIn.
+ */
+const reverseForwards = new Map<number, { targetPort: number; host: string; serverPort: number }>()
 
 // In-flight connect attempt, if any. Callers that arrive while a connect is
 // running must join it instead of starting a second one: openClient replaces
@@ -118,11 +134,32 @@ function closeAllForwardServers(): void {
   for (const localPort of [...forwardServers.keys()]) closeForwardServer(localPort)
 }
 
+/**
+ * Unregister a reverse forward from the server.
+ *
+ * `key` is the entry's key in `reverseForwards`; the actual server-side port may
+ * differ (the server allocated one when we asked for 0), so unforwardIn must use
+ * the recorded `serverPort`.
+ */
+function unforwardReverse(key: number): void {
+  const entry = reverseForwards.get(key)
+  reverseForwards.delete(key)
+  if (!entry || !client || !state.connected) return
+  try {
+    client.unforwardIn('127.0.0.1', entry.serverPort, () => { /* best effort */ })
+  } catch { /* connection already gone */ }
+}
+
+/** Unregister every reverse forward. Does NOT touch `state.forwarded` (the intent). */
+function unforwardAllReverse(): void {
+  for (const key of [...reverseForwards.keys()]) unforwardReverse(key)
+}
+
 export function isTunnelConnected(): boolean { return state.connected }
 export function getTunnelError(): string { return state.error }
 export function getTunnelErrorType(): TunnelErrorType { return state.errorType }
-export function getForwardedPorts(): Array<{ port: number; host: string }> {
-  return [...state.forwarded.entries()].map(([localPort, v]) => ({ port: localPort, host: v.host }))
+export function getForwardedPorts(): Array<{ port: number; host: string; direction: ForwardDirection }> {
+  return [...state.forwarded.entries()].map(([port, v]) => ({ port, host: v.host, direction: v.direction }))
 }
 
 function classifyError(err: Error & { level?: string; code?: string }): TunnelErrorType {
@@ -193,6 +230,31 @@ function openClient(host: string, port: number, username: string): Promise<boole
         .then(() => done(true))
         .catch(() => done(true))
     })
+      // 'tcp connection' is not in @types/ssh2's Client overloads even though
+      // ssh2 emits it for forwarded-tcpip channels, so the handler is attached
+      // through a cast. The event is only emitted after forwardIn() registers a
+      // matching forward.
+      .on('tcp connection' as never, ((info: { destIP: string; destPort: number; origIP: string; origPort: number }, accept: () => any, reject: () => void) => {
+        // The server accepted a connection on a port we asked it to forward and
+        // is handing it to us. Dial the real target locally and splice.
+        const entry = reverseForwards.get(info.destPort)
+        if (!entry) {
+          // No matching forward (e.g. a stale entry the server still holds).
+          reject()
+          return
+        }
+        const upstream = net.connect(entry.targetPort, entry.host || '127.0.0.1')
+        upstream.on('connect', () => {
+          const stream = accept()
+          // Both ends need an 'error' handler: a bare pipe() chain does not
+          // forward errors, so a reset would become an uncaught exception in the
+          // main process (same trap as listenForward).
+          upstream.on('error', () => { upstream.destroy(); stream.destroy() })
+          stream.on('error', () => { stream.destroy(); upstream.destroy() })
+          upstream.pipe(stream).pipe(upstream)
+        })
+        upstream.on('error', () => { reject() })
+      }) as never)
       .on('error', (err: Error & { level?: string; code?: string }) => {
         if (client === c) {
           state.connected = false
@@ -211,6 +273,11 @@ function openClient(host: string, port: number, username: string): Promise<boole
           // Only the runtime listeners die here. The desired set is kept so the
           // monitor (or a caller) can rebuild it.
           closeAllForwardServers()
+          // The server released its side of every reverse forward when the
+          // connection dropped, so the bookkeeping is stale. Clearing it lets
+          // rebuildAllForwards re-register cleanly instead of trying to
+          // unforward ports the server no longer holds.
+          reverseForwards.clear()
           // An unexpected drop: keep/arm the monitor so the forwards come back
           // on their own. disconnectTunnel() stops it for an explicit teardown.
           syncMonitor()
@@ -245,6 +312,10 @@ export function disconnectTunnel(): void {
   // An explicit teardown means "stop maintaining this" — only an unexpected
   // close should leave the monitor running to recover.
   stopMonitor()
+  // Unforward reverse mappings while the client is still alive, so the server
+  // releases its listeners promptly. Dropping the connection alone would also
+  // free them, but only once the server notices.
+  unforwardAllReverse()
   if (client) {
     try { client.end() } catch { /* ignore */ }
     client = null
@@ -312,6 +383,48 @@ function listenForward(localPort: number, targetPort: number, host: string): Pro
 }
 
 /**
+ * Ask the server to bind `serverPort` on its loopback and hand connections back
+ * to us; each one is then spliced to `host:targetPort` on this machine.
+ *
+ * Unlike listenForward there is no local socket: the server owns the listener,
+ * so success means the server acknowledged the tcpip-forward request.
+ *
+ * Per-port single-flight for the same reason as listenForward: two concurrent
+ * requests for one port would race, and the loser would clobber the winner's
+ * bookkeeping.
+ */
+const pendingReverseBinds = new Map<number, Promise<boolean>>()
+
+function listenReverse(serverPort: number, targetPort: number, host: string): Promise<boolean> {
+  const inFlight = pendingReverseBinds.get(serverPort)
+  if (inFlight) return inFlight
+  const p = new Promise<boolean>((resolve) => {
+    const c = client
+    if (!c || !state.connected) { resolve(false); return }
+    c.forwardIn('127.0.0.1', serverPort, (err: Error | undefined, realPort?: number) => {
+      if (err) {
+        resolve(false)
+        return
+      }
+      // The server may allocate a different port (we asked for 0, or it
+      // remapped a privileged one), and unforwardIn must use the real one.
+      const bound = realPort || serverPort
+      // A remove landing during the request must win: publishing here would
+      // revive a mapping the user just deleted.
+      if (!state.forwarded.has(serverPort)) {
+        try { c.unforwardIn('127.0.0.1', bound, () => { /* ignore */ }) } catch { /* ignore */ }
+        resolve(false)
+        return
+      }
+      reverseForwards.set(serverPort, { targetPort, host, serverPort: bound })
+      resolve(true)
+    })
+  }).finally(() => { pendingReverseBinds.delete(serverPort) })
+  pendingReverseBinds.set(serverPort, p)
+  return p
+}
+
+/**
  * Re-bind every desired forward. Called after the client becomes ready.
  *
  * The snapshot is taken up front and the awaits yield, so a
@@ -319,8 +432,12 @@ function listenForward(localPort: number, targetPort: number, host: string): Pro
  * `state.forwarded` at publish time and refuses to bind a deleted port.
  */
 async function rebuildAllForwards(): Promise<void> {
-  for (const [localPort, fwd] of [...state.forwarded.entries()]) {
-    await listenForward(localPort, fwd.targetPort, fwd.host)
+  for (const [key, fwd] of [...state.forwarded.entries()]) {
+    if (fwd.direction === 'reverse') {
+      await listenReverse(key, fwd.targetPort, fwd.host)
+    } else {
+      await listenForward(key, fwd.targetPort, fwd.host)
+    }
   }
 }
 
@@ -332,17 +449,44 @@ export async function addForwardedPort(localPort: number, targetPort: number, ho
   }
   // Record the intent BEFORE binding, so a concurrent reconnect's
   // rebuildAllForwards() can pick it up even if this call loses the race.
-  state.forwarded.set(localPort, { targetPort, host })
+  state.forwarded.set(localPort, { targetPort, host, direction: 'forward' })
   // There is now something worth keeping alive.
   syncMonitor()
   return listenForward(localPort, targetPort, host)
 }
 
+/**
+ * Add a reverse forward: expose this machine's host:targetPort on the server's
+ * loopback `serverPort`.
+ */
+export async function addReverseForwardedPort(serverPort: number, targetPort: number, host: string): Promise<boolean> {
+  if (!state.connected) {
+    const ok = await ensureTunnel()
+    if (!ok) return false
+  }
+  state.forwarded.set(serverPort, { targetPort, host, direction: 'reverse' })
+  syncMonitor()
+  return listenReverse(serverPort, targetPort, host)
+}
+
 export function removeForwardedPort(localPort: number): void {
-  closeForwardServer(localPort)
+  const entry = state.forwarded.get(localPort)
+  if (entry?.direction === 'reverse') {
+    unforwardReverse(localPort)
+  } else {
+    closeForwardServer(localPort)
+  }
   state.forwarded.delete(localPort)
   // Nothing left to maintain → stop polling.
   syncMonitor()
+}
+
+/**
+ * Remove a reverse forward. `serverPort` is the port the SERVER bound, which is
+ * the key the mapping was registered under.
+ */
+export function removeReverseForwardedPort(serverPort: number): void {
+  removeForwardedPort(serverPort)
 }
 
 export function testPortReachable(localPort: number): Promise<boolean> {

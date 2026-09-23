@@ -5,7 +5,7 @@ import os from 'node:os'
 import fs from 'node:fs'
 import { getStore, initStore } from './store'
 import { getPassword, savePassword } from './secrets'
-import { addForwardedPort, removeForwardedPort as rmFwd,
+import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
 import { getMainWindow, createMainWindow, openSandboxWindow, showLoginPage } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
@@ -71,6 +71,8 @@ export function registerBridge(): void {
   ipcMain.handle('native:get-tunnel-error-type', () => getTunnelErrorType())
   ipcMain.handle('native:add-forwarded-port', (_e, l: number, t: number, h: string) => addForwardedPort(l, t, h))
   ipcMain.handle('native:remove-forwarded-port', (_e, l: number) => rmFwd(l))
+  ipcMain.handle('native:add-reverse-forwarded-port', (_e, s: number, t: number, h: string) => addReverseForwardedPort(s, t, h))
+  ipcMain.handle('native:remove-reverse-forwarded-port', (_e, s: number) => rmReverseFwd(s))
   ipcMain.handle('native:reconnect-tunnel', () => reconnectTunnel())
   ipcMain.handle('native:get-pending-navigation', () => getPendingNavigationJson())
 

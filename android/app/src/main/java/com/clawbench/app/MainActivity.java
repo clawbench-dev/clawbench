@@ -2755,6 +2755,39 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Add a reverse (ssh -R) forward: publish this device's targetPort on the
+         * SERVER's loopback serverPort, so programs running on the server can
+         * reach a service on this device.
+         *
+         * serverPort must be explicit — JSch's setPortForwardingR returns void, so
+         * requesting 0 would leave us unable to learn the bound port.
+         */
+        @JavascriptInterface
+        public void addReverseForwardedPort(int serverPort, int targetPort, String host) {
+            AppLog.i(TAG, "addReverseForwardedPort: serverPort=" + serverPort + ", targetPort=" + targetPort + ", host=" + host);
+            activity.runOnUiThread(() -> {
+                BackgroundService.addReverseForwardedPort(activity, serverPort, targetPort, host != null ? host : "");
+
+                // Same battery-optimization ask as the forward path: a reverse
+                // mapping needs the tunnel alive just as much.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                    if (pm != null && !pm.isIgnoringBatteryOptimizations(activity.getPackageName())) {
+                        requestIgnoreBatteryOptimization();
+                    }
+                }
+            });
+        }
+
+        /**
+         * Remove a reverse (ssh -R) forward. serverPort is the port bound on the server.
+         */
+        @JavascriptInterface
+        public void removeReverseForwardedPort(int serverPort) {
+            activity.runOnUiThread(() -> BackgroundService.removeReverseForwardedPort(activity, serverPort));
+        }
+
+        /**
          * Stop the BackgroundService and disconnect SSH.
          * Called from WebView when server reports no forwarded ports,
          * to avoid running an idle foreground service with no work to do.
@@ -2784,9 +2817,11 @@ public class MainActivity extends AppCompatActivity {
                 // no longer enabled on the server. Fall back to the local cache when
                 // the background service is not running.
                 java.util.Map<Integer, ?> realSet = null;
+                java.util.Map<Integer, ?> reverseSet = null;
                 BackgroundService bs = BackgroundService.getInstance();
                 if (bs != null) {
                     realSet = bs.getForwardedPortsSnapshot();
+                    reverseSet = bs.getReversePortsSnapshot();
                 }
                 JSONArray arr = new JSONArray();
                 if (realSet != null) {
@@ -2798,6 +2833,7 @@ public class MainActivity extends AppCompatActivity {
                             host = ((BackgroundService.PortInfo) entry.getValue()).host;
                         }
                         obj.put("host", host);
+                        obj.put("direction", "forward");
                         arr.put(obj);
                     }
                 } else {
@@ -2805,6 +2841,22 @@ public class MainActivity extends AppCompatActivity {
                         org.json.JSONObject obj = new org.json.JSONObject();
                         obj.put("port", entry.getKey());
                         obj.put("host", entry.getValue());
+                        obj.put("direction", "forward");
+                        arr.put(obj);
+                    }
+                }
+                // Reverse mappings share the list: `port` is the SERVER-side port,
+                // which is the key the frontend reconciliation matches on.
+                if (reverseSet != null) {
+                    for (java.util.Map.Entry<Integer, ?> entry : reverseSet.entrySet()) {
+                        org.json.JSONObject obj = new org.json.JSONObject();
+                        obj.put("port", entry.getKey());
+                        String host = "";
+                        if (entry.getValue() instanceof BackgroundService.PortInfo) {
+                            host = ((BackgroundService.PortInfo) entry.getValue()).host;
+                        }
+                        obj.put("host", host);
+                        obj.put("direction", "reverse");
                         arr.put(obj);
                     }
                 }

@@ -25,12 +25,13 @@ import (
 
 // ProxyRegistry manages forwarded ports: registration, health checks, and auto-detection.
 type ProxyRegistry struct {
-	mu           sync.RWMutex
-	ports        map[int]*model.ForwardedPort // key = localPort (auto-assigned, unique)
-	proxies      map[int]*proxy.ReverseProxy  // key = localPort, active HTTP reverse proxies for non-localhost targets
-	allowedPorts string                       // Port ranges, e.g. "1024-65535" or "3000,5173,8080"
-	selfPort     int                          // ClawBench's own port, excluded from detection
-	cancel       context.CancelFunc
+	mu            sync.RWMutex
+	ports         map[int]*model.ForwardedPort // key = localPort (auto-assigned, unique)
+	proxies       map[int]*proxy.ReverseProxy  // key = localPort, active HTTP reverse proxies for non-localhost targets
+	allowedPorts  string                       // Port ranges, e.g. "1024-65535" or "3000,5173,8080"
+	selfPort      int                          // ClawBench's own port, excluded from detection
+	reservedPorts map[int]bool                 // Ports reverse mappings must never bind (main port, SSH port)
+	cancel        context.CancelFunc
 }
 
 // allocateLocalPort finds an available local port for forwarding.
@@ -38,27 +39,56 @@ type ProxyRegistry struct {
 // Privileged ports (< 1024) are never returned directly — they are mapped to
 // high ports (1024+) since Android/non-root cannot bind privileged ports.
 func (r *ProxyRegistry) allocateLocalPort(preferred int) int {
-	// Privileged ports must be remapped to non-privileged range
+	return r.scanPort(preferred, r.portTaken)
+}
+
+// allocateServerPort finds an available SERVER-side port for a reverse (ssh -R)
+// mapping. Unlike allocateLocalPort it also probes the OS, because the SSH
+// server will bind this port on the server itself: a port that is free in the
+// registry but already bound by an unrelated process must not be handed out.
+//
+// The probe is bind-then-close, so it narrows but cannot eliminate the window
+// between allocation and the SSH server's own bind. If that bind still fails
+// the request is rejected — see handleTCPIPForward.
+//
+// Callers must hold r.mu (it is only used from the registration path).
+func (r *ProxyRegistry) allocateServerPort(preferred int) int {
+	return r.scanPort(preferred, func(p int) bool {
+		return r.portTaken(p) || r.reservedPorts[p] || !portBindable(p)
+	})
+}
+
+// scanPort walks from preferred (or 1024 for privileged input) to 65535 and
+// returns the first port the taken predicate reports as free.
+func (r *ProxyRegistry) scanPort(preferred int, taken func(int) bool) int {
+	start := preferred
 	if preferred < 1024 {
-		// Start scanning from 1024 for a free port
-		for p := 1024; p <= 65535; p++ {
-			if _, taken := r.ports[p]; !taken {
-				return p
-			}
-		}
-		return 1024 // fallback
+		// Privileged ports must be remapped to non-privileged range
+		start = 1024
 	}
-	if _, taken := r.ports[preferred]; !taken {
-		return preferred
-	}
-	// Scan upward from preferred+1 to find a free local port
-	for p := preferred + 1; p <= 65535; p++ {
-		if _, taken := r.ports[p]; !taken {
+	for p := start; p <= 65535; p++ {
+		if !taken(p) {
 			return p
 		}
 	}
-	// Should never happen in practice
-	return preferred
+	return start // Should never happen in practice
+}
+
+// portTaken reports whether a port is already claimed in the registry.
+func (r *ProxyRegistry) portTaken(port int) bool {
+	_, taken := r.ports[port]
+	return taken
+}
+
+// portBindable probes whether a loopback port can be bound right now. Used only
+// for reverse mappings, where the server (not the client) does the listening.
+func portBindable(port int) bool {
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
 }
 
 // hostDisplayName returns a human-readable host name for error messages.
@@ -79,11 +109,12 @@ func NewProxyRegistry(selfPort int) *ProxyRegistry {
 	ctx, cancel := context.WithCancel(context.Background())
 	allowedPorts := "1024-65535" // default: non-privileged ports only (ISS-186 — was empty=allow-all)
 	r := &ProxyRegistry{
-		ports:        make(map[int]*model.ForwardedPort),
-		proxies:      make(map[int]*proxy.ReverseProxy),
-		allowedPorts: allowedPorts,
-		selfPort:     selfPort,
-		cancel:       cancel,
+		ports:         make(map[int]*model.ForwardedPort),
+		proxies:       make(map[int]*proxy.ReverseProxy),
+		allowedPorts:  allowedPorts,
+		selfPort:      selfPort,
+		reservedPorts: make(map[int]bool),
+		cancel:        cancel,
 	}
 
 	// Restore persisted ports from database
@@ -104,6 +135,11 @@ func NewProxyRegistry(selfPort int) *ProxyRegistry {
 
 // SetAllowedPorts overrides the allowed port range and removes any already-loaded
 // ports that fall outside the new range.
+//
+// The port that must be inside the range is direction-dependent: a forward
+// mapping exposes the target (Port) on the server, while a reverse mapping
+// exposes the port the server binds (LocalPort). Checking Port for a reverse
+// entry would test the client-side port, which the server never exposes.
 func (r *ProxyRegistry) SetAllowedPorts(allowedPorts string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -111,13 +147,44 @@ func (r *ProxyRegistry) SetAllowedPorts(allowedPorts string) {
 
 	// Remove ports that are no longer allowed
 	for lp, p := range r.ports {
-		if !isPortInRange(p.Port, r.allowedPorts) {
+		if !isPortInRange(exposedPort(p), r.allowedPorts) {
 			slog.Info("proxy port removed (outside allowed range)", slog.Int("local_port", lp), slog.Int("port", p.Port))
 			r.stopReverseProxy(lp)
 			delete(r.ports, lp)
 			r.deletePortFromDB(lp)
 		}
 	}
+}
+
+// exposedPort returns the port a mapping exposes on the server: the target port
+// for a forward mapping, the server-side bound port for a reverse one. This is
+// the port the allowed-range whitelist must be applied to.
+func exposedPort(p *model.ForwardedPort) int {
+	if p.IsReverse() {
+		return p.LocalPort
+	}
+	return p.Port
+}
+
+// SetReservedPorts records ports that reverse mappings must never bind on the
+// server (ClawBench's own HTTP port and the SSH tunnel port). Without this a
+// client could forward its local service onto the port ClawBench itself serves
+// on, or onto the SSH port, either of which breaks the platform.
+func (r *ProxyRegistry) SetReservedPorts(ports ...int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, p := range ports {
+		if p > 0 {
+			r.reservedPorts[p] = true
+		}
+	}
+}
+
+// IsPortReserved reports whether a port is reserved for ClawBench's own use.
+func (r *ProxyRegistry) IsPortReserved(port int) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.reservedPorts[port]
 }
 
 // Stop shuts down the proxy registry and all health check goroutines.
@@ -136,10 +203,14 @@ func (r *ProxyRegistry) Stop() {
 	slog.Info("proxy service stopped")
 }
 
-// RegisterPort adds a port to the forwarding registry and returns the allocated local port.
-// port is the target port on the remote host. If the same port is already
-// registered (with a different host), a nearby free local port is auto-assigned.
-func (r *ProxyRegistry) RegisterPort(port int, host string, name string, protocol string) (int, error) {
+// RegisterPort adds a port to the forwarding registry and returns the allocated
+// listening port (the client-side port for a forward mapping, the server-side
+// bound port for a reverse one).
+//
+// port is the target port. If the same (direction, port, host) is already
+// registered, the existing listening port is returned; if only the listening
+// port is taken, a nearby free one is auto-assigned.
+func (r *ProxyRegistry) RegisterPort(port int, host string, name string, protocol string, direction string) (int, error) {
 	if port <= 0 || port > 65535 {
 		return 0, fmt.Errorf("invalid port number: %d", port)
 	}
@@ -149,41 +220,53 @@ func (r *ProxyRegistry) RegisterPort(port int, host string, name string, protoco
 	if protocol != "https" {
 		protocol = "http"
 	}
+	direction = model.NormalizeDirection(direction)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Idempotent: if (port, host) already exists, returns existing localPort.
+	// Idempotent: if (direction, port, host) already exists, returns existing localPort.
 	// Does NOT update name, protocol, or other fields of the existing entry.
 	for _, p := range r.ports {
-		if p.Port == port && p.Host == host {
-			slog.Debug("proxy port already registered, returning existing", slog.Int("local_port", p.LocalPort), slog.Int("port", port), slog.String("host", host))
+		if p.Port == port && p.Host == host && p.Direction == direction {
+			slog.Debug("proxy port already registered, returning existing", slog.Int("local_port", p.LocalPort), slog.Int("port", port), slog.String("host", host), slog.String("direction", direction))
 			return p.LocalPort, nil
 		}
 	}
 
-	// Auto-allocate a local port (prefers the target port if available)
-	localPort := r.allocateLocalPort(port)
+	// Auto-allocate the listening port. Forward mappings listen on the client
+	// (prefer the target port); reverse mappings listen on the server, so they
+	// additionally probe the OS and skip ClawBench's own ports.
+	listenPort := r.allocateLocalPort(port)
+	if direction == model.DirectionReverse {
+		listenPort = r.allocateServerPort(port)
+	}
 
-	r.ports[localPort] = &model.ForwardedPort{
+	r.ports[listenPort] = &model.ForwardedPort{
 		Port:      port,
-		LocalPort: localPort,
+		LocalPort: listenPort,
 		Host:      host,
 		Name:      name,
 		Protocol:  protocol,
-		Active:    checkPortActive(port, host),
-		Enabled:   true,
+		Direction: direction,
+		// A reverse mapping is only live once the client's SSH session binds
+		// the server-side port, so it starts inactive and is driven by
+		// SetReverseBound. Forward mappings are probed from the server.
+		Active:  direction == model.DirectionForward && checkPortActive(port, host),
+		Enabled: true,
 	}
 
 	// For non-localhost targets, start an HTTP reverse proxy to rewrite the Host header.
 	// SSH tunnel is TCP-level and cannot modify HTTP headers; the reverse proxy
 	// ensures the backend receives the correct Host header (targetHost:targetPort).
-	if IsNonLocalhostTarget(host) {
-		if err := r.startReverseProxy(localPort, port, host, protocol); err != nil {
+	// Reverse mappings never need this: the target lives on the client, so no
+	// HTTP traffic reaches the server for this port.
+	if direction == model.DirectionForward && IsNonLocalhostTarget(host) {
+		if err := r.startReverseProxy(listenPort, port, host, protocol); err != nil {
 			// Log but don't fail — the port is still registered for SSH tunneling
 			slog.Warn(
 				"failed to start reverse proxy for non-localhost target",
-				slog.Int("local_port", localPort),
+				slog.Int("local_port", listenPort),
 				slog.Int("target_port", port),
 				slog.String("host", host),
 				slog.String("err", err.Error()),
@@ -192,23 +275,25 @@ func (r *ProxyRegistry) RegisterPort(port int, host string, name string, protoco
 	}
 
 	// Persist to database
-	r.savePortToDB(localPort, port, host, name, protocol)
+	r.savePortToDB(listenPort, port, host, name, protocol, direction)
 
 	slog.Info(
 		"proxy port registered",
-		slog.Int("local_port", localPort),
+		slog.Int("local_port", listenPort),
 		slog.Int("target_port", port),
 		slog.String("host", host),
 		slog.String("name", name),
 		slog.String("protocol", protocol),
+		slog.String("direction", direction),
 	)
 
-	return localPort, nil
+	return listenPort, nil
 }
 
 // UpdatePort modifies an existing forwarded port's host, name, and protocol.
-// localPort is the immutable key; the target (port, host) must remain unique among other entries.
-func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name string, protocol string) error {
+// localPort is the immutable key; the target (port, host) must remain unique
+// among other entries of the same direction.
+func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name string, protocol string, direction string) error {
 	if port <= 0 || port > 65535 {
 		return fmt.Errorf("invalid port number: %d", port)
 	}
@@ -218,6 +303,7 @@ func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name st
 	if protocol != "https" {
 		protocol = "http"
 	}
+	direction = model.NormalizeDirection(direction)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -226,24 +312,12 @@ func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name st
 	if !ok {
 		return fmt.Errorf("local port %d is not registered", localPort)
 	}
-
-	// Check (port, host) uniqueness — skip self
-	for lp, p := range r.ports {
-		if lp == localPort {
-			continue
-		}
-		if p.Port == port && p.Host == host {
-			return fmt.Errorf("port %d → %s is already registered (local %d)", port, hostDisplayName(host), lp)
-		}
+	if dup := r.findDuplicate(localPort, port, host, direction); dup != 0 {
+		return fmt.Errorf("port %d → %s is already registered (local %d)", port, hostDisplayName(host), dup)
 	}
 
-	// If target port changed, may need to re-allocate local port
-	newLocalPort := r.reallocateLocalPort(localPort, port, existing.Port)
-
-	// Determine if reverse proxy needs to be restarted:
-	// host, port, or protocol changed for a non-localhost target,
-	// or the target switched between localhost and non-localhost.
-	needProxyRestart := r.needsProxyRestart(existing, host, port, protocol)
+	newLocalPort := r.updatedListenPort(localPort, port, existing, direction)
+	needProxyRestart := direction == model.DirectionForward && r.needsProxyRestart(existing, host, port, protocol)
 
 	if needProxyRestart {
 		r.stopReverseProxy(localPort)
@@ -261,24 +335,16 @@ func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name st
 		Host:      host,
 		Name:      name,
 		Protocol:  protocol,
-		Active:    checkPortActive(port, host),
+		Direction: direction,
+		Active:    direction == model.DirectionForward && checkPortActive(port, host),
 		Enabled:   true,
 	}
 
-	// Start reverse proxy if needed for the new target
 	if needProxyRestart && IsNonLocalhostTarget(host) {
-		if err := r.startReverseProxy(newLocalPort, port, host, protocol); err != nil {
-			slog.Warn(
-				"failed to restart reverse proxy after UpdatePort",
-				slog.Int("local_port", newLocalPort),
-				slog.Int("target_port", port),
-				slog.String("host", host),
-				slog.String("err", err.Error()),
-			)
-		}
+		r.startReverseProxyAfterUpdate(newLocalPort, port, host, protocol)
 	}
 
-	r.savePortToDB(newLocalPort, port, host, name, protocol)
+	r.savePortToDB(newLocalPort, port, host, name, protocol, direction)
 
 	slog.Info(
 		"proxy port updated",
@@ -287,9 +353,53 @@ func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name st
 		slog.String("host", host),
 		slog.String("name", name),
 		slog.String("protocol", protocol),
+		slog.String("direction", direction),
 	)
 
 	return nil
+}
+
+// findDuplicate returns the local port of an entry that already maps the same
+// (direction, target port, host), skipping exclude. Returns 0 when none.
+func (r *ProxyRegistry) findDuplicate(exclude, port int, host, direction string) int {
+	for lp, p := range r.ports {
+		if lp == exclude {
+			continue
+		}
+		if p.Port == port && p.Host == host && p.Direction == direction {
+			return lp
+		}
+	}
+	return 0
+}
+
+// updatedListenPort decides the listening port after an update.
+//
+// A forward mapping listens on the client, so a changed target port may move it
+// (reallocateLocalPort). A reverse mapping's listening port is the SERVER-side
+// bind port, which must NOT move when the client-side target changes — moving it
+// would silently rebind a different server port while the UI showed the same
+// entry.
+func (r *ProxyRegistry) updatedListenPort(localPort, port int, existing *model.ForwardedPort, direction string) int {
+	if direction == model.DirectionForward {
+		return r.reallocateLocalPort(localPort, port, existing.Port)
+	}
+	return localPort
+}
+
+// startReverseProxyAfterUpdate restarts the Host-rewriting proxy for a forward
+// mapping whose target changed. Failures are logged, not returned: the mapping
+// still works over the tunnel, just with the wrong Host header.
+func (r *ProxyRegistry) startReverseProxyAfterUpdate(localPort, port int, host, protocol string) {
+	if err := r.startReverseProxy(localPort, port, host, protocol); err != nil {
+		slog.Warn(
+			"failed to restart reverse proxy after UpdatePort",
+			slog.Int("local_port", localPort),
+			slog.Int("target_port", port),
+			slog.String("host", host),
+			slog.String("err", err.Error()),
+		)
+	}
 }
 
 // reallocateLocalPort determines the new local port if the target port changed.
@@ -358,8 +468,8 @@ func (r *ProxyRegistry) SetPortEnabled(localPort int, enabled bool) error {
 
 	p.Enabled = enabled
 	if enabled {
-		// Restore reverse proxy for non-localhost targets
-		if IsNonLocalhostTarget(p.Host) {
+		// Restore reverse proxy for non-localhost targets (forward mappings only)
+		if !p.IsReverse() && IsNonLocalhostTarget(p.Host) {
 			if err := r.startReverseProxy(localPort, p.Port, p.Host, p.Protocol); err != nil {
 				slog.Warn(
 					"failed to start reverse proxy after enabling port",
@@ -369,7 +479,10 @@ func (r *ProxyRegistry) SetPortEnabled(localPort int, enabled bool) error {
 			}
 		}
 	} else {
-		// Disabled — halt forwarding and mark inactive
+		// Disabled — halt forwarding and mark inactive.
+		// For a reverse mapping this only clears the UI state: the server-side
+		// listener is owned by the SSH session and is torn down when the client
+		// cancels the forward (or disconnects).
 		r.stopReverseProxy(localPort)
 		p.Active = false
 	}
@@ -382,6 +495,25 @@ func (r *ProxyRegistry) SetPortEnabled(localPort int, enabled bool) error {
 		slog.Bool("enabled", enabled),
 	)
 	return nil
+}
+
+// SetReverseBound records whether the server-side port of a reverse mapping is
+// currently bound by a client's SSH session. Called by the SSH server when a
+// tcpip-forward is accepted or released. Unknown ports are ignored: the client
+// may run a manual `ssh -R` for a port that was never registered here.
+func (r *ProxyRegistry) SetReverseBound(serverPort int, bound bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	p, ok := r.ports[serverPort]
+	if !ok || !p.IsReverse() {
+		return
+	}
+	if p.Active == bound {
+		return
+	}
+	p.Active = bound
+	slog.Info("reverse port bound state updated", slog.Int("server_port", serverPort), slog.Bool("bound", bound))
 }
 
 // ListPorts returns all registered ports with current health status.
@@ -612,6 +744,7 @@ func (r *ProxyRegistry) checkAllPorts() {
 		port      int
 		host      string
 		enabled   bool
+		reverse   bool
 	}, 0, len(r.ports))
 	for lp, p := range r.ports {
 		portList = append(portList, struct {
@@ -619,13 +752,21 @@ func (r *ProxyRegistry) checkAllPorts() {
 			port      int
 			host      string
 			enabled   bool
-		}{localPort: lp, port: p.Port, host: p.Host, enabled: p.Enabled})
+			reverse   bool
+		}{localPort: lp, port: p.Port, host: p.Host, enabled: p.Enabled, reverse: p.IsReverse()})
 	}
 	r.mu.RUnlock()
 
 	for _, entry := range portList {
 		// Disabled ports are not probed — they stay inactive until re-enabled.
 		if !entry.enabled {
+			continue
+		}
+		// Reverse mappings are not dial-probed. The target lives on the client,
+		// and the server-side port is bound by the SSH session, so a dial from
+		// here would just connect to our own listener and always succeed. Their
+		// Active flag is driven by SetReverseBound instead.
+		if entry.reverse {
 			continue
 		}
 		active := checkPortActive(entry.port, entry.host)
@@ -1023,7 +1164,7 @@ func (r *ProxyRegistry) loadPortsFromDB() {
 		return
 	}
 
-	rows, err := dbRead.Query("SELECT local_port, port, host, name, protocol, enabled FROM forwarded_ports")
+	rows, err := dbRead.Query("SELECT local_port, port, host, name, protocol, enabled, direction FROM forwarded_ports")
 	if err != nil {
 		slog.Warn("failed to load persisted ports from DB", slog.String("err", err.Error()))
 		return
@@ -1032,14 +1173,22 @@ func (r *ProxyRegistry) loadPortsFromDB() {
 
 	for rows.Next() {
 		var localPort, port int
-		var host, name, protocol string
+		var host, name, protocol, direction string
 		enabled := true
-		if err := rows.Scan(&localPort, &port, &host, &name, &protocol, &enabled); err != nil {
+		if err := rows.Scan(&localPort, &port, &host, &name, &protocol, &enabled, &direction); err != nil {
 			slog.Warn("failed to scan persisted port", slog.String("err", err.Error()))
 			continue
 		}
+		direction = model.NormalizeDirection(direction)
+		// The allowed-range check applies to the port this mapping exposes on
+		// the server: the target for a forward mapping, the bound port for a
+		// reverse one.
 		if !r.IsPortAllowed(port) {
 			slog.Warn("skipping persisted port outside allowed range", slog.Int("port", port))
+			continue
+		}
+		if direction == model.DirectionReverse && !r.IsPortAllowed(localPort) {
+			slog.Warn("skipping persisted reverse port outside allowed range", slog.Int("server_port", localPort))
 			continue
 		}
 		if protocol != "https" {
@@ -1051,11 +1200,13 @@ func (r *ProxyRegistry) loadPortsFromDB() {
 			Host:      host,
 			Name:      name,
 			Protocol:  protocol,
-			Active:    false, // will be updated by health check
+			Direction: direction,
+			Active:    false, // will be updated by health check (forward) or SetReverseBound (reverse)
 			Enabled:   enabled,
 		}
 		// For non-localhost targets, start an HTTP reverse proxy to rewrite Host header.
-		if enabled && IsNonLocalhostTarget(host) {
+		// Reverse mappings never run one — their target is on the client.
+		if enabled && direction == model.DirectionForward && IsNonLocalhostTarget(host) {
 			if err := r.startReverseProxy(localPort, port, host, protocol); err != nil {
 				slog.Warn(
 					"failed to start reverse proxy on DB load",
@@ -1074,18 +1225,18 @@ func (r *ProxyRegistry) loadPortsFromDB() {
 }
 
 // savePortToDB persists a single forwarded port to the database.
-func (r *ProxyRegistry) savePortToDB(localPort int, port int, host string, name, protocol string) {
-	r.savePortToDBWithEnabled(localPort, port, host, name, protocol, true)
+func (r *ProxyRegistry) savePortToDB(localPort int, port int, host string, name, protocol, direction string) {
+	r.savePortToDBWithEnabled(localPort, port, host, name, protocol, direction, true)
 }
 
 // savePortToDBWithEnabled persists a forwarded port including its enabled state.
-func (r *ProxyRegistry) savePortToDBWithEnabled(localPort int, port int, host string, name, protocol string, enabled bool) {
+func (r *ProxyRegistry) savePortToDBWithEnabled(localPort int, port int, host string, name, protocol, direction string, enabled bool) {
 	if db == nil {
 		return
 	}
 	_, err := WriteExec(
-		"INSERT OR REPLACE INTO forwarded_ports (local_port, port, host, name, protocol, enabled) VALUES (?, ?, ?, ?, ?, ?)",
-		localPort, port, host, name, protocol, enabled,
+		"INSERT OR REPLACE INTO forwarded_ports (local_port, port, host, name, protocol, direction, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		localPort, port, host, name, protocol, model.NormalizeDirection(direction), enabled,
 	)
 	if err != nil {
 		slog.Error("failed to persist port to DB", slog.Int("local_port", localPort), slog.String("err", err.Error()))

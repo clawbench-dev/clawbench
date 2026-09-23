@@ -84,6 +84,16 @@ export interface ClawBenchNative {
    */
   addForwardedPort(localPort: number, targetPort: number, host: string): Promise<boolean | void> | void
   removeForwardedPort(localPort: number): Promise<void>
+  /**
+   * Publish a service running on THIS device on a loopback port of the server
+   * (ssh -R). `serverPort` is the port bound on the server, `targetPort` the
+   * local port to relay to.
+   *
+   * Optional: older hosts predate reverse forwarding, and the caller degrades to
+   * showing the manual `ssh -R` command instead.
+   */
+  addReverseForwardedPort?(serverPort: number, targetPort: number, host: string): Promise<boolean | void> | void
+  removeReverseForwardedPort?(serverPort: number): Promise<void>
   reconnectTunnel(): Promise<boolean>
   reconnectTunnelAsync(): Promise<void>
   downloadFile(path: string): Promise<void>

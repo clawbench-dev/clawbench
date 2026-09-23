@@ -5,6 +5,11 @@
       <div class="port-badges">
         <span class="port-number">{{ localPort }}</span>
         <span class="port-protocol" :class="protocol">{{ protocol }}</span>
+        <span
+          class="port-direction"
+          :class="direction === 'reverse' ? 'reverse' : 'forward'"
+          :title="direction === 'reverse' ? t('proxy.directionReverseHint') : t('proxy.directionForwardHint')"
+        >{{ direction === 'reverse' ? '↓' : '↑' }}</span>
         <span class="port-status" :class="statusClass" :title="statusTitle"></span>
       </div>
       <div class="port-toggle">
@@ -20,21 +25,40 @@
       </div>
     </div>
 
-    <!-- Info row: name + target -->
+    <!-- Info row: name + target.
+         The big number is always the port this entry owns on the machine that
+         listens (client side for a forward, server side for a reverse), so the
+         chip points at the other end. -->
     <div class="port-info">
       <span v-if="name" class="port-name">{{ name }}</span>
-      <span v-if="port !== localPort" class="port-target">→ {{ host || 'localhost' }}:{{ port }}</span>
+      <span v-if="direction === 'reverse'" class="port-target reverse">
+        ← {{ host || '127.0.0.1' }}:{{ port }}
+      </span>
+      <span v-else-if="port !== localPort" class="port-target">→ {{ host || 'localhost' }}:{{ port }}</span>
       <span v-else-if="host" class="port-host">{{ host }}</span>
     </div>
 
     <!-- Actions row -->
     <div class="port-actions">
-      <button class="port-action-btn sandbox" :disabled="!enabled" @click.stop="$emit('open', localPort, protocol, host)" :title="t('proxy.openInSandbox')">
-        <Box :size="14" />
+      <!-- Reverse mappings bind the SERVER's loopback: there is nothing to open
+           on this device, so the useful action is copying the server-side
+           address. Forward mappings keep the browser actions. -->
+      <button
+        v-if="direction === 'reverse'"
+        class="port-action-btn copy-address"
+        :title="t('proxy.copyServerAddress')"
+        @click.stop="$emit('copyAddress', localPort, protocol)"
+      >
+        <Copy :size="14" />
       </button>
-      <button class="port-action-btn open" :disabled="!enabled" @click.stop="$emit('openExternal', localPort, protocol, host)" :title="t('proxy.openInBrowser')">
-        <ExternalLink :size="14" />
-      </button>
+      <template v-else>
+        <button class="port-action-btn sandbox" :disabled="!enabled" @click.stop="$emit('open', localPort, protocol, host)" :title="t('proxy.openInSandbox')">
+          <Box :size="14" />
+        </button>
+        <button class="port-action-btn open" :disabled="!enabled" @click.stop="$emit('openExternal', localPort, protocol, host)" :title="t('proxy.openInBrowser')">
+          <ExternalLink :size="14" />
+        </button>
+      </template>
       <RefreshButton icon="RotateCcw" class="port-action-btn reconnect" :loading="reconnecting" :disabled="reconnecting || !enabled" :title="t('proxy.reconnectPort')" @click.stop="$emit('reconnect', localPort)" />
       <span class="port-actions-spacer" />
       <button class="port-action-btn edit" @click.stop="$emit('edit', localPort)" :title="t('common.edit')">
@@ -48,7 +72,7 @@
 </template>
 
 <script setup>
-import { Box, ExternalLink, Pencil, Trash2 } from 'lucide-vue-next'
+import { Box, Copy, ExternalLink, Pencil, Trash2 } from 'lucide-vue-next'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -61,6 +85,8 @@ const props = defineProps({
   host: { type: String, default: '' },
   name: { type: String, default: '' },
   protocol: { type: String, default: 'http' },
+  /** 'forward' (ssh -L) or 'reverse' (ssh -R). */
+  direction: { type: String, default: 'forward' },
   active: { type: Boolean, default: false },
   enabled: { type: Boolean, default: true },
   tunnelDisconnected: { type: Boolean, default: false },
@@ -78,11 +104,14 @@ const props = defineProps({
   tunnelReady: { type: null, default: null },
 })
 
-defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove', 'toggleEnabled'])
+defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove', 'toggleEnabled', 'copyAddress'])
 
 const statusClass = computed(() => {
   if (!props.enabled) return 'disabled'
   if (props.connecting) return 'connecting'
+  // A reverse mapping has no client-side listener, so the local probe is never
+  // populated for it and `tunnelReady` stays null — `active` (the server-side
+  // bind) is already the right answer.
   // Local probe is authoritative when available: the server-side `active` flag
   // only reports whether the TARGET port is up on the server, so a dead tunnel
   // used to show a healthy green dot.
@@ -100,6 +129,9 @@ const statusTitle = computed(() => {
   if (props.tunnelReady === true) return props.active ? t('proxy.portItem.active') : t('proxy.portItem.inactive')
   if (props.active) return t('proxy.portItem.active')
   if (props.tunnelDisconnected) return t('proxy.portItem.tunnelDown')
+  // Inactive reverse mappings are waiting for the client to establish the
+  // tunnel — a distinct reason worth naming.
+  if (props.direction === 'reverse') return t('proxy.reverseInactiveHint')
   return t('proxy.portItem.inactive')
 })
 </script>
@@ -169,6 +201,25 @@ const statusTitle = computed(() => {
 .port-protocol.https {
   background: rgba(59, 130, 246, 0.12);
   color: #2563eb;
+}
+
+/* Direction badge: ↑ = ssh -L (server → local), ↓ = ssh -R (local → server). */
+.port-direction {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  padding: var(--space-1) var(--space-2);
+  border-radius: 0;
+}
+
+.port-direction.forward {
+  background: rgba(107, 114, 128, 0.12);
+  color: var(--text-secondary, #666);
+}
+
+.port-direction.reverse {
+  background: rgba(139, 92, 246, 0.14);
+  color: #8b5cf6;
 }
 
 .port-status {
@@ -299,6 +350,13 @@ const statusTitle = computed(() => {
   color: #3b82f6;
 }
 
+/* Reverse mappings read right-to-left: the server-side chip points at the
+   client-side service it relays to. */
+.port-target.reverse {
+  background: rgba(139, 92, 246, 0.1);
+  color: #8b5cf6;
+}
+
 .port-host {
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
@@ -359,6 +417,10 @@ const statusTitle = computed(() => {
   }
   .port-action-btn.delete:hover:not(:disabled) {
     color: #dc3545;
+    background: var(--bg-tertiary, #f0f0f0);
+  }
+  .port-action-btn.copy-address:hover:not(:disabled) {
+    color: #8b5cf6;
     background: var(--bg-tertiary, #f0f0f0);
   }
 }

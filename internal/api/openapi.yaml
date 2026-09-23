@@ -3140,15 +3140,9 @@ paths:
       tags: [Terminal]
       summary: 终端可用状态
       description: |
-        返回 `enabled`、`platform_supported`、`cwd_probe_supported`、`sessions`、`session_count`；
+        返回 `enabled`、`platform_supported`、`sessions`、`session_count`；
         带 `session` 查询参数时另返回 `hasSession`/`sessionId`/`cwd`/`running`。
         取代已移除的 `/api/terminal/config`。
-
-        `cwd` 是 shell 的**实时**工作目录：由后端读取 PTY 前台进程组的 `/proc/<pid>/cwd`
-        得到，因此会跟随 `cd`（含嵌套子 shell）。`cwd_probe_supported` 表示该探测在当前
-        **服务端**平台是否可用（仅 Linux/Android；macOS 需 cgo libproc，Windows 无 PTY）；
-        为 false 时 `cwd` 退化为会话启动目录。这是服务端能力，前端不可用
-        `navigator.userAgent` 推断（浏览器与服务端可能不同平台）。
       operationId: terminalStatus
       responses:
         "200":
@@ -3841,6 +3835,15 @@ paths:
       tags: [Proxy]
       summary: 端口转发列表
       operationId: proxyPortsList
+      description: |
+        返回已注册的端口映射。每项含 `direction` 字段：
+        - `forward`（默认，ssh -L）：`port` = 服务器侧目标端口，`localPort` = 客户端监听端口，
+          `host` = 服务器侧目标主机。
+        - `reverse`（ssh -R）：`port` = 客户端本地待暴露端口，`localPort` = 服务器侧绑定端口，
+          `host` = 客户端侧目标主机。
+
+        反向映射的 `active` 表示服务器侧 `127.0.0.1:{localPort}` 是否已由客户端 SSH 会话绑定，
+        与正向映射（探测目标端口）的语义不同。
       responses:
         "200":
           description: 端口列表
@@ -3848,6 +3851,11 @@ paths:
       tags: [Proxy]
       summary: 新增端口转发
       operationId: proxyPortsCreate
+      description: |
+        请求体：`{port, host, name, protocol, direction}`。
+        `direction` 为 `forward`（默认）或 `reverse`；非法值按 `forward` 处理。
+        返回 `{status, localPort}` —— `localPort` 是实际分配的监听端口（正向为客户端侧，
+        反向为服务器侧；端口被占用时会自动改分配，故不要假定与 `port` 相同）。
       responses:
         "200":
           description: 结果
@@ -3855,6 +3863,10 @@ paths:
       tags: [Proxy]
       summary: 更新端口转发
       operationId: proxyPortsUpdate
+      description: |
+        请求体：`{localPort, port, host, name, protocol, direction}`。
+        `localPort` 是不可变键；正向映射在目标端口变化时可能重新分配 `localPort`，
+        反向映射的 `localPort`（服务器绑定端口）保持不变。
       responses:
         "200":
           description: 结果
@@ -3862,6 +3874,7 @@ paths:
       tags: [Proxy]
       summary: 删除端口转发
       operationId: proxyPortsDelete
+      description: 查询参数 `port` 为条目的 `localPort`。
       responses:
         "200":
           description: 结果

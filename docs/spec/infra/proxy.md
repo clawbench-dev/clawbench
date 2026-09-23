@@ -37,10 +37,12 @@ flowchart TD
 
 ### 功能清单
 
-- **反向代理与 Host 重写**：将浏览器请求的 `Host: localhost:port` 重写为目标服务的原始 Host，解决虚拟主机后端在 SSH 隧道场景下的路由问题
+- **反向代理与 Host 重写**：将浏览器请求的 `Host: localhost:port` 重写为目标服务的原始 Host，解决虚拟主机后端在 SSH 隧道场景下的路由问题。**仅用于正向映射（ssh -L）的非 localhost 目标**
 - **端口注册与生命周期管理**：转发的端口注册到 ProxyRegistry，统一管理创建、销毁和查询。前端可以获取所有可用端口的列表
+- **方向感知（forward / reverse）**：每条映射带 `direction` 字段。`forward`（默认，ssh -L）由客户端监听、服务器拨号目标；`reverse`（ssh -R）由服务器绑定 loopback、回连客户端拨号本机目标。`port`/`localPort`/`host` 的含义随方向翻转，详见 `ssh-tunnel.md` 的方向语义表
 - **特权端口自动映射**：目标端口 < 1024 时自动映射到 1024+ 范围，兼容 Android 和非 root 环境——这些环境无法绑定特权端口
-- **健康检查**：定期检查转发端口的可用性，不可用的端口自动标记。前端只展示可用的端口，避免用户点击后才发现服务不可达
+- **反向映射的服务器端口分配**：`allocateServerPort` 在 registry 分配阶段 bind-then-close 探测 OS 并跳过保留端口（ClawBench 自身 HTTP 端口与 SSH 端口，经 `SetReservedPorts` 登记）。**改选只能发生在此阶段**——SSH bind 阶段改绑会破坏客户端按请求端口匹配 `forwarded-tcpip` 通道的约定
+- **健康检查**：定期检查转发端口的可用性，不可用的端口自动标记。前端只展示可用的端口，避免用户点击后才发现服务不可达。**反向条目完全跳过拨号探测**：目标在客户端，且拨服务器自身监听端口恒为真，其 `active` 由 `SetReverseBound` 在 `tcpip-forward` 成功/释放时驱动
 - **端口自动检测**：`/api/proxy/detect` 端点扫描常用端口，发现可用的开发服务。用户不需要记住端口号
 - **CORS 代理**：`/api/openapi-proxy` 端点为 Swagger UI 的"Try it out"功能转发 API 请求，绕过浏览器 CORS 限制。仅转发 HTTP/HTTPS 请求，过滤 hop-by-hop 头部。生产环境可设置 `AllowLocalProxy=false` 阻止对私有 IP 的请求（防 SSRF），DNS 重绑定攻击在 TCP dial 阶段二次校验
 - **FRP 状态接口**：FRP 客户端由独立的 `internal/frp` 模块管理。`GET /api/frp/info` 返回包含公网地址的完整状态并要求认证；`GET /api/frp/status` 仅返回 enabled/running 等最小状态，供无需认证的本地或原生状态检查使用
@@ -48,6 +50,8 @@ flowchart TD
 ### 设计要点
 
 - **Host 重写是核心价值**：没有 Host 重写，通过 SSH 隧道访问虚拟主机后端（如 `admin.example.com`）会得到 404——浏览器发送的 Host 是 `localhost:port`，后端不认识这个 Host。反向代理将 Host 改回目标地址，问题迎刃而解
+- **白名单必须按方向取字段**：`SetAllowedPorts` 裁剪时，正向比的是 `port`（服务器暴露的目标端口），反向比的是 `localPort`（服务器绑定的端口）。统一用 `port` 会让反向条目的越界判断测到客户端侧端口——看着生效，实则判错了对象
+- **`reallocateLocalPort` 只对正向生效**：正向的 `localPort` 是客户端监听端口，目标端口变化时可以跟着改；反向的 `localPort` 是服务器绑定端口，客户端目标变化时移动它等于静默改绑另一个服务器端口
 - **特权端口映射对 Android 必要**：Android 没有 root 权限，无法绑定 1024 以下端口。自动映射到高端口号后，SSH 隧道在 Android 上也能转发 80/443 端口的服务
 - **默认端口剥离**：重写 Host 时按 HTTP 规范剥离默认端口号（80 for HTTP, 443 for HTTPS），避免 `backend:80` 这样的非规范 Host 导致后端匹配失败
 - **支持自签名证书**：HTTPS 目标跳过证书验证——开发环境常用自签名证书，严格验证会阻断转发

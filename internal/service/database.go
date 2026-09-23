@@ -625,6 +625,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			host TEXT NOT NULL DEFAULT '',
 			name TEXT NOT NULL DEFAULT '',
 			protocol TEXT NOT NULL DEFAULT 'http',
+			direction TEXT NOT NULL DEFAULT 'forward',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -1279,6 +1280,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasForwardedPortEnabled == 0 {
 		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"); err != nil {
 			return fmt.Errorf("failed to add enabled column to forwarded_ports: %w", err)
+		}
+	}
+
+	// Migrate: add direction column for reverse (ssh -R) port mappings.
+	// Existing rows are classic ssh -L forwards (backward compatible).
+	var hasForwardedPortDirection int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='direction'").Scan(&hasForwardedPortDirection)
+	if hasForwardedPortDirection == 0 {
+		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN direction TEXT NOT NULL DEFAULT 'forward'"); err != nil {
+			return fmt.Errorf("failed to add direction column to forwarded_ports: %w", err)
 		}
 	}
 

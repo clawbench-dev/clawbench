@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -290,7 +291,7 @@ func TestSSHPortForward_DisallowedPortRejectedByTunnel(t *testing.T) {
 func TestSSHPortForward_RegisteredPortWorks(t *testing.T) {
 	portReg := newTestRegistry(t)
 	echoPort := startEchoServer(t)
-	portReg.RegisterPort(echoPort, "", "echo", "http")
+	portReg.RegisterPort(echoPort, "", "echo", "http", "")
 
 	srv := testServerHelper(t, "test-password", portReg)
 	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
@@ -324,8 +325,8 @@ func TestSSHPortForward_MultiplePorts(t *testing.T) {
 	// Start two echo servers
 	echoPort1 := startEchoServer(t)
 	echoPort2 := startEchoServer(t)
-	portReg.RegisterPort(echoPort1, "", "echo1", "http")
-	portReg.RegisterPort(echoPort2, "", "echo2", "http")
+	portReg.RegisterPort(echoPort1, "", "echo1", "http", "")
+	portReg.RegisterPort(echoPort2, "", "echo2", "http", "")
 
 	srv := testServerHelper(t, "test-password", portReg)
 	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
@@ -371,7 +372,7 @@ func TestSSHPortForward_DisallowedPortRejected(t *testing.T) {
 	defer r.Stop()
 
 	// RegisterPort should reject a port outside the allowed range
-	_, err := r.RegisterPort(8080, "", "outside-range", "http")
+	_, err := r.RegisterPort(8080, "", "outside-range", "http", "")
 	if err == nil {
 		t.Error("expected RegisterPort to reject port 8080 (outside allowed range 3000-4000)")
 	}
@@ -385,7 +386,7 @@ func TestSSHPortForward_DisallowedPortRejected(t *testing.T) {
 func TestSSHPortForward_LargeDataTransfer(t *testing.T) {
 	portReg := newTestRegistry(t)
 	echoPort := startEchoServer(t)
-	portReg.RegisterPort(echoPort, "", "echo", "http")
+	portReg.RegisterPort(echoPort, "", "echo", "http", "")
 
 	srv := testServerHelper(t, "test-password", portReg)
 	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
@@ -633,7 +634,7 @@ func TestSSHServer_ConnectionStats_MultipleClients(t *testing.T) {
 func TestSSHServer_ConnectionStats_ActiveChannels(t *testing.T) {
 	portReg := newTestRegistry(t)
 	echoPort := startEchoServer(t)
-	portReg.RegisterPort(echoPort, "", "echo", "http")
+	portReg.RegisterPort(echoPort, "", "echo", "http", "")
 
 	srv := testServerHelper(t, "test-password", portReg)
 	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
@@ -773,7 +774,7 @@ func TestSSHServer_JoinHostPort_LocalhostTarget(t *testing.T) {
 	// This tests the fix from fmt.Sprintf("127.0.0.1:%d") → net.JoinHostPort.
 	portReg := newTestRegistry(t)
 	echoPort := startEchoServer(t)
-	portReg.RegisterPort(echoPort, "", "echo", "http")
+	portReg.RegisterPort(echoPort, "", "echo", "http", "")
 
 	srv := testServerHelper(t, "test-password", portReg)
 	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
@@ -1349,4 +1350,362 @@ func marshalSignerKey(t *testing.T) []byte {
 	keyBytes, err := x509.MarshalECPrivateKey(key)
 	require.NoError(t, err)
 	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+}
+
+// --- Reverse port forwarding (ssh -R / tcpip-forward) tests ---
+
+// reverseEchoRelay serves a client-side listener by relaying each accepted
+// connection to a local echo server, emulating what a real client does when the
+// server hands it a forwarded-tcpip channel. It returns a stop function.
+func reverseEchoRelay(t *testing.T, ln net.Listener, echoPort int) {
+	t.Helper()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				upstream, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(echoPort)))
+				if err != nil {
+					return
+				}
+				defer upstream.Close()
+				go func() { _, _ = io.Copy(upstream, c) }()
+				_, _ = io.Copy(c, upstream)
+			}(c)
+		}
+	}()
+}
+
+// dialReversePort connects to the server-side bound port and verifies the echo
+// round trip, proving the whole chain works: server listener → forwarded-tcpip
+// channel → client relay → client's local target.
+func assertReverseEcho(t *testing.T, serverPort int, payload string) {
+	t.Helper()
+	var conn net.Conn
+	var err error
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err = net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(serverPort)), 500*time.Millisecond)
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("failed to reach server-side reverse port %d: %v", serverPort, err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := conn.Write([]byte(payload)); err != nil {
+		t.Fatalf("write to reverse port failed: %v", err)
+	}
+	buf := make([]byte, len(payload))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read from reverse port failed: %v", err)
+	}
+	if string(buf) != payload {
+		t.Fatalf("echo mismatch: got %q, want %q", string(buf), payload)
+	}
+}
+
+// waitPortFree polls until a port can be bound again, proving it was released.
+func waitPortFree(t *testing.T, port int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)))
+		if err == nil {
+			_ = ln.Close()
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("port %d was never released", port)
+}
+
+func TestSSHReverseForward_EndToEnd(t *testing.T) {
+	portReg := newTestRegistry(t)
+	srv := testServerHelper(t, "test-password", portReg)
+	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
+
+	echoPort := startEchoServer(t)
+
+	// Ask the server to bind an ephemeral loopback port and hand connections back.
+	ln, err := client.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reverse forward request failed: %v", err)
+	}
+	defer ln.Close()
+
+	serverPort := ln.Addr().(*net.TCPAddr).Port
+	if serverPort <= 0 {
+		t.Fatalf("expected a real allocated port, got %d", serverPort)
+	}
+	reverseEchoRelay(t, ln, echoPort)
+
+	assertReverseEcho(t, serverPort, "hello reverse")
+}
+
+func TestSSHReverseForward_ExplicitPort(t *testing.T) {
+	portReg := newTestRegistry(t)
+	srv := testServerHelper(t, "test-password", portReg)
+	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
+
+	echoPort := startEchoServer(t)
+
+	// Reserve a free port, then ask for exactly that one.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to probe free port: %v", err)
+	}
+	wantPort := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	ln, err := client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", wantPort))
+	if err != nil {
+		t.Fatalf("reverse forward on explicit port failed: %v", err)
+	}
+	defer ln.Close()
+
+	if got := ln.Addr().(*net.TCPAddr).Port; got != wantPort {
+		t.Fatalf("requested port %d but got %d", wantPort, got)
+	}
+	reverseEchoRelay(t, ln, echoPort)
+	assertReverseEcho(t, wantPort, "explicit port")
+}
+
+func TestSSHReverseForward_RejectsReservedSSHPort(t *testing.T) {
+	portReg := newTestRegistry(t)
+	srv := testServerHelper(t, "test-password", portReg)
+	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
+
+	// Binding the SSH port itself would take down the tunnel.
+	_, err := client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", srv.Port()))
+	if err == nil {
+		t.Fatal("expected the SSH port to be rejected for reverse forwarding")
+	}
+}
+
+func TestSSHReverseForward_RejectsMainPort(t *testing.T) {
+	// A stand-in for ClawBench's own HTTP port: hold it so nothing else can
+	// take it, and tell the server it is reserved.
+	mainListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to hold main port: %v", err)
+	}
+	defer mainListener.Close()
+	mainPort := mainListener.Addr().(*net.TCPAddr).Port
+
+	portReg := newTestRegistry(t)
+	portReg.SetReservedPorts(mainPort)
+
+	srv := NewServer(model.PortForwardConfig{Enabled: true, Port: 0}, mainPort, "test-password", portReg)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to find ssh port: %v", err)
+	}
+	srv.addr = listener.Addr().String()
+	listener.Close()
+	go srv.ListenAndServe()
+	t.Cleanup(func() { srv.Close() })
+	time.Sleep(100 * time.Millisecond)
+
+	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
+	_, err = client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", mainPort))
+	if err == nil {
+		t.Fatal("expected ClawBench's own port to be rejected for reverse forwarding")
+	}
+}
+
+func TestSSHReverseForward_RejectsDisallowedPort(t *testing.T) {
+	portReg := newTestRegistry(t)
+	portReg.SetAllowedPorts("3000-4000")
+	srv := testServerHelper(t, "test-password", portReg)
+	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
+
+	_, err := client.Listen("tcp", "127.0.0.1:9999")
+	if err == nil {
+		t.Fatal("expected a port outside allowed_ports to be rejected")
+	}
+}
+
+func TestSSHReverseForward_CancelReleasesPort(t *testing.T) {
+	portReg := newTestRegistry(t)
+	srv := testServerHelper(t, "test-password", portReg)
+	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
+
+	ln, err := client.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reverse forward request failed: %v", err)
+	}
+	serverPort := ln.Addr().(*net.TCPAddr).Port
+
+	// Closing the listener sends cancel-tcpip-forward.
+	if err := ln.Close(); err != nil {
+		t.Fatalf("failed to cancel reverse forward: %v", err)
+	}
+	waitPortFree(t, serverPort)
+}
+
+func TestSSHReverseForward_ConnCloseReleasesPort(t *testing.T) {
+	portReg := newTestRegistry(t)
+	srv := testServerHelper(t, "test-password", portReg)
+
+	clientCfg := &gossh.ClientConfig{
+		User:            "clawbench",
+		Auth:            []gossh.AuthMethod{gossh.Password("test-password")},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	client, err := gossh.Dial("tcp", srv.addr, clientCfg)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+
+	ln, err := client.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reverse forward request failed: %v", err)
+	}
+	serverPort := ln.Addr().(*net.TCPAddr).Port
+
+	// Dropping the whole connection (not just the listener) must release too.
+	client.Close()
+	waitPortFree(t, serverPort)
+}
+
+func TestSSHReverseForward_RegistryActiveLifecycle(t *testing.T) {
+	portReg := newTestRegistry(t)
+	srv := testServerHelper(t, "test-password", portReg)
+	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
+
+	// Register the mapping first, so the server can flag it bound.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to probe free port: %v", err)
+	}
+	serverPort := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	allocated, err := portReg.RegisterPort(serverPort, "", "local svc", "http", model.DirectionReverse)
+	if err != nil {
+		t.Fatalf("failed to register reverse port: %v", err)
+	}
+
+	isActive := func() bool {
+		for _, p := range portReg.ListPorts() {
+			if p.LocalPort == allocated {
+				return p.Active
+			}
+		}
+		return false
+	}
+	if isActive() {
+		t.Fatal("reverse mapping should start inactive")
+	}
+
+	ln, err := client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort))
+	if err != nil {
+		t.Fatalf("reverse forward request failed: %v", err)
+	}
+	// The reply is synchronous, so the registry is updated by the time Listen returns.
+	if !isActive() {
+		t.Fatal("reverse mapping should be active once the client binds it")
+	}
+
+	_ = ln.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && isActive() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if isActive() {
+		t.Fatal("reverse mapping should be inactive after the client cancels it")
+	}
+}
+
+func TestSSHReverseForward_DuplicatePortSecondClientRejected(t *testing.T) {
+	portReg := newTestRegistry(t)
+	srv := testServerHelper(t, "test-password", portReg)
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to probe free port: %v", err)
+	}
+	serverPort := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	client1 := testSSHClient(t, srv.addr, "clawbench", "test-password")
+	ln, err := client1.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort))
+	if err != nil {
+		t.Fatalf("first reverse forward failed: %v", err)
+	}
+	defer ln.Close()
+
+	client2 := testSSHClient(t, srv.addr, "clawbench", "test-password")
+	if _, err := client2.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort)); err == nil {
+		t.Fatal("expected the second client's request for the same port to be rejected")
+	}
+}
+
+func TestSSHReverseForward_LocalForwardStillWorks(t *testing.T) {
+	portReg := newTestRegistry(t)
+	srv := testServerHelper(t, "test-password", portReg)
+	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
+
+	echoPort := startEchoServer(t)
+
+	// Establish a reverse forward first...
+	ln, err := client.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reverse forward request failed: %v", err)
+	}
+	defer ln.Close()
+	reverseEchoRelay(t, ln, echoPort)
+
+	// ...then confirm direct-tcpip (ssh -L) is unaffected on the same connection.
+	conn, err := client.Dial("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(echoPort)))
+	if err != nil {
+		t.Fatalf("local forward broke after a reverse forward: %v", err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := conn.Write([]byte("still works")); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	buf := make([]byte, len("still works"))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	if string(buf) != "still works" {
+		t.Fatalf("got %q", string(buf))
+	}
+}
+
+func TestSSHReverseForward_UnknownGlobalRequestDoesNotHang(t *testing.T) {
+	portReg := newTestRegistry(t)
+	srv := testServerHelper(t, "test-password", portReg)
+	client := testSSHClient(t, srv.addr, "clawbench", "test-password")
+
+	// A global request we do not implement must be answered (or ignored) rather
+	// than leaving the connection wedged. The old code discarded requests
+	// wholesale; the new handler must not regress that for unknown types.
+	ok, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+	if err != nil {
+		t.Fatalf("unknown global request errored: %v", err)
+	}
+	if ok {
+		t.Fatal("expected an unimplemented global request to be rejected")
+	}
+
+	// The connection must still be usable afterwards.
+	echoPort := startEchoServer(t)
+	conn, err := client.Dial("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(echoPort)))
+	if err != nil {
+		t.Fatalf("connection unusable after an unknown global request: %v", err)
+	}
+	_ = conn.Close()
 }

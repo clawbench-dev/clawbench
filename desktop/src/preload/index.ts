@@ -81,6 +81,8 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   connectToServer: (u: string, p: string) => invoke('native:connect-to-server', u, p),
   addForwardedPort: (l: number, t: number, h: string) => invoke('native:add-forwarded-port', l, t, h),
   removeForwardedPort: (l: number) => invoke('native:remove-forwarded-port', l),
+  addReverseForwardedPort: (s: number, t: number, h: string) => invoke('native:add-reverse-forwarded-port', s, t, h),
+  removeReverseForwardedPort: (s: number) => invoke('native:remove-reverse-forwarded-port', s),
   reconnectTunnel: () => invoke('native:reconnect-tunnel'),
   reconnectTunnelAsync: () => invoke('native:reconnect-tunnel'),
   downloadFile: (path: string) => invoke('native:download-file', path),

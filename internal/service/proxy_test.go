@@ -55,7 +55,7 @@ func TestProxyRegistry_RegisterPort(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	_, err := r.RegisterPort(8080, "", "test", "http")
+	_, err := r.RegisterPort(8080, "", "test", "http", "")
 	assert.NoError(t, err)
 	assert.True(t, isPortRegistered(r, 8080))
 }
@@ -75,7 +75,7 @@ func TestProxyRegistry_RegisterPort_Invalid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := r.RegisterPort(tt.port, "", "", "")
+			_, err := r.RegisterPort(tt.port, "", "", "", "")
 			assert.Error(t, err)
 		})
 	}
@@ -85,11 +85,11 @@ func TestProxyRegistry_RegisterPort_Duplicate(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	localPort1, err := r.RegisterPort(3000, "", "first", "")
+	localPort1, err := r.RegisterPort(3000, "", "first", "", "")
 	assert.NoError(t, err)
 
 	// Duplicate (same port + same host) should be idempotent — return existing localPort
-	localPort2, err := r.RegisterPort(3000, "", "second", "")
+	localPort2, err := r.RegisterPort(3000, "", "second", "", "")
 	assert.NoError(t, err)
 	assert.Equal(t, localPort1, localPort2, "duplicate registration should return same localPort")
 }
@@ -98,7 +98,7 @@ func TestProxyRegistry_UnregisterPort(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	_, _ = r.RegisterPort(9090, "", "metrics", "")
+	_, _ = r.RegisterPort(9090, "", "metrics", "", "")
 
 	err := r.UnregisterPort(9090)
 	assert.NoError(t, err)
@@ -118,9 +118,9 @@ func TestProxyRegistry_ListPorts_Sorted(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	_, _ = r.RegisterPort(8080, "", "api", "")
-	_, _ = r.RegisterPort(3000, "", "app", "")
-	_, _ = r.RegisterPort(5173, "", "vite", "")
+	_, _ = r.RegisterPort(8080, "", "api", "", "")
+	_, _ = r.RegisterPort(3000, "", "app", "", "")
+	_, _ = r.RegisterPort(5173, "", "vite", "", "")
 
 	ports := r.ListPorts()
 	assert.Len(t, ports, 3)
@@ -142,7 +142,7 @@ func TestProxyRegistry_IsPortAllowed(t *testing.T) {
 	defer r.Stop()
 
 	assert.False(t, isPortRegistered(r, 8080))
-	_, _ = r.RegisterPort(8080, "", "", "")
+	_, _ = r.RegisterPort(8080, "", "", "", "")
 	assert.True(t, isPortRegistered(r, 8080))
 }
 
@@ -182,14 +182,14 @@ func TestProxyRegistry_RegisterPort_Protocol(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	_, err := r.RegisterPort(4443, "", "secure", "https")
+	_, err := r.RegisterPort(4443, "", "secure", "https", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
 	assert.Len(t, ports, 1)
 	assert.Equal(t, "https", ports[0].Protocol)
 
-	_, err = r.RegisterPort(8080, "", "plain", "http")
+	_, err = r.RegisterPort(8080, "", "plain", "http", "")
 	assert.NoError(t, err)
 
 	protocol := getPortProtocol(r, 4443)
@@ -207,7 +207,7 @@ func TestProxyRegistry_RegisterPort_InvalidProtocolDefaultsToHTTP(t *testing.T) 
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	_, err := r.RegisterPort(8080, "", "test", "ftp")
+	_, err := r.RegisterPort(8080, "", "test", "ftp", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
@@ -268,6 +268,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			host TEXT NOT NULL DEFAULT '',
 			name TEXT NOT NULL DEFAULT '',
 			protocol TEXT NOT NULL DEFAULT 'http',
+			direction TEXT NOT NULL DEFAULT 'forward',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -287,9 +288,9 @@ func TestProxyRegistry_PortPersistence_RegisterAndLoad(t *testing.T) {
 	r := NewProxyRegistry(0)
 	defer r.Stop()
 
-	_, err := r.RegisterPort(5173, "", "Vite Dev", "http")
+	_, err := r.RegisterPort(5173, "", "Vite Dev", "http", "")
 	assert.NoError(t, err)
-	_, err = r.RegisterPort(8080, "", "API", "https")
+	_, err = r.RegisterPort(8080, "", "API", "https", "")
 	assert.NoError(t, err)
 
 	// Verify ports are in the database
@@ -319,7 +320,7 @@ func TestProxyRegistry_SetPortEnabled_PersistsAndReloads(t *testing.T) {
 	r := NewProxyRegistry(0)
 	defer r.Stop()
 
-	_, err := r.RegisterPort(8080, "", "API", "http")
+	_, err := r.RegisterPort(8080, "", "API", "http", "")
 	assert.NoError(t, err)
 	assert.True(t, r.ListPorts()[0].Enabled, "newly registered port should be enabled by default")
 
@@ -351,7 +352,7 @@ func TestProxyRegistry_SetPortEnabled_ReEnableRestores(t *testing.T) {
 	r := NewProxyRegistry(0)
 	defer r.Stop()
 
-	_, err := r.RegisterPort(8080, "", "API", "http")
+	_, err := r.RegisterPort(8080, "", "API", "http", "")
 	assert.NoError(t, err)
 	assert.NoError(t, r.SetPortEnabled(8080, false))
 	assert.NoError(t, r.SetPortEnabled(8080, true))
@@ -383,8 +384,8 @@ func TestProxyRegistry_PortPersistence_UnregisterDeletesFromDB(t *testing.T) {
 	r := NewProxyRegistry(0)
 	defer r.Stop()
 
-	r.RegisterPort(3000, "", "app", "http")
-	r.RegisterPort(8080, "", "api", "http")
+	r.RegisterPort(3000, "", "app", "http", "")
+	r.RegisterPort(8080, "", "api", "http", "")
 
 	// Unregister one port
 	err := r.UnregisterPort(3000)
@@ -410,8 +411,8 @@ func TestProxyRegistry_PortPersistence_RestoreOnStartup(t *testing.T) {
 
 	// First registry: register ports (persists to DB)
 	r1 := NewProxyRegistry(0)
-	r1.RegisterPort(5173, "", "Vite Dev", "http")
-	r1.RegisterPort(8080, "", "API", "https")
+	r1.RegisterPort(5173, "", "Vite Dev", "http", "")
+	r1.RegisterPort(8080, "", "API", "https", "")
 	r1.Stop()
 
 	// Second registry: should load ports from DB
@@ -438,9 +439,9 @@ func TestProxyRegistry_PortPersistence_FullLifecycle(t *testing.T) {
 
 	// Phase 1: Create, register, verify
 	r1 := NewProxyRegistry(0)
-	r1.RegisterPort(3000, "", "frontend", "http")
-	r1.RegisterPort(4000, "", "backend", "http")
-	r1.RegisterPort(5432, "", "database", "http")
+	r1.RegisterPort(3000, "", "frontend", "http", "")
+	r1.RegisterPort(4000, "", "backend", "http", "")
+	r1.RegisterPort(5432, "", "database", "http", "")
 	r1.Stop()
 
 	// Phase 2: Load, remove one, add another, verify
@@ -449,8 +450,8 @@ func TestProxyRegistry_PortPersistence_FullLifecycle(t *testing.T) {
 	assert.True(t, isPortRegistered(r2, 4000))
 	assert.True(t, isPortRegistered(r2, 5432))
 
-	r2.UnregisterPort(4000)                      // remove one
-	r2.RegisterPort(9090, "", "metrics", "http") // add new
+	r2.UnregisterPort(4000)                          // remove one
+	r2.RegisterPort(9090, "", "metrics", "http", "") // add new
 	r2.Stop()
 
 	// Phase 3: Load again, verify final state
@@ -504,7 +505,7 @@ func TestProxyRegistry_PortPersistence_NoDB(t *testing.T) {
 	defer r.Stop()
 
 	// Register should work (in-memory only)
-	_, err := r.RegisterPort(8080, "", "test", "http")
+	_, err := r.RegisterPort(8080, "", "test", "http", "")
 	assert.NoError(t, err)
 	assert.True(t, isPortRegistered(r, 8080))
 
@@ -539,7 +540,7 @@ func TestProxyRegistry_GetPortProtocol_Registered(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	_, err := r.RegisterPort(8443, "", "secure", "https")
+	_, err := r.RegisterPort(8443, "", "secure", "https", "")
 	assert.NoError(t, err)
 
 	protocol := getPortProtocol(r, 8443)
@@ -559,7 +560,7 @@ func TestProxyRegistry_GetPortProtocol_EmptyProtocol(t *testing.T) {
 	defer r.Stop()
 
 	// Register with http (default protocol)
-	_, err := r.RegisterPort(8080, "", "web", "http")
+	_, err := r.RegisterPort(8080, "", "web", "http", "")
 	assert.NoError(t, err)
 
 	protocol := getPortProtocol(r, 8080)
@@ -615,7 +616,7 @@ func TestProxyRegistry_RegisterPort_WithHost(t *testing.T) {
 	defer r.Stop()
 
 	port := getFreePort(t)
-	_, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http")
+	_, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
@@ -631,10 +632,10 @@ func TestProxyRegistry_RegisterPort_SamePortDifferentHost(t *testing.T) {
 
 	// Same port, different hosts should both succeed
 	port := getFreePort(t)
-	_, err := r.RegisterPort(port, "", "local-api", "http")
+	_, err := r.RegisterPort(port, "", "local-api", "http", "")
 	assert.NoError(t, err)
 
-	_, err = r.RegisterPort(port, "192.168.1.100", "remote-api", "http")
+	_, err = r.RegisterPort(port, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
@@ -646,11 +647,11 @@ func TestProxyRegistry_RegisterPort_SamePortSameHost_Duplicate(t *testing.T) {
 	defer r.Stop()
 
 	port := getFreePort(t)
-	localPort1, err := r.RegisterPort(port, "192.168.1.100", "api", "http")
+	localPort1, err := r.RegisterPort(port, "192.168.1.100", "api", "http", "")
 	assert.NoError(t, err)
 
 	// Duplicate (same port + same host) should be idempotent — return existing localPort
-	localPort2, err := r.RegisterPort(port, "192.168.1.100", "api-2", "http")
+	localPort2, err := r.RegisterPort(port, "192.168.1.100", "api-2", "http", "")
 	assert.NoError(t, err)
 	assert.Equal(t, localPort1, localPort2, "duplicate registration should return same localPort")
 }
@@ -659,11 +660,11 @@ func TestProxyRegistry_RegisterPort_EmptyHostDuplicate(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	localPort1, err := r.RegisterPort(3000, "", "app1", "http")
+	localPort1, err := r.RegisterPort(3000, "", "app1", "http", "")
 	assert.NoError(t, err)
 
 	// Same port + empty host should be idempotent — return existing localPort
-	localPort2, err := r.RegisterPort(3000, "", "app2", "http")
+	localPort2, err := r.RegisterPort(3000, "", "app2", "http", "")
 	assert.NoError(t, err)
 	assert.Equal(t, localPort1, localPort2, "duplicate registration should return same localPort")
 }
@@ -675,7 +676,7 @@ func TestProxyRegistry_AllocateLocalPort_PreferRequested(t *testing.T) {
 	defer r.Stop()
 
 	// First registration on 8080 should get local port 8080
-	_, err := r.RegisterPort(8080, "", "api", "http")
+	_, err := r.RegisterPort(8080, "", "api", "http", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
@@ -688,11 +689,11 @@ func TestProxyRegistry_AllocateLocalPort_AutoAssignWhenTaken(t *testing.T) {
 	defer r.Stop()
 
 	// Register port 3000 on localhost — gets local port 3000
-	_, err := r.RegisterPort(3000, "", "local-app", "http")
+	_, err := r.RegisterPort(3000, "", "local-app", "http", "")
 	assert.NoError(t, err)
 
 	// Register same port on different host — local 3000 is taken, should auto-assign
-	_, err = r.RegisterPort(3000, "192.168.1.100", "remote-app", "http")
+	_, err = r.RegisterPort(3000, "192.168.1.100", "remote-app", "http", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
@@ -713,9 +714,9 @@ func TestProxyRegistry_UpdatePort_BasicUpdate(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	r.RegisterPort(8080, "", "api", "http")
+	r.RegisterPort(8080, "", "api", "http", "")
 
-	err := r.UpdatePort(8080, 8080, "", "api-v2", "https")
+	err := r.UpdatePort(8080, 8080, "", "api-v2", "https", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
@@ -728,9 +729,9 @@ func TestProxyRegistry_UpdatePort_ChangeHost(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	r.RegisterPort(8080, "", "api", "http")
+	r.RegisterPort(8080, "", "api", "http", "")
 
-	err := r.UpdatePort(8080, 8080, "192.168.1.100", "remote-api", "http")
+	err := r.UpdatePort(8080, 8080, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
@@ -743,7 +744,7 @@ func TestProxyRegistry_UpdatePort_NotRegistered(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	err := r.UpdatePort(9999, 8080, "", "test", "http")
+	err := r.UpdatePort(9999, 8080, "", "test", "http", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not registered")
 }
@@ -752,11 +753,11 @@ func TestProxyRegistry_UpdatePort_DuplicateTarget(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	r.RegisterPort(8080, "", "api1", "http")
-	r.RegisterPort(9090, "", "api2", "http")
+	r.RegisterPort(8080, "", "api1", "http", "")
+	r.RegisterPort(9090, "", "api2", "http", "")
 
 	// Updating 9090 to target (8080, "") would conflict with the existing entry
-	err := r.UpdatePort(9090, 8080, "", "api-updated", "http")
+	err := r.UpdatePort(9090, 8080, "", "api-updated", "http", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already registered")
 }
@@ -765,9 +766,9 @@ func TestProxyRegistry_UpdatePort_InvalidPort(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	r.RegisterPort(8080, "", "api", "http")
+	r.RegisterPort(8080, "", "api", "http", "")
 
-	err := r.UpdatePort(8080, 0, "", "test", "http")
+	err := r.UpdatePort(8080, 0, "", "test", "http", "")
 	assert.Error(t, err)
 }
 
@@ -776,9 +777,9 @@ func TestProxyRegistry_UpdatePort_PortNotAllowed(t *testing.T) {
 	defer r.Stop()
 
 	r.SetAllowedPorts("8000-9000")
-	r.RegisterPort(8080, "", "api", "http")
+	r.RegisterPort(8080, "", "api", "http", "")
 
-	err := r.UpdatePort(8080, 80, "", "test", "http")
+	err := r.UpdatePort(8080, 80, "", "test", "http", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in the allowed range")
 }
@@ -787,9 +788,9 @@ func TestProxyRegistry_UpdatePort_ProtocolDefault(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	r.RegisterPort(8080, "", "api", "http")
+	r.RegisterPort(8080, "", "api", "http", "")
 
-	err := r.UpdatePort(8080, 8080, "", "api", "ftp")
+	err := r.UpdatePort(8080, 8080, "", "api", "ftp", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
@@ -800,10 +801,10 @@ func TestProxyRegistry_UpdatePort_ChangeTargetPort(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	r.RegisterPort(8080, "", "api", "http")
+	r.RegisterPort(8080, "", "api", "http", "")
 
 	// Change target port from 8080 to 9090
-	err := r.UpdatePort(8080, 9090, "", "api-v2", "http")
+	err := r.UpdatePort(8080, 9090, "", "api-v2", "http", "")
 	assert.NoError(t, err)
 
 	ports := r.ListPorts()
@@ -819,9 +820,9 @@ func TestProxyRegistry_UpdatePort_WithDB(t *testing.T) {
 	r := NewProxyRegistry(0)
 	defer r.Stop()
 
-	r.RegisterPort(8080, "", "api", "http")
+	r.RegisterPort(8080, "", "api", "http", "")
 
-	err := r.UpdatePort(8080, 8080, "192.168.1.100", "remote-api", "https")
+	err := r.UpdatePort(8080, 8080, "192.168.1.100", "remote-api", "https", "")
 	assert.NoError(t, err)
 
 	// Verify the DB was updated
@@ -841,7 +842,7 @@ func TestProxyRegistry_PortPersistence_HostSavedAndRestored(t *testing.T) {
 	defer cleanup()
 
 	r1 := NewProxyRegistry(0)
-	r1.RegisterPort(8080, "192.168.1.100", "remote-api", "http")
+	r1.RegisterPort(8080, "192.168.1.100", "remote-api", "http", "")
 	r1.Stop()
 
 	// Load from DB in a new registry
@@ -861,8 +862,8 @@ func TestProxyRegistry_PortPersistence_DifferentHostsSamePort(t *testing.T) {
 	defer cleanup()
 
 	r1 := NewProxyRegistry(0)
-	r1.RegisterPort(8080, "", "local-api", "http")
-	r1.RegisterPort(8080, "192.168.1.100", "remote-api", "http")
+	r1.RegisterPort(8080, "", "local-api", "http", "")
+	r1.RegisterPort(8080, "192.168.1.100", "remote-api", "http", "")
 	r1.Stop()
 
 	r2 := NewProxyRegistry(0)
@@ -901,7 +902,7 @@ func TestProxyRegistry_RegisterPort_PrivilegedPort(t *testing.T) {
 	defer r.Stop()
 
 	// Port 80 should be blocked by default (ISS-186 — default is now 1024-65535)
-	_, err := r.RegisterPort(80, "", "http-server", "http")
+	_, err := r.RegisterPort(80, "", "http-server", "http", "")
 	assert.Error(t, err, "port 80 should be blocked by default")
 	assert.Contains(t, err.Error(), "not in the allowed range")
 }
@@ -911,7 +912,7 @@ func TestProxyRegistry_RegisterPort_Port443(t *testing.T) {
 	defer r.Stop()
 
 	// Port 443 should be blocked by default (ISS-186 — default is now 1024-65535)
-	_, err := r.RegisterPort(443, "", "https-server", "https")
+	_, err := r.RegisterPort(443, "", "https-server", "https", "")
 	assert.Error(t, err, "port 443 should be blocked by default")
 	assert.Contains(t, err.Error(), "not in the allowed range")
 }
@@ -923,7 +924,7 @@ func TestProxyRegistry_RegisterPort_ReturnsLocalPort(t *testing.T) {
 	defer r.Stop()
 
 	// When no collision, localPort == port
-	localPort, err := r.RegisterPort(8080, "", "test", "http")
+	localPort, err := r.RegisterPort(8080, "", "test", "http", "")
 	assert.NoError(t, err)
 	assert.Equal(t, 8080, localPort)
 }
@@ -933,12 +934,12 @@ func TestProxyRegistry_RegisterPort_ReturnsAutoAssignedLocalPort(t *testing.T) {
 	defer r.Stop()
 
 	// Register port 8080 on localhost
-	localPort1, err := r.RegisterPort(8080, "", "local-api", "http")
+	localPort1, err := r.RegisterPort(8080, "", "local-api", "http", "")
 	assert.NoError(t, err)
 	assert.Equal(t, 8080, localPort1)
 
 	// Register same port 8080 on a different host — should auto-assign 8081
-	localPort2, err := r.RegisterPort(8080, "192.168.1.100", "remote-api", "http")
+	localPort2, err := r.RegisterPort(8080, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 	assert.Equal(t, 8081, localPort2)
 }
@@ -951,7 +952,7 @@ func TestProxyRegistry_RegisterPort_PrivilegedPort_ReturnsLocalPort(t *testing.T
 	r.SetAllowedPorts("1-65535")
 
 	// Port 80 is a privileged port — it must be remapped to a non-privileged localPort
-	localPort, err := r.RegisterPort(80, "", "http-server", "http")
+	localPort, err := r.RegisterPort(80, "", "http-server", "http", "")
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, localPort, 1024, "privileged port should be remapped to >= 1024")
 	assert.NotEqual(t, 80, localPort, "localPort should not equal the privileged target port")
@@ -1244,7 +1245,7 @@ func TestProxyRegistry_StopReverseProxy(t *testing.T) {
 	port := getFreePort(t)
 
 	// Register a port with non-localhost host — starts a reverse proxy
-	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http")
+	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	// Verify reverse proxy was started
@@ -1273,12 +1274,12 @@ func TestProxyRegistry_AllocateLocalPort_PrivilegedPortScansUpward(t *testing.T)
 	r.SetAllowedPorts("1-65535")
 
 	// Port 22 (SSH) should be remapped to >=1024
-	localPort, err := r.RegisterPort(22, "", "ssh", "http")
+	localPort, err := r.RegisterPort(22, "", "ssh", "http", "")
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, localPort, 1024)
 
 	// Port 443 should also be remapped
-	localPort2, err := r.RegisterPort(443, "", "https-server", "https")
+	localPort2, err := r.RegisterPort(443, "", "https-server", "https", "")
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, localPort2, 1024)
 	assert.NotEqual(t, localPort, localPort2, "two privileged ports should get different local ports")
@@ -1305,7 +1306,7 @@ func TestProxyRegistry_RegisterPort_NonLocalhostStartsReverseProxy(t *testing.T)
 	port := getFreePort(t)
 
 	// Register a port with a non-localhost host — should start reverse proxy
-	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http")
+	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	r.mu.RLock()
@@ -1329,7 +1330,7 @@ func TestProxyRegistry_RegisterPort_LocalhostNoReverseProxy(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	localPort, err := r.RegisterPort(8080, "", "local-api", "http")
+	localPort, err := r.RegisterPort(8080, "", "local-api", "http", "")
 	assert.NoError(t, err)
 
 	r.mu.RLock()
@@ -1345,7 +1346,7 @@ func TestProxyRegistry_StartReverseProxy_FailsOnUsedPort(t *testing.T) {
 	port := getFreePort(t)
 
 	// First register a non-localhost port to start a reverse proxy on localPort
-	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http")
+	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	// Manually start another reverse proxy on the same localPort — should fail
@@ -1443,7 +1444,7 @@ func TestProxyRegistry_UpdatePort_LocalhostToNonLocalhost_StartsReverseProxy(t *
 	port := getFreePort(t)
 
 	// Register a localhost port — no reverse proxy
-	localPort, err := r.RegisterPort(port, "", "local-api", "http")
+	localPort, err := r.RegisterPort(port, "", "local-api", "http", "")
 	assert.NoError(t, err)
 
 	r.mu.RLock()
@@ -1452,7 +1453,7 @@ func TestProxyRegistry_UpdatePort_LocalhostToNonLocalhost_StartsReverseProxy(t *
 	assert.False(t, hasProxy, "no reverse proxy for localhost target")
 
 	// Update host to non-localhost — should start reverse proxy
-	err = r.UpdatePort(localPort, port, "192.168.1.100", "remote-api", "http")
+	err = r.UpdatePort(localPort, port, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	r.mu.RLock()
@@ -1468,7 +1469,7 @@ func TestProxyRegistry_UpdatePort_NonLocalhostToLocalhost_StopsReverseProxy(t *t
 	port := getFreePort(t)
 
 	// Register a non-localhost port — starts reverse proxy
-	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http")
+	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	r.mu.RLock()
@@ -1477,7 +1478,7 @@ func TestProxyRegistry_UpdatePort_NonLocalhostToLocalhost_StopsReverseProxy(t *t
 	assert.True(t, hasProxy, "reverse proxy should be started for non-localhost target")
 
 	// Update host to localhost — should stop reverse proxy
-	err = r.UpdatePort(localPort, port, "", "local-api", "http")
+	err = r.UpdatePort(localPort, port, "", "local-api", "http", "")
 	assert.NoError(t, err)
 
 	r.mu.RLock()
@@ -1493,11 +1494,11 @@ func TestProxyRegistry_UpdatePort_NonLocalhostToDifferentHost_RestartsReversePro
 	port := getFreePort(t)
 
 	// Register a non-localhost port — starts reverse proxy
-	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http")
+	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	// Update to different non-localhost host — should restart reverse proxy
-	err = r.UpdatePort(localPort, port, "10.0.0.1", "other-remote", "http")
+	err = r.UpdatePort(localPort, port, "10.0.0.1", "other-remote", "http", "")
 	assert.NoError(t, err)
 
 	r.mu.RLock()
@@ -1518,7 +1519,7 @@ func TestProxyRegistry_UpdatePort_SameHostNoChange_NoReverseProxyRestart(t *test
 	port := getFreePort(t)
 
 	// Register a non-localhost port — starts reverse proxy
-	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http")
+	localPort, err := r.RegisterPort(port, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	r.mu.RLock()
@@ -1526,7 +1527,7 @@ func TestProxyRegistry_UpdatePort_SameHostNoChange_NoReverseProxyRestart(t *test
 	r.mu.RUnlock()
 
 	// Update name only — should NOT restart reverse proxy
-	err = r.UpdatePort(localPort, port, "192.168.1.100", "remote-api-v2", "http")
+	err = r.UpdatePort(localPort, port, "192.168.1.100", "remote-api-v2", "http", "")
 	assert.NoError(t, err)
 
 	r.mu.RLock()
@@ -1542,12 +1543,12 @@ func TestProxyRegistry_ListPorts_ReflectsReverseProxyState(t *testing.T) {
 	defer r.Stop()
 
 	// Register localhost port — no reverse proxy in registry
-	localPort1, err := r.RegisterPort(3000, "", "local-app", "http")
+	localPort1, err := r.RegisterPort(3000, "", "local-app", "http", "")
 	assert.NoError(t, err)
 
 	// Register non-localhost port — reverse proxy started in registry
 	port2 := getFreePort(t)
-	localPort2, err := r.RegisterPort(port2, "192.168.1.100", "remote-api", "http")
+	localPort2, err := r.RegisterPort(port2, "192.168.1.100", "remote-api", "http", "")
 	assert.NoError(t, err)
 
 	// Verify reverse proxy presence via internal map
@@ -1558,4 +1559,187 @@ func TestProxyRegistry_ListPorts_ReflectsReverseProxyState(t *testing.T) {
 
 	assert.False(t, hasProxy1, "localhost port should not have reverse proxy")
 	assert.True(t, hasProxy2, "non-localhost port should have reverse proxy")
+}
+
+// --- Reverse (ssh -R) direction tests ---
+
+// findPort returns the registered entry for a server-side port, if any.
+func findPort(r *ProxyRegistry, localPort int) *model.ForwardedPort {
+	for _, p := range r.ListPorts() {
+		if p.LocalPort == localPort {
+			cp := p
+			return &cp
+		}
+	}
+	return nil
+}
+
+func TestProxyRegistry_RegisterReverse_AllocatesServerPort(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	port := getFreePort(t)
+	localPort, err := r.RegisterPort(port, "", "local service", "http", model.DirectionReverse)
+	assert.NoError(t, err)
+
+	p := findPort(r, localPort)
+	assert.NotNil(t, p)
+	assert.Equal(t, model.DirectionReverse, p.Direction)
+	assert.Equal(t, port, p.Port, "Port is the client-side port to expose")
+	assert.Equal(t, localPort, p.LocalPort, "LocalPort is the server-side bind port")
+	assert.False(t, p.Active, "reverse mapping starts inactive until the client binds it")
+	assert.True(t, p.Enabled)
+}
+
+func TestProxyRegistry_Reverse_NoReverseProxy(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	// A non-localhost target would trigger a reverse proxy for a forward
+	// mapping; a reverse mapping's target lives on the client so it must not.
+	port := getFreePort(t)
+	localPort, err := r.RegisterPort(port, "192.168.1.50", "remote", "http", model.DirectionReverse)
+	assert.NoError(t, err)
+	assert.False(t, r.HasReverseProxy(localPort), "reverse mapping must not start a reverse proxy")
+}
+
+func TestProxyRegistry_Reverse_CheckAllPortsSkipsDial(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	port := getFreePort(t)
+	localPort, err := r.RegisterPort(port, "", "local", "http", model.DirectionReverse)
+	assert.NoError(t, err)
+
+	r.SetReverseBound(localPort, true)
+	assert.True(t, findPort(r, localPort).Active)
+
+	// A health-check sweep must not clobber the SSH-driven Active flag: it has
+	// no way to probe a client-side target.
+	r.checkAllPorts()
+	assert.True(t, findPort(r, localPort).Active, "reverse Active must survive checkAllPorts")
+}
+
+func TestProxyRegistry_SetReverseBound(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	port := getFreePort(t)
+	localPort, err := r.RegisterPort(port, "", "local", "http", model.DirectionReverse)
+	assert.NoError(t, err)
+
+	r.SetReverseBound(localPort, true)
+	assert.True(t, findPort(r, localPort).Active)
+	r.SetReverseBound(localPort, false)
+	assert.False(t, findPort(r, localPort).Active)
+
+	// Unknown ports (e.g. a manual ssh -R the user never registered) are ignored.
+	r.SetReverseBound(65000, true)
+}
+
+func TestProxyRegistry_SetAllowedPorts_ReverseUsesLocalPort(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	clientPort := getFreePort(t)
+	localPort, err := r.RegisterPort(clientPort, "", "local", "http", model.DirectionReverse)
+	assert.NoError(t, err)
+
+	// The server exposes LocalPort, not Port. A range that covers LocalPort but
+	// not Port must keep the entry...
+	assert.NoError(t, r.UpdatePort(localPort, clientPort, "", "local", "http", model.DirectionReverse))
+	r.SetAllowedPorts(fmt.Sprintf("%d-%d", localPort, localPort))
+	assert.NotNil(t, findPort(r, localPort), "reverse entry must survive when its server port is allowed")
+
+	// ...and a range that excludes LocalPort must drop it, even though Port is
+	// outside it too — this is the case that regressed when the check used Port.
+	lo := localPort - 1
+	if lo < 1 {
+		lo = 1
+	}
+	r.SetAllowedPorts(fmt.Sprintf("%d-%d", lo, lo))
+	assert.Nil(t, findPort(r, localPort), "reverse entry must be dropped when its server port is disallowed")
+}
+
+func TestProxyRegistry_ReverseIdempotent(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	port := getFreePort(t)
+	first, err := r.RegisterPort(port, "", "local", "http", model.DirectionReverse)
+	assert.NoError(t, err)
+	second, err := r.RegisterPort(port, "", "local", "http", model.DirectionReverse)
+	assert.NoError(t, err)
+	assert.Equal(t, first, second, "same (direction, port, host) must be idempotent")
+
+	// A forward mapping with the same target is a distinct entry.
+	third, err := r.RegisterPort(port, "", "local", "http", model.DirectionForward)
+	assert.NoError(t, err)
+	assert.NotEqual(t, first, third, "forward and reverse are different mappings")
+}
+
+func TestProxyRegistry_UpdateReverse_KeepsServerPort(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	clientPort := getFreePort(t)
+	localPort, err := r.RegisterPort(clientPort, "", "local", "http", model.DirectionReverse)
+	assert.NoError(t, err)
+
+	// Changing the client-side target port must NOT move the server bind port.
+	newClientPort := getFreePort(t)
+	assert.NoError(t, r.UpdatePort(localPort, newClientPort, "", "renamed", "http", model.DirectionReverse))
+
+	p := findPort(r, localPort)
+	assert.NotNil(t, p, "server bind port must stay the same")
+	assert.Equal(t, newClientPort, p.Port)
+	assert.Equal(t, "renamed", p.Name)
+	assert.Equal(t, model.DirectionReverse, p.Direction)
+}
+
+func TestProxyRegistry_AllocateServerPort_SkipsReserved(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	reserved := getFreePort(t)
+	r.SetReservedPorts(reserved)
+	assert.True(t, r.IsPortReserved(reserved))
+
+	allocated := r.allocateServerPort(reserved)
+	assert.NotEqual(t, reserved, allocated, "must not hand out a reserved port")
+
+	// A port already bound by an unrelated process must be skipped too.
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	assert.NoError(t, err)
+	defer held.Close()
+	heldPort := held.Addr().(*net.TCPAddr).Port
+
+	allocated = r.allocateServerPort(heldPort)
+	assert.NotEqual(t, heldPort, allocated, "must not hand out an OS-bound port")
+}
+
+func TestProxyRegistry_ReversePersistenceRoundTrip(t *testing.T) {
+	testDB := setupTestDB(t)
+	cleanup := SetDBForTest(testDB, testDB)
+	defer cleanup()
+
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	port := getFreePort(t)
+	localPort, err := r.RegisterPort(port, "10.0.0.5", "local svc", "https", model.DirectionReverse)
+	assert.NoError(t, err)
+
+	// A fresh registry restores from the same DB.
+	r2 := NewProxyRegistry(0)
+	defer r2.Stop()
+
+	p := findPort(r2, localPort)
+	assert.NotNil(t, p, "reverse mapping must survive a registry restart")
+	assert.Equal(t, model.DirectionReverse, p.Direction)
+	assert.Equal(t, port, p.Port)
+	assert.Equal(t, "10.0.0.5", p.Host)
+	assert.Equal(t, "https", p.Protocol)
+	assert.False(t, p.Active, "restored reverse mapping waits for the client to reconnect")
+	assert.False(t, r2.HasReverseProxy(localPort), "restored reverse mapping must not start a reverse proxy")
 }

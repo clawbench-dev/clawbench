@@ -93,6 +93,8 @@ public class BackgroundService extends Service {
     private static final String KEY_SSH_PASSWORD = "ssh_password";
     private static final String KEY_FRP_REMOTE_URL = "frp_remote_url";
     private static final String KEY_FORWARDED_PORTS = "forwarded_ports";
+    /** Reverse (ssh -R) forwards, kept separately so the old key's format is untouched. */
+    private static final String KEY_REVERSE_FORWARDED_PORTS = "reverse_forwarded_ports";
     private static final String KEY_BATTERY_OPT_REQUESTED = "battery_opt_requested";
     private static final String KEY_LAST_SEEN_EVENT_ID = "last_seen_event_id";
     private static final String KEY_NATIVE_PUSH_ENABLED = "native_push_enabled";
@@ -139,19 +141,51 @@ public class BackgroundService extends Service {
     static class PortInfo {
         final int targetPort;
         final String host;
+        /** True for a reverse (ssh -R) mapping: the SERVER binds, we dial. */
+        final boolean reverse;
         PortInfo(int targetPort, String host) {
+            this(targetPort, host, false);
+        }
+        PortInfo(int targetPort, String host, boolean reverse) {
             this.targetPort = targetPort;
             this.host = host != null ? host : "";
+            this.reverse = reverse;
         }
         /** Returns true if this target is a non-localhost host.
          *  Non-localhost targets must route through the server-side reverse proxy
-         *  (which rewrites the Host header) rather than connecting directly. */
+         *  (which rewrites the Host header) rather than connecting directly.
+         *
+         *  Never true for reverse mappings: their target lives on THIS device, so
+         *  there is no server-side proxy involved — routing them through
+         *  127.0.0.1:{localPort} would dial the server's own listener. */
         boolean isNonLocalhost() {
+            if (reverse) return false;
             return !host.isEmpty() && !host.equals("localhost") && !host.equals("127.0.0.1") && !host.equals("::1");
+        }
+        boolean isReverse() {
+            return reverse;
         }
     }
 
+    /** Local (ssh -L) forwards: key = device-side listening port. */
     private final Map<Integer, PortInfo> forwardedPorts = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * Reverse (ssh -R) forwards: key = port bound on the SERVER, value.targetPort
+     * is the device-side port to relay to. Kept in a separate map because the key
+     * spaces mean different things — sharing one map would make
+     * testLocalPort(serverPort) probe a port nothing listens on locally.
+     */
+    private final Map<Integer, PortInfo> reversePorts = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Total managed mappings across both directions (drives the notification count). */
+    private int totalPortCount() {
+        return forwardedPorts.size() + reversePorts.size();
+    }
+
+    /** True when nothing is left to forward in either direction. */
+    private boolean hasNoPorts() {
+        return forwardedPorts.isEmpty() && reversePorts.isEmpty();
+    }
     private String serverHost;
     private int sshPort;
     private String password;
@@ -451,7 +485,7 @@ public class BackgroundService extends Service {
     public static void setTerminalSessionCount(int count) {
         terminalSessionCount = count;
         if (isRunning && instance != null) {
-            instance.updateNotification(instance.forwardedPorts.size(), null);
+            instance.updateNotification(instance.totalPortCount(), null);
         }
     }
 
@@ -666,10 +700,12 @@ public class BackgroundService extends Service {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .remove(KEY_FORWARDED_PORTS)
+                .remove(KEY_REVERSE_FORWARDED_PORTS)
                 .apply();
         BackgroundService svc = instance;
         if (svc != null) {
             svc.forwardedPorts.clear();
+            svc.reversePorts.clear();
             AppLog.i(TAG, "SSH: forgot all forwarded ports (memory + prefs)");
         } else {
             AppLog.i(TAG, "SSH: cleared forwarded ports from prefs (service not running)");
@@ -749,7 +785,7 @@ public class BackgroundService extends Service {
                     // Resume SSH: reconnect if suspended and ports need forwarding.
                     // Guard check runs inside networkExecutor to avoid reading
                     // sshScreenSuspended from the main thread (review C1).
-                    if (!forwardedPorts.isEmpty() && !intentionalDisconnect) {
+                    if (!hasNoPorts() && !intentionalDisconnect) {
                         AppLog.i(TAG, "SSH: screen on, scheduling SSH resume (ports=" + forwardedPorts.keySet() + ")");
                         networkExecutor.execute(() -> {
                             if (sshScreenSuspended && !intentionalDisconnect) {
@@ -775,7 +811,7 @@ public class BackgroundService extends Service {
                     // Suspend SSH: disconnect tunnel to save battery.
                     // Guard check and disconnect run on networkExecutor for thread safety.
                     // Don't suspend if user intentionally disconnected (review I3).
-                    if (!forwardedPorts.isEmpty() && !intentionalDisconnect) {
+                    if (!hasNoPorts() && !intentionalDisconnect) {
                         AppLog.i(TAG, "SSH: screen off, scheduling SSH suspend (ports=" + forwardedPorts.keySet() + ")");
                         networkExecutor.execute(() -> {
                             if (sshSession != null && sshSession.isConnected() && !intentionalDisconnect) {
@@ -803,6 +839,7 @@ public class BackgroundService extends Service {
 
         // Restore previously saved ports (from before Service was killed)
         restoreForwardedPorts();
+        restoreReversePorts();
 
         // Initialize the desktop floating status window controller (opt-in feature).
         // Created here so it lives exactly as long as this Service instance.
@@ -851,6 +888,20 @@ public class BackgroundService extends Service {
                 if (port > 0) {
                     networkExecutor.execute(() -> removePortForward(port));
                 }
+            } else if ("ADD_REVERSE_PORT".equals(action)) {
+                int serverPort = intent.getIntExtra("serverPort", 0);
+                int targetPort = intent.getIntExtra("targetPort", 0);
+                String host = intent.getStringExtra("host");
+                if (host == null) host = "";
+                if (serverPort > 0) {
+                    String finalHost = host;
+                    networkExecutor.execute(() -> addReversePortForward(serverPort, targetPort, finalHost));
+                }
+            } else if ("REMOVE_REVERSE_PORT".equals(action)) {
+                int serverPort = intent.getIntExtra("serverPort", 0);
+                if (serverPort > 0) {
+                    networkExecutor.execute(() -> removeReversePortForward(serverPort));
+                }
             } else if ("DISCONNECT".equals(action)) {
                 networkExecutor.execute(this::disconnect);
             } else if ("RESTORE_PORTS".equals(action)) {
@@ -883,8 +934,8 @@ public class BackgroundService extends Service {
             // START_STICKY restart: Android killed the service and recreated it with null intent.
             // onCreate() already restored port numbers into forwardedPorts via restoreForwardedPorts(),
             // but the SSH session was lost. Re-establish the tunnel now.
-            if (!forwardedPorts.isEmpty()) {
-                AppLog.i(TAG, "SSH: service restarted by START_STICKY, restoring " + forwardedPorts.size() + " port forwards");
+            if (!hasNoPorts()) {
+                AppLog.i(TAG, "SSH: service restarted by START_STICKY, restoring " + totalPortCount() + " port forwards");
                 networkExecutor.execute(this::restoreAndReconnect);
             }
             // Also restore native WS if it was active before the service was killed.
@@ -907,9 +958,10 @@ public class BackgroundService extends Service {
         // the port into forwardedPorts and set up the SSH tunnel. Stopping now would
         // cause onDestroy → networkExecutor.shutdownNow() → InterruptedIOException.
         // addPortForward itself will call stopSelf() if it fails with no ports left.
-        boolean hasAddPort = intent != null && "ADD_PORT".equals(intent.getAction());
+        boolean hasAddPort = intent != null
+                && ("ADD_PORT".equals(intent.getAction()) || "ADD_REVERSE_PORT".equals(intent.getAction()));
         boolean hasStartWs = intent != null && "START_NATIVE_WS".equals(intent.getAction());
-        if (!hasAddPort && !hasStartWs && forwardedPorts.isEmpty() && !nativeWsNeeded) {
+        if (!hasAddPort && !hasStartWs && hasNoPorts() && !nativeWsNeeded) {
             AppLog.i(TAG, "SSH: no ports to forward and native WS not needed, stopping service");
             stopSelf();
         }
@@ -953,10 +1005,11 @@ public class BackgroundService extends Service {
 
         // If there are no forwarded ports, clean up SharedPreferences
         // so the service won't be unnecessarily restored on next cold start.
-        if (forwardedPorts.isEmpty()) {
+        if (hasNoPorts()) {
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                     .edit()
                     .remove(KEY_FORWARDED_PORTS)
+                    .remove(KEY_REVERSE_FORWARDED_PORTS)
                     .apply();
             AppLog.i(TAG, "SSH: cleaned up empty forwarded_ports from SharedPreferences");
         }
@@ -1032,6 +1085,62 @@ public class BackgroundService extends Service {
     }
 
     /**
+     * Save the reverse (ssh -R) forwards. Format: "serverPort:targetPort:host"
+     * (host omitted when empty). A separate key so existing installs' forward
+     * list is read unchanged.
+     */
+    private void saveReversePorts() {
+        Set<String> portStrings = new HashSet<>();
+        for (Map.Entry<Integer, PortInfo> entry : reversePorts.entrySet()) {
+            int serverPort = entry.getKey();
+            PortInfo info = entry.getValue();
+            if (info.host.isEmpty()) {
+                portStrings.add(serverPort + ":" + info.targetPort);
+            } else {
+                portStrings.add(serverPort + ":" + info.targetPort + ":" + info.host);
+            }
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putStringSet(KEY_REVERSE_FORWARDED_PORTS, portStrings)
+                .apply();
+    }
+
+    /**
+     * Restore reverse forwards from SharedPreferences (without connecting).
+     * Absent on installs that predate reverse forwarding — that is not an error.
+     */
+    private void restoreReversePorts() {
+        Set<String> portStrings = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getStringSet(KEY_REVERSE_FORWARDED_PORTS, null);
+        if (portStrings == null || portStrings.isEmpty()) {
+            return;
+        }
+        for (String ps : portStrings) {
+            try {
+                String[] parts = ps.split(":", 3);
+                int serverPort = Integer.parseInt(parts[0]);
+                int targetPort;
+                String host;
+                if (parts.length >= 3) {
+                    targetPort = Integer.parseInt(parts[1]);
+                    host = parts[2];
+                } else if (parts.length == 2) {
+                    targetPort = Integer.parseInt(parts[1]);
+                    host = "";
+                } else {
+                    targetPort = serverPort;
+                    host = "";
+                }
+                reversePorts.put(serverPort, new PortInfo(targetPort, host, true));
+            } catch (NumberFormatException e) {
+                AppLog.w(TAG, "SSH: failed to parse saved reverse port entry: " + ps + ", skipping");
+            }
+        }
+        AppLog.i(TAG, "SSH: restored " + reversePorts.size() + " reverse ports from prefs");
+    }
+
+    /**
      * Restore forwarded ports from SharedPreferences (without actually connecting).
      * The actual SSH connection and port forward setup happens when restoreAndReconnect() is called.
      *
@@ -1087,7 +1196,10 @@ public class BackgroundService extends Service {
         if (forwardedPorts.isEmpty()) {
             restoreForwardedPorts();
         }
-        if (!forwardedPorts.isEmpty()) {
+        if (reversePorts.isEmpty()) {
+            restoreReversePorts();
+        }
+        if (!forwardedPorts.isEmpty() || !reversePorts.isEmpty()) {
             if (!screenOn) {
                 // Screen is off — don't reconnect SSH, defer until screen on
                 AppLog.i(TAG, "SSH: screen is off, deferring reconnect until screen on");
@@ -1136,7 +1248,7 @@ public class BackgroundService extends Service {
 
                 // Check if session is dead
                 if (sshSession == null || !sshSession.isConnected()) {
-                    if (forwardedPorts.isEmpty()) {
+                    if (hasNoPorts()) {
                         // No ports to maintain — don't bother reconnecting
                         AppLog.d(TAG, "SSH: session disconnected but no ports to forward, skipping reconnect");
                         continue;
@@ -1370,7 +1482,35 @@ public class BackgroundService extends Service {
         }
         AppLog.i(TAG, "SSH: re-established " + reEstablished + "/" + forwardedPorts.size() + " port forwards");
 
-        updateNotification(forwardedPorts.size(), null);
+        // Re-establish reverse (ssh -R) forwards. The server released its side of
+        // every one when the previous connection dropped, so each must be
+        // re-requested — skipping this would leave the server-side ports unbound
+        // while the UI still showed the mappings as configured.
+        int reverseReEstablished = 0;
+        for (Map.Entry<Integer, PortInfo> entry : reversePorts.entrySet()) {
+            int serverPort = entry.getKey();
+            PortInfo info = entry.getValue();
+            String targetHost = info.host.isEmpty() ? "127.0.0.1" : info.host;
+            try {
+                sshSession.setPortForwardingR("127.0.0.1", serverPort, targetHost, info.targetPort);
+                reverseReEstablished++;
+                AppLog.i(TAG, "SSH: re-established reverse forward " + serverPort + " -> " + targetHost + ":" + info.targetPort);
+            } catch (com.jcraft.jsch.JSchException e) {
+                if (e.getMessage() != null && e.getMessage().contains("already registered")) {
+                    AppLog.d(TAG, "SSH: reverse forward " + serverPort + " already registered, skipping");
+                    reverseReEstablished++;
+                } else {
+                    AppLog.e(TAG, "SSH: failed to re-establish reverse forward " + serverPort, e);
+                }
+            } catch (Exception e) {
+                AppLog.e(TAG, "SSH: failed to re-establish reverse forward " + serverPort, e);
+            }
+        }
+        if (!reversePorts.isEmpty()) {
+            AppLog.i(TAG, "SSH: re-established " + reverseReEstablished + "/" + reversePorts.size() + " reverse forwards");
+        }
+
+        updateNotification(forwardedPorts.size() + reversePorts.size(), null);
 
         // Start connection monitor to detect future disconnects
         startConnectionMonitor();
@@ -1508,7 +1648,7 @@ public class BackgroundService extends Service {
 
         // If addPortForward failed and no ports remain, stop the service.
         // (This replaces the eager stopSelf in onCreate which caused race conditions.)
-        if (!success && forwardedPorts.isEmpty() && !nativeWsNeeded) {
+        if (!success && hasNoPorts() && !nativeWsNeeded) {
             AppLog.i(TAG, "SSH: no ports remaining after failed addPortForward, stopping service");
             stopSelf();
         }
@@ -1621,11 +1761,120 @@ public class BackgroundService extends Service {
 
         forwardedPorts.remove(port);
         saveForwardedPorts();
-        updateNotification(forwardedPorts.size(), null);
+        updateNotification(forwardedPorts.size() + reversePorts.size(), null);
 
         // If no more forwarded ports and native WS is not needed, stop the service
-        if (forwardedPorts.isEmpty() && !nativeWsNeeded) {
+        if (forwardedPorts.isEmpty() && reversePorts.isEmpty() && !nativeWsNeeded) {
             AppLog.i(TAG, "SSH: no ports remaining after removePortForward, stopping service");
+            stopSelf();
+        }
+    }
+
+    /**
+     * Add a reverse port forward through the SSH tunnel (ssh -R).
+     * Creates: 127.0.0.1:{serverPort} on the SERVER → {host}:{targetPort} on this device.
+     *
+     * The server port must be explicit: JSch's setPortForwardingR(int, String, int)
+     * returns void, so requesting port 0 would leave us unable to learn which port
+     * the server actually bound. The backend allocates a concrete port instead.
+     *
+     * There is no local listener to probe, so success is simply "no exception".
+     * MUST be called from a background thread (network I/O).
+     */
+    private synchronized void addReversePortForward(int serverPort, int targetPort, String host) {
+        if (isShuttingDown) {
+            AppLog.w(TAG, "SSH: addReversePortForward skipped, service shutting down");
+            return;
+        }
+        if (serverPort <= 0 || serverPort > 65535 || targetPort <= 0 || targetPort > 65535) {
+            AppLog.w(TAG, "SSH: addReversePortForward invalid ports: server=" + serverPort + ", target=" + targetPort);
+            notifyPortForwardResult(serverPort, false);
+            return;
+        }
+
+        String targetHost = (host == null || host.isEmpty()) ? "127.0.0.1" : host;
+        AppLog.i(TAG, "SSH: addReversePortForward ENTER: serverPort=" + serverPort
+                + ", targetPort=" + targetPort + ", targetHost=" + targetHost
+                + ", sessionAlive=" + (sshSession != null && sshSession.isConnected()));
+
+        reversePorts.put(serverPort, new PortInfo(targetPort, host, true));
+        saveReversePorts();
+
+        try {
+            ensureConnection();
+        } catch (Exception e) {
+            lastError = e.getMessage();
+            AppLog.e(TAG, "SSH: addReversePortForward ensureConnection failed", e);
+            reversePorts.remove(serverPort);
+            saveReversePorts();
+            notifyPortForwardResult(serverPort, false);
+            return;
+        }
+
+        if (sshSession == null || !sshSession.isConnected()) {
+            AppLog.e(TAG, "SSH: addReversePortForward no live session for serverPort=" + serverPort);
+            reversePorts.remove(serverPort);
+            saveReversePorts();
+            notifyPortForwardResult(serverPort, false);
+            return;
+        }
+
+        try {
+            sshSession.setPortForwardingR("127.0.0.1", serverPort, targetHost, targetPort);
+            AppLog.i(TAG, "SSH: reverse forward added " + serverPort + " -> " + targetHost + ":" + targetPort);
+            notifyPortForwardResult(serverPort, true);
+        } catch (com.jcraft.jsch.JSchException e) {
+            if (e.getMessage() != null && e.getMessage().contains("already registered")) {
+                // ensureConnection's replay already set this one up.
+                AppLog.d(TAG, "SSH: reverse forward " + serverPort + " already registered");
+                notifyPortForwardResult(serverPort, true);
+            } else {
+                lastError = e.getMessage();
+                AppLog.e(TAG, "SSH: failed to add reverse forward " + serverPort, e);
+                reversePorts.remove(serverPort);
+                saveReversePorts();
+                notifyPortForwardResult(serverPort, false);
+            }
+        } catch (Exception e) {
+            lastError = e.getMessage();
+            AppLog.e(TAG, "SSH: failed to add reverse forward " + serverPort, e);
+            reversePorts.remove(serverPort);
+            saveReversePorts();
+            notifyPortForwardResult(serverPort, false);
+        }
+
+        updateNotification(forwardedPorts.size() + reversePorts.size(), null);
+    }
+
+    /**
+     * Remove a reverse port forward. `serverPort` is the port bound on the server.
+     */
+    synchronized void removeReversePortForward(int serverPort) {
+        if (!reversePorts.containsKey(serverPort)) {
+            return;
+        }
+
+        AppLog.i(TAG, "SSH: removeReversePortForward ENTER: serverPort=" + serverPort
+                + ", sessionAlive=" + (sshSession != null && sshSession.isConnected()));
+
+        try {
+            if (sshSession != null && sshSession.isConnected()) {
+                sshSession.delPortForwardingR(serverPort);
+                AppLog.i(TAG, "SSH: reverse forward removed: " + serverPort);
+            } else {
+                AppLog.i(TAG, "SSH: removeReversePortForward skipping delPortForwardingR (session "
+                        + (sshSession == null ? "null" : "disconnected") + ") for port " + serverPort);
+            }
+        } catch (Exception e) {
+            AppLog.e(TAG, "SSH: failed to remove reverse forward for " + serverPort, e);
+        }
+
+        reversePorts.remove(serverPort);
+        saveReversePorts();
+        updateNotification(forwardedPorts.size() + reversePorts.size(), null);
+
+        if (forwardedPorts.isEmpty() && reversePorts.isEmpty() && !nativeWsNeeded) {
+            AppLog.i(TAG, "SSH: no ports remaining after removeReversePortForward, stopping service");
             stopSelf();
         }
     }
@@ -1768,8 +2017,14 @@ public class BackgroundService extends Service {
                         sshSession.delPortForwardingL(port);
                     } catch (Exception ignored) {}
                 }
+                for (int serverPort : new HashSet<>(reversePorts.keySet())) {
+                    try {
+                        sshSession.delPortForwardingR(serverPort);
+                    } catch (Exception ignored) {}
+                }
                 sshSession.disconnect();
-                AppLog.i(TAG, "SSH: disconnected (had " + forwardedPorts.size() + " port forwards: " + forwardedPorts.keySet() + ")");
+                AppLog.i(TAG, "SSH: disconnected (had " + forwardedPorts.size() + " port forwards: " + forwardedPorts.keySet()
+                        + ", " + reversePorts.size() + " reverse: " + reversePorts.keySet() + ")");
             } catch (Exception e) {
                 AppLog.e(TAG, "SSH: error during disconnect", e);
             }
@@ -1868,7 +2123,8 @@ public class BackgroundService extends Service {
     private Notification buildCurrentNotification() {
         int activePortCount = 0;
         if (sshSession != null && sshSession.isConnected()) {
-            activePortCount = forwardedPorts.size();
+            // Both directions are live mappings once the session is up.
+            activePortCount = totalPortCount();
         }
         // If SSH is down but native WS is active, show that instead of zombie port count
         if (activePortCount == 0 && (nativeWsNeeded || nativeWsActive)) {
@@ -1881,7 +2137,7 @@ public class BackgroundService extends Service {
         // reconnect wording is the accurate description of this state, and it is
         // the same string the monitor uses when a session drops with ports
         // pending. ensureConnection()/the monitor will flip it to the real count.
-        if (activePortCount == 0 && !forwardedPorts.isEmpty()) {
+        if (activePortCount == 0 && !hasNoPorts()) {
             return buildNotification(0, getString(R.string.ssh_notification_reconnecting));
         }
         return buildNotification(activePortCount, null);
@@ -1897,11 +2153,13 @@ public class BackgroundService extends Service {
      * a reason to run, and ports may be re-established on next reconnect.
      */
     private void cleanupStalePorts() {
-        if (forwardedPorts.isEmpty()) return;
-        int stale = forwardedPorts.size();
+        if (hasNoPorts()) return;
+        int stale = totalPortCount();
         AppLog.i(TAG, "SSH: cleaning up " + stale + " stale port entries (SSH disconnected, no reconnect possible)");
         forwardedPorts.clear();
+        reversePorts.clear();
         saveForwardedPorts();
+        saveReversePorts();
         updateNotification(0, nativeWsNeeded || nativeWsActive ? getString(R.string.notif_listening) : null);
     }
 
@@ -2172,6 +2430,42 @@ public class BackgroundService extends Service {
     }
 
     /**
+     * Add a reverse (ssh -R) forward via the service: publish this device's
+     * targetPort on the SERVER's loopback serverPort.
+     */
+    public static void addReverseForwardedPort(Context context, int serverPort, int targetPort, String host) {
+        Intent intent = new Intent(context, BackgroundService.class);
+        intent.setAction("ADD_REVERSE_PORT");
+        intent.putExtra("serverPort", serverPort);
+        intent.putExtra("targetPort", targetPort);
+        intent.putExtra("host", host != null ? host : "");
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (Exception e) {
+            AppLog.e(TAG, "SSH: failed to start BackgroundService for ADD_REVERSE_PORT: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Remove a reverse (ssh -R) forward via the service.
+     */
+    public static void removeReverseForwardedPort(Context context, int serverPort) {
+        Intent intent = new Intent(context, BackgroundService.class);
+        intent.setAction("REMOVE_REVERSE_PORT");
+        intent.putExtra("serverPort", serverPort);
+        context.startService(intent);
+    }
+
+    /** Snapshot of the currently managed reverse (ssh -R) forwards (serverPort → PortInfo). */
+    public Map<Integer, PortInfo> getReversePortsSnapshot() {
+        return new java.util.HashMap<>(reversePorts);
+    }
+
+    /**
      * Snapshot of the currently managed forwarded ports (localPort → PortInfo).
      * Returns a copy so callers (e.g. the WebView bridge's getForwardedPorts)
      * can inspect the real set that drives the notification count without
@@ -2436,7 +2730,7 @@ public class BackgroundService extends Service {
      * Stop the service if it has no active work (no SSH ports, no native WS needed).
      */
     private void maybeStopIdleService() {
-        if (forwardedPorts.isEmpty() && !nativeWsNeeded) {
+        if (hasNoPorts() && !nativeWsNeeded) {
             AppLog.i(TAG, "Service idle (no SSH ports, no native WS), stopping");
             stopSelf();
         }

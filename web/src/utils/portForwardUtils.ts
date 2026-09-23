@@ -3,14 +3,24 @@
  * Extracted from usePortForward for testability.
  */
 
+/** Port forwarding direction. `forward` = ssh -L (server → local), `reverse` = ssh -R (local → server). */
+export type PortDirection = 'forward' | 'reverse'
+
 export interface ForwardedPort {
   port: number
   localPort: number
   host: string
   name: string
   protocol: string
+  /** Omitted by older backends; treat as 'forward'. */
+  direction?: PortDirection
   active: boolean
   enabled: boolean
+}
+
+/** True when the port is an ssh -R mapping (local service exposed to the server). */
+export function isReversePort(p: ForwardedPort): boolean {
+  return p.direction === 'reverse'
 }
 
 /**
@@ -53,6 +63,22 @@ export function buildPortUrl(localPort: number, protocol?: string, path?: string
     return `${scheme}://localhost${path || '/'}`
   }
   return `${scheme}://localhost:${localPort}${path || '/'}`
+}
+
+/**
+ * Build the server-side address of a reverse mapping, for the user to reach from
+ * a shell on the server host (e.g. `curl http://127.0.0.1:9000`).
+ *
+ * Always 127.0.0.1: reverse mappings bind the server's loopback only, so the
+ * address is only meaningful on the server itself. Omits the port when it is the
+ * default for the protocol.
+ */
+export function buildServerAddress(serverPort: number, protocol?: string): string {
+  const scheme = protocol === 'https' ? 'https' : 'http'
+  if ((scheme === 'http' && serverPort === 80) || (scheme === 'https' && serverPort === 443)) {
+    return `${scheme}://127.0.0.1`
+  }
+  return `${scheme}://127.0.0.1:${serverPort}`
 }
 
 /** Result of sshInstallHint: how to obtain a local `ssh` client per OS. */

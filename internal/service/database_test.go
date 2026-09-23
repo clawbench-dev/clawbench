@@ -1747,6 +1747,77 @@ func TestSchema_ForwardedPortsColumns(t *testing.T) {
 	assert.Contains(t, columns, "host", "forwarded_ports should have host column")
 	assert.Contains(t, columns, "name", "forwarded_ports should have name column")
 	assert.Contains(t, columns, "protocol", "forwarded_ports should have protocol column")
+	assert.Contains(t, columns, "direction", "forwarded_ports should have direction column")
+}
+
+// TestSchema_ForwardedPortsMigration_DirectionColumn drives the real migration
+// against an old table that predates the direction column: the column must be
+// added, existing rows must be classified as "forward", and no row may be lost.
+func TestSchema_ForwardedPortsMigration_DirectionColumn(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() {
+		model.BinDir = origBinDir
+		model.DataDir = origDataDir
+		db = origDB
+		dbRead = origDBRead
+	}()
+
+	// Step 1: Build a database whose forwarded_ports has every column EXCEPT
+	// direction, and insert two rows.
+	dbDir := filepath.Join(tmpDir, ".clawbench")
+	assert.NoError(t, os.MkdirAll(dbDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(dbDir, "ClawBench.db"))
+	assert.NoError(t, err)
+	oldDB.SetMaxOpenConns(1)
+	oldDB.Exec("PRAGMA journal_mode=WAL")
+	oldDB.Exec("PRAGMA busy_timeout=5000")
+	_, err = oldDB.Exec(`
+		CREATE TABLE IF NOT EXISTS forwarded_ports (
+			local_port INTEGER PRIMARY KEY,
+			port INTEGER NOT NULL,
+			host TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL DEFAULT '',
+			protocol TEXT NOT NULL DEFAULT 'http',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	assert.NoError(t, err)
+	_, err = oldDB.Exec("INSERT INTO forwarded_ports (local_port, port, host, name, protocol, enabled) VALUES (5173, 5173, '', 'vite', 'http', 1)")
+	assert.NoError(t, err)
+	_, err = oldDB.Exec("INSERT INTO forwarded_ports (local_port, port, host, name, protocol, enabled) VALUES (8081, 8080, '192.168.1.100', 'remote', 'http', 0)")
+	assert.NoError(t, err)
+	assert.NoError(t, oldDB.Close())
+
+	// Step 2: Real migration.
+	assert.NoError(t, InitDB())
+	defer CloseDB()
+
+	// Step 3: Column added.
+	columns := getTableColumns(t, UnsafeDBForTest(), "forwarded_ports")
+	assert.Contains(t, columns, "direction", "direction column should exist after migration")
+
+	// Step 4: Existing rows preserved and defaulted to forward.
+	rows, err := db.Query("SELECT local_port, direction, enabled FROM forwarded_ports ORDER BY local_port")
+	assert.NoError(t, err)
+	defer rows.Close()
+
+	var count int
+	for rows.Next() {
+		var localPort, enabled int
+		var direction string
+		assert.NoError(t, rows.Scan(&localPort, &direction, &enabled))
+		assert.Equal(t, "forward", direction, "pre-existing rows must default to forward")
+		count++
+	}
+	assert.NoError(t, rows.Err())
+	assert.Equal(t, 2, count, "should have 2 rows after migration")
 }
 
 func TestSchema_ForwardedPortsMigration_HostColumn(t *testing.T) {
