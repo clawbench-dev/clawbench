@@ -178,4 +178,36 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('<UploadProgressBar')
     expect(source).toContain('@cancel="cancelDirUpload"')
   })
+
+  it('opens the shell current directory in the file manager from both toolbars', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // PC tab bar AND the mobile virtual-key toolbar each get the button, so the
+    // action is reachable on every form factor.
+    const pcButton = source.indexOf('class="terminal-tab-add"\n        @click="openCurrentDirInFileManager"')
+    const mobileButton = source.indexOf('btn-func" @click="openCurrentDirInFileManager"')
+    expect(pcButton).toBeGreaterThan(-1)
+    expect(mobileButton).toBeGreaterThan(-1)
+
+    // Reuses the shared directory-jump event rather than inventing a new emit,
+    // and tags the source so Back returns to the terminal.
+    expect(source).toContain("window.dispatchEvent(new CustomEvent('open-directory-from-context'")
+    expect(source).toContain("source: 'terminal'")
+    expect(source).toContain('FolderOpen as FolderOpenIcon')
+  })
+
+  it('hides the open-directory buttons when the server cannot resolve a live cwd', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // Strict `=== true` (not a truthy check): the ref starts as null while the
+    // status request is in flight, and a truthy gate would flash the button on
+    // macOS before it disappears.
+    const gates = source.match(/v-if="cwdProbeSupported === true"/g) ?? []
+    expect(gates).toHaveLength(2)
+
+    // Guard against an empty cwd (tab not connected yet): dispatching '' would
+    // navigate the file manager to the project root by accident.
+    expect(source).toContain("if (!dir) {")
+    expect(source).toContain("t('terminal.cwdUnavailable')")
+  })
 })

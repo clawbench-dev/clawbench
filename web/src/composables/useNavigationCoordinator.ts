@@ -141,6 +141,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     if (surface === 'history') return t('git.history.projectHistory')
     if (surface === 'browse') return t('file.nav.back')
     if (surface === 'forge') return t('file.nav.backToForge')
+    if (surface === 'terminal') return t('file.nav.backToTerminal')
     return t('common.back')
   }
 
@@ -216,9 +217,9 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
       label,
       ...target,
     }
-    // Callers only start jumps from chat/task/history surfaces; a jump from
-    // the file view is a file-stack push (see handleOpenFileOverlay), so there
-    // is deliberately no 'file' branch here.
+    // Callers start jumps from chat/task/history/forge/terminal surfaces; a
+    // jump from the file view is a file-stack push (see handleOpenFileOverlay),
+    // so there is deliberately no 'file' branch here.
     if (navigation.start(origin)) return
     if (!isSameVisit(navigation.origin.value, origin)) {
       directoryReturn.clear()
@@ -476,7 +477,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         scrollTop: location?.scrollTop ?? getFileScroll(file.path) ?? 0,
         scrollEntry: location?.scrollEntry ?? getFileScrollEntry(file.path),
       }, store.state.currentDir)
-    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge') {
+    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge' || surface === 'terminal') {
       const normSurface: NavigationSurface = surface === 'tasks' ? 'task' : (surface as NavigationSurface)
       beginExternalJump(normSurface, surfaceLabel(normSurface), normSurface === 'chat' ? { tab: 'chat' } : {})
     }

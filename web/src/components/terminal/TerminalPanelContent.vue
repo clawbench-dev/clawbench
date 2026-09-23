@@ -50,6 +50,14 @@
       </button>
       <template v-if="isPC">
       <button
+        v-if="cwdProbeSupported === true"
+        class="terminal-tab-add"
+        @click="openCurrentDirInFileManager"
+        :title="t('terminal.openCurrentDir')"
+      >
+        <FolderOpenIcon :size="14" />
+      </button>
+      <button
         class="terminal-tab-add"
         @click="openThemeMenu"
         :title="t('terminal.theme')"
@@ -167,6 +175,9 @@
             </button>
             <button ref="cmdBtnRef" class="toolbar-btn btn-action btn-func" @click="openCommands" :title="t('terminal.quickCommands')">
               <ZapIcon :size="14" />
+            </button>
+            <button v-if="cwdProbeSupported === true" class="toolbar-btn btn-action btn-func" @click="openCurrentDirInFileManager" :title="t('terminal.openCurrentDir')">
+              <FolderOpenIcon :size="14" />
             </button>
             <button class="toolbar-btn btn-action btn-func" @click="openThemeMenu" :title="t('terminal.theme')">
               <PaletteIcon :size="14" />
@@ -337,7 +348,7 @@ import {
   lightTheme,
 } from '@/utils/terminalThemes'
 
-import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon, CircleHelp as CircleHelpIcon, Settings as SettingsIcon, Sun, Moon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon, CircleHelp as CircleHelpIcon, Settings as SettingsIcon, Sun, Moon, FolderOpen as FolderOpenIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -792,6 +803,34 @@ const terminalDropHandlers = computed(() => {
     drop: terminalFileDrop.onDrop,
   }
 })
+
+/**
+ * Open the shell's current directory in the file manager.
+ *
+ * The mirror of the file manager's "open terminal here": that one emits
+ * `openTerminal` upward to App, this one dispatches the same
+ * `open-directory-from-context` event every other "reveal a directory" caller
+ * uses, so the jump records `terminal` as its return origin and Back comes back
+ * here. Going through the event (rather than a new emit) keeps this component
+ * from needing to know how App wires navigation.
+ *
+ * `source: 'terminal'` is what makes the return label read "Back to Terminal"
+ * instead of falling through to the generic "Back".
+ */
+function openCurrentDirInFileManager() {
+  // The button only renders when the server can resolve a live cwd, so `cwd` is
+  // normally present. It can still be empty for a tab whose session has not
+  // connected yet — there is nothing sensible to open, and dispatching '' would
+  // load the project root by accident.
+  const dir = activeTab.value?.cwd
+  if (!dir) {
+    toast.show(t('terminal.cwdUnavailable'), { icon: '⚠️', type: 'info', duration: 2000 })
+    return
+  }
+  window.dispatchEvent(new CustomEvent('open-directory-from-context', {
+    detail: { path: dir, source: 'terminal' },
+  }))
+}
 
 // React to mono font changes from the Settings panel: when the chosen font is
 // a self-hosted bundled webfont, wait for it to finish loading BEFORE setting
