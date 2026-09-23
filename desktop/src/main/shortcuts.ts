@@ -16,6 +16,13 @@
 export interface KeyInput {
   type: string
   key: string
+  /**
+   * Physical key code (e.g. 'Equal', 'Numpad0'). Required for the zoom chords:
+   * the numpad keys do not carry their own `key` — Numpad0 reports `Insert`,
+   * and NumpadAdd reports `+` on some layouts but not others — so matching on
+   * `key` alone would either miss the numpad or hit the wrong key entirely.
+   */
+  code?: string
   control: boolean
   shift: boolean
   alt: boolean
@@ -27,6 +34,11 @@ export interface ShortcutHandlers {
   onHardReload: () => void
   /** Show or hide DevTools. */
   onToggleDevTools: () => void
+  /**
+   * Change the page zoom. The shell applies it via `webContents.setZoomFactor`
+   * (see `zoom.ts`); this module only decides whether a chord claims the key.
+   */
+  onZoom: (action: 'in' | 'out' | 'reset') => void
 }
 
 /**
@@ -68,6 +80,36 @@ export function handleShortcut(
   if (devToolsChord) {
     handlers.onToggleDevTools()
     return true
+  }
+
+  // ── Page zoom ──
+  // Chromium's own Ctrl+=/Ctrl+-/Ctrl+0 accelerators are gone (the app has no
+  // menu bar), so the shell reproduces them here.
+  //
+  // Matched on `code`, not `key`: the numpad has no distinct `key` of its own
+  // (Numpad0 reports 'Insert'), so a `key`-based table would silently miss it.
+  //
+  // `alt` is required to be absent because AltGr is delivered as
+  // Ctrl+Alt on Windows — without this guard, typing AltGr+0 (a brace on many
+  // European layouts) would reset the zoom instead of inserting a character.
+  if (mod && !input.alt) {
+    const code = input.code
+    if (code === 'Equal' || code === 'NumpadAdd') {
+      handlers.onZoom('in')
+      return true
+    }
+    // Shift is deliberately NOT allowed here: Ctrl+Shift+Minus is Ctrl+_
+    // (0x1f), which readline binds to undo, so claiming it would break the
+    // terminal. This also matches browser behaviour — only unshifted Ctrl+-
+    // zooms out.
+    if (!input.shift && (code === 'Minus' || code === 'NumpadSubtract')) {
+      handlers.onZoom('out')
+      return true
+    }
+    if (!input.shift && (code === 'Digit0' || code === 'Numpad0')) {
+      handlers.onZoom('reset')
+      return true
+    }
   }
 
   return false
