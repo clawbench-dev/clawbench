@@ -172,6 +172,16 @@ env:
 
 `clawbench-android.apk` 的**构建产物名不可改**——Gradle 的 `outputFileName` 与 `go:embed` 路径（`assets/clawbench-android.apk`）都固定在无版本名上。因此发布时是**复制一份带版本副本**（`clawbench-android-${RELEASE_TAG}.apk`）上传，而非重命名构建产物；`/api/apk` 依旧读无版本名。
 
+### 桌面端载荷包（增量升级）
+
+桌面端全量包约 150MB，其中 Electron 运行时占 ~98%，**应用自身只有 `resources/` 目录（~3.8MB）**。因此除全量包外，每个平台还发布一个**载荷包** `<base>-payload-<tag>.zip`（如 `clawbench-desktop-linux-x64-payload-v0.99.1.zip`），客户端把它安装到从当前运行版本克隆出的目录上，从而复用运行时。
+
+- **载荷边界 = 整个 `resources/` 目录**。`resources/` 之外的一切都是 Electron 运行时（二进制、`resources.pak`、`icudtl.dat`、`locales/`、各 `.so`/`.dll`），可以复用；`resources/` 之内都是自有资源，必须换新。**注意 `resources/app-update.yml` 只在 Linux 存在、Windows 不存在**，所以不能手挑文件，必须整体复制 `resources/`。
+- **归档必须从 `payload/` 内部进行**，使条目为 `payload.json` + `resources/…`。二者**不共享顶层目录**，因此 `install.ts` 的 `extractZip` 不会剥掉前缀。若条目全在 `resources/` 下，该前缀会被剥掉，`app.asar` 会落到应用根目录而非 `resources/` 内。
+- **`payload.json` 记录 Electron 版本**，客户端按**主版本**比对（原生模块 ABI 只随主版本变）。不匹配则回退全量下载。CI 用 Node 脚本（`desktop/scripts/stage-payload.mjs`）而非 PowerShell 通配复制，因为 `resources/` 内含点文件（`cpu-features` 的 `.eslintrc.js`、`.clang-format`），而 PowerShell 的 `*` 会静默漏掉隐藏项。
+- **macOS 不发布载荷**。替换已签名 `.app` 内的 `resources/app.asar` 会破坏代码签名封条，Apple Silicon 拒绝运行无效签名，故 macOS 保持全量下载。`desktopPayloadAssetBase` 中 darwin 键**缺席**（而非空数组），客户端据此走全量。
+- **失败静默性**：客户端把任何载荷问题（镜像 404、ABI 不符、归档损坏）都降级为全量下载，所以载荷资产名不一致**不会报错**，只会让每次升级又下 150MB。因此资产名由 `scripts/__tests__/releaseAssets.test.ts` 做跨语言比对（`release.yml` ↔ Go `desktopPayloadAssetBase`）。
+
 ### 下游影响
 
 - **桌面端下载 URL 必须带 tag**：`internal/service/desktop_upgrade.go` 的 `desktopAssetBase` 只存基名，`desktopAssetName(osArch, tag)` 拼上 tag。因为名字含版本，**不存在** `releases/latest/download/<名>` 这种稳定链接，URL 一律由服务端上报的 tag 拼出。
@@ -205,8 +215,9 @@ env:
 - 两侧变量拼写一致（`${RELEASE_TAG}` / `$env:RELEASE_TAG` 对 `${{ env.RELEASE_TAG }}`）
 - APK 例外：无版本 embed 路径仍在，且带版本的复制与上传两半都在
 - Go 侧 `desktopAssetName` 由 base+tag 拼出，且源码里不再有裸 `clawbench-desktop-*.zip` 字面量
+- 载荷资产名跨语言一致：`release.yml` 打包的三个 basename 与 Go `desktopPayloadAssetBase` 逐项相等，且 macOS 不得出现在该 map 中（载荷失败会静默降级为全量下载，名字不一致不会报错）
 
-变异验证 4/4（均实测变红）：改回无版本归档名 / 上传 pattern 去掉 tag / 删掉 APK 版本化复制 / Go 资产名丢 tag。
+变异验证 4/4（均实测变红）：改回无版本归档名 / 上传 pattern 去掉 tag / 删掉 APK 版本化复制 / Go 资产名丢 tag。载荷守护另验：重命名 CI 载荷资产名 → 跨语言比对变红。
 
 ## 历史遗留
 

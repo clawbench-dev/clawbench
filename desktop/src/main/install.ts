@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process'
 import { inflateRawSync } from 'node:zlib'
 import { app } from 'electron'
 import { verifyIntegrity } from '../shared/integrity'
+import { normalizeVersion } from '../shared/version'
 
 /**
  * Self-upgrade installer for the desktop shell.
@@ -25,6 +26,15 @@ import { verifyIntegrity } from '../shared/integrity'
  * it names (see handOffToPointedVersion). Switching versions is then an atomic
  * file write plus a relaunch, and a bad build can be rolled back by rewriting
  * the pointer.
+ *
+ * Two kinds of archive are installed through that same machinery:
+ *
+ *   - the FULL release zip (~150MB), which carries its own Electron runtime;
+ *   - a PAYLOAD zip (~3MB) containing only `resources/`, installed over a
+ *     clone of the already-running shell so the ~279MB runtime is reused
+ *     (see installPayload). Linux and Windows take this path; macOS does not,
+ *     because replacing `resources/app.asar` inside a signed .app breaks the
+ *     code-signature seal and Apple Silicon requires a valid signature.
  */
 
 /** Root of the version store: ~/.clawbench-desktop */
@@ -295,6 +305,159 @@ export async function downloadFirstAvailable(urls: string[]): Promise<Buffer> {
   throw new Error(`all download sources failed:\n${errs.join('\n')}`)
 }
 
+/** Name of the manifest a payload archive carries at its root. */
+export const PAYLOAD_MANIFEST = 'payload.json'
+
+/** The directory the running app's own files live in. */
+export function appRoot(): string {
+  return path.dirname(process.resourcesPath)
+}
+
+/**
+ * Raised when a payload cannot be used against the installed shell — a
+ * different Electron ABI, or a payload built for a different app. Callers
+ * treat this as "fall back to the full download", not as a hard failure.
+ */
+export class PayloadIncompatibleError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PayloadIncompatibleError'
+  }
+}
+
+/**
+ * Major component of an Electron version, or '' when it cannot be parsed.
+ *
+ * Native modules (`sshcrypto.node`, `cpufeatures.node`) are compiled against
+ * Electron's ABI, which only changes on a MAJOR bump. Gating on the major
+ * component is therefore what actually decides whether reusing the shell is
+ * safe; comparing the full string would reject payloads unnecessarily on
+ * patch releases that carry no ABI change.
+ */
+export function electronMajor(version: string): string {
+  const m = /^(\d+)/.exec(version.trim())
+  return m ? m[1] : ''
+}
+
+/**
+ * Copy `src` into `dst`, skipping every path that already exists under `dst`.
+ *
+ * The skip rule is the whole trick, and it is what makes payload installs safe:
+ * the caller extracts the payload FIRST, so every path the payload provides is
+ * already present and is left untouched. What remains — the Electron runtime —
+ * is hardlinked from the installed shell, which costs no extra disk and no
+ * copy time on the same volume.
+ *
+ * Skipping on existence rather than on a precomputed path set is deliberate:
+ * it needs no separator normalization (zip entries use `/`, `path.relative`
+ * yields `\` on Windows) and cannot drift from what the archive actually
+ * contained. It also makes the dangerous ordering impossible — cloning first
+ * and extracting second would write through a hardlink into the OLD version's
+ * files, mutating the install the user is currently running.
+ */
+export function cloneTree(src: string, dst: string): void {
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const from = path.join(src, entry.name)
+    const to = path.join(dst, entry.name)
+
+    if (fs.existsSync(to)) continue // already provided by the payload
+
+    if (entry.isDirectory()) {
+      fs.mkdirSync(to, { recursive: true })
+      cloneTree(from, to)
+    } else if (entry.isFile()) {
+      try {
+        fs.linkSync(from, to)
+      } catch {
+        // EXDEV (different volume), EPERM (filesystem without hardlinks),
+        // EMLINK (link limit). A real copy always works, so degrade rather
+        // than fail the upgrade. copyFileSync preserves the mode, which the
+        // Linux binary's executable bit depends on.
+        fs.copyFileSync(from, to)
+      }
+    } else {
+      // A symlink or device node here would mean the release layout changed.
+      // Skipping it silently would ship an install that is quietly missing
+      // files, so refuse instead.
+      throw new Error(`unsupported entry in shell: ${from}`)
+    }
+  }
+}
+
+/**
+ * Install a payload archive over a clone of `shellRoot`, then select it.
+ *
+ * `shellRoot` is the app root of the version currently running (see appRoot).
+ * Its Electron runtime is reused; only `resources/` comes from the archive.
+ *
+ * The archive is staged exactly like the full install: unpack to a temp
+ * directory, verify it, clone the shell around it, then `rm -rf` + rename into
+ * place. `rm -rf` before the rename is safe even when `dest` is a previous
+ * payload install, because the rename is what makes the switch atomic — a
+ * crash at any earlier point leaves only a staging directory, never a
+ * half-populated version the pointer could name.
+ *
+ * Returns the directory now selected.
+ */
+export async function installPayload(
+  urls: string | string[],
+  version: string,
+  shellRoot: string,
+  electron: string = process.versions.electron ?? '',
+): Promise<string> {
+  const dest = versionDir(version)
+  // Refuse to install over the version we are running from: the `rm -rf` below
+  // would delete the live binary out from under this process.
+  if (path.resolve(dest) === path.resolve(shellRoot)) {
+    throw new PayloadIncompatibleError(`payload target is the running install: ${dest}`)
+  }
+
+  const buf = await downloadFirstAvailable(Array.isArray(urls) ? urls : [urls])
+
+  const staging = `${dest}.staging-${process.pid}`
+  fs.rmSync(staging, { recursive: true, force: true })
+  fs.mkdirSync(staging, { recursive: true })
+
+  try {
+    extractZip(buf, staging)
+
+    const manifestPath = path.join(staging, PAYLOAD_MANIFEST)
+    if (!fs.existsSync(manifestPath)) {
+      throw new Error(`payload archive has no ${PAYLOAD_MANIFEST}`)
+    }
+    let manifest: { electron?: string }
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    } catch {
+      throw new Error(`payload ${PAYLOAD_MANIFEST} is not valid JSON`)
+    }
+
+    const built = electronMajor(String(manifest.electron ?? ''))
+    const running = electronMajor(electron)
+    if (!built || !running || built !== running) {
+      throw new PayloadIncompatibleError(
+        `payload targets Electron ${manifest.electron || '?'}, running ${electron || '?'}`,
+      )
+    }
+
+    // The manifest is metadata, not part of the app; leaving it behind would
+    // put a stray file in the install root.
+    fs.rmSync(manifestPath, { force: true })
+
+    cloneTree(shellRoot, staging)
+  } catch (err) {
+    fs.rmSync(staging, { recursive: true, force: true })
+    throw err
+  }
+
+  // Replace any prior copy of this version atomically.
+  fs.rmSync(dest, { recursive: true, force: true })
+  fs.renameSync(staging, dest)
+
+  writePointer(version)
+  return dest
+}
+
 /**
  * Path to the executable inside an unpacked version directory.
  *
@@ -348,7 +511,16 @@ export function selectStartupVersion(
   if (!pointed) return ''
   // Already the pointed-at version: nothing to do. This is the normal case
   // after a restart, and it is also what stops the handoff from looping.
-  if (pointed === running) return ''
+  //
+  // Compared NORMALIZED, because the two sides spell the same version
+  // differently: the pointer holds the server's `v0.99.1` (git describe) while
+  // `app.getVersion()` reports `0.99.1` (CI strips the prefix from
+  // desktop/package.json). A raw comparison reported "different", which sent
+  // this into handOffToPointedVersion's self-reference guard — and that guard
+  // DELETES the pointer, so the upgrade silently reverted on the second cold
+  // start. The returned value stays the RAW `pointed`, because versionDir()
+  // must resolve the directory the pointer actually names.
+  if (normalizeVersion(pointed) === normalizeVersion(running)) return ''
   return pointed
 }
 

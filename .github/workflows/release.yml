@@ -706,10 +706,25 @@ jobs:
           cd desktop/release/linux-unpacked
           zip -r "../clawbench-desktop-linux-x64-${RELEASE_TAG}.zip" .
 
+      - name: Build desktop payload (Linux)
+        # The payload is the same app WITHOUT the Electron runtime (~3MB vs
+        # ~150MB), for the incremental-upgrade path. Archived from INSIDE
+        # payload/ so entries are `payload.json` + `resources/…`: those share no
+        # top-level directory, which is what stops install.ts's extractZip from
+        # stripping a prefix (a zip of only `resources/…` would lose it and drop
+        # app.asar at the app root). Read desktop/scripts/stage-payload.mjs.
+        run: |
+          cd desktop
+          node scripts/stage-payload.mjs release/linux-unpacked
+          cd release/linux-unpacked/payload
+          zip -r "../clawbench-desktop-linux-x64-payload-${RELEASE_TAG}.zip" .
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
+          files: |
+            desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-linux-x64-payload-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -758,10 +773,21 @@ jobs:
           cd desktop/release/linux-arm64-unpacked
           zip -r "../clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip" .
 
+      - name: Build desktop payload (Linux arm64)
+        # Archived from inside payload/ so the entries share no top-level
+        # directory — see the x64 payload step for why that matters.
+        run: |
+          cd desktop
+          node scripts/stage-payload.mjs release/linux-arm64-unpacked
+          cd release/linux-arm64-unpacked/payload
+          zip -r "../clawbench-desktop-linux-arm64-payload-${RELEASE_TAG}.zip" .
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
+          files: |
+            desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-linux-arm64-payload-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -816,10 +842,54 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path desktop/release/win-unpacked/* -DestinationPath "desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip"
 
+      - name: Build desktop payload (Windows)
+        # `node` (not Copy-Item) because resources/ contains dotfiles — notably
+        # cpu-features' .eslintrc.js and .clang-format — and PowerShell's `*`
+        # glob silently SKIPS hidden items. That would ship an incomplete
+        # payload on Windows only, and the failure would surface at runtime
+        # rather than here.
+        #
+        # `-Path payload/*` flattens the directory the same way the full-package
+        # step above does: entries become payload.json + resources/…, which
+        # share no top-level directory. That is what keeps extractZip from
+        # stripping a prefix.
+        shell: pwsh
+        run: |
+          cd desktop
+          node scripts/stage-payload.mjs release/win-unpacked
+          Compress-Archive -Path release/win-unpacked/payload/* -DestinationPath "release/clawbench-desktop-windows-x64-payload-$env:RELEASE_TAG.zip"
+
+      - name: Verify payload archive (Windows)
+        # Compress-Archive reports success even if it wrote an incomplete
+        # archive, and a partial payload installs cleanly then fails at runtime.
+        # Assert the entries the client depends on, including a dotfile (the
+        # case a PowerShell glob would have dropped) and the native modules.
+        shell: pwsh
+        run: |
+          $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD/desktop/release/clawbench-desktop-windows-x64-payload-$env:RELEASE_TAG.zip")
+          try {
+            $names = $zip.Entries | ForEach-Object { $_.FullName }
+            $required = @(
+              'payload.json',
+              'resources/app.asar',
+              'resources/login.html',
+              'resources/logo.png',
+              'resources/app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node',
+              'resources/app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node',
+              'resources/app.asar.unpacked/node_modules/cpu-features/.eslintrc.js'
+            )
+            foreach ($r in $required) {
+              if ($names -notcontains $r) { throw "payload archive is missing $r" }
+            }
+            Write-Host "payload archive OK: $($names.Count) entries"
+          } finally { $zip.Dispose() }
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: desktop/release/clawbench-desktop-windows-x64-${{ env.RELEASE_TAG }}.zip
+          files: |
+            desktop/release/clawbench-desktop-windows-x64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-windows-x64-payload-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:

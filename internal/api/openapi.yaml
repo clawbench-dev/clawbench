@@ -4115,6 +4115,13 @@ paths:
 
         每个平台给出**候选 URL 列表**：国内优先走 GitHub 代理镜像，直连
         github.com 始终作为最后兜底。镜像为社区服务，不保证可用，故逐个降级。
+
+        `payloads` 是**增量升级**用的载荷包：只含应用自身的 `resources/`
+        （约 3MB），不含 Electron 运行时（约 150MB）。客户端把它安装到从
+        当前运行版本克隆出的目录上，从而复用运行时。**仅覆盖可安全替换
+        `app.asar` 的平台**（linux-x64 / linux-arm64 / win32-x64）；macOS
+        因替换会破坏 `.app` 的代码签名封条而不提供该键。键**缺席**（而非空
+        数组）即表示该平台只能走全量下载。
       operationId: desktopLatest
       security: []
       responses:
@@ -4137,6 +4144,17 @@ paths:
                       平台键（linux-x64 / linux-arm64 / darwin-x64 /
                       darwin-arm64 / win32-x64）到**候选 URL 数组**，
                       按推荐顺序排列，客户端依次尝试。
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  payloads:
+                    type: object
+                    description: |
+                      平台键（仅 linux-x64 / linux-arm64 / win32-x64）到
+                      **载荷包候选 URL 数组**。载荷包只含应用代码，客户端
+                      据此跳过 Electron 运行时的重复下载。macOS 与未知平台
+                      **没有该键**——键缺席即表示只能全量下载。
                     additionalProperties:
                       type: array
                       items:

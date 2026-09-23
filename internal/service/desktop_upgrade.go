@@ -12,15 +12,43 @@ import (
 // assets produced by release.yml's build-desktop-* jobs.
 const desktopReleaseRepo = "clawbench-dev/clawbench"
 
+// Platform keys (GOOS/GOARCH) shared by the maps below. Named constants because
+// each appears in both the full-package and payload maps, which pushes the
+// repeated literals past the goconst threshold.
+const (
+	platformLinuxAMD64   = "linux/amd64"
+	platformLinuxARM64   = "linux/arm64"
+	platformDarwinAMD64  = "darwin/amd64"
+	platformDarwinARM64  = "darwin/arm64"
+	platformWindowsAMD64 = "windows/amd64"
+)
+
 // desktopAssetBase maps GOOS/GOARCH to the release asset basename, without the
 // version. The tag is appended by desktopAssetName. Keep in sync with the
 // `zip -r` / `Compress-Archive` steps in release.yml.
 var desktopAssetBase = map[string]string{
-	"linux/amd64":   "clawbench-desktop-linux-x64",
-	"linux/arm64":   "clawbench-desktop-linux-arm64",
-	"darwin/amd64":  "clawbench-desktop-darwin-x64",
-	"darwin/arm64":  "clawbench-desktop-darwin-arm64",
-	"windows/amd64": "clawbench-desktop-windows-x64",
+	platformLinuxAMD64:   "clawbench-desktop-linux-x64",
+	platformLinuxARM64:   "clawbench-desktop-linux-arm64",
+	platformDarwinAMD64:  "clawbench-desktop-darwin-x64",
+	platformDarwinARM64:  "clawbench-desktop-darwin-arm64",
+	platformWindowsAMD64: "clawbench-desktop-windows-x64",
+}
+
+// desktopPayloadAssetBase maps GOOS/GOARCH to the basename of the payload-only
+// archive: the same app minus the Electron runtime (just `resources/`, ~3MB
+// against ~150MB). The client installs it over a clone of the shell it is
+// already running, so the runtime is never re-downloaded.
+//
+// macOS is deliberately ABSENT. Replacing resources/app.asar inside a signed
+// .app breaks the code-signature seal, and Apple Silicon refuses to run with an
+// invalid signature; the client therefore stays on the full package there. The
+// key being absent (rather than an empty list) is what tells it so.
+//
+// Keep in sync with the payload `zip`/`Compress-Archive` steps in release.yml.
+var desktopPayloadAssetBase = map[string]string{
+	platformLinuxAMD64:   "clawbench-desktop-linux-x64-payload",
+	platformLinuxARM64:   "clawbench-desktop-linux-arm64-payload",
+	platformWindowsAMD64: "clawbench-desktop-windows-x64-payload",
 }
 
 // desktopAssetName builds the published asset filename for a platform, e.g.
@@ -36,17 +64,34 @@ func desktopAssetName(osArch, tag string) string {
 	if !ok {
 		return ""
 	}
+	return desktopAssetNameFromBase(base, tag)
+}
+
+// desktopAssetNameFromBase appends the tag to an asset basename. Both the full
+// package and the payload are named through here so the two cannot drift into
+// different conventions.
+func desktopAssetNameFromBase(base, tag string) string {
 	return base + "-" + tag + ".zip"
+}
+
+// desktopPayloadAssetName is desktopAssetName for the payload archive, or ""
+// when the platform has no payload (macOS).
+func desktopPayloadAssetName(osArch, tag string) string {
+	base, ok := desktopPayloadAssetBase[osArch]
+	if !ok {
+		return ""
+	}
+	return desktopAssetNameFromBase(base, tag)
 }
 
 // desktopDownloadKey is the response key for each platform. It matches the
 // keys the web client derives from the user agent (detectPlatformKey).
 var desktopDownloadKey = map[string]string{
-	"linux/amd64":   "linux-x64",
-	"linux/arm64":   "linux-arm64",
-	"darwin/amd64":  "darwin-x64",
-	"darwin/arm64":  "darwin-arm64",
-	"windows/amd64": "win32-x64",
+	platformLinuxAMD64:   "linux-x64",
+	platformLinuxARM64:   "linux-arm64",
+	platformDarwinAMD64:  "darwin-x64",
+	platformDarwinARM64:  "darwin-arm64",
+	platformWindowsAMD64: "win32-x64",
 }
 
 // githubReleaseMirrors are prefix proxies that forward to github.com. They are
@@ -71,6 +116,11 @@ type DesktopLatestResult struct {
 	// client tries them in order, so one dead mirror degrades the download
 	// rather than breaking it.
 	Downloads map[string][]string `json:"downloads"`
+	// Payloads maps a platform key to candidate URLs for the payload-only
+	// archive (the app without the Electron runtime). A key is ABSENT when the
+	// platform has no payload — macOS, for code-signing reasons — which the
+	// client reads as "download the full package". Never an empty list.
+	Payloads map[string][]string `json:"payloads"`
 }
 
 // releaseAssetURLs returns the candidate download URLs for one release asset,
@@ -101,7 +151,12 @@ func releaseAssetURLs(tag, asset string) []string {
 func FetchDesktopLatest() (*DesktopLatestResult, error) {
 	v := version.Get()
 	tag := version.ReleaseTag(v)
-	res := &DesktopLatestResult{Version: v, Tag: tag, Downloads: map[string][]string{}}
+	res := &DesktopLatestResult{
+		Version:   v,
+		Tag:       tag,
+		Downloads: map[string][]string{},
+		Payloads:  map[string][]string{},
+	}
 	if tag == "" {
 		// Dev or untagged build: no release exists, so offer nothing rather
 		// than links that would 404.
@@ -110,6 +165,12 @@ func FetchDesktopLatest() (*DesktopLatestResult, error) {
 	for osArch := range desktopAssetBase {
 		asset := desktopAssetName(osArch, tag)
 		res.Downloads[desktopDownloadKey[osArch]] = releaseAssetURLs(tag, asset)
+	}
+	// Payloads cover fewer platforms than the full package (see
+	// desktopPayloadAssetBase), so iterate that map rather than Downloads'.
+	for osArch := range desktopPayloadAssetBase {
+		asset := desktopPayloadAssetName(osArch, tag)
+		res.Payloads[desktopDownloadKey[osArch]] = releaseAssetURLs(tag, asset)
 	}
 	return res, nil
 }

@@ -176,3 +176,52 @@ describe('desktop asset names match the Go download URLs', () => {
     expect(go).not.toMatch(/clawbench-desktop-[a-z0-9-]+\.zip"/)
   })
 })
+
+/**
+ * Payload archives (the incremental-upgrade path) are the same app without the
+ * Electron runtime. They are published by the desktop jobs and advertised by
+ * the Go server, so the basenames have to agree across the language boundary.
+ *
+ * The failure mode is nastier than for the full package: the client treats any
+ * payload problem as "fall back to the full download", so a name mismatch does
+ * not 404 loudly — it silently makes every upgrade re-download ~150MB again,
+ * which is exactly the cost this feature exists to remove. Hence a direct
+ * comparison of the two sides rather than a tag-presence check.
+ */
+describe('payload asset names agree between release.yml and the Go server', () => {
+  /** Basenames the workflow zips, e.g. "clawbench-desktop-linux-x64-payload". */
+  function payloadBasesInWorkflow(): string[] {
+    return packagingTargets(releaseYml())
+      .map((t) => /([a-z0-9-]*clawbench-desktop-[a-z0-9-]*-payload)-/.exec(t)?.[1] ?? '')
+      .filter((b) => b !== '')
+  }
+
+  /** Basenames the Go server maps to a platform. */
+  function payloadBasesInGo(): string[] {
+    const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
+    const block = /desktopPayloadAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
+    return [...block.matchAll(/"([^"]*payload)"/g)].map((m) => m[1]).sort()
+  }
+
+  it('publishes a payload for every non-macOS platform, and only those', () => {
+    // Three desktop jobs build a payload; macOS deliberately does not (it would
+    // break the .app code-signature seal).
+    expect(payloadBasesInWorkflow().sort()).toEqual([
+      'clawbench-desktop-linux-arm64-payload',
+      'clawbench-desktop-linux-x64-payload',
+      'clawbench-desktop-windows-x64-payload',
+    ])
+  })
+
+  it('uses exactly the basenames the Go server advertises', () => {
+    expect(payloadBasesInGo()).toEqual(payloadBasesInWorkflow().sort())
+  })
+
+  it('excludes macOS from the payload map', () => {
+    // A darwin entry would make the client attempt an install that invalidates
+    // the signature, and the failure would be silent (fallback to full).
+    const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
+    const block = /desktopPayloadAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
+    expect(block).not.toContain('darwin')
+  })
+})
