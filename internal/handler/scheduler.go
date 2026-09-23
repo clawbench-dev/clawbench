@@ -255,7 +255,11 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			// per-task parameter.
 			EventTypes string `json:"event_types"`
 			// Script is an optional pre-AI shell script (cron tasks only).
-			Script string `json:"script"`
+			// A pointer so "not provided" (leave unchanged) is distinguishable
+			// from "set to empty" (clear) — this endpoint is a partial update,
+			// so an unconditional assignment would let any caller that omits
+			// the field silently wipe the task's script.
+			Script *string `json:"script"`
 			// ScriptTimeout bounds Script in seconds; 0 means the default.
 			ScriptTimeout *int `json:"script_timeout"` // pointer to distinguish "not provided" from "set to 0"
 		}
@@ -403,12 +407,16 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		if req.EventTypes != "" {
 			task.EventTypes = req.EventTypes
 		}
-		// Script is assigned unconditionally: the update payload is the whole
-		// form, so an empty value means "clear the script" (there is no
-		// meaningful "not provided" sentinel for a string here). ScriptTimeout
-		// uses a pointer so 0 ("use the default") is distinguishable from
-		// "leave unchanged".
-		task.Script = req.Script
+		// Script is a partial-update field like every other string above: a nil
+		// pointer means "not provided" and leaves the stored script alone, while
+		// an explicit empty string clears it. Assigning unconditionally would
+		// wipe the script for any caller that omits the key — the UI submits the
+		// whole form, but the endpoint (and the AI-facing /cb-task docs) treat
+		// this as a partial update, so a prompt-only edit would silently destroy
+		// the script.
+		if req.Script != nil {
+			task.Script = *req.Script
+		}
 		if req.ScriptTimeout != nil {
 			// Negative is rejected rather than stored-and-ignored: the executor
 			// treats a non-positive timeout as the default, so persisting -1

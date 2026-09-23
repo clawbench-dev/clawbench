@@ -873,7 +873,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			Phase:       RunningPhaseScript,
 		})
 
-		res := RunTaskScript(ctx, task.Script, projectPath, time.Duration(task.ScriptTimeout)*time.Second)
+		res := RunTaskScript(ctx, task.Script, projectPath, scriptTimeoutDuration(task.ScriptTimeout))
 		s.runningExecutions.Delete(scriptExecID)
 
 		switch res.Outcome {
@@ -1283,7 +1283,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Update task execution stats
 	// Read current DB status to avoid overwriting user-initiated changes (e.g. pause).
 	// See ISS-013: using task.Status (in-memory snapshot) can revert "paused" back to "active".
-	newStatus, _ := s.advanceTaskAfterRun(task)
+	newStatus := s.advanceTaskAfterRun(task)
 	if task.IsEventTriggered() {
 		slog.Info("event task execution completed",
 			slog.Int64("task_id", task.ID),
@@ -1310,20 +1310,24 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 }
 
 // advanceTaskAfterRun applies the post-run bookkeeping shared by the AI
-// completion path and the script-only (skipped/cancelled) paths: run_count,
-// last_run_at, next_run_at and the repeat-mode-driven status transition.
-// Sharing it is what keeps a task's schedule from drifting between a run that
-// reached the AI and one that was skipped before it.
+// completion path and the script-only (skipped) path: run_count, last_run_at,
+// next_run_at and the repeat-mode-driven status transition. Sharing it is what
+// keeps a task's schedule from drifting between a run that reached the AI and
+// one that was skipped before it.
 //
-// It returns the resulting status and, for cron tasks, the next run time.
-func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask) (string, *time.Time) {
+// It returns the resulting task status.
+//
+// Callers that aborted the run before it produced a result (a user cancel)
+// must NOT use this: they record the run with UpdateTaskStats instead, matching
+// the AI-phase cancel path. See the cancel branch in executeTask.
+func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask) string {
 	// Event-triggered tasks do not participate in cron completion semantics:
 	// there is no next cron run and no repeat-mode exhaustion. They simply record
 	// the run and stay active so the next matching event fires again.
 	if task.IsEventTriggered() {
 		_, _ = WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, run_count = run_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			time.Now(), task.ID)
-		return task.Status, nil
+		return task.Status
 	}
 
 	// Read current DB status to avoid overwriting user-initiated changes (e.g. pause).
@@ -1383,7 +1387,7 @@ func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask) (string, *tim
 		_, _ = WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, next_run_at = NULL, run_count = run_count + 1, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			time.Now(), newStatus, task.ID)
 	}
-	return newStatus, nextRunAt
+	return newStatus
 }
 
 // scriptOutputCap bounds how much of the script's stdout/stderr is injected
@@ -1396,11 +1400,25 @@ const scriptOutputCap = 64 * 1024
 const scriptTruncationMarker = "\n…[output truncated]"
 
 // finishScriptOnlyRun applies the bookkeeping for a run that ended in the
-// script phase and never reached the AI. The execution row is recorded by the
-// caller (it needs the row id for the cancel event); this advances the
-// schedule exactly as a completed run would, so the task keeps ticking.
+// script phase and never reached the AI.
+//
+// A skip is a completed decision ("nothing to do"), so it advances the
+// schedule exactly as a completed run would and the task keeps ticking. A
+// cancel is an aborted run, not a decision: it records the run via
+// UpdateTaskStats and leaves status and next_run_at alone, matching the
+// AI-phase cancel path (ISS-013) — otherwise cancelling a `once` task during
+// its script would burn the single run and mark the task completed without the
+// AI ever executing.
 func (s *Scheduler) finishScriptOnlyRun(task *model.ScheduledTask, status string) {
-	newStatus, _ := s.advanceTaskAfterRun(task)
+	if status == "cancelled" {
+		UpdateTaskStats(task)
+		slog.Info("task run cancelled in script phase",
+			slog.Int64("task_id", task.ID),
+			slog.String("run_status", status),
+		)
+		return
+	}
+	newStatus := s.advanceTaskAfterRun(task)
 	slog.Info(
 		"task run ended in script phase",
 		slog.Int64("task_id", task.ID),
@@ -1426,22 +1444,22 @@ func buildScriptPromptBlock(res ScriptResult) string {
 			b.WriteString(res.Err.Error())
 			b.WriteString("\n")
 		}
-		if out := truncateScriptOutput(res.Stdout); out != "" {
+		if out := truncateScriptOutput(res.Stdout, res.StdoutTruncated); out != "" {
 			b.WriteString("--- stdout ---\n")
 			b.WriteString(out)
 			b.WriteString("\n")
 		}
-		if errOut := truncateScriptOutput(res.Stderr); errOut != "" {
+		if errOut := truncateScriptOutput(res.Stderr, res.StderrTruncated); errOut != "" {
 			b.WriteString("--- stderr ---\n")
 			b.WriteString(errOut)
 			b.WriteString("\n")
 		}
 	default: // ScriptProduced
-		if out := truncateScriptOutput(res.Stdout); out != "" {
+		if out := truncateScriptOutput(res.Stdout, res.StdoutTruncated); out != "" {
 			b.WriteString(out)
 			b.WriteString("\n")
 		}
-		if errOut := truncateScriptOutput(res.Stderr); errOut != "" {
+		if errOut := truncateScriptOutput(res.Stderr, res.StderrTruncated); errOut != "" {
 			b.WriteString("--- stderr ---\n")
 			b.WriteString(errOut)
 			b.WriteString("\n")
@@ -1455,14 +1473,18 @@ func buildScriptPromptBlock(res ScriptResult) string {
 // a marker when it was cut so the model knows the output is incomplete.
 //
 // This is a second line of defense only: cappedBuffer already bounds the
-// capture. A stream that reached exactly the cap was cut at capture time, so
-// the >= comparison is what keeps the marker in that case — a plain > would
-// let a capped-but-full stream through silently.
-func truncateScriptOutput(s string) string {
-	if len(s) < scriptOutputCap {
+// capture, and `truncated` is its record of having dropped bytes. Deriving the
+// marker from len(s) >= cap instead would false-positive on a stream that
+// happened to end exactly at the cap, and would also miss the case where the
+// marker is itself part of the retained prefix.
+func truncateScriptOutput(s string, truncated bool) string {
+	if !truncated && len(s) <= scriptOutputCap {
 		return strings.TrimRight(s, "\n")
 	}
-	return strings.TrimRight(s[:scriptOutputCap], "\n") + scriptTruncationMarker
+	if len(s) > scriptOutputCap {
+		s = s[:scriptOutputCap]
+	}
+	return strings.TrimRight(s, "\n") + scriptTruncationMarker
 }
 
 // GetTasks retrieves all tasks for a project path. If projectPath is empty, retrieves all tasks.

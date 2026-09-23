@@ -147,6 +147,40 @@ describe('TaskExecDetail skipped execution', () => {
     expect(buttons.some(b => b.text().includes('task.exec.continueConversation'))).toBe(false)
   })
 
+  it('does not offer continue for a run cancelled during the script phase', () => {
+    // A cancel during the pre-AI script is recorded with an empty sessionId too
+    // (the session is only created after the script passes), so it fails the
+    // same way a skip does. Gating on the session id rather than a status
+    // allowlist is what keeps this case covered.
+    const exec = {
+      id: 33,
+      status: 'cancelled',
+      createdAt: '2026-08-23T02:00:00Z',
+      sessionId: '',
+      content: '',
+    }
+    const wrapper = mount(TaskExecDetail, { props: { execDetail: exec, taskId: 2 } })
+
+    const buttons = wrapper.findAll('.exec-detail-actions button')
+    expect(buttons.some(b => b.text().includes('task.exec.continueConversation'))).toBe(false)
+  })
+
+  it('still offers continue for a cancelled run that had a session', () => {
+    // A cancel during the AI phase does have a session, and continuing from it
+    // is legitimate — the session-id gate must not over-correct and hide it.
+    const exec = {
+      id: 34,
+      status: 'cancelled',
+      createdAt: '2026-08-23T02:00:00Z',
+      sessionId: 's-34',
+      content: '{}',
+    }
+    const wrapper = mount(TaskExecDetail, { props: { execDetail: exec, taskId: 2 } })
+
+    const buttons = wrapper.findAll('.exec-detail-actions button')
+    expect(buttons.some(b => b.text().includes('task.exec.continueConversation'))).toBe(true)
+  })
+
   it('still offers continue for a completed run', () => {
     // Guard against over-correcting: the skip exclusion must not remove the
     // button from the normal completed path.

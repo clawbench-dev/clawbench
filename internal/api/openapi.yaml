@@ -3384,13 +3384,16 @@ paths:
                   description: 仅 `deleteExecution` 需要（字符串形式）。
                 script:
                   type: string
-                  description: "可选预执行脚本（仅 cron）。action=update 时生效；传空字符串表示清除。"
+                  description: |
+                    可选预执行脚本（仅 cron）。`action=update` 时生效。
+                    **省略该字段表示保持不变**（与 `name` / `prompt` 等一致的部分更新语义）；
+                    传空字符串表示清除脚本。
                 script_timeout:
                   type: integer
                   minimum: 0
                   description: |
-                    脚本超时秒数；0 表示默认 300 秒。action=update 时生效。
-                    负数为非法值，返回 400 `TaskScriptTimeoutInvalid`。
+                    脚本超时秒数；0 表示默认 300 秒。`action=update` 时生效。
+                    省略该字段表示保持不变。负数为非法值，返回 400 `TaskScriptTimeoutInvalid`。
       responses:
         "200":
           description: 结果

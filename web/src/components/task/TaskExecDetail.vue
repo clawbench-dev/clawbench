@@ -186,13 +186,14 @@ const execStream = useTaskExecStream({
   },
 })
 const showContinueBtn = computed(() => {
-  // Show button for completed or cancelled executions, not for running ones.
-  // A skipped run has an empty sessionId (the script exited 0 with no output,
-  // so no session was ever created), and continuing from it would fail
-  // server-side with "source session not found".
-  const status = props.execDetail?.status
-  if (status === 'running' || status === 'skipped') return false
-  return status && props.taskId && props.execDetail?.id
+  // Continuing needs a source session to fork from. Both script-phase outcomes
+  // — `skipped` and `cancelled` — are recorded with an empty sessionId (the
+  // script ended before any session was created), and a running execution has
+  // nothing to continue yet. Gate on the session id rather than enumerating
+  // statuses: the status list would have to grow with every future terminal
+  // state, and missing one fails server-side with "source session not found".
+  if (isRunning.value || !props.execDetail?.sessionId) return false
+  return !!(props.taskId && props.execDetail?.id)
 })
 
 async function onTerminate() {

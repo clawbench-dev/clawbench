@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"runtime"
 	"testing"
 	"time"
@@ -29,6 +30,7 @@ func TestRunTaskScript_SkippedOnNoOutput(t *testing.T) {
 }
 
 func TestRunTaskScript_SkippedOnWhitespaceOnlyOutput(t *testing.T) {
+	skipOnWindows(t)
 	// `echo` emits only a trailing newline; whitespace-only output must still
 	// count as no output.
 	res := RunTaskScript(context.Background(), "echo", "", 0)
@@ -39,6 +41,7 @@ func TestRunTaskScript_SkippedOnWhitespaceOnlyOutput(t *testing.T) {
 }
 
 func TestRunTaskScript_ProducedWithStdout(t *testing.T) {
+	skipOnWindows(t)
 	res := RunTaskScript(context.Background(), "echo hello-stdout", "", 0)
 	if res.Outcome != ScriptProduced {
 		t.Fatalf("outcome = %v, want ScriptProduced (err=%v)", res.Outcome, res.Err)
@@ -147,7 +150,7 @@ func TestRunTaskScript_WorkDir(t *testing.T) {
 		t.Fatalf("outcome = %v, want ScriptProduced (err=%v)", res.Outcome, res.Err)
 	}
 	got := res.Stdout
-	if len(got) > 0 && got[len(got)-1] == '\n' {
+	if got != "" && got[len(got)-1] == '\n' {
 		got = got[:len(got)-1]
 	}
 	if got != dir {
@@ -177,6 +180,11 @@ func TestRunTaskScript_OutputCappedAtCaptureTime(t *testing.T) {
 	}
 	if res.Stdout == "" {
 		t.Fatal("stdout is empty, want the retained prefix of the script's output")
+	}
+	// The capture dropped bytes, so the result must say so — the prompt block
+	// relies on this flag (not on len == cap) to append its marker.
+	if !res.StdoutTruncated {
+		t.Fatal("StdoutTruncated = false, want true after the cap dropped bytes")
 	}
 }
 
@@ -227,5 +235,92 @@ func TestCappedBuffer(t *testing.T) {
 	}
 	if got := b.String(); got != "abcd" {
 		t.Fatalf("String() = %q, want the buffer unchanged at %q", got, "abcd")
+	}
+}
+
+// TestCappedBuffer_ExactCapIsNotTruncated pins the distinction the prompt-block
+// builder relies on: a stream that ends exactly at the cap was NOT cut, so no
+// truncation marker may be reported for it. Deriving the marker from
+// len(out) == cap would mislabel this as truncated.
+func TestCappedBuffer_ExactCapIsNotTruncated(t *testing.T) {
+	var b cappedBuffer
+	b.cap = 4
+	if _, err := b.Write([]byte("abcd")); err != nil {
+		t.Fatal(err)
+	}
+	if b.truncated {
+		t.Fatal("truncated = true for a stream that exactly filled the cap, want false")
+	}
+}
+
+// TestRunTaskScript_BackgroundedChildDoesNotLookLikeFailure guards the
+// WaitDelay classification. A script that backgrounds a child which inherits
+// the pipes makes cmd.Wait() report exec.ErrWaitDelay; that is plumbing, not a
+// script failure. Both a silent script (must stay skipped) and a noisy one
+// (must stay produced) have to survive it.
+func TestRunTaskScript_BackgroundedChildDoesNotLookLikeFailure(t *testing.T) {
+	skipOnWindows(t)
+
+	// Exit 0 with no output, but a 20s grandchild holds the pipe. Without the
+	// ErrWaitDelay handling this is misread as failed, and the skip contract
+	// inverts: the AI would run with a bogus "script failed" block.
+	silent := RunTaskScript(context.Background(), "sleep 20 & exit 0", "", 0)
+	if silent.Outcome != ScriptSkipped {
+		t.Fatalf("outcome = %v, want ScriptSkipped (err=%v)", silent.Outcome, silent.Err)
+	}
+	if silent.Err != nil {
+		t.Fatalf("err = %v, want nil — WaitDelay is not a script failure", silent.Err)
+	}
+	if silent.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", silent.ExitCode)
+	}
+
+	// Exit 0 with output: must be classified produced, not failed.
+	noisy := RunTaskScript(context.Background(), "sleep 20 & echo hello", "", 0)
+	if noisy.Outcome != ScriptProduced {
+		t.Fatalf("outcome = %v, want ScriptProduced (err=%v)", noisy.Outcome, noisy.Err)
+	}
+	if noisy.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", noisy.ExitCode)
+	}
+	if noisy.Stdout != "hello\n" {
+		t.Fatalf("stdout = %q, want %q", noisy.Stdout, "hello\n")
+	}
+}
+
+// TestRunTaskScript_BackgroundedChildRealFailureStillFails is the converse
+// guard: a non-zero exit that also leaves a child holding the pipe must still
+// be a failure. os/exec only substitutes ErrWaitDelay for a nil wait error, so
+// this must not be swallowed by the same handling.
+func TestRunTaskScript_BackgroundedChildRealFailureStillFails(t *testing.T) {
+	skipOnWindows(t)
+
+	res := RunTaskScript(context.Background(), "sleep 20 & exit 7", "", 0)
+	if res.Outcome != ScriptFailed {
+		t.Fatalf("outcome = %v, want ScriptFailed (err=%v)", res.Outcome, res.Err)
+	}
+	if res.ExitCode != 7 {
+		t.Fatalf("exit code = %d, want 7", res.ExitCode)
+	}
+}
+
+// TestScriptTimeoutDuration covers the seconds→Duration conversion, including
+// the overflow that would otherwise wrap negative and be read as "unset".
+func TestScriptTimeoutDuration(t *testing.T) {
+	if got := scriptTimeoutDuration(0); got != DefaultScriptTimeout {
+		t.Fatalf("scriptTimeoutDuration(0) = %v, want the default %v", got, DefaultScriptTimeout)
+	}
+	if got := scriptTimeoutDuration(-5); got != DefaultScriptTimeout {
+		t.Fatalf("scriptTimeoutDuration(-5) = %v, want the default %v", got, DefaultScriptTimeout)
+	}
+	if got := scriptTimeoutDuration(42); got != 42*time.Second {
+		t.Fatalf("scriptTimeoutDuration(42) = %v, want 42s", got)
+	}
+	// An enormous timeout must saturate, not wrap negative into the default.
+	if got := scriptTimeoutDuration(math.MaxInt); got <= 0 {
+		t.Fatalf("scriptTimeoutDuration(MaxInt) = %v, want a positive (saturated) duration", got)
+	}
+	if got := scriptTimeoutDuration(math.MaxInt); got != time.Duration(math.MaxInt64) {
+		t.Fatalf("scriptTimeoutDuration(MaxInt) = %v, want the Duration maximum", got)
 	}
 }

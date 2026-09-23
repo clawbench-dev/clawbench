@@ -52,9 +52,11 @@ stdout 与 stderr 均为空时，跳过 AI 调用，并且不发送任何成功�
    （理由见下方「实现偏差」第 1 条；`emit` 会在实现中造成通知噪音）
 2. 执行脚本，工作目录 = projectPath，超时 = ScriptTimeout
    - **exit 0 且 stdout+stderr 皆空** → 写 execution（status `skipped`、session_id `''`）、
-     UpdateTaskStats + 重算 next_run_at、移除合成条目、**不 emit 任何事件**、return
-   - **ctx 被取消** → 写 execution（status `cancelled`、session_id `''`）、同样记账、
-     移除合成条目、emit `cancelled`、return
+     `advanceTaskAfterRun`（记账 + 推进 `next_run_at` + 按 repeat_mode 结算）、移除合成
+     条目、**不 emit 任何事件**、return
+   - **ctx 被取消** → 写 execution（status `cancelled`、session_id `''`）、
+     `UpdateTaskStats`（只记 `last_run_at`/`run_count`，**不推进** `next_run_at`、不改状态
+     ——见「实现偏差」第 6 条）、移除合成条目、emit `cancelled`、return
    - **其他情况**（有输出 / 非 0 / 超时）→ 移除合成条目，把输出或错误注入
      `renderedPrompt`，继续原有流程
 3. 继续原有流程：建 session → 写 execution 行 → 在 `runningExecutions` 登记 Phase `ai`
@@ -193,3 +195,34 @@ unix/windows 各一）：
      `maxRuns` 的空/零处理一致。显式输入（如 `60`）按原样提交；非负整数校验不变。
    其余脚本相关键（`script`、`scriptPlaceholder`、`scriptTimeout`、`scriptTimeoutInvalid`
    及 `task.exec.*`）保留；`task.exec.skippedHint` 是执行历史行的**另一个**键，不受影响。
+6. **脚本阶段取消不推进调度（不消耗运行次数）。** 原设计把 `skipped` 与 `cancelled`
+   都走 `advanceTaskAfterRun`（记账 + 推进 `next_run_at` + 按 repeat_mode 结算状态）。
+   但取消是**中止**一次尚未产生结果的运行，不是「完成一次决策」：对 `once` 任务会直接
+   置 `completed` 且 `next_run_at=NULL`，而 AI 从未执行，等于静默吞掉用户唯一的一次运行。
+   现改为：取消路径走 `UpdateTaskStats`（只记 `last_run_at`/`run_count`，不动状态与
+   `next_run_at`），与 AI 阶段取消路径（ISS-013）一致；`skipped` 仍按原设计推进调度
+   ——跳过是「无事可做」的完成决策，`once` 任务此时结算为 `completed` 是合理的。
+7. **`script` 更新改为部分语义（指针字段）。** 原实现无条件 `task.Script = req.Script`，
+   注释理由是「更新载荷就是整个表单」。但该端点（以及 `/cb-task` 注入给 AI 的文档）
+   是部分更新：省略字段即保持不变，与 `name`/`prompt`/`event_types` 一致。无条件赋值
+   会让任何只改 prompt 的调用（AI 经 `/cb-task` 是典型）静默清空脚本。现改为
+   `*string`：`nil` = 保持不变，显式空串 = 清除；`script_timeout` 原本就是指针，语义对齐。
+8. **`cmd.WaitDelay` 触发的 `exec.ErrWaitDelay` 不再算脚本失败。** 脚本若把子进程放后台
+   （`foo &`），子进程继承管道并持有它，`cmd.Wait()` 会在 `WaitDelay`（5s）后报
+   `ErrWaitDelay`。这是管道收尾的产物，不是脚本失败：脚本本身已正常退出。原实现落入
+   `runErr != nil` 分支 → `ScriptFailed` + `ExitCode=-1`，导致 `sleep 20 & exit 0`
+   这种「静默成功」被读成失败（本该跳过），并把假的失败信息注入 prompt，反转了本功能的
+   契约。现按 `cmd.ProcessState` 的退出码分类。`os/exec` 仅在进程自身 wait 错误为 nil
+   时才替换为 `ErrWaitDelay`，故非 0 退出仍以 `*ExitError` 呈现、不受影响。
+9. **截断标记改由 `cappedBuffer.truncated` 驱动。** 原 `truncateScriptOutput` 用
+   `len(s) >= scriptOutputCap` 反推是否被截断，无法区分「被截断」与「恰好写满上限」，
+   对后者会误标 `output truncated`。现由捕获期的 `cappedBuffer.truncated` 记录并透出到
+   `ScriptResult.StdoutTruncated`/`StderrTruncated`，`truncateScriptOutput` 接收该标志。
+10. **`script_timeout` 溢出饱和。** `time.Duration(v) * time.Second` 对超大秒数（如
+    `MaxInt64`）会溢出为负，随后被 `timeout <= 0` 读成「未设置」并静默回落到 300s 默认。
+    新增 `scriptTimeoutDuration` 在超过 `math.MaxInt64 / time.Second` 时饱和到 Duration
+    上限，使超大超时表现为「实际不限」而非「变成默认值」。
+11. **脚本阶段取消后不显示「继续对话」。** `skipped` 与 `cancelled`（脚本阶段）都带空
+    `sessionId`，继续对话必然服务端报 `source session not found`。原实现只排除了
+    `skipped`，漏了 `cancelled`。现改为按 `sessionId` 是否为空门控（而非枚举 status），
+    AI 阶段取消（有 session）仍可继续。

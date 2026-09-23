@@ -1092,6 +1092,60 @@ func TestServeTaskByID_PutWithScript(t *testing.T) {
 	assert.Equal(t, 7, persisted.ScriptTimeout)
 }
 
+// TestServeTaskByID_PutOmittingScriptKeepsIt guards the partial-update
+// contract: this endpoint is not "the whole form", so a caller that omits
+// `script` (e.g. an AI prompt-only edit through /cb-task) must not wipe the
+// stored script. Only an explicit empty string clears it.
+func TestServeTaskByID_PutOmittingScriptKeepsIt(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	taskID := setupTaskForSubRoute(t, env, "ScriptPartial")
+
+	// Seed a script.
+	seed := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", taskID), map[string]any{
+		"action": "update", "script": "echo IMPORTANT", "script_timeout": 60,
+	})
+	seed = withProjectCookie(seed, env.ProjectDir)
+	assertOK(t, callHandler(ServeTaskByID, seed))
+
+	// A prompt-only partial update: `script` and `script_timeout` are absent.
+	partial := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", taskID), map[string]any{
+		"action": "update", "prompt": "new prompt only",
+	})
+	partial = withProjectCookie(partial, env.ProjectDir)
+	assertOK(t, callHandler(ServeTaskByID, partial))
+
+	persisted, err := service.GetTaskByID(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "new prompt only", persisted.Prompt)
+	assert.Equal(t, "echo IMPORTANT", persisted.Script,
+		"omitting script must leave it unchanged, not clear it")
+	assert.Equal(t, 60, persisted.ScriptTimeout,
+		"omitting script_timeout must leave it unchanged")
+
+	// An explicit empty string is the documented way to clear it.
+	clearReq := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", taskID), map[string]any{
+		"action": "update", "script": "",
+	})
+	clearReq = withProjectCookie(clearReq, env.ProjectDir)
+	assertOK(t, callHandler(ServeTaskByID, clearReq))
+
+	cleared, err := service.GetTaskByID(taskID)
+	require.NoError(t, err)
+	assert.Empty(t, cleared.Script, "an explicit empty script must clear it")
+}
+
 // TestServeTaskByID_DetailRunningCount_ScriptPhaseExcluded asserts the detail
 // enrichment counts only the AI phase, matching the list endpoint.
 func TestServeTaskByID_DetailRunningCount_ScriptPhaseExcluded(t *testing.T) {

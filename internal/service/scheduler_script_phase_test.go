@@ -529,16 +529,25 @@ func TestBuildScriptPromptBlock_Outcomes(t *testing.T) {
 	// Output beyond the cap is truncated with a marker.
 	big := buildScriptPromptBlock(ScriptResult{
 		Outcome: ScriptProduced, Stdout: string(make([]byte, scriptOutputCap+100)),
+		StdoutTruncated: true,
 	})
 	assert.Contains(t, big, "output truncated")
 
-	// A stream that reached exactly the cap was also cut at capture time
-	// (cappedBuffer retains at most cap bytes), so the marker must still appear
-	// — otherwise the model is handed a silently-truncated output.
+	// A stream that reached exactly the cap is NOT truncated, so it must not
+	// carry the marker: the flag comes from cappedBuffer, not from the length,
+	// which cannot distinguish "cut" from "ended exactly here".
 	atCap := buildScriptPromptBlock(ScriptResult{
 		Outcome: ScriptProduced, Stdout: strings.Repeat("x", scriptOutputCap),
 	})
-	assert.Contains(t, atCap, "output truncated")
+	assert.NotContains(t, atCap, "output truncated",
+		"a stream that ended exactly at the cap was not cut and must not be marked")
+
+	// The truncation flag alone drives the marker, even for a short stream
+	// (defensive: the caller is authoritative about what was dropped).
+	flagged := buildScriptPromptBlock(ScriptResult{
+		Outcome: ScriptProduced, Stdout: "short", StdoutTruncated: true,
+	})
+	assert.Contains(t, flagged, "output truncated")
 }
 
 // TestExecuteTask_EventTask_IgnoresScript asserts the guard: an event task
@@ -584,3 +593,105 @@ func TestExecuteTask_EventTask_IgnoresScript(t *testing.T) {
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }
+
+// TestExecuteTask_ScriptPhase_CancelDoesNotConsumeRun guards the cancel
+// bookkeeping: cancelling during the script phase aborts a run that never
+// produced a result, so it must NOT exhaust a `once` task. Advancing the
+// schedule there would mark the task completed (and null next_run_at) without
+// the AI ever executing, silently swallowing the user's one-shot task.
+func TestExecuteTask_ScriptPhase_CancelDoesNotConsumeRun(t *testing.T) {
+	skipOnWindows(t)
+	setupSchedulerScriptDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"script-agent": {ID: "script-agent", Name: "Script Agent", Backend: "nonexistent-backend-xyz"},
+	}
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(nil) })
+
+	s := NewScheduler()
+	t.Cleanup(s.Stop)
+
+	task := &model.ScheduledTask{
+		ProjectPath: t.TempDir(),
+		Name:        "Once Cancel",
+		CronExpr:    "0 * * * *",
+		AgentID:     "script-agent",
+		Prompt:      "do work",
+		RepeatMode:  "once",
+		Script:      "sleep 30",
+		Status:      "active",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	before, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.NotNil(t, before.NextRunAt, "a cron task must have a next_run_at after AddTask")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.executeTask(task, task.ProjectPath, "auto", nil)
+	}()
+
+	require.Eventually(t, func() bool {
+		return s.CancelExecution("script-"+strconv.FormatInt(task.ID, 10)) == nil
+	}, 2*time.Second, 10*time.Millisecond, "the script execution must be cancellable")
+	<-done
+
+	after, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "active", after.Status,
+		"a script-phase cancel must not complete a once task the AI never ran")
+	require.NotNil(t, after.NextRunAt,
+		"a script-phase cancel must leave the schedule intact")
+	assert.Equal(t, before.RunCount+1, after.RunCount,
+		"the aborted run is still recorded")
+
+	// The cancelled execution row is still written, so the user can see it.
+	var status string
+	require.NoError(t, dbRead.QueryRow(
+		"SELECT status FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1", task.ID).Scan(&status))
+	assert.Equal(t, "cancelled", status)
+}
+
+// TestExecuteTask_ScriptSkip_StillConsumesRun is the converse guard: a skip is
+// a completed decision ("nothing to do"), so it must keep advancing the
+// schedule — including completing a `once` task, which has then legitimately
+// run its course.
+func TestExecuteTask_ScriptSkip_StillConsumesRun(t *testing.T) {
+	skipOnWindows(t)
+	setupSchedulerScriptDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"script-agent": {ID: "script-agent", Name: "Script Agent", Backend: "nonexistent-backend-xyz"},
+	}
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	s := NewScheduler()
+	t.Cleanup(s.Stop)
+
+	task := &model.ScheduledTask{
+		ProjectPath: t.TempDir(),
+		Name:        "Once Skip",
+		CronExpr:    "0 * * * *",
+		AgentID:     "script-agent",
+		Prompt:      "do work",
+		RepeatMode:  "once",
+		Script:      "true", // exits 0, no output -> skip
+		Status:      "active",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	s.executeTask(task, task.ProjectPath, "auto", nil)
+
+	after, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", after.Status, "a skip is a completed run for a once task")
+	assert.Equal(t, 1, after.RunCount)
+}

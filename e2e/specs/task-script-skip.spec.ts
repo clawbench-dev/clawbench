@@ -94,14 +94,18 @@ async function installNotificationRecorders(page: Page): Promise<void> {
       w.Notification = RecordingNotification
     }
 
-    // The ✅ toast and the completion popover are both teleported into <body>,
+    // The ✅ toast and the completion card are both teleported into <body>,
     // so watch the whole document. rAF-coalesced: the observer fires on every
     // boot-time mutation and only an element's appearance matters here.
+    //
+    // The card's classes are `.completion-notify-layer` / `.completion-notify`
+    // (it was renamed from the old `.completion-popover`); matching a stale
+    // name would make every assertion below pass vacuously.
     let scheduled = false
     const scan = () => {
       const toast = document.querySelector('.toast')
       if (toast) w.__e2eNotifications.push({ kind: 'toast', text: toast.textContent || '' })
-      if (document.querySelector('.completion-popover')) {
+      if (document.querySelector('.completion-notify')) {
         w.__e2eNotifications.push({ kind: 'popover', text: '' })
       }
     }
@@ -238,9 +242,9 @@ test.describe.serial('Task pre-AI script (smoke)', () => {
       `no toast/browser notification may name the skipped task: ${JSON.stringify(notifications)}`,
     ).toEqual([])
 
-    // The completion popover does not auto-dismiss, so had one been raised for
+    // The completion card does not auto-dismiss, so had one been raised for
     // this run it would still be on screen now.
-    await expect(page.locator('.completion-popover')).toHaveCount(0)
+    await expect(page.locator('.completion-notify')).toHaveCount(0)
   })
 
   test('the script field renders for a cron task but not for an event task', async ({ page }) => {
