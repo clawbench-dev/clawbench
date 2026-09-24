@@ -306,6 +306,30 @@ vi.mock('@/components/file/JumpDirDialog.vue', () => ({
   }),
 }))
 
+// Mock the shared path-annotation opener so the content-search delegation can be
+// asserted without a real file fetch. The component must route a chosen hit
+// through openFilePath — a bare `open-file-overlay` dispatch would skip
+// store.selectFile and land on an empty viewer.
+const mockOpenFilePath = vi.hoisted(() => vi.fn(async () => true))
+vi.mock('@/composables/useFilePathAnnotation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useFilePathAnnotation')>()
+  return { ...actual, openFilePath: mockOpenFilePath }
+})
+
+// Stub the content-search dialog: its own behaviour is covered in
+// ContentSearchDialog.test.ts. Here we only need to trigger its openFile emit.
+vi.mock('@/components/file/ContentSearchDialog.vue', () => ({
+  default: defineComponent({
+    name: 'ContentSearchDialog',
+    props: ['currentDir'],
+    emits: ['openFile', 'close'],
+    setup(_props, { expose }) {
+      expose({ open: () => {}, close: () => {}, focusInput: () => {} })
+      return () => null
+    },
+  }),
+}))
+
 // Mock useFileSearch so the inline search mode can be driven from tests
 // without opening a real SSE connection.
 const searchState = reactive({
@@ -594,6 +618,21 @@ describe('FileManagerContent — rendering', () => {
     const wrapper = mountContent()
     const toolbarBtns = wrapper.findAll('.toolbar-btn')
     expect(toolbarBtns.length).toBeGreaterThanOrEqual(4) // sort, hidden, refresh, multi-select, more
+  })
+
+  it('ranks content-search high enough that it does not collapse first', () => {
+    const wrapper = mountContent()
+    const ids = (wrapper.vm as any).$.setupState.demotableToolbarIds as string[]
+
+    // useToolbarOverflow keeps a PREFIX of this list inline and collapses the
+    // tail, so a late entry disappears first. contentSearch used to sit last,
+    // which made the button invisible on a normal-width toolbar — the reported
+    // bug. It must rank above the secondary toggles.
+    expect(ids).toContain('contentSearch')
+    const pos = ids.indexOf('contentSearch')
+    for (const lower of ['jump', 'sharedFiles', 'hidden', 'multiselect']) {
+      expect(pos, `contentSearch should outrank ${lower}`).toBeLessThan(ids.indexOf(lower))
+    }
   })
 })
 
@@ -5564,5 +5603,42 @@ describe('thumbnail lazy mounting', () => {
     await nextTick()
 
     expect(wrapper.findAll('img.file-thumb')).toHaveLength(0)
+  })
+})
+
+// ── Content (grep) search dialog wiring ──
+
+describe('FileManagerContent — content search dialog', () => {
+  it('opens the dialog from the toolbar button', async () => {
+    mockToolbarCollapsedIds.length = 0
+    const wrapper = mountContent()
+    // The dialog ref must be wired; openContentSearch is the exposed entry point
+    // that App's Ctrl+Shift+F also calls.
+    expect(typeof (wrapper.vm as any).openContentSearch).toBe('function')
+    expect(() => (wrapper.vm as any).openContentSearch()).not.toThrow()
+  })
+
+  it('routes a chosen hit through openFilePath (not a bare overlay dispatch)', () => {
+    mockOpenFilePath.mockClear()
+    const wrapper = mountContent()
+    const vm = wrapper.vm as any
+
+    vm.$.setupState.onContentSearchOpenFile('src/a.go', 42)
+
+    // openFilePath owns existence check, content fetch and the line target.
+    // Dispatching open-file-overlay directly would open an empty viewer.
+    expect(mockOpenFilePath).toHaveBeenCalledTimes(1)
+    const [path, line, , source] = mockOpenFilePath.mock.calls[0] as unknown as [string, number, unknown, string]
+    expect(path).toBe('src/a.go')
+    expect(line).toBe(42)
+    // 'browse': the dialog lives in the file manager, so Back returns there.
+    expect(source).toBe('browse')
+  })
+
+  it('ignores an empty path from a hit', () => {
+    mockOpenFilePath.mockClear()
+    const wrapper = mountContent()
+    ;(wrapper.vm as any).$.setupState.onContentSearchOpenFile('', 1)
+    expect(mockOpenFilePath).not.toHaveBeenCalled()
   })
 })

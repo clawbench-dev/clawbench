@@ -1,7 +1,8 @@
 <template>
   <BottomSheet
-    :open="open"
+    :open="drawer.effectiveOpen.value"
     auto
+    maximized
     panel-class="content-search-sheet"
     @close="handleClose"
   >
@@ -192,21 +193,29 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useFileContentSearch } from '@/composables/useFileContentSearch'
 import { useListNav } from '@/composables/useListNav'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { highlightRanges, parentDirOf } from '@/utils/contentSearchMark'
 
 const { t } = useI18n()
 
 const props = defineProps<{
-  open: boolean
   /** Directory the search starts from (project-relative or absolute). */
   currentDir: string
 }>()
 
 const emit = defineEmits<{
   close: []
-  /** Open a file at a line, then dismiss the dialog. */
+  /** A hit was chosen: open the file at that line. */
   openFile: [path: string, line: number]
 }>()
+
+// Bound to the file-manager (browse) tab. BottomSheet teleports to <body>, so
+// it would otherwise survive a tab switch and float over an unrelated panel.
+// Binding it means: leave browse -> hidden; come back -> restored with the
+// results still there. autoRestore stays at its default (true) because a search
+// is an in-progress task, not a fire-and-forget popover — closing it on tab
+// return would throw away the query and results the user was working through.
+const drawer = useTabDrawer('browse')
 
 const search = useFileContentSearch()
 const inputRef = ref<InstanceType<typeof SearchInput> | null>(null)
@@ -254,7 +263,7 @@ function rerun() {
 
 /** Re-run when include/exclude settle (debounced by the composable). */
 watch(() => [search.state.include, search.state.exclude], () => {
-  if (props.open && hasQuery.value) search.startSearch(props.currentDir)
+  if (drawer.effectiveOpen.value && hasQuery.value) search.startSearch(props.currentDir)
 })
 
 /**
@@ -275,7 +284,11 @@ watch(() => search.state.results, () => {
 // Focus the input once the sheet has finished sliding in. Focusing during the
 // animation makes the browser scroll the still-animating panel, which reads as
 // the dialog jumping — see the SearchDrawer/UserMsgIndexDrawer precedent.
-watch(() => props.open, async (isOpen) => {
+//
+// Keyed off effectiveOpen (not a prop): the drawer is tab-bound, so returning
+// to the browse tab re-opens it and must re-focus. Re-running the query on
+// return refreshes results that may have gone stale while the user was away.
+watch(() => drawer.effectiveOpen.value, async (isOpen) => {
   if (isOpen) {
     await new Promise(r => setTimeout(r, 300))
     nextTick(() => inputRef.value?.focus())
@@ -287,10 +300,20 @@ watch(() => props.open, async (isOpen) => {
 
 // A directory change invalidates the search root.
 watch(() => props.currentDir, () => {
-  if (props.open && hasQuery.value) search.startSearch(props.currentDir, true)
+  if (drawer.effectiveOpen.value && hasQuery.value) search.startSearch(props.currentDir, true)
 })
 
 function openMatch(path: string, line: number) {
+  // Reuse the shared path-annotation opener rather than hand-rolling a
+  // `open-file-overlay` dispatch. That dispatch only pushes onto the file nav
+  // stack and switches tabs — it never loads the file, so a bare dispatch opens
+  // an empty viewer. openFilePath owns the whole pipeline: existence check with
+  // a "file not found" toast, project-external handling, `store.selectFile`
+  // (which fetches the content), then the overlay event with the line target,
+  // which the coordinator turns into scroll + highlight.
+  //
+  // Source is 'browse': the dialog lives inside the file manager, so Back must
+  // return to the browse tab rather than treating this as a chat/task jump.
   emit('openFile', path, line)
 }
 
@@ -348,10 +371,13 @@ watch(() => search.state.results, () => listNav.reset())
 
 function handleClose() {
   search.cancelSearch()
-  emit('close')
+  drawer.close()
 }
 
 defineExpose({
+  /** Open the dialog (used by the toolbar button and Ctrl+Shift+F). */
+  open: () => drawer.open(),
+  close: () => drawer.close(),
   focusInput() {
     inputRef.value?.focus()
   },

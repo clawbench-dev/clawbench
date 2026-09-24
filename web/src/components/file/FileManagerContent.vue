@@ -542,11 +542,11 @@
     <!-- Independent content (grep) search dialog. Kept separate from the
          resident filename filter above: that one narrows the listing you are
          looking at, while this one searches inside file contents across the
-         tree and jumps to a line. -->
+         tree and jumps to a line. The dialog owns its own browse-tab binding,
+         so it hides on tab switch and restores on return. -->
     <ContentSearchDialog
-      :open="contentSearchOpen"
+      ref="contentSearchDialogRef"
       :current-dir="currentDir"
-      @close="closeContentSearch"
       @open-file="onContentSearchOpenFile"
     />
     <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
@@ -568,7 +568,7 @@ import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@/utils/path'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -576,7 +576,7 @@ import {
   numberedName,
 } from '@/utils/fileManager.ts'
 import { store } from '@/stores/app.ts'
-import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
+import { navToFileInManager, openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -895,10 +895,16 @@ watch(moreMenuOpen, (open) => {
 // Responsive toolbar overflow. The demotable list is the same on every
 // platform — preview mode is available on mobile too, so it takes a slot like
 // any other button and can collapse into the More dropdown.
+//
+// ORDER IS PRIORITY: useToolbarOverflow keeps a PREFIX inline and collapses the
+// tail, so the first entries are the last to collapse. `contentSearch` sits
+// early (right after the create/upload basics) because it is a primary action
+// users look for in the toolbar — leaving it last made it the very first button
+// to disappear into the More menu, which reads as "the feature is missing".
 const dirToolbarRef = ref(null)
 const demotableToolbarIds = computed(() => [
-  'refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle',
-  'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles', 'contentSearch',
+  'refresh', 'newFile', 'newFolder', 'contentSearch', 'upload', 'uploadFolder',
+  'viewToggle', 'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles',
 ])
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
@@ -1345,35 +1351,39 @@ function openSearch() {
 
 // ── Content (grep) search dialog ──
 // A separate surface from the resident filename filter: this one searches
-// inside file contents and jumps to a line. `openContentSearch` is exposed so
-// App can bind a shortcut.
-const contentSearchOpen = ref(false)
+// inside file contents and jumps to a line. The dialog owns its open state and
+// its browse-tab binding; the parent just forwards the two entry points, which
+// are also exposed so App can bind a shortcut.
+const contentSearchDialogRef = ref(null)
 
 function openContentSearch() {
-    contentSearchOpen.value = true
+    contentSearchDialogRef.value?.open()
 }
 
 function closeContentSearch() {
-    contentSearchOpen.value = false
+    contentSearchDialogRef.value?.close()
 }
 
 /**
  * A content-search hit was chosen: open the file at that line.
  *
- * Dispatch only — the navigation coordinator owns opening a file from an
- * arbitrary surface (it resolves file-vs-directory, handles project-external
- * paths, pushes onto the file nav stack and switches to the view tab). Doing
- * `store.selectFile` here as well would read the file twice, since the
- * coordinator selects it again as part of `openFileInViewer`.
+ * Delegates to the shared `openFilePath`, which owns the entire open pipeline
+ * (existence check + toast, project-external handling, content fetch via
+ * `store.selectFile`, then the overlay event carrying the line target that the
+ * navigation coordinator turns into scroll + highlight). Dispatching
+ * `open-file-overlay` directly would skip the content fetch and land on an
+ * empty viewer.
  *
- * The dialog is dismissed first so the sheet is not left covering the viewer.
+ * Source is 'browse' — the dialog lives in the file manager, so Back should
+ * return to the browse tab rather than treating this as a chat/task jump.
+ *
+ * The dialog is deliberately NOT closed here: it is tab-bound, so switching to
+ * the view tab hides it, and returning to browse restores the results the user
+ * was working through.
  */
 function onContentSearchOpenFile(path, line) {
-    contentSearchOpen.value = false
     if (!path) return
-    window.dispatchEvent(new CustomEvent('open-file-overlay', {
-        detail: { path, lineStart: line, source: 'browse' },
-    }))
+    void openFilePath(path, line, undefined, 'browse')
 }
 
 /** Enter in the search box opens the highlighted result (files keep search).
