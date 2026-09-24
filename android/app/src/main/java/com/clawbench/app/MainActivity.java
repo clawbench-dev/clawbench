@@ -3121,10 +3121,10 @@ public class MainActivity extends AppCompatActivity {
                 String url;
                 if (path.startsWith("/")) {
                     // External file: use ?path= query param
-                    url = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                    url = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
                 } else {
                     // Project-relative: use URL path
-                    url = serverUrl + "/api/local-file/" + Uri.encode(path, "/") + "?download=1";
+                    url = serverUrl + "/api/fs/raw/" + Uri.encode(path, "/") + "?download=1";
                 }
                 // Trigger the DownloadListener by asking WebView to load the URL
                 // The ?download=1 param makes the server return Content-Disposition: attachment
@@ -3135,7 +3135,7 @@ public class MainActivity extends AppCompatActivity {
 
         /**
          * Download a file by its full URL (e.g. /api/apk) using DownloadManager.
-         * Unlike downloadFile(), this does not hardcode the /api/local-file/ prefix
+         * Unlike downloadFile(), this does not hardcode the /api/fs/raw/ prefix
          * and uses DownloadManager directly for reliable progress notifications.
          * For APK files, automatically triggers the system installer when download completes.
          * @param url Full URL or server-relative path (e.g. "/api/apk")
@@ -3397,11 +3397,11 @@ public class MainActivity extends AppCompatActivity {
                     String downloadUrl;
                     if (path.startsWith("/")) {
                         // External file: use ?path= query param
-                        downloadUrl = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                        downloadUrl = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
                     } else {
                         // Project-relative: use URL path
                         String encodedPath = Uri.encode(path, "/");
-                        downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+                        downloadUrl = serverUrl + "/api/fs/raw/" + encodedPath + "?download=1";
                     }
 
                     OkHttpClient client = activity.buildTrustingOkHttpClient();
@@ -3533,10 +3533,10 @@ public class MainActivity extends AppCompatActivity {
                         // Build download URL
                         String downloadUrl;
                         if (path.startsWith("/")) {
-                            downloadUrl = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                            downloadUrl = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
                         } else {
                             String encodedPath = Uri.encode(path, "/");
-                            downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+                            downloadUrl = serverUrl + "/api/fs/raw/" + encodedPath + "?download=1";
                         }
 
                         Request request = new Request.Builder()

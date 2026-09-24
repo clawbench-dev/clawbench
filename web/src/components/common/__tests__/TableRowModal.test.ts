@@ -29,31 +29,31 @@ describe('TableRowModal image lightbox', () => {
   })
 
   it('opens the lightbox with the full-size src when the image body is clicked', async () => {
-    const { openLightbox } = await mountModal(CELL_HTML('/api/file/thumb?path=img/logo.png&w=800', '/api/local-file/img/logo.png'))
+    const { openLightbox } = await mountModal(CELL_HTML('/api/fs/thumb?target=img/logo.png&w=800', '/api/fs/raw/img/logo.png'))
     const img = document.querySelector('.table-row-value .lightbox-img') as HTMLElement | null
     expect(img).toBeTruthy()
     img!.click()
     await nextTick()
     expect(openLightbox).toHaveBeenCalledTimes(1)
-    expect(openLightbox).toHaveBeenCalledWith('/api/local-file/img/logo.png')
+    expect(openLightbox).toHaveBeenCalledWith('/api/fs/raw/img/logo.png')
   })
 
   it('opens the lightbox with the full-size src when the figure view button is clicked', async () => {
-    const { openLightbox } = await mountModal(CELL_HTML('/api/file/thumb?path=img/logo.png&w=800', '/api/local-file/img/logo.png'))
+    const { openLightbox } = await mountModal(CELL_HTML('/api/fs/thumb?target=img/logo.png&w=800', '/api/fs/raw/img/logo.png'))
     const btn = document.querySelector('.table-row-value .image-block-view-btn') as HTMLElement | null
     expect(btn).toBeTruthy()
     btn!.click()
     await nextTick()
     expect(openLightbox).toHaveBeenCalledTimes(1)
-    expect(openLightbox).toHaveBeenCalledWith('/api/local-file/img/logo.png')
+    expect(openLightbox).toHaveBeenCalledWith('/api/fs/raw/img/logo.png')
   })
 
   it('falls back to the inline src when there is no data-full-src', async () => {
-    const { openLightbox } = await mountModal('<span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/img/logo.png" alt="a"></span>')
+    const { openLightbox } = await mountModal('<span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/fs/raw/img/logo.png" alt="a"></span>')
     const img = document.querySelector('.table-row-value .lightbox-img') as HTMLElement | null
     img!.click()
     await nextTick()
     expect(openLightbox).toHaveBeenCalledTimes(1)
-    expect(openLightbox).toHaveBeenCalledWith(expect.stringContaining('/api/local-file/img/logo.png'))
+    expect(openLightbox).toHaveBeenCalledWith(expect.stringContaining('/api/fs/raw/img/logo.png'))
   })
 })

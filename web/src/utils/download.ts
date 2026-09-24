@@ -6,14 +6,14 @@ import { isShareMode, shareApiUrl } from '@/share/shareMode'
  * Download utilities shared across all components.
  *
  * Three download primitives:
- * - buildLocalFileUrl() — construct /api/local-file/ URLs with proper encoding
+ * - buildLocalFileUrl() — construct /api/fs/raw/ URLs with proper encoding
  * - downloadFileByPath() — download a file by relative or absolute path (web/app dispatch)
  * - downloadBlob()      — download client-side content as a file (blob → <a> or native bridge)
  */
 
 /**
  * Build a file-content URL with proper path encoding.
- * - Normal mode: `/api/local-file/` (project-relative via URL path, absolute via ?path=).
+ * - Normal mode: `/api/fs/raw/` (project-relative via URL path, absolute via ?target=).
  * - Share mode: `/api/share/{token}/local/...` so the anonymous share SPA can
  *   fetch the referenced file without auth. Absolute paths resolve through the
  *   token-scoped ?path= endpoint; bare relative paths are served relative to the
@@ -39,14 +39,14 @@ export function buildLocalFileUrl(
     }
 
     if (isAbsolutePath(path)) {
-        // External file: use ?path= query param
-        params.push(`path=${encodeURIComponent(path)}`)
-        return '/api/local-file/?' + params.join('&')
+        // External file: use ?target= query param
+        params.push(`target=${encodeURIComponent(path)}`)
+        return '/api/fs/raw/?' + params.join('&')
     }
 
     // Project-relative: encode segments individually
     const encoded = path.split('/').map(s => encodeURIComponent(s)).join('/')
-    let url = `/api/local-file/${encoded}`
+    let url = `/api/fs/raw/${encoded}`
     if (params.length) url += '?' + params.join('&')
     return url
 }

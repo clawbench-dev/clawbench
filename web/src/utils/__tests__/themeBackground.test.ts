@@ -320,7 +320,7 @@ describe('themeBackground', () => {
       invalidateGalleryImageUrls()
       const url = galleryImageUrl('local-1-a.png', '/data/theme/local/local-1-a.png')
 
-      expect(url).toContain('/api/file/thumb?path=')
+      expect(url).toContain('/api/fs/thumb?target=')
       expect(url).toContain(encodeURIComponent('/data/theme/local/local-1-a.png'))
       expect(url).toContain(`w=${THUMB_WIDTH}`)
       expect(url).not.toContain('theme-wallpaper')
@@ -332,17 +332,17 @@ describe('themeBackground', () => {
       const url = galleryImageUrl('local-1-a.png')
 
       expect(url).toContain('/api/file/theme-wallpaper?name=local-1-a.png')
-      expect(url).not.toContain('/api/file/thumb')
+      expect(url).not.toContain('/api/fs/thumb')
     })
 
     it('falls back to the full-size endpoint for SVG', () => {
-      // /api/file/thumb only rasterizes png/jpg/gif; SVG would 404, so it must
+      // /api/fs/thumb only rasterizes png/jpg/gif; SVG would 404, so it must
       // keep using the wallpaper endpoint (which serves it under a sandbox CSP).
       invalidateGalleryImageUrls()
       const url = galleryImageUrl('local-1-a.svg', '/data/theme/local/local-1-a.svg')
 
       expect(url).toContain('/api/file/theme-wallpaper?name=local-1-a.svg')
-      expect(url).not.toContain('/api/file/thumb')
+      expect(url).not.toContain('/api/fs/thumb')
     })
 
     it('caches the thumbnail URL per file', () => {
@@ -422,7 +422,7 @@ describe('themeBackground', () => {
         const out = await setWallpaperFromPath('assets/wall.png')
 
         // 1. Read the source file bytes through the local-file endpoint.
-        expect(fetchMock.mock.calls[0][0]).toContain('/api/local-file/assets/wall.png')
+        expect(fetchMock.mock.calls[0][0]).toContain('/api/fs/raw/assets/wall.png')
         // 2. Upload the bytes into the gallery.
         expect(fetchMock.mock.calls[1][0]).toBe('/api/theme/local/upload')
         const form = fetchMock.mock.calls[1][1].body as FormData

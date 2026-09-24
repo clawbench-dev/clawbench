@@ -69,18 +69,18 @@ const galleryUrlCache = new Map<string, string>()
  */
 export const THUMB_WIDTH = 144
 
-/** Extensions GET /api/file/thumb can rasterize; anything else falls back. */
+/** Extensions GET /api/fs/thumb can rasterize; anything else falls back. */
 const THUMB_RASTER_EXTS = ['.png', '.jpg', '.jpeg', '.gif']
 
 /**
  * URL for a small JPEG preview of a wallpaper.
  *
- * Prefers GET /api/file/thumb, which scales server-side: the settings panel
+ * Prefers GET /api/fs/thumb, which scales server-side: the settings panel
  * draws a 72px tile, and serving the full image meant downloading 2.4MB for the
  * Bing 4K wallpaper (a ~470x waste) on every render.
  *
  * Falls back to the full-size endpoint when the thumbnail route cannot serve
- * the file — notably SVG, which /api/file/thumb does not rasterize (it handles
+ * the file — notably SVG, which /api/fs/thumb does not rasterize (it handles
  * png/jpg/gif only) but which the wallpaper endpoint serves under a sandbox CSP.
  * A missing absPath (older server, or an unresolvable name) also falls back.
  */
@@ -93,7 +93,7 @@ export function galleryImageUrl(name: string, absPath?: string): string {
   const canThumb = !!absPath && THUMB_RASTER_EXTS.includes(ext)
 
   const url = canThumb
-    ? `/api/file/thumb?path=${encodeURIComponent(absPath)}&w=${THUMB_WIDTH}`
+    ? `/api/fs/thumb?target=${encodeURIComponent(absPath)}&w=${THUMB_WIDTH}`
     : `/api/file/theme-wallpaper?name=${encodeURIComponent(name)}&v=${version}`
 
   galleryUrlCache.set(name, url)
@@ -234,7 +234,7 @@ export interface GalleryItem {
   name: string
   uploaded_at: number
   size: number
-  /** Absolute path, for GET /api/file/thumb (which takes a path, not a name). */
+  /** Absolute path, for GET /api/fs/thumb (which takes a path, not a name). */
   abs_path?: string
 }
 
@@ -262,7 +262,7 @@ export interface BingStatus {
   mkt: string
   last_error: string
   last_attempt_at: number
-  /** Absolute path, for GET /api/file/thumb. */
+  /** Absolute path, for GET /api/fs/thumb. */
   abs_path?: string
 }
 
@@ -313,7 +313,7 @@ export function isBingFirstImagePending(appearance: Record<string, unknown> | un
 
 /**
  * Set the wallpaper from a server-side image file: read its bytes via
- * /api/local-file/, upload them into the local gallery, then select the new
+ * /api/fs/raw/, upload them into the local gallery, then select the new
  * entry as the active wallpaper.
  *
  * The gallery is the only wallpaper store — a file picked in the file viewer

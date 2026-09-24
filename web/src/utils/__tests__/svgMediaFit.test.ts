@@ -29,8 +29,8 @@ function withNaturalSize(img: HTMLImageElement, w: number, h: number): void {
 describe('isSvgImageSrc', () => {
   it('matches every served form of an SVG reference', () => {
     expect(isSvgImageSrc('chart.svg')).toBe(true)
-    expect(isSvgImageSrc('/api/local-file/docs/chart.svg?t=1')).toBe(true)
-    expect(isSvgImageSrc('/api/local-file/docs/chart.svg#frag')).toBe(true)
+    expect(isSvgImageSrc('/api/fs/raw/docs/chart.svg?t=1')).toBe(true)
+    expect(isSvgImageSrc('/api/fs/raw/docs/chart.svg#frag')).toBe(true)
     // Share mode / absolute paths encode the target in a query parameter.
     expect(isSvgImageSrc('/api/share/tok/local?path=%2Ftmp%2Fchart.svg&t=1')).toBe(true)
     expect(isSvgImageSrc('data:image/svg+xml;base64,PHN2Zy8+')).toBe(true)
@@ -38,7 +38,7 @@ describe('isSvgImageSrc', () => {
 
   it('does not match raster formats or unrelated srcs', () => {
     expect(isSvgImageSrc('photo.png')).toBe(false)
-    expect(isSvgImageSrc('/api/file/thumb?path=docs/a.jpg&w=1200')).toBe(false)
+    expect(isSvgImageSrc('/api/fs/thumb?target=docs/a.jpg&w=1200')).toBe(false)
     expect(isSvgImageSrc('')).toBe(false)
     expect(isSvgImageSrc(null)).toBe(false)
     expect(isSvgImageSrc(undefined)).toBe(false)
@@ -151,14 +151,14 @@ describe('stampSvgFigure', () => {
   })
 
   it('stamps an SVG-file image figure once the image has decoded', () => {
-    const w = figure(imgWrap('/api/local-file/docs/chart.svg?t=1'))
+    const w = figure(imgWrap('/api/fs/raw/docs/chart.svg?t=1'))
     withNaturalSize(w.querySelector('img')!, 100, 400)
     expect(stampSvgFigure(w)).toBe(true)
     expect(w.style.getPropertyValue(SVG_AR_PROP)).toBe('0.25')
   })
 
   it('leaves a raster image figure untouched', () => {
-    const w = figure(imgWrap('/api/file/thumb?path=docs/a.png&w=1200'))
+    const w = figure(imgWrap('/api/fs/thumb?target=docs/a.png&w=1200'))
     withNaturalSize(w.querySelector('img')!, 400, 100)
     expect(stampSvgFigure(w)).toBe(false)
     expect(w.classList.contains(SVG_FIT_CLASS)).toBe(false)
@@ -189,7 +189,7 @@ describe('stampSvgFigure', () => {
       '<div class="image-block-header"><span class="image-block-header-actions">'
       + '<button class="image-block-view-btn"><svg viewBox="0 0 24 24"></svg></button>'
       + '</span></div>'
-      + imgWrap('/api/local-file/docs/photo.png')
+      + imgWrap('/api/fs/raw/docs/photo.png')
     )
     withNaturalSize(w.querySelector('img')!, 400, 100)
     expect(stampSvgFigure(w)).toBe(false)
@@ -221,8 +221,8 @@ describe('stampSvgFigures', () => {
     const host = document.createElement('div')
     host.innerHTML = [
       figure(svgWrap('<svg class="lightbox-svg" viewBox="0 0 400 100"></svg>')).outerHTML,
-      figure(imgWrap('/api/local-file/docs/chart.svg?t=1')).outerHTML,
-      figure(imgWrap('/api/file/thumb?path=a.png&w=1200')).outerHTML,
+      figure(imgWrap('/api/fs/raw/docs/chart.svg?t=1')).outerHTML,
+      figure(imgWrap('/api/fs/thumb?target=a.png&w=1200')).outerHTML,
     ].join('')
     withNaturalSize(host.querySelectorAll('img')[0], 100, 400)
 

@@ -129,7 +129,7 @@ describe('useCodeLinkPreview', () => {
 
     expect(preview.isImageTarget.value).toBe(true)
     expect(preview.isMediaTarget.value).toBe(true)
-    // No /api/file call — media is served as raw bytes by /api/local-file/.
+    // No /api/file call — media is served as raw bytes by /api/fs/raw/.
     expect(mockApiGet).not.toHaveBeenCalled()
     expect(preview.status.value).toBe('ready')
     expect(preview.errorCode.value).toBeNull()
@@ -749,7 +749,7 @@ describe('useCodeLinkPreview', () => {
     expect(url).toContain('lineStart=270')
     expect(url).toContain('lineEnd=730')
     // A 50 MB file must not be fetched whole.
-    expect(url).not.toBe('/api/file/big.ts')
+    expect(url).not.toBe('/api/fs/file/big.ts')
   })
 
   it('reports total lines from the windowed response, not the window length', async () => {

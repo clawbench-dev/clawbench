@@ -585,31 +585,31 @@ describe('codeLinkPreview utils', () => {
 
   describe('buildPreviewUrl', () => {
     it('encodes relative paths', () => {
-      expect(buildPreviewUrl('src/utils/math.ts')).toBe('/api/file/src%2Futils%2Fmath.ts')
-      expect(buildPreviewUrl('utils/math.ts')).toBe('/api/file/utils%2Fmath.ts')
+      expect(buildPreviewUrl('src/utils/math.ts')).toBe('/api/fs/file/src%2Futils%2Fmath.ts')
+      expect(buildPreviewUrl('utils/math.ts')).toBe('/api/fs/file/utils%2Fmath.ts')
     })
 
     it('encodes Unix absolute paths with query param', () => {
-      expect(buildPreviewUrl('/etc/hosts')).toBe('/api/file?path=%2Fetc%2Fhosts')
+      expect(buildPreviewUrl('/etc/hosts')).toBe('/api/fs/file?target=%2Fetc%2Fhosts')
     })
 
     it('encodes Windows absolute paths with query param', () => {
-      expect(buildPreviewUrl('C:\\repo\\file.ts')).toBe('/api/file?path=C%3A%2Frepo%2Ffile.ts')
-      expect(buildPreviewUrl('D:/repo/file.ts')).toBe('/api/file?path=D%3A%2Frepo%2Ffile.ts')
+      expect(buildPreviewUrl('C:\\repo\\file.ts')).toBe('/api/fs/file?target=C%3A%2Frepo%2Ffile.ts')
+      expect(buildPreviewUrl('D:/repo/file.ts')).toBe('/api/fs/file?target=D%3A%2Frepo%2Ffile.ts')
     })
 
     it('appends the line window to a relative-path URL', () => {
       expect(buildPreviewUrl('src/a.ts', { start: 101, end: 200 }))
-        .toBe('/api/file/src%2Fa.ts?lineStart=101&lineEnd=200')
+        .toBe('/api/fs/file/src%2Fa.ts?lineStart=101&lineEnd=200')
     })
 
     it('appends the line window to an absolute-path URL with &', () => {
       expect(buildPreviewUrl('/etc/hosts', { start: 5, end: 9 }))
-        .toBe('/api/file?path=%2Fetc%2Fhosts&lineStart=5&lineEnd=9')
+        .toBe('/api/fs/file?target=%2Fetc%2Fhosts&lineStart=5&lineEnd=9')
     })
 
     it('omits the window when none is given', () => {
-      expect(buildPreviewUrl('src/a.ts', null)).toBe('/api/file/src%2Fa.ts')
+      expect(buildPreviewUrl('src/a.ts', null)).toBe('/api/fs/file/src%2Fa.ts')
     })
   })
 

@@ -117,7 +117,7 @@ watch(() => props.path, (path) => {
 }, { immediate: true })
 onUnmounted(() => { untrackMedia?.() })
 
-// Raw bytes come from /api/local-file/ (correct MIME, inline, no 10 MiB cap),
+// Raw bytes come from /api/fs/raw/ (correct MIME, inline, no 10 MiB cap),
 // not /api/file — which is JSON and reports raster images as binary.
 const mediaUrl = computed(() => {
   const base = buildLocalFileUrl(props.path)

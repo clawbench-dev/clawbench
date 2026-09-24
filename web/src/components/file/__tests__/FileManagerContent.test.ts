@@ -258,7 +258,7 @@ vi.mock('@/composables/useFileRefresh', () => ({
 const mockThumbable = vi.hoisted(() => ({ value: false }))
 
 vi.mock('@/utils/fileManager', () => ({
-  buildThumbUrl: (dir: string, name: string) => `/api/file/thumb?path=${dir}/${name}`,
+  buildThumbUrl: (dir: string, name: string) => `/api/fs/thumb?target=${dir}/${name}`,
   isImage: (e: any) => /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(e.name || ''),
   isAudio: (e: any) => /\.(mp3|wav|ogg)$/i.test(e.name || ''),
   isVideo: (e: any) => /\.(mp4|mov)$/i.test(e.name || ''),
@@ -4524,7 +4524,7 @@ describe('FileManagerContent — dropdowns', () => {
 describe('FileManagerContent — thumbnails', () => {
   it('thumbUrlFor builds a thumbnail URL from currentDir and name in browse mode', () => {
     const wrapper = mountContent({ currentDir: 'src' })
-    expect(wrapper.vm.thumbUrlFor({ name: 'a.png', path: 'src/a.png' })).toContain('/api/file/thumb')
+    expect(wrapper.vm.thumbUrlFor({ name: 'a.png', path: 'src/a.png' })).toContain('/api/fs/thumb')
   })
 
   it('thumbUrlFor builds a thumbnail URL from the result path in search mode', async () => {
@@ -5321,7 +5321,7 @@ describe('FileManagerContent — directory quick preview', () => {
     await wrapper.find('.dir-item[data-path="src"]').trigger('click')
     await nextTick()
 
-    // The body needs the directory to build /api/file/thumb URLs.
+    // The body needs the directory to build /api/fs/thumb URLs.
     expect(wrapper.findComponent(DirPreviewBodyStub).props('dirPath')).toBe('src')
   })
 
@@ -5490,7 +5490,7 @@ describe('FileManagerContent — gitignored entries', () => {
 
 // ── Thumbnail lazy mounting ─────────────────────────────────────────────────
 // Entering a directory used to mount one <img> (and therefore one
-// /api/file/thumb decode request) per image in the same tick. `loading="lazy"`
+// /api/fs/thumb decode request) per image in the same tick. `loading="lazy"`
 // did not prevent it — the element still existed and the browser fetched the
 // whole initial viewport immediately. A folder of dozens of images saturated
 // the server's CPU (measured: 32 parallel decodes → 638% CPU, and the DB-free
@@ -5547,7 +5547,7 @@ describe('thumbnail lazy mounting', () => {
 
     const thumbs = wrapper.findAll('img.file-thumb')
     expect(thumbs).toHaveLength(3)
-    expect(thumbs[0].attributes('src')).toContain('/api/file/thumb')
+    expect(thumbs[0].attributes('src')).toContain('/api/fs/thumb')
     // Thumbnails must not request SVG/WebP etc. — only decodable formats.
     expect(thumbs.map(t => t.attributes('src')).join(' ')).not.toContain('.md')
   })

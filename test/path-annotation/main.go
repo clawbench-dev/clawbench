@@ -84,7 +84,7 @@ var (
 	extDirEtc     = "/etc"
 )
 
-// ─── 项目外媒体（应渲染，改写为 /api/local-file/?path=<绝对路径>）───
+// ─── 项目外媒体（应渲染，改写为 /api/fs/raw/?target=<绝对路径>）───
 
 // 历史缺陷：所有 "/" 开头的 src 都被当站点根 URL 放行 → 404 不显示。
 var (

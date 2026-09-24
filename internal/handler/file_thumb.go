@@ -207,10 +207,10 @@ var thumbDecodeExts = []string{
 	".png", ".jpg", ".jpeg", ".gif",
 }
 
-// FileThumb handles GET /api/file/thumb?path=<path>&w=<width>
+// FileThumb handles GET /api/fs/thumb?target=<path>&w=<width>
 // Returns a JPEG thumbnail of the image file at the given path.
 func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // multi-format thumbnail generation
-	relPath := r.URL.Query().Get("path")
+	relPath := r.URL.Query().Get("target")
 	if relPath == "" {
 		model.WriteError(w, model.NotFound(nil, "path required"))
 		return

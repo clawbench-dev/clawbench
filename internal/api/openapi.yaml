@@ -2064,14 +2064,14 @@ paths:
         "200":
           description: 树形条目
 
-  /api/file/thumb:
+  /api/fs/thumb:
     get:
       tags: [Files]
       summary: 图片缩略图
       description: 按绝对路径服务端缩放（png/jpg/gif），SVG 需回退到壁纸原图端点。
       operationId: fileThumb
       parameters:
-        - name: path
+        - name: target
           in: query
           required: true
           schema:
@@ -2089,7 +2089,7 @@ paths:
                 type: string
                 format: binary
 
-  /api/file/{path}:
+  /api/fs/file/{path}:
     get:
       tags: [Files]
       summary: 读取文件内容
@@ -2106,7 +2106,7 @@ paths:
       operationId: fileGet
       parameters:
         - $ref: "#/components/parameters/FilePath"
-        - name: path
+        - name: target
           in: query
           description: 绝对路径（外部文件）。
           schema:
@@ -2182,15 +2182,15 @@ paths:
         "404":
           $ref: "#/components/responses/Error"
 
-  /api/local-file/{path}:
+  /api/fs/raw/{path}:
     get:
       tags: [Files]
       summary: 读取文件原始字节
-      description: 供图片/PDF/音视频等直接渲染。项目相对路径走 URL 路径，绝对路径走 `?path=`。
+      description: 供图片/PDF/音视频等直接渲染。项目相对路径走 URL 路径，绝对路径走 `?target=`。
       operationId: localFileGet
       parameters:
         - $ref: "#/components/parameters/FilePath"
-        - name: path
+        - name: target
           in: query
           description: 绝对路径（外部文件）。
           schema:

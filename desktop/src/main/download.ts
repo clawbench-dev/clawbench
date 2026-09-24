@@ -12,9 +12,9 @@ function pickSavePath(defaultName: string): Promise<string | null> {
 function resolveLocalFileUrl(filePath: string): string {
   const base = getStore().get('serverUrl') || ''
   if (filePath.startsWith('/')) {
-    return `${base}/api/local-file/?download=1&path=${encodeURIComponent(filePath)}`
+    return `${base}/api/fs/raw/?download=1&target=${encodeURIComponent(filePath)}`
   }
-  return `${base}/api/local-file/${filePath.split('/').map(encodeURIComponent).join('/')}?download=1`
+  return `${base}/api/fs/raw/${filePath.split('/').map(encodeURIComponent).join('/')}?download=1`
 }
 
 async function fetchToFile(url: string, dest: string): Promise<void> {

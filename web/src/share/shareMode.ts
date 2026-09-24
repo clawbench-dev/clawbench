@@ -5,7 +5,7 @@
  * setShareToken() before mounting preview components so that URL builders
  * (buildLocalFileUrl, markdown image rewriting) emit token-scoped URLs under
  * /api/share/{token}/... instead of the auth-protected /api/file/ and
- * /api/local-file/ endpoints.
+ * /api/fs/raw/ endpoints.
  *
  * baseDir records the directory of the shared file: relative media references
  * in the shared document resolve against it.

@@ -1115,7 +1115,7 @@ function thumbUrlFor(entry) {
     // Search results carry a project-relative path already (parent directory
     // may differ per result), so build the thumb URL straight from the path.
     if (searchHasQuery.value) {
-        return appendThumbVersion(`/api/file/thumb?path=${encodeURIComponent(entry.path)}&w=80`, entry.path)
+        return appendThumbVersion(`/api/fs/thumb?target=${encodeURIComponent(entry.path)}&w=80`, entry.path)
     }
     return appendThumbVersion(buildThumbUrl(props.currentDir || '', entry.name), joinPath(props.currentDir || '', entry.name))
 }
@@ -1137,7 +1137,7 @@ function appendThumbVersion(url, path) {
  * Thumbnails are only mounted once their row scrolls into view.
  *
  * The list renders every entry in the directory at once, so entering a folder
- * with dozens of images previously fired one /api/file/thumb request per image
+ * with dozens of images previously fired one /api/fs/thumb request per image
  * in the same tick. `loading="lazy"` does NOT prevent that: it defers the
  * browser's own fetch but still creates the <img>, and for the whole initial
  * viewport it fetches immediately — the request burst happens regardless.

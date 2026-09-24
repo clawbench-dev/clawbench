@@ -144,7 +144,7 @@ function restoreScrollPosition(scrollTop: number): void {
 
 async function prefetchFileContent(path: string): Promise<string | null> {
     try {
-        const resp = await fetch(`/api/file/${encodeURIComponent(path)}`)
+        const resp = await fetch(`/api/fs/file/${encodeURIComponent(path)}`)
         if (!resp.ok) return null
         const data = await resp.json()
         // Don't try to diff binary or too-large files

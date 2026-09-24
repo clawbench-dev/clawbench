@@ -16,8 +16,8 @@ describe('createFixLocalImagePaths', () => {
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 42, isPC: true })
     const html = '<p><img src="assets/a.png" alt="a"></p>'
     const out = fix(html)
-    expect(out).toContain('src="/api/file/thumb?path=docs/assets/a.png&amp;w=1200"')
-    expect(out).toContain('data-full-src="/api/local-file/docs/assets/a.png?t=42"')
+    expect(out).toContain('src="/api/fs/thumb?target=docs/assets/a.png&amp;w=1200"')
+    expect(out).toContain('data-full-src="/api/fs/raw/docs/assets/a.png?t=42"')
     // data-attach-src carries the resolved project-relative path for re-drag
     expect(out).toContain('data-attach-src="docs/assets/a.png"')
     // Local image is lifted into an image block with a header bar (view /
@@ -51,8 +51,8 @@ describe('createFixLocalImagePaths', () => {
     // and carries no attach data (the attach flow speaks project-relative paths).
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
     const out = fix('<img src="/abs/a.png">')
-    expect(out).toContain('data-full-src="/api/local-file/?path=%2Fabs%2Fa.png&amp;t=1"')
-    expect(out).toContain('path=%2Fabs%2Fa.png')
+    expect(out).toContain('data-full-src="/api/fs/raw/?target=%2Fabs%2Fa.png&amp;t=1"')
+    expect(out).toContain('target=%2Fabs%2Fa.png')
     expect(out).not.toContain('src="/abs/a.png"')
     expect(out).not.toContain('data-attach-src')
     expect(out).not.toContain('image-block-attach-btn')
@@ -63,36 +63,36 @@ describe('createFixLocalImagePaths', () => {
     // resolve against the project root and point at a different file.
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 3, isPC: true })
     const out = fix('<img src="/tmp/final_icon.png">')
-    expect(out).toContain('?path=%2Ftmp%2Ffinal_icon.png')
+    expect(out).toContain('?target=%2Ftmp%2Ffinal_icon.png')
     expect(out).not.toContain('docs%2Ftmp')
-    expect(out).not.toContain('/api/local-file/docs')
+    expect(out).not.toContain('/api/fs/raw/docs')
   })
 
   it('does not re-wrap a src that is already served by a file endpoint', () => {
     // Markup can be rendered through this pipeline more than once (and export
     // re-renders content that may already carry served URLs). Wrapping an
     // already-served URL a second time produced
-    // `?path=/api/local-file/images/a.png`, which the backend then treats as a
+    // `?path=/api/fs/raw/images/a.png`, which the backend then treats as a
     // literal relative path and skips.
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
     for (const src of [
-      '/api/local-file/images/a.png',
-      '/api/local-file/?path=%2Ftmp%2Fa.png',
-      '/api/file/thumb?path=images/a.png&w=1200',
+      '/api/fs/raw/images/a.png',
+      '/api/fs/raw/?target=%2Ftmp%2Fa.png',
+      '/api/fs/thumb?target=images/a.png&w=1200',
     ]) {
       const out = fix(`<img src="${src}">`)
       // The src is preserved verbatim (only "&" is HTML-escaped in the
       // attribute), and nothing is wrapped around it again.
       expect(out).toContain(escapeHtml(src))
-      expect(out).not.toContain('data-full-src="/api/local-file/?path=%2Fapi')
+      expect(out).not.toContain('data-full-src="/api/fs/raw/?target=%2Fapi')
     }
   })
 
   it('serves non-thumbnailable formats from the original full URL', () => {
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 7, isPC: false })
     const out = fix('<img src="anim.gif">')
-    expect(out).toContain('src="/api/local-file/docs/anim.gif?t=7"')
-    expect(out).not.toContain('/api/file/thumb')
+    expect(out).toContain('src="/api/fs/raw/docs/anim.gif?t=7"')
+    expect(out).not.toContain('/api/fs/thumb')
     expect(out).toContain('data-attach-src="docs/anim.gif"')
     // Mobile width 640 for non-PC
     const pc = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 7, isPC: true })
@@ -103,7 +103,7 @@ describe('createFixLocalImagePaths', () => {
     const fix = createFixLocalImagePaths({ baseDir: 'a/b', imageTimestamp: 1, isPC: true })
     const out = fix('<img src="../c/图 d.png">')
     // ../ popped → a/c; CJK/space percent-encoded by segment.
-    expect(out).toContain('path=a/c/%E5%9B%BE%20d.png')
+    expect(out).toContain('target=a/c/%E5%9B%BE%20d.png')
     expect(out).not.toContain('../')
     // data-attach-src is the DECODED project-relative path (FileEntry.path form)
     expect(out).toContain('data-attach-src="a/c/图 d.png"')
@@ -136,7 +136,7 @@ describe('createFixLocalImagePaths', () => {
     expect(out).toContain('data-attach-src="docs/we&quot;onerror=&quot;alert(1).png"')
     // The src stays segment-encoded (quotes not present), so no literal
     // attribute breakout can occur anywhere in the rewritten tag.
-    expect(out).toContain('src="/api/local-file/docs/we%22onerror%3D%22alert(1).png')
+    expect(out).toContain('src="/api/fs/raw/docs/we%22onerror%3D%22alert(1).png')
     expect(out).not.toContain('onerror="')
   })
 
@@ -147,8 +147,8 @@ describe('createFixLocalImagePaths', () => {
       const out = fix('<img src="assets/a.png" alt="a">')
       // Relative ref resolves against the markdown dir → token-scoped local endpoint.
       expect(out).toContain('src="/api/share/tokabc/local/docs/assets/a.png?t=42"')
-      expect(out).not.toContain('/api/file/thumb')
-      expect(out).not.toContain('/api/local-file/')
+      expect(out).not.toContain('/api/fs/thumb')
+      expect(out).not.toContain('/api/fs/raw/')
       // Share has no chat / local file actions — the block header carries only
       // the lightbox view button (no attach / open).
       expect(out).toContain('image-block-wrapper')
@@ -271,7 +271,7 @@ describe('buildMarkdownPreviewDom', () => {
     const md = '![img](img/x.png)'
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 5 })
     expect(html).toContain('lightbox-img-wrap')
-    expect(html).toContain('/api/file/thumb?path=img/x.png&amp;w=1200')
+    expect(html).toContain('/api/fs/thumb?target=img/x.png&amp;w=1200')
     expect(html).toContain('data-attach-src="img/x.png"')
   })
 
@@ -307,7 +307,7 @@ describe('buildMarkdownPreviewDom', () => {
       const md = '![img](img/x.png)'
       const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 5 })
       expect(html).toContain('src="/api/share/tokshare/local/img/x.png?t=5"')
-      expect(html).not.toContain('/api/file/thumb')
+      expect(html).not.toContain('/api/fs/thumb')
     } finally {
       setShareToken(null)
     }

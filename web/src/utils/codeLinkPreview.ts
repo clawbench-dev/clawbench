@@ -607,7 +607,7 @@ export function nextLoadWindow(
 
 /**
  * Build URL to fetch file content, matching store.selectFile convention.
- * Absolute paths use /api/file?path=..., relative paths use /api/file/...
+ * Absolute paths use /api/fs/file?target=..., relative paths use /api/file/...
  *
  * Pass `window` to request only that line range (1-based inclusive): the server
  * then returns just those lines plus the file's total line count instead of the
@@ -618,10 +618,10 @@ export function buildPreviewUrl(path: string, window?: FetchWindow | null): stri
   const normalized = normalizeSlashes(path)
   let url: string
   if (isAbsolutePath(normalized)) {
-    url = `/api/file?path=${encodeURIComponent(normalized)}`
+    url = `/api/fs/file?target=${encodeURIComponent(normalized)}`
   } else {
     const cleanPath = normalized.replace(/^\/+/, '')
-    url = `/api/file/${encodeURIComponent(cleanPath)}`
+    url = `/api/fs/file/${encodeURIComponent(cleanPath)}`
   }
   if (!window) return url
   const sep = url.includes('?') ? '&' : '?'

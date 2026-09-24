@@ -189,10 +189,10 @@ func ServeListTree(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveFilePath determines the absolute path and whether it's external to the
-// project. Supports absolute paths via ?path= query param and project-relative
+// project. Supports absolute paths via ?target= query param and project-relative
 // paths via URL path.
 func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string) (absPath string, isExternal bool, ok bool) {
-	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
+	if queryPath := r.URL.Query().Get("target"); queryPath != "" {
 		// Accept paths starting with / (POSIX-style absolute from frontend)
 		// or platform-native absolute paths (e.g. C:\ on Windows).
 		if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
@@ -214,12 +214,12 @@ func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string)
 
 	// Project-relative path from URL path
 	filepathStr := r.URL.Path
-	if !strings.HasPrefix(filepathStr, "/api/file/") {
+	if !strings.HasPrefix(filepathStr, "/api/fs/file/") {
 		http.NotFound(w, r)
 		return "", false, false
 	}
-	filepathStr = filepathStr[len("/api/file/"):]
-	// Strip leading slashes to handle double-slash URLs (/api/file//path)
+	filepathStr = filepathStr[len("/api/fs/file/"):]
+	// Strip leading slashes to handle double-slash URLs (/api/fs/file//path)
 	// caused by encodeURIComponent("/path") which encodes as %2Fpath.
 	// Go's ServeMux decodes %2F back to /, producing double slashes.
 	filepathStr = strings.TrimLeft(filepathStr, "/")
@@ -502,10 +502,10 @@ func responsePath(absPath, projectPath string, isExternal bool) string {
 }
 
 // resolveLocalFilePath determines the absolute path for ServeLocalFile.
-// Supports absolute paths via ?path= query param and project-relative paths via URL path.
+// Supports absolute paths via ?target= query param and project-relative paths via URL path.
 func resolveLocalFilePath(w http.ResponseWriter, r *http.Request, projectPath string) (string, bool) {
-	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
-		// Absolute path via ?path= — serves files outside the project directory
+	if queryPath := r.URL.Query().Get("target"); queryPath != "" {
+		// Absolute path via ?target= — serves files outside the project directory
 		if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPath")
 			return "", false
@@ -524,12 +524,12 @@ func resolveLocalFilePath(w http.ResponseWriter, r *http.Request, projectPath st
 
 	// Project-relative path from URL path
 	filepathStr := r.URL.Path
-	if !strings.HasPrefix(filepathStr, "/api/local-file/") {
+	if !strings.HasPrefix(filepathStr, "/api/fs/raw/") {
 		http.NotFound(w, r)
 		return "", false
 	}
-	filepathStr = filepathStr[len("/api/local-file/"):]
-	// Strip leading slashes to handle double-slash URLs (/api/local-file//path)
+	filepathStr = filepathStr[len("/api/fs/raw/"):]
+	// Strip leading slashes to handle double-slash URLs (/api/fs/raw//path)
 	// caused by encodeURIComponent("/path") which encodes as %2Fpath.
 	filepathStr = strings.TrimLeft(filepathStr, "/")
 	filepathStr = path.Clean(filepathStr)
@@ -544,7 +544,7 @@ func resolveLocalFilePath(w http.ResponseWriter, r *http.Request, projectPath st
 }
 
 // ServeLocalFile serves a file directly (for images, PDFs, etc.).
-// Supports project-relative paths via URL path and absolute paths via ?path=
+// Supports project-relative paths via URL path and absolute paths via ?target=
 // query param (for files outside the project directory).
 func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)

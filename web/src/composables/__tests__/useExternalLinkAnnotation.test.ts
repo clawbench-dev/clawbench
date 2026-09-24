@@ -51,7 +51,7 @@ describe('useExternalLinkAnnotation', () => {
     })
 
     it('rejects non-http schemes and relative forms', () => {
-      for (const href of ['#anchor', 'mailto:a@b.com', 'tel:+123', 'file:///etc/passwd', 'docs/a.md', '/api/file?path=x', 'blob:https://x/1', 'data:text/html,<b>']) {
+      for (const href of ['#anchor', 'mailto:a@b.com', 'tel:+123', 'file:///etc/passwd', 'docs/a.md', '/api/fs/file?target=x', 'blob:https://x/1', 'data:text/html,<b>']) {
         expect(isNewTabLink(href, ORIGIN), href).toBe(false)
       }
     })
@@ -84,13 +84,15 @@ describe('useExternalLinkAnnotation', () => {
         '<a href="mailto:dev@example.com">mail</a>',
         '<a href="tel:+15551234567">call</a>',
         '<a href="file:///etc/passwd">file</a>',
-        '<a href="/api/file?path=x">api</a>',
+        '<a href="/api/fs/file?target=x">api</a>',
         '<a href="blob:https://x/1">blob</a>',
         '<a href="data:text/html,x">data</a>',
       ]
       for (const html of cases) {
         const out = annotate(html)
-        expect(out, html).not.toContain('target=')
+        // `target=` is asserted via the attribute form (target="_blank"); the
+        // api-link case legitimately carries `?target=` as a query param.
+        expect(out, html).not.toContain('target="_blank"')
         expect(out, html).not.toContain('rel=')
       }
     })

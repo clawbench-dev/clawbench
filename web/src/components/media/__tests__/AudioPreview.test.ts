@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import AudioPreview from '@/components/media/AudioPreview.vue'
 
 vi.mock('@/utils/download.ts', () => ({
-  buildLocalFileUrl: (path: string) => `/api/local-file/${path}`,
+  buildLocalFileUrl: (path: string) => `/api/fs/raw/${path}`,
 }))
 
 describe('AudioPreview', () => {
@@ -47,7 +47,7 @@ describe('AudioPreview', () => {
     const wrapper = mountAudio()
     const audio = wrapper.find('audio.audio-player')
     expect(audio.exists()).toBe(true)
-    expect(audio.attributes('src')).toContain('/api/local-file/media/song.mp3')
+    expect(audio.attributes('src')).toContain('/api/fs/raw/media/song.mp3')
     expect(audio.attributes('src')).toMatch(/t=\d+/)
   })
 })

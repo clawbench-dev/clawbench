@@ -7,7 +7,7 @@ import { readAttachDragData, cleanupDragGhost } from '@/utils/attachDrag'
 
 // buildLocalFileUrl is the single source of the media URL; mock it so the
 // assertions read cleanly instead of depending on the path-encoding rules.
-const mockBuildLocalFileUrl = vi.hoisted(() => vi.fn((p: string) => `/api/local-file/${p}`))
+const mockBuildLocalFileUrl = vi.hoisted(() => vi.fn((p: string) => `/api/fs/raw/${p}`))
 vi.mock('@/utils/download.ts', () => ({
   buildLocalFileUrl: (p: string) => mockBuildLocalFileUrl(p),
 }))
@@ -80,7 +80,7 @@ describe('MediaPreviewBody', () => {
     const wrapper = mountBody('image')
     const img = wrapper.find('img.code-preview-media-img')
     expect(img.exists()).toBe(true)
-    expect(img.attributes('src')).toContain('/api/local-file/assets/logo.png')
+    expect(img.attributes('src')).toContain('/api/fs/raw/assets/logo.png')
     // Cache-busting param keeps a re-opened file from serving stale bytes.
     expect(img.attributes('src')).toMatch(/t=\d+/)
   })

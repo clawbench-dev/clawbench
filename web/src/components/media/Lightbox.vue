@@ -532,7 +532,7 @@ function handleDownload() {
     if (!filePath) {
         try {
             const url = new URL(currentUrl.value, window.location.origin)
-            const prefix = '/api/local-file/'
+            const prefix = '/api/fs/raw/'
             if (url.pathname.startsWith(prefix)) {
                 filePath = decodeURIComponent(url.pathname.slice(prefix.length))
             }
