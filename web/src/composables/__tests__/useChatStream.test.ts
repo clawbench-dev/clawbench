@@ -2679,16 +2679,76 @@ describe('useChatStream', () => {
       connectStream('test-session-1')
       options.onLoadHistory.mockClear()
 
-      // An event for another session must not reset our window, but the
-      // watchdog only ever acts for the CURRENT session, so silence stays.
-      await vi.advanceTimersByTimeAsync(150000)
+      // Inject the foreign event INSIDE the window (90s < 120s). If a foreign
+      // session's event wrongly counted as progress, the window would reset and
+      // no recovery would ever fire — so injecting it after the window (as an
+      // earlier version did) could not distinguish the two behaviours.
+      await vi.advanceTimersByTimeAsync(90000)
       simulateWsEvent('content', { content: 'x' }, 'other-session')
+      await vi.advanceTimersByTimeAsync(90000)
 
       expect(options.onLoadHistory).toHaveBeenCalled()
       // And the recovery targeted the current session, not the foreign one.
       expect(mockSendWsMessage).toHaveBeenCalledWith(
         { type: 'subscribe', session_id: 'test-session-1' }
       )
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('recovery is non-destructive: it does not finalize the turn', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onStreamEnd.mockClear()
+      const cleanup = vi.mocked(forceCleanupStreamingState)
+      cleanup.mockClear()
+
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // The whole point of the watchdog (vs the removed 30s timeout) is that a
+      // legitimately silent turn — a long tool or subagent — keeps running: the
+      // spinner stays, the stream is not ended, and no cleanup is forced.
+      expect(options.onStreamEnd).not.toHaveBeenCalled()
+      expect(options.loading.value).toBe(true)
+      expect(cleanup).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('restores the recovery budget when a turn ends, so the next turn gets its own attempts', async () => {
+      // A turn discovered as running via loadHistory never calls connectStream,
+      // so without a reset on turn end it would inherit an exhausted budget from
+      // a previous turn (e.g. a subagent that was silent for minutes) and a
+      // genuine subscription loss in the new turn would never be repaired.
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      // Turn 1: exhaust the budget (no events at all, panel visible).
+      options.loading.value = true
+      connectStream('test-session-1')
+      await vi.advanceTimersByTimeAsync(600000)
+      const afterTurn1 = options.onLoadHistory.mock.calls.length
+      expect(afterTurn1).toBeGreaterThan(0)
+      expect(afterTurn1).toBeLessThanOrEqual(3)
+
+      // Turn 1 ends.
+      simulateWsEvent('done', {})
+      options.onLoadHistory.mockClear()
+
+      // Turn 2 begins WITHOUT connectStream (the loadHistory-discovery path):
+      // just mark a turn in flight again.
+      options.loading.value = true
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // The new turn must get its own attempts.
+      expect(options.onLoadHistory).toHaveBeenCalled()
 
       vi.advanceTimersByTime(10000)
       vi.useRealTimers()

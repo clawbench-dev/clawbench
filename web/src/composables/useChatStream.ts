@@ -144,11 +144,13 @@ export function useChatStream(options: UseChatStreamOptions) {
     const silentFor = Date.now() - lastProgressAt
     if (silentFor < STREAM_STALL_MS) return
     if (stallRecoveries >= MAX_STALL_RECOVERIES) {
-      // Logged once per turn: the budget is exhausted, stop hammering. A later
-      // terminal event or session switch resets it.
+      // Logged once per turn, then silent: the budget is exhausted, stop
+      // hammering. The budget is per-turn and is restored by the next turn's
+      // start (see resetStallWatch call sites) — a turn that ends resets it,
+      // so a later turn in the same session still gets its own attempts.
       if (stallRecoveries === MAX_STALL_RECOVERIES) {
         stallRecoveries++
-        appLog.w(TAG, `stream silent ${silentFor}ms — recovery budget exhausted (${MAX_STALL_RECOVERIES}), giving up until the turn ends`)
+        appLog.w(TAG, `stream silent ${silentFor}ms — recovery budget exhausted (${MAX_STALL_RECOVERIES}), giving up until a new turn starts`)
       }
       return
     }
@@ -364,6 +366,14 @@ export function useChatStream(options: UseChatStreamOptions) {
     // interval itself keeps running (started once at setup): toggling it per turn
     // would add a lifecycle that has to be kept in sync with every exit path.
     lastProgressAt = 0
+    // Restore the recovery budget for the NEXT turn. This is what makes the
+    // budget per-turn rather than per-composable: a turn discovered as running
+    // via loadHistory (server-side run started while backgrounded, foreground
+    // resync) never calls connectStream, so without this reset it would inherit
+    // an exhausted budget from a previous turn in the same session — e.g. a
+    // subagent silent for minutes burns all 3 attempts — and a genuine
+    // subscription loss in the new turn would get zero attempts and never heal.
+    stallRecoveries = 0
   }
 
   function disconnectStream() {

@@ -199,21 +199,23 @@ export function useChatSession(options: UseChatSessionOptions) {
     // ── Change detection ──
     const newSnapshot = buildMessageSnapshot(rawMsgs)
     if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && !isRunning) {
-      // No UI refresh needed, but the response still describes the current
-      // session, so its `running` value is valid evidence — record it before
-      // bailing. runReload depends on that: a skipIfUnchanged load that returns
-      // "still running" must NOT look like "no answer".
+      // No UI refresh needed. The `&& !isRunning` above means this branch only
+      // runs for a NOT-running response, so recording it here is the
+      // authoritative "run has ended" that runReload needs — and this early
+      // return is precisely the path that would otherwise skip the assignment
+      // below. (A "still running" response falls through to the main path.)
       lastAuthoritativeRunning = isRunning
       return { synced: false, keepInputDisabled: false } // no change, skip UI refresh
     }
     lastMessageSnapshot = newSnapshot
 
-    // Record the authoritative per-session running state for runReload, which
-    // must decide whether it is safe to tear the stream subscription down. The
-    // session LIST can say "not running" while the backend has merely cleared
-    // the flag in preparation for the terminal event, so the history response's
-    // own `running` field is the trustworthy signal. Set only AFTER the identity
-    // guard above: a stale response for another session must not pollute it.
+    // Record the per-session running state for runReload, which must decide
+    // whether it is safe to tear the stream subscription down. The sessions
+    // LIST and this history response read the same server-side source, but this
+    // one is fetched LATER (so fresher) and, unlike the list, a bailed load
+    // leaves the value null — which runReload treats as "no answer, do not tear
+    // down" rather than as "finished". Set only AFTER the identity guard above:
+    // a stale response for another session must not pollute it.
     lastAuthoritativeRunning = isRunning
 
     // ── Message replacement ──
@@ -1403,6 +1405,15 @@ export function useChatSession(options: UseChatSessionOptions) {
       } catch {
         loading.value = false
       }
+      // The user may have switched sessions while the verification load was in
+      // flight. Everything below acts on ONE session — the resubscribe sends a
+      // real unsubscribe for whatever is currently subscribed — so applying it
+      // to a session the user has left would flip their NEW subscription onto
+      // the OLD session. Bail out; the new session's own load already ran.
+      if (currentSessionId.value !== sid) {
+        appLog.i(TAG, `${source}: session changed during verification (${sid} -> ${currentSessionId.value}), dropping stale result`)
+        return
+      }
       if (lastAuthoritativeRunning !== false) {
         // Either the run is genuinely still going, or the verification load
         // produced no answer (bailed/errored). Both mean "do not tear down":
@@ -1410,6 +1421,11 @@ export function useChatSession(options: UseChatSessionOptions) {
         // watchdog and a later refresh converge it), whereas sending a real
         // unsubscribe loses the rest of the turn's events for good. loadHistory
         // already restored the placeholder from the DB streaming=1 row.
+        //
+        // loading deliberately stays true in the "no answer" case: we do not
+        // know the run ended, and clearing it would unlock the input and hide
+        // the stop button for a turn that may still be live. Recovery comes from
+        // the stream watchdog, a WS reconnect, or a manual refresh.
         appLog.i(TAG, `${source}: session ${sid} not confirmed finished (running=${lastAuthoritativeRunning}) — keeping stream subscription`)
         if (force) {
           onResubscribeStream?.(sid)

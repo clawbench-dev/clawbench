@@ -5176,6 +5176,59 @@ describe('handleManualRefresh', () => {
     vi.restoreAllMocks()
   })
 
+  it('when the user switches sessions during verification: does not flip the new session\'s subscription', async () => {
+    // The verification load is an await, so the user can switch sessions while
+    // it is in flight. The code below acts on ONE session — resubscribe sends a
+    // real unsubscribe for whatever is currently subscribed — so applying it to
+    // the session the user just left would unsubscribe their NEW session and
+    // subscribe the OLD one.
+    const loading = ref(true)
+    const currentSessionId = ref('s1')
+    const onDisconnectStream = vi.fn()
+    const onResubscribeStream = vi.fn()
+    const options = {
+      currentSessionId,
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onResubscribeStream,
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
+      }
+      // Simulate the switch landing while the verification GET is in flight.
+      currentSessionId.value = 's2'
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: false }),
+      })
+    })
+
+    await session.handleManualRefresh()
+
+    // The stale result must be dropped: no teardown, and crucially no
+    // resubscribe that would flip the subscription onto the abandoned session.
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(onResubscribeStream).not.toHaveBeenCalled()
+
+    vi.restoreAllMocks()
+  })
+
   it('when loading=false (idle): forces history reload even when the message snapshot is unchanged', async () => {
     const loading = ref(false)
     const onRenderUpdate = vi.fn()
