@@ -8,6 +8,13 @@
         @create="handleCreateClick"
       >
         <template #actions>
+          <!-- Only when this project actually has a shared conversation:
+               with nothing to manage the button is pure header clutter.
+               hasAnySharedSession stays false until the list loads, so it
+               does not flash in for the common "nothing shared" case. -->
+          <button v-if="hasAnySharedSession" class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
+            <MessageSquareShare :size="16" />
+          </button>
           <button v-if="isWideScreen" class="header-action-btn" data-action="pin" @click.stop="$emit('pin')" :title="t('session.pinToSidebar')">
             <PanelRight :size="16" />
           </button>
@@ -46,18 +53,21 @@
     @update:open="v => v ? agentSelectorDrawer.open() : agentSelectorDrawer.close()"
     @select="createSession"
   />
+  <SharedSessionsDrawer ref="sharedSessionsRef" @select-session="$emit('select', $event)" />
 </template>
 
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PanelRight } from 'lucide-vue-next'
+import { PanelRight, MessageSquareShare } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
+import SharedSessionsDrawer from '@/components/session/SharedSessionsDrawer.vue'
 import SessionListTabs from '@/components/session/SessionListTabs.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
+import { useSessionShare } from '@/composables/useSessionShare'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { store } from '@/stores/app.ts'
@@ -76,7 +86,9 @@ const { isWideScreen } = useWideScreenLayout()
 
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
+const { hasAnySharedSession } = useSessionShare()
 const listRef = ref(null)
+const sharedSessionsRef = ref(null)
 // Which pane the list shows. Owned here (not in SessionList) because the tab bar
 // is rendered in the BottomSheet footer, outside the list's scroll area.
 const activeTab = ref('project')

@@ -130,6 +130,17 @@
           <Tags :size="14" />
           {{ t('common.setTags') }}
         </div>
+        <!-- Doubles as the share-state indicator (mirrors the file header's
+             "Share link" item): highlighted and relabelled when this
+             conversation already has a live public link. -->
+        <div
+          class="context-menu-item"
+          :class="{ active: isSessionShared(contextMenu.sessionId) }"
+          @click.stop="openShareDialogFromMenu(contextMenu.sessionId)"
+        >
+          <Share2 :size="14" />
+          {{ isSessionShared(contextMenu.sessionId) ? t('sessionShare.buttonActive') : t('sessionShare.button') }}
+        </div>
         <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
           <Archive :size="14" />
           {{ t('common.archive') }}
@@ -152,20 +163,27 @@
       :initial-tags="tagDialog.initialTags"
       @close="tagDialog.open = false"
     />
+    <SessionShareDialog
+      :open="shareDialog.open"
+      :session-id="shareDialog.sessionId"
+      @close="shareDialog.open = false"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Pin, PinOff, PencilLine, Tags, Trash2 } from 'lucide-vue-next'
+import { Archive, Pin, PinOff, PencilLine, Share2, Tags, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
+import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { tagAccentStyle } from '@/utils/tagColor.ts'
 import { useAgents } from '@/composables/useAgents'
+import { useSessionShare } from '@/composables/useSessionShare'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -190,6 +208,7 @@ const emit = defineEmits(['select', 'archive', 'destroy', 'update:activeTab'])
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()
+const { isSessionShared, setSharedSessionIds } = useSessionShare()
 const dialog = useDialog()
 const { runningSessionsVersion } = useSessionIdentity()
 const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useCrossProjectSessions()
@@ -601,6 +620,15 @@ function openTagDialogFromMenu(sessionId) {
   tagDialog.open = true
 }
 
+// Conversation share dialog. Only the session id is needed: the dialog loads
+// the message list and the existing share state itself.
+const shareDialog = reactive({ open: false, sessionId: '' })
+
+function openShareDialogFromMenu(sessionId) {
+  closeContextMenu()
+  shareDialog.sessionId = sessionId
+  shareDialog.open = true
+}
 function addSessionLocally(session) {
   if (!session) return
   if (sessions.value.some(s => s.id === session.id)) return
@@ -669,6 +697,8 @@ watch(() => store.state.projectRoot, () => {
   // the new project's sessions behind a tag it may not even have.
   activeTag.value = ''
   loadFilterTags()
+  // Shares are project-scoped: the previous project's badges must go.
+  void refreshSessionShares()
 })
 
 // Bring the active session into view after a cross-project jump. The row may
@@ -709,11 +739,29 @@ watch(() => store.state.sessionListVersion, async () => {
   reload()
 })
 
+/**
+ * Seed the shared-session set so row badges are correct without the user
+ * having to open the shared-conversations drawer first. One list request;
+ * failures are silent because a missing badge must never block the list.
+ */
+async function refreshSessionShares() {
+  try {
+    const resp = await fetch('/api/share/session/list')
+    if (!resp.ok) return
+    const data = await resp.json()
+    setSharedSessionIds((data.shares || []).map((s) => s.sessionId))
+  } catch (err) {
+    appLog.w('SessionList', 'refresh session shares failed:', err)
+  }
+}
+
 defineExpose({ loadSessions, addSessionLocally, reload })
 
 onMounted(() => {
   loadSessions()
   loadFilterTags()
+  // Seed the share badges for this project in one request.
+  void refreshSessionShares()
   // Real-time: keep the list in sync with session lifecycle events (running,
   // completed, cancelled, permission, title updates). Debounced so a stream
   // of events (e.g. running→completed) triggers one refresh.
@@ -918,6 +966,20 @@ onUnmounted(() => {
   }
 }
 
+/* The row whose context menu is open keeps the hover tint it just lost.
+   Opening the menu paints a full-viewport .ctx-overlay, which swallows :hover
+   (measured: the row stops matching :hover while the menu is up), so without
+   this the row goes plain at exactly the moment the user needs to see which row
+   the menu targets — it read as worse than not right-clicking at all.
+   Same 6% as :hover so the tint does not jump brighter on right-click; a
+   stronger value would also blur the distinction from .active, which means
+   "this is the open conversation", not "this is the row under the menu".
+   Deliberately OUTSIDE the (hover: hover) block: touch has no hover to lose,
+   and long-press opens this same menu, so for touch this is the only cue. */
+.session-row.menu-open {
+  background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
 .session-item-info {
   display: flex;
   flex-direction: column;
@@ -942,6 +1004,7 @@ onUnmounted(() => {
   flex-wrap: nowrap;
   overflow: hidden;
 }
+
 
 .session-item-title {
   font-size: var(--font-size-md);
