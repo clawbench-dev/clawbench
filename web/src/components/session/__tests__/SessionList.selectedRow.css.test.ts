@@ -73,6 +73,50 @@ describe('SessionList selected-row tint covers the archive button', () => {
   })
 })
 
+describe('SessionList context-menu row tint', () => {
+  // Bug: the row under an open context menu LOST the hover tint it had a moment
+  // earlier. Opening the menu paints a full-viewport .ctx-overlay, which
+  // swallows :hover (measured in the browser: the row stops matching :hover),
+  // and although the `menu-open` class was already being computed and applied,
+  // no rule ever styled it — so the row went plain at exactly the moment the
+  // user needed to see which row the menu targeted. It read as worse than not
+  // right-clicking at all.
+  //
+  // The existing class-application test could not catch this: the class was
+  // always applied correctly. Only a source check can.
+  it('styles the .menu-open class instead of leaving it dead', async () => {
+    const src = await sessionListSource()
+    const rule = src.match(/\.session-row\.menu-open\s*\{[^}]*\}/)?.[0]
+    expect(rule, '.session-row.menu-open must have a style rule').toBeTruthy()
+    expect(rule).toMatch(/background-color:/)
+  })
+
+  it('matches the hover tint so the row does not jump on right-click', async () => {
+    const src = await sessionListSource()
+    // Compare the two declared values rather than hardcoding 6%: if hover is
+    // retuned, menu-open must follow, or the row flickers brighter on
+    // right-click. A stronger value would also blur the distinction from
+    // .active, which means "this is the open conversation".
+    const hoverRule = src.match(/\.session-row:hover\s*\{[^}]*\}/)?.[0]
+    const menuRule = src.match(/\.session-row\.menu-open\s*\{[^}]*\}/)?.[0]
+    expect(hoverRule, '.session-row:hover should exist').toBeTruthy()
+    expect(menuRule, '.session-row.menu-open should exist').toBeTruthy()
+    const value = (r: string) => r.match(/background-color:\s*([^;]+);/)?.[1]?.trim()
+    expect(value(menuRule!)).toBe(value(hoverRule!))
+  })
+
+  it('keeps the rule outside the hover media query so touch gets the cue', async () => {
+    const src = await sessionListSource()
+    // Touch has no hover to lose, and long-press opens this same menu, so for
+    // touch this rule is the ONLY indication of which row is targeted. Inside
+    // `@media (hover: hover)` it would never apply there.
+    const blocks = src.match(/@media \(hover: hover\)\s*\{[\s\S]*?\n\}/g) || []
+    for (const b of blocks) {
+      expect(b).not.toContain('.session-row.menu-open')
+    }
+  })
+})
+
 describe('SessionList pinned marker', () => {
   it('paints the corner wedge from the .pinned row modifier', async () => {
     const src = await sessionListSource()

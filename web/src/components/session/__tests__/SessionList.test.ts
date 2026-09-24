@@ -206,6 +206,95 @@ describe('SessionList', () => {
     await nextTick()
   }
 
+  // ── Share state on the context menu ──
+  //
+  // The state indicator lives on the "Share conversation" menu item rather
+  // than a row badge: the badge was decorative (no click target) and showed
+  // state in a different place from the action. Mirrors the file header, whose
+  // "Share link" item highlights and relabels when a link exists.
+  //
+  // The i18n mock in this file returns the RAW KEY, so assertions match on
+  // sessionShare.button / sessionShare.buttonActive rather than English text.
+  it('seeds the share set on mount so the menu state is right without opening the drawer', async () => {
+    const { useSessionShare } = await import('@/composables/useSessionShare')
+    const { resetSessionShareState, isSessionShared } = useSessionShare()
+    resetSessionShareState()
+
+    mockFetch.mockImplementation((url: string) => {
+      if (String(url).includes('/api/share/session/list')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ shares: [{ sessionId: 's1', token: 't1' }] }) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    })
+
+    await mountList()
+    await flushPromises()
+
+    expect(isSessionShared('s1')).toBe(true)
+    resetSessionShareState()
+  })
+
+  it('renders no share badge on the rows (state moved to the context menu)', async () => {
+    const { useSessionShare } = await import('@/composables/useSessionShare')
+    const { resetSessionShareState, markShared } = useSessionShare()
+    resetSessionShareState()
+
+    const s1 = sessionsFixture().s1
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1], hasMore: false }) })
+
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    markShared(s1.id)
+    await nextTick()
+
+    expect(wrapper.findAll('.session-item-shared')).toHaveLength(0)
+
+    resetSessionShareState()
+  })
+
+  it('highlights and relabels the share menu item when the session is shared', async () => {
+    const { useSessionShare } = await import('@/composables/useSessionShare')
+    const { resetSessionShareState, markShared } = useSessionShare()
+    resetSessionShareState()
+
+    const s1 = sessionsFixture().s1
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1], hasMore: false }) })
+
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    // The menu is Teleported to body, so query there. openRowMenu clicks the
+    // real ⋮ button, the only menu entry point (long-press/right-click removed).
+    await openRowMenu(wrapper, s1.id)
+
+    const findShareItem = () => {
+      const menus = document.body.querySelectorAll('.context-menu.visible')
+      const menu = menus[menus.length - 1]
+      return Array.from(menu.querySelectorAll('.context-menu-item')).find(i => (i.textContent || '').includes('sessionShare.')) as HTMLElement | undefined
+    }
+
+    // Unshared: plain label, no active state.
+    const before = findShareItem()
+    expect(before).toBeTruthy()
+    expect(before!.classList.contains('active')).toBe(false)
+    expect(before!.textContent).toContain('sessionShare.button')
+
+    // Shared: highlighted and relabelled. The item is keyed off
+    // contextMenu.sessionId, so it reacts without being reopened.
+    markShared(s1.id)
+    await nextTick()
+
+    const after = findShareItem()
+    expect(after!.classList.contains('active')).toBe(true)
+    expect(after!.textContent).toContain('sessionShare.buttonActive')
+
+    resetSessionShareState()
+    wrapper.unmount()
+  })
+
   it('renders sessions from API', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
     const wrapper = await mountList()
@@ -1015,7 +1104,8 @@ describe('SessionList', () => {
       const menu = menus[menus.length - 1]
       expect(menu).toBeTruthy()
       // Reuses the file manager's item class + icon-left layout.
-      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(5)
+      // pin / rename / set-tags / share / archive / force-delete
+      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(6)
       expect(document.body.querySelector('.session-context-menu')).toBeNull()
       wrapper.unmount()
     })
@@ -1069,56 +1159,80 @@ describe('SessionList', () => {
 
       const menus = () => document.body.querySelectorAll('.context-menu.visible')
       const openFor = async () => { await openRowMenu(wrapper, 's1') }
-      const clickLastMenu = (idx: number) => {
+      // Select by label, not position: the menu order is a presentation detail
+      // and inserting an item must not silently retarget these assertions.
+      const clickLastMenu = (label: string) => {
         const items = menus()[menus().length - 1].querySelectorAll('.context-menu-item')
-        ;(items[idx] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        const match = Array.from(items).find((el) => (el.textContent || '').trim() === label)
+        if (!match) throw new Error(`context-menu item not found: ${label}`)
+        ;(match as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
       }
 
-      // Pin item (index 0) — must dismiss the menu, not just fire the action.
+      // Pin item — must dismiss the menu, not just fire the action.
       await openFor()
-      clickLastMenu(0)
+      clickLastMenu('common.pin')
       await flushPromises()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
 
-      // Rename item (index 1) — also dismisses. prompt() resolves null so the
+      // Rename item — also dismisses. prompt() resolves null so the
       // action itself is a no-op; the close must not depend on it succeeding.
       mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
       await openFor()
-      clickLastMenu(1)
+      clickLastMenu('common.renameSession')
       await flushPromises()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
 
-      // Set-tags item (index 2) — dismisses and opens the tag dialog.
+      // Set-tags item — dismisses and opens the tag dialog.
       await openFor()
-      clickLastMenu(2)
+      clickLastMenu('common.setTags')
       await nextTick()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
       expect(wrapper.vm.tagDialog.open).toBe(true)
 
-      // Archive item (index 3) — dismisses and emits.
+      // Archive item — dismisses and emits.
       await openFor()
-      clickLastMenu(3)
+      clickLastMenu('common.archive')
       await nextTick()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
       expect(wrapper.emitted('archive')).toBeTruthy()
 
-      // Remove item (index 4) — dismisses, confirms, then emits destroy. Cancel
+      // Remove item — dismisses, confirms, then emits destroy. Cancel
       // first: a declined confirm must not destroy anything.
       mockDialogHolder.confirm = vi.fn().mockResolvedValue(false)
       await openFor()
-      clickLastMenu(4)
+      clickLastMenu('common.remove')
       await flushPromises()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
       expect(wrapper.emitted('destroy')).toBeFalsy()
 
       mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
       await openFor()
-      clickLastMenu(4)
+      clickLastMenu('common.remove')
       await flushPromises()
       expect(wrapper.emitted('destroy')![0]).toEqual(['s1'])
       wrapper.unmount()
     })
 
+    it('opens the share dialog for the menu session', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await openRowMenu(wrapper, wrapper.vm.sessions[0].id)
+
+      const menus = document.body.querySelectorAll('.context-menu.visible')
+      const items = menus[menus.length - 1].querySelectorAll('.context-menu-item')
+      const share = Array.from(items).find((el) => (el.textContent || '').trim() === 'sessionShare.button')
+      expect(share).toBeTruthy()
+      ;(share as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await nextTick()
+
+      // The dialog opens for the right session and the menu dismisses.
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
+      expect(wrapper.vm.shareDialog.sessionId).toBe(wrapper.vm.sessions[0].id)
+      wrapper.unmount()
+    })
     it('opens the tag dialog seeded with the session tags', async () => {
       mockFetch.mockResolvedValue({
         ok: true,

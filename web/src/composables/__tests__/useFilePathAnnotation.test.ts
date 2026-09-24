@@ -14,6 +14,7 @@ import {
   navToFileInManager,
   revealInFileManager,
 } from '@/composables/useFilePathAnnotation'
+import { setShareToken } from '@/share/shareMode'
 
 // Mock escapeHtml from html utils
 vi.mock('@/utils/html', () => ({
@@ -1467,6 +1468,38 @@ describe('verifyFilePaths', () => {
   if (typeof (globalThis as any).CSS.escape === 'undefined') {
     ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&')
   }
+
+  // The share page is anonymous: /api/file/batch-exists answers 401, and a
+  // non-OK response makes fetchPathTypes return null, so the chips are left
+  // unverified. The guard must stop the request entirely rather than let it
+  // fire and fail — the share page renders through the CHAT pipeline, which
+  // has no share branch of its own (unlike buildMarkdownPreviewDom).
+  it('share mode must not probe the auth-protected batch-exists endpoint', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ error: "unauthorized" }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML =
+      '<span class="chat-file-path" data-file-path="src/app.ts">src/app.ts</span>'
+
+    setShareToken('tokguard')
+    try {
+      await verifyFilePaths(['src/app.ts'], container)
+    } finally {
+      setShareToken(null)
+    }
+
+    expect(mockFetch, 'share mode must not call the auth-protected endpoint')
+      .not.toHaveBeenCalled()
+    expect(container.querySelector('.chat-file-path'),
+      'the chip must survive as inert text').not.toBeNull()
+
+    vi.unstubAllGlobals()
+  })
 
   it('removes buttons for non-existent paths (batch API returns none)', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
