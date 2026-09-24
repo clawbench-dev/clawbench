@@ -93,7 +93,7 @@ vi.mock('vue-draggable-plus', () => ({
     // Declared (not left to fallthrough) so the "prop is absent" assertions are
     // meaningful: an undeclared prop would land in attrs and read undefined even
     // when the component set it.
-    props: ['modelValue', 'handle', 'tag', 'animation', 'delay', 'delayOnTouchOnly', 'filter', 'preventOnFilter', 'onMove'],
+    props: ['modelValue', 'handle', 'tag', 'animation', 'delay', 'delayOnTouchOnly', 'filter', 'preventOnFilter', 'onMove', 'draggable'],
     emits: ['update:modelValue', 'start', 'end'],
     setup(props, { slots, emit }) {
       mockDraggable.emit = emit
@@ -317,7 +317,7 @@ describe('SessionList', () => {
     const wrapper = await mountList({ runningSessionIds: new Set(['s1']) })
     await wrapper.vm.loadSessions()
     await flushPromises()
-    expect(wrapper.vm.sessionsWithStatus[0].running).toBe(true)
+    expect(wrapper.vm.visibleRows[0].running).toBe(true)
   })
 
   it('renders the sweep band as a real element only on running rows', async () => {
@@ -470,6 +470,140 @@ describe('SessionList', () => {
     expect(wrapper.findAll('.session-row').length).toBe(1)
   })
 
+  describe('derived-session groups (issue #477)', () => {
+    /** A root plus a two-generation chain forked from it. */
+    const root = { id: 'root', title: 'Topic', createdAt: '2025-01-01', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
+    const fork1 = { id: 'f1', title: '🔀 Topic', sourceSessionId: 'root', createdAt: '2025-01-02', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }
+    const fork2 = { id: 'f2', title: '🔀 🔀 Topic', sourceSessionId: 'f1', createdAt: '2025-01-03', updatedAt: '2025-01-03', agentId: 'agent-1', backend: 'cli' }
+    const other = { id: 'other', title: 'Unrelated', createdAt: '2025-01-04', updatedAt: '2025-01-04', agentId: 'agent-1', backend: 'cli' }
+
+    async function mountGrouped(sessions: any[] = [root, fork1, fork2, other]) {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions, hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      return wrapper
+    }
+
+    it('folds a fork chain under its root and leaves unrelated sessions flat', async () => {
+      const wrapper = await mountGrouped()
+      // Only the root and the unrelated session are top-level rows in the drag
+      // array; the two forks hang off the root's group.
+      expect(wrapper.vm.sessions.map((s: any) => s.id)).toEqual(['root', 'other'])
+      expect(wrapper.findAll('.session-row').map(r => r.attributes('data-session-id')))
+        .toEqual(['root', 'f1', 'f2', 'other'])
+    })
+
+    it('renders a group header under the anchor with the member count', async () => {
+      const wrapper = await mountGrouped()
+      const header = wrapper.find('.session-group-header')
+      expect(header.exists()).toBe(true)
+      expect(header.find('.session-group-count').text()).toBe('2')
+    })
+
+    it('labels each member with its generation', async () => {
+      const wrapper = await mountGrouped()
+      expect(wrapper.find('[data-session-id="f1"] .session-fork-gen').text()).toBe('session.forkGeneration')
+      expect(wrapper.find('[data-session-id="f2"] .session-fork-gen').exists()).toBe(true)
+      // The anchor row carries no generation chip — it is generation 0.
+      expect(wrapper.find('[data-session-id="root"] .session-fork-gen').exists()).toBe(false)
+    })
+
+    it('collapses and expands the group from its header', async () => {
+      const wrapper = await mountGrouped()
+      await wrapper.find('.session-group-header').trigger('click')
+      await nextTick()
+      // Collapsed: members are gone from the DOM entirely (not merely hidden),
+      // so the drag and keyboard indexes only ever see visible rows.
+      expect(wrapper.findAll('.session-row').map(r => r.attributes('data-session-id')))
+        .toEqual(['root', 'other'])
+      expect(wrapper.find('.session-group-header .session-group-count').text()).toBe('2')
+
+      await wrapper.find('.session-group-header').trigger('click')
+      await nextTick()
+      expect(wrapper.findAll('.session-row').map(r => r.attributes('data-session-id')))
+        .toEqual(['root', 'f1', 'f2', 'other'])
+    })
+
+    it('expands the group holding the current session', async () => {
+      // A deep link (notification / cross-project jump) can land on a member
+      // whose anchor was collapsed earlier; that must not hide the open row.
+      const wrapper = await mountGrouped()
+      await wrapper.find('.session-group-header').trigger('click')
+      await nextTick()
+      expect(wrapper.find('[data-session-id="f1"]').exists()).toBe(false)
+
+      await wrapper.setProps({ currentSessionId: 'f1' })
+      await flushPromises()
+      expect(wrapper.find('[data-session-id="f1"]').exists()).toBe(true)
+    })
+
+    it('admits only top-level rows as drag sources', async () => {
+      // `draggable` is what keeps a group member from being dragged out of its
+      // group; Sortable then reorders the top-level array, so a drag moves the
+      // whole group.
+      const wrapper = await mountGrouped()
+      expect(mockDraggable.props?.draggable).toBe('.session-row.is-top')
+      expect(wrapper.find('[data-session-id="root"]').classes()).toContain('is-top')
+      expect(wrapper.find('[data-session-id="f1"]').classes()).toContain('is-fork-member')
+    })
+
+    it('resolves the row menu for a group member, which is not in the drag array', async () => {
+      // Group members live in membersByAnchor, not in `sessions`. The menu used
+      // to resolve ids with sessions.find(), which would silently no-op here.
+      const wrapper = await mountGrouped()
+      mockDialogHolder.prompt = vi.fn().mockResolvedValue('Renamed fork')
+      await openRowMenu(wrapper, 'f1')
+      expect(wrapper.vm.contextMenu.sessionId).toBe('f1')
+
+      await wrapper.vm.renameSessionFromMenu('f1')
+      await flushPromises()
+
+      const patchCall = mockFetch.mock.calls.find(c => String(c[0]).startsWith('/api/ai/session/update'))
+      expect(patchCall).toBeTruthy()
+      expect(String(patchCall![0])).toContain(`session_id=${encodeURIComponent('f1')}`)
+    })
+
+    it('persists the flattened order so a group travels with its anchor', async () => {
+      // The server numbers sort_order per session. Posting only the top-level
+      // rows would leave the members behind and the group would reassemble
+      // somewhere else on the next load.
+      const wrapper = await mountGrouped()
+      mockFetch.mockClear()
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) })
+
+      // Drag `other` above the root.
+      const arr = wrapper.vm.sessions.slice()
+      const [moved] = arr.splice(1, 1)
+      arr.splice(0, 0, moved)
+      wrapper.vm.sessions = arr
+      mockDraggable.emit!('end', { oldIndex: 1, newIndex: 0 })
+      await flushPromises()
+
+      const putCall = mockFetch.mock.calls.find(c => String(c[0]) === '/api/ai/sessions/reorder')
+      expect(putCall).toBeTruthy()
+      // Flattened visible order: other, root, then the root's members.
+      expect(JSON.parse((putCall![1] as any).body).ids).toEqual(['other', 'root', 'f1', 'f2'])
+    })
+
+    it('keeps an orphaned chain visible as its own group', async () => {
+      // The root was hard-deleted; the survivors must not vanish from the list.
+      const orphan = { id: 'o1', title: 'Orphan', sourceSessionId: 'gone', createdAt: '2025-01-01', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
+      const orphanChild = { id: 'o2', title: 'Orphan child', sourceSessionId: 'o1', createdAt: '2025-01-02', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }
+      const wrapper = await mountGrouped([orphan, orphanChild])
+      expect(wrapper.findAll('.session-row').map(r => r.attributes('data-session-id')))
+        .toEqual(['o1', 'o2'])
+      expect(wrapper.find('.session-group-count').text()).toBe('1')
+    })
+
+    it('does not group an ACP-loaded session, whose source is a marker string', async () => {
+      const loaded = { id: 'acp1', title: 'Loaded', sourceSessionId: 'acp:abc123', createdAt: '2025-01-01', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
+      const wrapper = await mountGrouped([loaded, other])
+      expect(wrapper.findAll('.session-group-header').length).toBe(0)
+      expect(wrapper.findAll('.session-row').length).toBe(2)
+    })
+  })
+
   it('subscribes to session_update WS events and reloads the list (debounced)', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
     const wrapper = await mountList()
@@ -546,7 +680,7 @@ describe('SessionList', () => {
       }
     })
 
-    it('DOM order matches sessionsWithStatus order (the server sort order)', async () => {
+    it('DOM order matches the rendered row order (the server sort order)', async () => {
       // The array is now returned in the user's manual order; the component must
       // render it as-is. (Pin no longer lifts a row, so the pinned marker in the
       // fixture stays where the server put it.)
@@ -557,7 +691,7 @@ describe('SessionList', () => {
 
       const domOrder = wrapper.findAll('.session-row').map(r => r.attributes('data-session-id'))
       expect(domOrder).toEqual(['p-old', 'n-new', 'n-mid'])
-      expect(wrapper.vm.sessionsWithStatus.map((s: any) => s.id)).toEqual(domOrder)
+      expect(wrapper.vm.visibleRows.map((r: any) => r.session.id)).toEqual(domOrder)
     })
 
     // useListKeys installs a document-level listener on mount, so real

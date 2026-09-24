@@ -984,6 +984,9 @@ export default {
     tabCross: 'Other projects',
     crossEmpty: 'No active sessions in other projects',
     reorderFailed: 'Failed to save session order',
+    forkGroupTitle: 'Forked from this session',
+    forkGeneration: 'Gen {n}',
+    forkGenerationTitle: 'Forked {n} generation(s) from the session above',
   },
   sessionTags: {
     title: 'Set tags',

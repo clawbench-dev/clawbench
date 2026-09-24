@@ -12,7 +12,7 @@
       @toggle="toggleTagFilter"
     />
 
-    <!-- ── Project pane: one flat, infinite-scrolling list ── -->
+    <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
     <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen spinner on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
@@ -20,19 +20,29 @@
       <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
-        <!-- Single flat list. Order is the backend's: pinned DESC first (a fixed
-             block at the top), then the user's manual drag order (sort_order
-             ASC). This array order is authoritative — see GetSessions.
-             VueDraggable (SortableJS) owns the list root and reorders `sessions`
-             in place via v-model. It replaces the former TransitionGroup: both
-             drive the same DOM nodes, and running them together fights over the
-             move animation. `animation` keeps the smooth slide.
+        <!-- Order is the backend's: pinned DESC first (a fixed block at the top),
+             then the user's manual drag order (sort_order ASC).
+             VueDraggable (SortableJS) owns the list root and reorders
+             `sessions` in place via v-model. It replaces the former
+             TransitionGroup: both drive the same DOM nodes, and running them
+             together fights over the move animation. `animation` keeps the
+             smooth slide.
+
+             `sessions` holds only the TOP-LEVEL rows — a session that heads a
+             fork group is one entry, and its group is rendered right after it.
+             Dragging therefore moves the whole group as a unit, and a group can
+             never be split by a drag. Two consequences that keep Sortable's
+             index arithmetic honest: hidden rows are omitted from the DOM
+             entirely (v-if, never v-show), and `draggable` admits only the
+             top-level rows so a group member is never a drag source.
+
              Gesture: the drag starts ONLY from the row's ⋮ button (`handle`),
              identically on desktop and touch. Dragging the row body stays free
              for its normal jobs — selecting text on desktop, scrolling the list
              on touch — so no press delay is needed and the two can never fight.
              The button still opens the menu on a plain click; Sortable only
              takes over once the pointer actually moves.
+
              Pinned rows are protected on the frontend, not just by the backend:
              `filter` keeps them from being dragged (with preventOnFilter off, so
              their ⋮ menu still opens), and the end-of-drag re-partition in
@@ -44,48 +54,66 @@
           class="session-rows"
           handle=".session-more-btn"
           filter=".session-row.pinned"
+          draggable=".session-row.is-top"
           :prevent-on-filter="false"
           :animation="150"
           @move="onDragMove"
           @end="onDragEnd"
         >
-          <div
-            v-for="(session, idx) in sessionsWithStatus"
-            :key="session.id"
-            :data-session-id="session.id"
-            class="session-row"
-            :class="{ pinned: session.pinned, active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
-          >
-            <span v-if="session.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
+          <template v-for="row in visibleRows" :key="row.session.id">
             <div
-              class="session-item"
-              :class="{ active: session.id === currentSessionId }"
-              @click="selectSession(session.id, session.backend)"
+              :data-session-id="row.session.id"
+              class="session-row"
+              :class="rowClasses(row)"
             >
-              <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-              <div class="session-item-info">
-                <div class="session-item-header">
-                  <span class="session-item-title">{{ session.title }}</span>
-                </div>
-                <div class="session-item-meta">
-                  <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                  <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                  <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
-                </div>
-                <div v-if="session.tags && session.tags.length" class="session-item-tags">
-                  <span
-                    v-for="tag in session.tags"
-                    :key="tag.name"
-                    class="session-tag"
-                    :style="tagAccentStyle(tag.name)"
-                  >{{ tag.name }}</span>
+              <span v-if="row.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
+              <div
+                class="session-item"
+                :class="{ active: row.session.id === currentSessionId }"
+                @click="selectSession(row.session.id, row.session.backend)"
+              >
+                <span v-if="row.session.unreadCount > 0 || row.session.pendingApproval" class="session-item-badge"></span>
+                <div class="session-item-info">
+                  <div class="session-item-header">
+                    <span class="session-item-title">{{ row.session.title }}</span>
+                    <span v-if="row.depth > 0" class="session-fork-gen" :title="t('session.forkGenerationTitle', { n: row.depth })">{{ t('session.forkGeneration', { n: row.depth }) }}</span>
+                  </div>
+                  <div class="session-item-meta">
+                    <span class="session-item-time">{{ formatRelativeTime(row.session.updatedAt) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :size="12" /> {{ getAgentName(row.session.agentId) }}</span>
+                    <span v-if="row.session.model" class="session-item-model">{{ row.session.model }}</span>
+                  </div>
+                  <div v-if="row.session.tags && row.session.tags.length" class="session-item-tags">
+                    <span
+                      v-for="tag in row.session.tags"
+                      :key="tag.name"
+                      class="session-tag"
+                      :style="tagAccentStyle(tag.name)"
+                    >{{ tag.name }}</span>
+                  </div>
                 </div>
               </div>
+              <button class="session-more-btn" :title="t('common.moreActions')" @click.stop="showMenuFromButton($event, row.session)">
+                <MoreVertical :size="15" />
+              </button>
             </div>
-            <button class="session-more-btn" :title="t('common.moreActions')" @click.stop="showMenuFromButton($event, session)">
-              <MoreVertical :size="15" />
-            </button>
-          </div>
+            <!-- Group header for a derived-session group, directly under its
+                 anchor row (matching the issue's mock). Reuses the shared
+                 collapsible header — the same one the cross-project pane uses —
+                 so the two stay visually identical. It is a sibling of the rows,
+                 not one of them: Sortable's `draggable` selector skips it, and
+                 it carries no `.session-item`, so neither the drag index
+                 arithmetic nor keyboard navigation can see it. -->
+            <SessionGroupHeader
+              v-if="row.isAnchor"
+              :title="t('session.forkGroupTitle')"
+              :count="row.childCount"
+              :collapsed="isForkCollapsed(row.session.id)"
+              @toggle="toggleForkCollapsed(row.session.id)"
+            >
+              <template #icon><GitFork :size="12" /></template>
+            </SessionGroupHeader>
+          </template>
         </VueDraggable>
       </template>
     </div>
@@ -192,7 +220,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, Pin, PinOff, PencilLine, Share2, Tags, Trash2, MoreVertical } from 'lucide-vue-next'
+import { Archive, Pin, PinOff, PencilLine, Share2, Tags, Trash2, MoreVertical, GitFork } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -212,6 +240,7 @@ import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.t
 import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
+import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -232,7 +261,17 @@ const toast = useToast()
 const { runningSessionsVersion } = useSessionIdentity()
 const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useCrossProjectSessions()
 
+// The drag-bound array. It holds only TOP-LEVEL rows: a session that heads a
+// fork group is one entry here, and its group members live in
+// `membersByAnchor` and are rendered right after it. Dragging therefore moves
+// the whole group, and a group can never be split by a drag.
 const sessions = ref([])
+// anchorId → its group members (shallowest generation first), and every session
+// by id (members included). Both are rebuilt from the server response; the
+// `byId` map is what the row menu resolves against, since a group member is not
+// in `sessions`.
+const membersByAnchor = ref(new Map())
+const sessionsById = ref(new Map())
 const loading = ref(false)
 const refreshing = ref(false) // a reload (loadSessions) is in flight
 // Tag filter. Single-select: '' means no filter. Sent to the server so the
@@ -244,18 +283,93 @@ const listRef = ref(null)
 let reloadDebounce = null
 let removeEventHandler = null
 
-const sessionsWithStatus = computed(() => {
+// Fork-group collapse state, keyed by anchor session id. In-memory only, same
+// as the cross-project pane's: the pane is v-show'd (never unmounted) while the
+// app runs, so it survives tab switches and list reloads, and resets on page
+// reload. Default is EXPANDED — a freshly forked session is the one the user
+// just created, so its group should be visible.
+const collapsedAnchors = reactive(new Set())
+function isForkCollapsed(anchorId) {
+  return collapsedAnchors.has(anchorId)
+}
+function toggleForkCollapsed(anchorId) {
+  if (collapsedAnchors.has(anchorId)) collapsedAnchors.delete(anchorId)
+  else collapsedAnchors.add(anchorId)
+}
+
+/**
+ * Expand the group holding `sessionId`, if any.
+ *
+ * A collapsed anchor must never hide the row the user is actually on: a
+ * notification deep link or a cross-project jump can land on a group member
+ * whose anchor was collapsed earlier. Auto-expanding (rather than overriding
+ * the collapsed flag at render time) keeps the header's chevron truthful and
+ * leaves the user free to collapse it again afterwards.
+ */
+function expandGroupOf(sessionId) {
+  if (!sessionId) return
+  for (const [anchorId, members] of membersByAnchor.value) {
+    if (members.some(m => m.session.id === sessionId)) {
+      collapsedAnchors.delete(anchorId)
+      return
+    }
+  }
+}
+
+/**
+ * The rows actually rendered, in order: each top-level row followed by its
+ * group members when expanded. A collapsed group's members are omitted from
+ * the DOM entirely (the template v-if's on `isForkCollapsed`), never merely
+ * hidden — that keeps the draggable index arithmetic and the keyboard nav
+ * index working on exactly the set of visible rows.
+ */
+const visibleRows = computed(() => {
   void runningSessionsVersion.value
-  return sessions.value.map(s => ({
-    ...s,
-    running: props.runningSessionIds.has(s.id),
-  }))
+  const out = []
+  for (const top of sessions.value) {
+    const members = membersByAnchor.value.get(top.id)
+    const isAnchor = !!members && members.length > 0
+    out.push({
+      session: top,
+      depth: 0,
+      childCount: isAnchor ? members.length : 0,
+      isAnchor,
+      isLastInGroup: false,
+      running: props.runningSessionIds.has(top.id),
+    })
+    if (!isAnchor || isForkCollapsed(top.id)) continue
+    members.forEach((member, i) => {
+      out.push({
+        ...member,
+        // Explicit rather than left to CSS `:last-of-type`: the group header is
+        // also a <div> sibling, so the last member is only the last div of its
+        // type when nothing follows the group at all.
+        isLastInGroup: i === members.length - 1,
+        running: props.runningSessionIds.has(member.session.id),
+      })
+    })
+  }
+  return out
 })
 
-// Display order is the user's manual drag order — matching the backend's
-// `ORDER BY sort_order ASC, created_at DESC`. Rendered as one flat list, so the
-// rendered DOM order equals sessionsWithStatus order, which is what useListNav
-// indexes into.
+/** Row modifiers, derived from the row plus the live running set. */
+function rowClasses(row) {
+  return {
+    pinned: row.session.pinned,
+    active: row.session.id === props.currentSessionId,
+    running: row.running,
+    'is-top': row.depth === 0,
+    'is-fork-member': row.depth > 0,
+    'is-last-in-group': row.isLastInGroup,
+    'session-row-active': visibleRows.value[listNav.activeIndex.value]?.session.id === row.session.id,
+    'menu-open': contextMenu.visible && contextMenu.sessionId === row.session.id,
+  }
+}
+
+/** Resolve a session by id across the whole list, group members included. */
+function findSession(sessionId) {
+  return sessionsById.value.get(sessionId)
+}
 
 // Cross-project group collapse state, keyed by absolute project path. In-memory
 // only: the pane is v-show'd (never unmounted) while the app runs, so the state
@@ -285,12 +399,23 @@ async function loadSessions() {
     // drawer), and both reload on the same signals, so without this the list is
     // fetched twice for identical data.
     const data = await coalescedJson(`/api/ai/sessions${buildTagQuery()}`)
-    sessions.value = data.sessions || []
+    const fetched = data.sessions || []
+    reconcileRunningSessions(fetched)
+    // Group the server order into top-level rows + their groups. `sessions`
+    // holds the top-level rows in server order; the members hang off the map.
+    const grouping = buildSessionForkTree(fetched)
+    sessions.value = grouping.topSessions
+    membersByAnchor.value = grouping.membersByAnchor
+    sessionsById.value = grouping.byId
+    // A reload rebuilds the groups, so a member that is now the current session
+    // (opened while the previous snapshot was on screen) needs its group open.
+    expandGroupOf(props.currentSessionId)
     if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
-    reconcileRunningSessions(sessions.value)
   } catch (err) {
     appLog.e('SessionList', 'Failed to load sessions:', err)
     sessions.value = []
+    membersByAnchor.value = new Map()
+    sessionsById.value = new Map()
   } finally {
     loading.value = false
     refreshing.value = false
@@ -364,7 +489,7 @@ async function archiveSession(sessionId) {
     onExtraAction: () => emit('destroy', sessionId),
   })
   if (confirmed) {
-    const session = sessions.value.find(s => s.id === sessionId)
+    const session = findSession(sessionId)
     emit('archive', sessionId, session?.backend)
   }
 }
@@ -399,10 +524,14 @@ function showMenuFromButton(event, session) {
 }
 
 // ── Manual drag reordering (issue #492) ──
-// SortableJS reorders `sessions` in place via v-model, so by the time `end`
-// fires the array already holds the new order. We only persist it. A drag that
-// ends where it started never reaches here as a meaningful change — oldIndex
-// equals newIndex, and the server write is skipped.
+// SortableJS reorders `sessions` (the top-level rows) in place via v-model, so
+// by the time `end` fires the array already holds the new order. We only
+// persist it. A drag that ends where it started never reaches here as a
+// meaningful change — oldIndex equals newIndex, and the server write is skipped.
+//
+// A group member is not a drag source: `draggable=".session-row.is-top"` admits
+// only top-level rows, so dragging always moves a whole group (members are
+// rendered from `membersByAnchor`, which follows the anchor's position).
 
 /**
  * Force the pinned block back to the front of `sessions`.
@@ -461,14 +590,23 @@ async function onDragEnd(evt) {
   const ordered = pinPinnedRowsToTop(sessions.value)
   if (ordered !== sessions.value) sessions.value = ordered
 
-  // Only the unpinned rows participate: pinned rows are positioned by pinned
-  // DESC, so renumbering them would be meaningless (the server ignores their
-  // ids anyway — see service.ReorderSessions). The whole visible list is
-  // loaded, so the posted ids are exactly the rows the server will renumber,
-  // and mirroring that locally keeps the array in sync with storage.
-  const unpinned = ordered.filter(s => !s.pinned)
-  unpinned.forEach((s, i) => { s.sortOrder = i })
-  const ids = unpinned.map(s => s.id)
+  // Persist the order of every visible session, groups flattened in place.
+  //
+  // The server numbers `sort_order` per session, and a group's members must
+  // keep travelling with their anchor. Posting only the top-level rows would
+  // leave the members' sort_order untouched while their anchor moved, so the
+  // next load would rebuild the group in a different spot — the drag would
+  // appear to undo itself. Flattening the visible order (anchor, its members,
+  // next anchor, ...) is exactly the sequence the DOM shows, so the group
+  // reassembles around its anchor afterwards.
+  //
+  // A collapsed group's members are not rendered, so they are not in this
+  // list; the server leaves them after the posted prefix in their previous
+  // relative order (see service.ReorderSessions), which keeps them adjacent to
+  // their anchor because they were already numbered there.
+  const visibleUnpinned = visibleRows.value.filter(r => !r.session.pinned)
+  visibleUnpinned.forEach((r, i) => { r.session.sortOrder = i })
+  const ids = visibleUnpinned.map(r => r.session.id)
   try {
     await apiPut('/api/ai/sessions/reorder', { ids })
   } catch (err) {
@@ -503,7 +641,7 @@ async function togglePin(sessionId, currentPinned) {
   closeContextMenu()
   const newPinned = !currentPinned
   // Optimistic update
-  const session = sessions.value.find(s => s.id === sessionId)
+  const session = findSession(sessionId)
   if (session) session.pinned = newPinned
   try {
     await apiPatch(`/api/ai/session/update?session_id=${encodeURIComponent(sessionId)}`, { pinned: newPinned })
@@ -518,7 +656,7 @@ async function togglePin(sessionId, currentPinned) {
 
 async function renameSessionFromMenu(sessionId) {
   closeContextMenu()
-  const session = sessions.value.find(s => s.id === sessionId)
+  const session = findSession(sessionId)
   if (!session) return
   const current = session.title || ''
   const newTitle = await dialog.prompt(
@@ -553,7 +691,7 @@ function archiveFromMenu(sessionId) {
 
 async function destroyFromMenu(sessionId) {
   closeContextMenu()
-  const session = sessions.value.find(s => s.id === sessionId)
+  const session = findSession(sessionId)
   if (!session) return
   const title = session.title || t('session.unnamed')
   const isRunning = props.runningSessionIds.has(sessionId)
@@ -570,7 +708,7 @@ const tagDialog = reactive({ open: false, sessionId: '', initialTags: [] })
 
 function openTagDialogFromMenu(sessionId) {
   closeContextMenu()
-  const session = sessions.value.find(s => s.id === sessionId)
+  const session = findSession(sessionId)
   if (!session) return
   tagDialog.sessionId = sessionId
   tagDialog.initialTags = (session.tags || []).map(tag => tag.name)
@@ -607,14 +745,15 @@ function reload() {
   loadSessions()
 }
 
-// Keyboard navigation indexes sessionsWithStatus, whose order (pinned first,
-// then newest-first) is exactly the rendered DOM order. The list is flat, so
-// the nav index maps straight onto the rows — no section offset to apply.
+// Keyboard navigation indexes visibleRows, whose order is exactly the rendered
+// DOM order: each top-level row, then its group members when the group is
+// expanded. A collapsed group contributes only its anchor row, and the group
+// headers carry no `.session-item`, so neither is reachable by arrow keys.
 const listNav = useListNav({
-  getCount: () => sessionsWithStatus.value.length,
+  getCount: () => visibleRows.value.length,
   onConfirm: (idx) => {
-    const s = sessionsWithStatus.value[idx]
-    if (s) selectSession(s.id, s.backend)
+    const row = visibleRows.value[idx]
+    if (row) selectSession(row.session.id, row.session.backend)
   },
   onActiveChange: scrollActiveIntoView,
 })
@@ -629,7 +768,7 @@ function scrollActiveIntoView(index) {
   if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
 }
 
-watch(sessionsWithStatus, () => listNav.reset())
+watch(visibleRows, () => listNav.reset())
 
 // Reset to the project tab whenever the current project changes: the session we
 // just opened belongs to the (new) current project and must be visible in the
@@ -648,6 +787,9 @@ watch(() => store.state.projectRoot, () => {
 // not be loaded yet (pagination), so retry once after a reload settles.
 watch(() => props.currentSessionId, async (id) => {
   if (!id) return
+  // A group member can be hidden behind a collapsed anchor; expand first so the
+  // scroll below has a row to find.
+  expandGroupOf(id)
   await nextTick()
   if (scrollActiveRowIntoView()) return
   await nextTick()
@@ -705,6 +847,10 @@ onMounted(() => {
   loadFilterTags()
   // Seed the share badges for this project in one request.
   void refreshSessionShares()
+  // The session opened before this list mounted (cold start, or a notification
+  // deep link) may be a group member whose anchor was never expanded — there is
+  // no currentSessionId *change* to observe, so expand once here too.
+  expandGroupOf(props.currentSessionId)
   // Real-time: keep the list in sync with session lifecycle events (running,
   // completed, cancelled, permission, title updates). Debounced so a stream
   // of events (e.g. running→completed) triggers one refresh.
@@ -761,6 +907,52 @@ onUnmounted(() => {
   opacity: 0.9;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
   border-radius: var(--radius-sm, 6px);
+}
+
+/* ── Fork groups (issue #477) ──
+   A derived-session group renders its anchor row, then the shared group header,
+   then the members. The members are indented with a rail that continues the
+   header's leading edge, and the last one gets an elbow so the rail terminates
+   in a corner rather than dangling.
+
+   The indent lives on the row (not on .session-item) so the running band and
+   the selection tint — both painted on the row — are indented with it instead
+   of bleeding back to the pane edge. `padding-left` on the row would shrink
+   the row's background box, so the rail is drawn with a border-left on the row
+   and the extra space is real padding. */
+.session-row.is-fork-member {
+  /* Aligns with SessionGroupHeader's icon column (its horizontal padding). */
+  padding-left: var(--space-7);
+  border-left: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
+  margin-left: var(--space-4);
+}
+
+/* Elbow for the last member of a group: a short horizontal stub meeting the
+   rail. Drawn as a pseudo-element so it needs no extra markup, and only on the
+   final member — the earlier ones continue the vertical rail. */
+.session-row.is-fork-member.is-last-in-group::before {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--space-4) - 1px);
+  top: 0;
+  bottom: 50%;
+  width: var(--space-4);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
+  border-bottom-left-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
+/* Generation chip on a group member's title line ("Gen 2" / "第 2 代"). */
+.session-fork-gen {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  line-height: 16px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--text-muted, #999);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  white-space: nowrap;
 }
 
 .session-empty {

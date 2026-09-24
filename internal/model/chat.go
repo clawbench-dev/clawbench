@@ -278,7 +278,13 @@ type ChatSession struct {
 	AgentSource     string     `json:"agentSource,omitempty"`
 	Model           string     `json:"model,omitempty"`
 	SessionType     string     `json:"sessionType,omitempty"`     // "chat" | "scheduled"
-	SourceSessionID string     `json:"sourceSessionId,omitempty"` // non-empty = continued from task
+	// SourceSessionID records where this session was derived from. Three
+	// writers share the column, so it is NOT always a session id:
+	//   - ForkSession            → the source session's id
+	//   - ContinueFromExecution  → the source session's id (task continuation)
+	//   - ServeACPLoadSession    → the marker string "acp:{acpSessionId}"
+	// Consumers that resolve it to a session must skip the "acp:" prefix.
+	SourceSessionID string     `json:"sourceSessionId,omitempty"`
 	CreatedAt       time.Time  `json:"createdAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 	Running         bool       `json:"running,omitempty"`

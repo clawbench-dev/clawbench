@@ -39,7 +39,7 @@ flowchart LR
 
 - **Tab 式单页布局**：底部 Tab 栏切换主功能区（chat、browse、tasks 等），溢出 Tab 放入弹出菜单。`TabPanel` 使用 `v-show` 保持状态持久——切换 Tab 不销毁组件，回到之前的 Tab 状态还在
 - **抽屉式导航**：Session 抽屉（会话列表）、ACP Session 抽屉（ACP 模式/权限管理）、TOC 抽屉（文件目录）、搜索抽屉等。从侧面滑入，不占常驻空间——移动端屏幕有限，抽屉比常驻面板更节省空间
-- **会话列表是单一扁平列表**：项目面板内的会话不再分成「置顶 / 最近」两个分组（无分组头、无折叠、无分组计数），置顶会话仍排在最前（服务端 `pinned DESC` 排序不变），只在行的右上角加一个三角标记。跨项目面板按项目分组的结构保留不变。分组把同一份数据渲染成两个 `TransitionGroup` 与一套索引偏移计算，键盘导航还得补偿分组偏移——而用户要的只是"置顶的在上面"，一个标记就能表达
+- **会话列表是扁平列表 + 派生会话折叠组**：项目面板内的会话不再分成「置顶 / 最近」两个分组（无分组头、无折叠、无分组计数），置顶会话仍排在最前（服务端 `pinned DESC` 排序不变），只在行的右上角加一个三角标记。分组把同一份数据渲染成两个 `TransitionGroup` 与一套索引偏移计算，键盘导航还得补偿分组偏移——而用户要的只是"置顶的在上面"，一个标记就能表达。**派生（分叉）会话是唯一的例外**：`chat_sessions.source_session_id` 被消费为一条父子链，沿链回溯到「已加载集合内、同一 `pinned` 值下最顶的祖先」作为锚点行，其全部后代折叠到锚点下方，组头复用跨项目面板的 `SessionGroupHeader`（默认展开，内存态折叠）。三条边界：硬删除的父使该节点自己升为锚点（否则 issue 的动机场景整条链会平铺）；`acp:` 前缀是标记串非会话 ID，直接不参与；跨 `pinned` 边界不建组（`pinned DESC` 会拦腰截断分组）。拖拽数组只装顶层行（`draggable=".session-row.is-top"`），拖动锚点带走整棵子树，提交时按可见顺序摊平（否则成员 `sort_order` 不动，下次加载组会跑位）。跨项目面板按项目分组的结构保留不变
 - **模块级 Composable 单例**：多个 composable 使用模块级 `ref`，所有消费者共享同一份状态（如 `useToast`、`useSessionIdentity`、`useGlobalEvents`）。跨组件状态协调无需 provide/inject
 - **WebSocket 单通道**：所有实时推送走 `/api/ai/events/ws`。聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）由 `StreamHub.EmitToSession` 推送；系统事件（`session_update/task_update/summary_update`）通过 `ws.Manager` 广播。断线 ≤10s 自动缓冲重放（≤50 条），>120s 清理订阅（`internal/ws/manager.go`）。客户端通过 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`pong`/`metrics_preference` 六种消息与后端交互
 

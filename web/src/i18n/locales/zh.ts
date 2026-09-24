@@ -987,6 +987,9 @@ export default {
     tabCross: '其他项目',
     crossEmpty: '暂无其他项目的活跃会话',
     reorderFailed: '保存会话顺序失败',
+    forkGroupTitle: '分叉自本会话',
+    forkGeneration: '第 {n} 代',
+    forkGenerationTitle: '自上一级会话分叉出的第 {n} 代',
   },
   sessionTags: {
     title: '设置标签',
