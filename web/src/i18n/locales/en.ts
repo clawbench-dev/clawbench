@@ -641,6 +641,7 @@ export default {
       openDirectory: 'Open directory',
       addedToChat: 'Added to chat',
       addedToChatN: 'Added {n} files to chat',
+      quotedToChat: 'Quoted {label} in chat',
       alreadyAttached: 'Already in chat attachments',
       removedFromChat: 'Removed from chat attachments',
       removeFromChat: 'Remove attachment',

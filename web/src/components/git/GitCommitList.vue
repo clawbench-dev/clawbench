@@ -79,6 +79,9 @@
             :key="c.sha"
             class="drilldown-item"
             :class="{ 'drilldown-item-selected': c.sha === selectedSHA, 'drilldown-item-active': listNav.activeIndex.value === idx }"
+            :draggable="canDragCommit(c)"
+            @dragstart="onCommitDragStart(c, $event)"
+            @dragend="cleanupDragGhost()"
             @click="$emit('select', c)"
           >
             <div class="git-commit-info">
@@ -123,6 +126,8 @@ import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { refLabelText } from '@/utils/gitGraph'
 import { formatRelativeTime, formatDateTime } from '@/utils/format'
+import { startQuoteDrag, commitDragPayload } from '@/utils/quoteDrag'
+import { cleanupDragGhost } from '@/utils/attachDrag'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -144,6 +149,31 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select', 'search', 'load-more', 'refresh', 'manage'])
+
+/**
+ * Whether a commit row can be dragged into the chat as a quote.
+ *
+ * The working-tree row ("uncommitted changes") has no commit to reference, so it
+ * is not draggable — dragging it would produce a card that cannot be jumped to
+ * and that names nothing.
+ */
+function canDragCommit(c) {
+  return !c.isWT && !!c.sha
+}
+
+/**
+ * Start dragging a commit into the chat: dropping it stages a quote card for
+ * that commit (no annotation). The commit's sha is the locator, which is what
+ * lets the card jump back to the commit in git history.
+ */
+function onCommitDragStart(c, e) {
+  const payload = commitDragPayload(c)
+  if (!startQuoteDrag(e, payload)) {
+    // Nothing usable to drag — cancel so the browser does not start an empty
+    // drag that would silently drop nothing.
+    e.preventDefault()
+  }
+}
 
 const commitSearch = ref('')
 const listRef = ref(null)

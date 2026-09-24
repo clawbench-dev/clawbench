@@ -644,6 +644,7 @@ export default {
       openDirectory: '打开目录',
       addedToChat: '已添加到聊天',
       addedToChatN: '已添加 {n} 个文件到聊天',
+      quotedToChat: '已在聊天中引用 {label}',
       alreadyAttached: '已在聊天附件中',
       removedFromChat: '已从聊天附件移除',
       removeFromChat: '取消附件',

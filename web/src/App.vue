@@ -576,6 +576,7 @@ import type { ForgeTarget } from './composables/useForgeNavigation.ts'
 import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
+import { readQuoteDragData, hasQuoteDragData } from './utils/quoteDrag'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -2426,7 +2427,7 @@ function handleWideDockTabClick(tab: string) {
 }
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
-const { addAttachedFile } = useChatContext()
+const { addAttachedFile, addStagedQuote } = useChatContext()
 const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
@@ -2474,19 +2475,24 @@ function isOSFileDrop(e: DragEvent) {
 
 function onChatColDragEnter(e: DragEvent) {
   const internal = hasAttachDragData(e.dataTransfer)
+  const quote = hasQuoteDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
-  if (!internal && !osFiles) return
+  if (!internal && !quote && !osFiles) return
   chatDropCounter++
   chatDropActive.value = true
 }
 
 function onChatColDragOver(e: DragEvent) {
-  // Allow the drop for internal attach drags (wide-screen) and OS file drops.
+  // Allow the drop for internal attach drags (wide-screen), quote drags, and OS
+  // file drops. A quote drag is allowed on narrow screens too: it stages a card
+  // rather than referencing a file path, so there is no wide-screen-only
+  // affordance behind it (the narrow layout IS the chat).
   const internal = hasAttachDragData(e.dataTransfer)
+  const quote = hasQuoteDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
-  if (internal || osFiles) e.preventDefault()
+  if (internal || quote || osFiles) e.preventDefault()
 }
 
 function onChatColDragLeave() {
@@ -2519,6 +2525,18 @@ function onChatColDrop(e: DragEvent) {
     } else {
       toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     }
+    return
+  }
+  // Quote drag (a commit / task / issue / PR / CI run row) → stage a quote card
+  // with NO annotation. The user is already saying "put this in the chat", so a
+  // composer detour asking for a note would be friction; they can still open the
+  // card to annotate it afterwards, while it is staged.
+  const quote = readQuoteDragData(e.dataTransfer)
+  if (quote) {
+    e.preventDefault()
+    addStagedQuote(quote)
+    switchTab('chat')
+    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: '💬', type: 'success', duration: 1800 })
     return
   }
   // OS file drop → upload & auto-attach each file.

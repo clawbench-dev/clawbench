@@ -145,14 +145,24 @@ function setQuoteData(data: QuoteData | null) {
 }
 
 function sameQuote(a: QuoteData, b: QuoteData): boolean {
-  // messageId is part of the identity: quoting the same sentence out of two
-  // different chat messages produces two genuinely different quotes, and
-  // collapsing them would silently keep only the first.
+  // The LOCATORS are part of the identity, not just the label. A label is a
+  // human-facing name and is not unique: two scheduled tasks may share a name
+  // (the schema has no unique constraint), and two CI runs may share a workflow
+  // name and number across repositories. Comparing only the label would collapse
+  // them into a single card and silently drop one.
+  //
+  // messageId was the first field to need this (quoting the same sentence out of
+  // two different chat messages produces two genuinely different quotes), so the
+  // rule is simply "same label AND same locators".
   return a.filePath === b.filePath
     && a.startLine === b.startLine
     && a.endLine === b.endLine
     && a.text === b.text
     && (a.messageId ?? 0) === (b.messageId ?? 0)
+    && (a.taskId ?? 0) === (b.taskId ?? 0)
+    && (a.commitSha ?? '') === (b.commitSha ?? '')
+    && (a.executionId ?? '') === (b.executionId ?? '')
+    && (a.url ?? '') === (b.url ?? '')
 }
 
 function addStagedQuote(data: QuoteData, note = ''): StagedQuote {
