@@ -110,6 +110,83 @@ public class WebViewLifecycleTest {
     }
 
     // =====================================================
+    // MainActivity foreground / resume JS bridge tests
+    // =====================================================
+
+    /**
+     * The resume hook must be dispatched unconditionally, with no argument.
+     *
+     * It is deliberately separate from __setAppForeground(true): that reports a
+     * foreground STATE and is a no-op in the frontend when it already believes
+     * it is in the foreground — which is the normal Android case, because
+     * onPause's JS call is dropped while the WebView is frozen. The resume hook
+     * is what the frontend's current-session re-sync hangs off.
+     */
+    @Test
+    public void mainActivity_notifyFrontendAppResume_callsResumeHookUnconditionally() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(mainActivity, "webView", mockWebView);
+        setField(mainActivity, "webViewConnected", true);
+
+        invokeMethod(mainActivity, "notifyFrontendAppResume");
+
+        verify(mockWebView).evaluateJavascript(
+                contains("__clawbenchAppResume()"), any());
+    }
+
+    @Test
+    public void mainActivity_notifyFrontendAppForeground_callsStateHookWithArgument() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(mainActivity, "webView", mockWebView);
+        setField(mainActivity, "webViewConnected", true);
+
+        invokeMethod(mainActivity, "notifyFrontendAppForeground", boolean.class, true);
+
+        verify(mockWebView).evaluateJavascript(
+                contains("__setAppForeground(true)"), any());
+    }
+
+    @Test
+    public void mainActivity_notifyFrontendAppResume_noopWhenWebViewNotConnected() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(mainActivity, "webView", mockWebView);
+        setField(mainActivity, "webViewConnected", false);
+
+        invokeMethod(mainActivity, "notifyFrontendAppResume");
+
+        verify(mockWebView, never()).evaluateJavascript(anyString(), any());
+    }
+
+    /**
+     * onResume() must actually dispatch the resume hook — testing the method
+     * body alone would not catch the hook being dropped from the lifecycle.
+     *
+     * The real onResume() runs its full sequence on a spy: the siblings that
+     * would touch the Android framework (resumeWebView, the native-WS stop,
+     * intent handling) are stubbed out, while notifyFrontendAppResume is left
+     * real so its WebView call is observable.
+     */
+    @Test
+    public void mainActivity_onResume_dispatchesFrontendResumeHook() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(mainActivity, "webView", mockWebView);
+        setField(mainActivity, "webViewConnected", true);
+
+        MainActivity spyActivity = spy(mainActivity);
+        // super.onResume() (FragmentActivity) dereferences mFragments.
+        setField(spyActivity, "mFragments", mock(FragmentController.class));
+        doNothing().when(spyActivity).resumeWebView();
+        // stopNativeEventWs(this) calls context.startService(), which returns a
+        // ComponentName — doReturn, not doNothing (that is void-only).
+        doReturn(null).when(spyActivity).startService(any());
+        doNothing().when(spyActivity).handleResumeIntent();
+
+        invokeMethod(spyActivity, "onResume");
+
+        verify(mockWebView).evaluateJavascript(contains("__clawbenchAppResume()"), any());
+    }
+
+    // =====================================================
     // BrowserActivity.onNewIntent tests
     // =====================================================
 

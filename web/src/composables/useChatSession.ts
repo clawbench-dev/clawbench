@@ -2,7 +2,7 @@ import { ref, computed, type Ref } from 'vue'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { useAppForeground, onAppForeground } from '@/composables/useAppForeground'
+import { useAppForeground, onAppResume } from '@/composables/useAppForeground'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { appLog } from '@/utils/appLog'
 import { reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
@@ -872,9 +872,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   // visibilityState is unreliable in the WebView (onPause doesn't reliably
   // flip it to 'hidden'), so the WS may NOT have been disconnected while
   // backgrounded and no clawbench-reconnect event fires on return. Messages
-  // produced in the background would then never appear. The native
-  // __setAppForeground bridge (authoritative on Android) drives this callback
-  // regardless, so the session is always re-synced here.
+  // produced in the background would then never appear.
   //
   // It deliberately uses handleManualRefresh (forceReload=true, the same
   // semantics as the chat refresh button / a cold restart) instead of the
@@ -884,8 +882,15 @@ export function useChatSession(options: UseChatSessionOptions) {
   // streaming content missing from the UI until the user manually refreshes or
   // cold-restarts the app. A forced authoritative loadHistory always converges
   // the streaming placeholder (rebuildFromDb) to what the server has.
-  const removeForegroundReadListener = onAppForeground((fg) => {
-    if (!fg) return
+  //
+  // This listens on onAppResume, NOT onAppForeground. The latter only fires on
+  // a STATE transition, which is exactly what is missing when the WebView froze
+  // while paused: the background notification never reached JS, so the state is
+  // still `true` on return and no transition ever fires. That made the whole
+  // re-sync silently skip on Android — the reported "resume doesn't really
+  // refresh, only switching away and back works" symptom. onAppResume fires
+  // unconditionally from the native onResume hook.
+  const removeForegroundReadListener = onAppResume(() => {
     const sid = currentSessionId.value
     if (!sid) return
     markSessionRead(sid).catch(() => {})

@@ -62,7 +62,7 @@ const { mockState, resetMockState } = vi.hoisted(() => {
   return { mockState, resetMockState }
 })
 
-const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, mockForceCleanupStreamingState, mockOnAppForeground, resetAdditionalMocks } = vi.hoisted(() => {
+const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, mockForceCleanupStreamingState, mockOnAppResume, resetAdditionalMocks } = vi.hoisted(() => {
   const mockIdentity: Record<string, string | boolean> = {
     currentSessionTitle: '',
     currentBackend: '',
@@ -103,14 +103,17 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     parseMessages: vi.fn().mockReturnValue([]),
   }
   const mockForceCleanupStreamingState = vi.fn().mockReturnValue(undefined)
-  // Captures callbacks registered via onAppForeground by useChatSession —
-  // tests fire these to simulate app background/foreground transitions.
-  const foregroundHandlers: Array<(fg: boolean) => void> = []
-  const mockOnAppForeground = vi.fn((cb: (fg: boolean) => void) => {
-    foregroundHandlers.push(cb)
+  // Captures callbacks registered via onAppResume by useChatSession — tests
+  // fire these to simulate the app returning to the foreground (Android
+  // onResume). Deliberately NOT the state-transition listener: the resume
+  // signal fires even when the foreground state never changed (the WebView was
+  // frozen while paused so the onPause notification was dropped).
+  const resumeHandlers: Array<() => void> = []
+  const mockOnAppResume = vi.fn((cb: () => void) => {
+    resumeHandlers.push(cb)
     return () => {
-      const idx = foregroundHandlers.indexOf(cb)
-      if (idx !== -1) foregroundHandlers.splice(idx, 1)
+      const idx = resumeHandlers.indexOf(cb)
+      if (idx !== -1) resumeHandlers.splice(idx, 1)
     }
   })
   function resetAdditionalMocks() {
@@ -138,9 +141,9 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockForceCleanupStreamingState.mockReset().mockReturnValue(undefined)
     mockAppInForeground.value = true
     mockIsReplayingEvents.value = false
-    foregroundHandlers.length = 0
+    resumeHandlers.length = 0
   }
-  return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockForceCleanupStreamingState, mockIdentityFns, mockOnAppForeground, resetAdditionalMocks }
+  return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockForceCleanupStreamingState, mockIdentityFns, mockOnAppResume, resetAdditionalMocks }
 })
 
 // ── Mocks ──
@@ -327,7 +330,7 @@ vi.mock('@/composables/useToast', () => ({
 }))
 vi.mock('@/composables/useAppForeground', () => ({
   useAppForeground: () => ({ appInForeground: mockAppInForeground }),
-  onAppForeground: mockOnAppForeground,
+  onAppResume: mockOnAppResume,
 }))
 vi.mock('@/composables/useGlobalEvents', () => ({
   useGlobalEvents: () => ({ isReplayingEvents: mockIsReplayingEvents }),
@@ -1468,13 +1471,15 @@ describe('foreground return marks current session read', () => {
     resetMockState()
     resetChatSessionState()
     resetAdditionalMocks()
-    mockOnAppForeground.mockClear()
+    mockOnAppResume.mockClear()
   })
 
-  // Helper: capture the onAppForeground callback registered by useChatSession.
+  // Helper: capture the onAppResume callback registered by useChatSession.
+  // The resume signal (not the state-transition one) is what drives the
+  // re-sync — it must fire even when the foreground state never changed.
   function captureForegroundHandlers() {
-    const calls = mockOnAppForeground.mock.calls
-    return calls.map(c => c[0]) as Array<(fg: boolean) => void>
+    const calls = mockOnAppResume.mock.calls
+    return calls.map(c => c[0]) as Array<() => void>
   }
 
   function createForegroundTestSession() {
@@ -1495,7 +1500,7 @@ describe('foreground return marks current session read', () => {
     expect(handlers.length).toBeGreaterThan(0)
 
     // Simulate the app returning to the foreground (Android onResume).
-    handlers[handlers.length - 1](true)
+    handlers[handlers.length - 1]()
 
     await vi.waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -1505,18 +1510,25 @@ describe('foreground return marks current session read', () => {
     })
   })
 
-  it('does NOT mark read when the app transitions to the background', async () => {
+  it('re-syncs on resume even when the foreground state never left true', async () => {
+    // Regression: the resume signal must not be gated on a state transition.
+    // Android freezes the WebView while paused, so onPause's JS call can be
+    // dropped — the state is still true on return. The old implementation
+    // listened on the state transition, so this exact case silently skipped the
+    // re-sync and the session stayed stale until the user switched away and
+    // back. The state here is deliberately left at its default (true).
+    mockAppInForeground.value = true
     const session = createForegroundTestSession()
     const handlers = captureForegroundHandlers()
 
-    // Simulate the app going to the background (Android onPause).
-    handlers[handlers.length - 1](false)
+    handlers[handlers.length - 1]()
 
-    await new Promise(r => setTimeout(r, 50))
-    const readCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
-      (c: unknown[]) => String(c[0]).includes('/api/ai/chat/read')
-    )
-    expect(readCalls.length).toBe(0)
+    await vi.waitFor(() => {
+      const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1')
+      )
+      expect(chatFetches.length).toBeGreaterThan(0)
+    })
   })
 
   it('does nothing when returning to foreground with no active session', async () => {
@@ -1528,7 +1540,7 @@ describe('foreground return marks current session read', () => {
     options.currentSessionId.value = ''
     const handlers = captureForegroundHandlers()
 
-    handlers[handlers.length - 1](true)
+    handlers[handlers.length - 1]()
 
     await new Promise(r => setTimeout(r, 50))
     const readCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -1541,12 +1553,12 @@ describe('foreground return marks current session read', () => {
     // Regression: on Android, document.visibilityState is unreliable in the
     // WebView, so the WS may NOT have been disconnected while backgrounded —
     // no clawbench-reconnect event fires on return, and background messages
-    // never appear. The native __setAppForeground bridge drives this callback
-    // regardless, so the current session must be re-synced (loadHistory) here.
+    // never appear. The native resume hook drives this callback regardless, so
+    // the current session must be re-synced (loadHistory) here.
     const session = createForegroundTestSession()
     const handlers = captureForegroundHandlers()
 
-    handlers[handlers.length - 1](true)
+    handlers[handlers.length - 1]()
 
     // Foreground return now uses the manual-refresh path
     // (handleManualRefresh → syncSessionOnReconnect(true)): an authoritative
@@ -1586,7 +1598,7 @@ describe('foreground return marks current session read', () => {
     const fetchCountBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
 
     // App returns to foreground.
-    handlers[handlers.length - 1](true)
+    handlers[handlers.length - 1]()
 
     // Even with an unchanged snapshot the forced reload must fetch history —
     // the lightweight WS-reconnect path (skipIfUnchanged=true) would have
