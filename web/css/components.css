@@ -94,6 +94,18 @@
     background: var(--bg-tertiary);
 }
 
+/* A menu item reflecting a condition that is currently ON (e.g. the file or
+   conversation already has a public share link). Mirrors
+   .file-header-dropdown-menu .dropdown-item.active so both menus read the same. */
+.context-menu-item.active {
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+    color: var(--accent-color);
+}
+
+.context-menu-item.active:hover {
+    background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+}
+
 .context-menu-item.danger {
     color: #ef4444;
 }

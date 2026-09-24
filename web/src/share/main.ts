@@ -25,14 +25,14 @@ import '../../css/diff-rows.css'
 import '../../css/share-chrome.css'
 
 import { createApp } from 'vue'
-import ShareView from './ShareView.vue'
+import ShareRoot from './ShareRoot.vue'
 import i18n from '../i18n'
 import { LongPressDirective } from '../directives/longPress'
 import { configureMarkedRenderer } from '../utils/markedConfig'
 
 configureMarkedRenderer()
 
-const app = createApp(ShareView)
+const app = createApp(ShareRoot)
 app.use(i18n)
 app.directive('long-press', LongPressDirective)
 app.mount('#app')
