@@ -1,6 +1,7 @@
 import { escapeHtml } from '@/utils/html.ts'
 import { gt } from '@/composables/useLocale'
 import { resolveFilePath, registerWorktreeCacheClearter } from '@/composables/useFilePathAnnotation.ts'
+import { isShareMode } from '@/share/shareMode'
 
 // Register the clearWorktreeCache function to break circular dependency.
 // useFilePathAnnotation calls this instead of importing clearWorktreeCache directly.
@@ -50,6 +51,11 @@ const pendingWorktreeFetches = new Map<string, Promise<WorktreeInfo[]>>()
  * In-flight requests are deduplicated — concurrent callers share the same promise.
  */
 async function fetchWorktreeList(projectRoot: string): Promise<WorktreeInfo[]> {
+    // Anonymous share page: /api/git/worktrees is unreachable, and worktree
+    // chips are inert there anyway (file navigation is disabled). Returning an
+    // empty list avoids a 401 in the console on every shared conversation.
+    if (isShareMode()) return []
+
     const cached = worktreeListCache.get(projectRoot)
     if (cached) return cached
 

@@ -11,6 +11,7 @@ import {
 } from '@/utils/lineRanges.ts'
 import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
+import { isShareMode } from '@/share/shareMode'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
 // NOTE: do NOT import clearWorktreeCache from useWorktreeAnnotation here —
@@ -727,6 +728,15 @@ async function drainBatch(): Promise<void> {
  * click target rather than something to strip.
  */
 export async function verifyFilePaths(paths: string[], containerEl: HTMLElement): Promise<void> {
+    // The share page is anonymous and reaches this function through a DIFFERENT
+    // pipeline than the file-preview one: the chat renderer (renderMarkdown →
+    // useChatRender → ContentBlocks.reverifyAnnotations) annotates paths WITHOUT
+    // a share branch, unlike buildMarkdownPreviewDom. Without this guard every
+    // share page fires POST /api/file/batch-exists, gets 401, and — because
+    // fetchPathTypes returns null for a non-OK response — leaves the chips
+    // unverified. Returning early keeps them inert without the request.
+    if (isShareMode()) return
+
     const unique = [...new Set(paths)]
     if (unique.length === 0) return
 
@@ -917,6 +927,15 @@ export function tryResolveCodeString(
  * If the file doesn't exist, shows a toast and does not navigate.
  */
 export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number, source?: NavigationSurface, lineRanges?: string): Promise<boolean> {
+    // Load-bearing on the public share page, and NOT redundant with the
+    // handleShareLinkClick interceptor in MarkdownPreview: that interceptor
+    // deliberately declines modified clicks (Ctrl/Cmd/Shift) so the browser can
+    // open a new tab, after which the click chain continues and reaches this
+    // function through handleAnchorClick — which routes ANY relative link here.
+    // Without this guard an anonymous reader would fire an auth-protected file
+    // request and could probe the creator's directory layout.
+    if (isShareMode()) return false
+
     const parsed = parseFileUri(resolvedPath)
     let targetPath = parsed.path
     if (!targetPath) return false

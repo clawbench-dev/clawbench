@@ -16,6 +16,7 @@ import { store } from '@/stores/app.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
+import { isShareMode } from '@/share/shareMode'
 import { getSessionId } from '@/composables/useSessionIdentity.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
@@ -1753,6 +1754,11 @@ function getCurrentSessionId(): string {
 
 // Helper: call the permission respond API
 async function respondPermission(sessionId: string, toolCallId: string, optionId: string, cancelled: boolean): Promise<boolean> {
+  // Anonymous share page: there is no session to respond to and the endpoint is
+  // auth-protected. Guarding the single POST choke point covers every caller
+  // (chat list, tool drawer, diff drawer) instead of three separate call sites.
+  if (isShareMode()) return false
+
   try {
     const resp = await fetch('/api/ai/permission/respond', {
       method: 'POST',

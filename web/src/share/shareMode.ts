@@ -49,3 +49,62 @@ export function shareApiUrl(subpath: string): string {
     const clean = subpath.startsWith('/') ? subpath.slice(1) : subpath
     return `/api/share/${t}/${clean}`
 }
+
+// ─── Session-share data provider ─────────────────────────────────────────────
+//
+// A session snapshot inlines every tool call's input/output and every thinking
+// block's text, so the share page never needs the authenticated lazy-fetch
+// endpoints (/api/ai/chat/tool-call, /api/ai/chat/thinking). These maps are the
+// bridge: the render components consult them first and only fall back to the
+// network when nothing is found.
+//
+// Both maps are null outside session-share mode, which makes every lookup a
+// miss — that is what keeps the normal chat path unchanged.
+
+/** One inlined tool call, keyed by `${messageId}:${toolId}`. */
+export interface ShareToolCallData {
+    input?: unknown
+    output?: string
+    status?: string
+    done?: boolean
+    durationMs?: number
+    summary?: string
+    truncated?: boolean
+}
+
+let shareThinking: Map<string, string> | null = null
+let shareToolCalls: Map<string, ShareToolCallData> | null = null
+
+/** Composite key for both maps. Exported so callers build it identically. */
+export function shareDataKey(msgId: string | number, id: string): string {
+    return `${msgId}:${id}`
+}
+
+/**
+ * Install the session-share data provider. Called once by SessionShareView as
+ * it parses the snapshot.
+ */
+export function setShareSessionData(
+    thinking: Map<string, string>,
+    toolCalls: Map<string, ShareToolCallData>
+): void {
+    shareThinking = thinking
+    shareToolCalls = toolCalls
+}
+
+export function clearShareSessionData(): void {
+    shareThinking = null
+    shareToolCalls = null
+}
+
+/** Inlined thinking text for a block, or undefined when not in a session share. */
+export function getShareThinking(msgId: string | number, thinkId: string): string | undefined {
+    if (!shareThinking || !thinkId) return undefined
+    return shareThinking.get(shareDataKey(msgId, thinkId))
+}
+
+/** Inlined tool call for a block, or undefined when not in a session share. */
+export function getShareToolCall(msgId: string | number, toolId: string): ShareToolCallData | undefined {
+    if (!shareToolCalls || !toolId) return undefined
+    return shareToolCalls.get(shareDataKey(msgId, toolId))
+}

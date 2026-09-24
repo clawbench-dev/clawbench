@@ -32,6 +32,7 @@
         :getAgentName="getAgentName"
         :staticBlockCache="staticBlockCache"
         :active="active"
+        :readOnly="readOnly"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @task-card-click="$emit('task-card-click', $event)"
@@ -97,7 +98,7 @@
              Deliberately FIRST in the row: it is the entry point that starts a
              new action, while the rest are actions on the message itself. -->
         <button
-          v-if="!msg.streaming && !msg.pending && quotableText"
+          v-if="!readOnly && !msg.streaming && !msg.pending && quotableText"
           class="chat-action-btn"
           :title="t('quoteBar.quoteMessage')"
           :aria-label="t('quoteBar.quoteMessage')"
@@ -106,14 +107,14 @@
           <MessageSquareQuote :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
+          <span v-if="!readOnly && !msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
             <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
             <LoadingIndicator v-else size="sm" inline />
           </span>
           <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
             <LoadingIndicator size="sm" inline />
           </span>
-          <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
+          <button v-if="msgText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
             <!-- Generating states: summarizing / synthesizing -->
             <template v-if="autoSpeech.isGeneratingText(msg.id)">
               <Clock :size="14" class="speak-spinner" />
@@ -130,16 +131,16 @@
             </template>
           </button>
         </template>
-        <button v-if="!msg.streaming && (msg.role === 'assistant' || copyableUserText)" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
+        <button v-if="!readOnly && !msg.streaming && (msg.role === 'assistant' || copyableUserText)" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
           <span v-if="copied" class="chat-copy-copied-text">{{ t('common.copied') }}</span>
           <Copy v-else :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <button v-if="!msg.streaming && !hideSessionActions" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
+          <button v-if="!readOnly && !msg.streaming && !hideSessionActions" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
             <Split :size="14" />
           </button>
           <button
-            v-if="!msg.streaming && !hideSessionActions"
+            v-if="!readOnly && !msg.streaming && !hideSessionActions"
             class="chat-action-btn"
             :disabled="isLastMessage"
             :title="isLastMessage ? t('chat.session.nothingToRewind') : t('chat.actions.rewindSession')"
@@ -148,7 +149,7 @@
             <Rewind :size="14" />
           </button>
         </template>
-        <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
+        <button v-if="!readOnly && !msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
       </div>
@@ -227,6 +228,12 @@ const props = defineProps({
    *  execution record does not have. The rest of the bar (summary toggle,
    *  speak, copy, details) stays useful there. */
   hideSessionActions: { type: Boolean, default: false },
+  /** Public share page: the viewer is anonymous, so every per-message action
+   *  is suppressed — speak/fork/rewind need a live session or auth, and copy/
+   *  details duplicate what the snapshot already renders (details also exposes
+   *  token/cost metadata). The summary toggle and the time line are kept: they
+   *  are reading controls, not actions. */
+  readOnly: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'pending-action', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
@@ -341,7 +348,21 @@ const speakBtnLabel = computed(() => {
 // default display mode. While the full text is being lazily fetched in
 // original (or mixed-last-assistant) view, keep showing the summary as a
 // placeholder so the message bubble is never blank.
-const showSummary = computed(() => (props.msg ? isShowingSummary(props.msg, displayMode.value, { isLastAssistant: props.isLastAssistant }) : false))
+const showSummary = computed(() => {
+  if (!props.msg) return false
+  // readOnly (public share page) always renders the ORIGINAL content: the
+  // snapshot never strips blocks, and a read-only transcript has no business
+  // offering a summary/original switch the reader cannot evaluate.
+  //
+  // Never render blank, though: a message with a summary but no blocks (rare —
+  // the agent emitted metadata only) still shows its summary.
+  if (props.readOnly) {
+    const hasBlocks = !!props.msg.blocks?.length
+    const hasSummary = props.msg.summary != null && props.msg.summary !== ""
+    return !hasBlocks && hasSummary
+  }
+  return isShowingSummary(props.msg, displayMode.value, { isLastAssistant: props.isLastAssistant })
+})
 
 // A summarized message whose content was stripped by the backend has nothing
 // to render in original view — request the full text once. Only applies when
