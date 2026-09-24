@@ -42,7 +42,6 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tag, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { hasActiveTextSelection } from '@/utils/textSelection'
 
 const { t } = useI18n()
 
@@ -54,12 +53,7 @@ const props = defineProps<{
 
 const emit = defineEmits(['retry', 'switch-tag', 'delete-tag'])
 
-/**
- * A drag-select inside the row ends with a click on the row (mousedown and
- * mouseup share it as common ancestor); that must not be treated as a switch.
- */
 function handleRowClick(tag: Record<string, unknown>) {
-  if (hasActiveTextSelection()) return
   emit('switch-tag', tag)
 }
 

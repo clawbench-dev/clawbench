@@ -532,6 +532,7 @@ import { useFileEditor } from './composables/useFileEditor'
 import { useTocDockPreference } from './composables/useTocDockPreference'
 import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
+import { installDragClickGuard } from './utils/dragClickGuard'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
@@ -3322,6 +3323,10 @@ function handleCtrlShiftF(e: KeyboardEvent) {
  onMounted(() => {
      document.addEventListener('keydown', handleCtrlF)
      document.addEventListener('keydown', handleCtrlShiftF)
+     // Swallow clicks that were really a drag-select (see dragClickGuard). One
+     // document-level guard replaces a per-row check that only ever reached four
+     // of the ~50 clickable rows containing selectable text.
+     stopDragClickGuard = installDragClickGuard()
      stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
          const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
            || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
@@ -3336,10 +3341,13 @@ function handleCtrlShiftF(e: KeyboardEvent) {
  })
 
 let stopLocalLinkGuard: (() => void) | null = null
+let stopDragClickGuard: (() => void) | null = null
 
 onUnmounted(() => {
     stopLocalLinkGuard?.()
     stopLocalLinkGuard = null
+    stopDragClickGuard?.()
+    stopDragClickGuard = null
     activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()

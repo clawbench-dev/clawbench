@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import GitBranchRow from '@/components/git/GitBranchRow.vue'
+import { installDragClickGuard } from '@/utils/dragClickGuard'
 
 // ── Mocks ────────────────────────────────────────────────────
 vi.mock('vue-i18n', () => ({
@@ -74,28 +75,49 @@ describe('GitBranchRow', () => {
       expect(wrapper.emitted('switch')).toHaveLength(1)
     })
 
-    it('does not emit switch when a text selection is active (drag-select ends with a click)', async () => {
-      const wrapper = mountRow({ branch: makeBranch({ name: 'dev' }) })
-      vi.spyOn(window, 'getSelection').mockReturnValue({
-        toString: () => 'dev',
-      } as unknown as Selection)
+    /**
+     * End-to-end proof that the row is still protected after its own
+     * `hasActiveTextSelection()` guard was removed in favour of the single
+     * document-level dragClickGuard. Without the guard installed this test
+     * fails — which is exactly the regression it exists to catch, since the row
+     * no longer checks the selection itself.
+     */
+    it('does not emit switch when the click was really a drag-select', async () => {
+      // attachTo is required: the guard listens on `document`, and a detached
+      // wrapper's events never bubble out of the test container.
+      const wrapper = mount(GitBranchRow, {
+        props: { branch: makeBranch({ name: 'feature/login' }) },
+        global: { stubs: { GitBranch: true, Trash2: true } },
+        attachTo: document.body,
+      })
+      const row = wrapper.find('.git-branch-row').element as HTMLElement
+      const dispose = installDragClickGuard()
 
-      await wrapper.find('.git-branch-row').trigger('click')
+      try {
+        const down = new Event('pointerdown', { bubbles: true, cancelable: true })
+        Object.assign(down, { clientX: 10, clientY: 10, pointerType: 'mouse', button: 0 })
+        row.dispatchEvent(down)
 
-      expect(wrapper.emitted('switch')).toBeFalsy()
-      vi.restoreAllMocks()
-    })
+        // Dragged 40px to select the branch name, then released.
+        row.dispatchEvent(new MouseEvent('click', {
+          bubbles: true, cancelable: true, clientX: 50, clientY: 10, detail: 1,
+        }))
 
-    it('still emits switch when nothing is selected', async () => {
-      const wrapper = mountRow({ branch: makeBranch({ name: 'dev' }) })
-      vi.spyOn(window, 'getSelection').mockReturnValue({
-        toString: () => '',
-      } as unknown as Selection)
+        expect(wrapper.emitted('switch')).toBeFalsy()
 
-      await wrapper.find('.git-branch-row').trigger('click')
+        // A genuine click on the same row still works.
+        const down2 = new Event('pointerdown', { bubbles: true, cancelable: true })
+        Object.assign(down2, { clientX: 10, clientY: 10, pointerType: 'mouse', button: 0 })
+        row.dispatchEvent(down2)
+        row.dispatchEvent(new MouseEvent('click', {
+          bubbles: true, cancelable: true, clientX: 10, clientY: 10, detail: 1,
+        }))
 
-      expect(wrapper.emitted('switch')).toHaveLength(1)
-      vi.restoreAllMocks()
+        expect(wrapper.emitted('switch')).toHaveLength(1)
+      } finally {
+        dispose()
+        wrapper.unmount()
+      }
     })
   })
 

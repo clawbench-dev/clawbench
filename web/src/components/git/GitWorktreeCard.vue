@@ -37,7 +37,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FolderTree, Trash2 } from 'lucide-vue-next'
-import { hasActiveTextSelection } from '@/utils/textSelection'
 
 const { t } = useI18n()
 
@@ -47,12 +46,7 @@ const props = defineProps({
 
 const emit = defineEmits(['switch', 'delete'])
 
-/**
- * A drag-select inside the row ends with a click on the row (mousedown and
- * mouseup share it as common ancestor); that must not be treated as a switch.
- */
 function handleRowClick() {
-  if (hasActiveTextSelection()) return
   if (props.worktree.isCurrent || props.worktree.missing) return
   emit('switch', props.worktree)
 }

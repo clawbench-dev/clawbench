@@ -152,7 +152,7 @@
           :key="b.name"
           class="app-menu-item"
           :class="{ active: b.name === gitBranch }"
-          @click="onBranchRowClick(b)"
+          @click="selectBranch(b)"
         >
           <GitBranch :size="14" class="item-icon" />
           <span class="item-label">{{ b.name }}</span>
@@ -247,7 +247,6 @@ import HintTooltip from '@/components/common/HintTooltip.vue'
 import ShortcutTipTicker from '@/components/common/ShortcutTipTicker.vue'
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
-import { hasActiveTextSelection } from '@/utils/textSelection'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
@@ -439,18 +438,6 @@ async function loadBranches() {
 const dirtyModalOpen = ref(false)
 const dirtyBranch = ref('')
 const dirtyCount = ref(0)
-
-/**
- * Row click for the branch quick-index. A drag-select inside the row ends with
- * a click on the row (mousedown and mouseup share it as common ancestor), so
- * selecting the branch name would otherwise open the switch prompt.
- * The keyboard path (useMenuKeyboard → el.click()) is unaffected: a programmatic
- * click does not create a selection.
- */
-function onBranchRowClick(b: BranchEntry) {
-    if (hasActiveTextSelection()) return
-    selectBranch(b)
-}
 
 async function selectBranch(b: BranchEntry) {
     branchDropdownOpen.value = false

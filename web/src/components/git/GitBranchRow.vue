@@ -34,7 +34,6 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitBranch, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { hasActiveTextSelection } from '@/utils/textSelection'
 
 const { t } = useI18n()
 
@@ -74,9 +73,6 @@ function handleDelete() {
 }
 
 function handleClick() {
-  // A drag-select inside the row ends with a click on the row (mousedown and
-  // mouseup share it as common ancestor) — do not treat that as "switch".
-  if (hasActiveTextSelection()) return
   if (props.branch.isCurrent || props.disabled || switching.value) return
   switching.value = true
   emit('switch', props.branch)

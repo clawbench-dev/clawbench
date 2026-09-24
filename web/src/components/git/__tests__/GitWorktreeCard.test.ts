@@ -107,18 +107,6 @@ describe('GitWorktreeCard inline actions', () => {
     expect(wrapper.emitted('switch')![0][0]).toEqual(wt)
   })
 
-  it('does not emit switch when a text selection is active (drag-select ends with a click)', async () => {
-    const wrapper = mountCard(makeWorktree())
-    vi.spyOn(window, 'getSelection').mockReturnValue({
-      toString: () => 'feature-a',
-    } as unknown as Selection)
-
-    await wrapper.find('.git-worktree-row').trigger('click')
-
-    expect(wrapper.emitted('switch')).toBeFalsy()
-    vi.restoreAllMocks()
-  })
-
   it('emits delete when the delete button is clicked without also switching', async () => {
     const wt = makeWorktree()
     const wrapper = mountCard(wt)
