@@ -671,7 +671,10 @@ function updateSelectionFromTerm(term: TerminalType) {
       language: '',
       startLine: 0,
       endLine: 0,
-      sourceKind: 'selection',
+      // 'terminal', not 'selection': the two are the same shape (no path), but
+      // the kind is what lets the card and drawer show a terminal icon/label
+      // instead of a generic "selected text".
+      sourceKind: 'terminal',
     }, { delay: 0 })
   }
   autoCopy.onSelectionChanged(text)

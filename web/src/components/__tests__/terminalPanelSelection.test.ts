@@ -130,7 +130,7 @@ describe('TerminalPanel xterm selection defaults', () => {
       source.indexOf('/** Read the real CSS cell height'),
     )
     expect(updateFn).toContain('quoteQuestion.showBar(')
-    expect(updateFn).toContain("sourceKind: 'selection'")
+    expect(updateFn).toContain("sourceKind: 'terminal'")
     // An empty selection closes the bar rather than leaving a stale snippet.
     expect(updateFn).toContain('quoteQuestion.hideBar()')
     // PIN IS REQUIRED, not cosmetic: showBar does not pin, and the global

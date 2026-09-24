@@ -10,7 +10,7 @@ export interface QuoteData {
   /** External address when the quote came from a forge object. */
   url?: string
   /** Where the quote came from; drives the drawer's jump affordance. */
-  sourceKind?: 'file' | 'url' | 'message' | 'selection'
+  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal'
   /** DB message id when the quote was taken from a chat message. */
   messageId?: number
   /** Commit SHA when the quote came from a git-history or CI-pipeline view. */

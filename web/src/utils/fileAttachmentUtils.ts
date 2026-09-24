@@ -28,11 +28,11 @@ export interface FileEntry {
   language?: string
   /**
    * Quote-only: where the quote came from ('file' | 'url' | 'message' |
-   * 'selection'). Persisted so the detail drawer can label a sent quote
-   * correctly after a reload — inference alone cannot distinguish a terminal
-   * quote from a chat quote (both carry no url and no path).
+   * 'selection' | 'terminal'). Persisted so the detail drawer can label a sent
+   * quote correctly after a reload — inference alone cannot distinguish a
+   * terminal quote from a chat quote (both carry no url and no path).
    */
-  sourceKind?: 'file' | 'url' | 'message' | 'selection'
+  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal'
   /**
    * Quote-only source locators. Each is a MACHINE-readable key that both the
    * jump handler and the AI prompt use to find the origin; the human-readable

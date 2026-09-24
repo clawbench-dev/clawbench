@@ -50,11 +50,15 @@ type FileEntry struct {
 	// "lang:path:lines" form instead of degrading to ":path:lines".
 	Language string `json:"language,omitempty"`
 	// SourceKind is where a Kind == "quote" entry came from: "file", "url",
-	// "message", or "selection" (a free-form selection with no addressable
-	// source, e.g. a terminal selection). It round-trips so the detail drawer
-	// can label a reloaded quote correctly — it cannot be re-derived, since a
-	// "selection" quote carries no url and no path, exactly like a "message"
-	// one. Empty (legacy rows) falls back to client-side inference.
+	// "message", "selection", or "terminal". "terminal" is the same shape as
+	// "selection" (a free-form selection with no addressable source) but kept
+	// separate so the client can label and icon it as a terminal quote instead
+	// of a generic "selected text".
+	//
+	// It round-trips so the detail drawer can label a reloaded quote correctly —
+	// it cannot be re-derived, since a "selection"/"terminal" quote carries no
+	// url and no path, exactly like a "message" one. Empty (legacy rows) falls
+	// back to client-side inference.
 	SourceKind string `json:"sourceKind,omitempty"`
 	// The source locators below are MACHINE-readable keys that let the client
 	// jump back to where a quote came from, and let the AI reach the origin.

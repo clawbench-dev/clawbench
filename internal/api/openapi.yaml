@@ -4327,11 +4327,12 @@ components:
           description: 仅 `kind=quote`：围栏代码块的语言标识（如 `go`、`issue`）。
         sourceKind:
           type: string
-          enum: [file, url, message, selection]
+          enum: [file, url, message, selection, terminal]
           description: |
             仅 `kind=quote`：引用来源。`file` 本地文件、`url` 外部链接、`message` 聊天消息、
-            `selection` 无来源地址的自由选区（如终端选区）。
-            该字段会随 `files` 持久化：`selection` 与 `message` 都没有 path 与 url，
+            `selection` 无来源地址的自由选区、`terminal` 终端选区（与 `selection` 同形，
+            分开是为了能标成「终端」而非泛化的「选中内容」）。
+            该字段会随 `files` 持久化：`selection`/`terminal` 与 `message` 都没有 path 与 url，
             不存下来刷新后就无法区分，抽屉会把终端引用误标为「聊天消息」。
             缺省（旧数据）由前端按 url/path 推断。
         commitSha:

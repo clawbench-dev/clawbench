@@ -560,3 +560,98 @@
     background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
     border-color: color-mix(in srgb, var(--text-secondary) 35%, transparent);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Quote attachment card (QuoteCard.vue)
+
+   Global on purpose: this card renders on TWO surfaces — the chat input
+   (ChatInputBar, scoped) and a sent bubble (ChatMessageItem, scoped). A rule
+   inside either component's <style scoped> reaches only its own surface, so a
+   per-component rule is how the two drift apart. It already had: the sent
+   bubble had NO rule at all, so a sent quote card rendered as a bare chip with
+   no background or border, indistinguishable from plain text.
+
+   The card must stay VISUALLY distinct from a normal file attachment (which is
+   a plain neutral chip), while keeping EXACTLY the same geometry — height,
+   radius, padding and max-width all come from `.chat-file-attachment` and are
+   deliberately not restated here.
+
+   Distinctiveness is therefore carried by PAINT ONLY, never by box metrics:
+     - a solid accent border instead of the old dashed one (same 1px width, so
+       no reflow);
+     - an accent spine on the left edge, drawn with an INSET box-shadow rather
+       than a border-left, because a border would add to the box and change the
+       width of every card;
+     - a subtle vertical gradient wash, so the chip reads as a "card" rather
+       than a flat tag.
+
+   Scoped to `.attachment-quote`, which only QuoteCard sets, so no normal
+   attachment is affected.
+   ══════════════════════════════════════════════════════════════════════════ */
+.chat-file-attachment.attachment-quote {
+    background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--accent-color, #4f9cf7) 13%, transparent),
+        color-mix(in srgb, var(--accent-color, #4f9cf7) 7%, transparent)
+    );
+    border: 1px solid color-mix(in srgb, var(--accent-color, #4f9cf7) 42%, transparent);
+    color: var(--accent-color, #4f9cf7);
+    cursor: pointer;
+    /* Left accent spine + a hairline inner highlight. Inset shadows paint
+       inside the border box, so the card's outer size is untouched. */
+    box-shadow:
+        inset 3px 0 0 0 var(--accent-color, #4f9cf7),
+        inset 0 1px 0 0 color-mix(in srgb, #fff 10%, transparent);
+}
+
+/* The label inherits the accent colour set above; stated explicitly so a
+   theme's generic `.attachment-filename` colour cannot win by specificity.
+
+   Deliberately NO font-weight change: a bolder label is marginally wider, and
+   the card's size must stay identical to a normal attachment's. The
+   differentiation is carried entirely by colour and the spine. */
+.chat-file-attachment.attachment-quote .attachment-filename {
+    color: var(--accent-color, #4f9cf7);
+}
+
+@media (hover: hover) {
+    .chat-file-attachment.attachment-quote:hover {
+        background: linear-gradient(
+            180deg,
+            color-mix(in srgb, var(--accent-color, #4f9cf7) 20%, transparent),
+            color-mix(in srgb, var(--accent-color, #4f9cf7) 12%, transparent)
+        );
+    }
+}
+
+/* ── On the user's own bubble ──
+   The bubble is painted with --user-msg-color, so an accent-tinted card would
+   sink into it. Flip the treatment to a translucent white card, matching how
+   the other attachment chips behave inside a user bubble. The spine stays, so
+   a quote is still recognisable as a quote here. */
+.chat-message.user .chat-file-attachment.attachment-quote {
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.22),
+        rgba(255, 255, 255, 0.12)
+    );
+    border-color: rgba(255, 255, 255, 0.5);
+    color: rgba(255, 255, 255, 0.98);
+    box-shadow:
+        inset 3px 0 0 0 rgba(255, 255, 255, 0.9),
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.18);
+}
+
+.chat-message.user .chat-file-attachment.attachment-quote .attachment-filename {
+    color: rgba(255, 255, 255, 0.98);
+}
+
+@media (hover: hover) {
+    .chat-message.user .chat-file-attachment.attachment-quote:hover {
+        background: linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.3),
+            rgba(255, 255, 255, 0.2)
+        );
+    }
+}

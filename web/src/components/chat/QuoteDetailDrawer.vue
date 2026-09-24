@@ -8,12 +8,16 @@
     <div v-if="quote" class="qd-content">
       <!-- Source line: what this quote came from, plus the jump action.
            A chat-message or free-form selection quote has nothing to open, so
-           the button is hidden rather than rendered as a no-op. -->
+           the button is hidden rather than rendered as a no-op.
+           The type badge (icon + label) states WHAT KIND of thing was quoted —
+           a file reads very differently from a CI run or a scheduled task, and
+           the source label alone does not say which it is. -->
       <div class="qd-source-row">
+        <span class="qd-type" :title="typeLabel">
+          <component :is="typeIcon" :size="13" class="qd-type-icon" />
+          <span class="qd-type-label">{{ typeLabel }}</span>
+        </span>
         <span class="qd-source" :title="quote.filePath || quote.text">
-          <MessageSquareQuote v-if="quote.sourceKind === 'file' || quote.sourceKind === 'url'" :size="13" class="qd-source-icon" />
-          <MousePointer2 v-else-if="quote.sourceKind === 'selection'" :size="13" class="qd-source-icon" />
-          <MessageSquareText v-else :size="13" class="qd-source-icon" />
           {{ sourceLabel }}
         </span>
         <button
@@ -21,7 +25,7 @@
           class="qd-jump"
           :title="t('quoteBar.jumpToSource')"
           :aria-label="t('quoteBar.jumpToSource')"
-          @click="$emit('jump', quote)"
+          @click="handleJump"
         >
           <ExternalLink :size="14" />
         </button>
@@ -65,10 +69,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquareQuote, MessageSquareText, MousePointer2, ExternalLink } from 'lucide-vue-next'
+import { MessageSquareQuote, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { quoteLabel, quoteLineRange, canJumpToSource, type QuoteItem } from '@/utils/quoteItem'
+import { quoteLabel, quoteLineRange, canJumpToSource, resolveQuoteType, type QuoteItem } from '@/utils/quoteItem'
+import { QUOTE_TYPE_ICON, QUOTE_TYPE_LABEL_KEY } from '@/utils/quoteSourceMeta'
 
 const props = withDefaults(defineProps<{
   open: boolean
@@ -122,6 +127,29 @@ const dirty = computed(() => note.value !== (props.quote?.note || ''))
 
 const canJump = computed(() => (props.quote ? canJumpToSource(props.quote) : false))
 
+/** The kind of source this quote came from, for the icon + label badge. */
+const quoteType = computed(() => (props.quote ? resolveQuoteType(props.quote) : 'selection'))
+
+const typeIcon = computed(() => QUOTE_TYPE_ICON[quoteType.value])
+
+const typeLabel = computed(() => t(QUOTE_TYPE_LABEL_KEY[quoteType.value]))
+
+/**
+ * Jump to the source, closing the drawer first.
+ *
+ * The drawer must not stay open over the surface it navigated to: the jump
+ * switches tabs / opens a file / scrolls to a message, and leaving a modal over
+ * the destination hides the very thing the user asked to see.
+ *
+ * `close` is emitted before `jump` so the drawer starts sliding out while the
+ * (possibly async) navigation runs, rather than waiting on it.
+ */
+function handleJump() {
+  if (!props.quote) return
+  emit('close')
+  emit('jump', props.quote)
+}
+
 /**
  * Label for the source line.
  *
@@ -160,6 +188,28 @@ function handleSave() {
   min-width: 0;
 }
 
+/* Type badge: states WHAT KIND of source this is (file / CI run / task / …).
+   Fixed to its content and never shrinks, so a long source label truncates
+   instead of squeezing the badge. */
+.qd-type {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  color: var(--accent-color, #0066cc);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.qd-type-icon {
+  flex-shrink: 0;
+}
+
 .qd-source {
   display: inline-flex;
   align-items: center;
@@ -168,14 +218,10 @@ function handleSave() {
   flex: 1;
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
-  color: var(--accent-color, #0066cc);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.qd-source-icon {
-  flex-shrink: 0;
 }
 
 .qd-jump {

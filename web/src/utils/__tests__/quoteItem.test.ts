@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, isQuoteFileEntry, type QuoteItem } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, isQuoteFileEntry, resolveQuoteType, type QuoteItem } from '@/utils/quoteItem.ts'
 
 describe('fromStagedQuote', () => {
   it('maps a file quote and infers sourceKind=file', () => {
@@ -348,5 +348,76 @@ describe('quoteItemFromTarget', () => {
     expect(entry.path).toBe('/proj/src/main.ts')
     expect(entry.text).toBe('')
     expect(entry.startLine).toBeUndefined()
+  })
+})
+
+describe('resolveQuoteType', () => {
+  function q(over: Partial<QuoteItem> = {}): QuoteItem {
+    return {
+      id: 'q1', text: 'x', note: '', filePath: '', language: '',
+      startLine: 0, endLine: 0, sourceKind: 'file', ...over,
+    }
+  }
+
+  // The surface's own marker states the intent, so it wins over inference.
+  it.each([
+    ['pipeline', 'pipeline'],
+    ['task-exec', 'exec'],
+    ['task', 'task'],
+    ['diff', 'diff'],
+    ['pr', 'pr'],
+    ['issue', 'issue'],
+  ])('honours the %s type marker', (language, expected) => {
+    expect(resolveQuoteType(q({ language }))).toBe(expected)
+  })
+
+  // A real code fence language is not a type marker, so it falls through to the
+  // locator/path logic rather than being misread as a type.
+  it('ignores a real code language', () => {
+    expect(resolveQuoteType(q({ language: 'go', filePath: 'src/a.go' }))).toBe('file')
+  })
+
+  // Most-specific-first: a git-diff quote has BOTH a path and a commit, and the
+  // user who selected a hunk means the commit.
+  it('prefers the commit over the file path', () => {
+    expect(resolveQuoteType(q({ commitSha: 'abc123', filePath: 'src/a.go', sourceKind: 'file' }))).toBe('diff')
+  })
+
+  // A CI run carries its address AND the commit it built; a git diff only has
+  // the commit. That is the only thing separating them.
+  it('calls a commit with an address a pipeline run', () => {
+    expect(resolveQuoteType(q({ commitSha: 'abc123', url: 'https://ci/run/1', sourceKind: 'url' }))).toBe('pipeline')
+  })
+
+  it('prefers the execution over the task', () => {
+    expect(resolveQuoteType(q({ executionId: 'exec-1', taskId: 12 }))).toBe('exec')
+  })
+
+  it('resolves a task quote', () => {
+    expect(resolveQuoteType(q({ taskId: 12, filePath: '每日构建 (#12)' }))).toBe('task')
+  })
+
+  it('falls back to a generic link for a bare url', () => {
+    expect(resolveQuoteType(q({ url: 'https://example.com', sourceKind: 'url' }))).toBe('link')
+  })
+
+  // The whole reason 'terminal' exists as its own kind: without it a terminal
+  // selection and a chat quote are indistinguishable (both have no path/url).
+  it('distinguishes a terminal selection from a plain one', () => {
+    expect(resolveQuoteType(q({ sourceKind: 'terminal' }))).toBe('terminal')
+    expect(resolveQuoteType(q({ sourceKind: 'selection' }))).toBe('selection')
+  })
+
+  it('resolves a chat message quote', () => {
+    expect(resolveQuoteType(q({ sourceKind: 'message', sessionId: 's1' }))).toBe('chat')
+  })
+
+  it('resolves a file quote', () => {
+    expect(resolveQuoteType(q({ filePath: 'src/a.go', sourceKind: 'file' }))).toBe('file')
+  })
+
+  // A legacy row with no sourceKind and no locator is a bare selection.
+  it('defaults to selection when nothing identifies the source', () => {
+    expect(resolveQuoteType(q({ sourceKind: undefined }))).toBe('selection')
   })
 })

@@ -14,16 +14,20 @@ import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { isQuoteEntry } from '@/utils/fileAttachmentUtils'
 
 /**
- * Where a quote came from. Drives the drawer's "jump to source" affordance.
+ * Where a quote came from. Drives the drawer's "jump to source" affordance and
+ * the type icon/label shown on the card and drawer.
  *
- * 'selection' is a free-form selection with no addressable source (a terminal
- * selection, or any other region that carries no file path, URL or message id).
- * It is carried explicitly rather than inferred, because inference falls back to
- * 'message' for anything without a url/path — which would label a terminal quote
- * as "chat message" in the drawer, and is indistinguishable from a real chat
- * quote (both have an empty path).
+ * 'selection' is a free-form selection with no addressable source (a region that
+ * carries no file path, URL or message id). 'terminal' is the same shape but
+ * kept SEPARATE so it can be labelled and iconed as a terminal quote — the two
+ * are otherwise indistinguishable (both have no path), and lumping them
+ * together would force a generic "selected text" label on a terminal quote.
+ *
+ * The kind is carried explicitly rather than inferred, because inference falls
+ * back to 'message' for anything without a url/path — which would label a
+ * terminal quote as "chat message" in the drawer.
  */
-export type QuoteSourceKind = 'file' | 'url' | 'message' | 'selection'
+export type QuoteSourceKind = 'file' | 'url' | 'message' | 'selection' | 'terminal'
 
 /** The normalized quote shape used by every quote surface. */
 export interface QuoteItem {
@@ -201,6 +205,75 @@ export function toFileEntry(q: QuoteItem): FileEntry {
 /** Whether an entry in a sent message's files array is a quote. */
 export function isQuoteFileEntry(f: FileEntry): boolean {
   return isQuoteEntry(f)
+}
+
+/**
+ * The kind of source a quote came from, for the type icon + label shown on the
+ * card and in the detail drawer.
+ *
+ * Finer-grained than `sourceKind`: `sourceKind` says how to OPEN the quote,
+ * this says what to CALL it. A forge PR and a forge issue are both
+ * `sourceKind: 'url'` but read very differently, and a CI run and a git diff
+ * are both commits.
+ */
+export type QuoteDisplayType =
+  | 'task'      // scheduled task
+  | 'exec'      // one task execution/run
+  | 'diff'      // git commit diff
+  | 'pipeline'  // CI pipeline run
+  | 'pr'        // pull/merge request
+  | 'issue'     // issue
+  | 'link'      // other external link
+  | 'terminal'  // terminal selection
+  | 'chat'      // chat message
+  | 'file'      // file / code
+  | 'selection' // free-form selection with no addressable source
+
+/**
+ * Fence-language values that our own surfaces stamp as TYPE MARKERS rather than
+ * as a code language (see the `data-quote-language` attributes). They are
+ * checked first because they state the surface's intent explicitly, instead of
+ * inferring it from which locators happen to be present.
+ *
+ * A real code fence is never named one of these, so the two uses of `language`
+ * do not collide in practice.
+ */
+const TYPE_MARKER_LANGUAGE: Record<string, QuoteDisplayType> = {
+  'pipeline': 'pipeline',
+  'task-exec': 'exec',
+  'task': 'task',
+  'diff': 'diff',
+  'pr': 'pr',
+  'issue': 'issue',
+}
+
+/**
+ * Resolve what kind of source a quote came from.
+ *
+ * Order is most-specific-first, because a quote can carry several locators at
+ * once: a git-diff quote has BOTH a file path and a commit, and the user who
+ * selected a hunk means the commit, not the file.
+ */
+export function resolveQuoteType(q: Pick<QuoteItem,
+  'language' | 'url' | 'filePath' | 'sourceKind' | 'commitSha' | 'taskId' | 'executionId'
+>): QuoteDisplayType {
+  // 1. An explicit type marker from the surface that produced the quote.
+  const marked = q.language ? TYPE_MARKER_LANGUAGE[q.language] : undefined
+  if (marked) return marked
+
+  // 2. Locators, most specific first.
+  if (q.executionId) return 'exec'
+  if (q.taskId) return 'task'
+  // A CI run carries both its address and the commit it built; a git diff only
+  // has the commit. That is what separates the two.
+  if (q.commitSha) return q.url ? 'pipeline' : 'diff'
+  if (q.url) return 'link'
+
+  // 3. sourceKind, for sources with no locator at all.
+  if (q.sourceKind === 'terminal') return 'terminal'
+  if (q.sourceKind === 'message') return 'chat'
+  if (q.filePath) return 'file'
+  return 'selection'
 }
 
 /**

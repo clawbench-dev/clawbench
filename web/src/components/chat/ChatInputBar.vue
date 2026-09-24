@@ -2444,23 +2444,17 @@ defineExpose({
   .chat-attachment-tags .attachment-ref:hover {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
   }
-
-  .chat-attachment-tags .attachment-quote:hover {
-    background: color-mix(in srgb, var(--accent-color, #4f9cf7) 15%, transparent);
-  }
 }
 
-/* Quote card — accent-colored, same size as file cards.
-   Only the ROOT is styled from here: QuoteCard is a child component, so a
-   descendant selector like `.attachment-quote .attachment-filename` would not
-   match its internals (the scope attribute lives on QuoteCard's own elements).
-   The filename picks up the accent by INHERITING this `color`. */
-.chat-attachment-tags .attachment-quote {
-  background: color-mix(in srgb, var(--accent-color, #4f9cf7) 8%, transparent);
-  border: 1px dashed var(--accent-color, #4f9cf7);
-  color: var(--accent-color, #4f9cf7);
-  cursor: pointer;
-}
+/* The quote card's own appearance (accent border, left spine, gradient) lives in
+   the GLOBAL stylesheet (css/components.css), because the same card also renders
+   in a sent bubble, which this component's scoped styles cannot reach. Styling it
+   here too would leave the two surfaces free to drift apart — which is exactly
+   what had happened (the sent bubble had no rule at all).
+
+   Note the scoped attribute a <style scoped> rule carries would also OUT-SPECIFY
+   the global rule and silently win, so the quote card must not be restyled here.
+   Only the pieces unique to the input side (the close button) stay. */
 
 /* Input row.
    The vertical padding is symmetric on purpose: the row is `align-items:

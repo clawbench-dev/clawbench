@@ -94,6 +94,73 @@ describe('QuoteDetailDrawer', () => {
     expect(wrapper.emitted('jump')![0]).toEqual([quote])
   })
 
+  // The jump navigates away (opens a file / switches tab / scrolls to a
+  // message). Leaving the drawer open would cover the very thing the user asked
+  // to see, so it must close as part of the same action.
+  it('closes the drawer when jumping', async () => {
+    const wrapper = mountDrawer()
+
+    await wrapper.find('.qd-jump').trigger('click')
+
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  // Order matters: closing first lets the sheet slide out while the (possibly
+  // async) navigation runs, instead of waiting on it.
+  it('closes before jumping so the drawer does not block the destination', async () => {
+    const wrapper = mountDrawer()
+
+    await wrapper.find('.qd-jump').trigger('click')
+
+    const events = Object.keys(wrapper.emitted())
+    expect(events.indexOf('close')).toBeLessThan(events.indexOf('jump'))
+  })
+
+  it('does not close when there is nothing to jump to', async () => {
+    // No jump button, so the drawer must stay open on its own.
+    const wrapper = mountDrawer({
+      quote: fileQuote({ sourceKind: 'message', filePath: '', startLine: 0, endLine: 0, text: 'chat' }),
+    })
+
+    expect(wrapper.find('.qd-jump').exists()).toBe(false)
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
+  describe('type badge', () => {
+    // The badge states WHAT KIND of thing was quoted. The source label alone
+    // does not say whether "a1b2c3d" is a commit or a CI run.
+    it.each([
+      ['a file', fileQuote({ filePath: 'src/a.go', sourceKind: 'file' }), 'quoteBar.typeFile'],
+      ['a git diff', fileQuote({ commitSha: 'abc123', language: 'diff', sourceKind: 'file' }), 'quoteBar.typeDiff'],
+      ['a CI run', fileQuote({ commitSha: 'abc', url: 'https://ci/1', language: 'pipeline', sourceKind: 'url' }), 'quoteBar.typePipeline'],
+      ['a scheduled task', fileQuote({ taskId: 12, language: 'task', sourceKind: 'file' }), 'quoteBar.typeTask'],
+      ['a task run', fileQuote({ taskId: 12, executionId: 'e1', language: 'task-exec', sourceKind: 'file' }), 'quoteBar.typeExec'],
+      ['a terminal selection', fileQuote({ sourceKind: 'terminal', filePath: '', text: 'ls' }), 'quoteBar.typeTerminal'],
+      ['a chat message', fileQuote({ sourceKind: 'message', filePath: '', text: 'hi' }), 'quoteBar.messageQuote'],
+      ['a bare selection', fileQuote({ sourceKind: 'selection', filePath: '', text: 'x' }), 'quoteBar.selectionQuote'],
+    ])('labels %s', (_label, quote, expectedKey) => {
+      const wrapper = mountDrawer({ quote })
+
+      expect(wrapper.find('.qd-type-label').text()).toBe(expectedKey)
+    })
+
+    it('renders an icon inside the badge', () => {
+      const wrapper = mountDrawer({ quote: fileQuote({ commitSha: 'abc123', language: 'diff' }) })
+
+      expect(wrapper.find('.qd-type .qd-type-icon').exists()).toBe(true)
+    })
+
+    // A PR and an issue are both sourceKind 'url'; the type marker is what tells
+    // them apart, and mislabelling a PR as an issue is user-visible.
+    it('labels a forge PR and issue distinctly', () => {
+      const pr = mountDrawer({ quote: fileQuote({ sourceKind: 'url', url: 'https://x/1', language: 'pr', filePath: 'a/b#1' }) })
+      expect(pr.find('.qd-type-label').text()).toBe('quoteBar.typePr')
+
+      const issue = mountDrawer({ quote: fileQuote({ sourceKind: 'url', url: 'https://x/2', language: 'issue', filePath: 'a/b#2' }) })
+      expect(issue.find('.qd-type-label').text()).toBe('quoteBar.typeIssue')
+    })
+  })
+
   it('hides the jump button for a chat-message quote', () => {
     // Nothing to open: the button would be a no-op.
     const wrapper = mountDrawer({
