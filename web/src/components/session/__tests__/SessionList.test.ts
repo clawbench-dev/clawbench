@@ -292,17 +292,41 @@ describe('SessionList', () => {
     expect(wrapper.emitted('destroy')).toBeFalsy()
   })
 
-  it('loadMoreSessions appends sessions when hasMore', async () => {
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: true }) })
+  it('loads the whole list in one request, without a limit or cursor', async () => {
+    // No lazy loading: the list is fetched complete so drag-reorder always has
+    // every row, and there is no cursor bookkeeping to get wrong.
+    const s1 = sessionsFixture().s1
+    const s2 = sessionsFixture().s2
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1, s2], hasMore: false }) })
     const wrapper = await mountList()
     await wrapper.vm.loadSessions()
     await flushPromises()
-    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
-    wrapper.vm.hasMore = true
-    await wrapper.vm.loadMoreSessions()
-    await flushPromises()
+
+    const listCalls = mockFetch.mock.calls.filter((c: unknown[]) => String(c[0]).includes('/api/ai/sessions'))
+    // Every list request is the same full fetch — no second, cursor-based call.
+    expect(listCalls.length).toBeGreaterThanOrEqual(1)
+    for (const call of listCalls) {
+      const url = String(call[0])
+      expect(url).not.toContain('limit=')
+      expect(url).not.toContain('cursor')
+    }
     expect(wrapper.vm.sessions.length).toBe(2)
-    expect(wrapper.vm.sessions[1].id).toBe('s2')
+  })
+
+  it('sends the tag filter with the full-list request', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    mockFetch.mockClear()
+    wrapper.vm.activeTag = 'bug'
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    const listCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('/api/ai/sessions'))
+    expect(listCall).toBeTruthy()
+    expect(String(listCall![0])).toContain('tag=bug')
   })
 
   it('addSessionLocally prepends session', async () => {
@@ -392,181 +416,6 @@ describe('SessionList', () => {
     expect(wrapper.vm.sessions[0].id).toBe('s2')
   })
 
-  it('reload preserves the loaded depth instead of collapsing back to the first page', async () => {
-    // Two pages of sessions. Page 1 reports hasMore so loadMoreSessions can
-    // append page 2 — simulating a user who scrolled through more than one page.
-    const page1 = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, title: `S${i}`, createdAt: `2025-01-${String(i + 1).padStart(2, '0')}`, updatedAt: `2025-02-${String(i + 1).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
-    const page2 = Array.from({ length: 5 }, (_, i) => ({ id: `s1${i}`, title: `S1${i}`, createdAt: `2025-01-${String(i + 11).padStart(2, '0')}`, updatedAt: `2025-02-${String(i + 11).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
-    mockFetch.mockImplementation((url: string) => {
-      const hasCursor = url.includes('cursor=')
-      const page = hasCursor ? page2 : page1
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: page, hasMore: hasCursor ? false : true }) })
-    })
-    const wrapper = await mountList()
-    expect(wrapper.vm.sessions.length).toBe(10)
-
-    // User scrolls: load the second page → 15 rows loaded.
-    await wrapper.vm.loadMoreSessions()
-    await flushPromises()
-    expect(wrapper.vm.sessions.length).toBe(15)
-
-    // A WS/version reload fires (e.g. running-session update). It must re-fetch
-    // enough pages to cover the 15 rows the user already sees — collapsing back
-    // to 10 would re-expose the load-more sentinel and cause the list (and the
-    // auto-sized drawer) to oscillate in height.
-    await wrapper.vm.reload()
-    await flushPromises()
-    expect(wrapper.vm.sessions.length).toBe(15)
-    expect(mockFetch.mock.calls.filter((c: unknown[]) => String(c[0]).includes('cursor=')).length).toBeGreaterThanOrEqual(1)
-  })
-
-  it('paginates using createdAt (not updatedAt) as the cursor', async () => {
-    // Backend orders/filters paged sessions by created_at. Sending updatedAt
-    // (which is >= createdAt and bumped on every message) makes `created_at <
-    // cursor` match rows already shown, duplicating the list.
-    const first = { id: 's1', title: 'S1', createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-06-01T00:00:00Z', agentId: 'agent-1', backend: 'cli' }
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [first], hasMore: true }) })
-    const wrapper = await mountList()
-    await flushPromises()
-
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
-    wrapper.vm.hasMore = true
-    await wrapper.vm.loadMoreSessions()
-    await flushPromises()
-
-    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
-    expect(cursorCall).toBeTruthy()
-    const url = String(cursorCall![0])
-    expect(url).toContain(`cursor=${encodeURIComponent('2025-01-01T00:00:00Z')}`)
-    expect(url).not.toContain(encodeURIComponent('2025-06-01T00:00:00Z'))
-  })
-
-  it('reload (fetchSessionsUpTo) paginates using createdAt as the cursor', async () => {
-    // The depth-preservation refetch loop is the path that actually fired the
-    // duplicate bug, so its cursor must be createdAt too — not just loadMore's.
-    const page1 = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, title: `S${i}`, createdAt: `2025-01-${String(i + 1).padStart(2, '0')}`, updatedAt: `2025-09-${String(i + 1).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
-    const page2 = Array.from({ length: 5 }, (_, i) => ({ id: `s1${i}`, title: `S1${i}`, createdAt: `2025-01-${String(i + 11).padStart(2, '0')}`, updatedAt: `2025-09-${String(i + 11).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
-    mockFetch.mockImplementation((url: string) => {
-      const hasCursor = url.includes('cursor=')
-      const page = hasCursor ? page2 : page1
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: page, hasMore: hasCursor ? false : true }) })
-    })
-    const wrapper = await mountList()
-    await wrapper.vm.loadMoreSessions()
-    await flushPromises()
-    // Deepen to 15 rows, then reload — reload re-fetches page 2 via cursor.
-    mockFetch.mockClear()
-    mockFetch.mockImplementation((url: string) => {
-      const hasCursor = url.includes('cursor=')
-      const page = hasCursor ? page2 : page1
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: page, hasMore: hasCursor ? false : true }) })
-    })
-    await wrapper.vm.reload()
-    await flushPromises()
-
-    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
-    expect(cursorCall).toBeTruthy()
-    const url = String(cursorCall![0])
-    // Cursor must be the 10th row's createdAt (2025-01-10), never its updatedAt.
-    expect(url).toContain(`cursor=${encodeURIComponent('2025-01-10')}`)
-    expect(url).not.toContain(encodeURIComponent('2025-09-10'))
-  })
-
-  it('sends cursor_sort_order alongside the created_at cursor', async () => {
-    // Ordering is (sort_order ASC, created_at DESC, id DESC). A created_at-only
-    // cursor cannot exclude already-seen rows that share the cursor's
-    // sort_order (every row, until the user first drags), so the cursor must
-    // carry sort_order too.
-    const lastDragged = { id: 's1', title: 'S1', sortOrder: 3, createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-06-01T00:00:00Z', agentId: 'agent-1', backend: 'cli' }
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [lastDragged], hasMore: true }) })
-    const wrapper = await mountList()
-    await flushPromises()
-
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
-    wrapper.vm.hasMore = true
-    await wrapper.vm.loadMoreSessions()
-    await flushPromises()
-
-    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
-    expect(cursorCall).toBeTruthy()
-    const url = String(cursorCall![0])
-    expect(url).toContain('cursor_sort_order=3')
-    expect(url).toContain(`cursor_id=${encodeURIComponent('s1')}`)
-  })
-
-  it('sends cursor_pinned alongside the other cursor keys', async () => {
-    // Ordering is (pinned DESC, sort_order ASC, created_at DESC, id DESC). A
-    // pinned row leads no matter its sort_order, so the cursor must carry pinned
-    // too or page 2 re-returns it.
-    const lastPinned = { id: 's1', title: 'S1', pinned: true, sortOrder: 0, createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-06-01T00:00:00Z', agentId: 'agent-1', backend: 'cli' }
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [lastPinned], hasMore: true }) })
-    const wrapper = await mountList()
-    await flushPromises()
-
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
-    wrapper.vm.hasMore = true
-    await wrapper.vm.loadMoreSessions()
-    await flushPromises()
-
-    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
-    expect(cursorCall).toBeTruthy()
-    expect(String(cursorCall![0])).toContain('cursor_pinned=1')
-  })
-
-  it('sends cursor_pinned=0 for an unpinned cursor row', async () => {
-    const lastUnpinned = { id: 's9', title: 'S9', pinned: false, createdAt: '2025-02-02', updatedAt: '2025-07-02', agentId: 'agent-1', backend: 'cli' }
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [lastUnpinned], hasMore: true }) })
-    const wrapper = await mountList()
-    await flushPromises()
-
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
-    wrapper.vm.hasMore = true
-    await wrapper.vm.loadMoreSessions()
-    await flushPromises()
-
-    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
-    expect(cursorCall).toBeTruthy()
-    expect(String(cursorCall![0])).toContain('cursor_pinned=0')
-  })
-
-  it('defaults cursor_sort_order to 0 when the cursor row has no sortOrder', async () => {
-    // sortOrder is omitempty on the server, so an un-dragged row arrives with
-    // the field absent; the cursor must still send 0 rather than "undefined".
-    const lastUnordered = { id: 's9', title: 'S9', createdAt: '2025-02-02', updatedAt: '2025-07-02', agentId: 'agent-1', backend: 'cli' }
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [lastUnordered], hasMore: true }) })
-    const wrapper = await mountList()
-    await flushPromises()
-
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
-    wrapper.vm.hasMore = true
-    await wrapper.vm.loadMoreSessions()
-    await flushPromises()
-
-    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
-    expect(cursorCall).toBeTruthy()
-    const url = String(cursorCall![0])
-    expect(url).toContain('cursor_sort_order=0')
-    expect(url).not.toContain('cursor_sort_order=undefined')
-  })
-
-  it('stops paginating instead of sending cursor=undefined when createdAt is missing', async () => {
-    // A row without createdAt cannot form a valid cursor; encodeURIComponent
-    // would emit "undefined" and the server's `created_at < 'undefined'` is
-    // lexically true for all dates, re-returning page 1 (duplicates).
-    const noCreatedAt = { id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [noCreatedAt], hasMore: true }) })
-    const wrapper = await mountList()
-    await flushPromises()
-
-    mockFetch.mockClear()
-    wrapper.vm.hasMore = true
-    await wrapper.vm.loadMoreSessions()
-    await flushPromises()
-
-    // No follow-up request at all — bail before forming a bad cursor.
-    expect(mockFetch.mock.calls.filter((c: unknown[]) => String(c[0]).includes('cursor=')).length).toBe(0)
-    expect(wrapper.vm.hasMore).toBe(false)
-  })
 
   describe('pinned marker and keyboard nav', () => {
     // The backend returns the user's manual order (sort_order ASC). The
@@ -914,7 +763,36 @@ describe('SessionList', () => {
       expect(mockDraggable.props?.preventOnFilter).toBe(false)
     })
 
-    it('refuses a drop that would land a plain row inside the pinned block', async () => {
+    it('keeps the ⋮ menu icon on the button, including while dragging', async () => {
+      // The button is both the menu opener and the drag handle, but its icon is
+      // always the ⋮ menu glyph — no grip swap while dragging.
+      const s1 = sessionsFixture().s1
+      const s2 = sessionsFixture().s2
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1, s2], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // Lucide icons are anonymous functional components, so assert on the
+      // rendered svg rather than by component name.
+      const hasIcon = (id: string) =>
+        wrapper.find(`[data-session-id="${id}"] .session-more-btn svg`).exists()
+
+      expect(hasIcon('s1')).toBe(true)
+      expect(hasIcon('s2')).toBe(true)
+
+      mockDraggable.emit!('start', { item: { dataset: { sessionId: 's2' } } })
+      await nextTick()
+      // Still the same single icon, not a grip.
+      expect(hasIcon('s2')).toBe(true)
+      expect(wrapper.find('[data-session-id="s2"] .session-more-btn').findAll('svg').length).toBe(1)
+
+      mockDraggable.emit!('end', { oldIndex: 1, newIndex: 1 })
+      await flushPromises()
+      expect(hasIcon('s2')).toBe(true)
+    })
+
+    it('live guard refuses a drop inside the pinned block, container target included', async () => {
       const pinnedRow = { id: 'p1', title: 'Pinned', pinned: true, createdAt: '2025-01-01', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
       const plainRow = { id: 's1', title: 'Plain', pinned: false, createdAt: '2025-01-02', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedRow, plainRow], hasMore: false }) })
@@ -924,12 +802,64 @@ describe('SessionList', () => {
 
       const onMove = mockDraggable.props?.onMove as (evt: any) => boolean
       expect(typeof onMove).toBe('function')
-      // The row it would swap with decides: swapping with a pinned row is refused,
-      // swapping with a plain row is allowed.
       const pinnedEl = wrapper.find('[data-session-id="p1"]').element
       const plainEl = wrapper.find('[data-session-id="s1"]').element
-      expect(onMove({ related: pinnedEl })).toBe(false)
-      expect(onMove({ related: plainEl })).toBe(true)
+      // Inserting before the pinned row would put a plain row above it → refuse.
+      expect(onMove({ related: pinnedEl, willInsertAfter: false })).toBe(false)
+      // Inserting after it stays below the block → allow.
+      expect(onMove({ related: plainEl, willInsertAfter: true })).toBe(true)
+      // The container target (gap above the first row) has no row element; only
+      // appending at the end is safe.
+      expect(onMove({ related: wrapper.find('.session-rows').element, willInsertAfter: false })).toBe(false)
+      expect(onMove({ related: wrapper.find('.session-rows').element, willInsertAfter: true })).toBe(true)
+    })
+
+    it('lifts pinned rows back to the top even when Sortable drops a row above them', async () => {
+      // The hard frontend guarantee: Sortable's onMove is advisory and is skipped
+      // when the drop lands on the container, so a plain row CAN be left above a
+      // pinned one. onDragEnd must re-partition regardless of what Sortable did.
+      const pinnedRow = { id: 'p1', title: 'Pinned', pinned: true, sortOrder: 5, createdAt: '2025-01-01', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
+      const a = { id: 'a', title: 'A', pinned: false, sortOrder: 0, createdAt: '2025-01-02', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }
+      const b = { id: 'b', title: 'B', pinned: false, sortOrder: 1, createdAt: '2025-01-03', updatedAt: '2025-01-03', agentId: 'agent-1', backend: 'cli' }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedRow, a, b], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      mockFetch.mockClear()
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) })
+      // Simulate the bad outcome: Sortable inserted B at index 0, above the pin.
+      wrapper.vm.sessions = [b, pinnedRow, a]
+      mockDraggable.emit!('end', { oldIndex: 2, newIndex: 0 })
+      await flushPromises()
+
+      // Pinned row is back on top; the plain rows keep their relative order.
+      expect(wrapper.vm.sessions.map((s: any) => s.id)).toEqual(['p1', 'b', 'a'])
+      // ...and the pinned row's own sortOrder is untouched.
+      expect(wrapper.vm.sessions.find((s: any) => s.id === 'p1').sortOrder).toBe(5)
+      // Only unpinned rows are persisted.
+      const putCall = mockFetch.mock.calls.find(c => String(c[0]) === '/api/ai/sessions/reorder')
+      expect(JSON.parse((putCall![1] as any).body).ids).toEqual(['b', 'a'])
+    })
+
+    it('keeps a multi-row pinned block intact and ahead of the rest', async () => {
+      const p1 = { id: 'p1', title: 'P1', pinned: true, sortOrder: 0, createdAt: '2025-01-01', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
+      const p2 = { id: 'p2', title: 'P2', pinned: true, sortOrder: 1, createdAt: '2025-01-02', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }
+      const a = { id: 'a', title: 'A', pinned: false, sortOrder: 0, createdAt: '2025-01-03', updatedAt: '2025-01-03', agentId: 'agent-1', backend: 'cli' }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [p1, p2, a], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      mockFetch.mockClear()
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) })
+      // Sortable scattered the block; both pinned rows must return to the top in
+      // their previous relative order.
+      wrapper.vm.sessions = [p2, a, p1]
+      mockDraggable.emit!('end', { oldIndex: 0, newIndex: 2 })
+      await flushPromises()
+
+      expect(wrapper.vm.sessions.map((s: any) => s.id)).toEqual(['p2', 'p1', 'a'])
     })
 
     /** Emit a Sortable end event, reordering the bound array first as it does. */
@@ -1388,26 +1318,6 @@ describe('SessionList', () => {
       await wrapper.find('.session-tag-filter-chip').trigger('click')
       await flushPromises()
       expect(wrapper.find('.session-tag-filter-chip').classes()).not.toContain('active')
-      wrapper.unmount()
-    })
-
-    it('paginated pages keep the tag filter', async () => {
-      routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
-      const wrapper = await mountList()
-      await wrapper.vm.loadSessions()
-      await flushPromises()
-      await wrapper.find('.session-tag-filter-chip').trigger('click')
-      await flushPromises()
-
-      mockFetch.mockClear()
-      routeFetch({ sessions: [sessionsFixture().s2], hasMore: false, tags: [] })
-      // Pretend the first filtered page reported more rows so loadMore runs.
-      wrapper.vm.hasMore = true
-      await wrapper.vm.loadMoreSessions()
-      await flushPromises()
-
-      const moreCall = mockFetch.mock.calls.find(c => String(c[0]).includes('/api/ai/sessions'))
-      expect(String(moreCall![0])).toContain('tag=bug')
       wrapper.unmount()
     })
 

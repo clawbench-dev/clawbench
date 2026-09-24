@@ -1245,10 +1245,11 @@ paths:
       description: |
         拖拽排序后写回会话顺序。请求体 `ids` 是**当前可见的完整顺序**，
         第 i 个会话的 `sort_order` 变为 i（0 在最上）。
-        只作用于当前项目、`session_type='chat'` 且**未置顶**的会话：
+        只作用于当前项目、`session_type='chat'`、**未置顶且未归档**的会话：
         置顶会话是固定在最前的区块（`pinned DESC` 为第一排序键），不参与重排，
-        出现在 ids 中也会被忽略。
-        未出现在 ids 中的未置顶会话（分页未加载的尾部）按原有相对顺序接在前缀之后。
+        出现在 ids 中也会被忽略；归档会话不在列表中，也绝不被重编号
+        （否则每次拖拽都会重写项目里全部归档行，实测 1993 行/3 秒）。
+        未出现在 ids 中的可见会话按原有相对顺序接在其后。
         新建会话 `sort_order` 默认为 0，靠 `created_at DESC` 的并列规则落在最上。
       operationId: sessionsReorder
       requestBody:

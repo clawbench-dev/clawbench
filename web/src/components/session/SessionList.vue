@@ -33,10 +33,11 @@
              on touch — so no press delay is needed and the two can never fight.
              The button still opens the menu on a plain click; Sortable only
              takes over once the pointer actually moves.
-             Pinned rows are excluded twice over: `filter` keeps them from being
-             dragged (with preventOnFilter off, so their ⋮ menu still opens), and
-             onDragMove keeps an unpinned row from being dropped into their
-             block. -->
+             Pinned rows are protected on the frontend, not just by the backend:
+             `filter` keeps them from being dragged (with preventOnFilter off, so
+             their ⋮ menu still opens), and the end-of-drag re-partition in
+             pinPinnedRowsToTop is the hard guarantee that a plain row can never
+             be left above them. onDragMove only smooths the interaction. -->
         <VueDraggable
           v-model="sessions"
           tag="div"
@@ -86,10 +87,6 @@
             </button>
           </div>
         </VueDraggable>
-
-        <div ref="sentinelRef" class="session-list-sentinel"></div>
-        <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
-        <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
       </template>
     </div>
 
@@ -218,20 +215,13 @@ const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useC
 
 const sessions = ref([])
 const loading = ref(false)
-const loadingMore = ref(false)
 const refreshing = ref(false) // a reload (loadSessions) is in flight
-const hasMore = ref(false)
-// Tag filter. Single-select: '' means no filter. The value is sent to the
-// server (see buildListQuery) rather than applied to the loaded page, so
-// pagination and hasMore stay consistent — client-side filtering would show
-// "no matches" until the user happened to scroll far enough.
+// Tag filter. Single-select: '' means no filter. Sent to the server so the
+// returned set matches what the chips promise.
 const activeTag = ref('')
 // Tags in use in the current project (with session counts), for the filter bar.
 const filterTags = ref([])
 const listRef = ref(null)
-const sentinelRef = ref(null)
-let observer = null
-const pageSize = computed(() => store.state.chatSessionPageSize || 10)
 let reloadDebounce = null
 let removeEventHandler = null
 
@@ -265,21 +255,19 @@ async function loadSessions() {
   // the loading spinner when there is nothing to render yet. This prevents the
   // "clear then refill" flash when a WS-triggered reload fires.
   //
-  // Depth preservation: a reload must NOT collapse the list back to the first
-  // page when the user has already scrolled through more (loadMoreSessions
-  // appended pages). If it did, the shorter list would re-expose the load-more
-  // sentinel, the IntersectionObserver would immediately append again, and —
-  // while a running session keeps emitting session_update events — the list
-  // (and the auto-sized drawer around it) would oscillate in height forever.
-  // Instead, re-fetch pages until the fresh list covers the rows the user has
-  // already loaded, then swap in place.
-  const keepDepth = sessions.value.length
-  loading.value = keepDepth === 0
-  hasMore.value = false
+  // The whole list is fetched in one request (no pagination): a project has
+  // few enough sessions that paging only added cursor bookkeeping, and it made
+  // drag-reorder ambiguous (the client could not know about rows it had not
+  // loaded). Omitting `limit` selects the backend's full-list path.
+  loading.value = sessions.value.length === 0
   refreshing.value = true
   try {
-    const fresh = await fetchSessionsUpTo(keepDepth)
-    sessions.value = fresh
+    // Coalesced: this component is mounted twice (pinned sidebar + mobile
+    // drawer), and both reload on the same signals, so without this the list is
+    // fetched twice for identical data.
+    const data = await coalescedJson(`/api/ai/sessions${buildTagQuery()}`)
+    sessions.value = data.sessions || []
+    if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
     reconcileRunningSessions(sessions.value)
   } catch (err) {
     appLog.e('SessionList', 'Failed to load sessions:', err)
@@ -287,84 +275,10 @@ async function loadSessions() {
   } finally {
     loading.value = false
     refreshing.value = false
-    await nextTick()
-    setupObserver()
   }
 }
 
-/**
- * Fetch session pages until at least `minCount` rows are covered (or the
- * server reports no more), returning the accumulated list. A plain first load
- * passes minCount=0 and behaves like before: one page of pageSize rows.
- * Each page is fetched after the previous one's last row (cursor semantics
- * identical to loadMoreSessions below).
- *
- * The cursor is the last row's full sort key — sortOrder + createdAt + id —
- * NOT updatedAt: the backend orders and filters paged sessions by
- * (sort_order ASC, created_at DESC, id DESC), so sending updatedAt (which is
- * >= createdAt and bumped on every message) makes the cursor filter match rows
- * already shown, and omitting sortOrder re-returns every row sharing that
- * sort_order on each page.
- */
-async function fetchSessionsUpTo(minCount) {
-  const limit = pageSize.value
-  const accumulated = []
-  let cursor = null
-  // Always fetch at least one page; afterwards keep going only when a reload
-  // must preserve a deeper list (minCount > pageSize). On a plain first load
-  // (minCount = 0) one page is exactly right — the remaining pages are loaded
-  // on demand by loadMoreSessions when the user scrolls.
-  // Cap the loop so a pathological cursor never spins forever; pageSize is
-  // small (default 10) and the depth to preserve is bounded by what the user
-  // actually scrolled through.
-  let serverHasMore
-  let pages = 0
-  for (;;) {
-    let url = `/api/ai/sessions?limit=${limit}${buildTagQuery()}`
-    if (cursor) url += buildCursorQuery(cursor)
-    // Coalesced: this component is mounted twice (pinned sidebar + mobile
-    // drawer), and both reload on the same signals, so without this each page
-    // is fetched twice for identical data.
-    const data = await coalescedJson(url)
-    const list = data.sessions || []
-    accumulated.push(...list)
-    serverHasMore = !!data.hasMore
-    if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
-    const last = list[list.length - 1]
-    pages++
-    if (!last || !serverHasMore || accumulated.length >= minCount || pages >= 20) break
-    // A missing createdAt means we cannot form a safe cursor. encodeURIComponent
-    // would stringify it to "undefined", and the server filter
-    // `created_at < 'undefined'` is lexically true for every date — re-returning
-    // page 1 (the duplicate bug). Stop instead of looping.
-    if (!last.createdAt) {
-      appLog.w('SessionList', 'session missing createdAt; stopping pagination')
-      serverHasMore = false
-      break
-    }
-    cursor = last
-  }
-  hasMore.value = serverHasMore
-  return accumulated
-}
-
-/**
- * Build the cursor query string for the row the next page starts after.
- * `sortOrder` is part of the sort key, so it must travel with the cursor —
- * without it the backend cannot exclude already-seen rows that share the
- * cursor's sort_order (which is every row until the user first drags).
- */
-function buildCursorQuery(row) {
-  return `&cursor=${encodeURIComponent(row.createdAt)}`
-    + `&cursor_id=${encodeURIComponent(row.id)}`
-    + `&cursor_sort_order=${row.sortOrder ?? 0}`
-    + `&cursor_pinned=${row.pinned ? 1 : 0}`
-}
-
-/**
- * The tag filter must be part of EVERY list request (including each paginated
- * page), otherwise page 2 would silently fall back to the unfiltered set.
- */
+/** The tag filter query string, or '' when no filter is applied. */
 function buildTagQuery() {
   return activeTag.value ? `&tag=${encodeURIComponent(activeTag.value)}` : ''
 }
@@ -403,42 +317,6 @@ async function loadFilterTags() {
 function toggleTagFilter(name) {
   activeTag.value = activeTag.value === name ? '' : name
   loadSessions()
-}
-
-async function loadMoreSessions() {
-  if (loadingMore.value || !hasMore.value || refreshing.value) return
-  loadingMore.value = true
-  try {
-    const last = sessions.value[sessions.value.length - 1]
-    if (!last) return
-    // A missing createdAt cannot form a valid cursor (see fetchSessionsUpTo) —
-    // bail out rather than sending cursor=undefined and re-fetching page 1.
-    if (!last.createdAt) {
-      appLog.w('SessionList', 'last session missing createdAt; stopping pagination')
-      hasMore.value = false
-      return
-    }
-    // Cursor = the last row's full sort key (pinned, createdAt, id).
-    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}${buildCursorQuery(last)}${buildTagQuery()}`)
-    const data = await resp.json()
-    const more = data.sessions || []
-    if (more.length > 0) sessions.value = [...sessions.value, ...more]
-    hasMore.value = !!data.hasMore
-    if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
-  } catch (err) {
-    appLog.e('SessionList', 'Failed to load more sessions:', err)
-  } finally {
-    loadingMore.value = false
-  }
-}
-
-function setupObserver() {
-  if (observer) { observer.disconnect(); observer = null }
-  if (!sentinelRef.value || !listRef.value) return
-  observer = new IntersectionObserver((entries) => {
-    if (entries[0].isIntersecting && hasMore.value && !loadingMore.value && !refreshing.value) loadMoreSessions()
-  }, { threshold: 0.1, rootMargin: '100px', root: listRef.value })
-  observer.observe(sentinelRef.value)
 }
 
 function selectSession(sessionId, backend) {
@@ -508,30 +386,68 @@ function showMenuFromButton(event, session) {
 // equals newIndex, and the server write is skipped.
 
 /**
- * Reject a drop that would land an unpinned row inside the pinned block.
+ * Force the pinned block back to the front of `sessions`.
  *
- * Pinned rows are a fixed block at the top (the backend orders by pinned DESC
- * first), so a plain session must never be able to sit above one. Sortable calls
- * this continuously while dragging and passes the row it would swap with as
- * `evt.related`; refusing that swap when the row is pinned leaves the dragged
- * row parked just below the block. (The dragged row is never pinned itself —
- * `filter` blocks that — so only the target needs checking.)
+ * This is the frontend guarantee that a pinned row can never be pushed down —
+ * it does NOT rely on Sortable's onMove, which is only advisory and is bypassed
+ * whenever the drop lands on the list container rather than a row (the gap
+ * above the first row resolves to the container, whose element carries no
+ * `pinned` marker, so the live guard waves it through). Whatever order Sortable
+ * left the array in, pinned rows are lifted back to the top in their existing
+ * relative order, so the DOM can never show a plain row above a pinned one.
+ *
+ * Returns the same array instance when nothing needed moving, so the caller can
+ * skip a redundant reactive write.
+ */
+function pinPinnedRowsToTop(list) {
+  const pinnedCount = list.filter(s => s.pinned).length
+  if (pinnedCount === 0 || pinnedCount === list.length) return list
+  // Already partitioned? Then the drag stayed out of the pinned block.
+  if (list.slice(0, pinnedCount).every(s => s.pinned)) return list
+  const pinned = list.filter(s => s.pinned)
+  const rest = list.filter(s => !s.pinned)
+  return [...pinned, ...rest]
+}
+
+/**
+ * Live guard: refuse a drop that would place the dragged row at an index inside
+ * the pinned block, i.e. above a pinned row.
+ *
+ * Best-effort only — see pinPinnedRowsToTop for why the end-of-drag
+ * re-partition is the actual guarantee. This one just keeps the row from
+ * visibly jumping above the block and snapping back on release. It computes the
+ * prospective index from the row Sortable would insert next to plus
+ * `willInsertAfter`, rather than inspecting that row's class: the target can
+ * also be the list container (the gap above the first row), which carries no
+ * `pinned` marker and would otherwise be waved through.
  */
 function onDragMove(evt) {
-  const related = evt.related
-  if (!related?.classList) return true
-  return !related.classList.contains('pinned')
+  const pinnedCount = sessions.value.filter(s => s.pinned).length
+  if (pinnedCount === 0) return true
+  const relatedId = evt.related?.dataset?.sessionId
+  if (!relatedId) {
+    // Container target: appending at the end is fine, inserting at the top is not.
+    return evt.willInsertAfter === true
+  }
+  const idx = sessions.value.findIndex(s => s.id === relatedId)
+  if (idx < 0) return true
+  return idx + (evt.willInsertAfter ? 1 : 0) >= pinnedCount
 }
 
 async function onDragEnd(evt) {
   if (evt.oldIndex === evt.newIndex) return
+  // Lift pinned rows back to the top before anything else: Sortable may have
+  // inserted the dragged row above them (it only consults onMove when the drop
+  // target is a row, so the container gap is unprotected).
+  const ordered = pinPinnedRowsToTop(sessions.value)
+  if (ordered !== sessions.value) sessions.value = ordered
+
   // Only the unpinned rows participate: pinned rows are positioned by pinned
   // DESC, so renumbering them would be meaningless (the server ignores their
-  // ids anyway — see service.ReorderSessions). Mirroring the server's
-  // renumbering locally keeps buildCursorQuery's cursor consistent with the
-  // stored order; without it the rows keep their pre-drag sortOrder and the
-  // next page duplicates rows.
-  const unpinned = sessions.value.filter(s => !s.pinned)
+  // ids anyway — see service.ReorderSessions). The whole visible list is
+  // loaded, so the posted ids are exactly the rows the server will renumber,
+  // and mirroring that locally keeps the array in sync with storage.
+  const unpinned = ordered.filter(s => !s.pinned)
   unpinned.forEach((s, i) => { s.sortOrder = i })
   const ids = unpinned.map(s => s.id)
   try {
@@ -687,20 +603,6 @@ function scrollActiveIntoView(index) {
 
 watch(sessionsWithStatus, () => listNav.reset())
 
-// The project pane is v-show'd (not unmounted) so its scroll position and
-// pagination depth survive tab switches. But when hidden its scroll root has
-// zero size, which makes the load-more sentinel intersect immediately and
-// triggers bogus pagination. Pause the observer while the cross tab is shown
-// and re-arm it on return.
-watch(() => props.activeTab, async (tab) => {
-  if (tab === 'project') {
-    await nextTick()
-    setupObserver()
-  } else {
-    if (observer) { observer.disconnect(); observer = null }
-  }
-})
-
 // Reset to the project tab whenever the current project changes: the session we
 // just opened belongs to the (new) current project and must be visible in the
 // project list, not hidden behind the cross tab.
@@ -767,7 +669,6 @@ onUnmounted(() => {
   removeEventHandler?.()
   removeEventHandler = null
   if (reloadDebounce) { clearTimeout(reloadDebounce); reloadDebounce = null }
-  if (observer) { observer.disconnect(); observer = null }
   contextMenu.visible = false
 })
 </script>
@@ -1147,14 +1048,6 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.session-list-sentinel {
-  height: 1px;
-}
-
-.session-list-end {
-  height: 0;
 }
 
 /* ── Pinned marker ──

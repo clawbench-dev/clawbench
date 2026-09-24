@@ -6274,18 +6274,17 @@ func TestReorderSessionsPersistsManualOrder(t *testing.T) {
 	assert.NotEmpty(t, updatedAt)
 }
 
-// TestReorderSessionsKeepsUnloadedTailBelow guards the paginated case: the
-// client only posts the rows it has loaded (a prefix of the list), so the
-// unloaded tail must be pushed BELOW the dragged block rather than left at its
-// old sort_order — otherwise a row sharing the default 0 interleaves into the
-// prefix the user just ordered.
-func TestReorderSessionsKeepsUnloadedTailBelow(t *testing.T) {
+// TestReorderSessionsKeepsUnpostedVisibleRowsBelow guards the safety net: the
+// client posts every row it displays, but a row created between its load and
+// the drop is not in ids. Such a row defaults to sort_order 0 and would
+// otherwise sort above the whole dragged block, so the reorder must push it
+// below the posted rows.
+func TestReorderSessionsKeepsUnpostedVisibleRowsBelow(t *testing.T) {
 	setupDB(t)
 	projectPath := "/test/reorder-prefix"
 
-	// All rows start at sort_order 0 (the un-dragged default), like a fresh
-	// install or the state right after the #492 backfill. created_at is pinned
-	// so the newest-first tiebreak is deterministic.
+	// All rows start at sort_order 0 (the un-dragged default). created_at is
+	// pinned so the newest-first tiebreak is deterministic.
 	ids := make([]string, 0, 5)
 	for i, title := range []string{"A", "B", "C", "D", "E"} {
 		id := helperCreateSession(t, projectPath, "claude", title)
@@ -6297,7 +6296,7 @@ func TestReorderSessionsKeepsUnloadedTailBelow(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// The user sees the first two rows and swaps them.
+	// The user swaps the first two rows; the other three were not posted.
 	require.NoError(t, service.ReorderSessions(projectPath, []string{ids[1], ids[0]}))
 
 	sessions, err := service.GetSessions(projectPath, "")
@@ -6305,9 +6304,39 @@ func TestReorderSessionsKeepsUnloadedTailBelow(t *testing.T) {
 	require.Len(t, sessions, 5)
 	// The two dragged rows lead, in the posted order...
 	assert.Equal(t, []string{ids[1], ids[0]}, []string{sessions[0].ID, sessions[1].ID})
-	// ...and the unloaded tail follows, none of it interleaved above them.
+	// ...and the unposted rows follow, none interleaved above them.
 	assert.Equal(t, []string{ids[4], ids[3], ids[2]},
 		[]string{sessions[2].ID, sessions[3].ID, sessions[4].ID})
+}
+
+// TestReorderSessionsIgnoresArchived is the regression guard for the drag
+// slowness: the reorder used to renumber EVERY non-pinned row in the project,
+// including archived ones the list never shows (measured 1993 rows rewritten
+// for a 3-row list, ~3s per drag). Archived rows must be left untouched.
+func TestReorderSessionsIgnoresArchived(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/reorder-archived"
+
+	visible := helperCreateSession(t, projectPath, "claude", "Visible")
+	archived := helperCreateSession(t, projectPath, "claude", "Archived")
+	// A distinctive sort_order proves the archived row is not rewritten.
+	_, err := service.WriteExec("UPDATE chat_sessions SET sort_order = 42 WHERE id = ?", archived)
+	require.NoError(t, err)
+	_, err = service.WriteExec("UPDATE chat_sessions SET archived = 1 WHERE id = ?", archived)
+	require.NoError(t, err)
+
+	require.NoError(t, service.ReorderSessions(projectPath, []string{visible}))
+
+	var archivedOrder int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", archived).Scan(&archivedOrder))
+	assert.Equal(t, 42, archivedOrder, "an archived row must not be renumbered")
+
+	// The visible row is numbered from 0 (archived rows do not occupy an index).
+	var visibleOrder int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", visible).Scan(&visibleOrder))
+	assert.Equal(t, 0, visibleOrder)
 }
 
 // TestNewSessionLandsOnTop guards the "new session goes to the top" rule: a

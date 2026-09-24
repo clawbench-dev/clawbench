@@ -122,7 +122,7 @@ describe('SessionList pinned marker', () => {
 describe('SessionList row action button', () => {
   it('styles the trailing action cell under its current class name only', async () => {
     const src = await sessionListSource()
-    // The standalone archive button became the ⋮ menu button; a leftover
+    // The standalone archive button became the grip menu/drag handle; a leftover
     // `.session-archive-btn` rule would mean dead CSS outlived the markup.
     expect(src).toMatch(/\.session-more-btn\s*\{/)
     expect(src).not.toMatch(/\.session-archive-btn/)

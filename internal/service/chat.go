@@ -2051,20 +2051,21 @@ func UpdateSessionPinned(sessionID string, pinned bool) error {
 // the endpoint safe against a client that has not yet adopted the pinned-block
 // rule.
 //
-// Scoped to projectPath and session_type='chat' so a stale or malicious id
-// cannot renumber a session in another project or a scheduled task. Ids that do
-// not match are silently ignored (a row archived between load and drop simply
+// Scoped to projectPath, session_type='chat' and archived=0 so a stale or
+// malicious id cannot renumber a session in another project, a scheduled task,
+// or an archived row. The archived filter is what keeps this cheap: the list
+// only ever shows non-archived rows, but a project accumulates far more
+// archived ones (measured: 3 visible vs 1990 archived), and renumbering those
+// would rewrite ~2000 rows per drag for no visible effect. Ids that do not
+// match are silently ignored (a row archived between load and drop simply
 // disappears from the list).
 //
-// Non-pinned sessions NOT in ids are renumbered to len(ids), len(ids)+1, ... in
-// their previous relative order. This matters because the client only ever
-// posts the rows it has loaded: a paginated list is a PREFIX of the project's
-// sessions, and renumbering just that prefix would let an unloaded row keep a
-// sort_order smaller than a renumbered one and interleave into the dragged
-// block. (The common case is a fresh install where every row shares sort_order
-// 0 — the unloaded tail would then jump above most of the dragged prefix.)
-// Ordering the untouched rows after the prefix keeps the tail exactly where it
-// was.
+// Non-pinned, non-archived sessions NOT in ids are renumbered to len(ids),
+// len(ids)+1, ... in their previous relative order. The client posts every row
+// it displays, so this set is normally empty — it is a safety net for a row
+// created between the client's load and the drop, keeping it below the dragged
+// block instead of letting it interleave (a fresh session defaults to
+// sort_order 0 and would otherwise sort above the whole dragged prefix).
 //
 // Deliberately does NOT touch updated_at — see UpdateSessionPinned for why a UI
 // preference must not hijack the "most recent session" pick.
@@ -2074,9 +2075,9 @@ func ReorderSessions(projectPath string, ids []string) error {
 	}
 	// One statement, so a crash cannot leave the project half-renumbered. The
 	// `posted` CTE carries the target order; `rest` numbers the remaining
-	// non-pinned rows by their current order, starting at len(ids). The final
-	// UPDATE is restricted to pinned = 0, so pinned rows keep whatever
-	// sort_order they had.
+	// visible rows by their current order, starting at len(ids). Both the CTE
+	// and the UPDATE carry the same (pinned, archived) filter as the read query,
+	// so only rows the user can actually see are touched.
 	var posted strings.Builder
 	args := make([]any, 0, len(ids)*2+4)
 	for i, id := range ids {
@@ -2092,14 +2093,14 @@ func ReorderSessions(projectPath string, ids []string) error {
 		rest AS (
 			SELECT s.id AS rid, ROW_NUMBER() OVER (ORDER BY s.sort_order ASC, s.created_at DESC, s.id DESC) - 1 AS rn
 			FROM chat_sessions s
-			WHERE s.project_path = ? AND s.session_type = 'chat' AND s.pinned = 0
+			WHERE s.project_path = ? AND s.session_type = 'chat' AND s.pinned = 0 AND s.archived = 0
 			  AND s.id NOT IN (SELECT id FROM posted)
 		)
 		UPDATE chat_sessions SET sort_order = COALESCE(
 			(SELECT ord FROM posted WHERE posted.id = chat_sessions.id),
 			(SELECT ? + rn FROM rest WHERE rest.rid = chat_sessions.id)
 		)
-		WHERE project_path = ? AND session_type = 'chat' AND pinned = 0`
+		WHERE project_path = ? AND session_type = 'chat' AND pinned = 0 AND archived = 0`
 
 	_, err := WriteExec(query, args...)
 	return err
