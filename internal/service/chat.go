@@ -3357,6 +3357,10 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 		args[i] = id
 	}
 
+	// Revoke conversation share links first: the snapshot is a copy of the
+	// messages about to be purged.
+	_, _ = tx.Exec("DELETE FROM session_shares WHERE session_id IN ("+placeholders+")", args...)
+
 	// Delete chat_tool_calls for these sessions
 	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id IN ("+placeholders+")", args...)
 
@@ -3422,6 +3426,10 @@ func HardDeleteSession(sessionID string) error {
 	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_history WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM task_executions WHERE session_id = ?", sessionID)
+	// Revoke the conversation share link: the frozen snapshot is a copy of the
+	// messages being deleted, so leaving it readable would defeat the deletion.
+	// (Archived sessions keep their share — their messages survive.)
+	_, _ = tx.Exec("DELETE FROM session_shares WHERE session_id = ?", sessionID)
 	// Drop the session's tag links too: the link table has no FK to
 	// chat_sessions, so without this the rows would linger forever. The tag
 	// definitions themselves are preserved (other sessions may use them).
