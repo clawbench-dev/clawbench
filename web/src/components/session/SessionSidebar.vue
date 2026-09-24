@@ -38,8 +38,16 @@
       />
       <SessionListTabs v-model:active-tab="activeTab" />
     </div>
+    <!-- MUST stay inside the root element. SharedSessionsDrawer renders through
+         BottomSheet, which Teleports to <body>, so its DOM position here is
+         irrelevant — but a sibling at template top level would make this
+         component a FRAGMENT, and a fragment root cannot receive fallthrough
+         attributes. The host (App.vue) drives visibility with v-show, which
+         compiles to a `style` fallthrough: Vue would warn "Extraneous non-props
+         attributes (style)" and silently drop it, so the sidebar showed in
+         portrait and could not be closed. -->
+    <SharedSessionsDrawer ref="sharedSessionsRef" @select-session="$emit('select', $event)" />
   </div>
-  <SharedSessionsDrawer ref="sharedSessionsRef" @select-session="$emit('select', $event)" />
 </template>
 
 <script setup>

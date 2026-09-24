@@ -173,6 +173,29 @@ describe('SessionDrawer', () => {
       expect(wrapper.find('.session-list-stub').exists()).toBe(true)
       expect(wrapper.find('.header-stub').exists()).toBe(true)
     })
+
+    // Regression guard: this component renders three teleporting overlays
+    // (BottomSheet, AgentSelectorDrawer, SharedSessionsDrawer). Left as three
+    // top-level nodes it is a FRAGMENT, and a fragment root cannot inherit
+    // fallthrough attributes — a host binding v-show (a `style` fallthrough)
+    // gets "Extraneous non-props attributes (style)" and silently keeps the
+    // overlay visible. SessionSidebar shipped exactly that bug when a sibling
+    // drawer was added next to its root div.
+    it('has a single root element so hosts can apply v-show/class fallthrough', () => {
+      const src = readFileSync(
+        join(__dirname, '..', 'SessionDrawer.vue'),
+        'utf8',
+      )
+      // The template body, between the outermost <template> tags.
+      const body = src.slice(src.indexOf('<template>') + 10, src.indexOf('</template>'))
+      // Count top-level element starts: lines with exactly two leading spaces
+      // followed by a tag. Comments and blanks are ignored.
+      const roots = body
+        .split('\n')
+        .filter((l) => /^ {2}<[A-Za-z]/.test(l))
+      expect(roots).toHaveLength(1)
+      expect(roots[0]).toContain('div')
+    })
   })
 
   describe('pin button', () => {
