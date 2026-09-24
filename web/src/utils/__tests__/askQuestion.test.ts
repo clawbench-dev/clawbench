@@ -155,6 +155,37 @@ describe('parseItems', () => {
     expect(got[0].options[0]).toEqual({ label: '甲', description: '说明' })
   })
 
+  it('does not split on a dash inside the bold run', () => {
+    // A dash inside `**…**` is part of the label, not a separator. Splitting
+    // on it truncated the label to `**A` and left the unmatched `**` visible
+    // in the card (production message 52484).
+    const got = parseItems(
+      'Q?\n- **A — 回合结束时失效负缓存（推荐）** — 在 ContentBlocks.vue 里清缓存。',
+    )
+    expect(got[0].options[0]).toEqual({
+      label: 'A — 回合结束时失效负缓存（推荐）',
+      description: '在 ContentBlocks.vue 里清缓存。',
+    })
+  })
+
+  it('keeps a fully bold label that has no description', () => {
+    const got = parseItems('Q?\n- **A — 方案一**')
+    expect(got[0].options[0]).toEqual({ label: 'A — 方案一' })
+  })
+
+  it('still splits on a separator after the bold run', () => {
+    const got = parseItems('Q?\n- **甲** — 说明')
+    expect(got[0].options[0]).toEqual({ label: '甲', description: '说明' })
+  })
+
+  it('splits later plain options normally alongside a bold one', () => {
+    const got = parseItems('Q?\n- **A — 标签** — 描述\n- 乙 — 乙说明')
+    expect(got[0].options).toEqual([
+      { label: 'A — 标签', description: '描述' },
+      { label: '乙', description: '乙说明' },
+    ])
+  })
+
   it('drops a description identical to the label', () => {
     const got = parseItems('Q?\n- A — A')
     expect(got[0].options[0].description).toBeUndefined()
