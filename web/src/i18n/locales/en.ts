@@ -18,6 +18,7 @@ export default {
     rename: 'Rename',
     renameSession: 'Rename session',
     setTags: 'Set tags',
+    moreActions: 'More actions',
     open: 'Open',
     save: 'Save',
     create: 'Create',
@@ -982,6 +983,7 @@ export default {
     tabProject: 'This project',
     tabCross: 'Other projects',
     crossEmpty: 'No active sessions in other projects',
+    reorderFailed: 'Failed to save session order',
   },
   sessionTags: {
     title: 'Set tags',

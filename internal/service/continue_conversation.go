@@ -168,6 +168,8 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// Copy external_session_id from the source session so that --resume works correctly.
 	// The continued session inherits the CLI backend's session context, allowing the
 	// same resume flow as a normal session (no special-casing needed).
+	// sort_order stays at its default 0 so the new session lands at the top of the
+	// manual order (#492) via the created_at DESC tiebreak.
 	_, err = WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, CURRENT_TIMESTAMP)",
 		newSessionID, sessProjectPath, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, externalSessionID,
@@ -351,6 +353,8 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	// 4. Title is provided by handler (localized prefix + source title)
 
 	// 5. Create new session (no external_session_id inheritance)
+	// sort_order stays at its default 0 so the fork lands at the top of the
+	// manual order (#492) via the created_at DESC tiebreak.
 	newSessionID := generateSessionID()
 	_, err = WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",

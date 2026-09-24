@@ -1,8 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
-import { LongPressDirective } from '@/directives/longPress'
 import { RunningSweepDirective } from '@/directives/runningSweep'
 
 // UI zoom factor driving toFixedCSS()/getZoomedViewport() in the component's
@@ -19,7 +18,7 @@ vi.mock('@/composables/useSettingsConfig', async (importOriginal) => {
   }
 })
 
-const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState } = await vi.hoisted(async () => {
+const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState, mockDraggable, mockToastShow } = await vi.hoisted(async () => {
   // The real store exposes a reactive() state, so tests that mutate
   // state.projectRoot (or sessionListVersion) must trigger the component's
   // watchers. A plain object would silently not, making such a test vacuous.
@@ -52,6 +51,10 @@ const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRu
     mockEventHolder: { handler: null as null | ((event: string) => void) },
     mockStore,
     mockCrossState,
+    // Captured by the VueDraggable stub so tests can emit events and read the
+    // props the component bound (notably `handle`).
+    mockDraggable: { emit: null as null | ((event: string, ...args: any[]) => void), props: null as null | Record<string, unknown> },
+    mockToastShow: vi.fn(),
   }
 })
 
@@ -79,6 +82,28 @@ vi.mock('@/composables/useGlobalEvents', () => ({
 }))
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({ getAgentBackend: mockGetAgentBackend, getAgentName: mockGetAgentName }),
+}))
+// VueDraggable needs a real DOM root it can measure; in jsdom its mounted hook
+// throws "Root element not found" and takes the whole component down. The stub
+// renders the slot (so rows still mount) and records the handlers so tests can
+// drive a drag directly.
+vi.mock('vue-draggable-plus', () => ({
+  VueDraggable: defineComponent({
+    name: 'VueDraggable',
+    // Declared (not left to fallthrough) so the "prop is absent" assertions are
+    // meaningful: an undeclared prop would land in attrs and read undefined even
+    // when the component set it.
+    props: ['modelValue', 'handle', 'tag', 'animation', 'delay', 'delayOnTouchOnly', 'filter', 'preventOnFilter', 'onMove'],
+    emits: ['update:modelValue', 'start', 'end'],
+    setup(props, { slots, emit }) {
+      mockDraggable.emit = emit
+      mockDraggable.props = props as Record<string, unknown>
+      return () => h('div', { class: 'vdp-stub' }, slots.default?.())
+    },
+  }),
+}))
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ show: mockToastShow }),
 }))
 vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({
@@ -163,10 +188,22 @@ describe('SessionList', () => {
   async function mountList(props = {}) {
     const wrapper = mount(SessionList, {
       props: { currentSessionId: 's1', runningSessionIds: new Set(), ...props },
-      global: { directives: { 'long-press': LongPressDirective, 'running-sweep': RunningSweepDirective } },
+      global: { directives: { 'running-sweep': RunningSweepDirective } },
     })
     await flushPromises()
     return wrapper
+  }
+
+  /**
+   * Open the session menu the way the ⋮ button does. The button is the only
+   * entry point now (long-press / right-click were removed), so tests click the
+   * real element rather than reaching into an internal helper.
+   */
+  async function openRowMenu(wrapper: any, sessionId: string) {
+    const btn = wrapper.find(`[data-session-id="${sessionId}"] .session-more-btn`)
+    expect(btn.exists(), `row ${sessionId} should have a ⋮ button`).toBe(true)
+    await btn.trigger('click')
+    await nextTick()
   }
 
   it('renders sessions from API', async () => {
@@ -309,12 +346,14 @@ describe('SessionList', () => {
     expect(wrapper.vm.sessions[0].id).toBe('s2')
   })
 
-  it('uses a TransitionGroup so the refreshed list transitions instead of swapping', async () => {
+  it('renders the list through VueDraggable so rows can be reordered', async () => {
+    // The drag container replaced TransitionGroup: SortableJS owns the list
+    // root, and running both would fight over the move animation.
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
     const wrapper = await mountList()
     await wrapper.vm.loadSessions()
     await flushPromises()
-    expect(wrapper.findComponent({ name: 'TransitionGroup' }).exists()).toBe(true)
+    expect(wrapper.find('.vdp-stub').exists()).toBe(true)
     expect(wrapper.findAll('.session-row').length).toBe(1)
   })
 
@@ -433,12 +472,13 @@ describe('SessionList', () => {
     expect(url).not.toContain(encodeURIComponent('2025-09-10'))
   })
 
-  it('sends cursor_pinned alongside the created_at cursor', async () => {
-    // Ordering is (pinned DESC, created_at DESC, id DESC). A created_at-only
-    // cursor cannot exclude already-seen pinned rows — they sort first on every
-    // page — so the cursor must carry pinned too.
-    const lastPinned = { id: 's1', title: 'S1', pinned: true, createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-06-01T00:00:00Z', agentId: 'agent-1', backend: 'cli' }
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [lastPinned], hasMore: true }) })
+  it('sends cursor_sort_order alongside the created_at cursor', async () => {
+    // Ordering is (sort_order ASC, created_at DESC, id DESC). A created_at-only
+    // cursor cannot exclude already-seen rows that share the cursor's
+    // sort_order (every row, until the user first drags), so the cursor must
+    // carry sort_order too.
+    const lastDragged = { id: 's1', title: 'S1', sortOrder: 3, createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-06-01T00:00:00Z', agentId: 'agent-1', backend: 'cli' }
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [lastDragged], hasMore: true }) })
     const wrapper = await mountList()
     await flushPromises()
 
@@ -450,11 +490,30 @@ describe('SessionList', () => {
     const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
     expect(cursorCall).toBeTruthy()
     const url = String(cursorCall![0])
-    expect(url).toContain('cursor_pinned=1')
+    expect(url).toContain('cursor_sort_order=3')
     expect(url).toContain(`cursor_id=${encodeURIComponent('s1')}`)
   })
 
-  it('sends cursor_pinned=0 when the cursor row is not pinned', async () => {
+  it('sends cursor_pinned alongside the other cursor keys', async () => {
+    // Ordering is (pinned DESC, sort_order ASC, created_at DESC, id DESC). A
+    // pinned row leads no matter its sort_order, so the cursor must carry pinned
+    // too or page 2 re-returns it.
+    const lastPinned = { id: 's1', title: 'S1', pinned: true, sortOrder: 0, createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-06-01T00:00:00Z', agentId: 'agent-1', backend: 'cli' }
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [lastPinned], hasMore: true }) })
+    const wrapper = await mountList()
+    await flushPromises()
+
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
+    wrapper.vm.hasMore = true
+    await wrapper.vm.loadMoreSessions()
+    await flushPromises()
+
+    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
+    expect(cursorCall).toBeTruthy()
+    expect(String(cursorCall![0])).toContain('cursor_pinned=1')
+  })
+
+  it('sends cursor_pinned=0 for an unpinned cursor row', async () => {
     const lastUnpinned = { id: 's9', title: 'S9', pinned: false, createdAt: '2025-02-02', updatedAt: '2025-07-02', agentId: 'agent-1', backend: 'cli' }
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [lastUnpinned], hasMore: true }) })
     const wrapper = await mountList()
@@ -468,6 +527,26 @@ describe('SessionList', () => {
     const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
     expect(cursorCall).toBeTruthy()
     expect(String(cursorCall![0])).toContain('cursor_pinned=0')
+  })
+
+  it('defaults cursor_sort_order to 0 when the cursor row has no sortOrder', async () => {
+    // sortOrder is omitempty on the server, so an un-dragged row arrives with
+    // the field absent; the cursor must still send 0 rather than "undefined".
+    const lastUnordered = { id: 's9', title: 'S9', createdAt: '2025-02-02', updatedAt: '2025-07-02', agentId: 'agent-1', backend: 'cli' }
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [lastUnordered], hasMore: true }) })
+    const wrapper = await mountList()
+    await flushPromises()
+
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
+    wrapper.vm.hasMore = true
+    await wrapper.vm.loadMoreSessions()
+    await flushPromises()
+
+    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
+    expect(cursorCall).toBeTruthy()
+    const url = String(cursorCall![0])
+    expect(url).toContain('cursor_sort_order=0')
+    expect(url).not.toContain('cursor_sort_order=undefined')
   })
 
   it('stops paginating instead of sending cursor=undefined when createdAt is missing', async () => {
@@ -490,8 +569,9 @@ describe('SessionList', () => {
   })
 
   describe('pinned marker and keyboard nav', () => {
-    // Backend returns pinned DESC, created_at DESC. The component must render in
-    // that same order so useListNav's index maps onto the visible rows.
+    // The backend returns the user's manual order (sort_order ASC). The
+    // component must render in that same order so useListNav's index maps onto
+    // the visible rows.
     const pinnedOld = { id: 'p-old', title: 'Pinned Old', pinned: true, createdAt: '2024-01-01', updatedAt: '2024-01-01', agentId: 'agent-1', backend: 'cli' }
     const newest = { id: 'n-new', title: 'Newest', pinned: false, createdAt: '2025-06-01', updatedAt: '2025-06-01', agentId: 'agent-1', backend: 'cli' }
     const middle = { id: 'n-mid', title: 'Middle', pinned: false, createdAt: '2025-05-01', updatedAt: '2025-05-01', agentId: 'agent-1', backend: 'cli' }
@@ -528,7 +608,10 @@ describe('SessionList', () => {
       }
     })
 
-    it('DOM order matches sessionsWithStatus order (pinned first, then newest)', async () => {
+    it('DOM order matches sessionsWithStatus order (the server sort order)', async () => {
+      // The array is now returned in the user's manual order; the component must
+      // render it as-is. (Pin no longer lifts a row, so the pinned marker in the
+      // fixture stays where the server put it.)
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedOld, newest, middle], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
@@ -769,7 +852,7 @@ describe('SessionList', () => {
       expect(wrapper.emitted('select')![0]).toEqual(['o1', 'cli', '/proj/other'])
     })
 
-    it('does not render an archive button on cross rows', async () => {
+    it('does not render the row action button on cross rows', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList({ activeTab: 'cross' })
@@ -777,7 +860,7 @@ describe('SessionList', () => {
       const crossRows = wrapper.findAll('.cross-session-row')
       expect(crossRows.length).toBe(2)
       for (const row of crossRows) {
-        expect(row.find('.session-archive-btn').exists()).toBe(false)
+        expect(row.find('.session-more-btn').exists()).toBe(false)
       }
     })
 
@@ -801,79 +884,158 @@ describe('SessionList', () => {
     })
   })
 
-  describe('context menu / long-press session targeting', () => {
-    it('long-press reads the session id from the DOM row, not a stale reference', async () => {
+  describe('drag reordering (issue #492)', () => {
+    it('scopes the drag to the row ⋮ button, with no press delay', async () => {
+      // The drag must start only from the trailing button so the row body stays
+      // free for text selection (desktop) and list scrolling (touch). That also
+      // makes the touch press-delay unnecessary — the two gestures can no
+      // longer collide, so the row is never hijacked.
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      expect(mockDraggable.props?.handle).toBe('.session-more-btn')
+      expect(mockDraggable.props?.delay).toBeUndefined()
+      expect(mockDraggable.props?.delayOnTouchOnly).toBeUndefined()
+      expect(wrapper.find('.session-more-btn').exists()).toBe(true)
+    })
+
+    it('excludes pinned rows from dragging without swallowing their menu click', async () => {
+      // `filter` keeps a pinned row from being dragged; preventOnFilter=false is
+      // what still lets its ⋮ button open the menu (Sortable's default would
+      // preventDefault the press and eat the click).
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      expect(mockDraggable.props?.filter).toBe('.session-row.pinned')
+      expect(mockDraggable.props?.preventOnFilter).toBe(false)
+    })
+
+    it('refuses a drop that would land a plain row inside the pinned block', async () => {
+      const pinnedRow = { id: 'p1', title: 'Pinned', pinned: true, createdAt: '2025-01-01', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
+      const plainRow = { id: 's1', title: 'Plain', pinned: false, createdAt: '2025-01-02', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedRow, plainRow], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const onMove = mockDraggable.props?.onMove as (evt: any) => boolean
+      expect(typeof onMove).toBe('function')
+      // The row it would swap with decides: swapping with a pinned row is refused,
+      // swapping with a plain row is allowed.
+      const pinnedEl = wrapper.find('[data-session-id="p1"]').element
+      const plainEl = wrapper.find('[data-session-id="s1"]').element
+      expect(onMove({ related: pinnedEl })).toBe(false)
+      expect(onMove({ related: plainEl })).toBe(true)
+    })
+
+    /** Emit a Sortable end event, reordering the bound array first as it does. */
+    async function drag(wrapper: any, oldIndex: number, newIndex: number) {
+      if (oldIndex !== newIndex) {
+        const arr = wrapper.vm.sessions.slice()
+        const [moved] = arr.splice(oldIndex, 1)
+        arr.splice(newIndex, 0, moved)
+        wrapper.vm.sessions = arr
+      }
+      mockDraggable.emit!('end', { oldIndex, newIndex })
+      await flushPromises()
+    }
+
+    it('persists the new order via PUT /api/ai/sessions/reorder', async () => {
+      const s1 = sessionsFixture().s1
+      const s2 = sessionsFixture().s2
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1, s2], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      mockFetch.mockClear()
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) })
+      await drag(wrapper, 1, 0)
+
+      const putCall = mockFetch.mock.calls.find(c => String(c[0]) === '/api/ai/sessions/reorder')
+      expect(putCall).toBeTruthy()
+      expect((putCall![1] as any).method).toBe('PUT')
+      expect(JSON.parse((putCall![1] as any).body).ids).toEqual(['s2', 's1'])
+
+      // Local sortOrder is renumbered to match the server, so the next
+      // pagination cursor is built from the post-drag order rather than the
+      // stale pre-drag values.
+      expect(wrapper.vm.sessions.map((s: any) => s.sortOrder)).toEqual([0, 1])
+    })
+
+    it('posts only the unpinned rows, leaving pinned order untouched', async () => {
+      // Pinned rows are positioned by pinned DESC, so they are not part of the
+      // drag payload and must not be locally renumbered either.
+      const pinnedRow = { id: 'p1', title: 'Pinned', pinned: true, sortOrder: 7, createdAt: '2025-01-01', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
+      const a = { id: 'a', title: 'A', pinned: false, sortOrder: 0, createdAt: '2025-01-02', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }
+      const b = { id: 'b', title: 'B', pinned: false, sortOrder: 1, createdAt: '2025-01-03', updatedAt: '2025-01-03', agentId: 'agent-1', backend: 'cli' }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedRow, a, b], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      mockFetch.mockClear()
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) })
+      // Drag B above A (indices 2 -> 1); the pinned row stays at index 0.
+      await drag(wrapper, 2, 1)
+
+      const putCall = mockFetch.mock.calls.find(c => String(c[0]) === '/api/ai/sessions/reorder')
+      expect(putCall).toBeTruthy()
+      expect(JSON.parse((putCall![1] as any).body).ids).toEqual(['b', 'a'])
+      // The pinned row keeps its own sort_order rather than being renumbered.
+      expect(wrapper.vm.sessions.find((s: any) => s.id === 'p1').sortOrder).toBe(7)
+    })
+
+    it('does not persist when a drag ends where it started', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1, sessionsFixture().s2], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
-      expect(wrapper.findAll('.session-row').length).toBe(2)
 
-      // Touch the second row (s2). The long-press handler must resolve the
-      // session id from that row's data-session-id attribute, so the context
-      // menu targets s2 even if the list re-renders afterwards.
-      const rows = wrapper.findAll('.session-row')
-      const targetRow = rows[1]
-      expect(targetRow.attributes('data-session-id')).toBe('s2')
+      mockFetch.mockClear()
+      await drag(wrapper, 1, 1)
 
-      const touch = { clientX: 100, clientY: 200, touches: [{ clientX: 100, clientY: 200 }] }
-      wrapper.vm.onSessionLongPress({ currentTarget: targetRow.element, target: targetRow.element, touches: touch.touches })
-      await nextTick()
-
-      expect(wrapper.vm.contextMenu.visible).toBe(true)
-      expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
-      // The menu-open highlight must sit on the s2 row.
-      const highlighted = wrapper.findAll('.session-row.menu-open')
-      expect(highlighted.length).toBe(1)
-      expect(highlighted[0].attributes('data-session-id')).toBe('s2')
+      expect(mockFetch.mock.calls.filter(c => String(c[0]) === '/api/ai/sessions/reorder').length).toBe(0)
     })
 
-    it('long-press on a pinned and an unpinned row each target their own session', async () => {
-      const pinned = { ...sessionsFixture().s1, pinned: true }
-      const unpinned = sessionsFixture().s2
-      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinned, unpinned], hasMore: false }) })
+    it('a failed reorder rolls back to the server order and toasts', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1, sessionsFixture().s2], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      const touch = (x: number) => ({ clientX: x, clientY: 200, touches: [{ clientX: x, clientY: 200 }] })
+      // The reorder PUT fails, then the rollback reload returns the original order.
+      mockFetch.mockImplementation((url: string, init?: any) => {
+        if (init?.method === 'PUT') return Promise.resolve({ ok: false, statusText: 'boom', json: () => Promise.resolve({}) })
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1, sessionsFixture().s2], hasMore: false }) })
+      })
+      await drag(wrapper, 1, 0)
 
-      // Long-press the pinned row (s1).
-      const pinnedRow = wrapper.findAll('.session-row.pinned')[0]
-      wrapper.vm.onSessionLongPress({ currentTarget: pinnedRow.element, target: pinnedRow.element, touches: touch(50).touches })
-      await nextTick()
-      expect(wrapper.vm.contextMenu.sessionId).toBe('s1')
-      expect(wrapper.vm.contextMenu.pinned).toBe(true)
-      wrapper.vm.contextMenu.visible = false
-      await nextTick()
-
-      // Long-press the unpinned row (s2) — must NOT reuse the previous s1 target.
-      const unpinnedRow = wrapper.findAll('.session-row:not(.pinned)')[0]
-      wrapper.vm.onSessionLongPress({ currentTarget: unpinnedRow.element, target: unpinnedRow.element, touches: touch(150).touches })
-      await nextTick()
-      expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
-      expect(wrapper.vm.contextMenu.pinned).toBe(false)
+      expect(mockToastShow).toHaveBeenCalledWith('session.reorderFailed', expect.anything())
+      expect(wrapper.vm.sessions[0].id).toBe('s1')
     })
 
-    it('rename from menu targets the long-pressed session', async () => {
-      const pinned = { ...sessionsFixture().s1, pinned: true, title: 'Pinned A' }
-      const unpinned = sessionsFixture().s2
-      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinned, unpinned], hasMore: false }) })
+    it('rename from the menu targets the button-owning session', async () => {
+      const s1 = sessionsFixture().s1
+      const s2 = sessionsFixture().s2
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1, s2], hasMore: false }) })
       mockDialogHolder.prompt = vi.fn().mockResolvedValue('Renamed B')
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      // Long-press the unpinned row (s2), then rename from the menu.
-      const unpinnedRow = wrapper.findAll('.session-row:not(.pinned)')[0]
-      wrapper.vm.onSessionLongPress({ currentTarget: unpinnedRow.element, target: unpinnedRow.element, touches: [{ clientX: 150, clientY: 200 }] })
-      await nextTick()
+      // Open s2's menu from its own ⋮ button, then rename from the menu.
+      await openRowMenu(wrapper, 's2')
       expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
 
       await wrapper.vm.renameSessionFromMenu(wrapper.vm.contextMenu.sessionId)
       await flushPromises()
 
-      // The API call must carry s2 (not the pinned s1) via the session_id query.
+      // The API call must carry s2 (not s1) via the session_id query.
       const patchCall = mockFetch.mock.calls.find(c => (c[0] as string).startsWith('/api/ai/session/update'))
       expect(patchCall).toBeTruthy()
       expect(patchCall![0]).toContain(`session_id=${encodeURIComponent('s2')}`)
@@ -881,21 +1043,19 @@ describe('SessionList', () => {
       expect(body.title).toBe('Renamed B')
       // Only s2's title updated locally.
       expect(wrapper.vm.sessions.find((s: any) => s.id === 's2').title).toBe('Renamed B')
-      expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').title).toBe('Pinned A')
+      expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').title).toBe('Session 1')
     })
 
-    it('pin from menu toggles the long-pressed session', async () => {
-      const pinned = { ...sessionsFixture().s1, pinned: true }
-      const unpinned = sessionsFixture().s2
-      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinned, unpinned], hasMore: false }) })
+    it('pin from the menu toggles the button-owning session', async () => {
+      const s1 = sessionsFixture().s1
+      const s2 = sessionsFixture().s2
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1, s2], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      // Long-press the unpinned row (s2), then pin from the menu.
-      const unpinnedRow = wrapper.findAll('.session-row:not(.pinned)')[0]
-      wrapper.vm.onSessionLongPress({ currentTarget: unpinnedRow.element, target: unpinnedRow.element, touches: [{ clientX: 150, clientY: 200 }] })
-      await nextTick()
+      // Open s2's menu from its own ⋮ button, then pin from the menu.
+      await openRowMenu(wrapper, 's2')
       expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
 
       await wrapper.vm.togglePin(wrapper.vm.contextMenu.sessionId, wrapper.vm.contextMenu.pinned)
@@ -908,7 +1068,7 @@ describe('SessionList', () => {
       expect(body.pinned).toBe(true)
       // Optimistic local update applied to s2, not s1.
       expect(wrapper.vm.sessions.find((s: any) => s.id === 's2').pinned).toBe(true)
-      expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').pinned).toBe(true)
+      expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').pinned).toBeFalsy()
     })
   })
 
@@ -919,8 +1079,7 @@ describe('SessionList', () => {
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      wrapper.vm.showContextMenu({ clientX: 40, clientY: 60 }, wrapper.vm.sessions[0])
-      await nextTick()
+      await openRowMenu(wrapper, 's1')
 
       const menus = document.body.querySelectorAll('.context-menu.visible')
       const menu = menus[menus.length - 1]
@@ -937,8 +1096,7 @@ describe('SessionList', () => {
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      wrapper.vm.showContextMenu({ clientX: 40, clientY: 60 }, wrapper.vm.sessions[0])
-      await nextTick()
+      await openRowMenu(wrapper, 's1')
 
       // Earlier tests leave their own teleported menus open on document.body, so
       // take the newest overlay — the one this wrapper just rendered.
@@ -951,20 +1109,21 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
-    it('stores coords in fixed-CSS space and clamps within the zoomed viewport', async () => {
+    it('anchors the menu under the row button and clamps it within the zoomed viewport', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      // At zoom 2, a raw clientX of 2000 is 1000 in fixed-CSS space; the menu
-      // (140px min-width) must then be pulled back inside the 512px-wide CSS
-      // viewport instead of overflowing to the right.
+      // jsdom reports a zero-size rect for the button, so the menu opens at the
+      // clamped origin. The point is the clamp math: coords are stored in
+      // fixed-CSS space, so at zoom 2 they must be pulled inside the 512px-wide
+      // CSS viewport rather than overflowing.
       scaleHolder.value = 2
-      wrapper.vm.showContextMenu({ clientX: 2000, clientY: 1600 }, wrapper.vm.sessions[0])
-      await nextTick()
+      await openRowMenu(wrapper, 's1')
       await nextTick()
 
+      expect(wrapper.vm.contextMenu.visible).toBe(true)
       expect(wrapper.vm.contextMenu.x).toBeLessThanOrEqual(512 - 8)
       expect(wrapper.vm.contextMenu.y).toBeLessThanOrEqual(384 - 8)
       expect(wrapper.vm.contextMenu.x).toBeGreaterThanOrEqual(8)
@@ -979,15 +1138,14 @@ describe('SessionList', () => {
       await flushPromises()
 
       const menus = () => document.body.querySelectorAll('.context-menu.visible')
-      const openFor = (session: any) => wrapper.vm.showContextMenu({ clientX: 40, clientY: 60 }, session)
+      const openFor = async () => { await openRowMenu(wrapper, 's1') }
       const clickLastMenu = (idx: number) => {
         const items = menus()[menus().length - 1].querySelectorAll('.context-menu-item')
         ;(items[idx] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
       }
 
       // Pin item (index 0) — must dismiss the menu, not just fire the action.
-      openFor(wrapper.vm.sessions[0])
-      await nextTick()
+      await openFor()
       clickLastMenu(0)
       await flushPromises()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
@@ -995,23 +1153,20 @@ describe('SessionList', () => {
       // Rename item (index 1) — also dismisses. prompt() resolves null so the
       // action itself is a no-op; the close must not depend on it succeeding.
       mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
-      openFor(wrapper.vm.sessions[0])
-      await nextTick()
+      await openFor()
       clickLastMenu(1)
       await flushPromises()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
 
       // Set-tags item (index 2) — dismisses and opens the tag dialog.
-      openFor(wrapper.vm.sessions[0])
-      await nextTick()
+      await openFor()
       clickLastMenu(2)
       await nextTick()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
       expect(wrapper.vm.tagDialog.open).toBe(true)
 
       // Archive item (index 3) — dismisses and emits.
-      openFor(wrapper.vm.sessions[0])
-      await nextTick()
+      await openFor()
       clickLastMenu(3)
       await nextTick()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
@@ -1020,16 +1175,14 @@ describe('SessionList', () => {
       // Remove item (index 4) — dismisses, confirms, then emits destroy. Cancel
       // first: a declined confirm must not destroy anything.
       mockDialogHolder.confirm = vi.fn().mockResolvedValue(false)
-      openFor(wrapper.vm.sessions[0])
-      await nextTick()
+      await openFor()
       clickLastMenu(4)
       await flushPromises()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
       expect(wrapper.emitted('destroy')).toBeFalsy()
 
       mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
-      openFor(wrapper.vm.sessions[0])
-      await nextTick()
+      await openFor()
       clickLastMenu(4)
       await flushPromises()
       expect(wrapper.emitted('destroy')![0]).toEqual(['s1'])

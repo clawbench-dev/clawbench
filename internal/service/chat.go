@@ -1362,7 +1362,7 @@ const unreadCountSubquery = `(SELECT COUNT(*) FROM chat_history h
 // the backend filter and ORDER BY. Package-level so the query-plan test can
 // EXPLAIN the query production actually runs — asserting on unreadCountSubquery
 // alone would miss a caller that switched back to the grouped-join form.
-const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
+const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
@@ -1378,14 +1378,16 @@ const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.ag
 // pagedSessionsQueryBase is the prefix of GetSessionsPaged' query, up to (not
 // including) the backend/tag/cursor filters and ORDER BY/LIMIT. Package-level
 // for the same reason as sessionsQueryBase.
-const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
+const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
 
-// GetSessions retrieves chat sessions for a given project path,
-// ordered by pinned DESC, created_at DESC (pinned sessions first, then newest first).
-// If backend is non-empty, filters by backend; otherwise returns all backends.
+// GetSessions retrieves chat sessions for a given project path, ordered by
+// pinned DESC, sort_order ASC, created_at DESC — pinned sessions are a fixed
+// block at the top, and the rest follow the user's manual drag order (ties
+// newest-first). If backend is non-empty, filters by backend; otherwise
+// returns all backends.
 // Only returns sessions with session_type='chat' (excludes scheduled sessions).
 //
 // The unread count is unreadCountSubquery — see its doc comment for why it is a
@@ -1398,7 +1400,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
 	}
-	query += " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC"
+	query += " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC"
 
 	rows, err := dbRead.Query(query, args...)
 	if err != nil {
@@ -1410,7 +1412,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRead.Valid {
@@ -1458,27 +1460,31 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 }
 
 // GetSessionsPaged retrieves chat sessions with cursor-based pagination,
-// ordered by pinned DESC, created_at DESC (pinned sessions first, then newest first).
-// limit=0 means no limit (returns all sessions).
+// ordered by pinned DESC, sort_order ASC, created_at DESC — pinned sessions are
+// a fixed block at the top, and the rest follow the user's manual drag order
+// (ties newest-first). limit=0 means no limit (returns all sessions).
 //
 // The cursor is the full sort key of the last row of the previous page, not
-// just its created_at. Ordering is (pinned DESC, created_at DESC, id DESC), so
-// the keyset predicate must compare all three columns lexicographically:
+// just its created_at. Ordering is (pinned DESC, sort_order ASC, created_at
+// DESC, id DESC), so the keyset predicate must compare all four columns
+// lexicographically:
 //
 //	pinned < cursorPinned
-//	OR (pinned = cursorPinned AND (created_at < cursor
-//	      OR (created_at = cursor AND id < cursorID)))
+//	OR (pinned = cursorPinned AND (sort_order > cursorSortOrder
+//	      OR (sort_order = cursorSortOrder AND (created_at < cursor
+//	            OR (created_at = cursor AND id < cursorID)))))
 //
-// Comparing created_at alone re-returns every pinned row on each page (a pinned
-// row sorts first regardless of its created_at), duplicating rows across pages.
-// cursorPinned is optional for backward compatibility: when nil the legacy
-// created_at-only predicate is used, so older clients keep working unchanged.
+// Comparing created_at alone re-returns every row sharing the cursor's
+// (pinned, sort_order) on each page, duplicating rows across pages.
+// cursorSortOrder and cursorPinned are optional: when either is nil the legacy
+// created_at-only predicate is used, so callers that do not track the full sort
+// key still page without error.
 //
 // Returns sessions and hasMore flag.
 // GetSessionsPaged returns a keyset-paginated page of active chat sessions for
 // projectPath. tagName, when non-empty, restricts the page to sessions carrying
 // a tag of that name visible in this project (global, or this project's own).
-func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cursorID string, cursorPinned *bool, tagName string) ([]model.ChatSession, bool, error) {
+func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cursorID string, cursorSortOrder *int, cursorPinned *bool, tagName string) ([]model.ChatSession, bool, error) {
 	// No limit: return all sessions
 	if limit <= 0 {
 		sessions, err := GetSessions(projectPath, backend)
@@ -1517,24 +1523,26 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		args = append(args, tagName, projectPath)
 	}
 	if cursor != "" && cursorID != "" {
-		if cursorPinned != nil {
-			// Full keyset: pinned is the leading sort column, so a row is "after"
-			// the cursor when it has a lower pinned flag, or the same flag with an
-			// older created_at / smaller id.
-			query += " AND (s.pinned < ? OR (s.pinned = ? AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))))"
+		if cursorSortOrder != nil && cursorPinned != nil {
+			// Full keyset: pinned is the leading sort column (descending), then
+			// sort_order (ascending), then created_at DESC / id DESC. A row is
+			// "after" the cursor when it sits in a later pinned group, or in the
+			// same group with a greater sort_order, or with the same sort_order
+			// and an older created_at / smaller id.
 			pinnedInt := 0
 			if *cursorPinned {
 				pinnedInt = 1
 			}
-			args = append(args, pinnedInt, pinnedInt, cursor, cursor, cursorID)
+			query += " AND (s.pinned < ? OR (s.pinned = ? AND (s.sort_order > ? OR (s.sort_order = ? AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))))))"
+			args = append(args, pinnedInt, pinnedInt, *cursorSortOrder, *cursorSortOrder, cursor, cursor, cursorID)
 		} else {
-			// Legacy cursor (created_at + id only). Kept so an older client that
-			// does not send cursor_pinned still pages without error.
+			// Legacy cursor (created_at + id only), for callers that do not track
+			// the full sort key.
 			query += " AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))"
 			args = append(args, cursor, cursor, cursorID)
 		}
 	}
-	query += " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC LIMIT ?"
+	query += " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC LIMIT ?"
 	args = append(args, limit+1)
 
 	rows, err := dbRead.Query(query, args...)
@@ -1548,7 +1556,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
 			return nil, false, err
 		}
 		if lastRead.Valid {
@@ -1928,6 +1936,9 @@ func createSession(projectPath, backend, title, agentID, modelName, agentSource,
 	if sessionID == "" {
 		return "", fmt.Errorf("failed to generate unique session ID after 10 attempts")
 	}
+	// sort_order is left at its default 0: a new session ties the current top
+	// row and wins on the created_at DESC tiebreak, so it lands at the top of
+	// the manual order (#492) without disturbing the rows the user dragged.
 	_, err := WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		sessionID, projectPath, backend, title, agentID, agentSource, modelName, sessionType, "",
@@ -2013,8 +2024,12 @@ func SetSessionTitleLocked(sessionID, title string) error {
 	return err
 }
 
-// UpdateSessionPinned sets the pinned state for a session.
-// Pinned sessions sort to the top of the session list.
+// UpdateSessionPinned sets the pinned marker for a session.
+//
+// Pinning is now purely a visual marker (a corner wedge): since #492 the list
+// order is the user's manual drag order (sort_order), so pinning no longer
+// moves a row. It is still persisted separately so the marker survives a
+// reload and a drag reorder does not clear it.
 //
 // Deliberately does NOT touch updated_at: pinning is a UI preference, not
 // session activity. updated_at drives the relative-time label in the session
@@ -2022,6 +2037,71 @@ func SetSessionTitleLocked(sessionID, title string) error {
 // make an old pinned session read as "just now" and hijack the default session.
 func UpdateSessionPinned(sessionID string, pinned bool) error {
 	_, err := WriteExec("UPDATE chat_sessions SET pinned = ? WHERE id = ?", pinned, sessionID)
+	return err
+}
+
+// ReorderSessions persists a manual drag order for one project's chat sessions.
+// ids is the visible order the user just dropped; the i-th id becomes
+// sort_order i (0 = top of the NON-pinned block).
+//
+// Pinned sessions are excluded from the reorder: they are a fixed block at the
+// top (pinned DESC leads the ORDER BY), so their sort_order is irrelevant to
+// their position and rewriting it would only lose the order they had before
+// being pinned. Any pinned id posted by the client is ignored, which also makes
+// the endpoint safe against a client that has not yet adopted the pinned-block
+// rule.
+//
+// Scoped to projectPath and session_type='chat' so a stale or malicious id
+// cannot renumber a session in another project or a scheduled task. Ids that do
+// not match are silently ignored (a row archived between load and drop simply
+// disappears from the list).
+//
+// Non-pinned sessions NOT in ids are renumbered to len(ids), len(ids)+1, ... in
+// their previous relative order. This matters because the client only ever
+// posts the rows it has loaded: a paginated list is a PREFIX of the project's
+// sessions, and renumbering just that prefix would let an unloaded row keep a
+// sort_order smaller than a renumbered one and interleave into the dragged
+// block. (The common case is a fresh install where every row shares sort_order
+// 0 — the unloaded tail would then jump above most of the dragged prefix.)
+// Ordering the untouched rows after the prefix keeps the tail exactly where it
+// was.
+//
+// Deliberately does NOT touch updated_at — see UpdateSessionPinned for why a UI
+// preference must not hijack the "most recent session" pick.
+func ReorderSessions(projectPath string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	// One statement, so a crash cannot leave the project half-renumbered. The
+	// `posted` CTE carries the target order; `rest` numbers the remaining
+	// non-pinned rows by their current order, starting at len(ids). The final
+	// UPDATE is restricted to pinned = 0, so pinned rows keep whatever
+	// sort_order they had.
+	var posted strings.Builder
+	args := make([]any, 0, len(ids)*2+4)
+	for i, id := range ids {
+		if i > 0 {
+			posted.WriteString(",")
+		}
+		posted.WriteString("(?,?)")
+		args = append(args, id, i)
+	}
+	args = append(args, projectPath, len(ids), projectPath)
+
+	query := `WITH posted(id, ord) AS (VALUES ` + posted.String() + `),
+		rest AS (
+			SELECT s.id AS rid, ROW_NUMBER() OVER (ORDER BY s.sort_order ASC, s.created_at DESC, s.id DESC) - 1 AS rn
+			FROM chat_sessions s
+			WHERE s.project_path = ? AND s.session_type = 'chat' AND s.pinned = 0
+			  AND s.id NOT IN (SELECT id FROM posted)
+		)
+		UPDATE chat_sessions SET sort_order = COALESCE(
+			(SELECT ord FROM posted WHERE posted.id = chat_sessions.id),
+			(SELECT ? + rn FROM rest WHERE rest.rid = chat_sessions.id)
+		)
+		WHERE project_path = ? AND session_type = 'chat' AND pinned = 0`
+
+	_, err := WriteExec(query, args...)
 	return err
 }
 

@@ -1185,12 +1185,20 @@ paths:
           in: query
           schema:
             type: string
+        - name: cursor_sort_order
+          in: query
+          description: |
+            游标；上一页最后一行的 `sortOrder`。
+            排序为 `pinned DESC, sort_order ASC, created_at DESC, id DESC`，
+            游标必须同时携带 sort_order 与 pinned，否则同一 (pinned, sort_order) 的行会在每一页重复返回。
+            省略时退回旧的 created_at-only 行为。
+          schema:
+            type: integer
         - name: cursor_pinned
           in: query
           description: |
-            游标；上一页最后一行的 `pinned`（`1`/`0`）。
-            排序为 `pinned DESC, created_at DESC, id DESC`，游标必须携带 pinned，
-            否则置顶会话会在每一页重复返回。省略时退回旧的 created_at-only 行为。
+            游标；上一页最后一行的 `pinned`（`1`/`0`）。置顶会话是固定在最前的区块，
+            游标必须携带它才能正确翻页。省略时退回旧的 created_at-only 行为。
           schema:
             type: integer
             enum: [0, 1]
@@ -1229,6 +1237,36 @@ paths:
       responses:
         "200":
           description: 新会话
+
+  /api/ai/sessions/reorder:
+    put:
+      tags: [Sessions]
+      summary: 持久化会话手动排序
+      description: |
+        拖拽排序后写回会话顺序。请求体 `ids` 是**当前可见的完整顺序**，
+        第 i 个会话的 `sort_order` 变为 i（0 在最上）。
+        只作用于当前项目、`session_type='chat'` 且**未置顶**的会话：
+        置顶会话是固定在最前的区块（`pinned DESC` 为第一排序键），不参与重排，
+        出现在 ids 中也会被忽略。
+        未出现在 ids 中的未置顶会话（分页未加载的尾部）按原有相对顺序接在前缀之后。
+        新建会话 `sort_order` 默认为 0，靠 `created_at DESC` 的并列规则落在最上。
+      operationId: sessionsReorder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: string
+                  description: 按目标顺序排列的会话 ID 列表
+      responses:
+        "200":
+          description: 已重排
 
   /api/ai/sessions/overview:
     get:

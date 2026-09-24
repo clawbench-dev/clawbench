@@ -18,6 +18,7 @@ export default {
     rename: '重命名',
     renameSession: '重命名会话',
     setTags: '设置标签',
+    moreActions: '更多操作',
     open: '打开',
     save: '保存',
     create: '创建',
@@ -985,6 +986,7 @@ export default {
     tabProject: '本项目',
     tabCross: '其他项目',
     crossEmpty: '暂无其他项目的活跃会话',
+    reorderFailed: '保存会话顺序失败',
   },
   sessionTags: {
     title: '设置标签',

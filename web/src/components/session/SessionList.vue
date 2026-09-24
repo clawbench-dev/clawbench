@@ -20,19 +20,40 @@
       <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
-        <!-- Single flat list. Pinned sessions stay first (the backend returns
-             them in that order, so this array order is authoritative) but are no
-             longer split into their own section — a pinned row is marked with a
-             corner wedge plus a small pin glyph at the end of its title. -->
-        <TransitionGroup name="session-list" tag="div" class="session-rows">
+        <!-- Single flat list. Order is the backend's: pinned DESC first (a fixed
+             block at the top), then the user's manual drag order (sort_order
+             ASC). This array order is authoritative — see GetSessions.
+             VueDraggable (SortableJS) owns the list root and reorders `sessions`
+             in place via v-model. It replaces the former TransitionGroup: both
+             drive the same DOM nodes, and running them together fights over the
+             move animation. `animation` keeps the smooth slide.
+             Gesture: the drag starts ONLY from the row's ⋮ button (`handle`),
+             identically on desktop and touch. Dragging the row body stays free
+             for its normal jobs — selecting text on desktop, scrolling the list
+             on touch — so no press delay is needed and the two can never fight.
+             The button still opens the menu on a plain click; Sortable only
+             takes over once the pointer actually moves.
+             Pinned rows are excluded twice over: `filter` keeps them from being
+             dragged (with preventOnFilter off, so their ⋮ menu still opens), and
+             onDragMove keeps an unpinned row from being dropped into their
+             block. -->
+        <VueDraggable
+          v-model="sessions"
+          tag="div"
+          class="session-rows"
+          handle=".session-more-btn"
+          filter=".session-row.pinned"
+          :prevent-on-filter="false"
+          :animation="150"
+          @move="onDragMove"
+          @end="onDragEnd"
+        >
           <div
             v-for="(session, idx) in sessionsWithStatus"
             :key="session.id"
             :data-session-id="session.id"
             class="session-row"
             :class="{ pinned: session.pinned, active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
-            @contextmenu.prevent="showContextMenu($event, session)"
-            v-long-press="onSessionLongPress"
           >
             <span v-if="session.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
             <div
@@ -60,11 +81,11 @@
                 </div>
               </div>
             </div>
-            <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-              <Archive :size="15" />
+            <button class="session-more-btn" :title="t('common.moreActions')" @click.stop="showMenuFromButton($event, session)">
+              <MoreVertical :size="15" />
             </button>
           </div>
-        </TransitionGroup>
+        </VueDraggable>
 
         <div ref="sentinelRef" class="session-list-sentinel"></div>
         <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
@@ -113,9 +134,10 @@
       </template>
     </div>
 
-    <!-- Context menu for pin/unpin & rename — reuses the shared file-manager
-         context menu (.context-menu / .context-menu-item in css/components.css)
-         so positioning, styling and viewport clamping stay in one place. -->
+    <!-- Session menu (pin/rename/tags/archive/remove), opened from the row's ⋮
+         button. Reuses the shared file-manager context menu (.context-menu /
+         .context-menu-item in css/components.css) so positioning, styling and
+         viewport clamping stay in one place. -->
     <Teleport to="body">
       <div v-if="contextMenu.visible" class="context-menu visible" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }" @click.stop @contextmenu.prevent.stop>
         <div class="context-menu-item" @click.stop="togglePin(contextMenu.sessionId, contextMenu.pinned)">
@@ -140,10 +162,8 @@
           {{ t('common.remove') }}
         </div>
       </div>
-      <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu.
-           Re-dispatching contextmenu through it keeps right-click-on-another-row
-           working while the menu is open (mirrors FileManagerContent). -->
-      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" @contextmenu.prevent="handleOverlayContextMenu" />
+      <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu. -->
+      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" />
     </Teleport>
 
     <SessionTagDialog
@@ -158,7 +178,8 @@
 <script setup>
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Pin, PinOff, PencilLine, Tags, Trash2 } from 'lucide-vue-next'
+import { VueDraggable } from 'vue-draggable-plus'
+import { Archive, Pin, PinOff, PencilLine, Tags, Trash2, MoreVertical } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -169,11 +190,12 @@ import { useAgents } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useDialog } from '@/composables/useDialog.ts'
+import { useToast } from '@/composables/useToast'
 import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
-import { apiPatch } from '@/utils/api.ts'
+import { apiPatch, apiPut } from '@/utils/api.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
@@ -187,10 +209,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select', 'archive', 'destroy', 'update:activeTab'])
-
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()
 const dialog = useDialog()
+const toast = useToast()
 const { runningSessionsVersion } = useSessionIdentity()
 const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useCrossProjectSessions()
 
@@ -221,8 +243,8 @@ const sessionsWithStatus = computed(() => {
   }))
 })
 
-// Display order is pinned-first, then the rest — matching the backend's
-// `ORDER BY pinned DESC, created_at DESC`. Rendered as one flat list, so the
+// Display order is the user's manual drag order — matching the backend's
+// `ORDER BY sort_order ASC, created_at DESC`. Rendered as one flat list, so the
 // rendered DOM order equals sessionsWithStatus order, which is what useListNav
 // indexes into.
 
@@ -277,11 +299,12 @@ async function loadSessions() {
  * Each page is fetched after the previous one's last row (cursor semantics
  * identical to loadMoreSessions below).
  *
- * The cursor is the last row's full sort key — createdAt + id + pinned — NOT
- * updatedAt: the backend orders and filters paged sessions by
- * (pinned DESC, created_at DESC, id DESC), so sending updatedAt (which is
+ * The cursor is the last row's full sort key — sortOrder + createdAt + id —
+ * NOT updatedAt: the backend orders and filters paged sessions by
+ * (sort_order ASC, created_at DESC, id DESC), so sending updatedAt (which is
  * >= createdAt and bumped on every message) makes the cursor filter match rows
- * already shown, and omitting pinned re-returns every pinned row on each page.
+ * already shown, and omitting sortOrder re-returns every row sharing that
+ * sort_order on each page.
  */
 async function fetchSessionsUpTo(minCount) {
   const limit = pageSize.value
@@ -327,12 +350,14 @@ async function fetchSessionsUpTo(minCount) {
 
 /**
  * Build the cursor query string for the row the next page starts after.
- * `pinned` is part of the sort key, so it must travel with the cursor —
- * without it the backend cannot exclude already-seen pinned rows.
+ * `sortOrder` is part of the sort key, so it must travel with the cursor —
+ * without it the backend cannot exclude already-seen rows that share the
+ * cursor's sort_order (which is every row until the user first drags).
  */
 function buildCursorQuery(row) {
   return `&cursor=${encodeURIComponent(row.createdAt)}`
     + `&cursor_id=${encodeURIComponent(row.id)}`
+    + `&cursor_sort_order=${row.sortOrder ?? 0}`
     + `&cursor_pinned=${row.pinned ? 1 : 0}`
 }
 
@@ -462,53 +487,65 @@ function openContextMenu(x, y, sessionId, pinned) {
   nextTick(() => clampContextMenu())
 }
 
-function showContextMenu(event, session) {
-  openContextMenu(event.clientX, event.clientY, session.id, session.pinned)
+/**
+ * Open the session menu from the row's ⋮ button, anchored under its bottom-right
+ * corner. This is the only menu entry point — the long-press and right-click
+ * gestures were removed so the menu behaves the same on every device.
+ */
+function showMenuFromButton(event, session) {
+  const btn = event.currentTarget
+  const rect = btn?.getBoundingClientRect?.()
+  // Right-align the menu with the button and drop it just below.
+  const x = rect ? rect.right : (event.clientX ?? 0)
+  const y = rect ? rect.bottom : (event.clientY ?? 0)
+  openContextMenu(x, y, session.id, session.pinned)
 }
 
-function onSessionLongPress(e, capturedSessionId) {
-  // Prefer the session id captured at touchstart time by the directive — it is
-  // the id of the row that was actually pressed. Important: inside the
-  // directive's setTimeout callback `e.currentTarget` is null (the touch event
-  // has already finished dispatching), so reading the DOM attribute from the
-  // event target at fire-time can return a different row when TransitionGroup
-  // has moved/reused DOM nodes (e.g. after pinning reorders the list).
-  let sessionId = capturedSessionId
-  if (!sessionId) {
-    const el = e.currentTarget || e.target
-    sessionId = el?.dataset?.sessionId || el?.closest('[data-session-id]')?.dataset?.sessionId
+// ── Manual drag reordering (issue #492) ──
+// SortableJS reorders `sessions` in place via v-model, so by the time `end`
+// fires the array already holds the new order. We only persist it. A drag that
+// ends where it started never reaches here as a meaningful change — oldIndex
+// equals newIndex, and the server write is skipped.
+
+/**
+ * Reject a drop that would land an unpinned row inside the pinned block.
+ *
+ * Pinned rows are a fixed block at the top (the backend orders by pinned DESC
+ * first), so a plain session must never be able to sit above one. Sortable calls
+ * this continuously while dragging and passes the row it would swap with as
+ * `evt.related`; refusing that swap when the row is pinned leaves the dragged
+ * row parked just below the block. (The dragged row is never pinned itself —
+ * `filter` blocks that — so only the target needs checking.)
+ */
+function onDragMove(evt) {
+  const related = evt.related
+  if (!related?.classList) return true
+  return !related.classList.contains('pinned')
+}
+
+async function onDragEnd(evt) {
+  if (evt.oldIndex === evt.newIndex) return
+  // Only the unpinned rows participate: pinned rows are positioned by pinned
+  // DESC, so renumbering them would be meaningless (the server ignores their
+  // ids anyway — see service.ReorderSessions). Mirroring the server's
+  // renumbering locally keeps buildCursorQuery's cursor consistent with the
+  // stored order; without it the rows keep their pre-drag sortOrder and the
+  // next page duplicates rows.
+  const unpinned = sessions.value.filter(s => !s.pinned)
+  unpinned.forEach((s, i) => { s.sortOrder = i })
+  const ids = unpinned.map(s => s.id)
+  try {
+    await apiPut('/api/ai/sessions/reorder', { ids })
+  } catch (err) {
+    appLog.e('SessionList', 'Failed to persist session order:', err)
+    toast.show(t('session.reorderFailed'), { icon: '❌', type: 'error' })
+    // Roll back to the server's order rather than leaving the DOM diverged.
+    loadSessions()
   }
-  if (!sessionId) return
-  const session = sessionsWithStatus.value.find(s => s.id === sessionId)
-  if (!session) return
-  const touch = e.touches[0]
-  openContextMenu(touch.clientX, touch.clientY + 10, sessionId, session.pinned)
 }
 
 function closeContextMenu() {
   contextMenu.visible = false
-}
-
-/**
- * Right-click while the menu is open lands on the full-viewport overlay, not on
- * a row. Hide the overlay for one hit-test so elementFromPoint reveals the row
- * underneath, then re-open the menu for that row — otherwise a second
- * right-click anywhere would just close the menu (mirrors FileManagerContent).
- */
-function handleOverlayContextMenu(e) {
-  const overlay = e.currentTarget
-  const prev = overlay.style.pointerEvents
-  overlay.style.pointerEvents = 'none'
-  let row = null
-  try {
-    row = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-session-id]') || null
-  } finally {
-    overlay.style.pointerEvents = prev
-  }
-  if (!row) { closeContextMenu(); return }
-  const session = sessionsWithStatus.value.find(s => s.id === row.dataset.sessionId)
-  if (!session) { closeContextMenu(); return }
-  openContextMenu(e.clientX, e.clientY, session.id, session.pinned)
 }
 
 // Clamp menu position to stay within the viewport on all sides. Mirrors
@@ -569,10 +606,14 @@ async function renameSessionFromMenu(sessionId) {
   }
 }
 
+// Archive goes through archiveSession so the confirmation dialog is preserved.
+// The standalone archive button used to be the only confirmed entry point;
+// removing it in favour of this menu would otherwise drop the confirmation
+// entirely (the menu's sibling "remove" item still confirms, so this keeps the
+// two destructive actions consistent).
 function archiveFromMenu(sessionId) {
-  const session = sessions.value.find(s => s.id === sessionId)
   closeContextMenu()
-  emit('archive', sessionId, session?.backend)
+  return archiveSession(sessionId)
 }
 
 async function destroyFromMenu(sessionId) {
@@ -754,23 +795,23 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-.session-list-enter-active,
-.session-list-leave-active {
-  transition: opacity var(--duration-slow) ease, transform var(--duration-slow) ease;
+/* Drag feedback (SortableJS classes). `.sortable-ghost` is the placeholder left
+   in the list at the drop position; `.sortable-chosen` is the row being held;
+   `.sortable-drag` is the floating element under the pointer. The drag starts
+   from the row's ⋮ button, so the grabbed cursor lives on the button. */
+.session-row.sortable-ghost {
+  opacity: 0.4;
+  background-color: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
 }
 
-.session-list-enter-from {
-  opacity: 0;
-  transform: translateY(-6px);
+.session-row.sortable-chosen .session-more-btn {
+  cursor: grabbing;
 }
 
-.session-list-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
-}
-
-.session-list-move {
-  transition: transform var(--duration-slow) ease;
+.session-row.sortable-drag {
+  opacity: 0.9;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  border-radius: var(--radius-sm, 6px);
 }
 
 .session-empty {
@@ -1037,13 +1078,17 @@ onUnmounted(() => {
   display: flex;
   align-items: stretch;
   position: relative;
-  /* Row separator lives here (not on .session-item / .session-archive-btn) so it
+  cursor: pointer;
+  /* Row separator lives here (not on .session-item / .session-more-btn) so it
      spans the full row width. Drawn on the two cells it stopped short of the
-     archive button, leaving a gap. */
+     trailing button cell, leaving a gap. */
   border-top: 1px solid var(--border-color, #dee2e6);
 }
 
-.session-archive-btn {
+/* Trailing action cell: opens the session menu (pin/rename/tags/archive/
+   remove). It replaced the standalone archive button, which was the only
+   confirmed entry point for archiving. */
+.session-more-btn {
   flex-shrink: 0;
   width: 34px;
   border: none;
@@ -1057,12 +1102,12 @@ onUnmounted(() => {
 }
 
 @media (hover: hover) {
-  .session-archive-btn:hover {
+  .session-more-btn:hover {
     color: var(--accent-color, #0066cc);
   }
 }
 
-.session-archive-btn:active {
+.session-more-btn:active {
   color: var(--accent-color, #0066cc);
 }
 
@@ -1150,12 +1195,6 @@ onUnmounted(() => {
 /* The unread badge lives at the top-right of `.session-item`, which ends where
    the 34px archive cell begins — so it already sits clear of the wedge in the
    row's own top-right corner and needs no offset. */
-
-/* ── Long-press feedback ── */
-
-.session-row.long-pressing .session-item {
-  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-}
 
 /* The context menu itself uses the shared .context-menu / .context-menu-item
    styles from css/components.css (same as the file manager). */

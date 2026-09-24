@@ -182,7 +182,7 @@ func TestUnreadCountSubquery_UsesSessionLeadingIndex(t *testing.T) {
 	}{
 		{
 			name:  "GetSessions",
-			query: sessionsQueryBase + " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC",
+			query: sessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC",
 		},
 		{
 			name:  "GetOverviewSessions",
@@ -190,7 +190,7 @@ func TestUnreadCountSubquery_UsesSessionLeadingIndex(t *testing.T) {
 		},
 		{
 			name:  "GetSessionsPaged",
-			query: pagedSessionsQueryBase + " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC LIMIT 11",
+			query: pagedSessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC LIMIT 11",
 		},
 	}
 
@@ -436,6 +436,81 @@ func TestSchema_TitleSourceBackfill(t *testing.T) {
 	assert.Equal(t, "custom", got["s-custom"])
 	assert.Equal(t, "auto", got["s-auto"])
 	assert.Equal(t, "placeholder", got["s-ph"])
+}
+
+// TestSchema_SortOrderMigration verifies chat_sessions.sort_order is added to a
+// database created before the column existed (#492), that the migration is
+// idempotent, and that it leaves pre-existing rows at the default 0 — so the
+// list falls back to the newest-first tiebreak rather than pinned-first.
+func TestSchema_SortOrderMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Phase 1: build the current schema, then drop sort_order (and the index
+	// that references it — SQLite refuses to DROP an indexed column) to
+	// simulate a pre-#492 database.
+	require.NoError(t, InitDB())
+	CloseDB()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	// Three sessions: 'old' is oldest, 'pinned' is the oldest of all but pinned,
+	// 'new' is newest.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, pinned, created_at) VALUES ('old', '/p', 'claude', 'Old', 0, '2024-01-01 00:00:00')")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, pinned, created_at) VALUES ('pinned', '/p', 'claude', 'Pinned', 1, '2023-01-01 00:00:00')")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, pinned, created_at) VALUES ('new', '/p', 'claude', 'New', 0, '2025-01-01 00:00:00')")
+	require.NoError(t, err)
+	_, err = raw.Exec("DROP INDEX IF EXISTS idx_sessions_order")
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_sessions DROP COLUMN sort_order")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds the column and rebuilds the index.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	assert.Contains(t, getTableColumns(t, UnsafeDBForTest(), "chat_sessions"), "sort_order")
+
+	// Every migrated row is left at the default 0, so the unpinned rows fall
+	// back to newest-first while the pinned row leads the pinned block.
+	sessions, err := GetSessions("/p", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, "pinned", sessions[0].ID, "the pinned row must lead after the migration")
+	assert.True(t, sessions[0].Pinned, "the pin marker must be preserved")
+	assert.Equal(t, "new", sessions[1].ID, "unpinned rows stay newest-first")
+	assert.Equal(t, "old", sessions[2].ID)
+	for _, s := range sessions {
+		assert.Equal(t, 0, s.SortOrder, "migrated rows must keep the default sort_order")
+	}
+
+	// The covering index must lead with pinned, so the new ORDER BY is served
+	// by it rather than a filesort.
+	var idxSQL string
+	require.NoError(t, db.QueryRow(
+		"SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='index' AND name='idx_sessions_order'",
+	).Scan(&idxSQL))
+	assert.Contains(t, idxSQL, "pinned DESC", "idx_sessions_order must lead with pinned")
+	assert.Contains(t, idxSQL, "sort_order ASC")
+
+	// Idempotent: a second InitDB must not fail or renumber.
+	require.NoError(t, InitDB())
+	sessions, err = GetSessions("/p", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, "pinned", sessions[0].ID)
+	assert.Equal(t, "new", sessions[1].ID)
 }
 
 // TestSchema_TitleSourceMigration_Idempotent verifies running InitDB twice does

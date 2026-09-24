@@ -283,7 +283,8 @@ type ChatSession struct {
 	UpdatedAt       time.Time  `json:"updatedAt"`
 	Running         bool       `json:"running,omitempty"`
 	UnreadCount     int        `json:"unreadCount,omitempty"`
-	Pinned          bool       `json:"pinned,omitempty"`          // pinned to top of session list
+	Pinned          bool       `json:"pinned,omitempty"`          // pinned to the top block of the session list (leads the sort order)
+	SortOrder       int        `json:"sortOrder,omitempty"`       // manual drag order within the unpinned block; lower first (issue #492)
 	PendingApproval bool       `json:"pendingApproval,omitempty"` // ACP permission request awaiting user response
 	LastReadAt      *time.Time `json:"-"`
 	ProjectPath     string     `json:"projectPath,omitempty"` // project this session belongs to (overview grouping)

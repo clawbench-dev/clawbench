@@ -5,12 +5,12 @@ import { describe, it, expect } from 'vitest'
  *
  * Bug: the tint was declared on `.session-item` (and, for pinned rows, only on
  * `.session-row.pinned.active .session-item`). `.session-item` is the flexible
- * cell to the LEFT of the fixed-width `.session-archive-btn`, so the tint stopped
- * 34px short of the right edge. On a running (green) row the archive cell kept
- * showing the row's green fill, making a selected pinned+running row look like it
- * was only partially highlighted.
+ * cell to the LEFT of the fixed-width trailing action button, so the tint stopped
+ * 34px short of the right edge. On a running (green) row that cell kept showing
+ * the row's green fill, making a selected pinned+running row look like it was
+ * only partially highlighted.
  *
- * Fix: declare the tint on `.session-row.active` so it spans the archive button
+ * Fix: declare the tint on `.session-row.active` so it spans the trailing button
  * too, and paint it via `background-image` (not the `background` shorthand or
  * `background-color`) so a running row's green `background-color` still shows
  * through underneath instead of being replaced.
@@ -30,11 +30,11 @@ describe('SessionList selected-row tint covers the archive button', () => {
     // The row owns the tint...
     expect(src).toMatch(/\.session-row\.active\s*\{[\s\S]*?background-image:/)
     // ...and no rule tints a bare `.session-item.active` background, which would
-    // reintroduce the 34px gap in front of the archive button.
+    // reintroduce the 34px gap in front of the trailing action button.
     expect(src).not.toMatch(/\.session-item\.active\s*\{[^}]*background/)
   })
 
-  it('has no pinned-only item tint that would leave the archive cell unstyled', async () => {
+  it('has no pinned-only item tint that would leave the trailing cell unstyled', async () => {
     const src = await sessionListSource()
     expect(src).not.toContain('.session-row.pinned.active .session-item')
   })
@@ -89,7 +89,7 @@ describe('SessionList pinned marker', () => {
     // Anchored to the row's own top-right corner.
     expect(rule).toMatch(/top:\s*0/)
     expect(rule).toMatch(/right:\s*0/)
-    // Decorative only — must not swallow clicks meant for the archive button.
+    // Decorative only — must not swallow clicks meant for the trailing button.
     expect(rule).toMatch(/pointer-events:\s*none/)
   })
 
@@ -116,5 +116,15 @@ describe('SessionList pinned marker', () => {
     // The pin glyph was dropped in favour of the wedge alone — a leftover class
     // rule would mean a dead style outlived the markup.
     expect(src).not.toMatch(/\.session-pin-icon\s*\{/)
+  })
+})
+
+describe('SessionList row action button', () => {
+  it('styles the trailing action cell under its current class name only', async () => {
+    const src = await sessionListSource()
+    // The standalone archive button became the ⋮ menu button; a leftover
+    // `.session-archive-btn` rule would mean dead CSS outlived the markup.
+    expect(src).toMatch(/\.session-more-btn\s*\{/)
+    expect(src).not.toMatch(/\.session-archive-btn/)
   })
 })

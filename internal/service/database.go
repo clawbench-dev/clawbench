@@ -1214,6 +1214,56 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add sort_order column for manual session drag-reordering (#492).
+	//
+	// Ordering is now purely manual: `ORDER BY sort_order ASC, created_at DESC,
+	// id DESC`. `pinned` keeps its marker but loses its sort privilege (the user
+	// chose a pure manual order), so the list is no longer pinned-first.
+	//
+	// Every pre-existing row is backfilled with 0 — i.e. "no manual order yet".
+	// The created_at DESC tiebreak then reproduces the previous newest-first
+	// list exactly; pinned rows do move down, which is the intended consequence
+	// of dropping the pin privilege. New sessions also default to 0 and win the
+	// tiebreak on being newest, so they land on top.
+	//
+	// The covering index is rebuilt to lead with sort_order. It deliberately
+	// keeps `pinned` out of the key: the column is no longer part of the sort
+	// order. That also matters because SQLite refuses to DROP a column
+	// referenced by an index — the same reason this index must not gain new
+	// droppable columns.
+	var hasSortOrder int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='sort_order'").Scan(&hasSortOrder)
+	if hasSortOrder == 0 {
+		// ADD COLUMN with a non-null default already backfills every existing
+		// row with that default, so no separate UPDATE is needed.
+		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add sort_order column: %w", err)
+		}
+		if _, err := WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
+			return fmt.Errorf("failed to drop old idx_sessions_order: %w", err)
+		}
+		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, sort_order ASC, created_at DESC, id DESC)"); err != nil {
+			return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
+		}
+	}
+
+	// Migrate: pinned leads the session sort order again.
+	//
+	// Pinned sessions are a fixed block at the top (`ORDER BY pinned DESC,
+	// sort_order ASC, created_at DESC`); a plain session can never sort above
+	// them and they are excluded from drag-reordering. The covering index must
+	// therefore lead with pinned, so this rebuilds it when the existing
+	// definition does not already match.
+	//
+	// Detected from sqlite_master rather than guarded on a column's existence:
+	// installs that already ran the sort_order migration have the column but an
+	// index WITHOUT the pinned prefix, so a column check would skip the rebuild.
+	// The desired definition is compared by its full SQL text, so this is a
+	// no-op on every subsequent startup.
+	if err := rebuildSessionOrderIndexIfNeeded(); err != nil {
+		return err
+	}
+
 	// Migrate: create session tag registry + session↔tag links.
 	//
 	// Tags are a separate registry (not a JSON column on chat_sessions) so a
@@ -2385,6 +2435,45 @@ func GetUserMessageStats(limit int) ([]UserMessageStat, error) {
 		stats = append(stats, s)
 	}
 	return stats, nil
+}
+
+// sessionOrderIndexSQL is the desired definition of idx_sessions_order: the
+// covering index for the session list's ORDER BY (pinned DESC, sort_order ASC,
+// created_at DESC, id DESC) under the WHERE (session_type, project_path,
+// archived) prefix.
+const sessionOrderIndexSQL = "CREATE INDEX idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, sort_order ASC, created_at DESC, id DESC)"
+
+// rebuildSessionOrderIndexIfNeeded rebuilds idx_sessions_order when its stored
+// definition does not match sessionOrderIndexSQL.
+//
+// The index has been reshaped twice (created_at-only → +pinned → +sort_order →
+// now pinned + sort_order), and each shape change needs a rebuild because
+// CREATE INDEX IF NOT EXISTS silently keeps whatever already exists. Comparing
+// the stored SQL from sqlite_master is what makes the migration idempotent: an
+// install already on the current shape is a no-op, while one on any older shape
+// is rebuilt exactly once.
+//
+// Failure is returned, not swallowed: a missing/mismatched index only costs
+// query planning (the list still returns correctly), but silently leaving a
+// stale index would hide a broken migration from every future startup.
+func rebuildSessionOrderIndexIfNeeded() error {
+	var existing string
+	err := db.QueryRow(
+		"SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='index' AND name='idx_sessions_order'",
+	).Scan(&existing)
+	if err == nil && existing == sessionOrderIndexSQL {
+		return nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("failed to read idx_sessions_order definition: %w", err)
+	}
+	if _, err := WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
+		return fmt.Errorf("failed to drop old idx_sessions_order: %w", err)
+	}
+	if _, err := WriteExec(sessionOrderIndexSQL); err != nil {
+		return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
+	}
+	return nil
 }
 
 // CloseDB closes both write and read database connections.

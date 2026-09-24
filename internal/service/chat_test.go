@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	title_renamed INTEGER NOT NULL DEFAULT 0,
 	title_source TEXT NOT NULL DEFAULT '',
 	pinned INTEGER NOT NULL DEFAULT 0,
+	sort_order INTEGER NOT NULL DEFAULT 0,
 	archived INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -115,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id)
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_path, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
 CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, sort_order ASC, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS summaries (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	target_type TEXT NOT NULL,
@@ -2359,7 +2360,7 @@ func TestGetSessionsPaged_NoLimit_ReturnsAll(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S2")
 	helperCreateSession(t, "/project", "claude", "S3")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 0, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 0, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.False(t, hasMore)
@@ -2371,7 +2372,7 @@ func TestGetSessionsPaged_LimitGreaterThanTotal(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S1")
 	helperCreateSession(t, "/project", "claude", "S2")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.False(t, hasMore)
@@ -2384,7 +2385,7 @@ func TestGetSessionsPaged_LimitEqualsTotal(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S2")
 	helperCreateSession(t, "/project", "claude", "S3")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.False(t, hasMore) // limit+1=4, only 3 exist, so no more
@@ -2397,7 +2398,7 @@ func TestGetSessionsPaged_LimitLessThanTotal_HasMore(t *testing.T) {
 		helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
 	}
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.True(t, hasMore)
@@ -2885,7 +2886,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	}
 
 	// First page: limit=2, no cursor
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.True(t, hasMore)
@@ -2896,7 +2897,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	cursorID := lastSession.ID
 
 	// Second page: cursor from last session of first page
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, "")
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 2)
 	assert.True(t, hasMore2)
@@ -2921,7 +2922,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 	}
 
 	// First page: limit=3
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.True(t, hasMore)
 
@@ -2930,7 +2931,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID, nil, "")
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID, nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 2) // only 2 remaining
 	assert.False(t, hasMore2)
@@ -2939,7 +2940,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 func TestGetSessionsPaged_EmptyProject(t *testing.T) {
 	setupDB(t)
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Empty(t, sessions)
 	assert.False(t, hasMore)
@@ -2952,7 +2953,7 @@ func TestGetSessionsPaged_FiltersByProject(t *testing.T) {
 	helperCreateSession(t, "/proj1", "claude", "P1-S2")
 	helperCreateSession(t, "/proj2", "claude", "P2-S1")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/proj1", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/proj1", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.False(t, hasMore)
@@ -2966,7 +2967,7 @@ func TestGetSessionsPaged_ExcludesDeletedSessions(t *testing.T) {
 	err := service.ArchiveSession("/project", "claude", archivedSID)
 	assert.NoError(t, err)
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.False(t, hasMore)
@@ -2979,7 +2980,7 @@ func TestGetSessionsPaged_ExcludesScheduledSessions(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "Chat")
 	helperCreateScheduledSession(t, "/project", "claude", "Scheduled")
 
-	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.Equal(t, "Chat", sessions[0].Title)
@@ -3001,7 +3002,7 @@ func TestGetSessionsPaged_OrderedByCreatedDesc(t *testing.T) {
 	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
-	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.Equal(t, sid2, sessions[0].ID) // most recently created first
@@ -3028,7 +3029,7 @@ func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 	page := 0
 
 	for {
-		sessions, hasMore, err := service.GetSessionsPaged("/project", "", limit, cursor, cursorID, nil, "")
+		sessions, hasMore, err := service.GetSessionsPaged("/project", "", limit, cursor, cursorID, nil, nil, "")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, sessions, "page %d should not be empty", page)
 
@@ -3082,7 +3083,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	assert.NoError(t, err)
 
 	// First page: limit=2 — should get sid3 (newest) and one of sid1/sid2
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.True(t, hasMore)
@@ -3092,7 +3093,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, "")
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 1) // only 1 remaining
 	assert.False(t, hasMore2)
@@ -3137,7 +3138,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Page 1 (limit=1) → newest session.
-	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "", nil, "")
+	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	require.Len(t, page1, 1)
 	assert.Equal(t, sidNew, page1[0].ID)
@@ -3146,7 +3147,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// Page 2 uses the created_at cursor — must be the middle session, NOT a
 	// repeat of page 1.
 	cursor := page1[0].CreatedAt.Format("2006-01-02 15:04:05")
-	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID, nil, "")
+	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID, nil, nil, "")
 	assert.NoError(t, err)
 	require.Len(t, page2, 1)
 	assert.Equal(t, sidMid, page2[0].ID)
@@ -3159,7 +3160,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld,
 	).Scan(&oldUpdatedAt)
 	require.NoError(t, err)
-	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID, nil, "")
+	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID, nil, nil, "")
 	assert.NoError(t, err)
 	require.Len(t, badCursor, 1)
 	assert.Equal(t, sidNew, badCursor[0].ID,
@@ -3858,7 +3859,7 @@ func TestGetSessionsPaged_UnreadCount(t *testing.T) {
 
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "msg", nil, false, "")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.Equal(t, 1, sessions[0].UnreadCount)
@@ -6132,29 +6133,39 @@ func TestPatchContextStateMerge_UsageFirstWriteAsIs(t *testing.T) {
 	assert.Equal(t, 0.5, state.Usage.Cost)
 }
 
+// TestPinnedSessionSortOrder covers the pinned block: pinned sessions lead the
+// list (pinned DESC is the leading sort key, ahead of the manual order), and
+// pinning must not bump updated_at (which drives the relative-time label and
+// GetLatestSessionID's "most recent" pick).
 func TestPinnedSessionSortOrder(t *testing.T) {
 	db := setupDB(t)
 	projectPath := "/test/pinned-sort"
 
-	// Create sessions with different pinned states
+	// Create sessions with different pinned states. created_at is set explicitly
+	// so the newest-first tiebreak (all default to sort_order 0) is deterministic.
 	s1 := helperCreateSession(t, projectPath, "claude", "First")
 	s2 := helperCreateSession(t, projectPath, "claude", "Second")
 	s3 := helperCreateSession(t, projectPath, "claude", "Third")
+	_, err := service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", s1)
+	require.NoError(t, err)
+	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", s2)
+	require.NoError(t, err)
+	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-03 00:00:00' WHERE id = ?", s3)
+	require.NoError(t, err)
 
-	// Pin is a UI preference, not session activity: it must not bump updated_at,
-	// which drives the relative-time label and GetLatestSessionID's "most recent"
-	// pick. Backdate updated_at first so a bump would be visible.
-	_, err := service.WriteExec(
-		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s2,
+	// Pin is a UI preference, not session activity: it must not bump updated_at.
+	// Backdate s1's updated_at first so a bump would be visible when it is pinned.
+	_, err = service.WriteExec(
+		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s1,
 	)
 	require.NoError(t, err)
 
-	// Pin the second session (oldest by creation)
-	require.NoError(t, service.UpdateSessionPinned(s2, true))
+	// Pin the OLDEST session: it must jump to the top despite being the oldest.
+	require.NoError(t, service.UpdateSessionPinned(s1, true))
 
 	var updatedAt string
 	require.NoError(t, service.UnsafeDBForTest().
-		QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", s2).Scan(&updatedAt))
+		QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", s1).Scan(&updatedAt))
 	assert.Contains(t, updatedAt, "2020-01-01",
 		"pinning must not rewrite updated_at")
 
@@ -6162,49 +6173,180 @@ func TestPinnedSessionSortOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sessions, 3)
 
-	// Pinned session must be first regardless of created_at
-	assert.Equal(t, s2, sessions[0].ID, "pinned session should be first")
-	assert.True(t, sessions[0].Pinned, "pinned session should have Pinned=true")
-	assert.False(t, sessions[1].Pinned, "non-pinned session should have Pinned=false")
+	// The pinned row leads; the unpinned rest keep newest-first.
+	assert.Equal(t, s1, sessions[0].ID, "pinned session must lead")
+	assert.True(t, sessions[0].Pinned)
+	assert.Equal(t, s3, sessions[1].ID, "unpinned rows stay newest-first")
+	assert.Equal(t, s2, sessions[2].ID)
 
-	// Unpin — should revert to created_at order
-	require.NoError(t, service.UpdateSessionPinned(s2, false))
+	// Unpinning drops it back into the manual order (newest-first tiebreak).
+	require.NoError(t, service.UpdateSessionPinned(s1, false))
 	sessions, err = service.GetSessions(projectPath, "")
 	require.NoError(t, err)
-	assert.False(t, sessions[0].Pinned, "after unpin, first session should not be pinned")
-	assert.False(t, sessions[1].Pinned, "after unpin, second session should not be pinned")
-	assert.False(t, sessions[2].Pinned, "after unpin, third session should not be pinned")
+	for _, s := range sessions {
+		assert.False(t, s.Pinned, "all markers must be cleared")
+	}
+	assert.Equal(t, s3, sessions[0].ID, "unpinned list is newest-first")
 
-	// Pin multiple — all pinned sessions come before unpinned ones
+	// Pinning several sessions puts them all ahead of the unpinned ones.
 	require.NoError(t, service.UpdateSessionPinned(s1, true))
 	require.NoError(t, service.UpdateSessionPinned(s3, true))
 	sessions, err = service.GetSessions(projectPath, "")
 	require.NoError(t, err)
-	// Collect pinned and unpinned IDs
-	var pinnedIDs []string
-	var unpinnedIDs []string
-	for _, s := range sessions {
-		if s.Pinned {
-			pinnedIDs = append(pinnedIDs, s.ID)
-		} else {
-			unpinnedIDs = append(unpinnedIDs, s.ID)
-		}
-	}
-	assert.ElementsMatch(t, []string{s1, s3}, pinnedIDs, "pinned sessions should be s1 and s3")
-	assert.ElementsMatch(t, []string{s2}, unpinnedIDs, "unpinned session should be s2")
-	// Verify order: all pinned before unpinned
 	require.Len(t, sessions, 3)
-	assert.True(t, sessions[0].Pinned, "first session should be pinned")
-	assert.True(t, sessions[1].Pinned, "second session should be pinned")
-	assert.False(t, sessions[2].Pinned, "third session should not be pinned")
+	assert.True(t, sessions[0].Pinned, "pinned block leads")
+	assert.True(t, sessions[1].Pinned, "pinned block leads")
+	assert.False(t, sessions[2].Pinned, "unpinned tail follows")
+	assert.ElementsMatch(t, []string{s1, s3}, []string{sessions[0].ID, sessions[1].ID})
 
 	_ = db
 }
 
+// TestReorderSessionsIgnoresPinned guards the pinned block against the drag
+// write: pinned rows are positioned by pinned DESC, not sort_order, so a
+// reorder must neither move them nor overwrite the sort_order they held before
+// being pinned.
+func TestReorderSessionsIgnoresPinned(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/reorder-pinned"
+
+	a := helperCreateSession(t, projectPath, "claude", "A")
+	b := helperCreateSession(t, projectPath, "claude", "B")
+	pinned := helperCreateSession(t, projectPath, "claude", "Pinned")
+
+	// Give the pinned row a distinctive sort_order, then pin it.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{b, a, pinned}))
+	require.NoError(t, service.UpdateSessionPinned(pinned, true))
+	var before int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", pinned).Scan(&before))
+
+	// The client (wrongly) posts the pinned row at the bottom. It must be
+	// ignored: pinned stays on top and keeps its old sort_order.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{a, b, pinned}))
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, pinned, sessions[0].ID, "a pinned row cannot be dragged out of the pinned block")
+
+	var after int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", pinned).Scan(&after))
+	assert.Equal(t, before, after, "a pinned row's sort_order must not be rewritten")
+
+	// The unpinned pair still honours the posted order.
+	assert.Equal(t, []string{a, b}, []string{sessions[1].ID, sessions[2].ID})
+}
+
+// TestReorderSessionsPersistsManualOrder covers the drag-order write: ids
+// become sort_order by index, the list reads back in that order, and a
+// session from another project cannot be renumbered through it.
+func TestReorderSessionsPersistsManualOrder(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/reorder"
+
+	a := helperCreateSession(t, projectPath, "claude", "A")
+	b := helperCreateSession(t, projectPath, "claude", "B")
+	c := helperCreateSession(t, projectPath, "claude", "C")
+	foreign := helperCreateSession(t, "/test/reorder-other", "claude", "Foreign")
+
+	// Drag C to the top, then A, then B.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{c, a, b}))
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, []string{c, a, b}, []string{sessions[0].ID, sessions[1].ID, sessions[2].ID})
+	assert.Equal(t, []int{0, 1, 2}, []int{sessions[0].SortOrder, sessions[1].SortOrder, sessions[2].SortOrder})
+
+	// A foreign-project id must be ignored, not renumbered.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{foreign}))
+	var foreignOrder int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", foreign).Scan(&foreignOrder))
+	assert.Equal(t, 0, foreignOrder, "another project's session must not be renumbered")
+
+	// The reorder must not touch updated_at (it is a UI preference).
+	var updatedAt string
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", c).Scan(&updatedAt))
+	assert.NotEmpty(t, updatedAt)
+}
+
+// TestReorderSessionsKeepsUnloadedTailBelow guards the paginated case: the
+// client only posts the rows it has loaded (a prefix of the list), so the
+// unloaded tail must be pushed BELOW the dragged block rather than left at its
+// old sort_order — otherwise a row sharing the default 0 interleaves into the
+// prefix the user just ordered.
+func TestReorderSessionsKeepsUnloadedTailBelow(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/reorder-prefix"
+
+	// All rows start at sort_order 0 (the un-dragged default), like a fresh
+	// install or the state right after the #492 backfill. created_at is pinned
+	// so the newest-first tiebreak is deterministic.
+	ids := make([]string, 0, 5)
+	for i, title := range []string{"A", "B", "C", "D", "E"} {
+		id := helperCreateSession(t, projectPath, "claude", title)
+		ids = append(ids, id)
+		_, err := service.WriteExec(
+			"UPDATE chat_sessions SET created_at = ? WHERE id = ?",
+			fmt.Sprintf("2024-01-%02d 00:00:00", i+1), id,
+		)
+		require.NoError(t, err)
+	}
+
+	// The user sees the first two rows and swaps them.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{ids[1], ids[0]}))
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 5)
+	// The two dragged rows lead, in the posted order...
+	assert.Equal(t, []string{ids[1], ids[0]}, []string{sessions[0].ID, sessions[1].ID})
+	// ...and the unloaded tail follows, none of it interleaved above them.
+	assert.Equal(t, []string{ids[4], ids[3], ids[2]},
+		[]string{sessions[2].ID, sessions[3].ID, sessions[4].ID})
+}
+
+// TestNewSessionLandsOnTop guards the "new session goes to the top" rule: a
+// fresh session defaults to sort_order 0 and wins the created_at DESC tiebreak,
+// so it leads even after the user has dragged other rows.
+func TestNewSessionLandsOnTop(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/new-on-top"
+
+	a := helperCreateSession(t, projectPath, "claude", "A")
+	b := helperCreateSession(t, projectPath, "claude", "B")
+	// Put B on top, then A. Their created_at differs, so pin down the drag order
+	// explicitly by backdating to make the assertion meaningful.
+	_, err := service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", a)
+	require.NoError(t, err)
+	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", b)
+	require.NoError(t, err)
+	require.NoError(t, service.ReorderSessions(projectPath, []string{b, a}))
+
+	fresh := helperCreateSession(t, projectPath, "claude", "Fresh")
+	// The fresh session defaults to sort_order 0, tied with b; give it a newer
+	// created_at so the tiebreak is deterministic rather than second-precision.
+	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-06-01 00:00:00' WHERE id = ?", fresh)
+	require.NoError(t, err)
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, fresh, sessions[0].ID, "a new session must land at the top of the manual order")
+	assert.Equal(t, b, sessions[1].ID)
+	assert.Equal(t, a, sessions[2].ID)
+}
+
 // TestPinnedSessionPaginationNoDuplicates guards the keyset cursor against the
-// pinned column. Ordering is (pinned DESC, created_at DESC, id DESC); paging on
-// created_at alone re-returns every pinned row on each page because a pinned row
-// sorts first no matter how old it is. The cursor must carry pinned too.
+// full sort key. Ordering is (pinned DESC, sort_order ASC, created_at DESC,
+// id DESC); when rows share a (pinned, sort_order) — the state after the #492
+// backfill, and any list the user has never dragged — paging on created_at
+// alone can skip or repeat rows. The cursor must carry pinned and sort_order
+// too.
 func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	setupDB(t)
 	projectPath := "/test/pinned-pagination"
@@ -6221,22 +6363,30 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Pin the OLDEST session. It now sorts first while its created_at is the
-	// smallest — exactly the case that broke the created_at-only cursor.
+	// Force a shared sort_order, which is what an un-dragged list looks like
+	// (and what the migration backfill produces). Ties then fall back to
+	// created_at DESC, id DESC — so the newest session (ids[5]) leads.
+	_, err := service.WriteExec("UPDATE chat_sessions SET sort_order = 0 WHERE project_path = ?", projectPath)
+	require.NoError(t, err)
+
+	// Pin the OLDEST session so the page boundary falls between the pinned block
+	// and the unpinned rows — the case where a created_at-only cursor would
+	// re-return the pinned row on page 2.
 	require.NoError(t, service.UpdateSessionPinned(ids[0], true))
 
-	page1, hasMore, err := service.GetSessionsPaged(projectPath, "", 3, "", "", nil, "")
+	page1, hasMore, err := service.GetSessionsPaged(projectPath, "", 3, "", "", nil, nil, "")
 	require.NoError(t, err)
 	require.True(t, hasMore, "there are more rows after page 1")
 	require.Len(t, page1, 3)
-	// Pinned row leads regardless of created_at.
-	assert.Equal(t, ids[0], page1[0].ID)
+	assert.Equal(t, ids[0], page1[0].ID, "the pinned row leads")
 	assert.True(t, page1[0].Pinned)
 
 	last1 := page1[len(page1)-1]
+	lastOrder := last1.SortOrder
+	lastPinned := last1.Pinned
 	page2, _, err := service.GetSessionsPaged(
 		projectPath, "", 3,
-		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, &last1.Pinned, "",
+		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, &lastOrder, &lastPinned, "",
 	)
 	require.NoError(t, err)
 
@@ -6248,20 +6398,6 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 		assert.Equalf(t, 1, n, "session %s must appear exactly once across pages", id)
 	}
 	assert.Len(t, seen, 6, "both pages together must cover every session")
-
-	// The legacy (nil cursorPinned) predicate is retained for older clients that
-	// do not send cursor_pinned. It compares created_at only, so the pinned row
-	// is returned again — that is the very duplication this fix addresses, and
-	// pinning it here keeps the compatibility path intentional rather than a
-	// silent regression.
-	legacyPage2, _, err := service.GetSessionsPaged(
-		projectPath, "", 3,
-		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, nil, "",
-	)
-	require.NoError(t, err)
-	require.NotEmpty(t, legacyPage2)
-	assert.Equal(t, ids[0], legacyPage2[0].ID,
-		"legacy created_at-only cursor still returns the pinned row first")
 }
 
 // TestGetQuestionByQueueID covers the subscribe-time recovery lookup: given the
