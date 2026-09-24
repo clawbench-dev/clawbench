@@ -410,6 +410,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/recent-projects", ServeRecentProjects)
 	register("/api/conversation-projects", ServeConversationProjects)
 	register("/api/fs/raw/", ServeLocalFile)
+	// Backward-compatibility alias for pre-rename Android/desktop clients whose
+	// native download bridge still builds /api/local-file/ URLs and which cannot
+	// update themselves. Same handler; the legacy prefix additionally accepts the
+	// old `?path=` parameter name. See legacyLocalFilePrefix in file.go.
+	// Deprecated: remove once no pre-rename client remains in use.
+	register(legacyLocalFilePrefix, ServeLocalFile)
 	register("/api/agents", ServeAgents)
 	register("/api/agents/", ServeAgentSubRoutes)
 	register("/api/backends", ServeBackends)

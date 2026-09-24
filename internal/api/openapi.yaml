@@ -2249,6 +2249,46 @@ paths:
                 type: string
                 format: binary
 
+  # Deprecated: pre-rename raw-file endpoint, kept as a backward-compatibility
+  # alias for installed Android/desktop clients whose NATIVE download bridge still
+  # builds /api/local-file/ URLs. Those builds cannot be fixed by a frontend
+  # update (the WebView loads the latest JS, but the download URL is built in
+  # native code) and cannot self-update, so without this alias every file-manager
+  # download 404s. Unlike the current endpoint it also accepts the legacy `?path=`
+  # parameter name — scoped to this prefix only.
+  # Do not use in new code; do not add the alias to the frontend.
+  /api/local-file/{path}:
+    get:
+      tags: [Files]
+      summary: 读取文件原始字节（旧端点，已废弃）
+      description: |
+        **已废弃**：请改用 `/api/fs/raw/{path}`。此端点仅为无法自更新的旧版
+        Android/桌面客户端保留（其原生下载桥仍拼 `/api/local-file/` URL）。
+        兼容点：绝对路径参数可写作 `?path=`（旧参数名）。
+      operationId: localFileGetLegacy
+      deprecated: true
+      parameters:
+        - $ref: "#/components/parameters/FilePath"
+        - name: path
+          in: query
+          description: 绝对路径（外部文件）。旧参数名，仅本端点接受。
+          schema:
+            type: string
+        - name: download
+          in: query
+          description: 置 1 时强制下载（附 Content-Disposition）。
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: 原始字节
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   /api/file/write:
     post:
       tags: [Files]

@@ -501,11 +501,57 @@ func responsePath(absPath, projectPath string, isExternal bool) string {
 	return filepath.ToSlash(relPath)
 }
 
+// rawFilePrefix is the URL-path prefix of the current raw-file endpoint.
+const rawFilePrefix = "/api/fs/raw/"
+
+// legacyLocalFilePrefix is the pre-rename raw-file endpoint, restored as a
+// backward-compatibility alias for installed clients that cannot be updated.
+//
+// Why the alias exists: the rename to /api/fs/raw/ (see file_routes_rename_test.go)
+// was a hard cutover — the old route was dropped and 404s. But the URL is built in
+// NATIVE client code, not in the web frontend:
+//
+//	android/.../MainActivity.java  downloadFile()      -> "/api/local-file/…"
+//	desktop/src/main/download.ts   resolveLocalFileUrl -> "/api/local-file/…"
+//
+// A frontend update cannot reach that code: the Android WebView loads the latest
+// JS from the server, so the UI looks current while the native download bridge
+// still emits the deleted URL. Those builds also cannot self-recover through the
+// in-app updater (their embedded APK predates the fix), so a file-manager
+// download simply 404s forever. The alias keeps them working until they are gone.
+//
+// Scope is deliberately minimal — one endpoint, matching what those clients
+// actually call. The alias accepts the legacy `?path=` parameter name ONLY under
+// this prefix (see resolveLocalFilePath), so the current /api/fs/raw/ endpoint
+// keeps the renamed `?target=` shape and does not regain the Crawlab LFI
+// fingerprint (`GET /api/file?path=…`) that motivated the rename.
+//
+// Deprecated: remove once no pre-rename Android/desktop client remains in use.
+const legacyLocalFilePrefix = "/api/local-file/"
+
 // resolveLocalFilePath determines the absolute path for ServeLocalFile.
 // Supports absolute paths via ?target= query param and project-relative paths via URL path.
+//
+// The deprecated /api/local-file/ alias (legacyLocalFilePrefix) is also served
+// here, with two compatibility accommodations — both gated on the request path so
+// the current endpoint is unaffected:
+//   - the absolute-path query param may be spelled `?path=` (the pre-rename name);
+//   - the URL-path form is matched against the legacy prefix instead.
 func resolveLocalFilePath(w http.ResponseWriter, r *http.Request, projectPath string) (string, bool) {
-	if queryPath := r.URL.Query().Get("target"); queryPath != "" {
-		// Absolute path via ?target= — serves files outside the project directory
+	// A request is "legacy" purely by its URL prefix. Everything below — the
+	// param-name fallback and the prefix used for the URL-path form — keys off
+	// this one flag, so the two accommodations cannot drift apart.
+	legacy := strings.HasPrefix(r.URL.Path, legacyLocalFilePrefix)
+
+	// Absolute path via query param. `?target=` is the current name; `?path=` is
+	// the pre-rename name, honored only on the deprecated prefix. Accepting it on
+	// /api/fs/raw/ too would undo the rename's whole point.
+	queryPath := r.URL.Query().Get("target")
+	if queryPath == "" && legacy {
+		queryPath = r.URL.Query().Get("path")
+	}
+	if queryPath != "" {
+		// Absolute path — serves files outside the project directory
 		if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPath")
 			return "", false
@@ -523,12 +569,16 @@ func resolveLocalFilePath(w http.ResponseWriter, r *http.Request, projectPath st
 	}
 
 	// Project-relative path from URL path
+	prefix := rawFilePrefix
+	if legacy {
+		prefix = legacyLocalFilePrefix
+	}
 	filepathStr := r.URL.Path
-	if !strings.HasPrefix(filepathStr, "/api/fs/raw/") {
+	if !strings.HasPrefix(filepathStr, prefix) {
 		http.NotFound(w, r)
 		return "", false
 	}
-	filepathStr = filepathStr[len("/api/fs/raw/"):]
+	filepathStr = filepathStr[len(prefix):]
 	// Strip leading slashes to handle double-slash URLs (/api/fs/raw//path)
 	// caused by encodeURIComponent("/path") which encodes as %2Fpath.
 	filepathStr = strings.TrimLeft(filepathStr, "/")

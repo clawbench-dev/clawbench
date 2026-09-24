@@ -67,6 +67,10 @@ describe('file-read endpoint rename', () => {
   })
 
   it('no source file builds or parses the old /api/local-file/ endpoint', () => {
+    // The backend serves /api/local-file/ again as a DEPRECATED alias, but only
+    // for pre-rename native clients that cannot update themselves. The frontend
+    // must never (re)introduce it: the web build always ships with the server,
+    // so it can use the current endpoint and must keep the rename intact.
     const offenders: string[] = []
     for (const full of SOURCES) {
       const src = readWebFile(webRel(full))

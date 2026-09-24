@@ -33,7 +33,8 @@ flowchart TD
 - **目录树列表**：`GET /api/file/list-tree?path=<rel>` 递归列出指定目录下所有文件（含相对路径和大小），用于目录树下载功能
 - **批量文件存在检查**：`POST /api/file/batch-exists` 批量检查文件是否存在，返回每个路径的状态（file/dir/none）。支持 glob 字符快捷跳过、`~` 展开、绝对路径
 - **批量图片 Base64**：`POST /api/file/batch-base64` 批量读取图片文件并返回 base64 编码，单文件限制 2MB，总响应限制 20MB
-- **绝对路径查询**：`?path=` 查询参数支持绝对路径，用于项目外文件访问
+- **绝对路径查询**：`?target=` 查询参数支持绝对路径，用于项目外文件访问
+- **旧端点兼容别名**：`/api/local-file/` 作为**已废弃**别名保留，指向同一处理器，供无法自更新的旧版 Android/桌面客户端使用（其原生下载桥仍拼该 URL）；该前缀下额外接受旧参数名 `?path=`
 - **强制下载**：`?download=1` 参数强制返回附件响应，使用 `http.ServeContent` 避免 index.html 301 重定向问题
 - **Office MIME 类型**：新增 .docx/.xlsx/.pptx/.doc/.xls/.ppt 和 .m3u8 流媒体 MIME 类型
 
@@ -46,3 +47,4 @@ flowchart TD
 - **内容类型由文件与探测共同决定**：未知扩展名使用安全的通用二进制类型，避免浏览器错误执行内容
 - **批量操作有大小限制**：batch-base64 单文件 2MB、总响应 20MB，防止内存溢出
 - **绝对路径查询与 URL 路径共享校验**：两种输入形式只影响调用便利性，安全边界一致
+- **兼容别名不扩大安全边界**：`/api/local-file/` 只是同一处理器的第二个前缀，鉴权、`isPathUnderAnyRoot` 校验和目录拒绝全部复用；旧参数名 `?path=` 仅在**该前缀**下被接受，当前端点 `/api/fs/raw/` 仍只认 `?target=`，改名消除的指纹不会因别名回流
