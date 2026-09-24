@@ -32,7 +32,9 @@ function mountRow(props: Record<string, unknown> = {}) {
 }
 
 describe('GitBranchRow', () => {
-  beforeEach(() => { vi.useFakeTimers() })
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
   afterEach(() => { vi.useRealTimers() })
 
   describe('click handling', () => {
@@ -71,22 +73,56 @@ describe('GitBranchRow', () => {
       await wrapper.find('.git-branch-row').trigger('click')
       expect(wrapper.emitted('switch')).toHaveLength(1)
     })
+
+    it('does not emit switch when a text selection is active (drag-select ends with a click)', async () => {
+      const wrapper = mountRow({ branch: makeBranch({ name: 'dev' }) })
+      vi.spyOn(window, 'getSelection').mockReturnValue({
+        toString: () => 'dev',
+      } as unknown as Selection)
+
+      await wrapper.find('.git-branch-row').trigger('click')
+
+      expect(wrapper.emitted('switch')).toBeFalsy()
+      vi.restoreAllMocks()
+    })
+
+    it('still emits switch when nothing is selected', async () => {
+      const wrapper = mountRow({ branch: makeBranch({ name: 'dev' }) })
+      vi.spyOn(window, 'getSelection').mockReturnValue({
+        toString: () => '',
+      } as unknown as Selection)
+
+      await wrapper.find('.git-branch-row').trigger('click')
+
+      expect(wrapper.emitted('switch')).toHaveLength(1)
+      vi.restoreAllMocks()
+    })
   })
 
   describe('delete button', () => {
-    it('shows delete button when branch is not current and not default', () => {
+    it('shows an enabled delete button when branch is not current and not default', () => {
       const wrapper = mountRow({ branch: makeBranch() })
-      expect(wrapper.find('.branch-action-btn').exists()).toBe(true)
+      const btn = wrapper.find('.branch-action-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeUndefined()
+      expect(btn.attributes('title')).toBe('git.manage.deleteBranch')
     })
 
-    it('hides delete button when branch is current', () => {
+    it('keeps the delete button visible but disabled when branch is current', () => {
       const wrapper = mountRow({ branch: makeBranch({ isCurrent: true }) })
-      expect(wrapper.find('.branch-action-btn').exists()).toBe(false)
+      const btn = wrapper.find('.branch-action-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.attributes('title')).toBe('git.manage.cannotDeleteCurrent')
+      expect(btn.classes()).toContain('is-disabled')
     })
 
-    it('hides delete button when branch is default', () => {
+    it('keeps the delete button visible but disabled when branch is default', () => {
       const wrapper = mountRow({ branch: makeBranch({ isDefault: true }) })
-      expect(wrapper.find('.branch-action-btn').exists()).toBe(false)
+      const btn = wrapper.find('.branch-action-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.attributes('title')).toBe('git.manage.cannotDeleteDefault')
     })
 
     it('emits delete without switching when the delete button is clicked', async () => {
@@ -96,6 +132,17 @@ describe('GitBranchRow', () => {
       expect(wrapper.emitted('delete')).toBeTruthy()
       expect(wrapper.emitted('delete')![0][0]).toEqual(branch)
       expect(wrapper.emitted('switch')).toBeFalsy()
+    })
+
+    it('does not emit delete for a disabled (current) branch, even via a programmatic click', async () => {
+      const wrapper = mountRow({ branch: makeBranch({ isCurrent: true }) })
+      // `trigger` respects the `disabled` attribute and would pass vacuously.
+      // Dispatch directly to prove the handler guards itself too (real browsers
+      // do deliver programmatic clicks to disabled buttons).
+      const el = wrapper.find('.branch-action-btn').element as HTMLButtonElement
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('delete')).toBeFalsy()
     })
   })
 

@@ -1030,6 +1030,35 @@ describe('AppHeader', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not switch branch when a text selection is active (drag-select ends with a click)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    mockState.gitDirty = false
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => 'dev',
+    } as unknown as Selection)
+
+    // Click the non-current branch row.
+    const rows = document.body.querySelectorAll('.app-menu-item')
+    ;(rows[1] as HTMLElement).click()
+    await wrapper.vm.$nextTick()
+
+    // Without the guard, selectBranch('dev') runs → dirty check false → confirm
+    // dialog opens and the dropdown closes.
+    expect(dialogConfirmFn).not.toHaveBeenCalled()
+    expect(wrapper.vm.branchDropdownOpen).toBe(true)
+
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
   it('openHistory emits pending navigation and switches tab', () => {
     const wrapper = mountAndTrack()
     ;(wrapper.vm as any).openHistory()

@@ -17,10 +17,12 @@
       <LoadingIndicator size="sm" inline />
     </div>
     <button
-      v-if="!branch.isCurrent && !branch.isDefault"
       class="branch-action-btn"
-      :title="t('git.manage.deleteBranch')"
-      @click.stop="$emit('delete', branch)"
+      :class="{ 'is-disabled': deleteDisabled }"
+      :disabled="deleteDisabled"
+      :title="deleteDisabledReason"
+      :aria-label="deleteDisabledReason"
+      @click.stop="handleDelete"
     >
       <Trash2 :size="15" />
     </button>
@@ -28,10 +30,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitBranch, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { hasActiveTextSelection } from '@/utils/textSelection'
 
 const { t } = useI18n()
 
@@ -44,7 +47,36 @@ const emit = defineEmits(['switch', 'delete'])
 
 const switching = ref(false)
 
+/**
+ * The current branch and the repository's default branch cannot be deleted
+ * (the backend answers `cannot_delete_current` / `cannot_delete_default`).
+ * The button stays visible but disabled, so the action is discoverable and its
+ * unavailability is explained — hiding it entirely made the row look like it
+ * simply had no delete action.
+ */
+const deleteDisabled = computed(() => props.branch.isCurrent || props.branch.isDefault)
+
+const deleteDisabledReason = computed(() => {
+  if (props.branch.isCurrent) return t('git.manage.cannotDeleteCurrent')
+  if (props.branch.isDefault) return t('git.manage.cannotDeleteDefault')
+  return t('git.manage.deleteBranch')
+})
+
+/**
+ * Guard the emit itself, not just the `disabled` attribute: a programmatic
+ * `dispatchEvent('click')` still reaches the handler on a disabled button (the
+ * browser only suppresses *user* clicks), and the backend would answer with an
+ * error toast.
+ */
+function handleDelete() {
+  if (deleteDisabled.value) return
+  emit('delete', props.branch)
+}
+
 function handleClick() {
+  // A drag-select inside the row ends with a click on the row (mousedown and
+  // mouseup share it as common ancestor) — do not treat that as "switch".
+  if (hasActiveTextSelection()) return
   if (props.branch.isCurrent || props.disabled || switching.value) return
   switching.value = true
   emit('switch', props.branch)
@@ -163,14 +195,25 @@ function handleClick() {
 }
 
 @media (hover: hover) {
-  .branch-action-btn:hover {
+  .branch-action-btn:hover:not(:disabled) {
     color: var(--color-red);
     background: color-mix(in srgb, var(--color-red) 10%, transparent);
   }
 }
 
-.branch-action-btn:active {
+.branch-action-btn:active:not(:disabled) {
   background: color-mix(in srgb, var(--color-red) 15%, transparent);
+}
+
+/* Non-deletable branch (current / default): keep the icon visible as an
+   affordance but make its unavailability obvious. The native `:disabled` still
+   fires the button's `title` tooltip (verified in Chromium), so the reason
+   stays discoverable. */
+.branch-action-btn.is-disabled,
+.branch-action-btn:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+  color: var(--text-muted, #999);
 }
 
 </style>

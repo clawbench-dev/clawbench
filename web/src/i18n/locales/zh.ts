@@ -1841,6 +1841,8 @@ export default {
       cannotDeleteCurrent: '不能删除当前分支',
       cannotDeleteDefault: '不能删除默认分支',
       cannotDeleteCurrentWorktree: '不能删除当前工作树',
+      cannotDeleteMainWorktree: '不能删除主工作树',
+      cannotDeleteLockedWorktree: '不能删除已锁定的工作树',
     },
   },
   media: {

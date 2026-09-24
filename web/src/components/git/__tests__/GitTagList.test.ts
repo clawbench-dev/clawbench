@@ -44,6 +44,18 @@ describe('GitTagList inline delete', () => {
     expect(wrapper.emitted('switch-tag')![0][0]).toEqual(tag)
   })
 
+  it('does not emit switch-tag when a text selection is active (drag-select ends with a click)', async () => {
+    const wrapper = mountList([{ name: 'v1.0' }])
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => 'v1.0',
+    } as unknown as Selection)
+
+    await wrapper.find('.tag-row').trigger('click')
+
+    expect(wrapper.emitted('switch-tag')).toBeFalsy()
+    vi.restoreAllMocks()
+  })
+
   it('sorts tags by date, most recent first', () => {
     const wrapper = mountList([
       { name: 'v1.0', date: '2025-01-15 10:00:00 +0800' },

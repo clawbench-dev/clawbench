@@ -13,7 +13,7 @@
         v-for="tag in sortedTags"
         :key="tag.name"
         class="tag-row"
-        @click="$emit('switch-tag', tag)"
+        @click="handleRowClick(tag)"
       >
         <div class="tag-info">
           <div class="tag-main">
@@ -42,6 +42,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tag, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { hasActiveTextSelection } from '@/utils/textSelection'
 
 const { t } = useI18n()
 
@@ -51,7 +52,16 @@ const props = defineProps<{
   error?: boolean
 }>()
 
-defineEmits(['retry', 'switch-tag', 'delete-tag'])
+const emit = defineEmits(['retry', 'switch-tag', 'delete-tag'])
+
+/**
+ * A drag-select inside the row ends with a click on the row (mousedown and
+ * mouseup share it as common ancestor); that must not be treated as a switch.
+ */
+function handleRowClick(tag: Record<string, unknown>) {
+  if (hasActiveTextSelection()) return
+  emit('switch-tag', tag)
+}
 
 // Most recent tags first
 const sortedTags = computed(() =>

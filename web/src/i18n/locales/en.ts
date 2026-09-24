@@ -1838,6 +1838,8 @@ export default {
       cannotDeleteCurrent: 'Cannot delete current branch',
       cannotDeleteDefault: 'Cannot delete default branch',
       cannotDeleteCurrentWorktree: 'Cannot delete current worktree',
+      cannotDeleteMainWorktree: 'Cannot delete the main worktree',
+      cannotDeleteLockedWorktree: 'Cannot delete a locked worktree',
     },
   },
   media: {
