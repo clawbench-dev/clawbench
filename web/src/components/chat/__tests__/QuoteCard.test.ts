@@ -19,6 +19,53 @@ function mountCard(props: Record<string, unknown> = {}) {
 }
 
 describe('QuoteCard', () => {
+  describe('quoted-content preview', () => {
+    // The card used to show only WHERE the quote came from (a filename), never
+    // WHAT was quoted — so several quotes from the same file were
+    // indistinguishable at a glance.
+    it('shows a taste of the quoted text', () => {
+      const wrapper = mountCard({ quote: quote({ text: 'func main() {}' }) })
+
+      expect(wrapper.find('.attachment-quote-preview').text()).toBe('func main() {}')
+    })
+
+    // The preview is a SEPARATE element from the filename on purpose: the
+    // filename is the source label (asserted below) and merging the two would
+    // make the card's identity depend on the quoted content.
+    it('keeps the preview separate from the filename', () => {
+      const wrapper = mountCard({ quote: quote({ text: 'x := 1', startLine: 10, endLine: 20 }) })
+
+      expect(wrapper.find('.attachment-filename').text()).toBe('a.go:10-20')
+      expect(wrapper.find('.attachment-quote-preview').text()).toBe('x := 1')
+    })
+
+    it('collapses newlines so a multi-line quote stays one line', () => {
+      // The card is a single-line chip (the shared rules set white-space:
+      // nowrap), so a raw newline would otherwise render as one long clipped
+      // line with an arbitrary break.
+      const wrapper = mountCard({ quote: quote({ text: 'line one\n\n  line two  ' }) })
+
+      expect(wrapper.find('.attachment-quote-preview').text()).toBe('line one line two')
+    })
+
+    it('renders no preview for a whole-object quote', () => {
+      // A file/issue reference quotes the OBJECT, so there is no content to
+      // preview — an empty span would only add padding to the chip.
+      const wrapper = mountCard({
+        quote: quote({ text: '', filePath: 'src/main.ts', startLine: 0, endLine: 0 }),
+      })
+
+      expect(wrapper.find('.attachment-quote-preview').exists()).toBe(false)
+      expect(wrapper.find('.attachment-filename').text()).toBe('main.ts')
+    })
+
+    it('renders no preview when the quote is only whitespace', () => {
+      const wrapper = mountCard({ quote: quote({ text: '   \n  ' }) })
+
+      expect(wrapper.find('.attachment-quote-preview').exists()).toBe(false)
+    })
+  })
+
   it('carries the shared classes both surfaces style against', () => {
     // chat-file-attachment / attachment-quote are what make the global rules in
     // ChatMessageItem.vue (sent bubble) and the scoped rules in ChatInputBar.vue

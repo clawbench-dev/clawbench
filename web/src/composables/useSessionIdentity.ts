@@ -167,6 +167,15 @@ export function getSessionId(): string {
   return currentSessionId.value
 }
 
+/**
+ * Read-only accessor for the current session title (no composable setup
+ * needed). Used by module-level code that builds a quote's source label
+ * outside a component setup scope.
+ */
+export function getSessionTitle(): string {
+  return currentSessionTitle.value
+}
+
 // Persist the current session id per project (useRecentSession). Must be
 // registered at module init so the storage watcher is active before any
 // session switching occurs.

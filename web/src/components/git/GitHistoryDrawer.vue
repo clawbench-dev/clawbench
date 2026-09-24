@@ -153,6 +153,7 @@
           :html="diffState.html"
           :no-wrap="mode === 'project'"
           :file-path="mode === 'project' ? selectedFilePath : file?.path"
+          :commit-sha="selectedSHA || ''"
         />
       </div>
     </div>

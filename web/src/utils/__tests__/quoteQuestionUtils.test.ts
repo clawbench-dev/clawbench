@@ -511,6 +511,53 @@ describe('getQuoteSource', () => {
     expect(getQuoteSource(inner)).toEqual({ label: 'a/b#1', language: '', url: '' })
   })
 
+  // The locators are the machine keys behind the human-readable label. Without
+  // them a quote can name its source but never reach it.
+  describe('source locators', () => {
+    function sourceWith(attrs: Record<string, string>) {
+      const wrap = document.createElement('div')
+      wrap.setAttribute('data-quote-source', '每日构建 (#12)')
+      for (const [k, v] of Object.entries(attrs)) wrap.setAttribute(k, v)
+      const inner = document.createElement('div')
+      wrap.appendChild(inner)
+      return getQuoteSource(inner)
+    }
+
+    it('reads the commit', () => {
+      expect(sourceWith({ 'data-quote-commit': 'a1b2c3d' })).toMatchObject({ commitSha: 'a1b2c3d' })
+    })
+
+    it('reads the task id as a number', () => {
+      expect(sourceWith({ 'data-quote-task-id': '12' })).toMatchObject({ taskId: 12 })
+    })
+
+    it('reads the session and message ids', () => {
+      expect(sourceWith({ 'data-quote-session-id': 'sess-abc', 'data-quote-message-id': '42' }))
+        .toMatchObject({ sessionId: 'sess-abc', messageId: 42 })
+    })
+
+    it('reads the execution id', () => {
+      expect(sourceWith({ 'data-quote-execution-id': 'exec-7' })).toMatchObject({ executionId: 'exec-7' })
+    })
+
+    it('omits locators that are absent rather than setting them to undefined', () => {
+      const got = sourceWith({})
+      expect('commitSha' in got!).toBe(false)
+      expect('taskId' in got!).toBe(false)
+      expect('sessionId' in got!).toBe(false)
+      expect('messageId' in got!).toBe(false)
+      expect('executionId' in got!).toBe(false)
+    })
+
+    // A non-numeric or non-positive id is not an id. Emitting 0/NaN would make
+    // the drawer offer a jump that goes nowhere.
+    it('ignores a non-numeric or non-positive id', () => {
+      expect(sourceWith({ 'data-quote-task-id': 'abc' })).not.toHaveProperty('taskId')
+      expect(sourceWith({ 'data-quote-task-id': '0' })).not.toHaveProperty('taskId')
+      expect(sourceWith({ 'data-quote-message-id': '-3' })).not.toHaveProperty('messageId')
+    })
+  })
+
   it('reads the source address so a forge quote can offer a jump action', () => {
     // Without the address the label alone is not openable, and the quote detail
     // drawer would have no jump target.

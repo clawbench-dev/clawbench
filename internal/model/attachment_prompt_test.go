@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The attachment→prompt classification is shared by internal/handler and
@@ -148,6 +149,36 @@ func TestClassifyAttachments_QuoteIsItsOwnBucket(t *testing.T) {
 	assert.Equal(t, QuotePrompt{
 		Label: "/src/a.go", Language: "go", Note: "why?", Text: "fmt.Println()", StartLine: 3, EndLine: 3,
 	}, parts.Quotes[0])
+}
+
+// The source locators must survive classification, or the prompt loses the
+// only addressable handle on the origin (the label is a human-readable name).
+func TestClassifyAttachments_QuoteCarriesSourceLocators(t *testing.T) {
+	entries := []FileEntry{{
+		Path: "每日构建 (#12)", Kind: "quote", ID: "q1", Text: "构建失败了",
+		SourceKind: "file", TaskID: 12, ExecutionID: "exec-7",
+		CommitSHA: "a1b2c3d", SessionID: "sess-abc", MessageID: 42,
+	}}
+	parts := ClassifyAttachments(entries, nil)
+
+	require.Len(t, parts.Quotes, 1)
+	got := parts.Quotes[0]
+	assert.Equal(t, int64(12), got.TaskID)
+	assert.Equal(t, "exec-7", got.ExecutionID)
+	assert.Equal(t, "a1b2c3d", got.CommitSHA)
+	assert.Equal(t, "sess-abc", got.SessionID)
+	assert.Equal(t, int64(42), got.MessageID)
+}
+
+// End-to-end: the locators must actually appear in the rendered prompt.
+func TestApplyAttachmentPrefixes_QuoteRendersSourceLocators(t *testing.T) {
+	parts := ClassifyAttachments([]FileEntry{{
+		Path: "每日构建 (#12)", Kind: "quote", ID: "q1", TaskID: 12,
+	}}, nil)
+
+	got := ApplyAttachmentPrefixes("为什么失败", nil, nil, parts)
+
+	assert.Contains(t, got, "[Quoted from 每日构建 (#12) (task: 12)]")
 }
 
 // The quote's Path is only a label and may legitimately equal an attached
@@ -313,6 +344,66 @@ func TestQuoteHeader_ClosesItsBracket(t *testing.T) {
 			assert.NotContains(t, got, "\n", "header must be a single line")
 		})
 	}
+}
+
+// A quote's source locators must reach the prompt: the human-readable label
+// ("每日构建") is not addressable, so without the machine key the AI knows a
+// task was referenced but cannot reach it.
+func TestQuoteHeader_CarriesSourceLocators(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		q    QuotePrompt
+		want string
+	}{
+		{
+			"task",
+			QuotePrompt{Label: "每日构建 (#12)", TaskID: 12},
+			"[Quoted from 每日构建 (#12) (task: 12)]",
+		},
+		{
+			"commit",
+			QuotePrompt{Label: "a1b2c3d 修复登录", CommitSHA: "a1b2c3d"},
+			"[Quoted from a1b2c3d 修复登录 (commit: a1b2c3d)]",
+		},
+		{
+			"session and message together",
+			QuotePrompt{Label: "修复登录 (sess-abc)", SessionID: "sess-abc", MessageID: 42},
+			"[Quoted from 修复登录 (sess-abc) (session: sess-abc, message: 42)]",
+		},
+		{
+			"execution",
+			QuotePrompt{Label: "每日构建 (#12)", TaskID: 12, ExecutionID: "exec-7"},
+			"[Quoted from 每日构建 (#12) (task: 12, execution: exec-7)]",
+		},
+		{
+			"address leads the group",
+			QuotePrompt{Label: "a/b#1", URL: "https://e.com/1", CommitSHA: "deadbeef"},
+			"[Quoted from a/b#1 (https://e.com/1, commit: deadbeef)]",
+		},
+		{
+			"line range plus locator",
+			QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9, CommitSHA: "deadbeef"},
+			"[Quoted from /a.go:3-9 (commit: deadbeef)]",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := quoteHeader(tc.q)
+			assert.Equal(t, tc.want, got)
+			assert.True(t, strings.HasSuffix(got, "]"), "header must close its bracket")
+			// The strip rule is stripToNewline: a second line would leak into
+			// the derived session title.
+			assert.NotContains(t, got, "\n", "header must be a single line")
+		})
+	}
+}
+
+// Zero-valued locators must not emit empty entries ("task: 0"), which would be
+// noise and would misreport an unset id as a real one.
+func TestQuoteHeader_OmitsZeroValuedLocators(t *testing.T) {
+	got := quoteHeader(QuotePrompt{Label: "/a.go", TaskID: 0, MessageID: 0})
+	assert.Equal(t, "[Quoted from /a.go]", got)
+	assert.NotContains(t, got, "task:")
+	assert.NotContains(t, got, "message:")
 }
 
 func TestQuotePromptPrefix_IsRegisteredAsStripRule(t *testing.T) {

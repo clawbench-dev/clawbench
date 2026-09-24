@@ -1694,6 +1694,7 @@ export default {
     notePlaceholder: 'Add a note about this quote...',
     jumpToSource: 'Jump to source',
     messageQuote: 'Chat message',
+    selectionQuote: 'Selected text',
     removeQuote: 'Remove quote',
     quoteMessage: 'Quote this message',
   },

@@ -1,5 +1,5 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
+import { useSessionIdentity, getSessionId, getSessionTitle } from '@/composables/useSessionIdentity.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { closestElement, getLineInfo, getFileInfo, getQuoteSource, messageIdFromKey } from '@/utils/quoteQuestionUtils.ts'
@@ -121,15 +121,20 @@ function evaluateSelection() {
     return
   }
 
-  // Check if selection is within a code, markdown, or office preview area, or
-  // inside a chat message's content.
+  // Check if selection is within a code, markdown, office preview, or git diff
+  // area, or inside a chat message's content.
   //
   // The chat selector must be `.chat-message .msg-content-wrapper`, NOT bare
   // `.chat-message`: the row also contains the meta bar, so the wider selector
   // would surface the bar for selections in the timestamp/action area (the
   // chrome guard above catches the buttons, but the wrapper is the precise
   // content boundary).
-  const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper')
+  //
+  // This stays a WHITELIST on purpose: "quote what I selected" is only useful
+  // where the selection is content. An allow-list keeps the bar out of settings,
+  // session lists and other chrome, where a quote would carry no meaning and the
+  // drawer could only show a generic label.
+  const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper, .git-diff-scroll')
   if (!container) {
     if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
@@ -145,9 +150,13 @@ function evaluateSelection() {
     return
   }
 
-  // A labelled non-file source (an issue/PR body) supplies the quote's identity.
-  // It has no meaningful file line numbers, so those stay 0 — appending ":0"
-  // would be noise in the fence header.
+  // A labelled non-file source (an issue/PR body, a commit, a task, a CI run)
+  // supplies the quote's identity. It has no meaningful file line numbers, so
+  // those stay 0 — appending ":0" would be noise in the fence header.
+  //
+  // The locator attributes on the same region are what make the quote
+  // addressable: the label is a human-readable name, so without them neither
+  // the jump handler nor the AI can find the origin.
   const source = getQuoteSource(container)
   if (source) {
     setQuoteData({
@@ -158,6 +167,11 @@ function evaluateSelection() {
       endLine: 0,
       sourceKind: source.url ? 'url' : 'file',
       ...(source.url ? { url: source.url } : {}),
+      ...(source.commitSha ? { commitSha: source.commitSha } : {}),
+      ...(source.taskId !== undefined ? { taskId: source.taskId } : {}),
+      ...(source.sessionId ? { sessionId: source.sessionId } : {}),
+      ...(source.messageId !== undefined ? { messageId: source.messageId } : {}),
+      ...(source.executionId ? { executionId: source.executionId } : {}),
     })
     barVisible.value = true
     return
@@ -167,17 +181,24 @@ function evaluateSelection() {
   // attributed to the message it came from so the quote can be traced back.
   // Optimistic messages have no DB id — the quote is still valid, just not
   // addressable later.
+  //
+  // The session id/name are attached too: a message id alone is only unique
+  // within its session, so without them the quote could not be reopened from
+  // another project or after a reload.
   const msgEl = container.closest('.chat-message')
   if (msgEl) {
     const messageId = messageIdFromKey(msgEl.getAttribute('data-msg-key'))
+    const sessionId = getSessionId()
+    const sessionTitle = getSessionTitle()
     setQuoteData({
       text,
-      filePath: '',
+      filePath: sessionTitle ? `${sessionTitle} (${sessionId})` : sessionId,
       language: '',
       startLine: 0,
       endLine: 0,
       sourceKind: 'message',
       ...(messageId !== undefined ? { messageId } : {}),
+      ...(sessionId ? { sessionId } : {}),
     })
     barVisible.value = true
     return
@@ -186,7 +207,17 @@ function evaluateSelection() {
   const { filePath, language } = getFileInfo(container)
   const { startLine, endLine } = getLineInfo(sel)
 
-  setQuoteData({ text, filePath, language, startLine, endLine })
+  // No file path means no addressable source (e.g. a git diff whose container
+  // carried no file name). Tag it explicitly: leaving sourceKind unset would
+  // make the client infer 'message' and the drawer would call it a chat quote.
+  setQuoteData({
+    text,
+    filePath,
+    language,
+    startLine,
+    endLine,
+    ...(filePath ? {} : { sourceKind: 'selection' as const }),
+  })
   barVisible.value = true
 }
 

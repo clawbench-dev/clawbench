@@ -168,6 +168,27 @@ export function buildQuoteFirstMessage(quoteBlock: string, userMessage: string):
   return input ? `${quoteBlock}\n${input}` : `${quoteBlock}\n`
 }
 
+/** A labelled quote source region, as read from `data-quote-*` attributes. */
+export interface QuoteSource {
+  label: string
+  language: string
+  url: string
+  /**
+   * Machine-readable locators for the origin. Each is optional and read from
+   * the SAME element as the label, so a region either carries a whole identity
+   * or none of it.
+   *
+   * They exist so the quote can jump back to its source and so the AI can
+   * address it: the label is a human-readable name ("每日构建"), which is not
+   * enough to find anything.
+   */
+  commitSha?: string
+  taskId?: number
+  sessionId?: string
+  messageId?: number
+  executionId?: string
+}
+
 /**
  * Read the quote source label from a container's ancestors.
  *
@@ -180,18 +201,42 @@ export function buildQuoteFirstMessage(quoteBlock: string, userMessage: string):
  * `data-quote-url` carries the object's address so a forge quote can offer a
  * real jump-to-source action. Without it the label alone is not openable.
  *
+ * The locator attributes (`data-quote-commit`, `-task-id`, `-session-id`,
+ * `-message-id`, `-execution-id`) are read from the same element: they are the
+ * machine keys behind the human-readable label.
+ *
  * Returns null when the container is not inside a labelled region, so callers
  * can fall back to the normal file-path handling.
  */
-export function getQuoteSource(container: HTMLElement): { label: string; language: string; url: string } | null {
+export function getQuoteSource(container: HTMLElement): QuoteSource | null {
   const el = container.closest<HTMLElement>('[data-quote-source]')
   const label = el?.getAttribute('data-quote-source') || ''
   if (!label) return null
+  const taskId = intAttr(el, 'data-quote-task-id')
+  const messageId = intAttr(el, 'data-quote-message-id')
+  const commitSha = el?.getAttribute('data-quote-commit') || ''
+  const sessionId = el?.getAttribute('data-quote-session-id') || ''
+  const executionId = el?.getAttribute('data-quote-execution-id') || ''
   return {
     label,
     language: el?.getAttribute('data-quote-language') || '',
     url: el?.getAttribute('data-quote-url') || '',
+    // Omitted (not undefined-valued) when absent, so a caller spreading this
+    // into a quote does not write empty keys that then round-trip as set.
+    ...(commitSha ? { commitSha } : {}),
+    ...(taskId !== undefined ? { taskId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(messageId !== undefined ? { messageId } : {}),
+    ...(executionId ? { executionId } : {}),
   }
+}
+
+/** Parse a positive-integer attribute; undefined when absent or not a number. */
+function intAttr(el: HTMLElement | null, name: string): number | undefined {
+  const raw = el?.getAttribute(name)
+  if (!raw) return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
 /**

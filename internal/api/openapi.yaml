@@ -4325,6 +4325,35 @@ components:
         language:
           type: string
           description: 仅 `kind=quote`：围栏代码块的语言标识（如 `go`、`issue`）。
+        sourceKind:
+          type: string
+          enum: [file, url, message, selection]
+          description: |
+            仅 `kind=quote`：引用来源。`file` 本地文件、`url` 外部链接、`message` 聊天消息、
+            `selection` 无来源地址的自由选区（如终端选区）。
+            该字段会随 `files` 持久化：`selection` 与 `message` 都没有 path 与 url，
+            不存下来刷新后就无法区分，抽屉会把终端引用误标为「聊天消息」。
+            缺省（旧数据）由前端按 url/path 推断。
+        commitSha:
+          type: string
+          description: 仅 `kind=quote`：来源 commit（git 历史 / CI 流水线引用），用于跳转回该 commit。
+        taskId:
+          type: integer
+          description: 仅 `kind=quote`：来源计划任务 id，用于跳转回该任务；任务名在 `path` 中。
+        sessionId:
+          type: string
+          description: 仅 `kind=quote`：来源会话 id，用于跳转回该会话；会话名在 `path` 中。
+        messageId:
+          type: integer
+          description: 仅 `kind=quote`：来源消息的 DB id，用于跳转后滚动定位到该条消息。
+        executionId:
+          type: string
+          description: |
+            仅 `kind=quote`：来源任务执行 id（任务执行详情页引用），用于跳转回该次运行。
+
+            上列 `commitSha` / `taskId` / `sessionId` / `messageId` / `executionId` 均为**来源定位键**：
+            客户端据此跳回源头，AI 提示词也会带上它们（形如 `[Quoted from 名称 (task: 12)]`），
+            以便 AI 定位源头。它们随 `files` 持久化——引用正文里不含这些信息，不存就无法再跳转。
 
     GalleryItem:
       type: object

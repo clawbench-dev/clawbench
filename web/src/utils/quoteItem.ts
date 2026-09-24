@@ -13,8 +13,17 @@
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { isQuoteEntry } from '@/utils/fileAttachmentUtils'
 
-/** Where a quote came from. Drives the drawer's "jump to source" affordance. */
-export type QuoteSourceKind = 'file' | 'url' | 'message'
+/**
+ * Where a quote came from. Drives the drawer's "jump to source" affordance.
+ *
+ * 'selection' is a free-form selection with no addressable source (a terminal
+ * selection, or any other region that carries no file path, URL or message id).
+ * It is carried explicitly rather than inferred, because inference falls back to
+ * 'message' for anything without a url/path — which would label a terminal quote
+ * as "chat message" in the drawer, and is indistinguishable from a real chat
+ * quote (both have an empty path).
+ */
+export type QuoteSourceKind = 'file' | 'url' | 'message' | 'selection'
 
 /** The normalized quote shape used by every quote surface. */
 export interface QuoteItem {
@@ -37,6 +46,14 @@ export interface QuoteItem {
   sourceKind: QuoteSourceKind
   /** DB message id when the quote was taken from a chat message. */
   messageId?: number
+  /** Commit SHA when the quote came from a git-history or CI-pipeline view. */
+  commitSha?: string
+  /** Scheduled task id when the quote came from a task view. */
+  taskId?: number
+  /** Chat session id when the quote came from a chat message. */
+  sessionId?: string
+  /** Task execution id when the quote came from one run's detail view. */
+  executionId?: string
 }
 
 /** The staged-quote shape owned by useChatContext (structurally compatible). */
@@ -51,6 +68,10 @@ export interface StagedQuoteLike {
   url?: string
   sourceKind?: QuoteSourceKind
   messageId?: number
+  commitSha?: string
+  taskId?: number
+  sessionId?: string
+  executionId?: string
 }
 
 /**
@@ -80,6 +101,10 @@ export function fromStagedQuote(q: StagedQuoteLike): QuoteItem {
     url: q.url,
     sourceKind: inferSourceKind(q),
     messageId: q.messageId,
+    commitSha: q.commitSha,
+    taskId: q.taskId,
+    sessionId: q.sessionId,
+    executionId: q.executionId,
   }
 }
 
@@ -95,7 +120,18 @@ export function fromFileEntry(f: FileEntry): QuoteItem {
     startLine: f.startLine || 0,
     endLine: f.endLine || 0,
     url,
-    sourceKind: inferSourceKind({ url, filePath: f.path }),
+    // Prefer the persisted kind. Inference cannot tell a terminal quote from a
+    // chat quote (both have no url and no path), so a round-tripped 'selection'
+    // would come back as 'message' and the drawer would mislabel it.
+    sourceKind: f.sourceKind || inferSourceKind({ url, filePath: f.path }),
+    // Source locators. Read back explicitly (never inferred): the quoted text
+    // carries no trace of them, so a reloaded quote would otherwise be
+    // unjumpable.
+    messageId: f.messageId,
+    commitSha: f.commitSha,
+    taskId: f.taskId,
+    sessionId: f.sessionId,
+    executionId: f.executionId,
   }
 }
 
@@ -149,6 +185,16 @@ export function toFileEntry(q: QuoteItem): FileEntry {
     startLine: q.startLine || undefined,
     endLine: q.endLine || undefined,
     ...(q.url ? { url: q.url } : {}),
+    // Persisted so a reloaded quote keeps its real source: a terminal quote has
+    // no url and no path, so without this it would be inferred as a chat quote.
+    ...(q.sourceKind ? { sourceKind: q.sourceKind } : {}),
+    // Source locators. These are the only route back to the commit/task/
+    // message, so each must be written or the sent quote is unjumpable.
+    ...(q.commitSha ? { commitSha: q.commitSha } : {}),
+    ...(q.taskId ? { taskId: q.taskId } : {}),
+    ...(q.sessionId ? { sessionId: q.sessionId } : {}),
+    ...(q.messageId ? { messageId: q.messageId } : {}),
+    ...(q.executionId ? { executionId: q.executionId } : {}),
   }
 }
 
@@ -196,11 +242,21 @@ export function quoteLineRange(q: QuoteItem): string {
 /**
  * Whether the drawer should offer a jump-to-source action.
  *
- * A chat-message quote has no file and no URL to open, so the button is hidden
- * rather than rendered as a no-op.
+ * This must stay in sync with the dispatch order in
+ * `jumpToQuoteSource` (ChatPanelContent.vue): every locator it can act on has
+ * to be accepted here, or the button is hidden for a quote that could in fact
+ * be opened.
+ *
+ * A quote with no locator at all (a bare text selection, e.g. from a terminal
+ * or a settings pane) has nowhere to go, so the button is hidden rather than
+ * rendered as a no-op.
  */
 export function canJumpToSource(q: QuoteItem): boolean {
+  if (q.commitSha) return true
+  if (q.taskId) return true
+  if (q.sessionId) return true
   if (q.sourceKind === 'message') return false
+  if (q.sourceKind === 'selection') return false
   if (q.sourceKind === 'url') return !!q.url
   return !!q.filePath
 }

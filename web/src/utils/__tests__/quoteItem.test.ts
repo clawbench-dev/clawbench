@@ -79,6 +79,10 @@ describe('toFileEntry', () => {
     expect(toFileEntry(item)).toEqual({
       path: 'src/a.go', kind: 'quote', id: 'q1', text: 'x := 1',
       note: 'why?', language: 'go', startLine: 10, endLine: 20,
+      // Persisted so a reloaded quote keeps its real source. It cannot be
+      // re-derived: a 'selection' quote has no url and no path, exactly like a
+      // 'message' one.
+      sourceKind: 'file',
     })
   })
 
@@ -116,6 +120,77 @@ describe('toFileEntry', () => {
     expect(roundTripped.startLine).toBe(10)
     expect(roundTripped.endLine).toBe(20)
     expect(roundTripped.sourceKind).toBe('file')
+  })
+
+  // The regression this guards: a terminal quote ('selection') has no url and
+  // no path, exactly like a quote taken from a chat message. Without persisting
+  // the kind, inference would label it 'message' after a reload and the drawer
+  // would claim the user quoted a chat message they never quoted.
+  it('round-trips a selection quote without degrading it to a chat message', () => {    const item: QuoteItem = {
+      id: 'q9', text: 'npm run build', note: '', filePath: '', language: '',
+      startLine: 0, endLine: 0, sourceKind: 'selection',
+    }
+
+    const entry = toFileEntry(item)
+    expect(entry.sourceKind).toBe('selection')
+
+    const back = fromFileEntry(entry)
+    expect(back.sourceKind).toBe('selection')
+    // And inference alone would NOT have produced this — proving the field is
+    // what carries the meaning.
+    expect(fromFileEntry({ path: '', kind: 'quote', text: 'npm run build' }).sourceKind).toBe('message')
+  })
+
+  it('keeps the payload of a selection quote intact through the round trip', () => {
+    const item: QuoteItem = {
+      id: 'q10', text: 'line one\nline two', note: 'note', filePath: '', language: '',
+      startLine: 0, endLine: 0, sourceKind: 'selection',
+    }
+    const back = fromFileEntry(toFileEntry(item))
+
+    expect(back.text).toBe('line one\nline two')
+    expect(back.note).toBe('note')
+    expect(back.id).toBe('q10')
+  })
+
+  // Every source locator must survive the round trip. These are the ONLY route
+  // back to the origin (the quoted text carries no trace of them), so losing one
+  // makes the quote silently unjumpable — no error, the button just does nothing.
+  it('round-trips every source locator', () => {
+    const item: QuoteItem = {
+      id: 'q11', text: '构建失败', note: '', filePath: '每日构建 (#12)', language: '',
+      startLine: 0, endLine: 0, sourceKind: 'file',
+      commitSha: 'a1b2c3d4e5', taskId: 12, sessionId: 'sess-abc',
+      messageId: 42, executionId: 'exec-7',
+    }
+
+    const entry = toFileEntry(item)
+    expect(entry.commitSha).toBe('a1b2c3d4e5')
+    expect(entry.taskId).toBe(12)
+    expect(entry.sessionId).toBe('sess-abc')
+    expect(entry.messageId).toBe(42)
+    expect(entry.executionId).toBe('exec-7')
+
+    const back = fromFileEntry(entry)
+    expect(back.commitSha).toBe('a1b2c3d4e5')
+    expect(back.taskId).toBe(12)
+    expect(back.sessionId).toBe('sess-abc')
+    expect(back.messageId).toBe(42)
+    expect(back.executionId).toBe('exec-7')
+  })
+
+  it('omits absent locators rather than writing undefined keys', () => {
+    const item: QuoteItem = {
+      id: 'q12', text: 'x', note: '', filePath: 'a.go', language: 'go',
+      startLine: 0, endLine: 0, sourceKind: 'file',
+    }
+    const entry = toFileEntry(item)
+
+    expect('commitSha' in entry).toBe(false)
+    expect('taskId' in entry).toBe(false)
+    expect('sessionId' in entry).toBe(false)
+    expect('messageId' in entry).toBe(false)
+    expect('executionId' in entry).toBe(false)
   })
 })
 
@@ -169,8 +244,40 @@ describe('canJumpToSource', () => {
     expect(canJumpToSource(q)).toBe(false)
   })
 
+  // A terminal selection has no file and no address, so there is nothing to
+  // open. The drawer must not offer a button that does nothing.
+  it('refuses a free-form selection quote', () => {
+    const q: QuoteItem = { id: '1', text: 'npm run build', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'selection' }
+    expect(canJumpToSource(q)).toBe(false)
+  })
+
   it('refuses a forge quote with no address', () => {
     const q: QuoteItem = { id: '1', text: '', note: '', filePath: 'acme#7', language: '', startLine: 0, endLine: 0, sourceKind: 'url' }
+    expect(canJumpToSource(q)).toBe(false)
+  })
+
+  // Each locator alone is enough to offer the jump — jumpToQuoteSource has a
+  // branch for it, so hiding the button here would strand a quote that could in
+  // fact be opened.
+  it('allows a commit quote', () => {
+    const q: QuoteItem = { id: '1', text: '', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'file', commitSha: 'abc123' }
+    expect(canJumpToSource(q)).toBe(true)
+  })
+
+  it('allows a task quote', () => {
+    const q: QuoteItem = { id: '1', text: '', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'selection', taskId: 12 }
+    expect(canJumpToSource(q)).toBe(true)
+  })
+
+  // A chat quote is only jumpable when it carries a session id; without one
+  // there is no session to reopen, so the button stays hidden.
+  it('allows a chat quote that carries a session id', () => {
+    const q: QuoteItem = { id: '1', text: 'chat', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'message', sessionId: 'sess-abc', messageId: 42 }
+    expect(canJumpToSource(q)).toBe(true)
+  })
+
+  it('still refuses a chat quote with no session id', () => {
+    const q: QuoteItem = { id: '1', text: 'chat', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'message' }
     expect(canJumpToSource(q)).toBe(false)
   })
 })

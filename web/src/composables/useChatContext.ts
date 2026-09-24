@@ -10,9 +10,17 @@ export interface QuoteData {
   /** External address when the quote came from a forge object. */
   url?: string
   /** Where the quote came from; drives the drawer's jump affordance. */
-  sourceKind?: 'file' | 'url' | 'message'
+  sourceKind?: 'file' | 'url' | 'message' | 'selection'
   /** DB message id when the quote was taken from a chat message. */
   messageId?: number
+  /** Commit SHA when the quote came from a git-history or CI-pipeline view. */
+  commitSha?: string
+  /** Scheduled task id when the quote came from a task view. */
+  taskId?: number
+  /** Chat session id when the quote came from a chat message. */
+  sessionId?: string
+  /** Task execution id when the quote came from one run's detail view. */
+  executionId?: string
 }
 
 export interface StagedQuote extends QuoteData {

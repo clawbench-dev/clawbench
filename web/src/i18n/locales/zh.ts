@@ -1697,6 +1697,7 @@ export default {
     notePlaceholder: '为这段引用添加批注...',
     jumpToSource: '跳转到来源',
     messageQuote: '聊天消息',
+    selectionQuote: '选中内容',
     removeQuote: '移除引用',
     quoteMessage: '引用这条消息',
   },

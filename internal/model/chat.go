@@ -49,6 +49,30 @@ type FileEntry struct {
 	// It is what makes the re-rendered fence header match the pre-refactor
 	// "lang:path:lines" form instead of degrading to ":path:lines".
 	Language string `json:"language,omitempty"`
+	// SourceKind is where a Kind == "quote" entry came from: "file", "url",
+	// "message", or "selection" (a free-form selection with no addressable
+	// source, e.g. a terminal selection). It round-trips so the detail drawer
+	// can label a reloaded quote correctly — it cannot be re-derived, since a
+	// "selection" quote carries no url and no path, exactly like a "message"
+	// one. Empty (legacy rows) falls back to client-side inference.
+	SourceKind string `json:"sourceKind,omitempty"`
+	// The source locators below are MACHINE-readable keys that let the client
+	// jump back to where a quote came from, and let the AI reach the origin.
+	// The human-readable name travels in Path (documented as a label).
+	//
+	// They round-trip because the quoted text carries no trace of them: after a
+	// reload nothing else identifies which commit, task, session or message a
+	// sent quote came from, so dropping one makes the quote silently unjumpable.
+	// CommitSHA is the commit a git-history or CI-pipeline quote came from.
+	CommitSHA string `json:"commitSha,omitempty"`
+	// TaskID is the scheduled task a task quote came from.
+	TaskID int64 `json:"taskId,omitempty"`
+	// SessionID is the chat session a message quote came from.
+	SessionID string `json:"sessionId,omitempty"`
+	// MessageID is the DB chat-message id the quote was taken from.
+	MessageID int64 `json:"messageId,omitempty"`
+	// ExecutionID is the task execution a run-detail quote came from.
+	ExecutionID string `json:"executionId,omitempty"`
 }
 
 // IsURL reports whether the entry is an external URL rather than a local path.

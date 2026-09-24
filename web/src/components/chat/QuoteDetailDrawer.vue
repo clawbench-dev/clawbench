@@ -7,11 +7,12 @@
 
     <div v-if="quote" class="qd-content">
       <!-- Source line: what this quote came from, plus the jump action.
-           A chat-message quote has nothing to open, so the button is hidden
-           rather than rendered as a no-op. -->
+           A chat-message or free-form selection quote has nothing to open, so
+           the button is hidden rather than rendered as a no-op. -->
       <div class="qd-source-row">
         <span class="qd-source" :title="quote.filePath || quote.text">
-          <MessageSquareQuote v-if="quote.sourceKind !== 'message'" :size="13" class="qd-source-icon" />
+          <MessageSquareQuote v-if="quote.sourceKind === 'file' || quote.sourceKind === 'url'" :size="13" class="qd-source-icon" />
+          <MousePointer2 v-else-if="quote.sourceKind === 'selection'" :size="13" class="qd-source-icon" />
           <MessageSquareText v-else :size="13" class="qd-source-icon" />
           {{ sourceLabel }}
         </span>
@@ -26,9 +27,14 @@
         </button>
       </div>
 
-      <!-- Quoted content, verbatim and read-only. -->
-      <div class="qd-section-title">{{ t('quoteBar.quotedContent') }}</div>
-      <pre class="qd-quoted-text">{{ quote.text }}</pre>
+      <!-- Quoted content, verbatim and read-only.
+           Hidden entirely when there is no text: a whole-object quote (a file or
+           an issue/PR reference) carries only a label, and an empty <pre> read as
+           a rendering bug rather than as "this quote references the object". -->
+      <template v-if="quote.text">
+        <div class="qd-section-title">{{ t('quoteBar.quotedContent') }}</div>
+        <pre class="qd-quoted-text">{{ quote.text }}</pre>
+      </template>
 
       <!-- Annotation, editable. Saved explicitly: the sent case writes to the
            DB, so an implicit save on every keystroke would be wasteful and an
@@ -59,7 +65,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquareQuote, MessageSquareText, ExternalLink } from 'lucide-vue-next'
+import { MessageSquareQuote, MessageSquareText, MousePointer2, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { quoteLabel, quoteLineRange, canJumpToSource, type QuoteItem } from '@/utils/quoteItem'
@@ -117,14 +123,20 @@ const dirty = computed(() => note.value !== (props.quote?.note || ''))
 const canJump = computed(() => (props.quote ? canJumpToSource(props.quote) : false))
 
 /**
- * Label for the source line. A chat quote has no path, so it is identified by
- * its kind instead of rendering an empty row.
+ * Label for the source line.
+ *
+ * A real label (a file path, "owner/repo#7", a session name) always wins — it
+ * is what tells the user which source this came from. Only a quote with no
+ * label at all falls back to a generic kind label, so the row is never blank.
  */
 const sourceLabel = computed(() => {
   const q = props.quote
   if (!q) return ''
+  const labelled = `${quoteLabel(q)}${quoteLineRange(q)}`
+  if (labelled) return labelled
   if (q.sourceKind === 'message') return t('quoteBar.messageQuote')
-  return `${quoteLabel(q)}${quoteLineRange(q)}`
+  if (q.sourceKind === 'selection') return t('quoteBar.selectionQuote')
+  return ''
 })
 
 function handleSave() {

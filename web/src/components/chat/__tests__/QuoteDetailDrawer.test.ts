@@ -40,6 +40,36 @@ describe('QuoteDetailDrawer', () => {
     expect(wrapper.find('.qd-quoted-text').text()).toBe('func main() {}')
   })
 
+  // A whole-object quote ("quote this file") carries only a label. The empty
+  // <pre> read as a rendering bug rather than as "this references the object",
+  // so the whole section is omitted.
+  it('omits the quoted-content section for a whole-object quote', () => {
+    const wrapper = mountDrawer({
+      quote: fileQuote({ text: '', startLine: 0, endLine: 0 }),
+    })
+
+    expect(wrapper.find('.qd-quoted-text').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('quoteBar.quotedContent')
+    // The rest of the drawer still works: the source and the annotation.
+    expect(wrapper.find('.qd-source').text()).toContain('a.go')
+    expect(wrapper.find('.qd-note-input').exists()).toBe(true)
+  })
+
+  it('labels a free-form selection quote generically', () => {
+    const wrapper = mountDrawer({
+      quote: fileQuote({
+        text: 'npm run build', filePath: '', startLine: 0, endLine: 0,
+        sourceKind: 'selection',
+      }),
+    })
+
+    // Without the 'selection' kind it would be inferred as a chat message.
+    expect(wrapper.find('.qd-source').text()).toContain('quoteBar.selectionQuote')
+    expect(wrapper.find('.qd-source').text()).not.toContain('quoteBar.messageQuote')
+    // No source to open, so no jump button.
+    expect(wrapper.find('.qd-jump').exists()).toBe(false)
+  })
+
   it('shows the source label with its line range', () => {
     const wrapper = mountDrawer()
     expect(wrapper.find('.qd-source').text()).toContain('a.go:10-20')

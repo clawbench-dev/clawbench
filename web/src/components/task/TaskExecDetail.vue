@@ -13,8 +13,27 @@
       <SummaryToggle mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
     </div>
 
-    <!-- Scrollable message content -->
-    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart.passive="onContentTouchStart" @touchend="onContentTouchEnd" @touchcancel="onContentTouchEnd" @scroll="handleScroll">
+    <!-- Scrollable message content.
+         The `data-quote-*` attributes make a selection in this run's output
+         quotable with its full provenance: which task, which run, and which
+         chat message/session it came from. Without them a quote of a run's
+         output would carry no way back to the run. -->
+    <div
+      class="exec-detail-content"
+      ref="contentRef"
+      :data-quote-source="quoteSourceLabel"
+      :data-quote-task-id="taskId || ''"
+      :data-quote-execution-id="String(execDetail?.id || '')"
+      :data-quote-session-id="String(execDetail?.sessionId || '')"
+      :data-quote-message-id="execDetail?.messageId ? String(execDetail.messageId) : ''"
+      data-quote-language="task-exec"
+      @click="handleContentClick"
+      @mousedown="onTableMouseDown"
+      @touchstart.passive="onContentTouchStart"
+      @touchend="onContentTouchEnd"
+      @touchcancel="onContentTouchEnd"
+      @scroll="handleScroll"
+    >
       <!-- Trigger source: links an event-triggered run back to its issue/PR and
            shows the exact context block that was prepended to the prompt, so
            the run can be read against what actually triggered it. -->
@@ -153,6 +172,21 @@ const { t } = useI18n()
 const { refreshExecDetail } = useTaskTab()
 const identity = useSessionIdentity()
 const theme = inject('theme', ref('light'))
+
+/**
+ * Quote-source label for a selection in this run's output.
+ *
+ * Names the task (what the user recognises) and the run (which execution, since
+ * a task has many). The task id and execution id travel as separate attributes
+ * — they are the machine keys the jump handler needs, and a name is not
+ * addressable.
+ */
+const quoteSourceLabel = computed(() => {
+  const name = props.taskName || ''
+  const execId = props.execDetail?.id ? `#${props.execDetail.id}` : ''
+  if (!name) return execId
+  return execId ? `${name} ${execId}` : name
+})
 const { openFilePath, verifyFilePaths, readLineTargetFromEl } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const switchTab = inject('switchTab', () => {})

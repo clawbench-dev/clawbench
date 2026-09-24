@@ -214,6 +214,7 @@ import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
 import { fromStagedQuote, fromFileEntry, materializeQuotes } from '@/utils/quoteItem.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
+import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
 import { buildSendPayload } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
@@ -471,16 +472,56 @@ async function saveQuoteNote(note) {
 }
 
 /**
- * Jump from the drawer to the quote's source: a file opens at its line range, a
- * forge quote opens its address. A chat-message quote has neither, and the
- * drawer hides the button for it.
+ * Jump from the drawer to the quote's source.
+ *
+ * Order matters: the most specific locator wins, because a quote can carry more
+ * than one. A git-diff quote, for instance, has both a file path and a commit —
+ * and the user who selected a hunk in a commit view means "that commit", not
+ * "that file at its current state". Each branch therefore jumps to the
+ * narrowest thing the quote can identify, and only falls through when that
+ * locator is absent.
+ *
+ * All four cross-panel jumps reuse the EXISTING navigation channels rather than
+ * inventing new ones: `navigate-to-commit` and `clawbench-open-task` are already
+ * handled by App.vue, and the session jump goes through the same session-open
+ * event the notification taps use.
  */
 async function jumpToQuoteSource(q) {
     if (!q) return
-    if (q.sourceKind === 'url' && q.url) {
+
+    // 1. Commit: open the git history at that commit (not the file, which is
+    //    what the path alone would open).
+    if (q.commitSha) {
+        window.dispatchEvent(new CustomEvent('navigate-to-commit', { detail: { sha: q.commitSha } }))
+        return
+    }
+
+    // 2. Task: open the scheduled task's detail view.
+    if (q.taskId) {
+        window.dispatchEvent(new CustomEvent('clawbench-open-task', {
+            detail: { taskId: q.taskId, executionId: q.executionId },
+        }))
+        return
+    }
+
+    // 3. Session + message: switch to the session and scroll to the message.
+    //    The request is parked in module state because the session may still
+    //    have to load (and may be a different project) — see useMessageNavigation.
+    if (q.sessionId) {
+        if (q.messageId) setPendingMessageNavigation(q.sessionId, q.messageId)
+        window.dispatchEvent(new CustomEvent('clawbench-open-session', {
+            detail: { sessionId: q.sessionId },
+        }))
+        return
+    }
+
+    // 4. External address (a forge issue/PR, a CI run, a comment anchor).
+    if (q.url) {
         openExternalUrl(q.url)
         return
     }
+
+    // 5. A file: open it at its line range.
     if (!q.filePath) return
     const relPath = relativizeProjectPath(q.filePath, store.state.projectRoot)
     await openFilePath(relPath, q.startLine, q.endLine, 'chat')
@@ -1192,6 +1233,36 @@ async function handleToolSendMessage(text, cardKey) {
 function scrollBottom(force = false) {
     messageListRef.value?.scrollToBottom(force)
 }
+
+/**
+ * Consume a pending "open this message" request once its session is loaded.
+ *
+ * A quote's jump may target a session that is not on screen yet (and may be in
+ * another project), so the request is parked in module state by
+ * jumpToQuoteSource and picked up here. It waits for the CURRENT session to be
+ * the requested one before scrolling: acting earlier would search the wrong
+ * session's message list and silently do nothing.
+ *
+ * `immediate` + watching the message count covers both arrival paths — the
+ * session may already be open (messages present) or still loading (the watcher
+ * fires when they land).
+ */
+watch(
+    [() => identity.currentSessionId.value, () => messages.value.length],
+    ([sid]) => {
+        const req = pendingMessageNavigation.value
+        if (!req || req.sessionId !== sid) return
+        // Consume only once the target message actually exists in this session.
+        // An optimistic or not-yet-paged message leaves the request pending, so
+        // a later arrival can still satisfy it.
+        const present = messages.value.some(m => m.id === req.messageId)
+        if (!present) return
+        consumePendingMessageNavigation()
+        // The list renders on the next tick; scroll after it exists.
+        nextTick(() => messageListRef.value?.scrollToMessage(req.messageId))
+    },
+    { immediate: true },
+)
 
 // Async render flush (throttled 300ms + rAF) grows the content height AFTER
 // the initial scroll-to-bottom already ran. If the user has not scrolled away

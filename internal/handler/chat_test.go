@@ -1397,6 +1397,98 @@ func TestAIChat_QuoteAttachment_KeepsURL(t *testing.T) {
 	assert.Equal(t, "acme/widgets#7", got.Path)
 }
 
+// TestAIChat_QuoteAttachment_KeepsSourceKind verifies a quote's source kind
+// survives validation and persistence.
+//
+// Same failure mode as the URL regression above (this function rebuilds the
+// entry field-by-field), with an extra twist: SourceKind cannot be re-derived
+// on the client. A terminal quote ('selection') carries no url and no path,
+// exactly like a quote taken from a chat message, so dropping it here makes the
+// detail drawer label a terminal quote as "chat message" after any reload.
+func TestAIChat_QuoteAttachment_KeepsSourceKind(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-kind", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "解释这段输出",
+		"files": []model.FileEntry{{
+			Path: "", Kind: "quote", ID: "quote-sel-1",
+			Text: "npm run build", SourceKind: "selection",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Files, 1)
+
+	got := messages[0].Files[0]
+	assert.Equal(t, "quote", got.Kind)
+	assert.Equal(t, "selection", got.SourceKind,
+		"the source kind must survive, or the drawer mislabels the quote after a reload")
+	assert.Equal(t, "npm run build", got.Text)
+	assert.Empty(t, got.Path, "a selection quote has no path")
+}
+
+// TestAIChat_QuoteAttachment_KeepsSourceLocators verifies every source locator
+// survives validation and persistence.
+//
+// Same field-by-field rebuild hazard as the URL and SourceKind regressions
+// above, one step worse: these are the ONLY route back to the origin. The
+// quoted text carries no trace of them, so dropping one makes the quote
+// silently unjumpable — no error, the jump button simply does nothing.
+func TestAIChat_QuoteAttachment_KeepsSourceLocators(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-locators", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "这个构建为什么失败",
+		"files": []model.FileEntry{{
+			Path: "每日构建 (#12)", Kind: "quote", ID: "quote-loc-1",
+			Text: "构建失败了", CommitSHA: "a1b2c3d4e5", TaskID: 12,
+			SessionID: "sess-abc", MessageID: 42, ExecutionID: "exec-7",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Files, 1)
+
+	got := messages[0].Files[0]
+	assert.Equal(t, "a1b2c3d4e5", got.CommitSHA, "commit locator must survive, or the quote cannot reach its commit")
+	assert.Equal(t, int64(12), got.TaskID, "task locator must survive, or the quote cannot reach its task")
+	assert.Equal(t, "sess-abc", got.SessionID, "session locator must survive, or the quote cannot reopen its session")
+	assert.Equal(t, int64(42), got.MessageID, "message locator must survive, or the quote cannot scroll to its message")
+	assert.Equal(t, "exec-7", got.ExecutionID, "execution locator must survive, or the quote cannot reach its run")
+}
+
 // TestAIChat_QuoteAttachment_EmptyPathAndTextOnly verifies a chat-message quote
 // (no path, message may even be empty) is accepted: files alone satisfy the
 // "message or files required" guard, and an empty Path never reaches

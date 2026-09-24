@@ -71,6 +71,14 @@ type QuotePrompt struct {
 	// StartLine/EndLine are 1-based file lines, 0 when not applicable.
 	StartLine int
 	EndLine   int
+	// Source locators. These are the machine keys that let the AI (and the
+	// client's jump handler) find the origin. They are emitted in the header's
+	// parenthetical group; the human-readable name stays in Label.
+	CommitSHA   string
+	TaskID      int64
+	SessionID   string
+	MessageID   int64
+	ExecutionID string
 }
 
 // ClassifyAttachments splits entries into prompt buckets. excludePaths holds
@@ -86,13 +94,18 @@ func ClassifyAttachments(entries []FileEntry, excludePaths map[string]struct{}) 
 		// there would silently drop the quoted text from the prompt.
 		if f.IsQuote() {
 			parts.Quotes = append(parts.Quotes, QuotePrompt{
-				Label:     f.Path,
-				Language:  f.Language,
-				Note:      f.Note,
-				Text:      f.Text,
-				URL:       f.URL,
-				StartLine: f.StartLine,
-				EndLine:   f.EndLine,
+				Label:       f.Path,
+				Language:    f.Language,
+				Note:        f.Note,
+				Text:        f.Text,
+				URL:         f.URL,
+				StartLine:   f.StartLine,
+				EndLine:     f.EndLine,
+				CommitSHA:   f.CommitSHA,
+				TaskID:      f.TaskID,
+				SessionID:   f.SessionID,
+				MessageID:   f.MessageID,
+				ExecutionID: f.ExecutionID,
 			})
 			continue
 		}
@@ -125,15 +138,51 @@ const ReferencedLinkPrefix = "[Referenced external link: "
 // with no strip rule would become the session title.
 const QuotePromptPrefix = "[Quoted from "
 
+// quoteSourceKeys renders the machine-readable source locators for a quote, in
+// a stable order, as "key: value" pairs. Empty when the quote has none.
+//
+// These are what let the AI reach the origin rather than merely knowing a
+// human-readable name: "每日构建" is not addressable, "task: 12" is. They are
+// the same keys the client uses to jump, so the AI and the UI agree on what
+// identifies a source.
+func quoteSourceKeys(q QuotePrompt) []string {
+	var keys []string
+	if q.CommitSHA != "" {
+		keys = append(keys, "commit: "+q.CommitSHA)
+	}
+	if q.TaskID != 0 {
+		keys = append(keys, fmt.Sprintf("task: %d", q.TaskID))
+	}
+	if q.SessionID != "" {
+		keys = append(keys, "session: "+q.SessionID)
+	}
+	if q.MessageID != 0 {
+		keys = append(keys, fmt.Sprintf("message: %d", q.MessageID))
+	}
+	if q.ExecutionID != "" {
+		keys = append(keys, "execution: "+q.ExecutionID)
+	}
+	return keys
+}
+
 // quoteHeader renders a quote's header line, e.g.
 //
 //	[Quoted from /src/a.go:10-20]
 //	[Quoted from acme/widgets#7 (https://github.com/acme/widgets/issues/7)]
+//	[Quoted from 每日构建 (#12) (task: 12)]
+//	[Quoted from 修复登录 (session: sess-abc, message: 42)]
 //
 // The address is included for forge quotes: without it the AI knows an
-// issue/PR was referenced but has no way to reach it. Everything stays on ONE
-// line so the session-title stripper's stripToNewline rule consumes the whole
-// header (a second line would leak into the derived title).
+// issue/PR was referenced but has no way to reach it. Source locators (commit,
+// task, session, message, execution) join it in the same parenthetical group,
+// comma-separated, so the AI can address the origin too.
+//
+// Everything stays on ONE line so the session-title stripper's stripToNewline
+// rule consumes the whole header (a second line would leak into the derived
+// title).
+//
+// The parenthetical group is emitted ONLY when it has content, so a plain file
+// quote renders byte-identically to before this field existed.
 func quoteHeader(q QuotePrompt) string {
 	label := q.Label
 	if q.StartLine > 0 && q.EndLine > 0 && q.StartLine != q.EndLine {
@@ -141,8 +190,13 @@ func quoteHeader(q QuotePrompt) string {
 	} else if q.StartLine > 0 {
 		label = fmt.Sprintf("%s:%d", q.Label, q.StartLine)
 	}
+	var detail []string
 	if q.URL != "" {
-		label = fmt.Sprintf("%s (%s)", label, q.URL)
+		detail = append(detail, q.URL)
+	}
+	detail = append(detail, quoteSourceKeys(q)...)
+	if len(detail) > 0 {
+		label = fmt.Sprintf("%s (%s)", label, strings.Join(detail, ", "))
 	}
 	return QuotePromptPrefix + label + "]"
 }

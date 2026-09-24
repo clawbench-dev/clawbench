@@ -3,10 +3,30 @@
     <LoadingIndicator size="md" />
   </div>
   <div v-else-if="empty" class="git-diff-empty">{{ t('git.diffView.noChanges') }}</div>
-  <div v-else :class="['git-diff-scroll', { 'no-wrap': noWrap }]" v-html="html" @click="onDiffClick" />
+  <!-- `data-quote-source` labels text selected inside the diff so the quote bar
+       (useQuoteQuestion) can name the file. It is deliberately NOT
+       `data-file-path`: that attribute marks a markdown body as an attachable
+       file (mdBlockAttach/mdMermaidAttach), which would sprout "add to chat"
+       buttons on every block. An empty value is passed through so
+       getQuoteSource returns null and the quote falls back to a generic
+       selection label rather than an empty one.
+
+       `data-quote-commit` carries the commit the diff belongs to, so a quoted
+       hunk can jump back to that commit (not just to the file, which is what
+       the path alone would open). -->
+  <div
+    v-else
+    :class="['git-diff-scroll', { 'no-wrap': noWrap }]"
+    :data-quote-source="quoteLabel"
+    :data-quote-commit="commitSha || ''"
+    data-quote-language="diff"
+    v-html="html"
+    @click="onDiffClick"
+  />
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
@@ -18,6 +38,21 @@ const props = defineProps({
   html: { type: String, default: '' },
   noWrap: Boolean,
   filePath: { type: String, default: '' },
+  /** Commit this diff shows. Lets a quoted hunk jump back to the commit. */
+  commitSha: { type: String, default: '' },
+})
+
+/**
+ * Source label for a quote taken from the diff.
+ *
+ * The commit is named in the label when known, because "which commit" is the
+ * user's question in a history view — the file path alone does not answer it.
+ * Falls back to the bare path so the label is never empty when a file is known.
+ */
+const quoteLabel = computed(() => {
+  if (!props.commitSha) return props.filePath || ''
+  const short = props.commitSha.slice(0, 7)
+  return props.filePath ? `${short} ${props.filePath}` : short
 })
 
 function onDiffClick(event: MouseEvent) {
