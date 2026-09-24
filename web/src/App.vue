@@ -587,6 +587,7 @@ import {
   setSplitRatio,
   setLeftCollapsed,
   setChatCollapsed,
+  isChatPanelVisible,
   registerWideScreenCallbacks,
   WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
@@ -1432,12 +1433,19 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
 
     const sessionId = data.session_id
     if (!sessionId) return
-    // 聊天界面在前台激活且正是当前会话时，用户正看着结果，不弹；
-    // 否则（看别的 Tab、或事件属于其他会话）都弹。
-    // 注意：PC 宽屏下聊天面板常驻右侧（ChatPanelContent :active 恒为 true），
-    // 此时 activeTab 可能是 browse/terminal 但聊天仍在前台——必须用同一判断。
-    const chatPanelActive = isWideScreen || activeTab.value === 'chat'
-    if (chatPanelActive && sessionId === sessionIdentity.currentSessionId.value) return
+    // 聊天面板真正可见且正是当前会话时，用户正看着结果，不弹；
+    // 否则（看别的 Tab、聊天面板被折叠、或事件属于其他会话）都弹。
+    //
+    // 判定必须走 isChatPanelVisible，而不是内联 `isWideScreen || ...`：
+    // isWideScreen 是 ref，<script setup> 里不会自动解包，内联写法恒为真，
+    // 会让「当前会话」的完成/审批通知在任何 tab 下都被吞掉。
+    // 该 helper 还覆盖宽屏下聊天面板被折叠（display:none）的情况。
+    const chatPanelVisible = isChatPanelVisible({
+        isWideScreen: isWideScreen.value,
+        chatCollapsed: chatCollapsed.value,
+        activeTab: activeTab.value,
+    })
+    if (chatPanelVisible && sessionId === sessionIdentity.currentSessionId.value) return
 
     // 正文与系统通知用同一份纯文本：同一事件不该因为页面是否聚焦而读起来不同。
     // permission_pending 的 response_preview 为空，用工具名代替（同系统通知）。

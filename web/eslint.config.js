@@ -52,6 +52,19 @@ export default tseslint.config(
         rules: {
             'vue/multi-word-component-names': 'off',
             'vue/no-v-html': 'off',
+            // `isWideScreen || ...` in <script setup> is a constant-true expression:
+            // a ref object is always truthy and script code does NOT auto-unwrap.
+            // That silently collapsed the completion-notification guard to
+            // "any event for the current session is suppressed" (see App.vue's
+            // isChatPanelVisible and completionNotifyChatPanelGuard.test.ts).
+            //
+            // Caveat: this rule only recognises refs it can see being declared with
+            // ref()/computed() in the same file. A ref destructured from a
+            // composable (the App.vue case) carries no type info here, so the rule
+            // does NOT catch it — vue-tsc does not either (TS permits truthiness on
+            // objects). For those, pass the value explicitly into a typed helper so
+            // the mistake becomes a type error.
+            'vue/no-ref-as-operand': 'error',
             // typescript-eslint's `eslint-recommended` turns no-undef off on the
             // assumption that tsc will catch it — but only ~half of the .vue
             // files here declare `lang="ts"`, so vue-tsc silently skips the rest
