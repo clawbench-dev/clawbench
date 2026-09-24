@@ -120,7 +120,10 @@
         </div>
 
         <template v-else-if="!hasQuery">
-          <div class="cs-empty">{{ t('file.contentSearch.hint') }}</div>
+          <div class="cs-empty">
+            <SearchCode :size="56" :stroke-width="1.25" class="cs-empty-icon" />
+            <p class="cs-empty-text">{{ t('file.contentSearch.hint') }}</p>
+          </div>
         </template>
 
         <template v-else-if="search.state.searching && search.state.results.length === 0">
@@ -128,7 +131,11 @@
         </template>
 
         <template v-else-if="search.state.results.length === 0">
-          <div class="cs-empty">{{ t('file.search.noResults') }}</div>
+          <div class="cs-empty">
+            <SearchX :size="56" :stroke-width="1.25" class="cs-empty-icon" />
+            <p class="cs-empty-text">{{ t('file.search.noResults') }}</p>
+            <p class="cs-empty-hint">{{ t('file.contentSearch.noResultsHint') }}</p>
+          </div>
         </template>
 
         <template v-else>
@@ -184,7 +191,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  SearchCode, CaseSensitive, WholeWord, Regex, FolderTree, Globe,
+  SearchCode, SearchX, CaseSensitive, WholeWord, Regex, FolderTree, Globe,
   ListFilter, ChevronRight, TriangleAlert,
 } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -492,11 +499,36 @@ defineExpose({
   flex-direction: column;
 }
 
+/* Empty states (pre-query hint and no-results). Mirrors the filename search's
+   empty state in FileManagerContent (.fs-search-empty) so the two search
+   surfaces in the same panel look alike: a large muted icon over the text. */
 .cs-empty {
-  padding: var(--space-9) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: 40px var(--space-8);
   text-align: center;
-  color: var(--text-muted);
+}
+
+.cs-empty-icon {
+  color: var(--text-muted, #999);
+  opacity: var(--opacity-muted);
+}
+
+.cs-empty-text {
+  margin: 0;
   font-size: var(--font-size-md);
+  color: var(--text-secondary, #666);
+}
+
+/* Secondary line under the no-results message: suggests how to widen the
+   search instead of leaving the user at a dead end. */
+.cs-empty-hint {
+  margin: calc(-1 * var(--space-2)) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted, #999);
 }
 
 .cs-error {

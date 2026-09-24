@@ -92,6 +92,7 @@ const i18n = createI18n({
           excludeLabel: 'files to exclude',
           excludePlaceholder: 'e.g. dist/**, *.min.js',
           hint: 'Type to search inside file contents',
+          noResultsHint: 'Try a shorter term, or adjust the include / exclude and scope',
           summary: '{files} files, {matches} matches',
           summaryPlus: '{files}+ files, {matches}+ matches',
           fileTruncated: '{total} matches in this file — open it to see all',
@@ -197,6 +198,44 @@ describe('ContentSearchDialog', () => {
   it('shows the hint before a query is typed', async () => {
     const wrapper = await mountDialog()
     expect(wrapper.find('.cs-empty').text()).toContain('Type to search')
+  })
+
+  it('renders a large icon in the pre-query empty state', async () => {
+    const wrapper = await mountDialog()
+    const icon = wrapper.find('.cs-empty-icon')
+
+    // A large muted glyph anchors the empty state; without it the panel is a
+    // lone line of grey text. 56px matches the filename search's empty state
+    // in FileManagerContent so the two surfaces look alike.
+    expect(icon.exists()).toBe(true)
+    expect(icon.attributes('width')).toBe('56')
+    expect(icon.attributes('height')).toBe('56')
+    // The message must sit alongside the icon, not replace it.
+    expect(wrapper.find('.cs-empty-text').text()).toContain('Type to search')
+  })
+
+  it('renders a large icon plus a suggestion when nothing matched', async () => {
+    searchState.query = 'needle'
+    searchState.searching = false
+    const wrapper = await mountDialog()
+
+    expect(wrapper.find('.cs-empty-icon').exists()).toBe(true)
+    expect(wrapper.find('.cs-empty-icon').attributes('width')).toBe('56')
+    expect(wrapper.find('.cs-empty-text').text()).toContain('No files found')
+    // A dead-end "no results" is less useful than one that suggests widening
+    // the search.
+    expect(wrapper.find('.cs-empty-hint').text()).toContain('shorter term')
+  })
+
+  it('does not show the no-results icon while still searching', async () => {
+    searchState.query = 'needle'
+    searchState.searching = true
+    const wrapper = await mountDialog()
+
+    // The spinner owns this state; an empty-state icon here would claim the
+    // search already finished.
+    expect(wrapper.find('.cs-empty').exists()).toBe(false)
+    expect(wrapper.find('.cs-empty-icon').exists()).toBe(false)
   })
 
   it('shows a spinner while searching with no results yet', async () => {

@@ -1540,6 +1540,7 @@ export default {
       excludeLabel: '排除的文件',
       excludePlaceholder: '例如 dist/**, *.min.js',
       hint: '输入关键词以搜索文件内容',
+      noResultsHint: '试试更短的关键词，或调整包含 / 排除与范围',
       summary: '{files} 个文件，{matches} 处匹配',
       summaryPlus: '{files}+ 个文件，{matches}+ 处匹配',
       fileTruncated: '该文件共 {total} 处匹配 — 打开文件查看全部',

@@ -1537,6 +1537,7 @@ export default {
       excludeLabel: 'files to exclude',
       excludePlaceholder: 'e.g. dist/**, *.min.js',
       hint: 'Type to search inside file contents',
+      noResultsHint: 'Try a shorter term, or adjust the include / exclude and scope',
       summary: '{files} files, {matches} matches',
       summaryPlus: '{files}+ files, {matches}+ matches',
       fileTruncated: '{total} matches in this file — open it to see all',

@@ -26,7 +26,8 @@ describe('i18n content-search keys completeness', () => {
     const used = [
       'title', 'placeholder', 'button', 'caseSensitive', 'wholeWord', 'regex',
       'filters', 'includeLabel', 'includePlaceholder', 'excludeLabel',
-      'excludePlaceholder', 'hint', 'summary', 'summaryPlus', 'fileTruncated',
+      'excludePlaceholder', 'hint', 'noResultsHint', 'summary', 'summaryPlus',
+      'fileTruncated',
     ]
     const enCs = (en.file as Record<string, Record<string, string>>).contentSearch
     const zhCs = (zh.file as Record<string, Record<string, string>>).contentSearch
