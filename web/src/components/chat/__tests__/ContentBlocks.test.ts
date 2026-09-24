@@ -67,13 +67,15 @@ vi.mock('@/utils/api', () => ({
 // `data-path-type` is applied ONLY by verifyFilePaths mutating the live DOM, so
 // a render served from a cache of the HTML string never carries it. The
 // component re-verifies unverified spans itself; this spy pins that it does.
-const { mockVerifyFilePaths, mockVerifyCommitHashes } = vi.hoisted(() => ({
+const { mockVerifyFilePaths, mockVerifyCommitHashes, mockInvalidateNegativePathCache } = vi.hoisted(() => ({
   mockVerifyFilePaths: vi.fn().mockResolvedValue(undefined),
   mockVerifyCommitHashes: vi.fn().mockResolvedValue(undefined),
+  mockInvalidateNegativePathCache: vi.fn(),
 }))
 vi.mock('@/composables/useFilePathAnnotation', () => ({
   useFilePathAnnotation: () => ({ verifyFilePaths: mockVerifyFilePaths }),
   verifyFilePaths: mockVerifyFilePaths,
+  invalidateNegativePathCache: mockInvalidateNegativePathCache,
 }))
 vi.mock('@/composables/useCommitHashAnnotation', () => ({
   verifyCommitHashes: mockVerifyCommitHashes,
@@ -2579,6 +2581,52 @@ describe('path verification after a cache hit', () => {
     await nextTick()
 
     expect(mockVerifyCommitHashes).toHaveBeenCalledWith(['a3d276135'], expect.anything())
+  })
+
+  it('drops cached negative results when a turn ends', async () => {
+    // A turn that creates files usually names them BEFORE writing them. The
+    // thinking block renders mid-stream (thinking does NOT skip enhancements,
+    // unlike text blocks) and verifies the path while the file does not exist
+    // yet, caching 'none'. Because a cached 'none' is never re-checked, the
+    // final text's annotation was then stripped even though the file existed —
+    // only a hard refresh (which resets the module-level cache) recovered it.
+    //
+    // The turn boundary must therefore drop the negative entries so the
+    // post-streaming re-render re-verifies and resolves the new file.
+    mockInvalidateNegativePathCache.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'wrote src/new.go' }],
+      streaming: true,
+      renderTextBlock: () => '<p>wrote src/new.go</p>',
+    })
+    await nextTick()
+
+    // No turn has ended yet — nothing may be invalidated.
+    expect(mockInvalidateNegativePathCache).not.toHaveBeenCalled()
+
+    await wrapper.setProps({ streaming: false })
+    await nextTick()
+
+    expect(mockInvalidateNegativePathCache).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not invalidate on a turn that is still streaming', async () => {
+    // Guard against a regression where the hook moves out of the
+    // streaming→false transition and fires on every streaming frame, which
+    // would re-request every unresolved path continuously.
+    mockInvalidateNegativePathCache.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'a' }],
+      streaming: true,
+      renderTextBlock: () => '<p>a</p>',
+    })
+    await nextTick()
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'ab' }] })
+    await nextTick()
+
+    expect(mockInvalidateNegativePathCache).not.toHaveBeenCalled()
   })
 
   it('verifies paths inside thinking blocks (rendered via renderMarkdownHtml)', async () => {

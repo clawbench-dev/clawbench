@@ -375,7 +375,7 @@ import { appLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
 import { isThinkingUserAwayFromBottom } from '@/utils/thinkingScroll'
-import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
+import { verifyFilePaths, invalidateNegativePathCache } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 // Footer pill buttons (.fbtn) — the PermissionApproval card buttons share this
 // language, so the styles must be present wherever the chat surfaces render.
@@ -1561,6 +1561,16 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
     _blockFlushScheduler.cancelAll()
+    // A turn that creates files usually names them BEFORE writing them. The
+    // thinking block rendered mid-stream verifies those paths while they do
+    // not exist yet, caching 'none' — and because a cached 'none' is never
+    // re-checked, the final text's annotation is stripped even though the
+    // file now exists (only a hard refresh recovered it).
+    //
+    // Drop the negative entries before the post-streaming re-render below
+    // re-verifies every span, so this turn's newly created files resolve.
+    // Verified 'file'/'dir' entries are kept — a turn cannot invalidate them.
+    invalidateNegativePathCache()
     // Collapse all completed thinking blocks when message ends
     for (const blockKey of _collapseElKeys) {
       delete thinkingExpanded.value[blockKey]
