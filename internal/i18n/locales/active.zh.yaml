@@ -122,6 +122,7 @@ NothingToRewind: 没有可回溯的内容 — 这是会话中的最后一条消�
 InvalidAgentID: 无效的智能体 ID
 Session: 会话
 SearchQueryRequired: 请输入搜索关键词
+InvalidRegex: '正则表达式无效：{{.Error}}'
 UpgradeInProgress: 升级正在进行中
 AlreadyLatestVersion: 已是最新版本
 RAGNotAvailable: 全文检索不可用

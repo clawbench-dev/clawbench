@@ -3208,6 +3208,11 @@ function openChatSearchDrawer() {
 function openBrowseSearchDrawer() {
   fileManagerRef.value?.openSearch()
 }
+/** Ctrl+Shift+F — VSCode's "search in files". Only meaningful while the file
+ *  manager panel is the one being worked in. */
+function openBrowseContentSearch() {
+  fileManagerRef.value?.openContentSearch()
+}
 function openFileViewSearchDrawer() {
   if (searchDrawer.isOpen.value) {
     fileOverlayRef.value?.focusSearchInput()
@@ -3288,8 +3293,35 @@ function handleCtrlF(e: KeyboardEvent) {
     // Other tabs: don't preventDefault — let browser handle Ctrl+F natively
 }
 
+/**
+ * Ctrl+Shift+F — "search in files" (VSCode's content search).
+ *
+ * Handled separately from Ctrl+F because the Shift modifier makes `e.key`
+ * uppercase ('F'), so the Ctrl+F handler above deliberately ignores it. Only
+ * opens when the file manager is the active surface; elsewhere the shortcut is
+ * left to the browser.
+ */
+function handleCtrlShiftF(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key.toLowerCase() !== 'f') return
+    const target = e.target as HTMLElement | null
+    const tag = target?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    if (target?.isContentEditable) return
+    if (target?.closest?.('.terminal-panel')) return
+    if (_dlg.state.value.visible || projectDialogOpen.value) return
+
+    const browseActive = isWideScreen.value
+        ? activePane.value === PANE_LEFT && panelIsActive('browse')
+        : activeTab.value === 'browse'
+    if (!browseActive) return
+
+    e.preventDefault()
+    openBrowseContentSearch()
+}
+
  onMounted(() => {
      document.addEventListener('keydown', handleCtrlF)
+     document.addEventListener('keydown', handleCtrlShiftF)
      stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
          const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
            || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')

@@ -100,6 +100,9 @@
           <button v-if="toolbarInlineIds.includes('sharedFiles')" class="toolbar-btn" @click="sharedDrawerRef?.open()" :title="t('sharedFiles.button')">
             <ScreenShare :size="16" />
           </button>
+          <button v-if="toolbarInlineIds.includes('contentSearch')" class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
+            <SearchCode :size="16" />
+          </button>
           <template v-if="showMoreDropdown">
           <div ref="moreDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" @click="moreMenuOpen = !moreMenuOpen" :title="t('nav.more')">
@@ -173,6 +176,12 @@
                 <button class="toolbar-dropdown-item" @click="sharedDrawerRef?.open(); moreMenuOpen = false">
                   <ScreenShare :size="14" />
                   <span>{{ t('sharedFiles.button') }}</span>
+                </button>
+              </template>
+              <template v-if="toolbarCollapsedIds.includes('contentSearch')">
+                <button class="toolbar-dropdown-item" @click="openContentSearch(); moreMenuOpen = false">
+                  <SearchCode :size="14" />
+                  <span>{{ t('file.contentSearch.button') }}</span>
                 </button>
               </template>
             </div>
@@ -529,6 +538,17 @@
       <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" @contextmenu.prevent="handleCtxMenu" />
     </Teleport>
     <JumpDirDialog :open="jumpOpen" @close="jumpOpen = false" @confirm="handleJumpConfirm" />
+
+    <!-- Independent content (grep) search dialog. Kept separate from the
+         resident filename filter above: that one narrows the listing you are
+         looking at, while this one searches inside file contents across the
+         tree and jumps to a line. -->
+    <ContentSearchDialog
+      :open="contentSearchOpen"
+      :current-dir="currentDir"
+      @close="closeContentSearch"
+      @open-file="onContentSearchOpenFile"
+    />
     <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
@@ -577,6 +597,7 @@ import ExternalBadge from './ExternalBadge.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
+import ContentSearchDialog from './ContentSearchDialog.vue'
 import SharedFilesDrawer from './SharedFilesDrawer.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
 import DirPreviewBody from './DirPreviewBody.vue'
@@ -877,7 +898,7 @@ watch(moreMenuOpen, (open) => {
 const dirToolbarRef = ref(null)
 const demotableToolbarIds = computed(() => [
   'refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle',
-  'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles',
+  'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles', 'contentSearch',
 ])
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
@@ -1322,6 +1343,39 @@ function openSearch() {
     nextTick(() => searchInputRef.value?.focus())
 }
 
+// ── Content (grep) search dialog ──
+// A separate surface from the resident filename filter: this one searches
+// inside file contents and jumps to a line. `openContentSearch` is exposed so
+// App can bind a shortcut.
+const contentSearchOpen = ref(false)
+
+function openContentSearch() {
+    contentSearchOpen.value = true
+}
+
+function closeContentSearch() {
+    contentSearchOpen.value = false
+}
+
+/**
+ * A content-search hit was chosen: open the file at that line.
+ *
+ * Dispatch only — the navigation coordinator owns opening a file from an
+ * arbitrary surface (it resolves file-vs-directory, handles project-external
+ * paths, pushes onto the file nav stack and switches to the view tab). Doing
+ * `store.selectFile` here as well would read the file twice, since the
+ * coordinator selects it again as part of `openFileInViewer`.
+ *
+ * The dialog is dismissed first so the sheet is not left covering the viewer.
+ */
+function onContentSearchOpenFile(path, line) {
+    contentSearchOpen.value = false
+    if (!path) return
+    window.dispatchEvent(new CustomEvent('open-file-overlay', {
+        detail: { path, lineStart: line, source: 'browse' },
+    }))
+}
+
 /** Enter in the search box opens the highlighted result (files keep search).
  * With no arrow-key highlight yet, the first result is opened — matching the
  * pre-fusion drawer's Enter-on-first-result behavior. In multi-select mode it
@@ -1607,6 +1661,8 @@ defineExpose({
     _setIsDragOver(val) { isDragOver.value = val },
     openSearch,
     closeSearch: exitSearch,
+    openContentSearch,
+    closeContentSearch,
     exitMultiSelect,
     focusSearchInput() { searchInputRef.value?.focus() },
 })

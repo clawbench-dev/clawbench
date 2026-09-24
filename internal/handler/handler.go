@@ -453,6 +453,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Directory search SSE (recursive fuzzy file search)
 	register("/api/dir/search", DirSearch)
 
+	// Content search SSE (grep-style search inside file contents)
+	register("/api/file/content-search", ContentSearch)
+
 	// Port forwarding (registration & detection only; actual forwarding uses SSH tunnels)
 	register("/api/proxy/ports", ServeProxyPortAction)
 	register("/api/proxy/ports/enabled", ServeProxySetPortEnabled)

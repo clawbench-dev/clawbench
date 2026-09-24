@@ -43,7 +43,7 @@ flowchart LR
 - **模块级 Composable 单例**：多个 composable 使用模块级 `ref`，所有消费者共享同一份状态（如 `useToast`、`useSessionIdentity`、`useGlobalEvents`）。跨组件状态协调无需 provide/inject
 - **WebSocket 单通道**：所有实时推送走 `/api/ai/events/ws`。聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）由 `StreamHub.EmitToSession` 推送；系统事件（`session_update/task_update/summary_update`）通过 `ws.Manager` 广播。断线 ≤10s 自动缓冲重放（≤50 条），>120s 清理订阅（`internal/ws/manager.go`）。客户端通过 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`pong`/`metrics_preference` 六种消息与后端交互
 
-  旁注：还存在几条独立小通道用于专门场景——`GET /api/file/watch/ws`（WebSocket）、`GET /api/dir/search`（SSE）、`GET /api/tts/audio/ws`（WebSocket）——与聊天流无关
+  旁注：还存在几条独立小通道用于专门场景——`GET /api/file/watch/ws`（WebSocket）、`GET /api/dir/search`（SSE，按文件名）、`GET /api/file/content-search`（SSE，按文件内容/grep）、`GET /api/tts/audio/ws`（WebSocket）——与聊天流无关
 - **ACP 会话管理**：`useAcpSession` 管理 ACP 模式切换、思考深度、斜杠命令、权限审批和计划进度。`AcpSessionDrawer` 展示 ACP 特有的会话状态，`PlanPanel` 显示计划步骤和进度。计划进度**不持久化**——只缓存在 ACP 连接对象上（无 plan 表，`context_state` 只含 mode/thinkingEffort/usage），因此会话回溯（rewind）销毁连接后无从还原：`rewindSession` 成功后显式 `clearPlanState()`，`onSessionEvent` 收到 `status="rewound"` 且属于当前会话时同样清空（覆盖未发起回溯的其他客户端）；清空早于 `loadHistory`，使 reload 自带的 planState 仍能生效
 - **标注管道**：聊天消息依次经过 Worktree 标注 → 文件路径标注（双候选路径解析）→ localhost URL 标注 → commit hash 标注，全部基于 DOM 遍历而非正则替换。文件路径标注优先基于当前文件所在目录解析，解析失败时回退到项目根目录，验证阶段自动替换为主候选存在的路径。localhost URL 标注（`useLocalhostAnnotation`）检测聊天中的 `localhost:PORT` 和 `127.0.0.1:PORT` URL，追加可点击图标按钮，点击后触发端口映射 + 打开 WebView 流程。让聊天中的技术信息可直接交互
 - **SPA 热切换项目**：切换项目不需要 `window.location.reload()`，而是原地重置 store + Vue `:key` 重建组件树（0.15s 渐隐过渡）。无页面闪烁

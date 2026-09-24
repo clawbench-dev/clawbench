@@ -1970,6 +1970,86 @@ paths:
               schema:
                 type: string
 
+  /api/file/content-search:
+    get:
+      tags: [Files]
+      summary: 文件内容搜索（SSE）
+      description: |
+        grep 风格的内容搜索，Server-Sent Events 流式返回。OpenAPI 不建模事件流。
+
+        事件序列：每个命中的文件一个 `result` 事件（该文件的所有命中行合并
+        在一个事件里），最后一个 `done` 事件。正则非法时发出 `error` 事件而
+        非 400 —— EventSource 读不到非 2xx 响应的响应体，用事件才能把原因
+        传给用户。
+
+        `result` 事件字段：`name`、`path`、`matches`（每项含 `line`、`text`、
+        `ranges`，`ranges` 是 `text` 内的 **rune** 偏移区间，供前端高亮）、
+        `total`（该文件命中总数，可能大于 `matches` 长度）、`truncated`
+        （命中数超过单文件上限被截断）、`ignored`（git 是否忽略，与
+        `/api/dir` 的 DirEntry 语义一致，便于统一灰显）。
+
+        `path` 为空或相对时按项目根解析；**绝对路径表示项目外目录**，此时
+        `result.path` 返回绝对路径而非项目相对路径（与 `/api/dir/search`
+        一致，绝对路径的前导分隔符原样保留）。
+
+        默认跳过二进制/媒体/压缩包等扩展名、含 NUL 字节的文件、超过 5MiB
+        的文件；单文件命中行数上限 200，超长行会在首个命中处开窗截断。
+      operationId: contentSearch
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: 搜索关键词（正则模式下为正则表达式）
+          schema:
+            type: string
+        - name: path
+          in: query
+          description: 搜索根目录；相对路径按项目根解析，绝对路径表示项目外目录
+          schema:
+            type: string
+        - name: recursive
+          in: query
+          description: 是否递归子目录（默认 true）
+          schema:
+            type: boolean
+        - name: regex
+          in: query
+          description: 是否按正则解释 q（默认 false，即字面量匹配）
+          schema:
+            type: boolean
+        - name: wholeWord
+          in: query
+          description: 是否全词匹配（\b 包裹；\b 为 ASCII 语义）
+          schema:
+            type: boolean
+        - name: caseSensitive
+          in: query
+          description: 是否区分大小写（默认 false）
+          schema:
+            type: boolean
+        - name: include
+          in: query
+          description: 逗号分隔的包含 glob（gitignore 语法，如 `*.ts,**/*.go`）
+          schema:
+            type: string
+        - name: exclude
+          in: query
+          description: 逗号分隔的排除 glob（gitignore 语法，如 `dist/**,*.min.js`）
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: 返回的最大文件数（默认 file_search.display_limit+1，上限 500）
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: SSE 流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
   /api/file/list-tree:
     get:
       tags: [Files]

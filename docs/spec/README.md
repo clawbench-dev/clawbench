@@ -28,7 +28,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [Web 终端](features/terminal.md) | PTY 多标签会话（独立进程组防 /dev/tty 阻塞）、三模式手势系统（浏览/手势/选择）、拖拽选择+浮动复制栏、虚拟修饰键、键位/符号配置、终端主题切换、终端输入抽屉、终端帮助抽屉、TUI 应用支持 |
 | [Git 管理](features/git-management.md) | 历史浏览（含工作区变更页按需重拉）、文件 Diff 抽屉（prev/next 顺序导航）、Worktree 隔离、分支/标签 CRUD、内联操作按钮、代码量统计（存量 cloc 快照，两层排除=内置规则 ∩ 项目 `.gitignore` + 增量 git stats 时间窗，双子页）、停靠页与抽屉共享同一套历史视图逻辑 |
 | [文件管理](features/file-management.md) | 目录浏览（browse）+ 文件查看（view）独立 Tab、按 `.gitignore` 灰显 git 不跟踪的条目（仅淡化、仍可操作）、停靠预览窗格（工具栏开关 → 列表下方可拖拽高度的预览区，目录列出内容、文件复用代码切片/媒体渲染）、预览按行窗口取数（`lineStart`/`lineEnd` + `totalLines`，大文件不整体传输）、CodeMirror 代码编辑（浏览/编辑双模式）、VS Code 风格 sticky scroll、Markdown 标题锚定滚动同步、Markdown HTML 导出（共享渲染管线重建自包含单文件）、代码链接预览（点击验证过的代码文件路径/path:line 链接弹出代码切片浮层卡片，详见文件管理规格）、文件分享链接（capability token 公开只读，边界=创建时快照的根）、Excalidraw 画布编辑（iframe 内嵌独立构建 + 保存写回原文件）、内联音频/视频播放器、二进制文件处理（64KB/512KB 截断 + forceText）、目录导航栈、双候选路径解析、文件刷新与差异高亮（useFileRefresh 统一三种触发 + Markdown 块级差异 + 代码行级差异 + 两阶段闪烁）、刷新跳过加载遮罩、编辑、上传（含文件夹上传/目录树下载/粘贴上传）、目录跳转、拖放移动、面包屑拖拽到聊天、排序、网格视图、键盘快捷键、代码符号提取、归档打包 |
-| [文件发现](features/file-discovery.md) | 搜索融合进文件管理器主界面（内嵌视图，结果复用目录条目交互与 git 忽略灰显）、结果展示所在目录、全局搜索蕴含递归、PC Shift 范围选、最近文件、统一覆盖层打开行为 |
+| [文件发现](features/file-discovery.md) | 文件名搜索融合进文件管理器主界面（内嵌视图，结果复用目录条目交互与 git 忽略灰显）、按内容搜索（独立对话框：递归/正则/全词/大小写 + 包含排除 glob + 范围切换，SSE 流式、按文件分组、点击跳行）、结果展示所在目录、全局搜索蕴含递归、PC Shift 范围选、最近文件、统一覆盖层打开行为 |
 | [附件与系统分享](features/attachments-and-share.md) | 多文件附件（含行范围）、上传历史（支持删除）、Share In（支持删除）、文件夹上传（保持目录结构）、目录树下载（File System Access API）、粘贴上传、面包屑拖拽附件、缩略图与项目隔离 |
 | [会话导航与分叉](features/session-navigation.md) | 用户消息索引（含搜索框即时过滤 + 命中高亮）、跨分页定位、Ctrl+Up/Down 跳转消息、从指定消息创建对话分支（含 beforeMessageId、可选 Agent）、分叉上下文字符预算压缩（优先保留全部用户消息 + 助手条目填充剩余额度） |
 | [快捷操作](features/quick-actions.md) | 聊天 Quick Send、终端 Quick Commands、CRUD 与排序 |

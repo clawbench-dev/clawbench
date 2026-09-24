@@ -248,6 +248,42 @@ func TestShouldSkipSearchDir(t *testing.T) {
 		{"internal/handler", "handler", false},
 		// A dir literally named "build" not in a build tree is still walked.
 		{"src/build-tool", "build-tool", false},
+
+		// ── Dependency / toolchain caches ──
+		// These dominate a full walk: a Python venv alone can hold tens of
+		// thousands of files. Missing them made content search ~13x slower on
+		// a repo that has one.
+		{".venv", ".venv", true},
+		{"backend/.venv", ".venv", true}, // nested copy still pruned
+		{"venv", "venv", true},
+		{"__pycache__", "__pycache__", true},
+		{"src/__pycache__", "__pycache__", true},
+		{".pytest_cache", ".pytest_cache", true},
+		{".mypy_cache", ".mypy_cache", true},
+		{".ruff_cache", ".ruff_cache", true},
+		{".tox", ".tox", true},
+		{"bower_components", "bower_components", true},
+		{".next", ".next", true},
+		{".nuxt", ".nuxt", true},
+		{".svelte-kit", ".svelte-kit", true},
+		{".turbo", ".turbo", true},
+		{".parcel-cache", ".parcel-cache", true},
+		{".dart_tool", ".dart_tool", true},
+
+		// ── ClawBench's own runtime data ──
+		// The data dir holds session exports and logs (plain text, hundreds of
+		// MB); searching it returns the assistant's own history rather than
+		// the user's source. Both search surfaces must prune it.
+		{".clawbench", ".clawbench", true},
+		{".clawbench-web", ".clawbench-web", true},
+		{".clawbench-ci", ".clawbench-ci", true},
+
+		// A source directory whose name merely CONTAINS a pruned name is not
+		// pruned — matching is by exact directory name, not substring.
+		{"web/src/components/venv-picker", "venv-picker", false},
+		{"internal/venvconfig", "venvconfig", false},
+		{"src/my-venv", "my-venv", false},
+		{"docs/clawbench-web-notes", "clawbench-web-notes", false},
 	}
 
 	for _, tt := range tests {
