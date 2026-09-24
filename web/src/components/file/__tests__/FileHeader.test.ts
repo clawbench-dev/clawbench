@@ -686,8 +686,11 @@ describe('FileHeader', () => {
       await nextTick()
       expect(mockOpenLightbox).toHaveBeenCalledTimes(1)
       const url = mockOpenLightbox.mock.calls[0][0]
-      // Absolute path → served via ?path= query form.
-      expect(url).toContain('path=%2Ftmp%2Fphoto.png')
+      // Absolute path → served via the ?target= query form. The param was
+      // renamed from ?path= when the file-read endpoints moved to /api/fs/*
+      // (see internal/handler/file_routes_rename_test.go, which pins that
+      // ?path= must NOT come back); this assertion had not been updated.
+      expect(url).toContain('target=%2Ftmp%2Fphoto.png')
     })
 
     it('does nothing on view click when the file has no path', async () => {
