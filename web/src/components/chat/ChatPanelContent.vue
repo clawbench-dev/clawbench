@@ -212,7 +212,7 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
-import { fromStagedQuote, fromFileEntry, materializeQuotes } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote } from '@/utils/quoteItem.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
@@ -363,6 +363,11 @@ async function handleFileTagClick(fileEntry) {
  * content. Staging it here — rather than building a message — puts it on the
  * exact same path as a selection quote: a card in the input, clickable into the
  * detail drawer.
+ *
+ * The payload comes from buildMessageQuote, the same builder the selection path
+ * uses, so both entries produce an identical kind of quote (session label, id
+ * and message id included). They were built separately before and had drifted:
+ * this one carried no session id at all, which made the quote unopenable.
  */
 function handleQuoteMessage(msg) {
     if (!msg) return
@@ -373,17 +378,13 @@ function handleQuoteMessage(msg) {
     if (!text) return
 
     const id = msg.id !== undefined && msg.id !== null ? Number(msg.id) : NaN
-    addStagedQuote({
+    addStagedQuote(buildMessageQuote(
         text,
-        filePath: '',
-        language: '',
-        startLine: 0,
-        endLine: 0,
-        sourceKind: 'message',
+        { id: identity.currentSessionId.value, title: identity.currentSessionTitle.value },
         // Optimistic/local messages have no DB id; the quote is still valid, it
         // just cannot be addressed later (and the drawer hides the jump action).
-        ...(Number.isFinite(id) && id > 0 ? { messageId: id } : {}),
-    }, '')
+        Number.isFinite(id) && id > 0 ? id : undefined,
+    ), '')
 }
 
 /** Remove an attached reference entry (from AttachmentTags cards or AttachDrawer

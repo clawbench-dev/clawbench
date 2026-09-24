@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, isQuoteFileEntry, resolveQuoteType, type QuoteItem } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, isQuoteFileEntry, resolveQuoteType, buildMessageQuote, type QuoteItem } from '@/utils/quoteItem.ts'
 
 describe('fromStagedQuote', () => {
   it('maps a file quote and infers sourceKind=file', () => {
@@ -419,5 +419,71 @@ describe('resolveQuoteType', () => {
   // A legacy row with no sourceKind and no locator is a bare selection.
   it('defaults to selection when nothing identifies the source', () => {
     expect(resolveQuoteType(q({ sourceKind: undefined }))).toBe('selection')
+  })
+})
+
+describe('buildMessageQuote', () => {
+  // The ONE builder for both ways a chat message is quoted: the meta-bar button
+  // (whole message) and a text selection inside a message. They were written
+  // separately and had drifted — the button's path carried no session id, so the
+  // quote could not be reopened.
+  it('labels with the session title and carries the session id separately', () => {
+    const q = buildMessageQuote('the reply', { id: 'sess-abc', title: '每日构建' }, 42)
+
+    expect(q.filePath).toBe('每日构建')
+    expect(q.sessionId).toBe('sess-abc')
+    expect(q.messageId).toBe(42)
+    expect(q.sourceKind).toBe('message')
+  })
+
+  // The id must not be folded into the label: the card shows the title, and the
+  // id is the machine key the jump handler needs.
+  it('does not fold the session id into the label', () => {
+    const q = buildMessageQuote('x', { id: 'sess-abc', title: '每日构建' })
+
+    expect(q.filePath).toBe('每日构建')
+    expect(q.filePath).not.toContain('sess-abc')
+  })
+
+  // A session with no title yet must not produce a blank card.
+  it('falls back to the session id when there is no title', () => {
+    const q = buildMessageQuote('x', { id: 'sess-abc', title: '' })
+
+    expect(q.filePath).toBe('sess-abc')
+    expect(q.sessionId).toBe('sess-abc')
+  })
+
+  it('trims a whitespace-only title into the id fallback', () => {
+    const q = buildMessageQuote('x', { id: 'sess-abc', title: '   ' })
+
+    expect(q.filePath).toBe('sess-abc')
+  })
+
+  // An optimistic message has no DB id. The quote is still valid, it just cannot
+  // be scrolled back to, so the key is OMITTED rather than set to 0/NaN.
+  it.each([
+    ['undefined', undefined],
+    ['NaN', NaN],
+    ['zero', 0],
+    ['negative', -1],
+  ])('omits an unusable message id (%s)', (_label, messageId) => {
+    const q = buildMessageQuote('x', { id: 's', title: 't' }, messageId as number | undefined)
+
+    expect('messageId' in q).toBe(false)
+  })
+
+  it('omits the session id when there is none, rather than writing an empty string', () => {
+    const q = buildMessageQuote('x', {})
+
+    expect('sessionId' in q).toBe(false)
+    expect(q.filePath).toBe('')
+  })
+
+  it('carries no line info and no language (a chat quote has neither)', () => {
+    const q = buildMessageQuote('x', { id: 's', title: 't' }, 1)
+
+    expect(q.startLine).toBe(0)
+    expect(q.endLine).toBe(0)
+    expect(q.language).toBe('')
   })
 })

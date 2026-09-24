@@ -988,9 +988,47 @@ describe('useQuoteQuestion', () => {
 
         expect(ctx.quoteData.value?.messageId).toBe(42)
         expect(ctx.quoteData.value?.sourceKind).toBe('message')
-        // A chat quote has no file and no line info.
-        expect(ctx.quoteData.value?.filePath).toBe('')
+        // A chat quote carries no line info.
         expect(ctx.quoteData.value?.startLine).toBe(0)
+
+        wrapper.unmount()
+      })
+
+      // The label is the session title — that is what the user recognises — and
+      // the session id travels SEPARATELY. Without the id the quote cannot be
+      // reopened (a message id is only unique within its session).
+      it('labels the quote with the session title and carries the session id', () => {
+        mockSessionState.sessionId = 'f033de62-5b46-4f57-ab7b-99c527d37ab2'
+        mockSessionState.sessionTitle = '在界面点创建定时任务按钮的时候'
+        const wrapper = mountWithComposable()
+        const { textNode } = createChatMessage('db-42')
+        selectNode(textNode)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(ctx.quoteData.value?.filePath).toBe('在界面点创建定时任务按钮的时候')
+        expect(ctx.quoteData.value?.sessionId).toBe('f033de62-5b46-4f57-ab7b-99c527d37ab2')
+        // The id must NOT be folded into the label: the card shows the title,
+        // and the id is what makes it addressable.
+        expect(ctx.quoteData.value?.filePath).not.toContain('f033de62')
+
+        wrapper.unmount()
+      })
+
+      // A session with no title yet must not render a blank card.
+      it('falls back to the session id when the session has no title', () => {
+        mockSessionState.sessionId = 'sess-abc'
+        mockSessionState.sessionTitle = ''
+        const wrapper = mountWithComposable()
+        const { textNode } = createChatMessage('db-42')
+        selectNode(textNode)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(ctx.quoteData.value?.filePath).toBe('sess-abc')
+        expect(ctx.quoteData.value?.sessionId).toBe('sess-abc')
 
         wrapper.unmount()
       })

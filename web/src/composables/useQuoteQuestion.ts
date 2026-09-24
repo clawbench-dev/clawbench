@@ -3,6 +3,7 @@ import { useSessionIdentity, getSessionId, getSessionTitle } from '@/composables
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { closestElement, getLineInfo, getFileInfo, getQuoteSource, messageIdFromKey } from '@/utils/quoteQuestionUtils.ts'
+import { buildMessageQuote } from '@/utils/quoteItem.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
 
@@ -185,21 +186,19 @@ function evaluateSelection() {
   // The session id/name are attached too: a message id alone is only unique
   // within its session, so without them the quote could not be reopened from
   // another project or after a reload.
+  //
+  // Built by the SAME builder as the meta-bar "quote this message" button, so
+  // quoting a snippet and quoting the whole message produce the same kind of
+  // card. They used to be written separately and had drifted (the button's path
+  // had no session id at all).
   const msgEl = container.closest('.chat-message')
   if (msgEl) {
     const messageId = messageIdFromKey(msgEl.getAttribute('data-msg-key'))
-    const sessionId = getSessionId()
-    const sessionTitle = getSessionTitle()
-    setQuoteData({
+    setQuoteData(buildMessageQuote(
       text,
-      filePath: sessionTitle ? `${sessionTitle} (${sessionId})` : sessionId,
-      language: '',
-      startLine: 0,
-      endLine: 0,
-      sourceKind: 'message',
-      ...(messageId !== undefined ? { messageId } : {}),
-      ...(sessionId ? { sessionId } : {}),
-    })
+      { id: getSessionId(), title: getSessionTitle() },
+      messageId,
+    ))
     barVisible.value = true
     return
   }

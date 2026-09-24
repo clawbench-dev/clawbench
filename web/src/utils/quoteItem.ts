@@ -140,6 +140,55 @@ export function fromFileEntry(f: FileEntry): QuoteItem {
 }
 
 /**
+ * Build the payload for a quote taken from a chat message.
+ *
+ * This is the ONE builder for both ways a chat message gets quoted:
+ *   - the meta-bar "quote this message" button (whole message), and
+ *   - selecting text inside a message (a snippet of it).
+ *
+ * They were written separately and had already drifted: the button's path
+ * omitted `sessionId` entirely, so the resulting quote could not be reopened
+ * (a message id is only unique within its session). Keeping one builder means
+ * the two entries produce the same kind of quote, which is what the user sees —
+ * they are the same card either way.
+ *
+ * Session id/title are passed IN rather than read from useSessionIdentity here,
+ * so this module stays a pure utility with no composable dependency (it is
+ * imported by modules whose tests mock narrowly, and useSessionIdentity already
+ * imports useChatContext, so importing it back would create a cycle).
+ *
+ * The label is the session TITLE because that is what the user recognises;
+ * the id is what makes it addressable, and it travels separately as `sessionId`.
+ * With no title we fall back to the id so the card is never blank.
+ *
+ * `messageId` is omitted when unavailable (an optimistic message has no DB id):
+ * the quote is still valid, it just cannot be scrolled back to.
+ */
+export function buildMessageQuote(
+  text: string,
+  session: { id?: string; title?: string },
+  messageId?: number,
+): Pick<QuoteItem, 'text' | 'filePath' | 'language' | 'startLine' | 'endLine' | 'sourceKind' | 'sessionId' | 'messageId'> {
+  const sessionId = session.id || ''
+  const sessionTitle = (session.title || '').trim()
+  return {
+    text,
+    // The label is the session title (what the user recognises); the id is
+    // carried separately. Falling back to the id keeps the card from rendering
+    // blank when a session has no title yet.
+    filePath: sessionTitle || sessionId,
+    language: '',
+    startLine: 0,
+    endLine: 0,
+    sourceKind: 'message',
+    ...(sessionId ? { sessionId } : {}),
+    ...(typeof messageId === 'number' && Number.isFinite(messageId) && messageId > 0
+      ? { messageId }
+      : {}),
+  }
+}
+
+/**
  * Build a quote that references a whole object (a file or a forge issue/PR)
  * rather than a text selection.
  *
