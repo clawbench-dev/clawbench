@@ -3,6 +3,8 @@ SessionStreamNotFound: Session stream not found
 SessionStreamBusy: Session stream is being viewed on another device
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
+ShareSessionNoContent: This conversation has no shareable messages yet
+ShareSessionInvalidSelection: Some selected messages cannot be shared (they may still be generating)
 QueueIdRequired: queueId required
 QueueInjectStranded: Insert failed and the message could not be re-queued — please resend it
 NewSession: New Session

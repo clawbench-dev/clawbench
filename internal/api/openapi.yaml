@@ -2533,6 +2533,123 @@ paths:
         "200":
           description: 结果
 
+  /api/share/session:
+    get:
+      tags: [Share]
+      summary: 会话分享状态 + 可选消息列表
+      description: |
+        需要  查询参数。返回该会话当前的分享状态，并附带**全部**消息
+        （含仍在生成/排队的）供分享对话框渲染：生成中的消息不可勾选。
+        未分享时  为空但  照常返回，使打开对话框只需一次请求。
+      operationId: sessionShareStatus
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 分享状态与消息列表
+    post:
+      tags: [Share]
+      summary: 创建会话分享链接
+      description: |
+        请求体 `{sessionId, messageIds?}`。`messageIds` 为空表示分享全部**已完结**
+        消息（streaming=0 且 queued=0）。选中未完结或不属于该会话的消息返回 400。
+        快照为**冻结副本**：同时包含摘要与原文、内联 tool 输入输出与思考全文；
+        执行计划不包含。重复创建会轮换 token，旧链接立即失效。
+      operationId: sessionShareCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId]
+              properties:
+                sessionId:
+                  type: string
+                messageIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: 为空表示全部分享；选中项之外的已完结消息不进快照
+      responses:
+        "200":
+          description: 分享 token 与路径
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Share]
+      summary: 关闭会话分享
+      description: 需要 `session_id`（查询参数或请求体 `{sessionId}`）。
+      operationId: sessionShareRevoke
+      parameters:
+        - name: session_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 结果
+  /api/share/session/list:
+    get:
+      tags: [Share]
+      summary: 已分享会话抽屉数据
+      description: |
+        列出**当前项目**（请求 cookie 中的项目）的会话分享，最新在前。
+        返回数组按 `shares` 包装，无分享时为空数组。
+
+        与 `/api/share/list`（文件）不同，这里**按项目隔离**：会话标题属于私有内容，
+        列出其他项目的分享会泄露它。
+
+        `archived: true` 表示底层会话已归档。分享本身仍然有效（快照是冻结副本），
+        也**仍然可以在此撤销**——归档后会话不再可按 id 寻址，这个列表是它唯一的
+        撤销入口。前端据此隐藏「打开会话」动作。
+      operationId: sessionShareList
+      responses:
+        "200":
+          description: |
+            分享列表，形如 `{"shares": [{token, sessionId, title, backend,
+            messageCount, createdAt, archived}]}`，无分享时 `shares` 为空数组。
+        "403":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Share]
+      summary: 撤销会话分享（单条或全部）
+      description: |
+        请求体 `{token}` 撤销一条；`{token}` 也可用查询参数传入。
+        `{all: true}`（或查询参数 `all=1`）撤销**本项目**的全部会话分享。
+
+        撤销前会校验 token 归属于请求项目；未知 token 与其他项目的 token 返回
+        **同一个 404**，两者都不暴露对方是否存在。
+      operationId: sessionShareRevokeByToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                all:
+                  type: boolean
+      responses:
+        "200":
+          description: 结果
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /api/share/list:
     get:
       tags: [Share]
@@ -2558,6 +2675,10 @@ paths:
         （文档内引用的文件，同样返回 FileContent JSON）、`{token}/download`（强制下载，
         支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
         token 不存在一律 404，零信息暴露。
+
+        会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
+        `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回冻结的
+        会话快照 JSON）。两者同样免鉴权、token 不存在一律 404。
 
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
         `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限

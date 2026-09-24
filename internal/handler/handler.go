@@ -370,6 +370,14 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// exposure when the feature is unused).
 	register("/api/share", ServeShareManage)
 	register("/api/share/list", ServeShareList)
+	// Conversation (session) share links. Exact path so it is matched ahead of
+	// the public /api/share/ subtree; see ServeSessionShareManage.
+	register("/api/share/session", ServeSessionShareManage)
+	// Management list for conversation shares: GET lists this project's shares,
+	// DELETE revokes one by token or all of them. Separate from
+	// /api/share/session because that one operates on a single session id, and an
+	// archived session has no addressable id left.
+	register("/api/share/session/list", ServeSessionShareList)
 	registerPublic("/api/share/", ServeSharePublic)
 	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)

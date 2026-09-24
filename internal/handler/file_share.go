@@ -27,6 +27,10 @@ import (
 // the resolver cannot drift apart.
 const shareLocalSegment = "local"
 
+// shareSessionSegment is the URL path segment that addresses a conversation
+// share payload (see serveShareSessionPayload).
+const shareSessionSegment = "session"
+
 // shareResponse is the payload for share management endpoints.
 type shareResponse struct {
 	Token string `json:"token,omitempty"`
@@ -372,6 +376,18 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	token, rest, ok := parseSharePublicPath(r.URL.Path)
 	if !ok || token == "" {
 		http.NotFound(w, r)
+		return
+	}
+
+	// Conversation-share subpaths are resolved BEFORE the file-share lookup:
+	// a session token has no file_shares row, so looking that up first would
+	// 404 every session request before it could reach its own branch.
+	switch rest {
+	case "meta":
+		serveShareMeta(w, r, token)
+		return
+	case shareSessionSegment:
+		serveShareSessionPayload(w, r, token)
 		return
 	}
 
