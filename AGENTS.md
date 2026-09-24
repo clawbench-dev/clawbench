@@ -114,8 +114,8 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 | `navReady.ts` / `session.ts` | 渲染进程就绪握手、会话缓存强刷 |
 | `shortcuts.ts` | 应用级快捷键决策表（`before-input-event` 只认领 Ctrl+Shift+R / F12，F5 等一律放行给页面），不 import electron 便于单测 |
 | `updater.ts` | 升级检查：请求**服务端** `/api/desktop/latest`（不查 npm）；语义化版本比较，降级不误报 |
-| `install.ts` | 自升级安装：多候选 URL 依次降级下载 → SRI 校验 → 解压 zip（剥顶层包装目录、拒绝路径穿越、**恢复可执行位**）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针 |
-| `secrets.ts` / `store.ts` | safeStorage 加密存密码、electron-store 持久化服务器列表/主题/语言 |
+| `install.ts` | 自升级安装：多候选 URL 依次降级下载 → SRI 校验 → 解压 zip（剥顶层包装目录、拒绝路径穿越、**恢复可执行位**）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针。另支持**增量载荷包**：安装到从当前版本克隆出的目录、复用 Electron 运行时，装前按主版本 + 壳指纹门控，不符即静默回退全量下载 |
+| `secrets.ts` / `store.ts` | safeStorage 加密存密码（**按服务端分别存于各自 entry**，旧全局槽迁移时只归属当时的活动服务端）、electron-store 持久化服务器列表/主题/语言 |
 | `powersave.ts` | 屏幕常亮（powerSaveBlocker） |
 
 **自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；**应用自己**在 `whenReady` 最前面读该指针决定运行哪个版本（`selectStartupVersion` + `handOffToPointedVersion`）——指针缺失、目标目录不存在或指向自身都清指针并继续用当前版本启动，因此失败可回滚、旧版本保留，被删坏或写坏的升级永远不会让应用打不开。必须由应用自己读：原先读指针的 npm 启动器已随 npm 渠道一并移除，双击 Release 解压出的旧 exe 时若无人读指针，会静默退回旧版。

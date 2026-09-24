@@ -74,9 +74,9 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [统一返回与跨界面导航](client/unified-back-navigation.md) | 两级分层栈（界面内文件历史 useFileNavStack + 跨界面 jump origin useNavigationContext）、useNavigationStateMachine 确定性优先级裁决、覆盖层关闭顺序等于层叠顺序（BottomSheet 按实例创建序自注册、上层优先）、useNavigationCoordinator 全局文件打开唯一入口、目录游历事务 useDirectoryReturn、滚动/阅读位置精准还原 useFileScrollRestore、双击退出协议、多端返回入口（桌面顶栏导航簇 / 移动底部悬浮胶囊 / 右缘手势 / Android 物理键） |
 | [视觉设计指导手册](client/design-guide.md) | 改 UI 前必读：样式三层归属（`web/css/` 全局 → `src/assets/` 全局原语 → SFC scoped）、设计 token（7 档字号 / 间距 / 圆角 / 命名 z-index / 时长 / 透明度，含"为何是 px 非 rem"）、36 命名主题机制与新增主题改动清单、布局骨架（宽屏阈值 1024px 与物理宽度回退、安全区、壁纸层与 z-index 提升）、组件约定（`.fbtn` / `.count-badge` / `.chat-message` / `PopupMenu` / lucide 图标 14px 默认）、动效 token 与 keyframes 复用；**六条红线**（v-html 匹配不到 scoped、共享类基规则也必须全局、app-region 豁免只能是控件、对比度不能靠固定跳一档背景、content-visibility 滚动跳变、Android WebView 像素怪癖）；含改动检查清单与 15 个 CSS 守卫测试索引 |
 | [Android 集成](client/android-integration.md) | JS Bridge（25+ 方法）、12 个 Java 类模块（BackgroundService / PendingEventsWorker / FloatingStatusView 悬浮状态窗 + 会话面板 / LiveUpdateManager 实时更新等）、Android 全量国际化、APK 嵌入（`build.sh --android` → `go:embed` → `/api/apk`）、AppLog 兼容日志端点、推送感知生命周期、版本不匹配 Overlay、硬件返回键同步委托（evaluateJavascript 读 `__clawbenchBackHandled` + 双击退出） |
-| [多服务器管理](client/multi-server.md) | 服务器列表、凭据保存、登录页选择、应用内快速切换 |
+| [多服务器管理](client/multi-server.md) | 服务器列表、凭据按服务端分别保存、登录页选择、应用内快速切换、认证失败分类提示 |
 | [客户端安装与 App 模式](client/install-and-app-mode.md) | PWA 安装（零缓存 Service Worker + 稳定 manifest URL）、iOS 手动安装、APK 下载与原生模式识别 |
-| [桌面端客户端](client/desktop-client.md) | Electron 壳：窗口与链接策略、原生上下文菜单、最小化仍可投递的系统通知（`isDesktopApp` 与 Android 省电策略分野）、SSH 端口映射（desired 状态 + 单飞 + 保活与断线重连重建）、应用级快捷键走 `before-input-event`（F5 放行给页面）、侧装+指针自升级（应用自读指针，坏指针自愈）、GitHub Release 唯一分发渠道 |
+| [桌面端客户端](client/desktop-client.md) | Electron 壳：窗口与链接策略、原生上下文菜单、最小化仍可投递的系统通知（`isDesktopApp` 与 Android 省电策略分野）、多服务器凭据（每服务端各存各的密码）、界面分辨率自动缩放与原生 `Ctrl+滚轮` 缩放、SSH 端口映射（desired 状态 + 单飞 + 保活与断线重连重建）、应用级快捷键走 `before-input-event`（F5 放行给页面）、侧装+指针自升级（应用自读指针，坏指针自愈）+ 增量载荷包（复用 Electron 运行时，主版本/壳指纹双重门控）、GitHub Release 唯一分发渠道 |
 
 ## 参考资料
 
