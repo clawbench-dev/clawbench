@@ -314,6 +314,38 @@ describe('buildMarkdownPreviewDom', () => {
   })
 })
 
+  // Share mode must produce NO file-path annotations from THIS pipeline.
+  //
+  // Scoped deliberately to buildMarkdownPreviewDom: it is the file-preview
+  // pipeline, and it is the one with a share branch. The chat pipeline
+  // (renderMarkdown) has no such branch and DOES annotate paths in share mode,
+  // which is why verifyFilePaths keeps its own isShareMode() guard — see the
+  // guard test in useFilePathAnnotation.test.ts. Do not read this test as
+  // licence to delete that guard; the share page renders through the chat
+  // pipeline, not this one.
+  it('emits no file-path annotations in share mode', () => {
+    setShareToken('tokpaths')
+    try {
+      const md = [
+        'See `src/app.ts` for the entry point.',
+        'And [the guide](./docs/guide.md).',
+      ].join(String.fromCharCode(10) + String.fromCharCode(10))
+      const { html, detectedPaths } = buildMarkdownPreviewDom(
+        { content: md, path: 'README.md' },
+        { isPC: true, imageTimestamp: 1 },
+      )
+
+      expect(detectedPaths,
+        'share mode must not report paths for the disk-verification pass').toEqual([])
+      expect(html, 'no [data-file-path] element may be produced in share mode')
+        .not.toContain('data-file-path')
+      expect(html, 'the auth-bound chip classes must be absent too')
+        .not.toContain('chat-file-path')
+    } finally {
+      setShareToken(null)
+    }
+  })
+
 describe('data-source-line through the full markdown preview pipeline', () => {
   it('annotates block elements with their 1-based source lines', () => {
     const md = [

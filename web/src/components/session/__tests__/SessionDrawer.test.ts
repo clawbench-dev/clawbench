@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import SessionDrawer from '@/components/session/SessionDrawer.vue'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 // ── Mocks ────────────────────────────────────────────────────
 vi.mock('vue-i18n', () => ({
@@ -111,6 +113,58 @@ describe('SessionDrawer', () => {
       { id: 'agent-2', name: 'Agent Two', backend: 'acp' },
     ]
     wideScreen.isWideScreen.value = true
+  })
+
+  describe('shared-sessions entry button', () => {
+    it('is hidden when the project has no shared conversation', async () => {
+      const { useSessionShare } = await import('@/composables/useSessionShare')
+      const { resetSessionShareState } = useSessionShare()
+      resetSessionShareState()
+
+      const wrapper = mountDrawer()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(false)
+    })
+
+    it('appears as soon as one conversation is shared', async () => {
+      const { useSessionShare } = await import('@/composables/useSessionShare')
+      const { resetSessionShareState, markShared } = useSessionShare()
+      resetSessionShareState()
+
+      const wrapper = mountDrawer()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(false)
+
+      markShared('s1')
+      await nextTick()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
+
+      resetSessionShareState()
+    })
+
+    it('disappears again when the last share is revoked', async () => {
+      const { useSessionShare } = await import('@/composables/useSessionShare')
+      const { resetSessionShareState, markShared, markUnshared } = useSessionShare()
+      resetSessionShareState()
+      markShared('s1')
+
+      const wrapper = mountDrawer()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
+
+      markUnshared('s1')
+      await nextTick()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(false)
+
+      resetSessionShareState()
+    })
+
+    // The glyph must be the conversation+share mark, not a plain conversation.
+    it('uses the share glyph, not a plain conversation glyph', () => {
+      const src = readFileSync(
+        join(__dirname, '..', 'SessionDrawer.vue'),
+        'utf8',
+      )
+      expect(src).toContain('MessageSquareShare')
+      expect(src).not.toContain('MessagesSquare')
+    })
   })
 
   describe('rendering shell', () => {

@@ -87,7 +87,13 @@ vi.mock('@/composables/useTabDrawer', () => ({
 
 // Mock child components that have complex props/dependencies
 vi.mock('@/components/chat/ContentBlocks.vue', () => ({
-  default: { name: 'ContentBlocks', template: '<div class="content-blocks-stub" />' },
+  // Declare showingSummary so tests can assert the summary/original decision the
+  // host made (the real component renders from it).
+  default: {
+    name: 'ContentBlocks',
+    props: ['showingSummary', 'summary', 'msgId', 'readOnly'],
+    template: '<div class="content-blocks-stub" />',
+  },
 }))
 vi.mock('@/components/chat/FileAttachmentList.vue', () => ({
   default: { name: 'FileAttachmentList', template: '<div class="file-attachment-list-stub" />' },
@@ -1095,6 +1101,60 @@ describe('ChatMessageItem', () => {
 //
 // Found by end-to-end testing: the app fetched history with a real session id
 // while the rendered card's data-ask-key said 'no-session|...'.
+describe('ChatMessageItem — readOnly (public share page)', () => {
+  const assistantMsg = {
+    id: 'r1',
+    role: 'assistant',
+    content: 'answer',
+    blocks: [{ type: 'text', text: 'answer' }],
+    summary: 'a summary',
+  }
+
+  it("hides the copy and view-details buttons", () => {
+    const wrapper = createWrapper({ msg: assistantMsg, readOnly: true })
+    const actions = wrapper.find('.chat-meta-actions')
+    // No action button of any kind: speak / copy / fork / rewind / details are
+    // all suppressed in readOnly.
+    expect(actions.find('.chat-action-btn').exists()).toBe(false)
+  })
+
+  // The summary/original switch is an app-side reading preference. On a
+  // read-only transcript the reader cannot evaluate which view is "right",
+  // and the snapshot always carries the full blocks — so the share page renders
+  // original content and shows no toggle.
+  it("hides the summary toggle and renders original content", () => {
+    const wrapper = createWrapper({ msg: assistantMsg, readOnly: true })
+    expect(wrapper.find('.chat-summary-anchor').exists()).toBe(false)
+  })
+
+  // ContentBlocks is stubbed in this file, so assert the prop contract:
+  // readOnly with real blocks renders ORIGINAL (showingSummary=false).
+  it("passes showingSummary=false to ContentBlocks in readOnly", () => {
+    const wrapper = createWrapper({ msg: assistantMsg, readOnly: true })
+    const cb = wrapper.findComponent({ name: 'ContentBlocks' })
+    expect(cb.props('showingSummary')).toBe(false)
+  })
+
+  // …but never blank: a message with a summary and NO blocks falls back to
+  // the summary, since original content would render nothing.
+  it("passes showingSummary=true in readOnly when there are no blocks", () => {
+    const wrapper = createWrapper({
+      msg: { id: 'r3', role: 'assistant', content: '', blocks: [], summary: 'only a summary' },
+      readOnly: true,
+    })
+    const cb = wrapper.findComponent({ name: 'ContentBlocks' })
+    expect(cb.props('showingSummary')).toBe(true)
+  })
+  it("still shows the toggle in normal chat", () => {
+    const wrapper = createWrapper({ msg: assistantMsg })
+    expect(wrapper.find('.chat-summary-anchor').exists()).toBe(true)
+  })
+
+  it("shows the same buttons when readOnly is off (normal chat is unaffected)", () => {
+    const wrapper = createWrapper({ msg: assistantMsg })
+    expect(wrapper.find('.chat-meta-actions .chat-action-btn').exists()).toBe(true)
+  })
+})
 describe('ChatMessageItem — sessionId reaches ContentBlocks', () => {
   async function source(): Promise<string> {
     const mod = await import('@/components/chat/ChatMessageItem.vue?raw')

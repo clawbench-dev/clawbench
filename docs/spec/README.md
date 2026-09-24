@@ -31,6 +31,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [文件发现](features/file-discovery.md) | 搜索融合进文件管理器主界面（内嵌视图，结果复用目录条目交互与 git 忽略灰显）、结果展示所在目录、全局搜索蕴含递归、PC Shift 范围选、最近文件、统一覆盖层打开行为 |
 | [附件与系统分享](features/attachments-and-share.md) | 多文件附件（含行范围）、上传历史（支持删除）、Share In（支持删除）、文件夹上传（保持目录结构）、目录树下载（File System Access API）、粘贴上传、面包屑拖拽附件、缩略图与项目隔离 |
 | [会话导航与分叉](features/session-navigation.md) | 用户消息索引（含搜索框即时过滤 + 命中高亮）、跨分页定位、Ctrl+Up/Down 跳转消息、从指定消息创建对话分支（含 beforeMessageId、可选 Agent）、分叉上下文字符预算压缩（优先保留全部用户消息 + 助手条目填充剩余额度） |
+| [会话分享](features/session-share.md) | 对话快照的公开只读链接（capability token，无记录 404、重新生成即旋转）、冻结快照必须自包含（内联工具输入输出与思考文本，不经过 `ContentBlock` 往返）、路径相对化覆盖块顶层 `file_path`、超限按最长工具输出裁剪（16 MiB / 4 KiB 下限 + `truncated` 标记）、管理列表按项目隔离（与文件分享有意不同）、归档保留分享（可撤销、不可打开）、硬删除与保留期清理同事务撤销、只读渲染复用聊天管线（`readOnly` 须覆盖每个动作按钮）、状态指示放在菜单入口 |
 | [快捷操作](features/quick-actions.md) | 聊天 Quick Send、终端 Quick Commands、CRUD 与排序 |
 | [RAG 检索](features/rag.md) | 文档分块（含 chunk_overlap 配置）、向量化（可独立开关）、SQLite vec0 向量索引、混合检索（含 search_mode 配置）、三级索引重建（向量重建 + 全量重建 + 独立 FTS 重建）、可配置批次大小（`rag.batch_size`）、索引磁盘占用展示、会话聚合搜索、消息聚类分析、索引进度跟踪 |
 | [推送通知](features/push-notifications.md) | WebSocket 实时推送、通知音效开关（防止蓝牙耳机中断）、权限待审推送、离线事件持久化与游标拉取、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊 + 会话交互命令） |
