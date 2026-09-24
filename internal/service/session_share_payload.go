@@ -177,25 +177,9 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 		return "", 0, ErrSessionShareEmptySelection
 	}
 
-	if len(messageIDs) > 0 {
-		byID := make(map[int64]model.ChatMessage, len(messages))
-		for _, m := range messages {
-			byID[m.ID] = m
-		}
-		selected := make([]model.ChatMessage, 0, len(messageIDs))
-		for _, id := range messageIDs {
-			m, ok := byID[id]
-			if !ok {
-				return "", 0, fmt.Errorf("%w: message %d", ErrSessionShareUnknownMessage, id)
-			}
-			selected = append(selected, m)
-		}
-		// Restore chronological order regardless of the order the client sent.
-		sort.Slice(selected, func(i, j int) bool { return selected[i].ID < selected[j].ID })
-		messages = selected
-	}
-	if len(messages) == 0 {
-		return "", 0, ErrSessionShareEmptySelection
+	messages, err = selectShareMessages(messages, messageIDs)
+	if err != nil {
+		return "", 0, err
 	}
 
 	toolCalls, err := loadToolCallsByMessage(sessionID)
@@ -222,34 +206,9 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 		},
 		Messages: make([]SessionShareMessage, 0, len(messages)),
 	}
-
 	for i := range messages {
-		msg := messages[i]
-
-		// Assistant content is a JSON wrapper; rewrite it with the full payload
-		// inlined. User content may be plain text or the same wrapper, so it goes
-		// through the same path and falls back to itself when it is not JSON.
-		content := inlineMessageContent(msg, toolCalls, thinking, projectRoot, homeDir)
-
-		item := SessionShareMessage{
-			ID:        msg.ID,
-			Role:      msg.Role,
-			Content:   content,
-			CreatedAt: msg.CreatedAt,
-		}
-		if len(msg.Files) > 0 {
-			item.Files = sanitizeFileEntries(msg.Files, projectRoot, homeDir)
-		}
-		if msg.Role == "assistant" {
-			if s, ok := summaries[msg.ID]; ok {
-				v := s
-				item.Summary = &v
-			}
-			if c, ok := cards[msg.ID]; ok {
-				item.SummaryCards = sanitizeSummaryCards(c, projectRoot, homeDir)
-			}
-		}
-		out.Messages = append(out.Messages, item)
+		out.Messages = append(out.Messages,
+			buildShareMessage(messages[i], toolCalls, thinking, summaries, cards, projectRoot, homeDir))
 	}
 
 	raw, err := json.Marshal(out)
@@ -258,6 +217,68 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 	}
 	raw = trimPayloadToCap(raw, &out)
 	return string(raw), len(out.Messages), nil
+}
+
+// selectShareMessages narrows the session's finalized messages to the client's
+// selection, restoring chronological order regardless of the order sent. An
+// empty selection means "every message". An id matching no finalized message is
+// an error rather than a silent drop, so the frozen snapshot always matches what
+// the user believed they selected.
+func selectShareMessages(messages []model.ChatMessage, messageIDs []int64) ([]model.ChatMessage, error) {
+	if len(messageIDs) == 0 {
+		return messages, nil
+	}
+	byID := make(map[int64]model.ChatMessage, len(messages))
+	for _, m := range messages {
+		byID[m.ID] = m
+	}
+	selected := make([]model.ChatMessage, 0, len(messageIDs))
+	for _, id := range messageIDs {
+		m, ok := byID[id]
+		if !ok {
+			return nil, fmt.Errorf("%w: message %d", ErrSessionShareUnknownMessage, id)
+		}
+		selected = append(selected, m)
+	}
+	// Restore chronological order regardless of the order the client sent.
+	sort.Slice(selected, func(i, j int) bool { return selected[i].ID < selected[j].ID })
+	return selected, nil
+}
+
+// buildShareMessage freezes one message: its content is rewritten with the full
+// tool/thinking payload inlined and its attachments relativized. An assistant
+// turn additionally carries its reading summary and cards.
+func buildShareMessage(
+	msg model.ChatMessage,
+	toolCalls map[toolCallKey]ToolCallRecord,
+	thinking map[thinkingKey]string,
+	summaries map[int64]string,
+	cards map[int64]*model.SummaryCards,
+	projectRoot, homeDir string,
+) SessionShareMessage {
+	// Assistant content is a JSON wrapper; rewrite it with the full payload
+	// inlined. User content may be plain text or the same wrapper, so it goes
+	// through the same path and falls back to itself when it is not JSON.
+	item := SessionShareMessage{
+		ID:        msg.ID,
+		Role:      msg.Role,
+		Content:   inlineMessageContent(msg, toolCalls, thinking, projectRoot, homeDir),
+		CreatedAt: msg.CreatedAt,
+	}
+	if len(msg.Files) > 0 {
+		item.Files = sanitizeFileEntries(msg.Files, projectRoot, homeDir)
+	}
+	if msg.Role != roleAssistant {
+		return item
+	}
+	if s, ok := summaries[msg.ID]; ok {
+		v := s
+		item.Summary = &v
+	}
+	if c, ok := cards[msg.ID]; ok {
+		item.SummaryCards = sanitizeSummaryCards(c, projectRoot, homeDir)
+	}
+	return item
 }
 
 // messageIDsOf extracts the ids from a message slice.
@@ -395,60 +416,7 @@ func inlineMessageContent(msg model.ChatMessage, toolCalls map[toolCallKey]ToolC
 		if !ok {
 			continue
 		}
-		// A slim tool_use block carries a TOP-LEVEL file_path (see
-		// model.SlimBlock.FilePath), separate from the copy inside `input`. It
-		// is sanitized here because the switch below only touches the fields it
-		// explicitly names, and a path left in this slot would ship the
-		// creator's absolute directory layout into a public snapshot.
-		if fp, ok := block["file_path"].(string); ok && fp != "" {
-			block["file_path"] = relativizeSharePath(fp, projectRoot, homeDir)
-		}
-		switch block["type"] {
-		case "tool_use":
-			toolID, _ := block["id"].(string)
-			if toolID == "" {
-				continue
-			}
-			rec, found := toolCalls[toolCallKey{messageID: msg.ID, toolID: toolID}]
-			if !found {
-				continue
-			}
-			// The stored block already carries name/status/done/summary; the side
-			// table is authoritative for the heavy payload and for status, which
-			// the block may not have received if the tool finished after the
-			// message was persisted.
-			if len(rec.Input) > 0 {
-				var input any
-				if json.Unmarshal(rec.Input, &input) == nil {
-					block["input"] = sanitizeShareValue(input, projectRoot, homeDir)
-				}
-			}
-			if rec.Output != "" {
-				block["output"] = sanitizeShareString(rec.Output, projectRoot, homeDir)
-			}
-			if rec.Status != "" {
-				block["status"] = rec.Status
-			}
-			block["done"] = rec.Done
-			if rec.DurationMs > 0 {
-				block["duration_ms"] = rec.DurationMs
-			}
-			if rec.Summary != "" {
-				block["summary"] = sanitizeShareString(rec.Summary, projectRoot, homeDir)
-			}
-		case "thinking":
-			thinkID, _ := block["think_id"].(string)
-			if thinkID == "" {
-				continue
-			}
-			if text, found := thinking[thinkingKey{messageID: msg.ID, thinkID: thinkID}]; found {
-				block["text"] = sanitizeShareString(text, projectRoot, homeDir)
-			}
-		case "text", "warning", "error":
-			if s, ok := block["text"].(string); ok {
-				block["text"] = sanitizeShareString(s, projectRoot, homeDir)
-			}
-		}
+		sanitizeShareBlock(block, msg.ID, toolCalls, thinking, projectRoot, homeDir)
 	}
 
 	// metadata is kept (the viewer's metadata modal reads model/token/cost from
@@ -462,6 +430,81 @@ func inlineMessageContent(msg model.ChatMessage, toolCalls map[toolCallKey]ToolC
 		return sanitizeShareString(msg.Content, projectRoot, homeDir)
 	}
 	return string(out)
+}
+
+// sanitizeShareBlock sanitizes one content block in place, restoring the heavy
+// fields the storage layer stripped (tool input/output, thinking text) from the
+// side tables and relativizing every path it carries.
+func sanitizeShareBlock(
+	block map[string]any,
+	messageID int64,
+	toolCalls map[toolCallKey]ToolCallRecord,
+	thinking map[thinkingKey]string,
+	projectRoot, homeDir string,
+) {
+	// A slim tool_use block carries a TOP-LEVEL file_path (see
+	// model.SlimBlock.FilePath), separate from the copy inside `input`. It is
+	// sanitized here because the switch below only touches the fields it
+	// explicitly names, and a path left in this slot would ship the creator's
+	// absolute directory layout into a public snapshot.
+	if fp, ok := block["file_path"].(string); ok && fp != "" {
+		block["file_path"] = relativizeSharePath(fp, projectRoot, homeDir)
+	}
+	switch block["type"] {
+	case eventTypeToolUse:
+		sanitizeToolUseBlock(block, messageID, toolCalls, projectRoot, homeDir)
+	case blockTypeThinking:
+		thinkID, _ := block["think_id"].(string)
+		if thinkID == "" {
+			return
+		}
+		if text, found := thinking[thinkingKey{messageID: messageID, thinkID: thinkID}]; found {
+			block["text"] = sanitizeShareString(text, projectRoot, homeDir)
+		}
+	case contentKeyText, blockTypeWarning, eventTypeError:
+		if s, ok := block["text"].(string); ok {
+			block["text"] = sanitizeShareString(s, projectRoot, homeDir)
+		}
+	}
+}
+
+// sanitizeToolUseBlock restores a tool_use block's heavy payload from the side
+// table. The stored block already carries name/status/done/summary; the side
+// table is authoritative for input/output and for status, which the block may
+// not have received if the tool finished after the message was persisted.
+func sanitizeToolUseBlock(
+	block map[string]any,
+	messageID int64,
+	toolCalls map[toolCallKey]ToolCallRecord,
+	projectRoot, homeDir string,
+) {
+	toolID, _ := block["id"].(string)
+	if toolID == "" {
+		return
+	}
+	rec, found := toolCalls[toolCallKey{messageID: messageID, toolID: toolID}]
+	if !found {
+		return
+	}
+	if len(rec.Input) > 0 {
+		var input any
+		if json.Unmarshal(rec.Input, &input) == nil {
+			block["input"] = sanitizeShareValue(input, projectRoot, homeDir)
+		}
+	}
+	if rec.Output != "" {
+		block["output"] = sanitizeShareString(rec.Output, projectRoot, homeDir)
+	}
+	if rec.Status != "" {
+		block["status"] = rec.Status
+	}
+	block["done"] = rec.Done
+	if rec.DurationMs > 0 {
+		block["duration_ms"] = rec.DurationMs
+	}
+	if rec.Summary != "" {
+		block["summary"] = sanitizeShareString(rec.Summary, projectRoot, homeDir)
+	}
 }
 
 // sanitizeSummaryCards prepares summary cards for the snapshot.
@@ -603,42 +646,7 @@ func trimPayloadToCap(raw []byte, payload *SessionSharePayload) []byte {
 		return raw
 	}
 
-	// A message body is a JSON *string*, so a candidate must remember which
-	// message it came from: trimming happens on the decoded wrapper map, and
-	// that change only reaches the stored payload once it is written back into
-	// payload.Messages[i].Content. Skipping the write-back made this function a
-	// no-op — it re-marshalled the original strings and returned an over-cap
-	// snapshot, while truncated=true was discarded along with the mutation.
-	type candidate struct {
-		msgIndex int
-		wrapper  map[string]any
-		block    map[string]any
-	}
-	var candidates []candidate
-
-	for i := range payload.Messages {
-		trimmed := strings.TrimSpace(payload.Messages[i].Content)
-		if !strings.HasPrefix(trimmed, "{") {
-			continue
-		}
-		var wrapper map[string]any
-		if json.Unmarshal([]byte(trimmed), &wrapper) != nil {
-			continue
-		}
-		blocks, ok := wrapper["blocks"].([]any)
-		if !ok {
-			continue
-		}
-		for _, b := range blocks {
-			block, ok := b.(map[string]any)
-			if !ok || block["type"] != "tool_use" {
-				continue
-			}
-			if out, ok := block["output"].(string); ok && len(out) > sessionShareOutputTrimFloor {
-				candidates = append(candidates, candidate{msgIndex: i, wrapper: wrapper, block: block})
-			}
-		}
-	}
+	candidates := collectTrimCandidates(payload)
 	if len(candidates) == 0 {
 		// Nothing trimmable (size comes from many small blocks or long text).
 		// Store as-is rather than destroying content.
@@ -657,36 +665,95 @@ func trimPayloadToCap(raw []byte, payload *SessionSharePayload) []byte {
 	// a stale size and every candidate got halved in lockstep — gutting short
 	// outputs even when trimming the single longest would have sufficed.
 	for _, c := range candidates {
-		for len(raw) > maxSessionSharePayloadBytes {
-			out, _ := c.block["output"].(string)
-			if len(out) <= sessionShareOutputTrimFloor {
-				break
-			}
-			c.block["output"] = clipRunes(out, len(out)/2) + "\n…[truncated for sharing]"
-			c.block["truncated"] = true
-
-			// Write the trimmed wrapper back into the message body, then
-			// re-marshal the whole payload to measure the real stored size.
-			encoded, err := json.Marshal(c.wrapper)
-			if err != nil {
-				return raw
-			}
-			payload.Messages[c.msgIndex].Content = string(encoded)
-
-			next, err := json.Marshal(payload)
-			if err != nil {
-				return raw
-			}
-			raw = next
+		next, ok := trimCandidateToFit(raw, payload, c)
+		if !ok {
+			return raw // re-marshaling failed: keep the last good snapshot
 		}
-		if len(raw) <= maxSessionSharePayloadBytes {
+		if raw = next; len(raw) <= maxSessionSharePayloadBytes {
 			break
 		}
 	}
 	return raw
 }
 
-// TrimPayloadToCapForTest exposes the size trimmer so its behaviour can be
+// trimCandidate identifies one trimmable tool output.
+//
+// A message body is a JSON *string*, so a candidate must remember which message
+// it came from: trimming happens on the decoded wrapper map, and that change
+// only reaches the stored payload once it is written back into
+// payload.Messages[msgIndex].Content. Skipping the write-back made the trimmer
+// a no-op — it re-marshaled the original strings and returned an over-cap
+// snapshot, while truncated=true was discarded along with the mutation.
+type trimCandidate struct {
+	msgIndex int
+	wrapper  map[string]any
+	block    map[string]any
+}
+
+// collectTrimCandidates finds every tool_use block whose output is large enough
+// to be worth trimming.
+func collectTrimCandidates(payload *SessionSharePayload) []trimCandidate {
+	var candidates []trimCandidate
+	for i := range payload.Messages {
+		trimmed := strings.TrimSpace(payload.Messages[i].Content)
+		if !strings.HasPrefix(trimmed, "{") {
+			continue
+		}
+		var wrapper map[string]any
+		if json.Unmarshal([]byte(trimmed), &wrapper) != nil {
+			continue
+		}
+		blocks, ok := wrapper["blocks"].([]any)
+		if !ok {
+			continue
+		}
+		for _, b := range blocks {
+			block, ok := b.(map[string]any)
+			if !ok || block["type"] != eventTypeToolUse {
+				continue
+			}
+			if out, ok := block["output"].(string); ok && len(out) > sessionShareOutputTrimFloor {
+				candidates = append(candidates, trimCandidate{msgIndex: i, wrapper: wrapper, block: block})
+			}
+		}
+	}
+	return candidates
+}
+
+// trimCandidateToFit halves one candidate's output repeatedly until the payload
+// fits or this output reaches the floor. Each cut is written back into the
+// message body and the whole payload re-marshaled, so the measured size is the
+// size that will actually be stored.
+//
+// Reaching the floor stops trimming THIS candidate but must not stop the outer
+// loop: the remaining (shorter) outputs are still trimmable and may be what
+// brings the payload under the cap. ok=false means a re-marshal failed, so the
+// caller must keep its last good snapshot rather than storing a truncated one.
+func trimCandidateToFit(raw []byte, payload *SessionSharePayload, c trimCandidate) ([]byte, bool) {
+	for len(raw) > maxSessionSharePayloadBytes {
+		out, _ := c.block["output"].(string)
+		if len(out) <= sessionShareOutputTrimFloor {
+			break
+		}
+		c.block["output"] = clipRunes(out, len(out)/2) + "\n…[truncated for sharing]"
+		c.block["truncated"] = true
+
+		encoded, err := json.Marshal(c.wrapper)
+		if err != nil {
+			return raw, false
+		}
+		payload.Messages[c.msgIndex].Content = string(encoded)
+
+		next, err := json.Marshal(payload)
+		if err != nil {
+			return raw, false
+		}
+		raw = next
+	}
+	return raw, true
+}
+
+// TrimPayloadToCapForTest exposes the size trimmer so its behavior can be
 // asserted directly. It has no production caller outside BuildSessionSharePayload
 // and the trim is invisible from the outside once stored, so without this hook
 // the cap could regress silently again.

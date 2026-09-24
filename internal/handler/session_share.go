@@ -323,7 +323,7 @@ func serveSessionShareRevokeByToken(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case req.All:
-		serveSessionShareRevokeAll(w, r, projectPath)
+		serveSessionShareRevokeAll(w, projectPath)
 	case req.Token != "":
 		serveSessionShareRevokeOne(w, r, projectPath, req.Token)
 	default:
@@ -358,7 +358,7 @@ func serveSessionShareRevokeOne(w http.ResponseWriter, r *http.Request, projectP
 //
 // Deliberately not service.DeleteAllSessionShares(): that statement is global
 // and would revoke other projects' links too.
-func serveSessionShareRevokeAll(w http.ResponseWriter, r *http.Request, projectPath string) {
+func serveSessionShareRevokeAll(w http.ResponseWriter, projectPath string) {
 	shares, err := service.ListSessionShares(projectPath)
 	if err != nil {
 		slog.Error("session share: list for clear-all failed", "err", err)
@@ -374,11 +374,12 @@ func serveSessionShareRevokeAll(w http.ResponseWriter, r *http.Request, projectP
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
+
 // ─── Public token-scoped endpoints ───────────────────────────────────────────
 
 // shareMetaResponse tells the share SPA which kind of share a token addresses.
 type shareMetaResponse struct {
-	Kind         string `json:"kind"` // "file" | "session"
+	Kind         string `json:"kind"` // shareKindFile | shareKindSession
 	Title        string `json:"title,omitempty"`
 	MessageCount int    `json:"messageCount,omitempty"`
 }
@@ -399,7 +400,7 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	}
 	if ok {
-		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: "session", Title: title, MessageCount: count})
+		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: shareKindSession, Title: title, MessageCount: count})
 		return
 	}
 
@@ -410,7 +411,7 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	}
 	if fileOK {
-		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: "file", Title: name})
+		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: shareKindFile, Title: name})
 		return
 	}
 	http.NotFound(w, r)
@@ -419,7 +420,7 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 // serveShareSessionPayload writes the frozen snapshot verbatim.
 //
 // The stored payload is already JSON, so it is streamed as-is rather than
-// unmarshalled and re-marshalled: re-encoding would double the memory spike on
+// unmarshaled and re-marshaled: re-encoding would double the memory spike on
 // an anonymous request and could reorder keys for no benefit.
 func serveShareSessionPayload(w http.ResponseWriter, r *http.Request, token string) {
 	payload, _, _, ok, err := service.GetSessionShareByToken(token)
@@ -434,5 +435,8 @@ func serveShareSessionPayload(w http.ResponseWriter, r *http.Request, token stri
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(payload))
+	// gosec flags this as tainted HTML output, but the payload is the output of
+	// json.Marshal (see BuildSessionSharePayload), which escapes <, > and & to
+	// \u003c/\u003e/\u0026 — the stored snapshot cannot contain a raw tag.
+	_, _ = w.Write([]byte(payload)) //nolint:gosec // stored payload is json.Marshal output, HTML-escaped by encoding/json
 }

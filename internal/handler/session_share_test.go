@@ -449,7 +449,7 @@ func moveSessionToProject(t *testing.T, env *testEnv, sessionID, projectPath str
 
 // createSessionShareForProject creates a share while presenting projectPath in
 // the cookie, returning the token.
-func createSessionShareForProject(t *testing.T, env *testEnv, projectPath, sessionID string, messageIDs []int64) string {
+func createSessionShareForProject(t *testing.T, projectPath, sessionID string, messageIDs []int64) string {
 	t.Helper()
 	body := map[string]any{"sessionId": sessionID, "messageIds": messageIDs}
 	req := newRequest(t, http.MethodPost, "/api/share/session", body)
@@ -498,7 +498,7 @@ func TestSessionShareList_IsProjectScoped(t *testing.T) {
 	otherProject := t.TempDir()
 	sessionID, ids := seedShareSession(t, env, "sess-other")
 	moveSessionToProject(t, env, sessionID, otherProject)
-	createSessionShareForProject(t, env, otherProject, sessionID, ids)
+	createSessionShareForProject(t, otherProject, sessionID, ids)
 
 	// Listing from env.ProjectDir must not see it.
 	assert.Empty(t, listSessionSharesViaAPI(t, env), "another project's share must not be listed")
@@ -570,7 +570,7 @@ func TestSessionShareList_RevokeAllIsProjectScoped(t *testing.T) {
 	otherProject := t.TempDir()
 	s3, ids3 := seedShareSession(t, env, "sess-c")
 	moveSessionToProject(t, env, s3, otherProject)
-	createSessionShareForProject(t, env, otherProject, s3, ids3)
+	createSessionShareForProject(t, otherProject, s3, ids3)
 
 	req := newRequest(t, http.MethodDelete, "/api/share/session/list", map[string]any{"all": true})
 	withProjectCookie(req, env.ProjectDir)
@@ -593,7 +593,7 @@ func TestSessionShareList_RevokeUnknownOrForeignTokenIs404(t *testing.T) {
 	otherProject := t.TempDir()
 	sessionID, ids := seedShareSession(t, env, "sess-foreign")
 	moveSessionToProject(t, env, sessionID, otherProject)
-	foreignToken := createSessionShareForProject(t, env, otherProject, sessionID, ids)
+	foreignToken := createSessionShareForProject(t, otherProject, sessionID, ids)
 
 	cases := map[string]string{
 		"unknown":         "00000000000000000000000000000000",

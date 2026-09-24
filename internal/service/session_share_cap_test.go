@@ -15,7 +15,7 @@ import (
 // that never trimmed.
 //
 // trimPayloadToCap decoded each message body into a NEW wrapper map, mutated
-// block["output"] there, then re-marshalled the payload — whose Content is a
+// block["output"] there, then re-marshaled the payload — whose Content is a
 // string, so the mutation was discarded and the returned bytes were byte-for-byte
 // identical to the input (measured 18874595 in, 18874595 out against a 16 MiB
 // cap). The truncated flag was discarded the same way, so the viewer's
@@ -23,7 +23,7 @@ import (
 // all, which is why it shipped.
 //
 // The payload is built directly rather than through the DB: the cap applies to
-// the marshalled bytes, and seeding 18 MiB through chat_history would only make
+// the marshaled bytes, and seeding 18 MiB through chat_history would only make
 // the test slower without exercising anything more.
 func TestSessionSharePayload_EnforcesSizeCap(t *testing.T) {
 	huge := strings.Repeat("x", 18<<20) // 18 MiB, comfortably over the cap
