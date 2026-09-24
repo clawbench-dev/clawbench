@@ -13,6 +13,7 @@ const navStack = ref<string[]>([])
 const mockCheckAllGuards = vi.fn(() => true)
 const mockDialogConfirm = vi.fn().mockResolvedValue(false)
 const mockPopNav = vi.fn()
+const mockTruncateNav = vi.fn()
 
 function createMockNavigation() {
   return {
@@ -22,6 +23,7 @@ function createMockNavigation() {
     currentCategory: computed(() => navStack.value.length > 0 ? navStack.value[navStack.value.length - 1] ?? null : null),
     pushNav: (id: string) => { navStack.value.push(id) },
     popNav: mockPopNav,
+    truncateNav: mockTruncateNav,
     resetState: () => { navStack.value = []; needsRestart.value = false; restarting.value = false },
     restartDialogVisible: ref(false),
     changedColdFields: ref<string[]>([]),
@@ -131,6 +133,7 @@ describe('SettingsPage', () => {
     mockCheckAllGuards.mockReturnValue(true)
     mockDialogConfirm.mockResolvedValue(false)
     mockPopNav.mockReset()
+    mockTruncateNav.mockReset()
     mockConsumePendingSettingsCategory.mockReset()
     mockConsumePendingSettingsCategory.mockReturnValue(null)
     mockPendingSettingsCategory.value = null
