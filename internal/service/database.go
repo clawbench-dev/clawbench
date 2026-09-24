@@ -814,6 +814,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := WriteExec(ProjectForgesDDL); err != nil {
 		return fmt.Errorf("failed to create project_forges table: %w", err)
 	}
+	// Public conversation-share links (capability tokens). Defined in
+	// session_shares.go as a constant so tests share one source of truth.
+	if _, err := WriteExec(SessionSharesDDL); err != nil {
+		return fmt.Errorf("failed to create session_shares table: %w", err)
+	}
 	// project_forges.scheme: the API scheme the binding's host is reached with.
 	//
 	// Existing rows backfill to '' (unknown) rather than 'https'. The distinction
