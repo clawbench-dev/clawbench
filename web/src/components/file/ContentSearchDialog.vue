@@ -483,7 +483,7 @@ defineExpose({
   background: color-mix(in srgb, var(--color-red) 10%, transparent);
   color: var(--color-red);
   font-size: var(--font-size-sm);
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .cs-summary {
