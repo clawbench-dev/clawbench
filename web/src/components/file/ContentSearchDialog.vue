@@ -549,7 +549,7 @@ defineExpose({
   top: 0;
   z-index: 1;
   padding: var(--space-3) var(--space-6);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   background: var(--bg-tertiary, #f8f8f8);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
@@ -573,7 +573,7 @@ defineExpose({
   border: none;
   background: none;
   color: var(--text-primary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-md);
   text-align: left;
   cursor: pointer;
 }
@@ -635,6 +635,11 @@ defineExpose({
 }
 
 /* ── Matches ── */
+/* Match text is the primary content of this panel, so it uses the same size as
+   a file-browser row (.file-item, --font-size-md) rather than the dense-meta
+   --font-size-xs it used to: at 11px in a monospace face the lines read as
+   thin and hard to scan. The secondary pieces around it (directory, count,
+   summary) stay a step smaller, mirroring .file-meta in the browser. */
 .cs-file-matches {
   padding-bottom: var(--space-2);
 }
@@ -643,10 +648,10 @@ defineExpose({
   display: flex;
   align-items: baseline;
   gap: var(--space-4);
-  padding: var(--space-2) var(--space-5) var(--space-2) var(--space-10);
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-10);
   cursor: pointer;
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-md);
   line-height: var(--line-height-snug);
 }
 
@@ -660,11 +665,15 @@ defineExpose({
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
+/* Line numbers share the code's size and are de-emphasized by opacity instead
+   of a smaller face — the same approach the code viewer's gutter takes, and it
+   keeps the gutter aligned with the code it labels. */
 .cs-match-line {
   flex-shrink: 0;
   min-width: 34px;
   text-align: right;
   color: var(--text-muted);
+  opacity: var(--opacity-muted);
   user-select: none;
 }
 
@@ -686,7 +695,7 @@ defineExpose({
 .cs-match-more {
   padding: var(--space-2) var(--space-5) var(--space-2) var(--space-10);
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-style: italic;
 }
 </style>
