@@ -31,6 +31,15 @@ const shareLocalSegment = "local"
 // share payload (see serveShareSessionPayload).
 const shareSessionSegment = "session"
 
+// shareKindFile and shareKindSession are the `kind` values the share meta
+// endpoint reports, telling the share SPA which renderer to use. Kept distinct
+// from entryTypeFile, which classifies a directory-search entry rather than a
+// share.
+const (
+	shareKindFile    = "file"
+	shareKindSession = "session"
+)
+
 // shareResponse is the payload for share management endpoints.
 type shareResponse struct {
 	Token string `json:"token,omitempty"`

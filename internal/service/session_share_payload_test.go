@@ -95,7 +95,9 @@ func setupTestDBForSessionSharePayload(t *testing.T) *sql.DB {
 
 const testProjectRoot = "/home/u/proj"
 
-func seedSession(t *testing.T, db *sql.DB, sessionID string) {
+// seedSession inserts a chat_sessions row. sessionID stays a parameter so the
+// helper mirrors the schema rather than hard-coding one id.
+func seedSession(t *testing.T, db *sql.DB, sessionID string) { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
 	t.Helper()
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, model)
@@ -105,8 +107,9 @@ func seedSession(t *testing.T, db *sql.DB, sessionID string) {
 	require.NoError(t, err)
 }
 
-// seedMessage inserts a finalized message and returns its id.
-func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, queued int) int64 {
+// seedMessage inserts a finalized message and returns its id. sessionID stays a
+// parameter so the helper mirrors the schema rather than hard-coding one id.
+func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, queued int) int64 { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
 	t.Helper()
 	res, err := db.Exec(
 		`INSERT INTO chat_history (project_path, session_id, role, content, backend, streaming, queued)

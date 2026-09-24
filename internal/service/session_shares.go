@@ -126,6 +126,7 @@ func GetSessionShareProjectByToken(token string) (projectPath string, ok bool, e
 	}
 	return projectPath, true, nil
 }
+
 // DeleteSessionShareByToken revokes a single share link by token.
 func DeleteSessionShareByToken(token string) error {
 	if token == "" {
