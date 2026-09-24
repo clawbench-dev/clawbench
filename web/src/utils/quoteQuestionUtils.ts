@@ -108,67 +108,7 @@ export function relativizeProjectPath(filePath: string, projectRoot: string): st
 }
 
 /**
- * Build a message that embeds quoted code as a fenced code block.
- * The code block includes language prefix, file path, and optional line range
- * so the AI can identify the source context precisely.
- */
-export function buildQuoteMessage(
-  userMessage: string,
-  text: string,
-  filePath: string,
-  language: string,
-  startLine: number,
-  endLine: number,
-): string {
-  const langPrefix = language ? `${language}:` : ':'
-  let lineSuffix = ''
-  if (startLine && endLine && startLine !== endLine) {
-    lineSuffix = `:${startLine}-${endLine}`
-  } else if (startLine) {
-    lineSuffix = `:${startLine}`
-  }
-  return `${userMessage.trim()}\n\n\`\`\`${langPrefix}${filePath}${lineSuffix}\n${text}\n\`\`\``
-}
-
-export interface QuoteMessageItem {
-  text: string
-  filePath: string
-  language: string
-  startLine: number
-  endLine: number
-  note?: string
-}
-
-export function buildQuoteBlock(quote: QuoteMessageItem): string {
-  const langPrefix = quote.language ? `${quote.language}:` : ':'
-  let lineSuffix = ''
-  if (quote.startLine && quote.endLine && quote.startLine !== quote.endLine) {
-    lineSuffix = `:${quote.startLine}-${quote.endLine}`
-  } else if (quote.startLine) {
-    lineSuffix = `:${quote.startLine}`
-  }
-  return `\`\`\`${langPrefix}${quote.filePath}${lineSuffix}\n${quote.text}\n\`\`\``
-}
-
-/**
- * Build a message whose quoted block comes FIRST, then a single newline, then
- * the user's own input.
- *
- * This is deliberately NOT `buildMultiQuoteMessage`: that one puts the prompt
- * first and joins with a blank line, which is right for the file-preview quote
- * flow. Here the quote is the subject of the message and the input is the
- * instruction about it, so the block leads.
- *
- * An empty input still emits the trailing newline, so the caret lands on the
- * line after the block and the user can start typing straight away.
- */
-export function buildQuoteFirstMessage(quoteBlock: string, userMessage: string): string {
-  const input = userMessage.trim()
-  if (!quoteBlock) return input
-  return input ? `${quoteBlock}\n${input}` : `${quoteBlock}\n`
-}
-
-/** A labelled quote source region, as read from `data-quote-*` attributes. */
+ * A labelled quote source region, as read from `data-quote-*` attributes. */
 export interface QuoteSource {
   label: string
   language: string
@@ -250,19 +190,4 @@ export function messageIdFromKey(key: string | null | undefined): number | undef
   if (!key || !key.startsWith('db-')) return undefined
   const id = Number(key.slice(3))
   return Number.isFinite(id) && id > 0 ? id : undefined
-}
-
-/** Build one prompt from an optional overall question and ordered quoted selections. */
-export function buildMultiQuoteMessage(userMessage: string, quotes: QuoteMessageItem[]): string {
-  const parts: string[] = []
-  const prompt = userMessage.trim()
-  if (prompt) parts.push(prompt)
-
-  for (const quote of quotes) {
-    const note = quote.note?.trim()
-    if (note) parts.push(note)
-    parts.push(buildQuoteBlock(quote))
-  }
-
-  return parts.join('\n\n')
 }

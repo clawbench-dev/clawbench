@@ -4372,10 +4372,15 @@ components:
         附件条目，可为本地文件/目录、**外部链接**（`kind=url`），或**引用**（`kind=quote`）。
         链接条目不参与文件系统校验，且其地址会以
         `[Referenced external link: <url>]` 前缀注入 AI 的 prompt。
-        引用条目同样不参与文件系统校验，注入 prompt 的形态取决于是否有 `text`：
-        - 有 `text`（引用片段）：`[Quoted from <label>]` + 批注 + 围栏代码块（含引用正文）；
-        - 无 `text`（引用整个文件/议题）：`[Quoted from <label>]` + 批注，**不渲染围栏**——
+        引用条目同样不参与文件系统校验，注入 prompt 的形态取决于是否有 `text`。
+        每条引用以**带序号的信封**开头（`[Quote i/n] <label>`，`n` 为本次引用的总条数），
+        批注单独一行并以 `[Note] ` 开头：
+        - 有 `text`（引用片段）：`[Quote i/n] <label>` + `[Note] <批注>` + 围栏代码块（含引用正文）；
+        - 无 `text`（引用整个文件/议题）：`[Quote i/n] <label>` + `[Note] <批注>`，**不渲染围栏**——
           此时是「引用该对象」，由 AI 自行按路径读取；`url` 非空时地址附在标签后（议题/PR）。
+
+        序号与 `[Note]` 标签是必要的：空行在「引用之间 / 标题与批注之间 / 批注与正文之间」三处
+        被复用，仅凭版面无法判断一条引用到哪里结束；裸批注行也会被读成游离句子或正文的一部分。
       properties:
         path:
           type: string
@@ -4433,7 +4438,7 @@ components:
             仅 `kind=quote`：来源任务执行 id（任务执行详情页引用），用于跳转回该次运行。
 
             上列 `commitSha` / `taskId` / `sessionId` / `messageId` / `executionId` 均为**来源定位键**：
-            客户端据此跳回源头，AI 提示词也会带上它们（形如 `[Quoted from 名称 (task: 12)]`），
+            客户端据此跳回源头，AI 提示词也会带上它们（形如 `[Quote 1/1] 名称 (task: 12)`），
             以便 AI 定位源头。它们随 `files` 持久化——引用正文里不含这些信息，不存就无法再跳转。
 
     GalleryItem:

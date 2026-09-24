@@ -35,6 +35,68 @@ function mountDrawer(props: Record<string, unknown> = {}) {
 }
 
 describe('QuoteDetailDrawer', () => {
+  describe('annotation editing (staged vs sent)', () => {
+    // A staged quote is the user's own draft, still in the chat input — editing
+    // it is the whole point of the drawer.
+    it('offers an editable annotation for a staged quote', () => {
+      const wrapper = mountDrawer({ mode: 'staged' })
+
+      expect(wrapper.find('.qd-note-input').exists()).toBe(true)
+      expect(wrapper.find('.qd-note-readonly').exists()).toBe(false)
+    })
+
+    // Once sent, the quote is part of the conversation record. The user asked
+    // for it to be read-only; an edit affordance that silently writes to the DB
+    // is the worse failure.
+    it('shows a sent quote\'s annotation read-only', () => {
+      const wrapper = mountDrawer({ mode: 'sent', quote: fileQuote({ note: '为什么这么写' }) })
+
+      expect(wrapper.find('.qd-note-input').exists()).toBe(false)
+      expect(wrapper.find('.qd-note-readonly').text()).toBe('为什么这么写')
+    })
+
+    // The annotation must stay VISIBLE when read-only: it is context the user
+    // wrote and should still be readable, just not changeable.
+    it('keeps a sent annotation visible rather than hiding it', () => {
+      const wrapper = mountDrawer({ mode: 'sent', quote: fileQuote({ note: 'keep me' }) })
+
+      expect(wrapper.text()).toContain('keep me')
+    })
+
+    it('says so when a sent quote has no annotation', () => {
+      const wrapper = mountDrawer({ mode: 'sent', quote: fileQuote({ note: '' }) })
+
+      expect(wrapper.find('.qd-note-readonly').exists()).toBe(false)
+      expect(wrapper.find('.qd-note-empty').text()).toBe('quoteBar.noAnnotation')
+    })
+
+    // A sent quote has nothing to save, so the footer must not offer Save (or
+    // Cancel, which only makes sense next to a Save).
+    it('offers only Close in the footer for a sent quote', () => {
+      const wrapper = mountDrawer({ mode: 'sent' })
+
+      const footerButtons = wrapper.findAll('.bs-stub button.fbtn')
+      expect(footerButtons).toHaveLength(1)
+      expect(footerButtons[0].text()).toBe('common.close')
+    })
+
+    it('offers Cancel and Save for a staged quote', () => {
+      const wrapper = mountDrawer({ mode: 'staged' })
+
+      const footerButtons = wrapper.findAll('.bs-stub button.fbtn')
+      expect(footerButtons.map(b => b.text())).toEqual(['common.cancel', 'common.save'])
+    })
+
+    // Defaults to staged so an existing caller that does not pass `mode` keeps
+    // the old editable behaviour rather than silently losing the ability to
+    // annotate.
+    it('defaults to editable when no mode is given', () => {
+      const wrapper = mountDrawer()
+
+      expect(wrapper.find('.qd-note-input').exists()).toBe(true)
+    })
+  })
+
   it('renders the quoted content verbatim', () => {
     const wrapper = mountDrawer({ quote: fileQuote({ text: 'func main() {}' }) })
     expect(wrapper.find('.qd-quoted-text').text()).toBe('func main() {}')

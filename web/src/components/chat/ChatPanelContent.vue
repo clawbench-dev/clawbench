@@ -125,6 +125,7 @@
   <QuoteDetailDrawer
     :open="quoteDetail.open.value"
     :quote="quoteDetail.quote.value"
+    :mode="quoteDetail.mode.value"
     :saving="quoteNoteSaving"
     @close="quoteDetail.close()"
     @save="saveQuoteNote"
@@ -433,8 +434,13 @@ const quoteNoteSaving = ref(false)
  * Persist an edited annotation.
  *
  * Staged quotes are edited locally — they have not been sent, so there is
- * nothing in the DB yet. Sent quotes go through the PATCH endpoint, addressed
- * by the message id and the quote's stable id.
+ * nothing in the DB yet.
+ *
+ * The sent branch below is currently DORMANT: the drawer only offers editing
+ * for a staged quote (a sent quote's annotation is part of the conversation
+ * record and is shown read-only), so `save` is never emitted with mode 'sent'.
+ * It is kept, together with the PATCH endpoint it calls, so that re-enabling
+ * post-send editing later does not require rebuilding either side.
  */
 async function saveQuoteNote(note) {
     const q = quoteDetail.quote.value

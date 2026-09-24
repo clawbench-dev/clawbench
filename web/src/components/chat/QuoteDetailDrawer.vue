@@ -40,11 +40,17 @@
         <pre class="qd-quoted-text">{{ quote.text }}</pre>
       </template>
 
-      <!-- Annotation, editable. Saved explicitly: the sent case writes to the
-           DB, so an implicit save on every keystroke would be wasteful and an
-           implicit save on close would be invisible. -->
+      <!-- Annotation.
+           Editable only for a STAGED quote (one still in the chat input). Once
+           the message has been sent the quote is part of the conversation
+           record, so the annotation is shown read-only — it stays visible
+           because it is context the user wrote, but it is no longer theirs to
+           change.
+           The editable case saves explicitly: the staged copy lives in memory,
+           so an implicit save on close would be invisible. -->
       <div class="qd-section-title">{{ t('quoteBar.annotation') }}</div>
       <textarea
+        v-if="editable"
         ref="noteRef"
         v-model="note"
         class="qd-note-input"
@@ -54,14 +60,22 @@
         @keydown.ctrl.enter.prevent="handleSave"
         @keydown.meta.enter.prevent="handleSave"
       />
+      <p v-else-if="quote.note" class="qd-note-readonly">{{ quote.note }}</p>
+      <p v-else class="qd-note-empty">{{ t('quoteBar.noAnnotation') }}</p>
     </div>
 
     <template #footer>
-      <button class="fbtn" @click="$emit('close')">{{ t('common.cancel') }}</button>
-      <button class="fbtn fbtn-primary" :disabled="!dirty || saving" @click="handleSave">
-        <LoadingIndicator v-if="saving" size="sm" inline />
-        <span v-else>{{ t('common.save') }}</span>
+      <!-- A sent quote has nothing to save, so only Close is offered. -->
+      <button v-if="!editable" class="fbtn fbtn-primary" @click="$emit('close')">
+        {{ t('common.close') }}
       </button>
+      <template v-else>
+        <button class="fbtn" @click="$emit('close')">{{ t('common.cancel') }}</button>
+        <button class="fbtn fbtn-primary" :disabled="!dirty || saving" @click="handleSave">
+          <LoadingIndicator v-if="saving" size="sm" inline />
+          <span v-else>{{ t('common.save') }}</span>
+        </button>
+      </template>
     </template>
   </BottomSheet>
 </template>
@@ -78,9 +92,18 @@ import { QUOTE_TYPE_ICON, QUOTE_TYPE_LABEL_KEY } from '@/utils/quoteSourceMeta'
 const props = withDefaults(defineProps<{
   open: boolean
   quote: QuoteItem | null
+  /**
+   * Whether the quote is still staged (in the chat input) or already sent.
+   *
+   * A staged quote's annotation is the user's own draft and stays editable. A
+   * sent one is part of the conversation record and is shown read-only — the
+   * drawer must not offer an edit affordance for it.
+   */
+  mode?: 'staged' | 'sent'
   /** True while the save request is in flight. */
   saving?: boolean
 }>(), {
+  mode: 'staged',
   saving: false,
 })
 
@@ -99,12 +122,25 @@ const noteRef = ref<HTMLTextAreaElement | null>(null)
 const note = ref('')
 let focusTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * Whether the annotation can be edited.
+ *
+ * Only a staged quote is editable. A sent quote's annotation is part of the
+ * conversation record: the user asked for it to be read-only, and offering an
+ * edit that silently writes to the DB is the worse failure.
+ *
+ * Declared BEFORE the watcher below, which reads it and runs immediately.
+ */
+const editable = computed(() => props.mode === 'staged')
+
 watch(
-  () => [props.open, props.quote?.id] as const,
+  () => [props.open, props.quote?.id, props.mode] as const,
   ([open]) => {
     if (focusTimer) { clearTimeout(focusTimer); focusTimer = null }
     if (!open) return
     note.value = props.quote?.note || ''
+    // Nothing to focus in read-only mode (there is no textarea).
+    if (!editable.value) return
     // Focus only AFTER the slide-up animation finishes (BottomSheet: 250ms).
     // Focusing during it makes the browser scroll the still-animating,
     // overflow-hidden panel to reveal the focused textarea, which fights the
@@ -290,5 +326,30 @@ function handleSave() {
 
 .qd-note-input:focus {
   border-color: var(--accent-color, #0066cc);
+}
+
+/* Read-only annotation (a sent quote).
+   Deliberately styled like the quoted-content block rather than as a disabled
+   input: it is information to read, not a control that happens to be off.
+   `white-space: pre-wrap` keeps the user's own line breaks. */
+.qd-note-readonly {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-tertiary);
+  border-left: 2px solid var(--border-color);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* No annotation on a sent quote: say so rather than leaving the section
+   header dangling over nothing. */
+.qd-note-empty {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted, #999);
+  font-style: italic;
 }
 </style>

@@ -178,7 +178,7 @@ func TestApplyAttachmentPrefixes_QuoteRendersSourceLocators(t *testing.T) {
 
 	got := ApplyAttachmentPrefixes("为什么失败", nil, nil, parts)
 
-	assert.Contains(t, got, "[Quoted from 每日构建 (#12) (task: 12)]")
+	assert.Contains(t, got, "[Quote 1/1] 每日构建 (#12) (task: 12)")
 }
 
 // The quote's Path is only a label and may legitimately equal an attached
@@ -244,7 +244,7 @@ func TestApplyAttachmentPrefixes_QuoteAppendedAfterUserText(t *testing.T) {
 
 	// Mirrors the pre-refactor buildMultiQuoteMessage ordering:
 	// "prompt\n\nheader\nnote\n\nfence", with the quote's source header added.
-	assert.Equal(t, "解释一下\n\n[Quoted from /src/a.go:3]\nwhy?\n\n```go:/src/a.go:3\nx := 1\n```", got)
+	assert.Equal(t, "解释一下\n\n[Quote 1/1] /src/a.go:3\n[Note] why?\n\n```go:/src/a.go:3\nx := 1\n```", got)
 }
 
 func TestApplyAttachmentPrefixes_QuoteWithoutNote(t *testing.T) {
@@ -254,7 +254,7 @@ func TestApplyAttachmentPrefixes_QuoteWithoutNote(t *testing.T) {
 
 	got := ApplyAttachmentPrefixes("问题", nil, nil, parts)
 
-	assert.Equal(t, "问题\n\n[Quoted from ]\n\n```:\npicked text\n```", got,
+	assert.Equal(t, "问题\n\n[Quote 1/1] \n\n```:\npicked text\n```", got,
 		"an unlabelled quote still gets its header line")
 }
 
@@ -268,7 +268,7 @@ func TestApplyAttachmentPrefixes_WholeFileQuoteHasNoFence(t *testing.T) {
 
 	got := ApplyAttachmentPrefixes("看看", nil, nil, parts)
 
-	assert.Equal(t, "看看\n\n[Quoted from /proj/src/main.ts]\nexplain this file", got)
+	assert.Equal(t, "看看\n\n[Quote 1/1] /proj/src/main.ts\n[Note] explain this file", got)
 	assert.NotContains(t, got, "```", "a quote with no content must not render a fence")
 }
 
@@ -286,7 +286,7 @@ func TestApplyAttachmentPrefixes_ForgeQuoteCarriesItsAddress(t *testing.T) {
 	got := ApplyAttachmentPrefixes("看看这个 issue", nil, nil, parts)
 
 	assert.Equal(t,
-		"看看这个 issue\n\n[Quoted from acme/widgets#7 (https://github.com/acme/widgets/issues/7)]\nwhy did this fail?",
+		"看看这个 issue\n\n[Quote 1/1] acme/widgets#7 (https://github.com/acme/widgets/issues/7)\n[Note] why did this fail?",
 		got)
 }
 
@@ -304,10 +304,15 @@ func TestApplyAttachmentPrefixes_QuoteHeaderIsOneLine(t *testing.T) {
 	got := ApplyAttachmentPrefixes("问题", nil, nil, parts)
 	lines := strings.Split(got, "\n")
 
-	assert.True(t, strings.HasPrefix(lines[2], "[") && strings.HasSuffix(lines[2], "]"),
-		"the header must be one bracketed line, got %q", lines[2])
+	// lines: [0]="问题" [1]="" [2]=header [3]=note
+	assert.True(t, strings.HasPrefix(lines[2], "[Quote 1/1] "),
+		"the header must open with a closed envelope on its own line, got %q", lines[2])
 	assert.Contains(t, lines[2], "/src/a.go:10-20")
 	assert.Contains(t, lines[2], "https://example.com/x")
+	// The annotation is on its own LABELLED line, so it cannot be read as part
+	// of the header or the quoted content.
+	assert.True(t, strings.HasPrefix(lines[3], QuoteNotePrefix),
+		"the annotation must be labelled on its own line, got %q", lines[3])
 }
 
 // A quote-only message has empty content; the renderer must not open with
@@ -320,27 +325,29 @@ func TestApplyAttachmentPrefixes_QuoteOnlyStartsWithHeader(t *testing.T) {
 	got := ApplyAttachmentPrefixes("", nil, nil, parts)
 
 	assert.True(t, strings.HasPrefix(got, QuotePromptPrefix), "no leading blank lines, got %q", got)
-	assert.NotContains(t, got, "\n\n[Quoted from", "the first quote must not be preceded by a blank line")
+	assert.NotContains(t, got, "\n\n[Quote", "the first quote must not be preceded by a blank line")
 }
 
-// The header must end with "]" even when the label carries line info AND an
-// address, or the stripper's bracket-close rule would not match.
-func TestQuoteHeader_ClosesItsBracket(t *testing.T) {
+// The header opens with a CLOSED bracketed envelope ("[Quote i/n]") followed by
+// the label. The bracket must close before the label — the stripper's
+// stripToNewline consumes the whole line regardless, but a well-formed envelope
+// is what makes consecutive quotes visually separable.
+func TestQuoteHeader_ClosesItsEnvelope(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		q    QuotePrompt
 		want string
 	}{
-		{"path only", QuotePrompt{Label: "/a.go"}, "[Quoted from /a.go]"},
-		{"line range", QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9}, "[Quoted from /a.go:3-9]"},
-		{"single line", QuotePrompt{Label: "/a.go", StartLine: 3}, "[Quoted from /a.go:3]"},
-		{"address", QuotePrompt{Label: "a/b#1", URL: "https://e.com/1"}, "[Quoted from a/b#1 (https://e.com/1)]"},
-		{"line range and address", QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9, URL: "https://e.com/1"}, "[Quoted from /a.go:3-9 (https://e.com/1)]"},
+		{"path only", QuotePrompt{Label: "/a.go"}, "[Quote 1/1] /a.go"},
+		{"line range", QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9}, "[Quote 1/1] /a.go:3-9"},
+		{"single line", QuotePrompt{Label: "/a.go", StartLine: 3}, "[Quote 1/1] /a.go:3"},
+		{"address", QuotePrompt{Label: "a/b#1", URL: "https://e.com/1"}, "[Quote 1/1] a/b#1 (https://e.com/1)"},
+		{"line range and address", QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9, URL: "https://e.com/1"}, "[Quote 1/1] /a.go:3-9 (https://e.com/1)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := quoteHeader(tc.q)
+			got := quoteHeader(tc.q, 1, 1)
 			assert.Equal(t, tc.want, got)
-			assert.True(t, strings.HasSuffix(got, "]"), "header must close its bracket")
+			assert.True(t, strings.HasPrefix(got, "[Quote 1/1] "), "header must open with a closed envelope")
 			assert.NotContains(t, got, "\n", "header must be a single line")
 		})
 	}
@@ -358,38 +365,38 @@ func TestQuoteHeader_CarriesSourceLocators(t *testing.T) {
 		{
 			"task",
 			QuotePrompt{Label: "每日构建 (#12)", TaskID: 12},
-			"[Quoted from 每日构建 (#12) (task: 12)]",
+			"[Quote 1/1] 每日构建 (#12) (task: 12)",
 		},
 		{
 			"commit",
 			QuotePrompt{Label: "a1b2c3d 修复登录", CommitSHA: "a1b2c3d"},
-			"[Quoted from a1b2c3d 修复登录 (commit: a1b2c3d)]",
+			"[Quote 1/1] a1b2c3d 修复登录 (commit: a1b2c3d)",
 		},
 		{
 			"session and message together",
 			QuotePrompt{Label: "修复登录 (sess-abc)", SessionID: "sess-abc", MessageID: 42},
-			"[Quoted from 修复登录 (sess-abc) (session: sess-abc, message: 42)]",
+			"[Quote 1/1] 修复登录 (sess-abc) (session: sess-abc, message: 42)",
 		},
 		{
 			"execution",
 			QuotePrompt{Label: "每日构建 (#12)", TaskID: 12, ExecutionID: "exec-7"},
-			"[Quoted from 每日构建 (#12) (task: 12, execution: exec-7)]",
+			"[Quote 1/1] 每日构建 (#12) (task: 12, execution: exec-7)",
 		},
 		{
 			"address leads the group",
 			QuotePrompt{Label: "a/b#1", URL: "https://e.com/1", CommitSHA: "deadbeef"},
-			"[Quoted from a/b#1 (https://e.com/1, commit: deadbeef)]",
+			"[Quote 1/1] a/b#1 (https://e.com/1, commit: deadbeef)",
 		},
 		{
 			"line range plus locator",
 			QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9, CommitSHA: "deadbeef"},
-			"[Quoted from /a.go:3-9 (commit: deadbeef)]",
+			"[Quote 1/1] /a.go:3-9 (commit: deadbeef)",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := quoteHeader(tc.q)
+			got := quoteHeader(tc.q, 1, 1)
 			assert.Equal(t, tc.want, got)
-			assert.True(t, strings.HasSuffix(got, "]"), "header must close its bracket")
+			assert.True(t, strings.HasPrefix(got, "[Quote 1/1] "), "header must open with a closed envelope")
 			// The strip rule is stripToNewline: a second line would leak into
 			// the derived session title.
 			assert.NotContains(t, got, "\n", "header must be a single line")
@@ -400,8 +407,8 @@ func TestQuoteHeader_CarriesSourceLocators(t *testing.T) {
 // Zero-valued locators must not emit empty entries ("task: 0"), which would be
 // noise and would misreport an unset id as a real one.
 func TestQuoteHeader_OmitsZeroValuedLocators(t *testing.T) {
-	got := quoteHeader(QuotePrompt{Label: "/a.go", TaskID: 0, MessageID: 0})
-	assert.Equal(t, "[Quoted from /a.go]", got)
+	got := quoteHeader(QuotePrompt{Label: "/a.go", TaskID: 0, MessageID: 0}, 1, 1)
+	assert.Equal(t, "[Quote 1/1] /a.go", got)
 	assert.NotContains(t, got, "task:")
 	assert.NotContains(t, got, "message:")
 }
@@ -410,6 +417,6 @@ func TestQuotePromptPrefix_IsRegisteredAsStripRule(t *testing.T) {
 	// The header literal is exported from model precisely so the handler's
 	// strip rule cannot drift from it. This test pins the constant's shape;
 	// the rule registration itself is asserted in internal/handler.
-	assert.Equal(t, "[Quoted from ", QuotePromptPrefix)
+	assert.Equal(t, "[Quote ", QuotePromptPrefix)
 	assert.True(t, strings.HasPrefix(QuotePromptPrefix, "["))
 }

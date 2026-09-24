@@ -44,3 +44,20 @@ describe('chat message quote — shared builder', () => {
     }
   })
 })
+
+/**
+ * The drawer's staged/sent distinction depends on the PARENT passing `mode`.
+ *
+ * The drawer itself defaults to 'staged' (editable), so dropping the binding at
+ * the mount site does not break anything visibly — it silently makes every sent
+ * quote editable again, which is exactly the behaviour the user asked to
+ * remove. A behavioural test on the drawer cannot catch it (the drawer is
+ * correct; the wiring is missing), so this is asserted at the source level.
+ */
+describe('quote detail drawer — mode wiring', () => {
+  it('passes the quote mode from the controller to the drawer', () => {
+    const src = readWebFile('src/components/chat/ChatPanelContent.vue')
+
+    expect(src).toMatch(/<QuoteDetailDrawer[\s\S]*?:mode="quoteDetail\.mode\.value"/)
+  })
+})
