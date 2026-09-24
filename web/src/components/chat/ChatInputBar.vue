@@ -79,8 +79,10 @@
           <span>{{ t('chat.attach.uploading') }}</span>
         </div>
       </Transition>
-      <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
-      <div v-if="hasAttachmentTags" class="chat-attachment-tags">
+      <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs).
+           Wheel scrolls it sideways on PC: the scrollbar is hidden, so without this a plain
+           mouse wheel over the strip scrolls the page instead. -->
+      <div v-if="hasAttachmentTags" class="chat-attachment-tags" @wheel="onHorizontalWheel">
         <!-- Staged quote cards (shared component — same card as a sent message) -->
         <QuoteCard
           v-for="quote in quoteItems"
@@ -336,6 +338,7 @@ import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
 import { fromStagedQuote } from '@/utils/quoteItem'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
 const QuickSendDrawer = defineAsyncComponent({ loader: () => import('@/components/chat/QuickSendDrawer.vue'), loadingComponent: AsyncComponentLoader })
