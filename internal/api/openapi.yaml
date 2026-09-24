@@ -2538,9 +2538,9 @@ paths:
       tags: [Share]
       summary: 会话分享状态 + 可选消息列表
       description: |
-        需要  查询参数。返回该会话当前的分享状态，并附带**全部**消息
+        需要 `session_id` 查询参数。返回该会话当前的分享状态，并附带**全部**消息
         （含仍在生成/排队的）供分享对话框渲染：生成中的消息不可勾选。
-        未分享时  为空但  照常返回，使打开对话框只需一次请求。
+        未分享时 `token` 为空但 `messages` 照常返回，使打开对话框只需一次请求。
       operationId: sessionShareStatus
       parameters:
         - name: session_id

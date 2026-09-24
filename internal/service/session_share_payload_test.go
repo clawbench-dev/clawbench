@@ -195,6 +195,125 @@ func TestSessionSharePayload_TrimsOverCapAtTheEntryPoint(t *testing.T) {
 		"the output must carry the marker so the cut is visible")
 }
 
+// TestSessionSharePayload_SanitizesSummaryText is the regression guard for an
+// absolute-path leak through the reading summary.
+//
+// buildShareMessage stored summaries[msg.ID] verbatim. A summary routinely names
+// the files the agent touched ("I edited /home/u/proj/secret.ts"), so the
+// creator's directory layout shipped to anonymous viewers — the exact thing the
+// path sanitizer exists to prevent. The pre-existing SanitizesPaths test could
+// not catch it: its fixture has no summary.
+func TestSessionSharePayload_SanitizesSummaryText(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	msgID := seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"text","text":"done"}],"metadata":{}}`, 0, 0)
+
+	_, err := db.Exec(
+		`INSERT INTO summaries (target_type, target_id, summary)
+		 VALUES ('chat_message', ?, ?)`,
+		msgID, "I edited /home/u/proj/src/secret.ts and read /home/u/.ssh/id_rsa",
+	)
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	assert.NotContains(t, raw, testProjectRoot,
+		"the project root must not appear anywhere in the snapshot")
+	assert.NotContains(t, raw, "/home/u/.ssh",
+		"a home-directory path must not survive in the summary")
+
+	msg := payloadMessages(t, raw)[0]
+	summary, _ := msg["summary"].(string)
+	require.NotEmpty(t, summary, "the summary must still be present, just sanitized")
+	assert.Contains(t, summary, "./src/secret.ts",
+		"the project path must be relativized, not dropped")
+	assert.Contains(t, summary, "~/.ssh/id_rsa",
+		"the home path must be relativized, not dropped")
+}
+
+// TestSessionSharePayload_SanitizesSummaryCardInputs is the regression guard for
+// an absolute-path leak through summary cards.
+//
+// sanitizeSummaryCards copied the card struct by value (`out := *cards`) and only
+// relativized CreatedFiles/ModifiedFiles/Warnings. Tools[].Input and the
+// AskQuestions sub-objects were left untouched, so a tool argument or an
+// ask-question option quoting an absolute path shipped verbatim.
+func TestSessionSharePayload_SanitizesSummaryCardInputs(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	msgID := seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"text","text":"done"}],"metadata":{}}`, 0, 0)
+
+	cards := `{
+		"tools": [{"name":"Read","id":"t1","input":{"file_path":"/home/u/proj/src/a.ts","command":"cat /home/u/.ssh/id_rsa"}}],
+		"askQuestions": [{
+			"header":"Pick","multiSelect":false,
+			"question":"should I edit /home/u/proj/src/secret.ts ?",
+			"options":[{"label":"/home/u/proj/src/x.ts","description":"touch /home/u/proj/src/y.ts"}]
+		}]
+	}`
+	_, err := db.Exec(
+		`INSERT INTO summaries (target_type, target_id, summary, summary_cards)
+		 VALUES ('chat_message', ?, 'a summary', ?)`,
+		msgID, cards,
+	)
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	assert.NotContains(t, raw, testProjectRoot,
+		"the project root must not appear anywhere in the snapshot")
+	assert.NotContains(t, raw, "/home/u/.ssh",
+		"a home-directory path must not survive inside a summary card")
+
+	// The sanitized values must still be there, relativized.
+	assert.Contains(t, raw, "./src/a.ts")
+	assert.Contains(t, raw, "~/.ssh/id_rsa")
+	assert.Contains(t, raw, "./src/secret.ts")
+}
+
+// TestSessionSharePayload_SanitizesInteractiveToolInlineInput is the regression
+// guard for a leak through a tool_use block's INLINE input.
+//
+// model.ContentBlock.MarshalJSON keeps `input` inline for AskUserQuestion and
+// PermissionApproval so their cards render immediately, and
+// ConvertAskQuestionBlocks creates them with no chat_tool_calls row.
+// sanitizeToolUseBlock returned early on `!found`, so those inline inputs — which
+// carry tool arguments such as a shell command — reached the public snapshot
+// unsanitized.
+func TestSessionSharePayload_SanitizesInteractiveToolInlineInput(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	// Inline input, and deliberately NO chat_tool_calls row.
+	seedMessage(t, db, "s1", "assistant", `{"blocks":[
+		{"type":"tool_use","id":"ask1","name":"AskUserQuestion","done":true,
+		 "input":{"toolInput":{"command":"cat /home/u/.ssh/id_rsa"},"file_path":"/home/u/proj/src/a.ts"}}
+	],"metadata":{}}`, 0, 0)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	assert.NotContains(t, raw, testProjectRoot,
+		"the project root must not appear anywhere in the snapshot")
+	assert.NotContains(t, raw, "/home/u/.ssh",
+		"an inline tool input must not leak a home-directory path")
+
+	// Still present, just relativized.
+	blocks := contentBlocks(t, payloadMessages(t, raw)[0])
+	require.NotEmpty(t, blocks)
+	input, ok := blocks[0]["input"].(map[string]any)
+	require.True(t, ok, "the inline input must survive for the card to render")
+	toolInput, _ := input["toolInput"].(map[string]any)
+	assert.Equal(t, "cat ~/.ssh/id_rsa", toolInput["command"])
+}
+
 func TestSessionSharePayload_InlinesToolIOAndThinkingText(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()

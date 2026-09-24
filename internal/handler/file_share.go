@@ -31,6 +31,10 @@ const shareLocalSegment = "local"
 // share payload (see serveShareSessionPayload).
 const shareSessionSegment = "session"
 
+// shareMetaSegment is the URL path segment that reports whether a token is a
+// file share or a conversation share (see serveShareMeta). Shared by both kinds.
+const shareMetaSegment = "meta"
+
 // shareKindFile and shareKindSession are the `kind` values the share meta
 // endpoint reports, telling the share SPA which renderer to use. Kept distinct
 // from entryTypeFile, which classifies a directory-search entry rather than a
@@ -369,6 +373,25 @@ func resolveShareScopePath(w http.ResponseWriter, r *http.Request, sharedAbsPath
 	return absTarget, true
 }
 
+// serveShareSessionSubpath dispatches the conversation-share subpaths (meta,
+// session), returning true when it handled the request.
+//
+// Split out of ServeSharePublic so the file-share routing stays readable: the
+// conversation branches must run before the file_shares lookup (a session token
+// has no file_shares row), but they are otherwise independent of it.
+func serveShareSessionSubpath(w http.ResponseWriter, r *http.Request, token, rest string) bool {
+	switch rest {
+	case shareMetaSegment:
+		serveShareMeta(w, r, token)
+		return true
+	case shareSessionSegment:
+		serveShareSessionPayload(w, r, token)
+		return true
+	default:
+		return false
+	}
+}
+
 // ServeSharePublic serves the unauthenticated token-scoped data endpoints:
 //   - GET /api/share/{token}/file        → FileContent JSON (shared file)
 //   - GET /api/share/{token}/content?path= → FileContent JSON for a file the
@@ -391,12 +414,7 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	// Conversation-share subpaths are resolved BEFORE the file-share lookup:
 	// a session token has no file_shares row, so looking that up first would
 	// 404 every session request before it could reach its own branch.
-	switch rest {
-	case "meta":
-		serveShareMeta(w, r, token)
-		return
-	case shareSessionSegment:
-		serveShareSessionPayload(w, r, token)
+	if serveShareSessionSubpath(w, r, token, rest) {
 		return
 	}
 

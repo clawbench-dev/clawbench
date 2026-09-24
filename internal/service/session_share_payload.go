@@ -51,6 +51,13 @@ const (
 
 	// sessionSharePreviewRunes bounds one selection-list preview line.
 	sessionSharePreviewRunes = 200
+
+	// maxSessionShareTrimIterations bounds the per-candidate halving loop. Each
+	// iteration must at least halve one output, so the natural bound is ~log2 of
+	// the largest output; this is a belt-and-braces stop so a future regression
+	// in the shrink invariant fails fast instead of spinning forever inside a
+	// request. 64 is far above what any real payload needs.
+	maxSessionShareTrimIterations = 64
 )
 
 // ErrSessionShareEmptySelection is returned when the requested selection
@@ -272,7 +279,11 @@ func buildShareMessage(
 		return item
 	}
 	if s, ok := summaries[msg.ID]; ok {
-		v := s
+		// The reading summary routinely names the files the agent touched
+		// ("I edited /home/u/proj/secret.ts"), so it must go through the same
+		// path sanitizer as the rest of the snapshot. Storing it verbatim was
+		// the largest absolute-path leak in the payload.
+		v := sanitizeShareString(s, projectRoot, homeDir)
 		item.Summary = &v
 	}
 	if c, ok := cards[msg.ID]; ok {
@@ -478,6 +489,22 @@ func sanitizeToolUseBlock(
 	toolCalls map[toolCallKey]ToolCallRecord,
 	projectRoot, homeDir string,
 ) {
+	// Sanitize whatever input/output the block already carries BEFORE the
+	// side-table lookup, because not every tool_use block has a side-table row.
+	//
+	// model.ContentBlock.MarshalJSON keeps `input` INLINE for the interactive
+	// tools (AskUserQuestion / PermissionApproval) so their cards can render
+	// immediately, and ConvertAskQuestionBlocks creates them with no
+	// chat_tool_calls row at all. Returning early on !found therefore shipped
+	// those inline inputs — which carry tool arguments such as a shell command
+	// or a file path — into the public snapshot untouched.
+	if raw, ok := block["input"]; ok && raw != nil {
+		block["input"] = sanitizeShareValue(deepCopyJSONValue(raw), projectRoot, homeDir)
+	}
+	if out, ok := block["output"].(string); ok && out != "" {
+		block["output"] = sanitizeShareString(out, projectRoot, homeDir)
+	}
+
 	toolID, _ := block["id"].(string)
 	if toolID == "" {
 		return
@@ -519,6 +546,41 @@ func sanitizeSummaryCards(cards *model.SummaryCards, projectRoot, homeDir string
 	}
 	out := *cards
 	out.TaskIDs = nil
+	// Every sub-object is deep-copied before mutation: `out := *cards` is a
+	// shallow copy, so writing through a shared slice/map would mutate the
+	// caller's cards (which belong to the live session) as a side effect.
+	if len(cards.Tools) > 0 {
+		tools := make([]model.SummaryTool, len(cards.Tools))
+		for i, tool := range cards.Tools {
+			// Deep-copy the input map before sanitizing: it is shared with the
+			// live session's cards, and mutating it in place would rewrite the
+			// running conversation's data as a side effect of sharing.
+			if len(tool.Input) > 0 {
+				if sanitized, ok := sanitizeShareValue(deepCopyJSONMap(tool.Input), projectRoot, homeDir).(map[string]any); ok {
+					tool.Input = sanitized
+				}
+			}
+			tool.Output = sanitizeShareString(tool.Output, projectRoot, homeDir)
+			tools[i] = tool
+		}
+		out.Tools = tools
+	}
+	if len(cards.AskQuestions) > 0 {
+		questions := make([]model.AskQuestionCard, len(cards.AskQuestions))
+		for i, q := range cards.AskQuestions {
+			q.Header = sanitizeShareString(q.Header, projectRoot, homeDir)
+			q.Question = sanitizeShareString(q.Question, projectRoot, homeDir)
+			options := make([]model.AskQuestionOption, len(q.Options))
+			for j, opt := range q.Options {
+				opt.Label = sanitizeShareString(opt.Label, projectRoot, homeDir)
+				opt.Description = sanitizeShareString(opt.Description, projectRoot, homeDir)
+				options[j] = opt
+			}
+			q.Options = options
+			questions[i] = q
+		}
+		out.AskQuestions = questions
+	}
 	if len(cards.CreatedFiles) > 0 {
 		out.CreatedFiles = sanitizeFileChanges(cards.CreatedFiles, projectRoot, homeDir)
 	}
@@ -560,6 +622,34 @@ func sanitizeFileEntries(entries []model.FileEntry, projectRoot, homeDir string)
 		out = append(out, e)
 	}
 	return out
+}
+
+// deepCopyJSONMap returns a recursive copy of a decoded-JSON map, so
+// sanitizeShareValue (which mutates in place) can be applied to a summary
+// card's input without rewriting the live session's data.
+func deepCopyJSONMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = deepCopyJSONValue(v)
+	}
+	return out
+}
+
+// deepCopyJSONValue recursively copies decoded-JSON slices and maps; scalars are
+// returned as-is (they are immutable).
+func deepCopyJSONValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return deepCopyJSONMap(t)
+	case []any:
+		out := make([]any, len(t))
+		for i := range t {
+			out[i] = deepCopyJSONValue(t[i])
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // sanitizeShareValue walks a decoded JSON value and sanitizes every string leaf.
@@ -730,12 +820,37 @@ func collectTrimCandidates(payload *SessionSharePayload) []trimCandidate {
 // brings the payload under the cap. ok=false means a re-marshal failed, so the
 // caller must keep its last good snapshot rather than storing a truncated one.
 func trimCandidateToFit(raw []byte, payload *SessionSharePayload, c trimCandidate) ([]byte, bool) {
-	for len(raw) > maxSessionSharePayloadBytes {
+	// Bound the loop independently of the size check: the cut must strictly
+	// shrink the output for the loop to be guaranteed to terminate, and a
+	// future edit that breaks that invariant should fail fast rather than
+	// spin forever holding the request (see the rune/byte note below).
+	for i := 0; len(raw) > maxSessionSharePayloadBytes; i++ {
+		if i > maxSessionShareTrimIterations {
+			break
+		}
 		out, _ := c.block["output"].(string)
 		if len(out) <= sessionShareOutputTrimFloor {
 			break
 		}
-		c.block["output"] = clipRunes(out, len(out)/2) + "\n…[truncated for sharing]"
+		// Halve by RUNE count, not byte length. clipRunes clips runes, so
+		// passing len(out)/2 (bytes) made every iteration a no-op for any
+		// output whose bytes-per-rune exceeds 1: len(out)/2 >= rune count, so
+		// clipRunes returned the string unchanged and each pass only appended
+		// the marker — the output GREW and the size check never came true.
+		// A CJK tool output (3 bytes/rune) therefore hung the request forever.
+		// Trimming is not allowed to increase the output, so the marker is only
+		// appended when the cut actually removed something.
+		runes := []rune(out)
+		if len(runes) <= 1 {
+			break
+		}
+		clipped := string(runes[:len(runes)/2]) + "\n…[truncated for sharing]"
+		// The cut must be a strict shrink including the marker, otherwise the
+		// loop could make no progress.
+		if len(clipped) >= len(out) {
+			break
+		}
+		c.block["output"] = clipped
 		c.block["truncated"] = true
 
 		encoded, err := json.Marshal(c.wrapper)

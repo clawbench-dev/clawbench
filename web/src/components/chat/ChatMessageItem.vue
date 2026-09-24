@@ -229,10 +229,14 @@ const props = defineProps({
    *  speak, copy, details) stays useful there. */
   hideSessionActions: { type: Boolean, default: false },
   /** Public share page: the viewer is anonymous, so every per-message action
-   *  is suppressed — speak/fork/rewind need a live session or auth, and copy/
+   *  is suppressed — speak/fork/rewind need a live session or auth, copy/
    *  details duplicate what the snapshot already renders (details also exposes
-   *  token/cost metadata). The summary toggle and the time line are kept: they
-   *  are reading controls, not actions. */
+   *  token/cost metadata), and quote needs a chat composer the reader does not
+   *  have. The summary/original switch is suppressed too: it is an app-side
+   *  reading preference, and a read-only transcript has no business offering a
+   *  choice the reader cannot evaluate (the snapshot always carries the original
+   *  blocks; `showSummary` falls back to the summary only when there are none).
+   *  Only the timestamp line is kept — it is information, not a control. */
   readOnly: { type: Boolean, default: false },
 })
 
