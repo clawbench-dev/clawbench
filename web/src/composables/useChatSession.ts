@@ -199,9 +199,22 @@ export function useChatSession(options: UseChatSessionOptions) {
     // ── Change detection ──
     const newSnapshot = buildMessageSnapshot(rawMsgs)
     if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && !isRunning) {
+      // No UI refresh needed, but the response still describes the current
+      // session, so its `running` value is valid evidence — record it before
+      // bailing. runReload depends on that: a skipIfUnchanged load that returns
+      // "still running" must NOT look like "no answer".
+      lastAuthoritativeRunning = isRunning
       return { synced: false, keepInputDisabled: false } // no change, skip UI refresh
     }
     lastMessageSnapshot = newSnapshot
+
+    // Record the authoritative per-session running state for runReload, which
+    // must decide whether it is safe to tear the stream subscription down. The
+    // session LIST can say "not running" while the backend has merely cleared
+    // the flag in preparation for the terminal event, so the history response's
+    // own `running` field is the trustworthy signal. Set only AFTER the identity
+    // guard above: a stale response for another session must not pollute it.
+    lastAuthoritativeRunning = isRunning
 
     // ── Message replacement ──
     const prevCount = messages.value.length
@@ -493,6 +506,18 @@ export function useChatSession(options: UseChatSessionOptions) {
   // When polling-triggered reloads find no change, the UI is not refreshed,
   // preventing expandedTools collapse, scroll reset, and unnecessary re-renders.
   let lastMessageSnapshot = ''
+
+  // The `running` flag from the most recent syncSessionState (i.e. the last
+  // history response actually processed). runReload uses it as the authoritative
+  // answer to "is a run still in flight?" — the session LIST snapshot it fetched
+  // a moment earlier can lag or fail, and acting on that stale answer tears down
+  // the subscription of a live stream.
+  //
+  // null means "no history response has been processed yet" — e.g. a loadHistory
+  // that bailed (sequence guard, fetch error) before reaching syncSessionState.
+  // Tearing a stream down on `null` would be acting on no information at all, so
+  // the cleanup path requires an explicit `false`.
+  let lastAuthoritativeRunning: boolean | null = null
 
   // Pending reload: when loadHistory is called while a load is already in-flight,
   // we record the requested parameters and execute one more load after the current
@@ -1354,19 +1379,50 @@ export function useChatSession(options: UseChatSessionOptions) {
         }
         return
       }
-      // AI finished while the user was away — clean up the stuck loading state
-      // and reload history. The backend clears in-memory running state before
-      // emitting terminal events, so the plain reload sees the final state.
-      appLog.w(TAG, `${source}: session ${currentSessionId.value} no longer running — cleaning up stuck loading state`)
-      onDisconnectStream()
-      forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
-      loading.value = false
+      // The session LIST says this run is over. That answer alone is NOT
+      // authoritative enough to tear the stream down: it comes from a separate
+      // request that can lag or have failed, and it is exactly what a run that
+      // just started (or a list load that raced the backend's `running` flag)
+      // looks like. onDisconnectStream() sends a REAL `unsubscribe`, so acting
+      // on a wrong answer drops the live turn's content/done events server-side
+      // — the UI then stays stuck mid-stream until a manual refresh, while the
+      // DB holds the complete reply (the reported symptom).
+      //
+      // So reload history FIRST: its own `running` field reflects the state at
+      // that instant (syncSessionState records it in lastAuthoritativeRunning),
+      // and only clean up once it confirms the run really ended.
+      const sid = currentSessionId.value
+      appLog.i(TAG, `${source}: session ${sid} not in running list — verifying against history before cleanup`)
+      // Clear the previous observation so a loadHistory that bails (sequence
+      // guard / fetch error) cannot be mistaken for a fresh "not running"
+      // confirmation. Only an explicit `false` from THIS load allows cleanup.
+      lastAuthoritativeRunning = null
       try {
         await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
         onRenderUpdate(true)
       } catch {
         loading.value = false
       }
+      if (lastAuthoritativeRunning !== false) {
+        // Either the run is genuinely still going, or the verification load
+        // produced no answer (bailed/errored). Both mean "do not tear down":
+        // keeping a possibly-live subscription is recoverable (the stream
+        // watchdog and a later refresh converge it), whereas sending a real
+        // unsubscribe loses the rest of the turn's events for good. loadHistory
+        // already restored the placeholder from the DB streaming=1 row.
+        appLog.i(TAG, `${source}: session ${sid} not confirmed finished (running=${lastAuthoritativeRunning}) — keeping stream subscription`)
+        if (force) {
+          onResubscribeStream?.(sid)
+        }
+        return
+      }
+      // AI finished while the user was away — clean up the stuck loading state.
+      // The backend clears in-memory running state before emitting terminal
+      // events, so the history just loaded is the final state.
+      appLog.w(TAG, `${source}: session ${sid} no longer running — cleaning up stuck loading state`)
+      onDisconnectStream()
+      forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
+      loading.value = false
     } else {
       // Session idle — reload history to reflect changes that occurred while
       // disconnected. skipIfUnchanged avoids UI churn when nothing changed;

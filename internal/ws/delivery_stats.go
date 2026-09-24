@@ -77,6 +77,20 @@ var (
 // recordDeliveryDrop counts a dropped event and logs it once per (reason, type)
 // per deliveryLogWindow.
 func recordDeliveryDrop(reason, sessionID, eventType string) {
+	recordDeliveryDropWithDiagnostics(reason, sessionID, eventType, nil)
+}
+
+// recordDeliveryDropWithDiagnostics is recordDeliveryDrop with a lazily-built
+// diagnostic payload.
+//
+// extra is evaluated ONLY when the drop is actually logged — never on the
+// suppressed hot path — so it may walk the manager's subscription table to
+// answer the one question the bare log line cannot: was this a client that
+// never subscribed, or one whose subscription was silently lost? That
+// distinction is the whole reason a stuck UI is hard to diagnose from logs
+// alone (a "connected" client with no session subscription looks identical to
+// an offline one in the counters).
+func recordDeliveryDropWithDiagnostics(reason, sessionID, eventType string, extra func() []any) {
 	switch reason {
 	case DropReasonNoSubscribers:
 		globalDeliveryStats.noSubscribers.Add(1)
@@ -103,6 +117,9 @@ func recordDeliveryDrop(reason, sessionID, eventType string) {
 		slog.String("reason", reason),
 		slog.String("session", sessionID),
 		slog.String("event_type", eventType),
+	}
+	if extra != nil {
+		attrs = append(attrs, extra()...)
 	}
 	if IsCriticalEvent(eventType) {
 		slog.Warn("ws: dropped critical stream event (see /api/ws/delivery-stats for totals)", attrs...)

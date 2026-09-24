@@ -148,6 +148,16 @@ func (h *StreamHub) HasSubscribers(sessionID string) bool {
 	return ok && len(subs) > 0
 }
 
+// SubscriberCount returns how many clients are subscribed to a session.
+// Used by the drop-diagnostics path to cross-check the "no subscribers"
+// decision against the per-client subscription table.
+func (h *StreamHub) SubscriberCount(sessionID string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	return len(h.subscribers[sessionID])
+}
+
 // Emit fans out a streaming event to all subscribed WS clients for a session.
 func (h *StreamHub) Emit(sessionID string, event ai.StreamEvent) {
 	msg, ok := buildChatStreamMessage(sessionID, event)
@@ -232,7 +242,14 @@ func EmitToSession(sessionID string, event ai.StreamEvent) {
 		// No live subscriber: nothing to deliver. Record it — silently
 		// returning here is what previously made a lost subscription
 		// indistinguishable from a backend that never sent anything.
-		recordDeliveryDrop(DropReasonNoSubscribers, sessionID, event.Type)
+		//
+		// The diagnostic payload is built lazily (only when the drop is
+		// actually logged, not on every suppressed repeat) and distinguishes
+		// "no client at all" from "clients connected but none subscribed to
+		// THIS session" — the silent failure that leaves a UI stuck mid-stream.
+		recordDeliveryDropWithDiagnostics(DropReasonNoSubscribers, sessionID, event.Type, func() []any {
+			return mgr.SubscriptionDiagnostics(sessionID)
+		})
 		// Still hand the event to the write-ahead store. Emit is the ONLY place
 		// that persists notifiable events, so returning here outright dropped
 		// them for good: a user_message sent while the client was mid-reconnect

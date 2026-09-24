@@ -4437,32 +4437,31 @@ describe('handleWsReconnect', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    // Mock loadSessionsOnce to NOT include s1 in runningSessions
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        sessions: [{ id: 's1', running: false }],
-        totalCount: 1,
-      }),
-    })
-
-    // Mock loadHistory fetch
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        // First call: loadSessionsOnce
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', running: false }],
-          totalCount: 1,
-        }),
-      })
-      .mockResolvedValueOnce({
-        // Second call: loadHistory
+    // URL-aware mock. The order-dependent form is fragile here: the force=false
+    // reconnect path also fires markSessionRead (POST /api/ai/chat/read) before
+    // the list load, so a positional mock feeds that response to the wrong call
+    // and the history fetch never returns — which now correctly means "not
+    // confirmed finished, keep the stream" instead of exercising the teardown.
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ id: 's1', running: false }],
+            totalCount: 1,
+          }),
+        })
+      }
+      if (String(url).includes('/api/ai/chat/read')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+      }
+      return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's1', messages: [], total: 0, running: false,
         }),
       })
+    })
 
     await session.handleWsReconnect()
 
@@ -4648,6 +4647,58 @@ describe('handleWsReconnect', () => {
 
     expect(mockUtilsFns.parseMessages.mock.calls.length).toBe(parseCallsBefore)
     expect(options.messages.value).toEqual(msgsSnapshot)
+
+    vi.restoreAllMocks()
+  })
+
+  it('when the verification response is for another session: keeps the stream (does NOT unsubscribe)', async () => {
+    // The identity guard rejects a stale response for a different session. That
+    // response carries `running:false` for SOMEONE ELSE — adopting it as
+    // authoritative for our session would authorise a teardown on data that does
+    // not describe the run in question.
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onResubscribeStream = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onResubscribeStream,
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
+      })
+      // Stale: describes s2, not the session we are looking at.
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's2', messages: [], total: 0, running: false,
+        }),
+      })
+
+    await session.handleManualRefresh()
+
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
+    expect(loading.value).toBe(true)
+    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
 
     vi.restoreAllMocks()
   })
@@ -4990,7 +5041,8 @@ describe('handleManualRefresh', () => {
     const session = useChatSession(options)
 
     // First fetch: loadSessionsOnce — s1 NOT running.
-    // Second fetch: loadHistory — the forced reload after cleanup.
+    // Second fetch: loadHistory — the verification load; confirms running:false,
+    // which is what authorises the cleanup.
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -5019,6 +5071,107 @@ describe('handleManualRefresh', () => {
         .filter((c: any[]) => String(c[0]).includes('/api/ai/chat?session_id=s1'))
       expect(chatFetches.length).toBeGreaterThanOrEqual(1)
     })
+
+    vi.restoreAllMocks()
+  })
+
+  it('when the running list is stale but history says running: keeps the stream (does NOT unsubscribe)', async () => {
+    // Regression for the "stuck mid-stream, refresh shows it was done" symptom.
+    // The session list is a separate request that can lag or fail; treating its
+    // "not running" as authoritative sent a REAL unsubscribe and dropped the
+    // live turn's content/done events server-side. The history response's own
+    // `running` field is the trustworthy signal.
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onResubscribeStream = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onResubscribeStream,
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn()
+      // Stale/empty list: s1 absent, so runningSessions.has('s1') is false.
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
+      })
+      // History is authoritative: the run is STILL going.
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's1', messages: [], total: 0, running: true,
+        }),
+      })
+
+    await session.handleManualRefresh()
+
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
+    expect(loading.value).toBe(true)
+    // The subscription must be actively re-established, not torn down.
+    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
+
+    vi.restoreAllMocks()
+  })
+
+  it('when the verification load gives no answer: keeps the stream (does NOT unsubscribe)', async () => {
+    // A loadHistory that bails (sequence guard / fetch error) yields no
+    // authoritative `running` value. Acting on "no information" by tearing the
+    // stream down is exactly the destructive mistake this guards against.
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onResubscribeStream = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onResubscribeStream,
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
+      })
+      // The history request fails outright — no `running` field is ever seen.
+      .mockRejectedValueOnce(new Error('network down'))
+
+    await session.handleManualRefresh()
+
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
+    expect(loading.value).toBe(true)
+    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
 
     vi.restoreAllMocks()
   })

@@ -1,6 +1,8 @@
 package ws
 
 import (
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -186,6 +188,72 @@ func TestEmitToSession_CriticalDropIsObservable(t *testing.T) {
 	stats := GetDeliveryStats()
 	require.Equal(t, int64(1), stats.NoSubscribers,
 		"a dropped terminal event must be observable — this is what makes the stuck-UI case diagnosable")
+}
+
+// diagInt extracts an integer field from a SubscriptionDiagnostics payload.
+// The payload is []any of slog.Attr (the standard dynamic-attrs shape), so a
+// test must unwrap it rather than compare Attr structs — that would silently
+// couple the assertion to slog's internals.
+func diagInt(t *testing.T, diag []any, key string) int64 {
+	t.Helper()
+	for _, a := range diag {
+		attr, ok := a.(slog.Attr)
+		if !ok || attr.Key != key {
+			continue
+		}
+		return attr.Value.Int64()
+	}
+	t.Fatalf("diagnostic payload has no %q field (got %v)", key, diag)
+	return 0
+}
+
+// TestSubscriptionDiagnostics_DistinguishesConnectedButUnsubscribed pins the
+// exact distinction that made the "stuck mid-stream" case undiagnosable: the
+// client is CONNECTED (so it is not offline) yet holds no subscription for the
+// session the event belongs to. The bare counters cannot tell this apart from
+// "no client at all"; the diagnostic payload must.
+func TestSubscriptionDiagnostics_DistinguishesConnectedButUnsubscribed(t *testing.T) {
+	mgr := NewManagerForTest()
+	SetManagerForTest(mgr)
+	t.Cleanup(func() { SetManagerForTest(nil) })
+
+	// A live connection that never subscribed to the session of interest.
+	conn := acceptRealConn(t)
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(conn, &writeMu, "client-a", "en")
+	require.NotNil(t, sub)
+
+	const sid = "session-nobody-watches"
+	diag := mgr.SubscriptionDiagnostics(sid)
+	assert.Equal(t, int64(1), diagInt(t, diag, "connected_clients"))
+	assert.Equal(t, int64(0), diagInt(t, diag, "subscribed_to_session"))
+	assert.Equal(t, int64(0), diagInt(t, diag, "hub_subscribers"))
+
+	// Now subscribe it: the same diagnostic must report the subscription, so a
+	// drop log can distinguish "lost subscription" from "never subscribed".
+	mgr.StreamHub().Subscribe("client-a", sid)
+	diag = mgr.SubscriptionDiagnostics(sid)
+	assert.Equal(t, int64(1), diagInt(t, diag, "subscribed_to_session"))
+	assert.Equal(t, int64(1), diagInt(t, diag, "hub_subscribers"))
+}
+
+// TestSubscriptionDiagnostics_CountsDisconnected verifies a detached
+// subscription (conn nil, entry preserved for replay) is reported as
+// disconnected rather than connected — otherwise a drop caused by a client
+// being genuinely away would look like a lost subscription.
+func TestSubscriptionDiagnostics_CountsDisconnected(t *testing.T) {
+	mgr := NewManagerForTest()
+	SetManagerForTest(mgr)
+	t.Cleanup(func() { SetManagerForTest(nil) })
+
+	conn := acceptRealConn(t)
+	var writeMu sync.Mutex
+	require.NotNil(t, mgr.Subscribe(conn, &writeMu, "client-b", "en"))
+	require.True(t, mgr.DisconnectClientIfCurrent("client-b", conn))
+
+	diag := mgr.SubscriptionDiagnostics("any-session")
+	assert.Equal(t, int64(0), diagInt(t, diag, "connected_clients"))
+	assert.Equal(t, int64(1), diagInt(t, diag, "disconnected_clients"))
 }
 
 // TestEmitToSession_UserMessageReachesWriteAheadWithoutSubscribers is the

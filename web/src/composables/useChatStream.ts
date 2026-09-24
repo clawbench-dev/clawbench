@@ -74,6 +74,112 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   const TOOL_USE_TIMEOUT_MS = 30000 // 30 seconds without 'done' event = mark as done
 
+  // ── Stream stall watchdog ──
+  //
+  // A subscription can be silently lost server-side (WS reconnect replaced the
+  // connection before its re-subscribe landed, App backgrounded and dropped the
+  // StreamHub subscriber, the session list lagged so runReload wrongly tore the
+  // subscription down). The run keeps going and the backend keeps writing to the
+  // DB, but every content/done event is dropped with `reason=no_subscribers`, so
+  // the UI sits on a spinner forever — until a manual refresh reads the DB and
+  // reveals the reply was complete long ago.
+  //
+  // There is no other self-healing path: the frontend has no stream inactivity
+  // timeout (an earlier 30s one was removed because a genuinely idle session is
+  // normal) and the polling fallback was deleted. This watchdog closes that gap
+  // without resurrecting the old "reload on any silence" behaviour:
+  //
+  //   * It only acts while we believe a turn is in flight (loading=true) AND the
+  //     panel is visible — an idle session and a backgrounded tab are untouched.
+  //   * "Progress" = ANY event delivered for our session, including housekeeping.
+  //     That is deliberate and is the opposite of the backend ACP watchdog, which
+  //     had to EXCLUDE housekeeping because its heartbeat kept arriving while the
+  //     model was dead. Here the failure being detected is a lost SUBSCRIPTION,
+  //     and housekeeping is fanned out through the same HasSubscribers gate as
+  //     content — so if the subscription were gone, the heartbeat would be gone
+  //     too. Receiving anything therefore proves the transport works and the
+  //     silence is the backend's (a long tool/subagent), which must NOT be
+  //     "recovered" as if the subscription had dropped.
+  //   * The recovery is NON-destructive and idempotent — resubscribe (re-triggers
+  //     the server's OnSubscribe → stream_start re-emit) + an authoritative
+  //     history reload. It never finalizes the turn, so a long-running tool or
+  //     subagent keeps its spinner (unlike the removed timeout, which killed it).
+  //     A turn that is legitimately silent for >STREAM_STALL_MS (e.g. a Claude
+  //     subagent whose inner events are not forwarded to the parent wire) will
+  //     trip the bounded attempts below; that is a few harmless reloads, not a
+  //     failure.
+  //   * Attempts are bounded per turn so a genuinely hung backend cannot cause an
+  //     endless reload loop; the log line is the diagnostic breadcrumb.
+  const STREAM_STALL_MS = 120000 // no event at all for 2min => suspect a lost subscription
+  const STREAM_STALL_CHECK_MS = 30000
+  const MAX_STALL_RECOVERIES = 3
+
+  let lastProgressAt = 0
+  let stallRecoveries = 0
+  let stallRecoveryInFlight = false
+  let stallWatchTimer: ReturnType<typeof setInterval> | null = null
+
+  /** Record that the model produced real progress (resets the stall window). */
+  function noteStreamProgress() {
+    lastProgressAt = Date.now()
+  }
+
+  /** Reset the stall window and the per-turn recovery budget. */
+  function resetStallWatch() {
+    lastProgressAt = Date.now()
+    stallRecoveries = 0
+  }
+
+  function checkStreamStall() {
+    // Only an in-flight turn on a visible panel can be "stuck". An idle session
+    // legitimately produces nothing, and a hidden panel is recovered by the
+    // foreground resync instead.
+    if (!loading.value || !isOpen.value) return
+    if (stallRecoveryInFlight) return
+    if (!currentSessionId.value) return
+    // First observation of an in-flight turn: start the window from here. Any
+    // entry path (send, session opened mid-stream, App foreground) is covered,
+    // so no explicit "turn started" hook is needed.
+    if (!lastProgressAt) { lastProgressAt = Date.now(); return }
+    const silentFor = Date.now() - lastProgressAt
+    if (silentFor < STREAM_STALL_MS) return
+    if (stallRecoveries >= MAX_STALL_RECOVERIES) {
+      // Logged once per turn: the budget is exhausted, stop hammering. A later
+      // terminal event or session switch resets it.
+      if (stallRecoveries === MAX_STALL_RECOVERIES) {
+        stallRecoveries++
+        appLog.w(TAG, `stream silent ${silentFor}ms — recovery budget exhausted (${MAX_STALL_RECOVERIES}), giving up until the turn ends`)
+      }
+      return
+    }
+    stallRecoveries++
+    // Reset the window BEFORE acting so the next tick cannot re-fire while the
+    // reload is still in flight.
+    lastProgressAt = Date.now()
+    stallRecoveryInFlight = true
+    const sid = currentSessionId.value
+    appLog.w(TAG, `stream silent ${silentFor}ms with a turn in flight — recovering (attempt ${stallRecoveries}/${MAX_STALL_RECOVERIES}, session=${sid})`)
+    // Resubscribe forces the server to re-emit stream_start/state for a run that
+    // is still going; the reload converges the UI to the DB if it already ended.
+    resubscribe(sid)
+    Promise.resolve()
+      .then(() => onLoadHistory())
+      .catch(() => { /* non-critical: the subscription repair already happened */ })
+      .finally(() => { stallRecoveryInFlight = false })
+  }
+
+  function startStallWatch() {
+    if (stallWatchTimer) return
+    stallWatchTimer = setInterval(checkStreamStall, STREAM_STALL_CHECK_MS)
+  }
+
+  function stopStallWatch() {
+    if (stallWatchTimer) {
+      clearInterval(stallWatchTimer)
+      stallWatchTimer = null
+    }
+  }
+
   // Subagent (task/Agent) tool calls run for minutes inside a child session whose
   // inner events aren't forwarded over ACP, so the outer call legitimately exceeds
   // TOOL_USE_TIMEOUT_MS. Don't kill their spinner with the 30s fallback, otherwise a
@@ -252,6 +358,12 @@ export function useChatStream(options: UseChatStreamOptions) {
   function stopStreaming() {
     clearToolUseTimeouts()
     thinkingBlockCounter = 0
+    // The turn is over (or being replaced). Clearing the window makes the stall
+    // watchdog inert until the next turn records progress — the idle period that
+    // follows a completed turn is normal and must never look like a stall. The
+    // interval itself keeps running (started once at setup): toggling it per turn
+    // would add a lifecycle that has to be kept in sync with every exit path.
+    lastProgressAt = 0
   }
 
   function disconnectStream() {
@@ -276,6 +388,8 @@ export function useChatStream(options: UseChatStreamOptions) {
   function connectStream(sessionId: string, options?: { reuseExistingStreaming?: boolean }) {
     // Stop any previous turn's stream state, then start a fresh one.
     stopStreaming()
+    // New turn: start the stall window fresh and restore the recovery budget.
+    resetStallWatch()
     // Discard events buffered for the PREVIOUS turn. They are replayed on the
     // next stream_start (the only replay trigger), so leaving them here means
     // that if the previous turn never got a placeholder — the very case the
@@ -383,6 +497,22 @@ export function useChatStream(options: UseChatStreamOptions) {
     const sessionId = csData.session_id
     const payload = csData.payload as Record<string, unknown>
     const sessionChanged = () => currentSessionId.value !== sessionId
+
+    // Any event for OUR session proves the subscription is alive — including one
+    // we end up discarding (e.g. a tool event for a placeholder that is gone).
+    //
+    // This watchdog detects a LOST SUBSCRIPTION, not a slow model, so the
+    // progress signal is deliberately the opposite of the backend ACP watchdog's:
+    // there, housekeeping notifications had to be EXCLUDED because they kept
+    // arriving while the model was dead, blinding the check. Here they are
+    // exactly the right evidence — housekeeping is fanned out through the same
+    // `HasSubscribers` gate as content, so if a subscription were lost, the
+    // heartbeat would be dropped too and NOTHING would arrive. Receiving anything
+    // therefore means the transport is fine and the silence is the backend's
+    // doing (a long tool / subagent), which must not be "recovered".
+    if (!sessionChanged()) {
+      noteStreamProgress()
+    }
 
     switch (csData.event_type) {
       case 'stream_start': {
@@ -863,6 +993,11 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   const unsubscribeFromWs = onEvent(handleChatStreamEvent)
 
+  // Watch for a silently-lost stream subscription for the lifetime of the
+  // composable. Cheap (one 30s interval, all checks are O(1) guard reads) and
+  // inert unless a turn is in flight on a visible panel.
+  startStallWatch()
+
   async function cancelStream() {
     if (!currentSessionId.value || !loading.value) return
     // Record the click before the send so the measured latency includes the
@@ -882,6 +1017,8 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Buffered events belong to the previous session's in-flight turn; applying
     // them to the new session's placeholder would corrupt it.
     clearBufferedEvents()
+    // The stall window is per-turn state: a new session starts a fresh one.
+    resetStallWatch()
     if (sid) subscribe(sid)
   }, { immediate: true })
 
@@ -905,6 +1042,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   onUnmounted(() => {
     disconnectStream()
+    stopStallWatch()
     clearToolUseTimeouts()
     renderScheduler.cancelAll()
     unsubscribeFromWs()

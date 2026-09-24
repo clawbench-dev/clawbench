@@ -2560,7 +2560,140 @@ describe('useChatStream', () => {
     })
   })
 
-  // ── isOpen guard ──
+  // ── Stream stall watchdog ──
+  // A subscription can be silently lost server-side while the run continues, so
+  // the UI sits on a spinner until a manual refresh reads the DB. The watchdog
+  // detects the silence and repairs it (resubscribe + authoritative reload)
+  // WITHOUT finalizing the turn.
+
+  describe('stream stall watchdog', () => {
+    it('resubscribes and reloads history after a long silence with a turn in flight', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+      mockSendWsMessage.mockClear()
+
+      // Past the stall window (120s) with no event at all.
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // The recovery re-establishes the subscription (forces a fresh subscribe
+      // so the server re-emits stream_start) and reloads from the DB.
+      expect(mockSendWsMessage).toHaveBeenCalledWith(
+        { type: 'subscribe', session_id: 'test-session-1' }
+      )
+      expect(options.onLoadHistory).toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('does NOT recover while the panel is hidden', async () => {
+      vi.useFakeTimers()
+      const options = createOptions({ isOpen: ref(false) })
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // A hidden panel is recovered by the foreground resync instead; firing
+      // reloads for an invisible panel would be pure churn.
+      expect(options.onLoadHistory).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('does NOT recover an idle session (loading=false)', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      // Turn already finished — silence is normal, not a stall.
+      options.loading.value = false
+      options.onLoadHistory.mockClear()
+
+      await vi.advanceTimersByTimeAsync(150000)
+
+      expect(options.onLoadHistory).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('a delivered event keeps the stream alive (no recovery)', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+
+      // Housekeeping counts as liveness here: it is fanned out through the same
+      // HasSubscribers gate as content, so receiving it proves the subscription
+      // works and the silence is the backend's doing.
+      await vi.advanceTimersByTimeAsync(90000)
+      simulateWsEvent('usage_update', { size: 10, used: 1 })
+      await vi.advanceTimersByTimeAsync(90000)
+
+      expect(options.onLoadHistory).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('bounds recovery attempts per turn', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+
+      // Keep the panel visible and the turn in flight; no events ever arrive.
+      // 4+ stall windows must NOT produce an unbounded number of reloads.
+      await vi.advanceTimersByTimeAsync(600000)
+
+      expect(options.onLoadHistory.mock.calls.length).toBeLessThanOrEqual(3)
+      expect(options.onLoadHistory).toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('does not recover a different session\'s silence', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+
+      // An event for another session must not reset our window, but the
+      // watchdog only ever acts for the CURRENT session, so silence stays.
+      await vi.advanceTimersByTimeAsync(150000)
+      simulateWsEvent('content', { content: 'x' }, 'other-session')
+
+      expect(options.onLoadHistory).toHaveBeenCalled()
+      // And the recovery targeted the current session, not the foreign one.
+      expect(mockSendWsMessage).toHaveBeenCalledWith(
+        { type: 'subscribe', session_id: 'test-session-1' }
+      )
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+  })
 
   describe('isOpen guard — skip render and scroll when panel not visible', () => {
     it('should skip debouncedRender when isOpen=false', async () => {
