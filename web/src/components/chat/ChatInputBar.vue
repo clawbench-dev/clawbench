@@ -66,7 +66,7 @@
     <Transition name="recommend-slide">
       <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
         <Sparkles :size="13" :stroke-width="1.5" class="recommendation-icon" />
-        <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('chat.recommendationCollapse') : t('chat.recommendationExpand')">{{ recommendation }}</span>
+        <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('tool.askUser.recommendationCollapse') : t('tool.askUser.recommendationExpand')">{{ recommendation }}</span>
         <button class="recommendation-accept" @click.stop="acceptRecommendation" :title="t('tool.askUser.recommendationFill')">{{ t('tool.askUser.recommendationFill') }}</button>
       </div>
     </Transition>

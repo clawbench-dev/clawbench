@@ -240,13 +240,20 @@
             </template>
 
             <template #right>
-              <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" :class="{ 'chat-drop-active': chatDropActive }" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
+              <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
                 <div class="col-right-chat">
                   <div class="chat-panel-row">
                   <!-- Chat column: title bar + chat panel. Keeping the title
                        bar inside this column (rather than spanning the whole
                        right pane) leaves the session sidebar full-height. -->
-                  <div class="chat-col">
+                  <!-- The drop highlight lives on THIS column, not on .col-right:
+                       .col-right also contains the session sidebar, so binding
+                       it there lit up the sidebar too and the user read that as
+                       "the whole pane is the target". The drag handlers stay on
+                       .col-right so the drop still works anywhere on the pane —
+                       the highlight previews the DESTINATION (the chat), not the
+                       cursor's location. -->
+                  <div class="chat-col" :class="{ 'chat-drop-active': chatDropActive }">
                   <div class="chat-title-bar">
                     <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
@@ -265,10 +272,13 @@
                       @open-session-search="sessionSearchDrawer.open()"
                     />
                   </TabPanel>
-                  </div>
+                  <!-- The hint is centered on the CHAT column, not on
+                       .chat-panel-row: that row also spans the session sidebar,
+                       so centering there would push the pill off the chat. -->
                   <div v-if="chatDropActive" class="chat-drop-hint">
                     <Paperclip :size="16" />
                     {{ t('file.dropToAttach') }}
+                  </div>
                   </div>
                   <SessionSidebar
                     ref="sessionSidebarRef"

@@ -40,7 +40,7 @@
           @input="onSliderInput"
           @click.stop
         />
-        <button v-if="defaultValue !== undefined && modelValue !== defaultValue" class="settings-item__slider-reset" :disabled="disabled" @click.stop="resetSlider" :title="t('settings.items.resetToDefault')">↺</button>
+        <button v-if="defaultValue !== undefined && modelValue !== defaultValue" class="settings-item__slider-reset" :disabled="disabled" @click.stop="resetSlider" :title="t('settings.resetToDefault')">↺</button>
       </template>
       <template v-else-if="type === 'password'">
         <span class="settings-item__value">{{ displayValue }}</span>

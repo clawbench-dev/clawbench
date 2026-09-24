@@ -14,6 +14,7 @@ export default {
     copied: '已复制',
     download: '下载',
     retry: '重试',
+    refresh: '刷新',
     rename: '重命名',
     renameSession: '重命名会话',
     setTags: '设置标签',

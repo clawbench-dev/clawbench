@@ -14,6 +14,7 @@ export default {
     copied: 'Copied',
     download: 'Download',
     retry: 'Retry',
+    refresh: 'Refresh',
     rename: 'Rename',
     renameSession: 'Rename session',
     setTags: 'Set tags',
