@@ -1512,16 +1512,15 @@
       }
     });
 
-    // Event: paste a full URL into the host field -> fill protocol + port.
-    // Only `paste` is handled (no blur/input): typing an address by hand must
-    // not be rewritten mid-keystroke.
-    document.getElementById('addHost').addEventListener('paste', function(e) {
-      var text = (e.clipboardData && e.clipboardData.getData('text')) || '';
-      var parsed = parseServerInput(text);
-      // Unparseable -> do not intercept; let the browser paste normally.
+    // Event: blur on the host field -> normalize a full URL into protocol + port.
+    // Blur, not paste/input: the field is only rewritten after the user leaves it,
+    // so typing is never disturbed mid-keystroke. Reading .value (rather than
+    // clipboard data) also sidesteps WebView clipboard restrictions.
+    document.getElementById('addHost').addEventListener('blur', function() {
+      var parsed = parseServerInput(document.getElementById('addHost').value);
+      // Not a URL we understand -> leave the field exactly as the user typed it.
       if (!parsed) return;
 
-      e.preventDefault();
       hideError('addErrorMsg');
       document.getElementById('addHost').value = parsed.host;
       // Only override the port when the URL carried one explicitly; the field

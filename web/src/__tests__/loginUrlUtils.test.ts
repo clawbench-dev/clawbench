@@ -73,7 +73,7 @@ const CASES: Array<[string, Parsed | null]> = [
   // Extra edges.
   ['', null],
   ['   ', null],
-  // Whitespace around a valid URL — clipboard pastes often carry padding.
+  // Whitespace around a valid URL — pasted/typed input often carries padding.
   ['  https://host:8443  ', { protocol: 'https', host: 'host', port: '8443' }],
   // An explicit port equal to the scheme default is still explicit.
   ['http://host:80', { protocol: 'http', host: 'host', port: '80' }],
@@ -102,7 +102,7 @@ const DESKTOP_LOGIN = 'desktop/assets/login.html'
 
 /**
  * Static wiring guard. Robolectric cannot execute JS (ShadowWebView
- * .evaluateJavascript is a no-op), so the paste handler cannot be exercised
+ * .evaluateJavascript is a no-op), so the blur handler cannot be exercised
  * end-to-end in a unit test. These assertions catch the wiring being forgotten
  * — a missing <script> tag or an unwired listener — which would otherwise ship
  * silently (no CSP, no error, the feature just does nothing).
@@ -112,10 +112,10 @@ describe('login.html wiring', () => {
     ['android', ANDROID_LOGIN],
     ['desktop', DESKTOP_LOGIN],
   ] as const) {
-    it(`${label} loads url-utils.js and wires a paste listener on #addHost`, () => {
+    it(`${label} loads url-utils.js and wires a blur listener on #addHost`, () => {
       const html = readRepoFile(rel)
       expect(html).toContain('<script src="url-utils.js"></script>')
-      expect(html).toMatch(/getElementById\('addHost'\)\.addEventListener\('paste'/)
+      expect(html).toMatch(/getElementById\('addHost'\)\.addEventListener\('blur'/)
       expect(html).toContain('parseServerInput')
     })
 
@@ -130,12 +130,12 @@ describe('login.html wiring', () => {
       const doc = new DOMParser().parseFromString(readRepoFile(rel), 'text/html')
 
       const host = doc.getElementById('addHost')
-      expect(host, '#addHost must exist (the paste listener is bound to it)').not.toBeNull()
+      expect(host, '#addHost must exist (the blur listener is bound to it)').not.toBeNull()
 
       const port = doc.getElementById('addPort')
       expect(port, '#addPort must exist (the listener writes parsed.port here)').not.toBeNull()
       // The design's "default 20000" behaviour depends on this exact value: a
-      // scheme-less paste leaves the field alone, so the default is what ships.
+      // scheme-less input leaves the field alone, so the default is what ships.
       expect(port!.getAttribute('value')).toBe('20000')
 
       // The listener flips these by value selector; a renamed value would make
@@ -207,42 +207,42 @@ describe('desktop packaging', () => {
 })
 
 /**
- * The comment that opens the paste listener in both login.html files. The
+ * The comment that opens the blur listener in both login.html files. The
  * extraction below slices from here to the listener's closing `});`, so if a
  * refactor renames or moves the block the test fails loudly instead of quietly
  * asserting nothing.
  */
-const PASTE_COMMENT = '// Event: paste a full URL into the host field'
+const BLUR_COMMENT = '// Event: blur on the host field'
 
 /**
- * Pull the paste listener's source out of a login.html. Robust anchors:
+ * Pull the blur listener's source out of a login.html. Robust anchors:
  *  - the comment marker must exist;
  *  - the first `});` after it must close the listener (no `// Event:` comment
  *    may intervene — the next handler starts with one);
- *  - the slice must contain the addEventListener('paste' call.
+ *  - the slice must contain the addEventListener('blur' call.
  * Throws with a specific reason when an anchor moved, so a future refactor is
  * caught rather than silently passing.
  */
-function extractPasteListener(rel: string): string {
+function extractBlurListener(rel: string): string {
   const html = readRepoFile(rel)
-  const markerIdx = html.indexOf(PASTE_COMMENT)
+  const markerIdx = html.indexOf(BLUR_COMMENT)
   if (markerIdx < 0) {
-    throw new Error(`paste listener comment ${JSON.stringify(PASTE_COMMENT)} not found in ${rel}`)
+    throw new Error(`blur listener comment ${JSON.stringify(BLUR_COMMENT)} not found in ${rel}`)
   }
-  const nextEventIdx = html.indexOf('// Event:', markerIdx + PASTE_COMMENT.length)
+  const nextEventIdx = html.indexOf('// Event:', markerIdx + BLUR_COMMENT.length)
   const closeIdx = html.indexOf('});', markerIdx)
   if (closeIdx < 0) {
-    throw new Error(`no closing '});' after the paste listener comment in ${rel}`)
+    throw new Error(`no closing '});' after the blur listener comment in ${rel}`)
   }
   if (nextEventIdx !== -1 && nextEventIdx < closeIdx) {
     throw new Error(
-      `the paste listener block in ${rel} does not end before the next '// Event:' comment ` +
+      `the blur listener block in ${rel} does not end before the next '// Event:' comment ` +
         `(close=${closeIdx}, nextEvent=${nextEventIdx}) — extraction anchors moved`,
     )
   }
   const src = html.slice(markerIdx, closeIdx + '});'.length)
-  if (!src.includes("addEventListener('paste'")) {
-    throw new Error(`extracted block from ${rel} is not the paste listener (no addEventListener('paste')`)
+  if (!src.includes("addEventListener('blur'")) {
+    throw new Error(`extracted block from ${rel} is not the blur listener (no addEventListener('blur')`)
   }
   if (!src.endsWith('});')) {
     throw new Error(`extracted block from ${rel} does not end with '});'`)
@@ -252,21 +252,21 @@ function extractPasteListener(rel: string): string {
 
 /**
  * The two login.html files legitimately differ (i18n slogans, the async bridge
- * handling, comments), so a whole-file equality check would be wrong. The paste
+ * handling, comments), so a whole-file equality check would be wrong. The blur
  * listener, however, is deliberately platform-agnostic — it touches no native
  * bridge, only the shared parseServerInput and plain DOM — so the two copies
  * must stay identical. Divergence means someone edited one page's listener and
  * forgot the other, which no behavioural test would catch (each page is tested
  * only against its own copy).
  */
-describe('login.html paste listener copies', () => {
+describe('login.html blur listener copies', () => {
   it('are byte-identical', () => {
-    expect(extractPasteListener(ANDROID_LOGIN)).toBe(extractPasteListener(DESKTOP_LOGIN))
+    expect(extractBlurListener(ANDROID_LOGIN)).toBe(extractBlurListener(DESKTOP_LOGIN))
   })
 })
 
 /**
- * Minimal DOM the paste listener touches. Values mirror the real login page:
+ * Minimal DOM the blur listener touches. Values mirror the real login page:
  * #addPort defaults to 20000 and the https radio is checked by default.
  */
 const DOM_FIXTURE = `
@@ -280,14 +280,14 @@ const DOM_FIXTURE = `
 /**
  * End-to-end wiring guard: actually executes the extracted listener against a
  * real jsdom document. Robolectric cannot run JS, so this is the only place the
- * paste handler's behaviour (not just its text) is exercised. Registered via
+ * blur handler's behaviour (not just its text) is exercised. Registered via
  * indirect eval so the listener's free identifiers (document, parseServerInput,
  * hideError) resolve in global scope exactly as they do in the page.
  */
 describe.each([
   ['android', ANDROID_LOGIN, ANDROID_UTILS],
   ['desktop', DESKTOP_LOGIN, DESKTOP_UTILS],
-])('paste listener behaviour (%s page)', (_label, loginRel, utilsRel) => {
+])('blur listener behaviour (%s page)', (_label, loginRel, utilsRel) => {
   let host: HTMLInputElement
 
   beforeEach(() => {
@@ -300,7 +300,7 @@ describe.each([
     // url-utils.js defines parseServerInput as a global function.
     ;(0, eval)(readRepoFile(utilsRel))
     // Register the listener on the real #addHost element.
-    ;(0, eval)(extractPasteListener(loginRel))
+    ;(0, eval)(extractBlurListener(loginRel))
     host = document.getElementById('addHost') as HTMLInputElement
     if (!host) throw new Error(`${loginRel} fixture did not create #addHost`)
   })
@@ -309,13 +309,11 @@ describe.each([
     document.body.innerHTML = ''
   })
 
-  function paste(text: string): Event {
-    const ev = new Event('paste', { bubbles: true, cancelable: true })
-    // jsdom has no ClipboardEvent.clipboardData; the listener only reads
-    // e.clipboardData.getData('text'), so a plain property suffices.
-    Object.defineProperty(ev, 'clipboardData', { value: { getData: () => text } })
-    host.dispatchEvent(ev)
-    return ev
+  function blur(text: string): void {
+    host.value = text
+    // blur does not bubble, but the listener is bound directly on #addHost, so a
+    // non-bubbling event dispatched on the element itself still reaches it.
+    host.dispatchEvent(new Event('blur'))
   }
 
   function portValue(): string {
@@ -332,45 +330,61 @@ describe.each([
     if (el) el.checked = true
   }
 
-  it('fills host, port and protocol from a full https URL and intercepts the paste', () => {
+  it('fills host, port and protocol from a full https URL', () => {
     // Start on http so the flip to https is meaningful.
     setProtocol('http')
-    const ev = paste('https://192.168.1.100:8443')
-    expect(ev.defaultPrevented).toBe(true)
+    blur('https://192.168.1.100:8443')
     expect(host.value).toBe('192.168.1.100')
     expect(portValue()).toBe('8443')
     expect(checkedProtocol()).toBe('https')
   })
 
   it('fills host from a scheme-only http URL and leaves the default port untouched', () => {
-    const ev = paste('http://example.com')
-    expect(ev.defaultPrevented).toBe(true)
+    blur('http://example.com')
     expect(host.value).toBe('example.com')
     expect(portValue()).toBe('20000')
     expect(checkedProtocol()).toBe('http')
   })
 
   it('fills host and port for a scheme-less URL but leaves the protocol radio alone', () => {
-    const ev = paste('192.168.1.100:8080')
-    expect(ev.defaultPrevented).toBe(true)
+    blur('192.168.1.100:8080')
     expect(host.value).toBe('192.168.1.100')
     expect(portValue()).toBe('8080')
     // No scheme in the input -> radio must stay at its default (https).
     expect(checkedProtocol()).toBe('https')
   })
 
-  it('does not intercept an unparseable paste', () => {
-    host.value = 'ORIGINAL'
-    const ev = paste('not a url')
-    expect(ev.defaultPrevented).toBe(false)
-    expect(host.value).toBe('ORIGINAL')
+  it('leaves an unparseable value exactly as typed and does not hide the error', () => {
+    const err = document.getElementById('addErrorMsg') as HTMLElement
+    err.classList.add('visible')
+    blur('not a url')
+    expect(host.value).toBe('not a url')
     expect(portValue()).toBe('20000')
+    // Unparseable -> the listener returns before hideError, so a shown error
+    // must stay visible.
+    expect(err.classList.contains('visible')).toBe(true)
+  })
+
+  it('leaves a plain host untouched and is idempotent across repeated blurs', () => {
+    // Start on http so "unchanged" is distinguishable from the default.
+    setProtocol('http')
+    blur('192.168.1.100')
+    // No explicit port -> the port field must never be written, and re-blurring
+    // (which happens often, e.g. when the form is hidden) must be harmless.
+    expect(host.value).toBe('192.168.1.100')
+    expect(portValue()).toBe('20000')
+    expect(checkedProtocol()).toBe('http')
+
+    blur('192.168.1.100')
+    expect(host.value).toBe('192.168.1.100')
+    expect(portValue()).toBe('20000')
+    expect(checkedProtocol()).toBe('http')
   })
 
   it('hides the error message on a successful parse (proves hideError ran)', () => {
     const err = document.getElementById('addErrorMsg') as HTMLElement
     err.classList.add('visible')
-    paste('https://host:8443')
+    blur('https://host:8443')
     expect(err.classList.contains('visible')).toBe(false)
   })
 })
