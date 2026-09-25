@@ -32,6 +32,9 @@ afterEach(() => {
   // Drop buffered appLog entries so the 50-entry flush never fires mid-test,
   // which would otherwise consume a fetch mock with a POST to /api/client-log.
   _clearLogBuffer()
+  // Module-level queue state must not leak between tests.
+  resetQueuesForTest()
+  resetInFlightSendsForTest()
 })
 
 // ── Hoisted mock state (plain objects, no Vue imports needed) ──
@@ -388,7 +391,8 @@ vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
 import { useChatSession, loadSessionsOnce, resetChatSessionState } from '@/composables/useChatSession'
 import { recordRecentSession } from '@/composables/useRecentSession'
 import { store } from '@/stores/app.ts'
-import { chatMessageReducer } from '@/utils/chatStreamUtils.ts'
+import { chatMessageReducer, resetInFlightSendsForTest } from '@/utils/chatStreamUtils.ts'
+import { addQueued, getQueue, removeQueued, resetQueuesForTest } from '@/composables/useMessageQueue.ts'
 import { updatePlanEntries, clearPlanState, usePlanProgress } from '@/composables/usePlanProgress'
 
 // Get direct references to the mocked functions from useSessionIdentity
@@ -2368,29 +2372,28 @@ describe('switchSession', () => {
     expect(globalThis.fetch).toHaveBeenCalled()
   })
 
-  it('marks DB-returned queued messages as pending after switchSession', async () => {
-    // Queued messages are real chat_history rows now (queued=true, queueId
-    // set). loadHistory must mark them pending so the UI shows a waiting bubble.
+  it('rebuilds the queue store from the response queue field after switchSession', async () => {
+    // Queued messages are NOT chat_history rows any more — they live in their
+    // own table and arrive in a separate `queue` field. loadHistory calls
+    // syncFromHistory, so the panel is rebuilt from the authoritative snapshot.
     mockUtilsFns.parseMessages.mockReturnValue([
       { id: 1, role: 'user', content: 'hello' },
       { id: 2, role: 'assistant', content: 'hi' },
-      { id: 3, role: 'user', content: 'queued message 1', queueId: 'pending-abc123', queued: true },
-      { id: 4, role: 'user', content: 'queued message 2', queueId: 'pending-def456', queued: true, files: [{ path: '/tmp/file.txt', isDir: false }] },
     ])
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
-        // Chat history fetch with queued messages
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's2',
           messages: [
             { id: 1, role: 'user', content: 'hello' },
             { id: 2, role: 'assistant', content: 'hi' },
-            { id: 3, role: 'user', content: 'queued message 1', queueId: 'pending-abc123', queued: true },
-            { id: 4, role: 'user', content: 'queued message 2', queueId: 'pending-def456', queued: true, files: [{ path: '/tmp/file.txt', isDir: false }] },
           ],
-          total: 4,
-          queuedCount: 2,
+          queue: [
+            { queueId: 'pending-abc123', text: 'queued message 1' },
+            { queueId: 'pending-def456', text: 'queued message 2', files: [{ path: '/tmp/file.txt', isDir: false }] },
+          ],
+          total: 2,
           backend: 'claude',
           agentId: 'agent1',
           modelId: '',
@@ -2399,7 +2402,6 @@ describe('switchSession', () => {
         }),
       })
       .mockResolvedValue({
-        // Catch-all for loadSessionsOnce etc.
         ok: true,
         json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
       })
@@ -2407,25 +2409,22 @@ describe('switchSession', () => {
     const session = createSession()
     await session.switchSession('s2')
 
-    // Queued messages should be marked pending, normal messages not.
-    const pendingMsgs = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
-    expect(pendingMsgs.length).toBe(2)
-    expect(pendingMsgs[0].content).toBe('queued message 1')
-    expect(pendingMsgs[0].queueId).toBe('pending-abc123')
-    expect(pendingMsgs[1].content).toBe('queued message 2')
-    expect(pendingMsgs[1].queueId).toBe('pending-def456')
-    // queuedCount should be synced for hasMore (plan C).
-    expect(session.queuedCount.value).toBe(2)
+    // The queued messages are in the queue store, keyed by the returned id.
+    const queue = getQueue('s2')
+    expect(queue).toHaveLength(2)
+    expect(queue[0].queueId).toBe('pending-abc123')
+    expect(queue[0].text).toBe('queued message 1')
+    expect(queue[1].queueId).toBe('pending-def456')
+    // And NOT in the conversation messages.
+    expect(lastSessionOptions!.messages.value.some((m: any) => m.queueId === 'pending-abc123')).toBe(false)
   })
 
-  it('marks a DB-returned queued message pending even when the optimistic bubble was replaced', async () => {
-    // The optimistic bubble pushed by sendMessageNow is replaced by its DB row
-    // on loadHistory. The DB row carries queueId/queued=true, so it must be
-    // re-marked pending — otherwise the UI loses the waiting bubble.
+  it('replaces (not merges) the queue store on a later loadHistory', async () => {
+    // syncFromHistory REPLACES the session's queue from the snapshot, so a
+    // drained/cancelled entry the snapshot no longer lists disappears.
     mockUtilsFns.parseMessages.mockReturnValue([
       { id: 1, role: 'user', content: 'A' },
       { id: 2, role: 'assistant', content: 'A reply' },
-      { id: 3, role: 'user', content: 'queued during reload', queueId: 'pending-xyz789', queued: true },
     ])
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -2434,50 +2433,9 @@ describe('switchSession', () => {
         messages: [
           { id: 1, role: 'user', content: 'A' },
           { id: 2, role: 'assistant', content: 'A reply' },
-          { id: 3, role: 'user', content: 'queued during reload', queueId: 'pending-xyz789', queued: true },
         ],
-        total: 3,
-        queuedCount: 1,
-        running: false,
-      }),
-    })
-
-    const session = createSession()
-    // Guard against state leaking from a prior test that populated the same
-    // shared messages ref.
-    lastSessionOptions!.messages.value = []
-
-    await session.loadHistory(true, false, false)
-
-    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
-    const xyz = pending.filter((m: any) => m.queueId === 'pending-xyz789')
-    // The DB row (id=3) is pending because it is still queued.
-    expect(xyz.length).toBe(1)
-    expect(xyz[0].id).toBe(3)
-    expect(xyz[0].content).toBe('queued during reload')
-    // queuedCount is synced for hasMore (plan C).
-    expect(session.queuedCount.value).toBe(1)
-  })
-
-  it('marks multiple DB-returned queued messages as pending', async () => {
-    mockUtilsFns.parseMessages.mockReturnValue([
-      { id: 1, role: 'user', content: 'A' },
-      { id: 2, role: 'assistant', content: 'A reply' },
-      { id: 3, role: 'user', content: 'queued B', queueId: 'pending-b1', queued: true },
-      { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
-    ])
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        sessionId: 'current-s1',
-        messages: [
-          { id: 1, role: 'user', content: 'A' },
-          { id: 2, role: 'assistant', content: 'A reply' },
-          { id: 3, role: 'user', content: 'queued B', queueId: 'pending-b1', queued: true },
-          { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
-        ],
-        total: 4,
-        queuedCount: 2,
+        queue: [{ queueId: 'pending-xyz789', text: 'queued during reload' }],
+        total: 2,
         running: false,
       }),
     })
@@ -2487,21 +2445,14 @@ describe('switchSession', () => {
 
     await session.loadHistory(true, false, false)
 
-    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
-    const queueIds = pending.map((m: any) => m.queueId)
-    expect(queueIds).toContain('pending-b1')
-    expect(queueIds).toContain('pending-b2')
+    expect(getQueue('current-s1')).toHaveLength(1)
+    expect(getQueue('current-s1')[0].queueId).toBe('pending-xyz789')
   })
 
-  it('does NOT mark a drained message pending when queued=false but queueId lingers (B2)', async () => {
-    // B2 regression: DequeueQueuedMessage flips queued=0 but keeps queue_id.
-    // A drained message arrives with queueId set and queued=false — it is a
-    // normal conversation message and must NOT show a waiting bubble.
+  it('clears the queue store when the snapshot has no queued messages', async () => {
     mockUtilsFns.parseMessages.mockReturnValue([
       { id: 1, role: 'user', content: 'A' },
       { id: 2, role: 'assistant', content: 'A reply' },
-      { id: 3, role: 'user', content: 'drained B', queueId: 'pending-b1', queued: false },
-      { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
     ])
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -2510,39 +2461,32 @@ describe('switchSession', () => {
         messages: [
           { id: 1, role: 'user', content: 'A' },
           { id: 2, role: 'assistant', content: 'A reply' },
-          { id: 3, role: 'user', content: 'drained B', queueId: 'pending-b1', queued: false },
-          { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
         ],
-        total: 4,
-        queuedCount: 1,
+        queue: [],
+        total: 2,
         running: false,
       }),
     })
 
     const session = createSession()
     lastSessionOptions!.messages.value = []
+    addQueued('current-s1', { queueId: 'stale-q', text: 'stale', files: [] })
 
     await session.loadHistory(true, false, false)
 
-    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
-    // Only the truly queued message (queued=true) is pending; the drained one
-    // (queued=false, queueId lingers) is a normal message.
-    expect(pending).toHaveLength(1)
-    expect(pending[0].content).toBe('queued C')
-    const drainedB = lastSessionOptions!.messages.value.find((m: any) => m.content === 'drained B')
-    expect(drainedB.pending).toBeUndefined()
+    expect(getQueue('current-s1')).toHaveLength(0)
   })
 
   it('does NOT carry the old session\u2019s queued messages into a new session on switch', async () => {
-    // Regression: syncSessionState merges in-flight messages across a reload,
-    // but a session SWITCH must start fresh — otherwise the old session's
-    // queued messages would leak into the new session.
+    // Regression: the queue store is keyed by session id, so a switch must not
+    // leak the old session's queued entries into the new session's panel.
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's2',
           messages: [{ id: 1, role: 'user', content: 'new A' }, { id: 2, role: 'assistant', content: 'new reply' }],
+          queue: [],
           total: 2,
           running: false,
         }),
@@ -2552,15 +2496,13 @@ describe('switchSession', () => {
     const session = createSession()
     lastSessionOptions!.messages.value = []
     // The old session has an in-flight queued message.
-    lastSessionOptions!.messages.value.push({
-      role: 'user', id: 'pending-old', content: 'queued in OLD session', pending: true, seq: 1,
-    })
+    addQueued('current-s1', { queueId: 'pending-old', text: 'queued in OLD session', files: [] })
 
     await session.switchSession('s2')
 
-    const contents = lastSessionOptions!.messages.value.map((m: any) => m.content)
-    // The old session's queued message must NOT leak into the new session.
-    expect(contents).not.toContain('queued in OLD session')
+    // The old session's queue entry stays under its own key and does not leak.
+    expect(getQueue('s2')).toHaveLength(0)
+    expect(getQueue('current-s1').some((m) => m.text === 'queued in OLD session')).toBe(true)
   })
 
   it('a cancelled queued message does not reappear after reload (it was never persisted)', async () => {
@@ -2569,6 +2511,7 @@ describe('switchSession', () => {
       json: () => Promise.resolve({
         sessionId: 'current-s1',
         messages: [{ id: 1, role: 'user', content: 'A' }],
+        queue: [],
         total: 1,
         running: false,
       }),
@@ -2576,16 +2519,15 @@ describe('switchSession', () => {
 
     const session = createSession()
     lastSessionOptions!.messages.value = []
-    // A queued message is in flight, then cancelled (removed from the array).
-    lastSessionOptions!.messages.value.push({
-      role: 'user', id: 'pending-c', content: 'cancelled msg', pending: true, seq: 1,
-    })
-    lastSessionOptions!.messages.value = lastSessionOptions!.messages.value.filter((m: any) => m.id !== 'pending-c')
+    // A queued message is in flight, then cancelled (removed from the store).
+    addQueued('current-s1', { queueId: 'pending-c', text: 'cancelled msg', files: [] })
+    removeQueued('current-s1', 'pending-c')
 
     await session.loadHistory(true, false, false)
 
     const contents = lastSessionOptions!.messages.value.map((m: any) => m.content)
     expect(contents).not.toContain('cancelled msg')
+    expect(getQueue('current-s1')).toHaveLength(0)
   })
 
             it('does not merge DB identity into drain messages while a new turn is streaming (done→send→loadHistory race)', async () => {
@@ -2639,11 +2581,9 @@ describe('switchSession', () => {
     expect(id2).not.toBe(drainA)
   })
 
-  it('adopts DB identity into a drained reply (stale anchor cleared)', async () => {
-    // Regression: queued replies carry an anchor (afterSort in the old design,
-    // parentQueueId today) computed from the transient parent value. When the
-    // reply adopts its DB id via loadHistory, the anchor must not pin it after
-    // all DB messages — DB id order must be authoritative.
+  it('drops a transient drain-* reply and adopts the authoritative DB row', async () => {
+    // Regression: a transient drain-* reply (no anchor machinery any more) must
+    // be replaced by its DB row on loadHistory — DB id order is authoritative.
     const drainReply2 = {
       role: 'assistant', id: 'drain-reply2', content: '', blocks: [{ type: 'text', text: 'reply2' }],
       createdAt: '2026-01-01T00:00:05Z', seq: 3,
@@ -2683,18 +2623,16 @@ describe('switchSession', () => {
     expect(adopted.content).toContain('reply2')
   })
 
-  it('restores conversational order for queued replies after loadHistory', async () => {
-    // Backend persists queued user messages at enqueue time, so raw DB id
-    // order is msg2, msg3, reply2, reply3. Each reply carries the queue_id of
-    // the question it answers; anchorRepliesToQuestions must restore the
-    // conversational order msg2, reply2, msg3, reply3.
+  it('sorts conversation messages by DB id after loadHistory', async () => {
+    // A queued message is materialized into chat_history only when dequeued, so
+    // its id always precedes the reply it produced. Ordering is therefore a
+    // plain numeric-id sort — no reply anchor is needed.
     mockUtilsFns.parseMessages.mockReturnValue([
       { id: 1, role: 'user', content: 'msg1', blocks: [{ type: 'text', text: 'msg1' }], createdAt: '2026-01-01T00:00:00Z' },
       { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}', createdAt: '2026-01-01T00:00:01Z' },
-      { id: 3, role: 'user', content: 'msg2', queueId: 'q2', queued: false, blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:02Z' },
-      { id: 4, role: 'user', content: 'msg3', queueId: 'q3', queued: false, blocks: [{ type: 'text', text: 'msg3' }], createdAt: '2026-01-01T00:00:03Z' },
-      { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2', createdAt: '2026-01-01T00:00:04Z' },
-      { id: 6, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply3"}]}', queueId: 'q3', createdAt: '2026-01-01T00:00:05Z' },
+      { id: 3, role: 'user', content: 'msg2', queueId: 'q2', blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:02Z' },
+      { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', createdAt: '2026-01-01T00:00:04Z' },
+      { id: 6, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply3"}]}', createdAt: '2026-01-01T00:00:05Z' },
     ])
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -2704,48 +2642,10 @@ describe('switchSession', () => {
           { id: 1, role: 'user', content: 'msg1' },
           { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
           { id: 3, role: 'user', content: 'msg2', queueId: 'q2' },
-          { id: 4, role: 'user', content: 'msg3', queueId: 'q3' },
-          { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2' },
-          { id: 6, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply3"}]}', queueId: 'q3' },
-        ],
-        total: 6,
-        running: false,
-      }),
-    })
-
-    const session = createSession()
-    lastSessionOptions!.messages.value = []
-
-    await session.loadHistory(true, false, false)
-
-    const msgs = lastSessionOptions!.messages.value as any[]
-    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5, 4, 6])
-  })
-
-  it('keeps queued replies anchored when some messages are still queued (mixed state)', async () => {
-    // Mid-drain state: msg2 drained (reply2 exists), msg3 still queued
-    // (pending bubble, queued=true). loadHistory must keep reply2 after msg2
-    // and msg3 as a pending bubble after reply2.
-    mockUtilsFns.parseMessages.mockReturnValue([
-      { id: 1, role: 'user', content: 'msg1', blocks: [{ type: 'text', text: 'msg1' }], createdAt: '2026-01-01T00:00:00Z' },
-      { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}', createdAt: '2026-01-01T00:00:01Z' },
-      { id: 3, role: 'user', content: 'msg2', queueId: 'q2', queued: false, blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:02Z' },
-      { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2', createdAt: '2026-01-01T00:00:04Z' },
-      { id: 4, role: 'user', content: 'msg3', queueId: 'q3', queued: true, blocks: [{ type: 'text', text: 'msg3' }], createdAt: '2026-01-01T00:00:03Z' },
-    ])
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        sessionId: 'current-s1',
-        messages: [
-          { id: 1, role: 'user', content: 'msg1' },
-          { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
-          { id: 3, role: 'user', content: 'msg2', queueId: 'q2' },
-          { id: 4, role: 'user', content: 'msg3', queueId: 'q3', queued: true },
-          { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2' },
+          { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}' },
+          { id: 6, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply3"}]}' },
         ],
         total: 5,
-        queuedCount: 1,
         running: false,
       }),
     })
@@ -2756,10 +2656,45 @@ describe('switchSession', () => {
     await session.loadHistory(true, false, false)
 
     const msgs = lastSessionOptions!.messages.value as any[]
-    // reply2 (id 5) stays anchored to msg2 (id 3), msg3 (id 4) pending after it.
-    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5, 4])
-    const msg3 = msgs.find((m: any) => m.id === 4)
-    expect(msg3.pending).toBe(true)
+    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5, 6])
+  })
+
+  it('keeps a still-queued message out of the array while its DB reply lands', async () => {
+    // Mid-drain state: msg2 was materialized (id 3) and reply2 exists (id 5),
+    // while msg3 is STILL queued — it has no chat_history row, so it lives only
+    // in the queue store and must not appear in the array.
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'msg1', blocks: [{ type: 'text', text: 'msg1' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}', createdAt: '2026-01-01T00:00:01Z' },
+      { id: 3, role: 'user', content: 'msg2', queueId: 'q2', blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:02Z' },
+      { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', createdAt: '2026-01-01T00:00:04Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [
+          { id: 1, role: 'user', content: 'msg1' },
+          { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
+          { id: 3, role: 'user', content: 'msg2', queueId: 'q2' },
+          { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}' },
+        ],
+        queue: [{ queueId: 'q3', text: 'msg3' }],
+        total: 4,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+
+    await session.loadHistory(true, false, false)
+
+    const msgs = lastSessionOptions!.messages.value as any[]
+    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5])
+    // msg3 is in the queue store, not the array.
+    expect(msgs.some((m: any) => m.content === 'msg3')).toBe(false)
+    expect(getQueue('current-s1').some((m) => m.text === 'msg3')).toBe(true)
   })
 
   it('restores usage state from API response after switch', async () => {
@@ -5822,7 +5757,6 @@ describe('loadMoreMessages', () => {
 
     // Even with total > 0, a null cursor (no DB history loaded) forces hasMore false.
     session.totalMessages.value = 6
-    session.queuedCount.value = 0
     expect(session.oldestLoadedId.value).toBeNull()
     expect(session.hasMore.value).toBe(false)
 
@@ -5892,13 +5826,13 @@ describe('loadMoreMessages', () => {
     expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(fetchCallsBefore)
   })
 
-  it('refreshes queuedCount from the loadMore response (plan C)', async () => {
-    // First: loadHistory returns 2 normal messages + 5 queued → queuedCount=5.
+  it('hasMore compares the loaded window against total (queued messages are not in chat_history)', async () => {
+    // loadHistory returns 2 loaded rows out of total=50 → hasMore true. Queued
+    // messages are not chat_history rows, so they need no adjustment.
     mockUtilsFns.parseMessages
       .mockReturnValueOnce([
         { id: 50, role: 'user', content: 'hello' },
         { id: 51, role: 'assistant', content: 'hi' },
-        { id: 52, role: 'user', content: 'q1', queueId: 'q1', queued: true },
       ])
       .mockReturnValueOnce([
         { id: 42, role: 'user', content: 'older' },
@@ -5913,10 +5847,8 @@ describe('loadMoreMessages', () => {
           messages: [
             { id: 50 },
             { id: 51 },
-            { id: 52, queueId: 'q1', queued: true },
           ],
           total: 50,
-          queuedCount: 5,
           running: false,
         }),
       })
@@ -5925,7 +5857,6 @@ describe('loadMoreMessages', () => {
         json: () => Promise.resolve({
           messages: [{ id: 42 }, { id: 43 }],
           total: 50,
-          queuedCount: 2,
         }),
       })
 
@@ -5950,12 +5881,12 @@ describe('loadMoreMessages', () => {
     const session = useChatSession(options)
 
     await session.loadHistory(true, false, false)
-    expect(session.queuedCount.value).toBe(5)
+    expect(session.hasMore.value).toBe(true)
 
     await session.loadMoreMessages()
 
-    // queuedCount must reflect the freshest response.
-    expect(session.queuedCount.value).toBe(2)
+    // Two more rows loaded (4 of 50) → still more to load.
+    expect(session.hasMore.value).toBe(true)
   })
 
   it('converges hasMore to false when loadMore returns no older messages', async () => {
@@ -6233,19 +6164,15 @@ describe('loadMoreMessages', () => {
     expect(session.hasMore.value).toBe(true)
   })
 
-  it('hasMore stays true while only queued messages are unloaded (plan C)', () => {
-    // All 40 normal messages are loaded, but 15 queued messages are still
-    // pending (they ARE in the messages array). total=55, queuedCount=15.
-    // There is no more NORMAL history to load → hasMore must be false.
+  it('hasMore is false once every chat_history row is loaded (queued messages are not counted)', () => {
+    // All 40 chat_history rows are loaded. Queued messages live in their own
+    // store, so total (40) equals the loaded count and hasMore is false.
     const normal = Array.from({ length: 40 }, (_, i) => ({
       id: i + 1, role: i % 2 === 0 ? 'user' : 'assistant', content: `m${i}`,
     }))
-    const queued = Array.from({ length: 15 }, (_, i) => ({
-      id: 100 + i, role: 'user', content: `q${i}`, queueId: `pq${i}`, queued: true,
-    }))
     const options = {
       currentSessionId: ref('current-s1'),
-      messages: ref([...normal, ...queued] as any),
+      messages: ref([...normal] as any),
       dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
@@ -6262,12 +6189,11 @@ describe('loadMoreMessages', () => {
     }
     lastSessionOptions = options
     const session = useChatSession(options)
-    session.totalMessages.value = 55
-    session.queuedCount.value = 15
-    // Establish a real loaded window (normal rows start at id 1).
+    session.totalMessages.value = 40
+    // Establish a real loaded window (rows start at id 1).
     session.oldestLoadedId.value = 1
 
-    // Non-queued loaded (40) == non-queued total (55-15=40) → no more history.
+    // Loaded (40) == total (40) → no more history.
     expect(session.hasMore.value).toBe(false)
   })
 })

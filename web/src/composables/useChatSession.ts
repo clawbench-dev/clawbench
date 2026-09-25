@@ -16,6 +16,7 @@ import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
+import { syncFromHistory, clearQueue } from '@/composables/useMessageQueue.ts'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
@@ -253,7 +254,11 @@ export function useChatSession(options: UseChatSessionOptions) {
     oldestLoadedId.value = oldestDbId(parsed)
     const prevTotal = totalMessages.value
     totalMessages.value = (sessionData.total as number) || messages.value.length
-    queuedCount.value = (sessionData.queuedCount as number) || 0
+    // Queued messages are NOT part of `messages` any more; the authoritative
+    // snapshot rebuilds the separate queue store. This is what makes a
+    // cross-device queue_added or a missed queue_drain self-heal on the next
+    // loadHistory.
+    syncFromHistory(returnedId, sessionData.queue as Array<{ queueId: string; text?: string }> | undefined)
     // Re-evaluate history existence only when the session actually grew new
     // messages (total increased) or this is a different session. A routine
     // refresh of an already-exhausted history must NOT clear noMoreHistory —
@@ -440,10 +445,6 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // Pagination state
   const totalMessages = ref(0)
-  // Number of queued (still waiting for the drain loop) messages in this
-  // session. They are real DB rows counted in totalMessages, so hasMore must
-  // exclude them — a pending bubble is not "loaded history" (plan C).
-  const queuedCount = ref(0)
   const loadingMore = ref(false)
   // Server confirmed there are no older messages (a loadMore returned empty).
   // Once set, hasMore is forced to false so scrolling to the top never fires
@@ -478,22 +479,18 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
     return oldest
   }
-  // Plan C: compare non-queued loaded messages against non-queued total.
-  // The queued messages in the messages array are pending bubbles, not loaded
-  // history. Filtering by (pending || queued) — NOT by queueId — keeps the
-  // loaded count accurate: every user row now carries a queueId (the backend
-  // persists it for direct-sent messages too), so a queueId filter would
-  // exclude ALL user messages and hasMore would stay true forever.
+  // `total` counts chat_history rows only (queued messages are not in that
+  // table), and the loaded window is rebuilt from those same rows — so the
+  // comparison needs no queued adjustment any more.
   //
-  // Root-cause fix: hasMore is gated on oldestLoadedId != null. While no DB
-  // history is loaded (session switch just cleared the array, or a brand-new
-  // session still holding only transient bubbles), hasMore is false — the top
-  // scroll can never fire a loadMore against an empty window.
+  // hasMore is gated on oldestLoadedId != null. While no DB history is loaded
+  // (session switch just cleared the array, or a brand-new session still
+  // holding only a streaming placeholder), hasMore is false — the top scroll
+  // can never fire a loadMore against an empty window.
   const hasMore = computed(() => {
     if (noMoreHistory.value) return false
     if (oldestLoadedId.value === null) return false
-    const loaded = messages.value.filter((m) => !m.pending && !m.queued).length
-    return loaded < totalMessages.value - queuedCount.value
+    return messages.value.length < totalMessages.value
   })
 
   const agentHeaderTitle = computed(() => makeAgentTitle(currentAgentId.value))
@@ -820,11 +817,6 @@ export function useChatSession(options: UseChatSessionOptions) {
           oldestLoadedId.value = newestOldest
         }
         totalMessages.value = data.total || totalMessages.value
-        // Refresh queuedCount from the latest response (plan C) — it may have
-        // changed since the initial load (e.g. messages drained meanwhile).
-        if (typeof data.queuedCount === 'number') {
-          queuedCount.value = data.queuedCount
-        }
         onExtractScheduledTasks(olderMsgs)
         onRenderUpdate(true)
       } else {
@@ -833,12 +825,8 @@ export function useChatSession(options: UseChatSessionOptions) {
         // scrolls to the top stop firing empty loadMore requests (previously
         // hasMore stayed true and every top scroll re-triggered the fetch).
         noMoreHistory.value = true
-        // Sync the snapshot anyway so queuedCount stays fresh for plan C.
         if (typeof data.total === 'number' && data.total >= 0) {
           totalMessages.value = data.total
-        }
-        if (typeof data.queuedCount === 'number') {
-          queuedCount.value = data.queuedCount
         }
       }
     } catch (err: unknown) {
@@ -1230,6 +1218,13 @@ export function useChatSession(options: UseChatSessionOptions) {
       // re-populates the panel afterwards).
       if (data.status === 'rewound' && sid === currentSessionId.value) {
         clearPlanState()
+        // Rewind discards the queue server-side too (a queued message is work
+        // that has not run yet), so drop the local queue panel entries as well.
+        // Without this, a client that did NOT issue the rewind keeps showing
+        // entries whose rows are gone — and since the next loadHistory rebuilds
+        // the store from the authoritative snapshot, this is only about the
+        // window before that refresh.
+        clearQueue(sid)
       }
       // Safety net: if the session completed/cancelled but loading is still true,
       // it means the chat_stream 'done'/'cancelled' event was missed or its
@@ -1724,7 +1719,6 @@ export function useChatSession(options: UseChatSessionOptions) {
     // UI state — local to this instance
     agentHeaderTitle,
     totalMessages,
-    queuedCount,
     hasMore,
     loadingMore,
     oldestLoadedId,

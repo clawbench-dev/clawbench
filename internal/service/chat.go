@@ -25,7 +25,7 @@ import (
 // Returns full content (no stripping). Used by non-chat-panel callers (fork, RAG, etc.).
 func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC",
 		projectPath, sessionID,
 	)
 	if err != nil {
@@ -38,15 +38,11 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		var queueID string
-		var queued int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &queueID, &queued); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
-		msg.QueueID = queueID
-		msg.Queued = queued != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -61,64 +57,63 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 // beforeID: if > 0, only return messages with id < beforeID (cursor-based for lazy load).
 // When beforeID == 0 and limit > 0, returns the most recent (limit) messages.
 // Returns messages in chronological (ASC) order.
-// Also returns the total message count for the session and the count of queued
-// messages (plan C) — the frontend subtracts queuedCount from total to compute
-// hasMore without counting pending bubbles as loaded history.
-func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int) ([]model.ChatMessage, int, int, error) {
+// Also returns the total message count for the session. Queued messages are NOT
+// part of chat_history any more (they live in queued_messages until dequeued),
+// so the total and the returned rows are both pure conversation history — the
+// caller no longer has to subtract a queued count to compute hasMore.
+func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int) ([]model.ChatMessage, int, error) {
 	messages := []model.ChatMessage{}
 	totalCount, countErr := GetChatMessageCount(sessionID)
-	queuedCount := GetQueuedCount(sessionID)
 	if countErr != nil {
 		// A count failure must not silently truncate pagination: fall back to
-		// "unknown total" (0). GetChatHistoryPaged callers that only use the
-		// count for hasMore treat 0 as "load everything", so nothing is lost;
-		// callers that expose the total to the UI surface it as 0 alongside
-		// the returned query error.
+		// "unknown total" (0). Callers that only use the count for hasMore treat
+		// 0 as "load everything", so nothing is lost; callers that expose the
+		// total to the UI surface it as 0 alongside the returned query error.
 		slog.Warn("GetChatHistoryPaged: GetChatMessageCount failed", "session_id", sessionID, "err", countErr)
 		totalCount = 0
 	}
 
 	if limit > 0 && beforeID > 0 {
 		// Cursor-based: load messages older than beforeID
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
 			WHERE project_path = ? AND session_id = ? AND id < ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
 		rows, err := dbRead.Query(query, projectPath, sessionID, beforeID, limit)
 		if err != nil {
-			return messages, totalCount, queuedCount, err
+			return messages, totalCount, err
 		}
 		defer rows.Close()
 		msgs, err := scanMessages(rows, sessionID)
-		return msgs, totalCount, queuedCount, err
+		return msgs, totalCount, err
 	}
 
 	if limit > 0 {
 		// Initial load: get the most recent (limit) messages
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
 			WHERE project_path = ? AND session_id = ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
 		rows, err := dbRead.Query(query, projectPath, sessionID, limit)
 		if err != nil {
-			return messages, totalCount, queuedCount, err
+			return messages, totalCount, err
 		}
 		defer rows.Close()
 		msgs, err := scanMessages(rows, sessionID)
-		return msgs, totalCount, queuedCount, err
+		return msgs, totalCount, err
 	}
 
 	// No limit: return all messages in chronological order
-	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC`
+	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC`
 	rows, err := dbRead.Query(query, projectPath, sessionID)
 	if err != nil {
-		return messages, totalCount, queuedCount, err
+		return messages, totalCount, err
 	}
 	defer rows.Close()
 	msgs, err := scanMessages(rows, sessionID)
-	return msgs, totalCount, queuedCount, err
+	return msgs, totalCount, err
 }
 
 // scanMessages scans rows into ChatMessage slice, enriches with summaries,
@@ -130,15 +125,11 @@ func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error)
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		var queueID string
-		var queued int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &queueID, &queued); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
-		msg.QueueID = queueID
-		msg.Queued = queued != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -188,14 +179,15 @@ const indexSummaryMaxRunes = 200
 // never blank for a reply that does have text. Only the fallback path reads the
 // (potentially large) assistant content column.
 //
-// Excludes queued messages — a pending bubble is not a navigable history turn
-// yet — and in-flight (streaming) rows, whose content is still being written.
+// Excludes in-flight (streaming) rows, whose content is still being written.
+// Queued messages are absent by construction: they live in queued_messages
+// until they are dequeued into chat_history.
 func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
 		`SELECT h.id, h.role, h.content, h.files, h.created_at, COALESCE(s.summary, '')
 		 FROM chat_history h
 		 LEFT JOIN summaries s ON s.target_type = 'chat_message' AND s.target_id = h.id
-		 WHERE h.session_id = ? AND h.streaming = 0 AND h.queued = 0
+		 WHERE h.session_id = ? AND h.streaming = 0
 		 ORDER BY h.id ASC`,
 		sessionID,
 	)
@@ -327,11 +319,12 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 // (see enrichMessagesWithSummaries) to save bandwidth. Callers that need the
 // real content blocks — e.g. push previews, fork context — must use
 // GetAssistantRawContents instead.
-// Excludes queued messages — callers (fork context, summarization, recent preview)
-// want completed history, not messages still waiting for the drain loop (M4).
+// Callers (fork context, summarization, recent preview) want completed history;
+// queued messages are absent by construction (they live in queued_messages
+// until dequeued), so no queued filter is needed.
 func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE session_id = ? AND streaming = 0 AND queued = 0 ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -349,7 +342,7 @@ func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 // must use this function.
 func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE session_id = ? AND streaming = 0 AND queued = 0 ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -362,15 +355,11 @@ func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		var queueID string
-		var queued int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &queueID, &queued); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
-		msg.QueueID = queueID
-		msg.Queued = queued != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -393,7 +382,7 @@ func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
 // previews — must use this function.
 func GetAssistantRawContents(sessionID string) ([]string, error) {
 	rows, err := dbRead.Query(
-		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND queued = 0 ORDER BY id DESC LIMIT ?",
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT ?",
 		sessionID, previewAssistantContentLimit,
 	)
 	if err != nil {
@@ -608,20 +597,15 @@ func joinExtractedTexts(texts []string) string {
 	return strings.Join(texts, "\n\n")
 }
 
-// AddChatMessage adds a message to the chat history for a given project path, backend, and session.
-// AddChatMessage persists a chat message. The optional queueID argument (when
-// non-empty) records the queue_id of the queued user message that this reply
-// answers. The frontend uses it to anchor the reply directly after its own
-// question, because a queued user message is persisted (and gets its DB id)
-// BEFORE later queued messages, so pure id ordering cannot reconstruct the
-// conversational order (msg2, reply2, msg3, reply3) once multiple messages are
-// queued at once.
-func AddChatMessage(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle string, queueID ...string) (int64, error) {
-	replyQueueID := ""
-	if len(queueID) > 0 {
-		replyQueueID = queueID[0]
-	}
-
+// AddChatMessage adds a message to the chat history for a given project path,
+// backend, and session.
+//
+// Ordering note: a queued user message is NOT inserted here at enqueue time any
+// more. It is materialized by MaterializeQueuedMessage only when the drain loop
+// dequeues it (or mid-turn injection delivers it), which is immediately before
+// its assistant reply is created. DB id order therefore equals conversational
+// order, and replies need no anchor.
+func AddChatMessage(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle string) (int64, error) {
 	// Guard: reject messages to archived sessions
 	var isArchived int
 	if err := dbRead.QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
@@ -642,7 +626,7 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	defer writeMu.Unlock()
 	defer tx.Rollback()
 
-	msgID, txErr = insertChatMessageTx(tx, projectPath, backend, sessionID, role, content, files, streamingInt, replyQueueID, fallbackTitle, 0, 0)
+	msgID, txErr = insertChatMessageTx(tx, projectPath, backend, sessionID, role, content, files, streamingInt, fallbackTitle)
 	if txErr != nil {
 		return 0, txErr
 	}
@@ -655,7 +639,6 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 		slog.String("session", sessionID),
 		slog.String("role", role),
 		slog.Int64("msgID", msgID),
-		slog.String("queueID", replyQueueID),
 		slog.Bool("streaming", streaming))
 	return msgID, nil
 }
@@ -741,15 +724,10 @@ func UpdateChatQuoteNote(sessionID string, messageID int64, quoteID, note string
 
 // insertChatMessageTx performs the chat_history INSERT plus the shared
 // session touches (updated_at refresh and first-user-message title generation)
-// inside the caller's transaction. queued/queueID are explicit so callers can
-// persist a queued message atomically in the same transaction that inserts the
-// row (ISS-237): queued=1 and queue_id are written on the INSERT itself, never
-// as a follow-up statement that could be lost to a crash between commits.
-// indexed is set by the caller too: normal messages use 0, queued messages use
-// 1 to skip RAG indexing until drained (M4).
+// inside the caller's transaction.
 //
 // It returns the LastInsertId (msgID). The caller owns Commit/Rollback.
-func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, queueID, fallbackTitle string, queued, indexed int) (int64, error) {
+func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, fallbackTitle string) (int64, error) {
 	var filesJSON string
 	if len(files) > 0 {
 		data, _ := json.Marshal(files)
@@ -757,8 +735,8 @@ func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, cont
 	}
 
 	result, txErr := tx.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, files, streaming, indexed, queue_id, queued) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		projectPath, backend, sessionID, role, content, filesJSON, streamingInt, indexed, queueID, queued,
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, files, streaming, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+		projectPath, backend, sessionID, role, content, filesJSON, streamingInt,
 	)
 	if txErr != nil {
 		return 0, txErr
@@ -873,304 +851,21 @@ func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []mode
 	return nil
 }
 
-// AddQueuedMessage persists a user message to chat_history with queued=1 so it
-// waits for the drain loop. It performs the INSERT and the queue markers in a
-// single transaction: queued=1 and queue_id are written on the INSERT itself,
-// so a crash between the INSERT commit and a follow-up UPDATE can never leave
-// an orphan row (queued=0, empty queue_id) that is visible as a normal user
-// message but never drained and unreachable by drain/clear (ISS-237).
-//
-// It reuses the archived-session guard, session title generation on first
-// message, and updated_at refresh (B3) shared with AddChatMessage via
-// insertChatMessageTx. The message is marked indexed=1 on the INSERT to skip
-// RAG indexing until it is drained and finalized (M4).
-func AddQueuedMessage(projectPath, backend, sessionID, content string, files []model.FileEntry, queueID string, fallbackTitle string) (int64, error) {
-	if queueID == "" {
-		queueID = "q-" + time.Now().Format("20060102150405") + "-" + fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-
-	// Guard: reject messages to archived sessions
-	var isArchived int
-	if err := dbRead.QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
-		return 0, fmt.Errorf("cannot add message to archived session %s", sessionID)
-	}
-
-	streamingInt := 0
-
-	var msgID int64
+// applyAutoTitle sets the session title from a user message outside a
+// transaction. Used by the enqueue path, which persists into queued_messages
+// (not chat_history) and therefore cannot use maybeAutoTitleSessionTx's
+// chat_history count fallback: it wraps the same logic in its own transaction.
+func applyAutoTitle(sessionID, content string, files []model.FileEntry, fallbackTitle string) error {
 	tx, err := WriteBegin()
-	if err != nil {
-		return 0, err
-	}
-	defer writeMu.Unlock()
-	defer tx.Rollback()
-
-	msgID, err = insertChatMessageTx(tx, projectPath, backend, sessionID, "user", content, files, streamingInt, queueID, fallbackTitle, 1, 1)
-	if err != nil {
-		return 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return msgID, nil
-}
-
-// DequeueQueuedMessage atomically claims the next queued message for a session
-// (oldest first). Uses a transaction under the global write mutex so two
-// concurrent drain loops can never consume the same row. The row stays in
-// chat_history with queued=0 (it becomes a normal conversation record).
-//
-// Returns (msg, true, nil) on success, (zeroMsg, false, nil) when the queue is
-// empty, and (zeroMsg, false, err) on a real DB error — the drain loop must
-// treat the latter as a retryable failure, NOT as "queue empty", or the
-// message is silently lost (B4).
-func DequeueQueuedMessage(sessionID string) (model.ChatMessage, bool, error) {
-	tx, err := WriteBegin()
-	if err != nil {
-		return model.ChatMessage{}, false, err
-	}
-	defer writeMu.Unlock()
-	defer tx.Rollback()
-
-	var msg model.ChatMessage
-	var filesJSON sql.NullString
-	var queueID string
-	var queued int
-	err = tx.QueryRow(`
-		SELECT id, role, content, files, backend, created_at, queue_id, queued
-		FROM chat_history WHERE session_id = ? AND queued = 1
-		ORDER BY id ASC LIMIT 1
-	`, sessionID).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &msg.CreatedAt, &queueID, &queued)
-	if errors.Is(err, sql.ErrNoRows) {
-		return model.ChatMessage{}, false, nil // genuinely empty
-	}
-	if err != nil {
-		return model.ChatMessage{}, false, err // real DB error — retry, don't exit
-	}
-
-	// Claim the row: flip queued=0 and reset indexed=0 so the drained user
-	// message becomes a normal conversation record eligible for RAG indexing
-	// (it was set indexed=1 at enqueue to skip indexing while still queued — M4).
-	res, err := tx.Exec("UPDATE chat_history SET queued = 0, indexed = 0 WHERE id = ? AND queued = 1", msg.ID)
-	if err != nil {
-		return model.ChatMessage{}, false, err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		// Already claimed by another drain loop — treat as empty for this call.
-		return model.ChatMessage{}, false, nil
-	}
-	if err := tx.Commit(); err != nil {
-		return model.ChatMessage{}, false, err
-	}
-
-	msg.SessionID = sessionID
-	msg.QueueID = queueID
-	msg.Queued = queued != 0
-	if filesJSON.Valid && filesJSON.String != "" {
-		msg.Files = unmarshalFilesJSON(filesJSON.String)
-	}
-	return msg, true, nil
-}
-
-// DequeueQueuedMessageByID atomically claims the queued message with the given
-// id (the row just inserted by AddQueuedMessage). Same transaction semantics as
-// DequeueQueuedMessage, but targets a specific row instead of "oldest first".
-// Used to consume exactly the message an execution goroutine is about to run
-// directly, so a concurrent enqueue's earlier row is left to the drain loop
-// (R1).
-func DequeueQueuedMessageByID(sessionID string, msgID int64) (model.ChatMessage, bool, error) {
-	tx, err := WriteBegin()
-	if err != nil {
-		return model.ChatMessage{}, false, err
-	}
-	defer writeMu.Unlock()
-	defer tx.Rollback()
-
-	var msg model.ChatMessage
-	var filesJSON sql.NullString
-	var queueID string
-	var queued int
-	err = tx.QueryRow(`
-		SELECT id, role, content, files, backend, created_at, queue_id, queued
-		FROM chat_history WHERE session_id = ? AND id = ? AND queued = 1
-	`, sessionID, msgID).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &msg.CreatedAt, &queueID, &queued)
-	if errors.Is(err, sql.ErrNoRows) {
-		return model.ChatMessage{}, false, nil // row not queued (already claimed/cleared)
-	}
-	if err != nil {
-		return model.ChatMessage{}, false, err
-	}
-
-	res, err := tx.Exec("UPDATE chat_history SET queued = 0, indexed = 0 WHERE id = ? AND queued = 1", msg.ID)
-	if err != nil {
-		return model.ChatMessage{}, false, err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return model.ChatMessage{}, false, nil
-	}
-	if err := tx.Commit(); err != nil {
-		return model.ChatMessage{}, false, err
-	}
-
-	msg.SessionID = sessionID
-	msg.QueueID = queueID
-	msg.Queued = queued != 0
-	if filesJSON.Valid && filesJSON.String != "" {
-		msg.Files = unmarshalFilesJSON(filesJSON.String)
-	}
-	return msg, true, nil
-}
-
-// DequeueQueuedMessageByQueueID atomically claims the queued message with the
-// given frontend-generated queue id. Same transaction semantics as
-// DequeueQueuedMessageByID, but addressed by the id the UI actually holds (the
-// queued bubble carries queueId, not necessarily the DB id). Used by the
-// "insert into the current reply" action on a queued message.
-func DequeueQueuedMessageByQueueID(sessionID, queueID string) (model.ChatMessage, bool, error) {
-	tx, err := WriteBegin()
-	if err != nil {
-		return model.ChatMessage{}, false, err
-	}
-	defer writeMu.Unlock()
-	defer tx.Rollback()
-
-	var msg model.ChatMessage
-	var filesJSON sql.NullString
-	var rowQueueID string
-	var queued int
-	err = tx.QueryRow(`
-		SELECT id, role, content, files, backend, created_at, queue_id, queued
-		FROM chat_history WHERE session_id = ? AND queue_id = ? AND queued = 1
-	`, sessionID, queueID).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &msg.CreatedAt, &rowQueueID, &queued)
-	if errors.Is(err, sql.ErrNoRows) {
-		return model.ChatMessage{}, false, nil // not queued (already claimed/cleared)
-	}
-	if err != nil {
-		return model.ChatMessage{}, false, err
-	}
-
-	res, err := tx.Exec("UPDATE chat_history SET queued = 0, indexed = 0 WHERE id = ? AND queued = 1", msg.ID)
-	if err != nil {
-		return model.ChatMessage{}, false, err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return model.ChatMessage{}, false, nil
-	}
-	if err := tx.Commit(); err != nil {
-		return model.ChatMessage{}, false, err
-	}
-
-	msg.SessionID = sessionID
-	msg.QueueID = rowQueueID
-	msg.Queued = queued != 0
-	if filesJSON.Valid && filesJSON.String != "" {
-		msg.Files = unmarshalFilesJSON(filesJSON.String)
-	}
-	return msg, true, nil
-}
-
-// RequeueMessage puts a claimed queued message back into the queue (queued=1).
-//
-// Used when a mid-turn insertion is declined AFTER the row was claimed: the
-// claim is what makes the attempt race-free, and this undoes it so the normal
-// drain loop still delivers the message. Without this a declined insert would
-// silently drop the message (claimed, never run).
-//
-// Only flips a row that is still unqueued and un-run; a row already picked up by
-// the drain loop (streaming or finalized) is left alone.
-func RequeueMessage(msgID int64) error {
-	res, err := WriteExec(
-		"UPDATE chat_history SET queued = 1, indexed = 1 WHERE id = ? AND queued = 0 AND streaming = 0",
-		msgID,
-	)
 	if err != nil {
 		return err
 	}
-	// Zero rows means the row is gone (or was already claimed by the drain loop).
-	// Report that as an error rather than success: the caller's whole point in
-	// calling this is to guarantee the message is back in the queue, and a
-	// silent no-op would let a stranded message look restored.
-	n, aerr := res.RowsAffected()
-	if aerr != nil {
-		return aerr
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+	if err := maybeAutoTitleSessionTx(tx, sessionID, content, files, fallbackTitle); err != nil {
+		return err
 	}
-	if n == 0 {
-		return fmt.Errorf("requeue message %d: no row updated (deleted or already claimed)", msgID)
-	}
-	return nil
-}
-
-// ClearQueuedMessages deletes every queued message of a session. Used by
-// session cancel/force-cancel — cancel semantics are "drop the queued
-// messages", so the rows are truly removed and never resurface as normal
-// conversation records after the current turn completes (they would otherwise
-// be indistinguishable from sent messages and reappear as "formal" messages on
-// the next loadHistory).
-//
-// NOTE: this function only deletes rows — it does NOT emit queue_cancel.
-// Callers are responsible for emitting the WS event so other devices remove
-// their pending/_remote bubbles (the session-cancel path emits it, while
-// ForceCancelSession does not because the WS client has already disconnected).
-func ClearQueuedMessages(sessionID string) error {
-	_, err := WriteExec("DELETE FROM chat_history WHERE session_id = ? AND queued = 1", sessionID)
-	return err
-}
-
-// GetQueuedQueueIDs returns the non-empty queue_ids of a session's queued
-// messages, oldest first. Used to emit queue_cancel with the exact ids.
-func GetQueuedQueueIDs(sessionID string) ([]string, error) {
-	rows, err := dbRead.Query(
-		"SELECT queue_id FROM chat_history WHERE session_id = ? AND queued = 1 AND queue_id != '' ORDER BY id ASC",
-		sessionID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-// GetQueuedCount returns the number of queued messages for a session.
-func GetQueuedCount(sessionID string) int {
-	var count int
-	dbRead.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queued = 1", sessionID).Scan(&count)
-	return count
-}
-
-// GetQueuedMessages returns the queued messages of a session, oldest first.
-func GetQueuedMessages(sessionID string) ([]model.ChatMessage, error) {
-	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE session_id = ? AND queued = 1 ORDER BY id ASC",
-		sessionID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanMessages(rows, sessionID)
-}
-
-// CancelQueuedMessage deletes a single queued message by queue_id. The row is
-// truly removed so the canceled message can never resurface as a normal
-// conversation record (e.g. after the current turn completes and the frontend
-// reloads history from the authoritative DB). The queued=1 guard means a row
-// already claimed by the drain loop (queued=0) is left untouched — the
-// execution in flight must not be deleted.
-func CancelQueuedMessage(sessionID, queueID string) error {
-	_, err := WriteExec("DELETE FROM chat_history WHERE session_id = ? AND queue_id = ? AND queued = 1", sessionID, queueID)
-	return err
+	return tx.Commit()
 }
 
 // titleFromFileEntries builds a session title from file entries by extracting
@@ -3048,15 +2743,15 @@ func SessionHasRealAssistantContent(sessionID string) bool {
 // "after" half needs its own streaming row so it finalizes independently of the
 // "before" half.
 //
-// queueID anchors the new row to the injected question (the same convention as
-// a run that answers a queued message), so the frontend places this reply
-// directly below that question. Pass "" for an unanchored placeholder.
-func CreateStreamingMessage(projectPath, backend, sessionID, queueID string) (int64, error) {
+// No anchor is needed: the injected question is materialized into chat_history
+// at injection time (before this row is created), so the new row's higher id
+// already places it directly below that question.
+func CreateStreamingMessage(projectPath, backend, sessionID string) (int64, error) {
 	emptyContent, err := json.Marshal(map[string]any{"blocks": []any{}})
 	if err != nil {
 		return 0, err
 	}
-	return AddChatMessage(projectPath, backend, sessionID, "assistant", string(emptyContent), nil, true, "", queueID)
+	return AddChatMessage(projectPath, backend, sessionID, "assistant", string(emptyContent), nil, true, "")
 }
 
 // FinalizeStreamingMessage marks the latest streaming assistant message as complete and updates its content.
@@ -3161,44 +2856,39 @@ func GetStreamingMessageID(sessionID string) int64 {
 	return id
 }
 
-// GetStreamingMessageInfo returns the ID and the answered queue id of the
-// actively streaming assistant message for a session. queueID is the queueId
-// of the user question this run answers (the streaming row's queue_id), empty
-// for runs without a question. Unlike GetStreamingMessageID it does NOT fall
-// back to a finalized row — the subscribe-time stream_start re-emit must
-// describe the live stream only, so a stale finalized row's queue_id is never
-// broadcast as the answer of a run that has not started yet.
-func GetStreamingMessageInfo(sessionID string) (id int64, queueID string) {
-	err := dbRead.QueryRow(
-		"SELECT id, queue_id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
-		sessionID,
-	).Scan(&id, &queueID)
-	if err != nil {
-		return 0, ""
-	}
-	return id, queueID
-}
-
-// GetQuestionByQueueID returns the user message that carries queueID — the
-// question a run answers. ok is false when no such row exists (runs without a
-// question, e.g. scheduled tasks).
+// GetLiveRunState returns the state a client that just subscribed needs in order
+// to render a run already in flight: the streaming assistant row's id, plus the
+// question it answers (the nearest preceding user row). Backs
+// ws.StreamHub.EmitLiveRunStateToClient.
 //
-// The subscribe-time recovery path uses this to re-emit the question alongside
-// the live stream_start: a client that subscribed after the run began gets the
-// reply but would otherwise have no bubble to attach it to, rendering the reply
-// with no question above it until a full history reload.
-func GetQuestionByQueueID(sessionID, queueID string) (id int64, content string, ok bool) {
-	if queueID == "" {
-		return 0, "", false
-	}
+// Unlike GetStreamingMessageID this does NOT fall back to a finalized message:
+// the caller's whole purpose is "a turn is running, hand me its state", and
+// emitting a stream_start for an idle session would open a phantom placeholder.
+// messageID is 0 when nothing is streaming.
+//
+// The question is resolved by id order (the greatest user id below the
+// streaming row), NOT by a queue id: in this model a queued message is
+// materialized into chat_history immediately before the reply it produces, so
+// id order IS the conversation order. The old queue-id lookup also broke for
+// rows whose queue_id was empty. questionID is 0 for a run with no preceding
+// user row (e.g. some scheduled runs).
+func GetLiveRunState(sessionID string) (messageID int64, questionID int64, questionContent string) {
 	err := dbRead.QueryRow(
-		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'user' AND queue_id = ? ORDER BY id DESC LIMIT 1",
-		sessionID, queueID,
-	).Scan(&id, &content)
-	if err != nil {
-		return 0, "", false
+		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&messageID)
+	if err != nil || messageID <= 0 {
+		return 0, 0, ""
 	}
-	return id, content, true
+
+	err = dbRead.QueryRow(
+		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1",
+		sessionID, messageID,
+	).Scan(&questionID, &questionContent)
+	if err != nil {
+		return messageID, 0, ""
+	}
+	return messageID, questionID, questionContent
 }
 
 // UpdateMessageContent updates the content of a specific message by its ID.

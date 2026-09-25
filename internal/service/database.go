@@ -339,27 +339,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			}
 		}
 
-		// chat_history.queue_id / queued — queued-message persistence.
-		// queue_id stores the frontend-generated queueId for matching queued
-		// messages to optimistic pending bubbles; queued=1 marks a message that
-		// is still waiting for the drain loop to consume it. The drain loop
-		// flips queued=0 when it picks the message up (the row stays as a
-		// normal conversation record).
-		var hasQueueID int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='queue_id'").Scan(&hasQueueID)
-		if hasQueueID == 0 {
-			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN queue_id TEXT DEFAULT ''"); err != nil {
-				return fmt.Errorf("failed to add queue_id column: %w", err)
-			}
-		}
-		var hasQueued int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='queued'").Scan(&hasQueued)
-		if hasQueued == 0 {
-			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN queued INTEGER NOT NULL DEFAULT 0"); err != nil {
-				return fmt.Errorf("failed to add queued column: %w", err)
-			}
-		}
-
 		// chat_history.completed_at — when the assistant reply finished streaming
 		// (streaming=1 -> 0). NULL for user messages and for rows finalized
 		// before this column existed.
@@ -454,8 +433,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			external_message_id TEXT DEFAULT '',
-			queue_id TEXT DEFAULT '',
-			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
 		);
@@ -567,6 +544,33 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- Covering index for RAG indexing progress queries:
 		-- TotalMessageCount (WHERE streaming = 0) and IndexedMessageCount (WHERE indexed = 1 AND streaming = 0)
 		CREATE INDEX IF NOT EXISTS idx_history_indexing ON chat_history(streaming, indexed);
+
+		-- Queued (pending) user messages, held OUTSIDE chat_history until the
+		-- drain loop picks them up.
+		--
+		-- A queued message is materialized into chat_history only when it is
+		-- dequeued (or injected mid-turn). That is what makes DB id order equal
+		-- conversational order: the user row gets its id immediately before the
+		-- assistant reply it produces, so no reply-anchoring token is needed.
+		-- Previously a queued message was a chat_history row with queued=1,
+		-- persisted at ENQUEUE time (before its reply existed), which forced a
+		-- queue_id anchor through the whole stack.
+		--
+		-- UNIQUE(session_id, queue_id) makes the client-generated queue id a real
+		-- identity key: the frontend addresses a queued message by it (cancel /
+		-- inject) and the backend echoes it back on user_message.
+		CREATE TABLE IF NOT EXISTS queued_messages (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id   TEXT NOT NULL,
+			project_path TEXT NOT NULL,
+			backend      TEXT NOT NULL DEFAULT '',
+			queue_id     TEXT NOT NULL,
+			content      TEXT NOT NULL,
+			files        TEXT,
+			created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_queued_session ON queued_messages(session_id, id);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_queued_identity ON queued_messages(session_id, queue_id);
 
 		-- Tool call detail storage (input/output split from chat_history.content for performance)
 		CREATE TABLE IF NOT EXISTS chat_tool_calls (
@@ -1377,6 +1381,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 		_, _ = WriteExec("CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at)")
 		slog.Info("dropped redundant deleted column from chat_history")
+	}
+
+	// Migrate: move queued messages out of chat_history into the dedicated
+	// queued_messages table, then drop the now-dead queue_id/queued columns.
+	//
+	// Runs as ONE transaction so a crash cannot drop the columns without having
+	// moved the data (which would silently lose every in-flight queued message
+	// on the upgrade). The NOT EXISTS guard makes it idempotent if a previous
+	// attempt committed the INSERT but failed before the DROP.
+	if err := migrateQueuedMessagesToOwnTable(); err != nil {
+		return fmt.Errorf("failed to migrate queued messages to own table: %w", err)
 	}
 
 	// Clean up orphaned streaming messages from previous crashes/restarts.
@@ -2206,6 +2221,85 @@ func migrateLegacyAgentPrompts(d *sql.DB) error {
 		return fmt.Errorf("failed to drop system_prompt column from agents: %w", err)
 	}
 	slog.Info("dropped legacy agents.system_prompt column")
+	return nil
+}
+
+// migrateQueuedMessagesToOwnTable moves every queued=1 row of chat_history into
+// the dedicated queued_messages table, then drops chat_history.queue_id and
+// chat_history.queued.
+//
+// Why a separate table: a queued message is not a conversation turn yet. While
+// it lived in chat_history it needed a pre-allocated DB id (assigned at enqueue,
+// before its reply existed) and a queue_id column to re-anchor the reply, which
+// was the root of the queue's complexity. Held outside chat_history, the row is
+// materialized only at dequeue time, so id order equals conversational order.
+//
+// The whole thing runs in ONE transaction: a crash between "INSERT moved rows"
+// and "DROP columns" must not be possible, or the in-flight queue is lost. The
+// NOT EXISTS guard additionally makes the INSERT idempotent for the case where
+// a previous attempt committed the INSERT but failed before the DROP.
+//
+// A row with an empty queue_id (should not happen on current code — every
+// enqueue mints one — but historic rows may) is given a deterministic
+// q-migrated-<id> id so the NOT EXISTS guard can recognize it on a retry.
+func migrateQueuedMessagesToOwnTable() error {
+	if db == nil {
+		return nil
+	}
+	var hasQueuedCol int
+	if err := db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='queued'",
+	).Scan(&hasQueuedCol); err != nil {
+		return fmt.Errorf("check chat_history.queued column: %w", err)
+	}
+	if hasQueuedCol == 0 {
+		return nil // already migrated (or a fresh database)
+	}
+
+	tx, err := WriteBegin()
+	if err != nil {
+		return err
+	}
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		INSERT INTO queued_messages (session_id, project_path, backend, queue_id, content, files, created_at)
+		SELECT COALESCE(h.session_id, ''), h.project_path, h.backend,
+		       CASE WHEN h.queue_id = '' OR h.queue_id IS NULL THEN 'q-migrated-' || h.id ELSE h.queue_id END,
+		       h.content, h.files, h.created_at
+		FROM chat_history h
+		WHERE h.queued = 1
+		  AND NOT EXISTS (
+		      SELECT 1 FROM queued_messages q
+		      WHERE q.session_id = COALESCE(h.session_id, '')
+		        AND q.queue_id = CASE WHEN h.queue_id = '' OR h.queue_id IS NULL
+		                              THEN 'q-migrated-' || h.id ELSE h.queue_id END
+		  )`); err != nil {
+		return fmt.Errorf("copy queued rows into queued_messages: %w", err)
+	}
+
+	// Delete the moved rows from chat_history. They are not conversation
+	// records: they were never answered, and leaving them behind would surface
+	// them as ordinary (duplicated) user messages once queued is gone.
+	if _, err := tx.Exec("DELETE FROM chat_history WHERE queued = 1"); err != nil {
+		return fmt.Errorf("delete moved queued rows from chat_history: %w", err)
+	}
+
+	// No index references queue_id/queued (verified against the index list in
+	// InitDB), so DROP COLUMN needs no DROP INDEX dance here — unlike the
+	// chat_history.deleted migration, which had to drop idx_history_session_id.
+	if _, err := tx.Exec("ALTER TABLE chat_history DROP COLUMN queue_id"); err != nil {
+		return fmt.Errorf("drop chat_history.queue_id: %w", err)
+	}
+	if _, err := tx.Exec("ALTER TABLE chat_history DROP COLUMN queued"); err != nil {
+		return fmt.Errorf("drop chat_history.queued: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	slog.Info("migrated queued messages into queued_messages table")
 	return nil
 }
 

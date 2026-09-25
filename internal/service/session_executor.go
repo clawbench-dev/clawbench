@@ -1121,20 +1121,22 @@ func (e *SessionExecutor) splitAtSteerBoundaryLocked(queueID string) bool {
 		return false
 	}
 
-	// Open the "after" half: a fresh streaming assistant row anchored to the
-	// injected question, so the frontend places it directly below that question.
-	afterID, err := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, queueID)
+	// Open the "after" half: a fresh streaming assistant row. Its id is higher
+	// than the injected question's (the question was materialized into
+	// chat_history at injection time), so it lands directly below that question
+	// with no anchor.
+	afterID, err := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID)
 	if err != nil {
 		// The "before" half is already durable; the rest of the turn simply keeps
 		// appending to it via UpdateStreamingMessage's "latest streaming row"
 		// lookup... except there is now no streaming row, so the remaining content
-		// would be lost. Re-open one without the anchor to stay safe.
+		// would be lost. Re-open one to stay safe.
 		slog.Error("session executor: failed to create assistant half at steer boundary; "+
-			"reopening an unanchored row so remaining content is not lost",
+			"reopening a row so remaining content is not lost",
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
-		if fallbackID, ferr := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, ""); ferr == nil {
-			e.resetForSplitLocked(fallbackID, "")
+		if fallbackID, ferr := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID); ferr == nil {
+			e.resetForSplitLocked(fallbackID)
 		}
 		// The "before" half IS finalized (its completed_at was stamped) even
 		// though the split degraded — the unread flip must still be corrected.
@@ -1145,24 +1147,24 @@ func (e *SessionExecutor) splitAtSteerBoundaryLocked(queueID string) bool {
 		slog.String("session", e.cfg.SessionID),
 		slog.Int64("before_msg_id", beforeID),
 		slog.Int64("after_msg_id", afterID),
-		slog.String("queue_id", queueID))
+		slog.String("client_user_message_id", queueID))
 
 	// Announce the split so every subscribed client (including one that opened
 	// the session mid-turn) creates the second bubble immediately instead of
 	// waiting for a reload.
 	e.forwardEvent(ai.StreamEvent{
 		Type:        "stream_split",
-		StreamSplit: &ai.StreamSplitData{MessageID: afterID, QueueID: queueID},
+		StreamSplit: &ai.StreamSplitData{MessageID: afterID},
 	})
 
-	e.resetForSplitLocked(afterID, queueID)
+	e.resetForSplitLocked(afterID)
 	return true
 }
 
 // resetForSplitLocked re-points the executor at a newly created streaming row
 // and clears all per-message accumulation, so the "after" half starts empty.
 // Caller holds e.mu.
-func (e *SessionExecutor) resetForSplitLocked(newMessageID int64, queueID string) {
+func (e *SessionExecutor) resetForSplitLocked(newMessageID int64) {
 	e.cfg.StreamingMessageID = newMessageID
 	e.blocks = nil
 	e.responseMetadata = nil
@@ -1175,7 +1177,6 @@ func (e *SessionExecutor) resetForSplitLocked(newMessageID int64, queueID string
 	// "before" half's thinking was already flushed above, so the "after" half
 	// starts its own cursors.
 	e.thinkingFlushed = make(map[string]*thinkingFlushState)
-	_ = queueID
 }
 
 // buildSplitContentLocked renders the accumulated blocks as the content JSON for

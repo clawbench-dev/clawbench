@@ -128,8 +128,6 @@ type ChatMessage struct {
 	ProjectPath  string        `json:"projectPath,omitempty"`
 	Streaming    bool          `json:"streaming,omitempty"`
 	Indexed      bool          `json:"indexed,omitempty"`
-	QueueID      string        `json:"queueId,omitempty"` // frontend-generated queueId for optimistic bubble matching
-	Queued       bool          `json:"queued,omitempty"`  // true while the message waits for the drain loop
 	CreatedAt    time.Time     `json:"createdAt"`
 	Summary      *string       `json:"summary,omitempty"`      // reading summary (nil=not summarized, ""=too short, non-empty=summary)
 	SummaryCards *SummaryCards `json:"summaryCards,omitempty"` // structured card metadata for summary view
@@ -271,13 +269,13 @@ func (m *ChatMessage) UnmarshalJSON(data []byte) error {
 
 // ChatSession represents a chat session
 type ChatSession struct {
-	ID              string     `json:"id"`
-	Title           string     `json:"title"`
-	Backend         string     `json:"backend"`
-	AgentID         string     `json:"agentId,omitempty"`
-	AgentSource     string     `json:"agentSource,omitempty"`
-	Model           string     `json:"model,omitempty"`
-	SessionType     string     `json:"sessionType,omitempty"`     // "chat" | "scheduled"
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Backend     string `json:"backend"`
+	AgentID     string `json:"agentId,omitempty"`
+	AgentSource string `json:"agentSource,omitempty"`
+	Model       string `json:"model,omitempty"`
+	SessionType string `json:"sessionType,omitempty"` // "chat" | "scheduled"
 	// SourceSessionID records where this session was derived from. Three
 	// writers share the column, so it is NOT always a session id:
 	//   - ForkSession            → the source session's id
@@ -307,13 +305,18 @@ type SessionTag struct {
 	Scope string `json:"scope,omitempty"`
 }
 
-// QueuedMessage represents a message waiting in the pending queue for a session.
-// Stored in-memory only (not persisted to DB).
+// QueuedMessage represents a user message waiting in a session's queue.
+//
+// Since the queue moved out of chat_history it is a real row in the
+// queued_messages table (id is that row's id), not an in-memory record. It is
+// materialized into chat_history only when it is dequeued or injected, so this
+// type never carries a chat_history message id.
 type QueuedMessage struct {
-	QueueID   string      `json:"queueId"` // Frontend-generated unique ID for matching
+	ID        int64       `json:"id,omitempty"` // queued_messages.id
+	QueueID   string      `json:"queueId"`      // client-generated stable identity (cancel/inject address it)
 	Text      string      `json:"text"`
-	FilePaths []string    `json:"filePaths"`
-	Files     []FileEntry `json:"files"`
+	FilePaths []string    `json:"filePaths,omitempty"` // legacy channel; Files is authoritative
+	Files     []FileEntry `json:"files,omitempty"`
 	CreatedAt string      `json:"createdAt"`
 }
 

@@ -42,6 +42,8 @@ var criticalEventTypes = map[string]struct{}{
 	"content_reset": {},
 	"user_message":  {},
 	"queue_drain":   {},
+	"queue_added":   {},
+	"queue_inject":  {},
 	"queue_cancel":  {},
 	"stream_split":  {},
 }

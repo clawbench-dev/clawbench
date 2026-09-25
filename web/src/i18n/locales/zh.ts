@@ -827,6 +827,11 @@ export default {
       actionFailed: '操作失败，消息仍在队列中',
       insertStranded: '插入失败且消息无法回到队列，请重新发送',
       interruptNotQueued: '这条消息已不在队列中，未中断当前回复',
+      barTitle: '排队中 · {count}',
+      expand: '展开',
+      collapse: '收起',
+      remove: '删除这条排队消息',
+      attachment: '附件',
     },
     contentBlocks: {
       scheduledTaskCreated: '任务已创建',

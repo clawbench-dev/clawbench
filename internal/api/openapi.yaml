@@ -818,7 +818,10 @@ paths:
             type: string
       responses:
         "200":
-          description: 消息列表与状态
+          description: |
+            消息列表与状态。`messages` 只含 `chat_history` 行（对话内容）；
+            尚未出队的排队消息不在其中，而是由 `queue` 数组单独返回（与
+            `GET /api/ai/queue` 同源，按入队顺序）。
     post:
       tags: [Chat]
       summary: 发送聊天消息
@@ -952,7 +955,7 @@ paths:
       summary: 对话索引
       description: |
         轻量返回该会话的对话索引（`{messages:[...]}`），供消息导航。
-        按 id 升序返回全部已定稿消息（用户消息 + 助手消息），排除 streaming / queued 行。
+        按 id 升序返回全部已定稿消息（用户消息 + 助手消息），排除 streaming 行。排队消息不在 `messages` 中（它们尚无 chat_history 行），由响应里的 `queue` 数组单独返回。
         用户消息带 `content` / `files`；助手消息带 `summary`（已存阅读摘要，缺失时回退为该轮回复正文抽取的预览，`content` 为空串）。
       operationId: chatUserMessages
       parameters:
@@ -1573,6 +1576,10 @@ paths:
     get:
       tags: [Queue]
       summary: 列出排队消息
+      description: |
+        返回会话当前排队中的用户消息（`queued_messages` 表），按入队顺序。
+        排队消息在出队/插入当前回复前**不会**写入 `chat_history`，因此不会出现在
+        `/api/ai/chat` 的 `messages` 中，只在这里与 `GET /api/ai/chat` 的 `queue` 字段可见。
       operationId: queueList
       parameters:
         - name: session_id
@@ -2659,7 +2666,7 @@ paths:
       summary: 创建会话分享链接
       description: |
         请求体 `{sessionId, messageIds?}`。`messageIds` 为空表示分享全部**已完结**
-        消息（streaming=0 且 queued=0）。选中未完结或不属于该会话的消息返回 400。
+        消息（streaming=0）。选中未完结或不属于该会话的消息返回 400。
         快照为**冻结副本**：同时包含摘要与原文、内联 tool 输入输出与思考全文；
         执行计划不包含。重复创建会轮换 token，旧链接立即失效。
       operationId: sessionShareCreate

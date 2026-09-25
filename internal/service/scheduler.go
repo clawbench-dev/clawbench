@@ -1228,8 +1228,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		// counts resumes. Passing attempt here would spend one retry too few.
 		if AutoContinueEnabled() && AutoContinueAttemptsAllowed(attempt-1, model.ChatAutoContinueMaxRetries) {
 			if autoContinueSleep(ctx, autoContinueDelay) && ctx.Err() == nil {
-				queueID := newAutoContinueQueueID()
-				if _, err := PrepareAutoContinueMessage(sessionID, projectPath, backendName, queueID); err != nil {
+				if _, err := PrepareAutoContinueMessage(sessionID, projectPath, backendName); err != nil {
 					slog.Error("task auto-continue: failed to persist continue message",
 						slog.Int64("task_id", task.ID),
 						slog.String("session_id", sessionID),

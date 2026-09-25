@@ -15,7 +15,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -129,8 +128,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		totalCount := 0
-		queuedCount := 0
-		messages, totalCount, queuedCount, err := service.GetChatHistoryPaged(projectPath, sessionBackend, sessionID, limit, beforeID)
+		messages, totalCount, err := service.GetChatHistoryPaged(projectPath, sessionBackend, sessionID, limit, beforeID)
 		// Use cached session info from earlier lookup, or fetch if not yet available
 		// (e.g. when session was found via GetLatestSessionID or newly created).
 		// This avoids an extra DB query for the common case of switching to an existing session.
@@ -224,16 +222,19 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// queuedCount tells the frontend how many messages are still waiting for
-		// the drain loop, so it can compute hasMore without counting them as
-		// loaded history. The queued messages themselves are returned in the
-		// messages array (they are real chat_history rows with queued=1).
+		// The queue is returned separately from messages: a queued message has no
+		// chat_history row yet, so it cannot appear in `messages`. `queue` is the
+		// authoritative snapshot the frontend queue panel rebuilds from.
+		queue, queueErr := service.GetQueuedMessages(sessionID)
+		if queueErr != nil {
+			queue = []model.QueuedMessage{}
+		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "queuedCount": queuedCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "queuedCount": queuedCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
 		return
 	}
 
@@ -468,12 +469,12 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// Prevent concurrent sessions for the same session ID
 	runCtx, claimed := service.TryClaimSessionRun(sessionID)
 	if !claimed {
-		// Session already running — enqueue the message to DB (queued=1).
-		// The running drain loop picks it up via DequeueQueuedMessage.
+		// Session already running — enqueue the message. The running drain loop
+		// claims and materializes it.
 		//
 		// Deliberately NOT auto-injecting into the running turn here: joining
 		// the current reply is an explicit choice the user makes on the queued
-		// bubble (POST /api/ai/queue/inject). Sending always queues, so the
+		// entry (POST /api/ai/queue/inject). Sending always queues, so the
 		// behavior is identical for every backend and the message is visible
 		// (and actionable) in the queue instead of silently disappearing into
 		// the reply being written.
@@ -482,12 +483,18 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// the claim marks the live runner as having pending work, and a runner
 		// about to exit consumes that mark on its next retire check. Inserting
 		// afterwards would leave the mark consumed with the row not yet visible,
-		// and the runner would exit before it could dequeue — stranding the
-		// message until the reaper's next pass. (The queue path inserts first
-		// for the same reason.) A row that is already visible when the runner
-		// re-checks cannot be missed.
-		msgID, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))
-		if err != nil {
+		// and the runner would exit before it could claim — stranding the
+		// message until the reaper's next pass. A row that is already visible
+		// when the runner re-checks cannot be missed.
+		// Mint the queue id before inserting so the queue_added broadcast below
+		// carries the same id the row stores — the later queue_drain/queue_inject
+		// events carry the stored id, so broadcasting the client's empty value
+		// would leave clients holding an entry they can never match.
+		effectiveQueueID := req.QueueID
+		if effectiveQueueID == "" {
+			effectiveQueueID = service.NewQueueID()
+		}
+		if _, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, effectiveQueueID, T(r, "FileMessage")); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
 			return
 		}
@@ -497,19 +504,15 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// guarantee unconditional rather than depending on timing.
 		service.WakeSessionRunner(sessionID)
 
-		// Emit user_message to other session subscribers for cross-device sync.
-		// SenderClientID allows the sending device to skip its own echo. MessageID
-		// carries the persisted DB id so the receiving device can anchor its bubble
-		// to the authoritative backend id (same as the non-queue path).
+		// Announce the queued message so other devices render it in the queue
+		// panel. SenderClientID lets the sending device skip its own echo.
 		ws.EmitToSession(sessionID, ai.StreamEvent{
-			Type: "user_message",
-			UserMessage: &ai.UserMessageData{
-				MessageID:      msgID,
-				Content:        req.Message,
+			Type: "queue_added",
+			QueueAdded: &ai.QueueAddedData{
+				QueueID:        effectiveQueueID,
+				Text:           req.Message,
 				Files:          allFiles,
 				SenderClientID: req.ClientID,
-				QueueID:        req.QueueID,
-				Queued:         true, // enqueued: waiting for the drain loop, not yet started
 			},
 		})
 
@@ -520,7 +523,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage"), req.QueueID)
+	msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage"))
 	if err != nil {
 		service.SetSessionRunning(sessionID, false, true) // skipEvent: session never actually started
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to save message")))
@@ -636,25 +639,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments)
 
 		// Execute first message
-		result := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir, req.QueueID)
+		result := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir)
 
 		// Drain loop: keep executing queued messages after normal completion
 		service.RunDrainLoop(service.DrainConfig{
 			SessionID:   sessionID,
 			ProjectPath: projectPath,
 			BackendName: backendName,
-			ExecuteRunWithMessage: func(msg model.ChatMessage) service.DrainResult {
-				qMsg := model.QueuedMessage{
-					QueueID:   msg.QueueID,
-					Text:      msg.Content,
-					Files:     msg.Files,
-					CreatedAt: msg.CreatedAt.Format(time.RFC3339),
-				}
+			ExecuteRunWithMessage: func(_ int64, row service.QueuedRow) service.DrainResult {
+				qMsg := row.ToModel()
 				nextChatReq, buildErr := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
 				if buildErr != nil {
 					return service.DrainResult{Err: buildErr.Error()}
 				}
-				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir, msg.QueueID)
+				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir)
 				return service.DrainResult{
 					CancelReason:   nextResult.cancelReason,
 					Err:            nextResult.err,
@@ -671,9 +669,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				SessionID:   sessionID,
 				ProjectPath: projectPath,
 				BackendName: backendName,
-				RunTurn: func(prompt, queueID string) service.DrainResult {
+				RunTurn: func(prompt string) service.DrainResult {
 					retryChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
-					retryResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, retryChatReq, fileDir, queueID)
+					retryResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, retryChatReq, fileDir)
 					return service.DrainResult{
 						CancelReason:   retryResult.cancelReason,
 						Err:            retryResult.err,
@@ -711,7 +709,6 @@ func executeStreamRun(
 	projectPath, sessionID, backendName, agentID string,
 	chatReq ai.ChatRequest,
 	fileDir string,
-	queueID string,
 ) streamRunResult {
 	// Delegate the whole turn to the service layer's single implementation,
 	// shared with the queue/push path and the scheduler. runTurn owns the
@@ -727,7 +724,6 @@ func executeStreamRun(
 		AgentID:         agentID,
 		ChatReq:         chatReq,
 		FileDir:         fileDir,
-		QueueID:         queueID,
 		DrainOnFinalize: true,
 		LocalizeError: func(err error, key string, args map[string]any) string {
 			return T(r, key, args)
@@ -882,8 +878,12 @@ func UpdateChatQuoteNote(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `json:"sessionId"`
 		MessageID int64  `json:"messageId"`
-		QuoteID   string `json:"quoteId"`
-		Note      string `json:"note"`
+		// QueueID addresses a still-QUEUED message, which has no chat_history row
+		// yet (it is materialized only at dequeue). The queue panel sends this
+		// instead of messageId so a note can be edited before the message runs.
+		QueueID string `json:"queueId"`
+		QuoteID string `json:"quoteId"`
+		Note    string `json:"note"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -907,7 +907,16 @@ func UpdateChatQuoteNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := service.UpdateChatQuoteNote(sessionID, req.MessageID, req.QuoteID, req.Note)
+	// A queued message has no chat_history row yet, so it is edited in the queue
+	// table. messageId takes precedence when both are supplied (the message has
+	// already been dequeued).
+	var entries []model.FileEntry
+	var err error
+	if req.MessageID <= 0 && req.QueueID != "" {
+		entries, err = service.UpdateQueuedMessageQuoteNote(sessionID, req.QueueID, req.QuoteID, req.Note)
+	} else {
+		entries, err = service.UpdateChatQuoteNote(sessionID, req.MessageID, req.QuoteID, req.Note)
+	}
 	if err != nil {
 		if errors.Is(err, service.ErrChatQuoteNotFound) {
 			writeLocalizedErrorf(w, r, http.StatusNotFound, "ChatQuoteNotFound")

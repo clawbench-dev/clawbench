@@ -6,14 +6,16 @@ import { gt } from '@/composables/useLocale'
 import { buildSendChannels, type FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { clearAskStatesByPrefix, askSessionPrefix } from '@/utils/askQuestionState.ts'
+import { clearQueue, removeQueued } from '@/composables/useMessageQueue.ts'
 
 /**
  * Unified session manager — ensures consistent cleanup around session operations.
  *
- * Queue sync is now handled by loadHistory: the backend includes the in-memory
- * queue in the /api/ai/chat GET response, and loadHistory appends queue items
- * as pending messages after replacing messages.value. This eliminates the race
- * where loadHistory replaces messages and erases pending messages.
+ * Queued messages live in a SEPARATE store (useMessageQueue), not in the
+ * conversation `messages` array: the backend keeps them out of chat_history
+ * until they are dequeued. loadHistory rebuilds that store from the `queue`
+ * field of the /api/ai/chat GET response, so a missed WS event self-heals on
+ * the next load.
  */
 
 export interface UseSessionManagerOptions {
@@ -54,7 +56,6 @@ export interface UseSessionManagerOptions {
 export function useSessionManager(options: UseSessionManagerOptions) {
   const {
     messages,
-    dispatch,
     loading,
     switchSessionCore,
     createSessionCore,
@@ -68,17 +69,16 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     updateRenderedContents,
     clearInputState: _clearInputState,
     restoreInputState: _restoreInputState,
-    scrollBottom,
   } = options
 
   const identity = useSessionIdentity()
   const toast = useToast()
 
-  // ── Pending message helpers ──
+  // ── Queue helpers ──
 
-  /** Remove all pending messages from messages.value */
-  function clearPendingMessages() {
-    dispatch({ type: 'clear_pending' })
+  /** Drop queued messages from the local queue store (active session by default). */
+  function clearPendingMessages(sessionId?: string) {
+    clearQueue(sessionId || identity.currentSessionId.value)
   }
 
   /** Enqueue a message for later delivery while AI is generating.
@@ -124,29 +124,24 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         throw new Error(`enqueue failed: ${resp.status}`)
       }
       // Sending always queues while a turn is running, for every backend — the
-      // bubble stays pending until its own turn drains. Joining the running
-      // turn is a separate, explicit action on that bubble (handlePendingAction).
+      // entry stays in the queue until its own turn drains. Joining the running
+      // turn is a separate, explicit action on that entry (handlePendingAction).
     } catch {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
-      // On enqueue failure, remove the pending message we just added.
+      // On enqueue failure, remove the optimistic queue entry we just added.
       if (queueId) {
-        dispatch({ type: 'remove_pending', queueId })
-      } else {
-        // Rare path (no queueId) — content-match rollback via the reducer
-        // (single write channel: never splice messages directly).
-        dispatch({ type: 'optimistic_remove_content', content: inputText })
+        removeQueued(sessionId, queueId)
       }
       // Report failure so callers can restore the input box (a failed enqueue
       // must not leave the user's typed text cleared).
       return false
     }
 
-    scrollBottom(true)
     return true
   }
 
-  /** Remove a pending message by its queueId.
-   *  Sends DELETE to backend with queueId parameter, then removes from messages.value. */
+  /** Remove a queued message by its queueId.
+   *  Sends DELETE to backend with queueId parameter, then drops it locally. */
   async function handleRemovePending(queueId: string) {
     if (!queueId) return
     const sessionId = identity.currentSessionId.value
@@ -156,8 +151,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         `/api/ai/queue?session_id=${encodeURIComponent(sessionId)}&queueId=${encodeURIComponent(queueId)}`,
         { method: 'DELETE' }
       )
-      // Remove from local messages via the reducer.
-      dispatch({ type: 'remove_pending', queueId })
+      removeQueued(sessionId, queueId)
     } catch {
       toast.show(gt('session.removeFailed'), { icon: '⚠️', type: 'error' })
     }
@@ -205,10 +199,10 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
       if (mode === 'insert') {
         if (data?.inserted) {
-          // The bubble stays in the list (it is part of the conversation now) —
-          // only its pending state goes. The backend also broadcasts
-          // queue_inject for other devices; this clears it locally right away.
-          dispatch({ type: 'clear_queued_pending', queueId })
+          // The message is now a normal conversation turn; drop it from the
+          // queue panel. The backend also broadcasts queue_inject for other
+          // devices; this clears it locally right away.
+          removeQueued(sessionId, queueId)
           return true
         }
         // 409 decline: the message is still queued, so it will run on its own.
@@ -285,7 +279,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     try {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
     } catch {}
-    clearPendingMessages()
+    clearPendingMessages(sessionId)
     await archiveSessionCore(sessionId, backend)
   }
 
@@ -301,7 +295,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     try {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(archivedId)}`, { method: 'DELETE' })
     } catch {}
-    clearPendingMessages()
+    clearPendingMessages(archivedId)
     await archiveSessionCore(archivedId, identity.currentBackend.value)
     deleteDraft(archivedId)
     // The session no longer exists — drop its attachment snapshot too so it
@@ -321,7 +315,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     try {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
     } catch {}
-    clearPendingMessages()
+    clearPendingMessages(sessionId)
     await destroySessionCore(sessionId)
   }
 
@@ -336,7 +330,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     try {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(destroyedId)}`, { method: 'DELETE' })
     } catch {}
-    clearPendingMessages()
+    clearPendingMessages(destroyedId)
     await destroySessionCore(destroyedId)
     deleteDraft(destroyedId)
     // Drop the attachment snapshot for the destroyed session.

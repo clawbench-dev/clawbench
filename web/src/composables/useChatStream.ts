@@ -6,11 +6,12 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, messageText, nextClientSeq, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 import { markCancelRequested, reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
+import { addQueued, removeQueued, removeQueuedMany, getQueue } from '@/composables/useMessageQueue.ts'
 
 const TAG = 'ChatStream'
 
@@ -31,6 +32,14 @@ export interface UseChatStreamOptions {
   onToast: (msg: string, opts?: { icon?: string; type?: string; duration?: number; onClick?: () => void }) => void
   onNotification: (title: string, opts?: { body?: string; onClick?: () => void }) => void
   onStreamEnd?: (reason: 'done' | 'cancelled' | 'error') => void
+  /**
+   * Fires at every queue_drain turn boundary for the current session: the
+   * previous turn's reply just finalized (stamping its completed_at) and the
+   * next queued message is starting. The host decides whether the user was
+   * watching and should therefore clear the unread state — the backend cannot
+   * know (a queued message may come from another device or an IM push).
+   */
+  onQueueDrainBoundary?: (sessionId: string) => void
   onFileModified?: (filePath: string) => void
   onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
   onToolResult?: (toolId: string) => void
@@ -53,6 +62,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     isOpen,
     onNotification,
     onStreamEnd,
+    onQueueDrainBoundary,
     onFileModified,
     onExtractScheduledTasks,
     onToolResult,
@@ -191,7 +201,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     return !!name && SUBAGENT_TOOL_NAMES.has(name.toLowerCase())
   }
 
-  const { onEvent, sendWsMessage, connected } = useGlobalEvents()
+  const { onEvent, sendWsMessage, connected, isReplayingEvents } = useGlobalEvents()
 
   function debouncedRender() {
     // Panel not visible: drop any pending render/scroll — data still accumulates
@@ -271,23 +281,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     subscribedSessionId = null
   }
 
-  /**
-   * Find the index of the user message a new streaming placeholder should
-   * anchor to: the newest NON-pending user message (fallback: newest user
-   * message).
-   */
-  function findAnchorUserIdx(): number {
-    let idx = -1
-    let maxSeq = -1
-    messages.value.forEach((m, i) => {
-      if (m.role !== 'user' || m.pending || m.seq == null) return
-      if (m.seq > maxSeq) { maxSeq = m.seq; idx = i }
-    })
-    if (idx === -1) idx = messages.value.findLastIndex((m) => m.role === 'user' && !m.pending)
-    if (idx === -1) idx = messages.value.findLastIndex((m) => m.role === 'user')
-    return idx
-  }
-
   /** Whether an assistant message carries any renderable content (text/thinking/tool blocks). */
   function messageHasContent(m: ChatMessage): boolean {
     return messageText(m) !== '' || !!m.blocks?.length
@@ -320,21 +313,11 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
     }
 
-    // Ensure a streaming assistant message exists — create one if needed
+    // Ensure a streaming assistant message exists — create one if needed.
+    // Ordering is by DB id (the question row was materialized before the reply),
+    // so a transient placeholder simply sorts after all DB-backed messages.
     const streaming = findStreamingMsg(messages.value)
     if (!streaming) {
-      // Anchor the new placeholder right after its question so it can never
-      // sort above an earlier reply. The question is the newest NON-pending
-      // user message: queued messages (pending=true) are later turns waiting
-      // for the drain loop — anchoring to one of them would push this reply
-      // (and everything before it) below the queued bubbles, producing the
-      // wrong order (msg2, msg3 above msg1, reply1). Fall back to the last
-      // user message when every user message is pending.
-      // NOTE: prefer the user message with the largest seq (monotonic send
-      // order) — sorting moves an unadopted msg1 bubble to the front, so the
-      // newest user is not necessarily the last physical element. Messages
-      // without a seq (DB-loaded history) are excluded unless nothing else.
-      const parentUserIdx = findAnchorUserIdx()
       const newStreaming: ChatMessage = {
         role: 'assistant' as const,
         id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -344,7 +327,6 @@ export function useChatStream(options: UseChatStreamOptions) {
         createdAt: new Date().toISOString(),
         backend: currentBackend.value,
         seq: nextClientSeq(),
-        parentQueueId: parentUserIdx !== -1 ? String(messages.value[parentUserIdx].id) : undefined,
       }
       // Single write channel: the reducer pushes + re-sorts.
       dispatch({ type: 'stream_placeholder', msg: newStreaming })
@@ -528,30 +510,14 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'stream_start': {
         if (sessionChanged()) return
         const messageId = payload.message_id as number | undefined
-        // The answered queue id (the streaming row's queue_id — the queueId of
-        // the user message this run answers). Lets the reducer re-anchor a
-        // recovery placeholder that was built before its question bubble
-        // arrived, so the reply sorts after its own question instead of above it.
-        const answeredQueueId = typeof payload.queue_id === 'string' ? payload.queue_id : undefined
         if (messageId) {
           // Event-driven placeholder: if no streaming assistant message exists
           // (e.g. client opened the session mid-stream, or the optimistic
-          // placeholder was dropped by a loadHistory), create one anchored to
-          // the current streaming id. The DB row id is used as the message id
-          // so subsequent content events (findStreamingMsg) match it.
+          // placeholder was dropped by a loadHistory), create one. The DB row id
+          // is used as the message id so subsequent content events
+          // (findStreamingMsg) match it. Ordering is by DB id, so no anchor is
+          // needed: the user row was materialized before this placeholder.
           if (!findStreamingMsg(messages.value)) {
-            // Anchor to the answered question's queue id when the backend
-            // provided it — the authoritative anchor (resolves once the
-            // question bubble is in the array, and lets rebuildFromDb Channel
-            // 2 match the DB streaming row). Fall back to the newest non-pending
-            // user message only when the backend sent no queue id (e.g.
-            // scheduled runs with no question), preserving the old behavior.
-            const anchorParent = answeredQueueId
-              ? undefined
-              : (() => {
-                  const anchorIdx = findAnchorUserIdx()
-                  return anchorIdx !== -1 ? String(messages.value[anchorIdx].id) : undefined
-                })()
             dispatch({ type: 'stream_placeholder', msg: {
               role: 'assistant',
               id: messageId,
@@ -561,16 +527,14 @@ export function useChatStream(options: UseChatStreamOptions) {
               createdAt: new Date().toISOString(),
               backend: currentBackend.value,
               seq: nextClientSeq(),
-              parentQueueId: answeredQueueId || anchorParent,
             } as ChatMessage })
             onRenderNeeded()
             onScrollBottom(false)
           }
           // ws_stream_start is idempotent: it re-sets the id on the existing
           // streaming message (a no-op when the placeholder above already
-          // carries the DB id) and re-anchors to the answered question when a
-          // recovery placeholder was anchored to a stale user message.
-          dispatch({ type: 'ws_stream_start', messageId, answeredQueueId })
+          // carries the DB id).
+          dispatch({ type: 'ws_stream_start', messageId })
         }
         // A placeholder now exists, so anything that arrived before it can be
         // applied. Done after the dispatch above so the replayed events land on
@@ -582,12 +546,12 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'stream_split': {
         if (sessionChanged()) return
         const messageId = payload.message_id as number | undefined
-        const splitQueueId = typeof payload.queue_id === 'string' ? payload.queue_id : undefined
         if (!messageId) break
         // The assistant reply was split in two at a mid-turn injection point.
         // The reducer finalizes the current bubble and pushes the new "after"
-        // bubble; the injected question sorts between them by DB id.
-        dispatch({ type: 'ws_stream_split', messageId, queueId: splitQueueId })
+        // bubble; the injected question sits between them by DB id (it was
+        // materialized at injection time).
+        dispatch({ type: 'ws_stream_split', messageId })
         onRenderNeeded()
         onScrollBottom(false)
         break
@@ -918,33 +882,27 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'user_message': {
         if (sessionChanged()) return
-        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; queued?: boolean }
+        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string }
 
-        // Skip self-echo: if the sender is this device, we already have the
-        // optimistic message. Still adopt its DB id from messageId — this is
-        // the ONLY reliable way to learn a directly-sent message's DB id
-        // without a backend that echoes msgId in the POST response. Without
-        // it the unadopted bubble sorts as a transient (after later queued
-        // messages that already adopted DB ids) — the ordering mess.
-        const myClientId = localStorage.getItem('clawbench_client_id')
-        if (userData.senderClientId && userData.senderClientId === myClientId) {
-          if (userData.messageId && userData.queueId) {
-            // The backend's own `queued` flag decides whether this bubble is
-            // still waiting for the drain loop. A message that joined the
-            // RUNNING turn (mid-turn injection) is not queued, so no drain will
-            // ever come for it — it must shed pending now or it would spin
-            // forever. Backend-driven, so this stays backend-agnostic.
-            dispatch({
-              type: 'optimistic_adopt_id',
-              id: userData.queueId,
-              dbId: userData.messageId,
-              clearPending: userData.queued !== true,
-            })
-          }
-          break
+        // A message whose queueId is still in the queue is being MATERIALIZED
+        // right now: drop the queue entry and render it inline. This covers the
+        // sender too — its optimistic bubble lives in the queue store, not the
+        // message list, so the usual self-echo skip would hide it.
+        const wasQueued = !!userData.queueId && getQueue(sessionId).some((m) => m.queueId === userData.queueId)
+        if (wasQueued) {
+          // removeQueued also releases the entry's in-flight guard.
+          removeQueued(sessionId, userData.queueId!)
+        } else {
+          // Direct send: this device already has the bubble (adopted from the
+          // POST response), so its echo is skipped.
+          const myClientId = localStorage.getItem('clawbench_client_id')
+          if (userData.senderClientId && userData.senderClientId === myClientId) break
         }
 
-        dispatch({ type: 'ws_user_message', data: { ...userData, backend: currentBackend.value } })
+        // Strip senderClientId when we decided to render: the reducer has its
+        // own self-echo guard, and a queue-originated echo from this device must
+        // still be shown.
+        dispatch({ type: 'ws_user_message', data: { ...userData, senderClientId: undefined, backend: currentBackend.value } })
 
         // debouncedRender schedules the scroll pin in the same rAF — no
         // separate onScrollBottom here (duplicate pin in the same frame).
@@ -952,24 +910,48 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
 
+      case 'queue_added': {
+        // A message was enqueued (by this device or another). It has no
+        // chat_history row yet, so it goes to the queue panel, not the list.
+        const addedData = payload as { queueId?: string; text?: string; files?: FileEntry[]; senderClientId?: string }
+        const myClientId = localStorage.getItem('clawbench_client_id')
+        if (addedData.senderClientId && addedData.senderClientId === myClientId) break
+        if (addedData.queueId) {
+          addQueued(sessionId, { queueId: addedData.queueId, text: addedData.text || '', files: addedData.files || [] })
+        }
+        break
+      }
+
       case 'queue_drain': {
+        // A queued message started its OWN turn. The real user message arrived
+        // in the preceding user_message event (content lives only there), so
+        // this is just the turn boundary: drop the entry from the queue panel
+        // and make sure a streaming placeholder exists for the reply.
         const drainData = payload as unknown as QueueEventData
         const eventSessionId = drainData.sessionId || sessionId
-
-        if (eventSessionId === currentSessionId.value) {
-          const drainText = drainData.text || ''
-          const drainFiles: FileEntry[] = [
-            ...(drainData.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-            ...(drainData.filePaths || []).map(p => ({ path: p, isDir: false })),
-          ]
-          dispatch({ type: 'ws_queue_drain', queueId: drainData.queueId || '', text: drainText, files: drainFiles, dbMessageId: drainData.messageId || undefined, backend: currentBackend.value })
-          // Extract tasks from the newly added message(s).
-          onExtractScheduledTasks?.(messages.value)
-
-          if (isOpen.value) {
-            onRenderNeeded()
-            onScrollBottom(false)
-          }
+        if (eventSessionId !== currentSessionId.value) break
+        if (drainData.queueId) removeQueued(eventSessionId, drainData.queueId)
+        // Finalize the reply that was streaming: the backend emits `done` only
+        // when the whole drain loop exits, so without this the previous bubble
+        // would keep its spinner while the next turn streams into it.
+        dispatch({ type: 'ws_queue_drain' })
+        // Turn boundary: the previous reply just finalized (its completed_at is
+        // now stamped past last_read_at), so the session would count as unread
+        // for the whole duration of the next turn even though the user may be
+        // watching. Let the host re-anchor last_read_at when it can prove the
+        // user is present. Gated on a live (non-replayed) event: a replayed
+        // drain means the user was disconnected, so the badge must survive.
+        if (!isReplayingEvents.value) {
+          onQueueDrainBoundary?.(eventSessionId)
+        }
+        // The new turn's placeholder is normally created by the stream_start
+        // that follows. Ensure one exists anyway so a lost stream_start still
+        // renders the reply.
+        ensureStreamingPlaceholder()
+        onExtractScheduledTasks?.(messages.value)
+        if (isOpen.value) {
+          onRenderNeeded()
+          onScrollBottom(false)
         }
         break
       }
@@ -978,12 +960,12 @@ export function useChatStream(options: UseChatStreamOptions) {
         // A queued message joined the RUNNING turn. Unlike queue_drain this must
         // NOT open a new assistant placeholder — the reply in flight continues
         // (the steer boundary splits it if the backend supports that). Only the
-        // bubble's pending state goes.
+        // queue entry goes; its user_message already put it in the list.
         const injectData = payload as unknown as QueueEventData
         const injectSessionId = injectData.sessionId || sessionId
         if (injectSessionId !== currentSessionId.value) break
         if (injectData.queueId) {
-          dispatch({ type: 'clear_queued_pending', queueId: injectData.queueId })
+          removeQueued(injectSessionId, injectData.queueId)
           onRenderNeeded()
         }
         break
@@ -993,8 +975,9 @@ export function useChatStream(options: UseChatStreamOptions) {
         const cancelData = payload as { sessionId?: string; queueIds?: string[] }
         const eventSessionId = cancelData.sessionId || sessionId
         if (eventSessionId !== currentSessionId.value) break
-        const ids = cancelData.queueIds || []
-        dispatch({ type: 'ws_queue_cancel', queueIds: ids })
+        const cancelled = cancelData.queueIds || []
+        removeQueuedMany(eventSessionId, cancelled)
+        for (const id of cancelled) untrackInFlightSend(id)
         onRenderNeeded()
         break
       }

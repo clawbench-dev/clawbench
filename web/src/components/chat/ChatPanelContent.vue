@@ -16,8 +16,6 @@
       :switching="session.switching.value"
       :totalMessages="session.totalMessages.value"
       :active="props.active"
-      :midTurnSupported="midTurnSupported"
-      :pendingActionBusy="pendingActionBusy"
       @touchstart.passive="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
@@ -28,8 +26,6 @@
       @load-more="handleLoadMore"
       @task-card-click="(taskId) => $emit('task-card-click', taskId)"
       @send-message="handleToolSendMessage"
-      @remove-pending="handleRemovePending"
-      @pending-action="handlePendingAction"
       @render-flush="handleRenderFlush"
       @toggle-summary="handleToggleSummary"
       @ensure-content="(msg) => ensureMessageContent(msg)"
@@ -66,6 +62,16 @@
       :collapsed="planCollapsed"
       :has-update="planHasUpdate"
       @toggle-collapse="togglePlanCollapse"
+    />
+
+    <!-- Queued messages — kept OUT of the conversation list; shown and managed
+         here, directly above the input. -->
+    <QueuedMessageBar
+      :messages="queuedMessages"
+      :midTurnSupported="midTurnSupported"
+      :busy="pendingActionBusy"
+      @remove="handleRemovePending"
+      @action="handlePendingAction"
     />
 
     <!-- Unified input container — hidden when no agents configured -->
@@ -199,6 +205,7 @@ import ToolDetailDrawer from './ToolDetailDrawer.vue'
 import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
+import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
 import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
@@ -209,6 +216,7 @@ import { useSessionIdentity, getSessionId } from '@/composables/useSessionIdenti
 import { useSessionManager } from '@/composables/useSessionManager.ts'
 import { createChatMessageStore } from '@/composables/useChatMessageStore.ts'
 import { useAcpSession } from '@/composables/useAcpSession'
+import { queuedMessages, setActiveQueueSession, addQueued, clearQueue } from '@/composables/useMessageQueue.ts'
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
@@ -611,6 +619,25 @@ const session = useChatSession({
   onResubscribeStream: (sid) => stream.resubscribe(sid),
 })
 
+// onQueueDrainBoundary: a queued message started its own turn, which means the
+// PREVIOUS turn's reply just finalized and stamped its completed_at. The unread
+// query compares COALESCE(completed_at, created_at) > last_read_at, so that
+// reply now counts as unread for the whole duration of the next turn — the
+// session row dot lights up mid-stream even though the user is watching it.
+//
+// The backend cannot fix this itself: a queued message may come from another
+// device or an IM push, so "a turn boundary happened" is not evidence that
+// anyone is looking. Only the client knows, so the gate lives here — same
+// condition as the completion path (foreground, current session).
+function handleQueueDrainBoundary(sessionId) {
+  if (!sessionId) return
+  if (sessionId !== identity.currentSessionId.value) return
+  if (!appInForeground.value) return
+  // Idempotent: UpdateLastRead anchors to MAX(now, newest completed_at), so
+  // this can never pull the watermark backwards.
+  session.markSessionRead(sessionId).catch(() => {})
+}
+
 // onStreamEnd: fires when current session stream completes with a reason
 // - 'done': normal completion → play sound, auto-speech; queue sync handled by
 //   useSessionManager's watch(loading) safety net (loading true→false triggers fetchQueue)
@@ -651,7 +678,7 @@ async function onStreamEnd(reason) {
     store.loadGitBranch().catch(() => {})
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
-    messageStore.dispatch({ type: 'clear_pending' })
+    clearQueue(identity.currentSessionId.value)
     // Restore screen lock — output was cancelled, no TTS will play
     autoSpeech.onOutputEndNoSpeech()
     // User was viewing this session while cancelling — clear its unread badge.
@@ -683,6 +710,15 @@ watch(loading, (newVal, oldVal) => {
   }
 })
 
+// The queue panel reads from a module-level store keyed by session; point it at
+// the session this panel is showing. Immediate so a remount (project switch,
+// drawer reopen) restores the right queue without waiting for a change.
+watch(
+  () => identity.currentSessionId.value,
+  (sid) => setActiveQueueSession(sid || ''),
+  { immediate: true },
+)
+
 const stream = useChatStream({
   messages,
   dispatch: messageStore.dispatch,
@@ -699,6 +735,7 @@ const stream = useChatStream({
   onToast: (msg, opts) => toast.show(msg, opts),
   onNotification: (title, opts) => notification.show(title, opts),
   onStreamEnd,
+  onQueueDrainBoundary: handleQueueDrainBoundary,
   onReplayDone: () => { inputDisabled.value = false },
   onFileModified: (filePath) => {
     // Chat-driven file refresh: when AI's Write/Edit tool completes,
@@ -1040,8 +1077,8 @@ async function sendMessage(text) {
        resetQuotePin()
        inputBarRef.value?.clearInput()
        clearPendingFiles()
-       // Push a pending user message and enqueue it. The backend handles the
-       // "session not running" race internally (B2 self-heal), so no
+       // Push an optimistic queue entry and enqueue it. The backend handles the
+       // "session not running" race internally (self-heal), so no
        // needs_start/resubmit round-trip is needed here. Shared with the
        // AskUserQuestion-card path for identical enqueue behavior.
        try {
@@ -1050,7 +1087,6 @@ async function sendMessage(text) {
            text: inputText || '',
            attachedFiles: capturedAttached,
            pendingFiles: capturedPending,
-           pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
            onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
            enqueue: (sid, text, attached, pending, qid) => manager.enqueueMessage(sid, text, attached, pending, qid),
          })
@@ -1168,21 +1204,25 @@ async function sendMessageNow(text, filePaths, files) {
         }
         // Direct-send path: adopt the DB id immediately so this bubble sorts
         // with DB-backed messages instead of staying transient (huge sort
-        // value) until the next loadHistory — otherwise it renders AFTER later
-        // queued messages that already adopted their DB ids (misorder).
+        // value) until the next loadHistory.
         if (data.msgId && !data.running) {
             messageStore.dispatch({ type: 'optimistic_adopt_id', id: pendingId, dbId: data.msgId })
         }
         // Session already running — another request is in progress
         if (data.running) {
             // The message was queued for the next turn (sending never joins the
-            // running turn), so mark it pending: it waits for its own drain.
-            const localIdx = messages.value.findLastIndex(
-                (m) => m.role === 'user' && m.id === pendingId
-            )
-            if (localIdx !== -1) {
-                messages.value[localIdx].pending = true
-            }
+            // running turn). It is NOT part of the conversation yet, so move the
+            // optimistic bubble out of the message list and into the queue
+            // panel. The in-flight guard keeps it across a stale loadHistory
+            // snapshot taken before the backend committed the queue row.
+            messageStore.dispatch({ type: 'optimistic_remove', id: pendingId })
+            addQueued(identity.currentSessionId.value, {
+                queueId: pendingId,
+                text: text || '',
+                files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+                createdAt: new Date().toISOString(),
+            })
+            render.updateRenderedContents()
             stream.connectStream(identity.currentSessionId.value, { reuseExistingStreaming: true })
             // Proactively sync ACP state for the running session
             if (effectiveAgentId && agentsComposable.supportsACP(effectiveAgentId)) {
@@ -1236,17 +1276,15 @@ async function handleToolSendMessage(text, cardKey) {
     if (!text) return
     let delivered = true
     if (loading.value) {
-      // Shared with the normal input path: push a pending user message and
-      // enqueue it. The backend's B2 self-heal handles the session-ended race.
-      // On failure, enqueueMessage already shows the toast and rolls back the
-      // pending message.
+      // Shared with the normal input path: push an optimistic queue entry and
+      // enqueue it. The backend's self-heal handles the session-ended race.
+      // On failure, enqueueMessage already shows the toast and rolls back.
       try {
         await enqueueAndMaybeStart({
           sessionId: identity.currentSessionId.value,
           text,
           attachedFiles: [],
           pendingFiles: [],
-          pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
           onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
           enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
         })
@@ -1353,23 +1391,21 @@ async function handleLoadMore() {
     el.scrollTop = newScrollHeight - oldScrollHeight
 }
 
-/** Handle remove-pending event from ChatMessageItem.
- *  The event passes the pending message's queueId (msg.id).
- *  Passes it directly to the manager for backend DELETE. */
+/** Remove a queued message from the queue panel (backend DELETE + local drop). */
 function handleRemovePending(queueId) {
     manager.handleRemovePending(queueId)
 }
 
-/** Single adaptive action on a queued bubble. The backend capability decides
+/** Single adaptive action on a queued entry. The backend capability decides
  *  what it does; the button label already told the user which, so here we only
  *  route to the matching endpoint. */
-async function handlePendingAction(queueId) {
+async function handlePendingAction(queueId, mode) {
     if (!queueId || pendingActionBusy.value) return
     pendingActionBusy.value = String(queueId)
     try {
         await manager.handlePendingAction(
             String(queueId),
-            midTurnSupported.value ? 'insert' : 'interrupt',
+            mode || (midTurnSupported.value ? 'insert' : 'interrupt'),
         )
     } finally {
         pendingActionBusy.value = ''
@@ -1514,7 +1550,7 @@ async function handleResetSession() {
         await apiPost('/api/ai/session/reset', { sessionId: sid })
         // Re-send the last persisted user message so the conversation continues
         // in the freshly-reset agent session.
-        const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user' && !m.pending)
+        const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user')
         if (lastUserMsg?.content) await sendMessage(lastUserMsg.content)
     } catch {
         toast.show(t('chat.contentBlocks.resetSessionFailed'), { icon: '⚠️', type: 'error' })

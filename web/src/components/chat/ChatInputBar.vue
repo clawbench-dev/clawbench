@@ -1093,15 +1093,15 @@ function handleFileSelect(item) {
 
 // ── Input history navigation (ArrowUp/ArrowDown) ──────────
 // Per-session, in-memory only. Derived from the session's persisted user
-// messages (excludes pending optimistic bubbles and queued messages, matching
-// the server-side user-message index source), newest first. Each entry carries
-// both the text and the attached files so a history restore can rebuild both.
+// messages (queued messages are not in this array at all), newest first. Each
+// entry carries both the text and the attached files so a history restore can
+// rebuild both.
 const historyInputs = computed(() => {
   const msgs = props.messages || []
   const list = []
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i]
-    if (m.role !== 'user' || m.pending || m.queued) continue
+    if (m.role !== 'user') continue
     const text = typeof m.content === 'string' ? m.content.trim() : ''
     const files = Array.isArray(m.files) ? m.files : []
     if (text) list.push({ text, files })

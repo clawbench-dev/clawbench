@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   chatMessageReducer,
   rebuildFromDb,
@@ -36,20 +36,20 @@ const a = (partial: Partial<ChatMessage> & { id: unknown }): ChatMessage => ({
 describe('chatMessageReducer — optimistic + structural', () => {
   it('optimistic_push then optimistic_remove', () => {
     const state = run([], [
-      { type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', pending: true, seq: 1 }) },
+      { type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1 }) },
     ])
     expect(state).toHaveLength(1)
-    expect(state[0].pending).toBe(true)
+    expect(state[0].content).toBe('1')
 
     const after = run(state, [{ type: 'optimistic_remove', id: 'pending-1' }])
     expect(after).toHaveLength(0)
   })
 
-  it('optimistic_remove_content removes only the matching pending message', () => {
+  it('optimistic_remove_content removes only the matching transient message', () => {
     const state = run(
       [
-        u({ id: 'a', content: 'earlier', pending: true, seq: 1 }),
-        u({ id: 'b', content: 'hello', pending: true, seq: 2 }),
+        u({ id: 'a', content: 'earlier', seq: 1 }),
+        u({ id: 'b', content: 'hello', seq: 2 }),
       ],
       [{ type: 'optimistic_remove_content', content: 'hello' }],
     )
@@ -58,46 +58,24 @@ describe('chatMessageReducer — optimistic + structural', () => {
   })
 
   it('optimistic_adopt_id adopts DB id and sorts by id (not seq space)', () => {
-    // A directly-sent bubble (sendMessageNow) learns its DB id from the
-    // user_message self-echo. Its DB id IS its real conversational position
-    // (send order = persist order), so it sorts by id alongside history —
-    // NOT in seq space where it would interleave with queued/remote messages
-    // by client receive order. Old id preserved as queueId for reply anchors.
+    // A directly-sent bubble (sendMessageNow) learns its DB id from the POST
+    // response / user_message self-echo. Its DB id IS its real conversational
+    // position (send order = persist order), so it sorts by id alongside
+    // history — NOT in seq space where it would interleave with remote messages
+    // by client receive order.
     const state = run(
       [
         u({ id: 'pending-1', content: '1', seq: 1 }),
-        u({ id: 'pending-2', content: '2', pending: true, seq: 2 }),
+        u({ id: 'pending-2', content: '2', seq: 2 }),
       ],
       [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 10 }],
     )
     const msg1 = state.find((m) => m.role === 'user' && m.content === '1')
     expect(msg1?.id).toBe(10)
-    expect(msg1?.queueId).toBe('pending-1')
-    expect(msg1?.pending).toBeUndefined()
     expect(msg1?.seq).toBeUndefined()
-    // Sorts by DB id, not by seq — the queued msg2 stays in seq space (huge).
+    // Sorts by DB id, not by seq — the not-yet-adopted msg2 stays in seq space.
     expect(messageSortValue(msg1!)).toBe(10)
     expect(messageSortValue(msg1!)).toBeLessThan(messageSortValue(state.find((m) => m.content === '2')!))
-  })
-
-  it('optimistic_adopt_id does NOT adopt a pending (queued) bubble', () => {
-    // A queued message is still waiting for the drain loop; the drain event
-    // carries its authoritative id and clears pending. Adopting early would
-    // flip it to a normal message (losing the "queuing" UI state).
-    const state = run(
-      [{ id: 'pending-2', role: 'user', content: '2', pending: true, seq: 2 } as ChatMessage],
-      [{ type: 'optimistic_adopt_id', id: 'pending-2', dbId: 10 }],
-    )
-    const msg2 = state.find((m) => m.content === '2')
-    expect(msg2?.id).toBe('pending-2')
-    expect(msg2?.pending).toBe(true)
-  })
-
-  it('clear_pending removes only pending messages', () => {
-    const state = run([u({ id: 1, content: 'done' }), u({ id: 'p2', pending: true, seq: 1 })], [
-      { type: 'clear_pending' },
-    ])
-    expect(state.map((m) => m.id)).toEqual([1])
   })
 
   it('clear empties the array', () => {
@@ -209,85 +187,45 @@ describe('chatMessageReducer — WS block-level events', () => {
   })
 })
 
-describe('chatMessageReducer — ws_queue_cancel', () => {
-  it('removes pending bubbles by id and by queueId field', () => {
-    const state = run(
-      [u({ id: 'p1', pending: true, seq: 1 }), u({ id: 5, queueId: 'p2', pending: true, seq: 2 }), u({ id: 9 })],
-      [{ type: 'ws_queue_cancel', queueIds: ['p1', 'p2'] }],
-    )
-    expect(state.map((m) => m.id)).toEqual([9])
-  })
-
-  it('removes cross-device _remote bubbles by _remoteQueueId', () => {
-    const state = run(
-      [
-        u({ id: 'p1', pending: true, seq: 1 }),
-        u({ id: 'remote-123', _remote: true, _remoteQueueId: 'p2', content: 'from other device', seq: 2 }),
-        u({ id: 9 }),
-      ],
-      [{ type: 'ws_queue_cancel', queueIds: ['p2'] }],
-    )
-    expect(state.map((m) => m.id)).toEqual(['p1', 9])
-  })
-})
-
-describe('chatMessageReducer — remove_pending', () => {
-  it('removes pending bubbles and cross-device _remote bubbles by queueId', () => {
-    const state = run(
-      [
-        u({ id: 'p1', pending: true, queueId: 'p1', seq: 1 }),
-        u({ id: 'remote-abc', _remote: true, _remoteQueueId: 'p2', content: 'other', seq: 2 }),
-        u({ id: 9 }),
-      ],
-      [{ type: 'remove_pending', queueId: 'p2' }],
-    )
-    // Only the _remote bubble for p2 is removed; p1 (a different queueId) stays.
-    expect(state.map((m) => m.id)).toEqual(['p1', 9])
-  })
-})
-
-// ── Race 1: optimistic_push → db_load → ws_queue_drain ──
-describe('chatMessageReducer — Race 1: optimistic bubble survives db_load and drains', () => {
-  it('bubble is not wiped by db_load and drain matches by id', () => {
+// ── Race 1: optimistic_push → db_load → user_message (drain) ──
+describe('chatMessageReducer — Race 1: optimistic bubble converges to its DB row', () => {
+  it('bubble is not duplicated by db_load and the drained user_message lands once', () => {
     let state: ChatMessage[] = []
     // 1. User sends message 2 while 1 is generating → optimistic bubble.
-    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 1 }) }])
+    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', seq: 1 }) }])
     expect(state).toHaveLength(1)
 
-    // 2. A loadHistory returns msg1 + reply1 + msg2 (DB row, queued) BEFORE drain.
+    // 2. A loadHistory returns msg1 + reply1 (msg2 is still queued, so it is
+    //    NOT in the conversation snapshot — it comes back in the `queue` field).
     state = run(state, [{
       type: 'db_load',
       sessionRunning: false,
       dbMessages: [
         u({ id: 1, content: '1' }),
         a({ id: 2, content: 'reply1' }),
-        u({ id: 3, content: '2', queueId: 'pending-2', queued: true }),
       ],
     }])
-    // Bubble must survive (matched by queueId), still pending, id still string.
-    expect(state.map((m) => m.id)).toEqual([1, 2, 'pending-2'])
-    expect(state[2].pending).toBe(true)
+    // The stale optimistic bubble is dropped: the DB is authoritative and has
+    // no row for it (a queued message has no chat_history row yet).
+    expect(state.map((m) => m.id)).toEqual([1, 2])
 
-    // 3. queue_drain arrives → matches the surviving bubble by id, no duplicate.
-    state = run(state, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: '2', files: [], dbMessageId: 3 }])
+    // 3. queue_drain arrives → the backend materialized msg2 as id=3 and emits
+    //    user_message; it lands exactly once.
+    state = run(state, [{ type: 'ws_user_message', data: { messageId: 3, content: '2' } }])
     const users = state.filter((m) => m.role === 'user' && m.content === '2')
     expect(users).toHaveLength(1)
+    expect(users[0].id).toBe(3)
   })
 
-  it('drain matches a bubble that already adopted a numeric DB id (queueId field survives)', () => {
+  it('user_message dedups against an existing bubble with the same DB id', () => {
     let state: ChatMessage[] = []
     state = run(state, [
-      { type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 1 }) },
+      { type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', seq: 1 }) },
     ])
-    // db_load replaces nothing but marks queued; then the bubble's id becomes numeric
-    // (e.g. stream_start or a later merge) while queueId field survives.
-    const bubble = state[0]
-    bubble.queueId = 'pending-2'
-    bubble.id = 3
-    bubble.pending = true
-    delete bubble.seq
+    state = run(state, [{ type: 'optimistic_adopt_id', id: 'pending-2', dbId: 3 }])
 
-    state = run(state, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: '2', files: [], dbMessageId: 3 }])
+    // A replayed/duplicate user_message for the same row must not add a second copy.
+    state = run(state, [{ type: 'ws_user_message', data: { messageId: 3, content: '2' } }])
     const users = state.filter((m) => m.role === 'user' && m.content === '2')
     expect(users).toHaveLength(1)
   })
@@ -332,12 +270,30 @@ describe('chatMessageReducer — Race 3: new stream coexists with background db_
       dbMessages: [u({ id: 1, content: '1' }), a({ id: 2, content: 'reply1' })],
     }])
     // Then the user sends message 2 and a new stream placeholder appears.
-    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 1 }) }])
-    state = run(state, [{ type: 'stream_placeholder', msg: a({ id: 'drain-2', streaming: true, seq: 2, parentQueueId: 'pending-2' }) }])
+    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', seq: 1 }) }])
+    state = run(state, [{ type: 'stream_placeholder', msg: a({ id: 'drain-2', streaming: true, seq: 2 }) }])
 
     const streaming = state.find((m) => m.streaming)
     expect(streaming).toBeDefined()
     expect(state.map((m) => m.id)).toEqual([1, 2, 'pending-2', 'drain-2'])
+  })
+})
+
+describe('chatMessageReducer — ws_stream_split', () => {
+  it('finalizes the before-half and opens a new streaming placeholder for the after-half', () => {
+    let state: ChatMessage[] = []
+    state = run(state, [
+      u({ id: 1, content: 'q' }),
+      { type: 'stream_placeholder', msg: a({ id: 'drain-1', streaming: true, seq: 1 }) },
+      { type: 'ws_content', text: 'before' },
+    ])
+    state = run(state, [{ type: 'ws_stream_split', messageId: 4 }])
+    const assistants = state.filter((m) => m.role === 'assistant')
+    expect(assistants).toHaveLength(2)
+    // before-half finalized (streaming cleared), after-half streaming with new id
+    expect(assistants[0].streaming).toBeFalsy()
+    expect(assistants[1].id).toBe(4)
+    expect(assistants[1].streaming).toBe(true)
   })
 })
 
@@ -352,168 +308,91 @@ describe('rebuildFromDb (db_load)', () => {
     expect(merged.some((m) => m.id === 'drain-99')).toBe(false)
   })
 
-  // ── Bug regression: db_load must NOT keep a pending bubble whose DB row is
-  //    already drained (queued=false). The rebuild drops the transient bubble
-  //    and keeps the authoritative DB row — a reload fixes the stale "waiting"
-  //    state permanently (same as a restart).
-  it('drops a pending bubble whose DB row is already drained (queued=false)', () => {
+  // ── Queued messages have no chat_history row, so a db_load snapshot that
+  //    does not contain the optimistic bubble is authoritative: the bubble is
+  //    dropped (it lives in the queue store, which is synced separately).
+  it('drops an optimistic bubble with no DB row (still queued, not in chat_history)', () => {
     const state = [
       u({ id: 1, content: 'msg1' }),
       a({ id: 2, content: 'reply1' }),
-      u({ id: 'pending-2', content: 'msg2', pending: true, queueId: 'pending-2', seq: 1 }),
+      u({ id: 'pending-2', content: 'msg2', seq: 1 }),
     ]
     const merged = rebuildFromDb(state, [
       u({ id: 1, content: 'msg1' }),
       a({ id: 2, content: 'reply1' }),
-      // msg2 is already drained: queued=false, has a DB id
-      u({ id: 3, content: 'msg2', queueId: 'pending-2', queued: false }),
     ])
     const msg2 = merged.find((m) => m.role === 'user' && m.content === 'msg2')
-    expect(msg2).toBeDefined()
-    expect(msg2?.pending).toBeUndefined()
-    // The transient string-id bubble is gone; the DB row id=3 is authoritative.
-    expect(msg2?.id).toBe(3)
+    expect(msg2).toBeUndefined()
+    expect(merged.map((m) => m.id)).toEqual([1, 2])
   })
 
   // ── Realistic streaming sequence: msg2 queued while reply1 streams, then a
-  //    db_load arrives BEFORE queue_drain. The pending bubble must survive (its
-  //    DB row is queued=1) and the streaming reply must not be duplicated.
-  it('full queue flow: pending bubble survives db_load, drain clears it, new placeholder appears', () => {
+  //    db_load arrives BEFORE drain. msg2 is not in the snapshot; the live
+  //    streaming placeholder must be preserved when the session is running.
+  it('full queue flow: live placeholder survives db_load, drained row lands once', () => {
     let state: ChatMessage[] = []
-    // User sends msg1 → optimistic user row (no pending)
+    // User sends msg1 → optimistic user row
     state = run(state, [{ type: 'optimistic_push', msg: u({ id: 1, content: 'msg1', seq: 1 }) }])
-    // stream_start → placeholder for reply1 anchored to msg1
-    state = run(state, [{ type: 'stream_placeholder', msg: a({ id: 'drain-1', streaming: true, seq: 2, parentQueueId: '1' }) }])
-    // While reply1 streams, user sends msg2 → optimistic pending bubble
-    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: 'msg2', pending: true, seq: 3 }) }])
+    // stream_start → placeholder for reply1 (DB id 2) with content
+    state = run(state, [
+      { type: 'stream_placeholder', msg: a({ id: 2, streaming: true, seq: 2 }) },
+      { type: 'ws_content', text: 'reply1' },
+    ])
+    // While reply1 streams, user sends msg2 → it goes to the queue store only
+    // (not represented in the messages array).
 
-    // db_load arrives: msg2 persisted as queued=1 (still waiting). The pending
-    // bubble matches the queued row by queueId → kept.
+    // db_load arrives: msg1 row present, reply1 streaming row present. The live
+    // placeholder keeps its object identity.
     state = run(state, [{
       type: 'db_load',
+      sessionRunning: true,
       dbMessages: [
         u({ id: 1, content: 'msg1' }),
-        u({ id: 3, content: 'msg2', queueId: 'pending-2', queued: true }),
+        a({ id: 2, streaming: true, content: '', blocks: [{ type: 'text', text: 'reply1' }] }),
       ],
     }])
-    const bubble = state.find((m) => m.role === 'user' && m.content === 'msg2')
-    expect(bubble?.pending).toBe(true)
-    expect(state.filter((m) => m.role === 'assistant' && m.streaming)).toHaveLength(0)
-
-    // queue_drain(msg2): msg2 becomes normal, new placeholder appears
-    state = run(state, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: 'msg2', files: [], dbMessageId: 3 }])
-    const msg2 = state.find((m) => m.role === 'user' && m.content === 'msg2')
-    expect(msg2?.pending).toBeUndefined()
-    // streaming reply for msg2 exists
     const streaming = state.filter((m) => m.role === 'assistant' && m.streaming)
     expect(streaming).toHaveLength(1)
-    // Conversational order preserved: msg1 < msg2 < reply2(streaming).
-    const order = state.map((m) => (m.role === 'user' ? `u:${m.content}` : `a:${m.id}`))
-    expect(order).toEqual(['u:msg1', 'u:msg2', `a:${streaming[0].id}`])
-  })
+    expect(streaming[0].id).toBe(2)
 
-  // ── Same as above but the db_load sees msg2 ALREADY drained (queued=false,
-  //    DB id adopted). The transient pending bubble is dropped.
-  it('full queue flow: db_load after drain drops the pending bubble, keeps DB row', () => {
-    let state: ChatMessage[] = []
-    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 1, content: 'msg1', seq: 1 }) }])
-    state = run(state, [{ type: 'stream_placeholder', msg: a({ id: 'drain-1', streaming: true, seq: 2, parentQueueId: '1' }) }])
-    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: 'msg2', pending: true, seq: 3 }) }])
-
-    // db_load sees msg2 already drained (queued=false, id=3)
-    state = run(state, [{
-      type: 'db_load',
-      dbMessages: [
-        u({ id: 1, content: 'msg1' }),
-        u({ id: 3, content: 'msg2', queueId: 'pending-2', queued: false }),
-      ],
-    }])
+    // queue_drain(msg2): msg2 materialized as id=3 → user_message + new turn.
+    state = run(state, [{ type: 'stream_finalize' }])
+    state = run(state, [{ type: 'ws_user_message', data: { messageId: 3, content: 'msg2' } }])
+    state = run(state, [{ type: 'stream_placeholder', msg: a({ id: 4, streaming: true, seq: 3 }) }])
     const msg2 = state.find((m) => m.role === 'user' && m.content === 'msg2')
-    expect(msg2).toBeDefined()
-    expect(msg2?.pending).toBeUndefined()
     expect(msg2?.id).toBe(3)
+    // Conversational order preserved: msg1 < reply1 < msg2 < reply2(streaming).
+    const order = state.map((m) => (m.role === 'user' ? `u:${m.content}` : `a:${m.id}`))
+    expect(order).toEqual(['u:msg1', 'a:2', 'u:msg2', 'a:4'])
   })
 })
 
-describe('ws_stream_start re-anchor (answeredQueueId)', () => {
-
-  // ── Bug regression: recovery placeholder anchored to a STALE user message.
-  //    When the question bubble is delayed (missed queue_drain/stream_start
-  //    while unsubscribed, then rebuilt on the "running" session_update), the
-  //    placeholder is anchored to the newest user visible at that moment — an
-  //    older question. The stream_start event now carries the answered queue
-  //    id, so the reducer must repoint the anchor to the true question and the
-  //    reply must sort right after it (never above it).
-  it('re-anchors a stale recovery placeholder to the answered question', () => {
+describe('ws_stream_start', () => {
+  it('assigns the DB id to the streaming placeholder', () => {
     const state = run([
-      // Older question Q1 and its finalized reply — newest non-pending user at
-      // recovery time was Q1 (Q2's bubble had not arrived yet).
-      u({ id: 100, content: 'Q1' }),
-      a({ id: 101, content: 'A1', blocks: [{ type: 'text', text: 'A1' }] }),
-      // Q2 arrived AFTER the recovery placeholder was built anchored to Q1.
-      u({ id: 200, content: 'Q2', _remote: true, _remoteQueueId: 'pending-2', seq: 1 }),
-      // Recovery placeholder: anchored to Q1 (stale), then ws_stream_start
-      // assigns the DB id 202 and the answered queue id 'pending-2'.
-      a({ id: 'drain-1', content: '', blocks: [], streaming: true, seq: 2, parentQueueId: '100' }),
-    ], [
-      { type: 'ws_stream_start', messageId: 202, answeredQueueId: 'pending-2' },
-    ])
-
-    const sm = state.find((m) => m.role === 'assistant' && m.streaming)!
-    expect(sm.id).toBe(202)
-    expect(String(sm.parentQueueId)).toBe('pending-2')
-    // Q1 < A1 < Q2 < streaming reply — the reply sorts after its own question.
-    const order = state.map((m) => (m.role === 'user' ? `u:${m.content}` : `a:${m.id}`))
-    expect(order).toEqual(['u:Q1', 'a:101', 'u:Q2', 'a:202'])
-  })
-
-  it('does not re-anchor when the placeholder already points at the answered question', () => {
-    const state = run([
-      u({ id: 200, content: 'Q2', _remote: true, _remoteQueueId: 'pending-2', seq: 1 }),
-      a({ id: 202, content: '', blocks: [], streaming: true, seq: 2, parentQueueId: 'pending-2' }),
-    ], [
-      { type: 'ws_stream_start', messageId: 202, answeredQueueId: 'pending-2' },
-    ])
-    const sm = state.find((m) => m.role === 'assistant' && m.streaming)!
-    expect(String(sm.parentQueueId)).toBe('pending-2')
-  })
-
-  it('drops the anchor when ws_stream_start carries no answered queue id (scheduled run)', () => {
-    const state = run([
-      u({ id: 200, content: 'Q2', seq: 1 }),
-      a({ id: 'drain-1', content: '', blocks: [], streaming: true, seq: 2, parentQueueId: '200' }),
+      a({ id: 'drain-1', content: '', blocks: [], streaming: true, seq: 2 }),
     ], [
       { type: 'ws_stream_start', messageId: 202 },
     ])
     const sm = state.find((m) => m.role === 'assistant' && m.streaming)!
     expect(sm.id).toBe(202)
-    // Anchor untouched — no answeredQueueId, keep whatever anchor exists.
-    expect(String(sm.parentQueueId)).toBe('200')
   })
 
-  it('re-anchor survives a following db_load rebuild (Channel 2 queue match)', () => {
-    // After re-anchoring to the answered queue id, loadHistory's rebuildFromDb
-    // matches the live placeholder to the DB streaming row by
-    // (r.queueId === live.parentQueueId) and keeps the live object.
+  it('does not rename a placeholder that already carries a numeric id', () => {
+    // A mid-turn split opens a second streaming row; a stale/duplicate
+    // stream_start for the first row must not collapse the two back into one.
     const state = run([
-      u({ id: 100, content: 'Q1' }),
-      a({ id: 101, content: 'A1', blocks: [{ type: 'text', text: 'A1' }] }),
-      u({ id: 200, content: 'Q2', queueId: 'pending-2' }),
-      a({ id: 'drain-1', content: '', blocks: [], streaming: true, seq: 2, parentQueueId: '100' }),
+      a({ id: 202, content: '', blocks: [], streaming: true, seq: 2 }),
     ], [
-      { type: 'ws_stream_start', messageId: 202, answeredQueueId: 'pending-2' },
+      { type: 'ws_stream_start', messageId: 101 },
     ])
-    const merged = rebuildFromDb(state, [
-      u({ id: 100, content: 'Q1' }),
-      a({ id: 101, content: 'A1', blocks: [{ type: 'text', text: 'A1' }] }),
-      u({ id: 200, content: 'Q2', queueId: 'pending-2' }),
-      a({ id: 202, streaming: true, queueId: 'pending-2', createdAt: '2026-01-01T00:00:00Z' }),
-    ])
-    const sm = merged.find((m) => m.role === 'assistant' && m.streaming)!
+    const sm = state.find((m) => m.role === 'assistant' && m.streaming)!
     expect(sm.id).toBe(202)
-    expect(String(sm.parentQueueId)).toBe('pending-2')
-    const order = merged.map((m) => (m.role === 'user' ? `u:${m.content}` : `a:${m.id}`))
-    expect(order).toEqual(['u:Q1', 'a:101', 'u:Q2', 'a:202'])
+  })
+
+  it('is a no-op when no streaming placeholder exists', () => {
+    const state = run([u({ id: 1 })], [{ type: 'ws_stream_start', messageId: 202 }])
+    expect(state.map((m) => m.id)).toEqual([1])
   })
 })
 
@@ -523,26 +402,24 @@ describe('rebuildFromDb (live placeholder)', () => {
     // ws_stream_start assigned the DB id to the live placeholder; the rebuild
     // must keep the placeholder object (content preserved) and not append a
     // duplicate DB row.
-    const state = [a({ id: 'drain-new', streaming: true, createdAt: '2026-01-01T00:00:02Z', seq: 1, parentQueueId: '2' })]
+    const state = [a({ id: 7, streaming: true, createdAt: '2026-01-01T00:00:02Z', seq: 1 })]
     const merged = rebuildFromDb(state, [
       a({ id: 7, streaming: true, createdAt: '2026-01-01T00:00:02Z' }),
     ])
     expect(merged).toHaveLength(1)
-    // The live placeholder adopts the DB id (like ws_stream_start would) but
-    // keeps streaming — its content/object identity is preserved.
     expect(merged[0].id).toBe(7)
     expect(merged[0].streaming).toBe(true)
   })
 
-  it('keeps the LIVE placeholder by queue match when ws_stream_start has not arrived yet', () => {
-    const state = [a({ id: 'drain-new', streaming: true, createdAt: '2026-01-01T00:00:02Z', seq: 1, parentQueueId: 'pending-B' })]
-    const merged = rebuildFromDb(state, [
-      a({ id: 7, streaming: true, queueId: 'pending-B', createdAt: '2026-01-01T00:00:02Z' }),
+  it('preserves the live placeholder object identity (keeps streamed content)', () => {
+    const live = a({ id: 7, streaming: true, blocks: [{ type: 'text', text: 'partial' }], seq: 1 })
+    const merged = rebuildFromDb([live], [
+      a({ id: 7, streaming: true, blocks: [] }),
     ])
     expect(merged).toHaveLength(1)
-    // Adopts the DB id via queue match; streaming preserved.
-    expect(merged[0].id).toBe(7)
-    expect(merged[0].streaming).toBe(true)
+    // Same object identity → the already-rendered content keeps its DOM.
+    expect(merged[0]).toBe(live)
+    expect(merged[0].blocks![0].text).toBe('partial')
   })
 
   // ── Bug regression (issue #419): session switch resets the streaming elapsed

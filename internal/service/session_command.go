@@ -180,28 +180,16 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	// Mint the queue id here, before the enqueue, and thread it through BOTH
-	// the execution and the user_message event below.
-	//
-	// The queue id is the only anchor that ties the streaming reply to the
-	// question it answers: run_turn stores it on the streaming assistant row and
-	// streams it as stream_start.queue_id, and the client re-anchors the reply
-	// to the question bubble carrying the same queueId. Without it the client
-	// falls back to "newest user message", which at this point is still the
-	// PREVIOUS question — the user_message event is emitted after the
-	// (asynchronous) execution launch, so it has not arrived yet. The reply then
-	// sorts above its own question until a reload rebuilds from the DB.
-	//
-	// AddQueuedMessage would generate an equivalent id when given "", but it
-	// does so internally and never returns it, so the execution and the event
-	// would both lose the anchor.
+	// Mint a queue id for the message. An IM backend has no queue id of its
+	// own, and the id is the queue entity's identity (cancel/inject address it)
+	// as well as the token the sender-side dedup uses on queue_added.
 	queueID := newPushQueueID()
 
 	// Persist the message + start execution or signal the running drain loop.
-	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally.
-	// msgID is the persisted DB id — used to emit a user_message event carrying
-	// the real id (not 0) for cross-device sync.
-	_, _, msgID, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally and
+	// emits the appropriate announcement (user_message when idle, queue_added
+	// when a runner is live).
+	_, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
 		SessionID:   sessionID,
 		ProjectPath: info.ProjectPath,
 		BackendName: info.Backend,
@@ -210,33 +198,15 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 		Files:       files,
 		QueueID:     queueID,
 	})
-	if err != nil {
-		return err
-	}
-
-	// Emit user_message for cross-device sync. MessageID is the persisted DB id.
-	// Files ride along so a client that is watching this session renders the
-	// attachment bubble without a reload. QueueID lets that client anchor the
-	// streaming reply to this bubble.
-	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type: eventTypeUserMessage,
-		UserMessage: &ai.UserMessageData{
-			MessageID: msgID,
-			Content:   message,
-			Files:     files,
-			QueueID:   queueID,
-		},
-	})
-
-	return nil
+	return err
 }
 
 // newPushQueueID mints a queue id for a message that arrives from an IM
 // backend, which (unlike the web client) has no queue id of its own.
 //
-// The format mirrors the fallback in AddQueuedMessage so ids from both paths
-// look alike; uniqueness comes from the timestamp plus a monotonic counter, not
-// from randomness, so a burst of messages cannot collide on a coarse clock.
+// The format mirrors newQueueID so ids from both paths look alike; uniqueness
+// comes from the timestamp plus a monotonic counter, not from randomness, so a
+// burst of messages cannot collide on a coarse clock.
 func newPushQueueID() string {
 	return fmt.Sprintf("q-%s-%d", time.Now().Format("20060102150405"), pushQueueSeq.Add(1))
 }
@@ -256,11 +226,6 @@ type LaunchConfig struct {
 	// through the handler's prompt builder, so omitting them silently drops
 	// every attachment — the URL of a quoted issue/PR and ordinary files alike.
 	Files []model.FileEntry
-	// QueueID is the queue_id of the queued user message this execution answers
-	// (set when draining a queued message). It is recorded on the reply row so
-	// the frontend can anchor the reply to its own question when multiple
-	// queued messages interleave (DB id order ≠ conversational order).
-	QueueID string
 
 	// RunCtx is the execution context returned by TryClaimSessionRun. It must be
 	// passed through so the execution is both the one the claim created and the
@@ -326,13 +291,12 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			SessionID:   sessionID,
 			ProjectPath: cfg.ProjectPath,
 			BackendName: cfg.BackendName,
-			ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
-				cfg.Message = msg.Content
-				cfg.QueueID = msg.QueueID
+			ExecuteRunWithMessage: func(_ int64, row QueuedRow) DrainResult {
+				cfg.Message = row.Content
 				// Carry the drained row's own attachments, replacing whatever the
 				// previous turn carried — otherwise turn N's files would be
 				// re-prefixed onto turn N+1's prompt.
-				cfg.Files = msg.Files
+				cfg.Files = row.Files
 				nextResult := executeStreamRunShared(ctx, cfg)
 				return DrainResult{
 					CancelReason:   nextResult.cancelReason,
@@ -349,12 +313,11 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 				SessionID:   sessionID,
 				ProjectPath: cfg.ProjectPath,
 				BackendName: cfg.BackendName,
-				RunTurn: func(prompt, queueID string) DrainResult {
+				RunTurn: func(prompt string) DrainResult {
 					// Mutate the shared cfg for this attempt only; the drain loop
-					// overwrites Message/Files/QueueID when it dequeues the next
-					// real user message, so nothing leaks forward.
+					// overwrites Message/Files when it dequeues the next real user
+					// message, so nothing leaks forward.
 					cfg.Message = prompt
-					cfg.QueueID = queueID
 					cfg.Files = nil
 					res := executeStreamRunShared(ctx, cfg)
 					return DrainResult{
@@ -389,37 +352,39 @@ type EnqueueStartConfig struct {
 	// (parity with the POST /api/ai/chat path).
 	ModelID   string
 	Transport string
+	// SenderClientID is the WS client id of the sending device, echoed on the
+	// queue_added event so the sender can skip its own optimistic entry.
+	SenderClientID string
 }
 
-// EnqueueAndMaybeStart is the unified enqueue entry point (POST /api/ai/queue).
-// It persists the message to chat_history (queued=1), then:
-//   - if the session is idle, claims it and starts an execution goroutine that
-//     runs the message and then drains the rest of the queue (started=true);
+// EnqueueAndMaybeStart is the unified enqueue entry point (POST /api/ai/queue
+// and the busy branch of POST /api/ai/chat).
+//
+// It inserts the message into queued_messages, then:
+//   - if the session is idle, claims it, materializes it into chat_history, and
+//     starts an execution goroutine that runs it and then drains the rest of the
+//     queue (started=true, msgID = the chat_history row id);
 //   - if the session is already running, marks its runner as having pending work
-//     and returns (started=false) — that runner's loop will dequeue it.
+//     and returns (started=false, msgID=0) — that runner's loop will claim and
+//     materialize it.
 //
 // A message can no longer be stranded between those two outcomes: a runner only
 // exits after re-checking for late work under the same lock this function uses
-// to submit (see retireRunner). That atomic check replaced the previous
-// "signal + 100ms delayed re-check" workaround.
+// to submit (see retireRunner).
 //
-// It returns started=true when a new execution goroutine was launched (the
-// session was idle), plus the persisted DB message id (msgID, >0) so callers
-// can emit a user_message event carrying the real id for cross-device sync.
-func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, msgID int64, err error) {
+// Emission is centralized here so the two HTTP callers cannot drift:
+//   - idle: the materialized message is announced with user_message (it is a
+//     real chat_history row now);
+//   - busy: the queued message is announced with queue_added (it has no
+//     chat_history row yet, so there is no message id).
+func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, err error) {
 	// Sending always queues while a turn is running — for every backend.
 	//
-	// Mid-turn injection is NOT attempted here on purpose. It used to be, which
-	// meant a steer-capable backend silently swallowed the message into the
-	// running turn: no queue bubble appeared, so the user got no feedback and no
-	// way to act on it. Now the message is always queued (visible, cancelable)
-	// and joining the current reply is an explicit action on its bubble
-	// (POST /api/ai/queue/inject) — so the flow is uniform across backends and
-	// only the action's LABEL differs.
-	//
-	// `injected` is kept in the signature for the HTTP response shape; it is now
-	// always false on this path (see InjectQueuedMessage for the real one).
-	_ = injected
+	// Mid-turn injection is NOT attempted here on purpose: joining the running
+	// turn is an explicit action on the queued entry (POST /api/ai/queue/inject),
+	// so the flow is uniform across backends and the message is always visible
+	// and cancelable in the queue instead of silently disappearing into the
+	// reply being written.
 
 	// Persist model/transport selection so the drain loop uses the user's
 	// choices (parity with the POST /api/ai/chat handler).
@@ -436,25 +401,43 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 		}
 	}
 
-	msgID, err = AddQueuedMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, cfg.Message, cfg.Files, cfg.QueueID, "")
+	// Mint the queue id here (not inside AddQueuedMessage) so the queue_added
+	// broadcast below carries the same id the row stores. AddQueuedMessage's own
+	// empty-id fallback would otherwise generate an id this function never sees,
+	// and clients would hold an entry they can never match to its drain.
+	effectiveQueueID := cfg.QueueID
+	if effectiveQueueID == "" {
+		effectiveQueueID = NewQueueID()
+	}
+
+	queueRowID, err := AddQueuedMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, cfg.Message, cfg.Files, effectiveQueueID, "")
 	if err != nil {
-		return false, false, 0, err
+		return false, 0, err
 	}
 
 	// Claim the session. created=true means we must start the execution; false
 	// means a live runner exists and has been woken to pick this message up.
-	// Either way the message cannot be stranded: a runner that is about to exit
-	// re-checks for late work under the same lock (see retireRunner).
 	if runCtx, created := TryClaimSessionRun(cfg.SessionID); created {
-		// Session was idle — the message we just queued is the FIRST one and must
-		// NOT be consumed twice. executeStreamRunShared runs cfg.Message directly,
-		// so dequeue the row we just inserted (it would otherwise be picked up
-		// again by the drain loop's DequeueQueuedMessage, executing it twice).
+		// Session was idle — claim and materialize the row we just inserted so
+		// the execution has a real chat_history user message (and so the drain
+		// loop cannot pick it up a second time).
 		//
-		// Consume BY ID: a concurrent enqueue may have slipped an earlier row
-		// into the queue between our insert and the claim, and that earlier row
+		// Claim BY ID: a concurrent enqueue may have slipped an earlier row into
+		// the queue between our insert and the claim, and that earlier row
 		// belongs to the drain loop, not to this execution.
-		consumeQueuedMessageByID(cfg.SessionID, msgID)
+		row, matMsgID, ok, cerr := ClaimByIDAndMaterialize(cfg.SessionID, queueRowID)
+		if cerr != nil || !ok {
+			// The row we just inserted is gone — a concurrent cancel/clear took
+			// it. Nothing to run; report failure so the caller restores input.
+			slog.Warn("enqueue: queued row vanished before materialize",
+				slog.String("session", cfg.SessionID),
+				slog.Int64("queue_row_id", queueRowID),
+				slog.Any("error", cerr))
+			return false, 0, fmt.Errorf("queued message could not be materialized")
+		}
+		// Announce the real user message so every device renders it inline.
+		emitUserMessage(cfg.SessionID, matMsgID, row)
+
 		// Start execution now; the loop inside will consume the REST of the
 		// queue (any messages beyond the first).
 		LaunchSessionExecution(LaunchConfig{
@@ -464,43 +447,28 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 			AgentID:     cfg.AgentID,
 			Message:     cfg.Message,
 			Files:       cfg.Files,
-			QueueID:     cfg.QueueID,
 			RunCtx:      runCtx,
 		})
-		return true, false, msgID, nil
+		return true, matMsgID, nil
 	}
 
-	// A runner already exists and has been woken; its loop will dequeue this
-	// message. No signal or delayed re-check is needed — the wake flag set by
-	// TryClaimSessionRun is what the runner consults before exiting (retireRunner
-	// re-checks for late work under the same lock).
-	return false, false, msgID, nil
-}
-
-// consumeQueuedMessageByID dequeues the specific queued message identified by
-// msgID (the row just inserted by AddQueuedMessage). Called right before
-// LaunchSessionExecution when the execution will run cfg.Message directly: the
-// row is still queued=1, and without dequeuing it here the drain loop would
-// pick it up a second time and execute it twice.
-//
-// Consuming by ID (instead of "first queued") is required because a concurrent
-// enqueue can insert an earlier row between our AddQueuedMessage and the
-// TrySetSessionRunning claim (R1). Dequeueing "the first" would claim that
-// other message while we run our own — leaving it queued for a double
-// execution, or (in the symmetric race) dropping it entirely.
-func consumeQueuedMessageByID(sessionID string, msgID int64) {
-	if msgID <= 0 {
-		slog.Warn("enqueue: invalid msgID for consume", slog.String("session", sessionID))
-		return
-	}
-	if _, ok, derr := DequeueQueuedMessageByID(sessionID, msgID); derr != nil {
-		// Not fatal — the drain loop will retry the dequeue. Log and continue.
-		slog.Warn("enqueue: failed to consume queued message",
-			slog.String("session", sessionID), slog.Int64("msgID", msgID), slog.String("error", derr.Error()))
-	} else if !ok {
-		slog.Warn("enqueue: expected to consume queued message but row not queued",
-			slog.String("session", sessionID), slog.Int64("msgID", msgID))
-	}
+	// A runner already exists and has been woken; its loop will claim and
+	// materialize this message. Announce it as queued so other devices render it.
+	//
+	// effectiveQueueID (not cfg.QueueID) is broadcast: when the caller sent no
+	// id, AddQueuedMessage generated one, and that stored id is what the later
+	// queue_drain/queue_inject events carry. Broadcasting the empty input would
+	// leave clients holding an entry they can never match or cancel.
+	ws.EmitToSession(cfg.SessionID, ai.StreamEvent{
+		Type: "queue_added",
+		QueueAdded: &ai.QueueAddedData{
+			QueueID:        effectiveQueueID,
+			Text:           cfg.Message,
+			Files:          cfg.Files,
+			SenderClientID: cfg.SenderClientID,
+		},
+	})
+	return false, 0, nil
 }
 
 // handleSessionPanic recovers from panics in the session goroutine.
@@ -637,7 +605,6 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		AgentID:         cfg.AgentID,
 		ChatReq:         chatReq,
 		FileDir:         fileDir,
-		QueueID:         cfg.QueueID,
 		DrainOnFinalize: true,
 		LocalizeError:   serviceLocalizeError,
 	})

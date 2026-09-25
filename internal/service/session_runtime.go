@@ -280,17 +280,17 @@ func truncatePreview(text string) string {
 }
 
 // GetLastUserMessagePlain returns the plain-text content of the most recent
-// non-streaming, non-queued user message in a session. Used to include a
-// "last user message" line in completion popovers/notifications alongside the
-// AI's response preview. Returns "" when no such message exists.
+// non-streaming user message in a session. Used to include a "last user message"
+// line in completion popovers/notifications alongside the AI's response preview.
+// Returns "" when no such message exists.
 func GetLastUserMessagePlain(ctx context.Context, sessionID string) string {
 	plain, _ := GetLastUserMessageMeta(ctx, sessionID)
 	return plain
 }
 
 // GetLastUserMessageMeta returns the plain-text content of the most recent
-// non-streaming, non-queued user message in a session together with whether
-// that message carried file attachments (chat_history.files non-empty).
+// non-streaming user message in a session together with whether that message
+// carried file attachments (chat_history.files non-empty).
 // Used to render an "attachment" chip next to the quoted user message in
 // completion popovers without leaking which files were attached.
 //
@@ -305,7 +305,7 @@ func GetLastUserMessageMeta(ctx context.Context, sessionID string) (plain string
 	var content string
 	var files string
 	err := dbRead.QueryRowContext(ctx,
-		"SELECT content, COALESCE(files, '') FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND queued = 0 ORDER BY id DESC LIMIT 1",
+		"SELECT content, COALESCE(files, '') FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 ORDER BY id DESC LIMIT 1",
 		sessionID,
 	).Scan(&content, &files)
 	if err != nil {

@@ -1737,18 +1737,17 @@ func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *test
 	err = SendMessageToSessionFromDingTalk(sessionID, "queued from dingtalk", nil)
 	assert.NoError(t, err)
 
-	// Verify message IS persisted to DB with queued=1 (enqueue-path now persists).
-	// GetMessagesBySessionID excludes queued rows (M4), so query the queue directly.
+	// Verify the message IS queued (it has no chat_history row yet).
 	messages, err := GetQueuedMessages(sessionID)
 	require.NoError(t, err)
-	assert.Len(t, messages, 1, "enqueue path should persist user message to DB")
-	assert.True(t, messages[0].Queued, "persisted message should be queued=1")
+	assert.Len(t, messages, 1, "enqueue path should persist user message to the queue")
+	assert.Equal(t, "queued from dingtalk", messages[0].Text)
 
 	// Verify message is discoverable via the queued-message query.
 	queue, err := GetQueuedMessages(sessionID)
 	require.NoError(t, err)
 	assert.Len(t, queue, 1)
-	assert.Equal(t, "queued from dingtalk", queue[0].Content)
+	assert.Equal(t, "queued from dingtalk", queue[0].Text)
 }
 
 // ============================================================================
@@ -2496,11 +2495,11 @@ func TestSendMessageToSessionFromFeishu_AlreadyRunning_EnqueuesMessage(t *testin
 	err = SendMessageToSessionFromFeishu(sessionID, "hello from feishu", nil)
 	assert.NoError(t, err)
 
-	// Verify message is persisted and queued in DB.
+	// Verify the message is queued (it has no chat_history row yet).
 	msgs, err := GetQueuedMessages(sessionID)
 	require.NoError(t, err)
 	assert.Len(t, msgs, 1)
-	assert.Equal(t, "hello from feishu", msgs[0].Content)
+	assert.Equal(t, "hello from feishu", msgs[0].Text)
 }
 
 func TestSendMessageToSessionFromFeishu_LaunchPath(t *testing.T) {
@@ -2573,7 +2572,7 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	require.NoError(t, err)
 
 	// Message 1 executes directly.
-	started, _, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+	started, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/test",
 		BackendName: "mock-queue",
@@ -2588,7 +2587,7 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	require.Eventually(t, func() bool { return !IsSessionRunning(sid) }, 10*time.Second, 50*time.Millisecond)
 
 	// Message 2 enqueued now (session idle) — starts a new run.
-	started2, _, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+	started2, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/test",
 		BackendName: "mock-queue",

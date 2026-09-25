@@ -105,15 +105,15 @@ type SessionShareMessage struct {
 }
 
 // SessionMessagePreview is one row of the share dialog's message list. It is
-// returned for EVERY message of the session — including streaming/queued ones —
-// so the dialog can show them disabled with a reason instead of hiding them
-// (a message that silently vanishes from the list is confusing).
+// returned for EVERY message of the session — including streaming ones — so the
+// dialog can show them disabled with a reason instead of hiding them (a message
+// that silently vanishes from the list is confusing). Queued messages are absent
+// by construction: they have no chat_history row until dequeued.
 type SessionMessagePreview struct {
 	ID        int64  `json:"id"`
 	Role      string `json:"role"`
 	Preview   string `json:"preview"`
 	Streaming bool   `json:"streaming"`
-	Queued    bool   `json:"queued"`
 	CreatedAt string `json:"createdAt"`
 }
 
@@ -124,7 +124,7 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 		return nil, fmt.Errorf("session id is required")
 	}
 	rows, err := ReadDB().Query(
-		`SELECT id, role, content, streaming, queued, created_at FROM chat_history
+		`SELECT id, role, content, streaming, created_at FROM chat_history
 		 WHERE session_id = ? ORDER BY id ASC`,
 		sessionID,
 	)
@@ -140,10 +140,9 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 			role      string
 			content   string
 			streaming int
-			queued    int
 			createdAt string
 		)
-		if err := rows.Scan(&id, &role, &content, &streaming, &queued, &createdAt); err != nil {
+		if err := rows.Scan(&id, &role, &content, &streaming, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan session message for selection: %w", err)
 		}
 		items = append(items, SessionMessagePreview{
@@ -151,7 +150,6 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 			Role:      role,
 			Preview:   clipRunes(ExtractPlainText(content), sessionSharePreviewRunes),
 			Streaming: streaming != 0,
-			Queued:    queued != 0,
 			CreatedAt: createdAt,
 		})
 	}
@@ -161,9 +159,9 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 // BuildSessionSharePayload freezes a session into a snapshot JSON string.
 //
 // messageIDs selects which messages to include; an empty slice means "every
-// finalized message". Only finalized messages (streaming = 0 AND queued = 0)
-// are shareable: a half-written reply would freeze mid-sentence. Selecting a
-// non-finalized or unknown id is an error rather than a silent drop.
+// finalized message". Only finalized messages (streaming = 0) are shareable: a
+// half-written reply would freeze mid-sentence. Selecting a non-finalized or
+// unknown id is an error rather than a silent drop.
 //
 // projectRoot and homeDir are used to relativize absolute paths in the payload.
 // Returns the payload and the number of messages included.

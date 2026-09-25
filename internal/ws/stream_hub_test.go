@@ -727,24 +727,32 @@ func TestStreamEventToPayload_UserMessage_NoFiles(t *testing.T) {
 	assert.False(t, hasQueued, "queued should be omitted when false")
 }
 
-func TestStreamEventToPayload_UserMessage_Queued(t *testing.T) {
+// TestStreamEventToPayload_QueueAdded covers the event that replaced the old
+// user_message{queued:true} misuse: an enqueued message has no chat_history row
+// yet, so it carries no messageId — only the queueId/text/files the queue panel
+// needs.
+func TestStreamEventToPayload_QueueAdded(t *testing.T) {
 	payload := StreamEventToPayload(ai.StreamEvent{
-		Type: "user_message",
-		UserMessage: &ai.UserMessageData{
-			MessageID: 11,
-			Content:   "enqueued message",
-			QueueID:   "pending-456",
-			Queued:    true,
+		Type: "queue_added",
+		QueueAdded: &ai.QueueAddedData{
+			QueueID: "pending-456",
+			Text:    "enqueued message",
+			Files:   []model.FileEntry{{Path: "/tmp/a.go"}},
 		},
 	})
 	m, ok := payload.(map[string]any)
 	assert.True(t, ok)
-	assert.Equal(t, int64(11), m["messageId"])
-	assert.Equal(t, "enqueued message", m["content"])
 	assert.Equal(t, "pending-456", m["queueId"])
-	queued, ok := m["queued"].(bool)
-	assert.True(t, ok, "queued must be a boolean")
-	assert.True(t, queued, "queued should be true when the message is enqueued")
+	assert.Equal(t, "enqueued message", m["text"])
+	files, _ := m["files"].([]model.FileEntry)
+	assert.Len(t, files, 1)
+	_, hasMessageID := m["messageId"]
+	assert.False(t, hasMessageID, "a queued message has no chat_history row yet")
+}
+
+func TestStreamEventToPayload_QueueAddedNil(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "queue_added", QueueAdded: nil})
+	assert.Nil(t, payload)
 }
 
 func TestStreamEventToPayload_UserMessage_Nil(t *testing.T) {
@@ -757,12 +765,13 @@ func TestStreamEventToPayload_UserMessage_Nil(t *testing.T) {
 func TestStreamEventToPayload_StreamStart(t *testing.T) {
 	payload := StreamEventToPayload(ai.StreamEvent{
 		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: 12345, QueueID: "pending-abc"},
+		StreamStart: &ai.StreamStartData{MessageID: 12345},
 	})
 	m, ok := payload.(map[string]any)
 	require.True(t, ok, "expected map[string]any payload")
 	assert.Equal(t, int64(12345), m["message_id"])
-	assert.Equal(t, "pending-abc", m["queue_id"])
+	_, hasQueue := m["queue_id"]
+	assert.False(t, hasQueue, "queue_id was removed from stream_start")
 }
 
 func TestStreamEventToPayload_StreamStart_NoQueueID(t *testing.T) {
@@ -784,23 +793,23 @@ func TestStreamEventToPayload_StreamStartNilData(t *testing.T) {
 
 // --- queueDrainPayload ---
 
+// TestStreamEventToPayload_QueueDrain covers the slim turn-boundary event: it
+// carries only ids now (the content rides on the preceding user_message), so a
+// client can never render two bubbles for the same message.
 func TestStreamEventToPayload_QueueDrain(t *testing.T) {
 	qe := &ai.QueueEventData{
 		SessionID: "sess1",
 		QueueID:   "q1",
-		Text:      "hello",
 		MessageID: 99,
-		FilePaths: []string{"/a.go"},
-		Files:     []model.FileEntry{{Path: "/a.go"}},
-		Queue:     []model.QueuedMessage{{QueueID: "q1", Text: "hello"}},
 	}
 	payload := StreamEventToPayload(ai.StreamEvent{Type: "queue_drain", QueueEvent: qe})
 	m, ok := payload.(map[string]any)
 	assert.True(t, ok)
-	assert.Equal(t, "sess1", m["sessionId"])
-	assert.Equal(t, "q1", m["queueId"])
-	assert.Equal(t, "hello", m["text"])
-	assert.Equal(t, int64(99), m["messageId"])
+	assert.Equal(t, map[string]any{
+		"sessionId": "sess1",
+		"queueId":   "q1",
+		"messageId": int64(99),
+	}, m)
 }
 
 func TestStreamEventToPayload_QueueDrainNil(t *testing.T) {
@@ -836,29 +845,6 @@ func TestStreamEventToPayload_QueueCancelNoQueueIDs(t *testing.T) {
 func TestStreamEventToPayload_QueueCancelNil(t *testing.T) {
 	payload := StreamEventToPayload(ai.StreamEvent{Type: "queue_cancel", QueueEvent: nil})
 	assert.Nil(t, payload)
-}
-
-// --- EmitStreamStartEvent ---
-
-func TestStreamHub_EmitStreamStartEvent(t *testing.T) {
-	mgr, hub := newTestStreamHub()
-
-	var writeMu sync.Mutex
-	sub := mgr.Subscribe(nil, &writeMu, "client-start", "")
-	hub.Subscribe("client-start", "session-start")
-
-	hub.EmitStreamStartEvent("client-start", "session-start", 42, "pending-abc")
-
-	buffered := sub.GetBufferedEvents()
-	require.NotEmpty(t, buffered, "expected at least one buffered event")
-	data, ok := buffered[0].Data.(ChatStreamData)
-	require.True(t, ok, "expected ChatStreamData")
-	assert.Equal(t, "stream_start", data.EventType)
-	assert.Equal(t, "session-start", data.SessionID)
-	payload, ok := data.Payload.(map[string]any)
-	require.True(t, ok, "expected map payload")
-	assert.Equal(t, int64(42), payload["message_id"])
-	assert.Equal(t, "pending-abc", payload["queue_id"])
 }
 
 // --- EmitACPStateEvents ---
@@ -1002,27 +988,19 @@ func TestStreamHub_Manager(t *testing.T) {
 }
 
 // TestStreamSplitPayload covers the "after" assistant row emitted when a
-// mid-turn injection split the reply: the message id is always carried, and the
-// queue id only when the split is anchored to an injected question.
+// mid-turn injection split the reply. The reply anchor was deleted with the
+// queue_id column: the injected user row is materialized before the "after"
+// row, so id order alone is correct and only the message id travels.
 func TestStreamSplitPayload(t *testing.T) {
 	assert.Nil(t, streamSplitPayload(ai.StreamEvent{}),
 		"an event without split data has no payload")
 
-	// Anchored to an injected message: both ids travel so the client can sort
-	// the new bubble directly below that question.
-	anchored := streamSplitPayload(ai.StreamEvent{
-		StreamSplit: &ai.StreamSplitData{MessageID: 42, QueueID: "q-1"},
+	payload := streamSplitPayload(ai.StreamEvent{
+		StreamSplit: &ai.StreamSplitData{MessageID: 42},
 	})
-	assert.Equal(t, map[string]any{"message_id": int64(42), "queue_id": "q-1"}, anchored)
-
-	// A split with no queue id (an unanchored boundary) omits the key rather
-	// than sending an empty string.
-	bare := streamSplitPayload(ai.StreamEvent{
-		StreamSplit: &ai.StreamSplitData{MessageID: 7},
-	})
-	assert.Equal(t, map[string]any{"message_id": int64(7)}, bare)
-	_, hasQueue := bare.(map[string]any)["queue_id"]
-	assert.False(t, hasQueue)
+	assert.Equal(t, map[string]any{"message_id": int64(42)}, payload)
+	_, hasQueue := payload.(map[string]any)["queue_id"]
+	assert.False(t, hasQueue, "queue_id was removed from stream_split")
 }
 
 // TestQueueInjectPayload covers the payload for a message that joined the
@@ -1046,81 +1024,45 @@ func TestQueueInjectPayload(t *testing.T) {
 	}, payload)
 }
 
-// TestStreamStartPayload_QueueID covers the stream_start builder: the queue id
-// is included only when the start is anchored to a queued message.
-func TestStreamStartPayload_QueueID(t *testing.T) {
+// TestStreamStartPayload covers the stream_start builder. The queue id was
+// deleted with the reply-anchor column — only the DB row id travels.
+func TestStreamStartPayload(t *testing.T) {
 	assert.Nil(t, streamStartPayload(ai.StreamEvent{}))
 
-	anchored := streamStartPayload(ai.StreamEvent{
-		StreamStart: &ai.StreamStartData{MessageID: 5, QueueID: "q-9"},
-	})
-	assert.Equal(t, map[string]any{"message_id": int64(5), "queue_id": "q-9"}, anchored)
-
-	bare := streamStartPayload(ai.StreamEvent{
+	payload := streamStartPayload(ai.StreamEvent{
 		StreamStart: &ai.StreamStartData{MessageID: 5},
 	})
-	assert.Equal(t, map[string]any{"message_id": int64(5)}, bare)
+	assert.Equal(t, map[string]any{"message_id": int64(5)}, payload)
 }
 
-// --- EmitUserMessageEvent ---
+// TestQueueAddedPayload covers the enqueue announcement: it carries the queue
+// panel data and, when present, the sender id so the sending device skips its
+// own echo.
+func TestQueueAddedPayload(t *testing.T) {
+	assert.Nil(t, queueAddedPayload(ai.StreamEvent{}))
 
-// TestStreamHub_EmitUserMessageEvent covers the subscribe-time recovery path:
-// a client that subscribes mid-run must receive the QUESTION bubble, not just
-// the reply's stream_start. Without it the client renders the assistant reply
-// with no user message above it until a full history reload.
-func TestStreamHub_EmitUserMessageEvent(t *testing.T) {
-	mgr, hub := newTestStreamHub()
-
-	var writeMu sync.Mutex
-	sub := mgr.Subscribe(nil, &writeMu, "client-q", "")
-	hub.Subscribe("client-q", "session-q")
-
-	hub.EmitUserMessageEvent("client-q", "session-q", 51659, "hello from dingtalk", "q-20260921112506-1")
-
-	buffered := sub.GetBufferedEvents()
-	require.NotEmpty(t, buffered, "expected at least one buffered event")
-	data, ok := buffered[0].Data.(ChatStreamData)
-	require.True(t, ok, "expected ChatStreamData")
-	assert.Equal(t, "user_message", data.EventType)
-	assert.Equal(t, "session-q", data.SessionID)
-	payload, ok := data.Payload.(map[string]any)
-	require.True(t, ok, "expected map payload")
-	assert.Equal(t, int64(51659), payload["messageId"])
-	assert.Equal(t, "hello from dingtalk", payload["content"])
-	// The queue id must ride along: it is what ties this bubble to the
-	// stream_start the client is about to receive.
-	assert.Equal(t, "q-20260921112506-1", payload["queueId"])
+	payload := queueAddedPayload(ai.StreamEvent{
+		QueueAdded: &ai.QueueAddedData{
+			QueueID:        "q-1",
+			Text:           "hello",
+			SenderClientID: "client-a",
+		},
+	})
+	assert.Equal(t, map[string]any{
+		"queueId":        "q-1",
+		"text":           "hello",
+		"senderClientId": "client-a",
+	}, payload)
 }
 
-// TestStreamHub_EmitUserMessageEvent_OmitsEmptyQueueID guards the scheduled-run
-// case (no question), where an empty queueId must not be sent as "".
-func TestStreamHub_EmitUserMessageEvent_OmitsEmptyQueueID(t *testing.T) {
-	mgr, hub := newTestStreamHub()
-
-	var writeMu sync.Mutex
-	sub := mgr.Subscribe(nil, &writeMu, "client-noq", "")
-	hub.Subscribe("client-noq", "session-noq")
-
-	hub.EmitUserMessageEvent("client-noq", "session-noq", 7, "text", "")
-
-	buffered := sub.GetBufferedEvents()
-	require.NotEmpty(t, buffered)
-	data := buffered[0].Data.(ChatStreamData)
-	payload := data.Payload.(map[string]any)
-	_, hasQueue := payload["queueId"]
-	assert.False(t, hasQueue, "an empty queue id must be omitted, not sent as \"\"")
-}
-
-// --- EmitLiveRunStateToClient ---
-
-// TestStreamHub_EmitLiveRunState_QuestionBeforeStreamStart is the regression
-// guard for the "assistant message but no user message" symptom.
+// --- subscribe-time live-run recovery ---
 //
-// A client subscribing mid-run missed the live user_message (it held no
-// subscription at send time, or the event was dropped). Recovery must hand it
-// the question bubble BEFORE the stream_start that anchors the reply to it —
-// otherwise the reply renders with nothing above it until a full history
-// reload. The assertion on ORDER is the point of this test.
+// These guard the "subscribed mid-flight" path. They are NOT redundant with the
+// history reload: the frontend buffers content/thinking/tool events that arrive
+// with no streaming placeholder and drains that buffer ONLY on stream_start,
+// which is emitted once at turn start. A client that subscribes afterwards
+// therefore needs this re-emit or its buffered events never land.
+
 func TestStreamHub_EmitLiveRunState_QuestionBeforeStreamStart(t *testing.T) {
 	mgr, hub := newTestStreamHub()
 
@@ -1128,14 +1070,8 @@ func TestStreamHub_EmitLiveRunState_QuestionBeforeStreamStart(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-late", "")
 	hub.Subscribe("client-late", "session-live")
 
-	hub.SetStreamStateLookupFunc(func(sessionID string) (int64, string) {
-		return 51660, "q-20260921112506-1"
-	})
-	hub.SetQuestionLookupFunc(func(sessionID, queueID string) (int64, string, bool) {
-		if queueID != "q-20260921112506-1" {
-			return 0, "", false
-		}
-		return 51659, "hello from dingtalk", true
+	hub.SetStreamStateLookupFunc(func(sessionID string) (int64, int64, string) {
+		return 51660, 51659, "hello from dingtalk"
 	})
 
 	hub.EmitLiveRunStateToClient("client-late", "session-live")
@@ -1146,21 +1082,21 @@ func TestStreamHub_EmitLiveRunState_QuestionBeforeStreamStart(t *testing.T) {
 	first, ok := buffered[0].Data.(ChatStreamData)
 	require.True(t, ok)
 	assert.Equal(t, "user_message", first.EventType,
-		"the question must be emitted BEFORE stream_start, or the reply has no bubble to anchor to")
+		"the question must be emitted BEFORE stream_start, or the reply has no bubble to sit under")
 	firstPayload := first.Payload.(map[string]any)
 	assert.Equal(t, int64(51659), firstPayload["messageId"])
-	assert.Equal(t, "q-20260921112506-1", firstPayload["queueId"])
+	assert.Equal(t, "hello from dingtalk", firstPayload["content"])
 
 	second, ok := buffered[1].Data.(ChatStreamData)
 	require.True(t, ok)
 	assert.Equal(t, "stream_start", second.EventType)
 	secondPayload := second.Payload.(map[string]any)
 	assert.Equal(t, int64(51660), secondPayload["message_id"])
-	assert.Equal(t, "q-20260921112506-1", secondPayload["queue_id"])
 }
 
-// TestStreamHub_EmitLiveRunState_NoQuestion covers a scheduled run: nothing to
-// anchor to, so only stream_start is emitted (and no error).
+// TestStreamHub_EmitLiveRunState_NoQuestion covers a run with no preceding user
+// row (some scheduled runs): nothing to anchor to, so only stream_start is
+// emitted (and no error).
 func TestStreamHub_EmitLiveRunState_NoQuestion(t *testing.T) {
 	mgr, hub := newTestStreamHub()
 
@@ -1168,11 +1104,7 @@ func TestStreamHub_EmitLiveRunState_NoQuestion(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-sched", "")
 	hub.Subscribe("client-sched", "session-sched")
 
-	hub.SetStreamStateLookupFunc(func(string) (int64, string) { return 99, "" })
-	hub.SetQuestionLookupFunc(func(string, string) (int64, string, bool) {
-		t.Fatal("question lookup must not be called when the run has no queue id")
-		return 0, "", false
-	})
+	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string) { return 99, 0, "" })
 
 	hub.EmitLiveRunStateToClient("client-sched", "session-sched")
 
@@ -1191,7 +1123,7 @@ func TestStreamHub_EmitLiveRunState_NothingStreaming(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-idle", "")
 	hub.Subscribe("client-idle", "session-idle")
 
-	hub.SetStreamStateLookupFunc(func(string) (int64, string) { return 0, "" })
+	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string) { return 0, 0, "" })
 
 	hub.EmitLiveRunStateToClient("client-idle", "session-idle")
 

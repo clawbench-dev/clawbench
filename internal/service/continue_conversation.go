@@ -589,6 +589,13 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 type RewindResult struct {
 	// DeletedCount is the number of chat_history rows removed.
 	DeletedCount int64
+	// QueuedCount is the number of queued (not yet run) messages discarded.
+	// Rewind discards work that has not run yet, and the queue is exactly that,
+	// so it is cleared alongside the history. It is reported separately because
+	// the handler's no-op guard must treat "a queued message was discarded" as a
+	// real rewind — otherwise it would report NothingToRewind while having just
+	// deleted the user's message.
+	QueuedCount int64
 	// RestoredText is the plain text of the first user message removed by the
 	// truncation (the user message immediately following the anchor assistant
 	// reply). Empty when no user message was removed.
@@ -682,19 +689,43 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 		return res, err
 	}
 
-	// 2. No-op when nothing follows the anchor.
+	// 2. No-op when nothing follows the anchor — in chat_history OR in the queue.
+	//    The queue is checked too: a queued message is work that has not run yet,
+	//    so rewinding past it must discard it and return its text for re-editing.
+	//    Without this check a session whose only trailing work is queued would
+	//    silently keep the queue.
 	trailingCount, err := CountMessagesAfterAnchor(sessionID, anchorID)
 	if err != nil {
 		return res, err
 	}
 	if trailingCount == 0 {
+		queued, qErr := GetQueuedMessages(sessionID)
+		if qErr != nil {
+			return res, qErr
+		}
+		if len(queued) == 0 {
+			return res, nil
+		}
+		res.RestoredText = ExtractPlainText(queued[0].Text)
+		if err := ClearQueuedMessages(sessionID); err != nil {
+			return res, err
+		}
+		// Reported so the handler knows a real rewind happened (it must not
+		// answer NothingToRewind after discarding a message the user queued).
+		res.QueuedCount = int64(len(queued))
 		return res, nil
 	}
 
 	// 3. Capture the prefill text of the first removed user message BEFORE the
-	//    rows are deleted. queued/streaming user rows are included deliberately —
-	//    they are user-typed inputs the rewind discards, so they belong in the
-	//    input box for re-editing.
+	//    rows are deleted. A streaming (in-flight) user row is included
+	//    deliberately — it is a user-typed input the rewind discards, so it
+	//    belongs in the input box for re-editing.
+	//
+	//    Queued messages are NOT in chat_history any more. They are cleared
+	//    wholesale below (rewind discards everything after the anchor, and the
+	//    queue is by definition work that has not run yet). When nothing was
+	//    removed from chat_history but the queue is non-empty, the first queued
+	//    message is the input the user most likely wants back.
 	var removedContent sql.NullString
 	err = dbRead.QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND id > ? AND role = 'user' ORDER BY id ASC LIMIT 1",
@@ -704,6 +735,8 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 		res.RestoredText = ExtractPlainText(removedContent.String)
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return res, err
+	} else if queued, qErr := GetQueuedMessages(sessionID); qErr == nil && len(queued) > 0 {
+		res.RestoredText = ExtractPlainText(queued[0].Text)
 	}
 
 	// 4. Transactional delete — mirrors HardDeleteSession (chat.go): child rows
@@ -765,6 +798,18 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 		return res, err
 	}
 	res.DeletedCount, _ = result.RowsAffected()
+
+	// Discard the queue in the SAME transaction as the history delete: a queued
+	// message is work that has not run yet, so rewinding past it must drop it,
+	// and doing it here means a failure rolls both back together (never a
+	// truncated history with an orphaned queue, or vice versa). Counted so the
+	// handler can tell "this was a real rewind" from "nothing followed the
+	// anchor" — a queue-only rewind must not answer NothingToRewind.
+	qres, err := tx.Exec("DELETE FROM queued_messages WHERE session_id = ?", sessionID)
+	if err != nil {
+		return res, err
+	}
+	res.QueuedCount, _ = qres.RowsAffected()
 
 	if err := tx.Commit(); err != nil {
 		return res, err

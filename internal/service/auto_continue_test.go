@@ -165,23 +165,6 @@ func TestAutoContinueAttemptsAllowed(t *testing.T) {
 	}
 }
 
-// Auto-sent messages must be indistinguishable from a user typing the same
-// text, and every attempt must carry a distinct queue id — the frontend dedups
-// user_message by queueId, so a reused id would drop the 2nd/3rd bubble.
-func TestAutoContinueQueueIDIsUnique(t *testing.T) {
-	seen := make(map[string]bool, 1000)
-	for i := range 1000 {
-		id := newAutoContinueQueueID()
-		if id == "" {
-			t.Fatal("queue id must not be empty")
-		}
-		if seen[id] {
-			t.Fatalf("duplicate queue id %q at iteration %d", id, i)
-		}
-		seen[id] = true
-	}
-}
-
 // The prompt is localized from the server-side language, because this runs with
 // no HTTP request in scope. Both supported languages must resolve to a real
 // translation rather than falling back to the message key.
@@ -236,7 +219,7 @@ func TestAutoContinueRunner_Disabled(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		RunTurn:     func(prompt, queueID string) DrainResult { called = true; return DrainResult{} },
+		RunTurn:     func(prompt string) DrainResult { called = true; return DrainResult{} },
 	})
 
 	_, ok := runner(1, DrainResult{AbnormalReason: abnormalEmpty})
@@ -263,7 +246,7 @@ func TestAutoContinueRunner_RespectsMaxRetries(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		RunTurn: func(prompt, queueID string) DrainResult {
+		RunTurn: func(prompt string) DrainResult {
 			turns++
 			return DrainResult{AbnormalReason: abnormalEmpty}
 		},
@@ -306,7 +289,7 @@ func TestAutoContinueRunner_CancelledDuringDelay(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		RunTurn:     func(prompt, queueID string) DrainResult { called = true; return DrainResult{} },
+		RunTurn:     func(prompt string) DrainResult { called = true; return DrainResult{} },
 	})
 
 	_, ok := runner(1, DrainResult{AbnormalReason: abnormalEmpty})
@@ -335,7 +318,7 @@ func TestAutoContinueRunner_AlreadyCancelledContext(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		RunTurn:     func(prompt, queueID string) DrainResult { called = true; return DrainResult{} },
+		RunTurn:     func(prompt string) DrainResult { called = true; return DrainResult{} },
 	})
 
 	_, ok := runner(1, DrainResult{AbnormalReason: abnormalEmpty})
@@ -343,8 +326,9 @@ func TestAutoContinueRunner_AlreadyCancelledContext(t *testing.T) {
 	assert.False(t, called)
 }
 
-// The persisted message must be a real user row carrying the localized prompt,
-// and each attempt must get a distinct queue id.
+// The persisted message must be a real user row carrying the localized prompt.
+// It is written directly to chat_history (not queued), so the frontend renders
+// it inline exactly like a user typing the same text.
 func TestAutoContinueRunner_PersistsRealUserMessage(t *testing.T) {
 	setupDrainTest(t)
 	sessionID := "runner-persists"
@@ -360,31 +344,31 @@ func TestAutoContinueRunner_PersistsRealUserMessage(t *testing.T) {
 		model.ChatAutoContinueMaxRetries = prevMax
 	})
 
-	var gotPrompt, gotQueueID string
+	var gotPrompt string
 	runner := NewAutoContinueRunner(AutoContinueRunnerConfig{
 		Ctx:         context.Background(),
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		RunTurn: func(prompt, queueID string) DrainResult {
-			gotPrompt, gotQueueID = prompt, queueID
+		RunTurn: func(prompt string) DrainResult {
+			gotPrompt = prompt
 			return DrainResult{}
 		},
 	})
 
 	require.True(t, mustRun(t, runner, 1))
 	assert.Equal(t, "Continue", gotPrompt)
-	assert.NotEmpty(t, gotQueueID)
 
-	var role, content, queueID string
-	var queued int
+	var role, content string
 	err := dbRead.QueryRow(
-		"SELECT role, content, queue_id, queued FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+		"SELECT role, content FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT 1",
 		sessionID,
-	).Scan(&role, &content, &queueID, &queued)
+	).Scan(&role, &content)
 	require.NoError(t, err)
 	assert.Equal(t, "user", role, "the continue message must be a real user message")
 	assert.Equal(t, "Continue", content, "the persisted text must be the localized prompt")
-	assert.Equal(t, gotQueueID, queueID)
-	assert.Equal(t, 0, queued, "it must be a direct message, not a queued one")
+
+	// It is a real chat_history row, NOT a queued one — a queued message would
+	// render in the queue panel instead of inline.
+	assert.Equal(t, 0, GetQueuedCount(sessionID), "the continue message must not be queued")
 }

@@ -81,8 +81,14 @@
               :disabled="!isSelectable(m)"
               @change="toggleOne(m)"
             />
-            <span class="session-share-dialog-role" :class="'role-' + m.role">
-              {{ m.role === 'user' ? t('sessionShare.roleUser') : t('sessionShare.roleAssistant') }}
+            <span
+              class="session-share-dialog-role"
+              :class="'role-' + m.role"
+              :title="m.role === 'user' ? t('sessionShare.roleUser') : t('sessionShare.roleAssistant')"
+              :aria-label="m.role === 'user' ? t('sessionShare.roleUser') : t('sessionShare.roleAssistant')"
+            >
+              <Bot v-if="m.role === 'assistant'" :size="12" />
+              <User v-else :size="12" />
             </span>
             <span class="session-share-dialog-preview" :title="m.preview">{{ m.preview || '—' }}</span>
             <span v-if="!isSelectable(m)" class="session-share-dialog-flag">
@@ -127,7 +133,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy, ExternalLink, Info, Link2, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { Bot, Copy, ExternalLink, Info, Link2, RefreshCw, Trash2, User } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
@@ -165,9 +171,9 @@ const messages = ref([])
 const selectedIds = ref(new Set())
 const linkInputRef = ref(null)
 
-/** A message is shareable only once finalized (streaming/queued excluded). */
+/** A message is shareable only once finalized (streaming excluded). */
 function isSelectable(m) {
-  return !m.streaming && !m.queued
+  return !m.streaming
 }
 
 const selectableCount = computed(() => messages.value.filter(isSelectable).length)
@@ -439,20 +445,19 @@ watch(() => props.open, (isOpen) => {
 }
 
 /* ── Role tag ──
-   The app's standard role chip: square-ish, tinted from a theme colour, no
-   hardcoded palette. Identical construction to the conversation-index drawer's
-   .msg-role-tag so the two message lists read as one family. */
+   Icon-only square, tinted from a theme colour, no hardcoded palette.
+   Identical construction to the conversation-index drawer's .msg-role-tag so
+   the two message lists read as one family. The role name lives in
+   title/aria-label since no text is rendered. */
 .session-share-dialog-role {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-xs);
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
-  font-size: 10px;
-  font-weight: var(--font-weight-semibold);
-  line-height: 1.6;
-  letter-spacing: 0.3px;
 }
 
 .session-share-dialog-role.role-user {

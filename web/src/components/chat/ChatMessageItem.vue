@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata, pending: msg.pending }]" :data-msg-key="msg.id ? 'db-' + msg.id : null">
+  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]" :data-msg-key="msg.id ? 'db-' + msg.id : null">
 
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
          element so it sits on the panel background for both roles. -->
@@ -45,31 +45,6 @@
       />
     </div>
 
-    <!-- Pending hint for queued user messages -->
-    <div v-if="msg.pending" class="pending-hint">
-      <LoadingIndicator class="pending-spinner" size="sm" inline />
-      {{ t('chat.pending.queuing') }}
-      <!--
-        One action, two labels — the backend decides which. A backend that can
-        inject into the running turn offers "insert into the current reply"
-        (the turn keeps its work); one that cannot offers "interrupt and send"
-        (the turn is stopped, this message runs next). The label always states
-        what will actually happen, so the single button never misleads.
-      -->
-      <button
-        class="pending-action"
-        :class="{ 'pending-action-interrupt': !midTurnSupported }"
-        :disabled="pendingActionBusy"
-        :title="midTurnSupported ? t('chat.pending.insertHint') : t('chat.pending.interruptHint')"
-        @click="$emit('pending-action', msg.queueId || msg.id)"
-      >
-        <Zap v-if="midTurnSupported" :size="11" />
-        <Square v-else :size="11" fill="currentColor" />
-        {{ midTurnSupported ? t('chat.pending.insert') : t('chat.pending.interrupt') }}
-      </button>
-      <button class="pending-remove" @click="$emit('remove-pending', msg.queueId || msg.id)" :title="t('common.remove')">×</button>
-    </div>
-
     <!-- File changes banner — standalone button above toolbar -->
     <button v-if="msg.role === 'assistant' && !msg.streaming && hasFileChanges" class="chat-file-changes-banner" @click="fileChangesDrawer.open()">
       <FileDiff :size="14" />
@@ -110,7 +85,7 @@
              reply. Gated like the rest of the meta bar, and skipped for queued
              bubbles which have no settled content yet. -->
         <button
-          v-if="!readOnly && !msg.streaming && !msg.pending && quotableText"
+          v-if="!readOnly && !msg.streaming && quotableText"
           class="chat-action-btn"
           :title="t('quoteBar.quoteMessage')"
           :aria-label="t('quoteBar.quoteMessage')"
@@ -190,7 +165,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind, Zap, Square, MessageSquareQuote } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind, MessageSquareQuote } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -223,11 +198,6 @@ const props = defineProps({
   /** True when this message is the very last entry in the rendered list — rewind
    *  has nothing to truncate after it, so the rewind button is disabled. */
   isLastMessage: { type: Boolean, default: false },
-  /** Whether the active backend can inject into the running turn. Drives the
-   *  queued bubble's single action label (insert vs interrupt). */
-  midTurnSupported: { type: Boolean, default: false },
-  /** True while this bubble's action request is in flight (disables the button). */
-  pendingActionBusy: { type: Boolean, default: false },
   /** Read-only hosts (task execution detail) hide the fork/rewind pair: those
    *  two actions need a live session to branch or truncate, which a finished
    *  execution record does not have. The rest of the bar (summary toggle,
@@ -245,7 +215,7 @@ const props = defineProps({
   readOnly: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'pending-action', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
@@ -321,13 +291,12 @@ const copyableUserText = computed(() => {
 })
 
 // Meta bar visibility. Assistant keeps its old gate (it owns the action bar);
-// user messages show it as soon as there is a timestamp or copyable text, and
-// never while the bubble is still queued (pending hint already occupies that row).
+// user messages show it as soon as there is a timestamp or copyable text.
 const showMetaBar = computed(() => {
   if (props.msg?.role === 'assistant') {
     return !props.msg.streaming && !!(msgText.value || props.msg.blocks?.length || props.msg.summary)
   }
-  if (props.msg?.role !== 'user' || props.msg.pending || props.msg.streaming) return false
+  if (props.msg?.role !== 'user' || props.msg.streaming) return false
   return !!(relativeTime.value || copyableUserText.value)
 })
 
@@ -624,90 +593,6 @@ function handleCopyMessage() {
     to { transform: rotate(360deg); }
 }
 
-/* ── Pending (queued) user message styles ── */
-.chat-message.user.pending .msg-card {
-    color: rgba(255, 255, 255, 0.55);
-    background: color-mix(in srgb, var(--user-msg-color) 55%, transparent);
-    border: 1px dashed rgba(255, 255, 255, 0.5);
-    animation: pending-fade-in 0.25s ease-out;
-}
-
-.pending-hint {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--font-size-2xs);
-    color: rgba(255, 255, 255, 0.7);
-    flex-basis: 100%;
-    margin-top: var(--space-2);
-}
-
-/* Spinner sits on the translucent user-bubble background → keep it white */
-.pending-hint .pending-spinner {
-    --li-color: #fff;
-}
-
-/* Single adaptive action on a queued bubble: "insert into the current reply"
-   for backends that can join the running turn, "interrupt and send" otherwise.
-   Sits inside the translucent user bubble, so it uses white-ish colours like
-   .pending-hint (a theme token would be invisible on that background). */
-.pending-action {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    background: rgba(255, 255, 255, 0.14);
-    border: none;
-    border-radius: var(--radius-full);
-    cursor: pointer;
-    color: rgba(255, 255, 255, 0.9);
-    padding: 1px 7px;
-    font-size: var(--font-size-2xs);
-    line-height: var(--line-height-relaxed);
-    transition: background var(--duration-base), color var(--duration-base);
-}
-
-.pending-action:disabled {
-    opacity: var(--opacity-muted);
-    cursor: default;
-}
-
-/* The interrupt variant is destructive — tint it so it does not look like the
-   harmless insert action when the two are compared across backends. */
-.pending-action-interrupt {
-    background: rgba(255, 145, 145, 0.2);
-}
-
-@media (hover: hover) {
-  .pending-action:not(:disabled):hover {
-    background: rgba(255, 255, 255, 0.24);
-  }
-
-  .pending-action-interrupt:not(:disabled):hover {
-    background: rgba(255, 145, 145, 0.32);
-  }
-}
-
-.pending-remove {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: rgba(255, 255, 255, 0.6);
-    padding:0 var(--space-1);
-    font-size: var(--font-size-md);
-    line-height: 1;
-    transition: color var(--duration-base);
-}
-
-@media (hover: hover) {
-  .pending-remove:hover {
-    color: rgba(255, 255, 255, 1);
-  }
-}
-
-@keyframes pending-fade-in {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-}
 
 @media (hover: hover) {
   .chat-meta-bar-user:hover {

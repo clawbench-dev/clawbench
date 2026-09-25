@@ -45,8 +45,6 @@ func setupTestDBForSessionSharePayload(t *testing.T) *sql.DB {
 			backend TEXT NOT NULL DEFAULT '',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
-			queue_id TEXT NOT NULL DEFAULT '',
-			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS chat_tool_calls (
@@ -109,12 +107,15 @@ func seedSession(t *testing.T, db *sql.DB, sessionID string) { //nolint:unparam 
 
 // seedMessage inserts a finalized message and returns its id. sessionID stays a
 // parameter so the helper mirrors the schema rather than hard-coding one id.
-func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, queued int) int64 { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
+func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, _queued int) int64 { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
 	t.Helper()
+	// The `queued` argument is retained so existing call sites read unchanged,
+	// but chat_history has no such column any more: queued messages live in
+	// queued_messages and only enter chat_history at dequeue time.
 	res, err := db.Exec(
-		`INSERT INTO chat_history (project_path, session_id, role, content, backend, streaming, queued)
-		 VALUES (?, ?, ?, ?, 'codebuddy', ?, ?)`,
-		testProjectRoot, sessionID, role, content, streaming, queued,
+		`INSERT INTO chat_history (project_path, session_id, role, content, backend, streaming)
+		 VALUES (?, ?, ?, ?, 'codebuddy', ?)`,
+		testProjectRoot, sessionID, role, content, streaming,
 	)
 	require.NoError(t, err)
 	id, err := res.LastInsertId()
@@ -674,8 +675,10 @@ func TestSessionSharePayload_UserBlockContentIsSanitized(t *testing.T) {
 
 // ─── Selection listing ───────────────────────────────────────────────────────
 
-// The dialog needs every message, including in-flight ones, so it can show them
-// disabled with a reason instead of hiding them.
+// The dialog needs every chat_history message, including in-flight (streaming)
+// ones, so it can show them disabled with a reason instead of hiding them.
+// Queued messages are absent by construction: they have no chat_history row
+// until they are dequeued, so there is nothing for the dialog to disable.
 func TestGetSessionMessagesForSelection_IncludesInFlight(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
@@ -684,17 +687,14 @@ func TestGetSessionMessagesForSelection_IncludesInFlight(t *testing.T) {
 	seedMessage(t, db, "s1", "user", "hello there", 0, 0)
 	seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"text","text":"a reply"}]}`, 0, 0)
 	seedMessage(t, db, "s1", "assistant", "typing", 1, 0)
-	seedMessage(t, db, "s1", "user", "queued msg", 0, 1)
 
 	items, err := service.GetSessionMessagesForSelection("s1")
 	require.NoError(t, err)
-	require.Len(t, items, 4, "in-flight messages must be listed, not hidden")
+	require.Len(t, items, 3, "in-flight messages must be listed, not hidden")
 
 	assert.False(t, items[0].Streaming)
-	assert.False(t, items[0].Queued)
 	assert.Equal(t, "hello there", items[0].Preview)
 	assert.True(t, items[2].Streaming, "streaming flag must be reported")
-	assert.True(t, items[3].Queued, "queued flag must be reported")
 
 	// A JSON block wrapper must be flattened to readable text for the preview.
 	assert.Equal(t, "a reply", items[1].Preview)

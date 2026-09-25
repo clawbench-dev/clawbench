@@ -53,7 +53,7 @@ func TestEnqueueAndMaybeStart_AlwaysQueuesWhileRunning(t *testing.T) {
 	require.True(t, service.TrySetSessionRunning(sid))
 	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
 
-	started, injected, msgID, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, msgID, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
@@ -63,8 +63,9 @@ func TestEnqueueAndMaybeStart_AlwaysQueuesWhileRunning(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.False(t, started, "session is running, so no new run starts")
-	assert.False(t, injected, "sending must never auto-inject")
-	require.NotZero(t, msgID)
+	// A busy session's message is NOT materialized: it has no chat_history row
+	// yet, so there is no message id to hand back.
+	assert.Zero(t, msgID, "a queued (not yet run) message has no chat_history id")
 
 	assert.Equal(t, 1, service.GetQueuedCount(sid),
 		"the message must be visible in the queue for every backend")
@@ -91,7 +92,7 @@ func TestInjectQueuedMessage_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	require.True(t, inserted, "the insertion must report success")
-	assert.Equal(t, queuedID, msgID, "the row must keep its original DB id — no delete+reinsert")
+	require.NotZero(t, msgID, "the injected message must be materialized with a chat_history id")
 
 	// The policy saw the queued content verbatim.
 	require.Len(t, *calls, 1)
@@ -102,11 +103,12 @@ func TestInjectQueuedMessage_Success(t *testing.T) {
 	assert.Equal(t, 0, service.GetQueuedCount(sid),
 		"an inserted message must leave the queue")
 
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 50, 0)
+	// It is a normal conversation row now, with the content the queue held.
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 50, 0)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
-	assert.Equal(t, queuedID, msgs[0].ID)
-	assert.False(t, msgs[0].Queued)
+	assert.Equal(t, msgID, msgs[0].ID)
+	assert.Equal(t, "queued text", msgs[0].Content)
 }
 
 // TestInjectQueuedMessage_DeclinedRestoresQueue is the safety property that
@@ -133,7 +135,7 @@ func TestInjectQueuedMessage_DeclinedRestoresQueue(t *testing.T) {
 	queued, err := service.GetQueuedMessages(sid)
 	require.NoError(t, err)
 	require.Len(t, queued, 1, "a declined insertion must not lose the message")
-	assert.Equal(t, "must survive", queued[0].Content)
+	assert.Equal(t, "must survive", queued[0].Text)
 	assert.Equal(t, queuedID, queued[0].ID, "the same row is restored, not a copy")
 }
 
@@ -220,5 +222,5 @@ func TestInjectQueuedMessage_DeclinedRequeueSucceeds(t *testing.T) {
 	queued, qerr := service.GetQueuedMessages(sid)
 	require.NoError(t, qerr)
 	require.Len(t, queued, 1, "the message must be back in the queue")
-	assert.Equal(t, "still queued", queued[0].Content)
+	assert.Equal(t, "still queued", queued[0].Text)
 }

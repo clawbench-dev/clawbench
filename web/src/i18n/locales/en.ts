@@ -824,6 +824,11 @@ export default {
       actionFailed: 'Action failed — the message is still queued',
       insertStranded: 'Insert failed and the message could not be re-queued — please resend it',
       interruptNotQueued: 'That message is no longer queued — the current reply was left running',
+      barTitle: 'Queued · {count}',
+      expand: 'Expand',
+      collapse: 'Collapse',
+      remove: 'Remove this queued message',
+      attachment: 'Attachment',
     },
     contentBlocks: {
       scheduledTaskCreated: 'Task created',
