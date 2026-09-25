@@ -1529,7 +1529,15 @@ const handleReconnect = () => {
     // Re-establish project cookie — server restart invalidates the session
     // cookie, and without it all /api/dir, /api/file, /api/ai/chat calls
     // return 403 (requireProject: "project cookie is empty").
-    store.loadProject().catch(() => {})
+    //
+    // The forge badge is re-derived in the same chain: it is project-scoped, so
+    // it needs the cookie this call writes. Unlike the other refreshes below,
+    // it has NO other reconnect trigger — forge events are neither persisted for
+    // offline replay (IsNotifiableEvent) nor re-applied from the WS replay
+    // buffer (useGlobalEvents skips `replayed` forge events), and Android
+    // disconnects the WS while backgrounded. So an event missed while away
+    // leaves the header's "mark all read" button disabled next to unread rows.
+    store.loadProject().then(() => refreshForgeUnread()).catch(() => {})
     store.loadFiles(store.state.currentDir, false, 0, true)
     store.loadGitBranch()
     loadSessionsOnce()
