@@ -2865,11 +2865,17 @@ public class BackgroundService extends Service {
                 // notifiable, so only they advance the cursor. NOTIFYING is a
                 // separate decision (NativeNotificationPolicy): a replayed event
                 // or one whose subject is already read must still advance the
-                // cursor, or the next fetch would return it forever.
+                // cursor, or the next fetch would return it forever. Note
+                // `task_update running` notifies but is never persisted, so it
+                // must NOT advance the cursor (see advancesCursor).
                 String status = data.optString("status", "");
-                boolean isNotifiable = NativeNotificationPolicy.isNotifiableEvent(event, status);
 
-                if (isNotifiable) {
+                if (NativeNotificationPolicy.isNotifiableEvent(event, status)) {
+                    // `replayed` is set by the server on reconnect-buffer replays.
+                    // `suppress_notification` is currently only produced by the
+                    // HTTP pending-events path, never on a broadcast message, so
+                    // it is always false here — read anyway so the policy has one
+                    // shape and a future server-side live suppression just works.
                     boolean replayed = msg.optBoolean("replayed", false);
                     boolean suppress = msg.optBoolean("suppress_notification", false);
                     if (NativeNotificationPolicy.shouldNotifyLive(event, status, replayed, suppress)) {
@@ -2885,7 +2891,7 @@ public class BackgroundService extends Service {
                 }
 
                 // Update last seen event cursor for pending events fetch
-                if (!eventId.isEmpty() && isNotifiable) {
+                if (!eventId.isEmpty() && NativeNotificationPolicy.advancesCursor(event, status)) {
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                             .edit()
                             .putString(KEY_LAST_SEEN_EVENT_ID, eventId)

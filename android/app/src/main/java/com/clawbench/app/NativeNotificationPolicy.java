@@ -22,8 +22,10 @@ package com.clawbench.app;
  *    read, so without this an already-read reply re-notifies on every recovery.
  *
  * Cursor advancement is deliberately a SEPARATE question from notification
- * (see {@link #isNotifiableEvent}): a suppressed or replayed event must still
- * advance the client cursor, or the next fetch would re-read it forever.
+ * (see {@link #advancesCursor}): a suppressed or replayed event must still
+ * advance the client cursor, or the next fetch would re-read it forever. The
+ * two predicates are not identical — `task_update running` notifies but is never
+ * persisted, so it must not move the cursor.
  */
 public final class NativeNotificationPolicy {
 
@@ -46,12 +48,11 @@ public final class NativeNotificationPolicy {
     }
 
     /**
-     * Whether the event is a notifiable terminal state.
+     * Whether the event should raise a notification.
      *
-     * This governs CURSOR ADVANCEMENT, not notification: every event the server
-     * persisted as notifiable must advance the cursor even when its notification
-     * is suppressed, otherwise the client would fetch it again on the next
-     * reconnect and suppress it again forever.
+     * Note this is NOT the same as {@link #advancesCursor}. `task_update running`
+     * notifies ("task started") but is never persisted server-side, so it must
+     * not move the cursor.
      */
     public static boolean isNotifiableEvent(String eventType, String status) {
         if ("session_update".equals(eventType)) {
@@ -59,6 +60,39 @@ public final class NativeNotificationPolicy {
         }
         if ("task_update".equals(eventType)) {
             return isNotifiableTaskStatus(status);
+        }
+        return false;
+    }
+
+    /**
+     * Whether this event was persisted server-side, so the client cursor may
+     * advance to it.
+     *
+     * This must mirror the server's own notifiable predicate
+     * (service.IsNotifiableEvent) EXACTLY — the cursor is only meaningful if it
+     * names a row that exists in pending_events. `task_update running` is
+     * notified but never stored: advancing the cursor to it leaves the client
+     * holding an id the server cannot resolve, and GetPendingEvents returns an
+     * EMPTY list for an unknown cursor (pending_events.go) rather than falling
+     * back to the full set. A completion that landed while offline would then be
+     * unreachable forever, because every later poll short-circuits on the dead
+     * cursor. The web client's cursor predicate already excludes `running`
+     * (useGlobalEvents.ts) for this reason.
+     *
+     * Cursor advancement is deliberately independent of whether a notification
+     * was shown: a replayed or already-read event must still advance the cursor,
+     * or the next fetch would return it forever.
+     */
+    public static boolean advancesCursor(String eventType, String status) {
+        if ("session_update".equals(eventType)) {
+            return "completed".equals(status)
+                    || "cancelled".equals(status)
+                    || "permission_pending".equals(status);
+        }
+        if ("task_update".equals(eventType)) {
+            return "completed".equals(status)
+                    || "failed".equals(status)
+                    || "cancelled".equals(status);
         }
         return false;
     }

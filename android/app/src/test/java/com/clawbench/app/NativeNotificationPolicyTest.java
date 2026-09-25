@@ -170,18 +170,40 @@ public class NativeNotificationPolicyTest {
     }
 
     /**
-     * Cursor advancement is independent of notification: the caller must still
-     * adopt the newest event id even when every notification was suppressed, or
-     * the next fetch would return the same backlog forever. This is asserted at
-     * the policy level by requiring the notifiable predicate to stay true for
-     * suppressed events.
+     * Cursor advancement is a SEPARATE question from notification, and the two
+     * deliberately differ for `task_update running`: it notifies ("task started")
+     * but is never persisted server-side, so it must not move the cursor.
+     *
+     * The behavioural proof that a caller actually advances the cursor lives in
+     * NativeCursorAdvancementTest (this predicate alone cannot detect a caller
+     * that stops writing it — a review mutation did exactly that and the whole
+     * suite stayed green).
      */
     @Test
-    public void suppressedEventStillCountsForCursorAdvancement() {
-        assertTrue("a read completion must still advance the cursor",
-                NativeNotificationPolicy.isNotifiableEvent("session_update", "completed"));
-        assertTrue("a replayed completion must still advance the cursor",
-                NativeNotificationPolicy.isNotifiableEvent("task_update", "completed"));
+    public void cursorPredicateMirrorsServerPersistence() {
+        // Persisted → may advance.
+        assertTrue(NativeNotificationPolicy.advancesCursor("session_update", "completed"));
+        assertTrue(NativeNotificationPolicy.advancesCursor("session_update", "cancelled"));
+        assertTrue(NativeNotificationPolicy.advancesCursor("session_update", "permission_pending"));
+        assertTrue(NativeNotificationPolicy.advancesCursor("task_update", "completed"));
+        assertTrue(NativeNotificationPolicy.advancesCursor("task_update", "failed"));
+        assertTrue(NativeNotificationPolicy.advancesCursor("task_update", "cancelled"));
+
+        // NOT persisted → must not advance, or the cursor becomes unresolvable
+        // and GetPendingEvents returns empty forever.
+        assertFalse("task_update running is notified but never stored",
+                NativeNotificationPolicy.advancesCursor("task_update", "running"));
+        assertFalse(NativeNotificationPolicy.advancesCursor("session_update", "running"));
+        assertFalse(NativeNotificationPolicy.advancesCursor("summary_update", "completed"));
+    }
+
+    /** The notify predicate and the cursor predicate must actually differ here. */
+    @Test
+    public void taskRunningNotifiesButDoesNotAdvanceCursor() {
+        assertTrue("task started should notify",
+                NativeNotificationPolicy.isNotifiableEvent("task_update", "running"));
+        assertFalse("...but must not advance the cursor",
+                NativeNotificationPolicy.advancesCursor("task_update", "running"));
     }
 
     @Test

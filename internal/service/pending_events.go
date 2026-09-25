@@ -46,6 +46,12 @@ const (
 	statusCancelled = "cancelled"
 	// statusCompleted is the completed status string used across event types.
 	statusCompleted = "completed"
+	// eventTypeTaskUpdate is the event name for scheduled-task run updates. It is
+	// referenced by the notifiable predicate, the read gate and the subject
+	// extractor, so it lives in one place to keep them from drifting.
+	eventTypeTaskUpdate = "task_update"
+	// statusFailed is the failed status string for task runs.
+	statusFailed = "failed"
 )
 
 // IsNotifiableEvent returns true if the event is a terminal state that
@@ -77,8 +83,8 @@ func IsNotifiableEvent(event string, data any) bool {
 	switch event {
 	case eventTypeSessionUpdate:
 		return status == statusCompleted || status == statusCancelled || status == "permission_pending"
-	case "task_update":
-		return status == statusCompleted || status == "failed" || status == statusCancelled
+	case eventTypeTaskUpdate:
+		return status == statusCompleted || status == statusFailed || status == statusCancelled
 	default:
 		return false
 	}
@@ -220,25 +226,36 @@ func suppressAlreadyReadEvents(events []PendingEvent) {
 	readSessions := lookupReadSessions(sessionIDs)
 	readExecutions := lookupReadExecutions(executionIDs)
 
-	// Apply: a subject is "read" when its session is read (session events) or
-	// its execution is read (task events).
+	// Apply. The two families use different read models and must not be mixed:
+	// a task run's session being read says nothing about whether that run's
+	// result was seen (the task badge is per-execution and would still be lit).
 	for i := range events {
 		s := subjects[i]
-		if s.sessionID != "" && readSessions[s.sessionID] {
-			events[i].SuppressNotification = true
+		if s.byExecution {
+			if readExecutions[s.executionID] {
+				events[i].SuppressNotification = true
+			}
 			continue
 		}
-		if s.executionID != "" && readExecutions[s.executionID] {
+		if s.sessionID != "" && readSessions[s.sessionID] {
 			events[i].SuppressNotification = true
 		}
 	}
 }
 
-// readGateSubject identifies the read-state subject of a pending event. A
-// session event carries only a session id, a task event only an execution id.
+// readGateSubject identifies the read-state subject of a pending event.
+//
+// byExecution selects WHICH read state decides suppression, and the choice is
+// not interchangeable. Task runs are tracked per-execution
+// (task_executions.read_at) while sessions are tracked per-session
+// (chat_sessions.last_read_at). A task_update carries BOTH ids (emitTaskEvent
+// sets SessionID alongside ExecutionID), so checking the session first would
+// suppress an unread task result whenever its run's session happened to be
+// read — the task badge would still be lit while the notification never fired.
 type readGateSubject struct {
 	sessionID   string
 	executionID string
+	byExecution bool
 }
 
 // collectReadGateSubjects resolves each event's read-state subject and returns
@@ -262,14 +279,27 @@ func collectReadGateSubjects(events []PendingEvent) (subjects []readGateSubject,
 		if status == ws.StatusPermissionPending {
 			continue
 		}
-		subjects[i] = readGateSubject{sessionID: sid, executionID: execID}
+
+		if ev.EventType == eventTypeTaskUpdate {
+			// The execution is the authority. An empty execution id (the early
+			// failure emitted before the execution row exists, scheduler.go
+			// emitTaskEvent with "") has no read state at all, so it keeps its
+			// zero subject and notifies — the safe direction.
+			if execID == "" {
+				continue
+			}
+			subjects[i] = readGateSubject{executionID: execID, byExecution: true}
+			if !seenExecution[execID] {
+				seenExecution[execID] = true
+				executionIDs = append(executionIDs, execID)
+			}
+			continue
+		}
+
+		subjects[i] = readGateSubject{sessionID: sid}
 		if sid != "" && !seenSession[sid] {
 			seenSession[sid] = true
 			sessionIDs = append(sessionIDs, sid)
-		}
-		if execID != "" && !seenExecution[execID] {
-			seenExecution[execID] = true
-			executionIDs = append(executionIDs, execID)
 		}
 	}
 	return subjects, sessionIDs, executionIDs
@@ -280,7 +310,7 @@ func collectReadGateSubjects(events []PendingEvent) (subjects []readGateSubject,
 // user_message (the other notifiable type) has no read model and is never
 // suppressed.
 func isReadGatedEvent(eventType string) bool {
-	return eventType == eventTypeSessionUpdate || eventType == "task_update"
+	return eventType == eventTypeSessionUpdate || eventType == eventTypeTaskUpdate
 }
 
 // pendingEventSubject extracts the session id, execution id and status from a
@@ -360,6 +390,9 @@ func lookupReadSessions(sessionIDs []string) map[string]bool {
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			// Partial set — fail open (fewer suppressed), but log it so a
+			// schema/type mismatch is not silently invisible.
+			slog.Warn("pending_events: read-state row scan failed", "error", err)
 			return read
 		}
 		read[id] = true
@@ -394,6 +427,7 @@ func lookupReadExecutions(executionIDs []string) map[string]bool {
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			slog.Warn("pending_events: execution read-state row scan failed", "error", err)
 			return read
 		}
 		read[id] = true
