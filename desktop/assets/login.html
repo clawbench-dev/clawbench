@@ -1402,6 +1402,7 @@
     </div>
   </div>
 
+<script src="url-utils.js"></script>
 <script>
   var connecting = false;
   var savedServers = [];
@@ -1508,6 +1509,29 @@
       } catch(e) {
         showError('addErrorMsg', t('connection_failed') + e.message);
         setConnecting(false, true);
+      }
+    });
+
+    // Event: paste a full URL into the host field -> fill protocol + port.
+    // Only `paste` is handled (no blur/input): typing an address by hand must
+    // not be rewritten mid-keystroke.
+    document.getElementById('addHost').addEventListener('paste', function(e) {
+      var text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+      var parsed = parseServerInput(text);
+      // Unparseable -> do not intercept; let the browser paste normally.
+      if (!parsed) return;
+
+      e.preventDefault();
+      hideError('addErrorMsg');
+      document.getElementById('addHost').value = parsed.host;
+      // Only override the port when the URL carried one explicitly; the field
+      // keeps its default (20000) otherwise.
+      if (parsed.port !== null) {
+        document.getElementById('addPort').value = parsed.port;
+      }
+      // No scheme in the input -> leave the radio untouched.
+      if (parsed.protocol !== null) {
+        document.querySelector('input[name="addProtocol"][value="' + parsed.protocol + '"]').checked = true;
       }
     });
 
