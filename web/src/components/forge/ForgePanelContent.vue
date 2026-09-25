@@ -530,8 +530,17 @@ function setActiveTab(key: ForgeTabKey) {
     // DOM updates. Critically, it must NOT reach items.setType, which only
     // accepts an item type.
   } else {
-    // The issue/PR list shares one composable; changing the type reloads it.
+    // The issue/PR list shares one composable. setType() only reloads when the
+    // type actually changes, and the panel mounts on the Activity tab with the
+    // list already defaulting to 'issue' — so the first switch to Issues would
+    // change nothing and fetch nothing, leaving the list's untouched state on
+    // screen with no request at all. Every other tab refreshes on entry
+    // (Pipelines calls load() directly; Activity remounts and its own watcher
+    // fetches), so this tab must too: load explicitly when setType had nothing
+    // to change.
+    const typeChanged = items.type.value !== key
     items.setType(key)
+    if (!typeChanged) void items.load()
   }
 }
 
