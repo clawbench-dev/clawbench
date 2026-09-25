@@ -107,9 +107,9 @@ describe('SessionList context-menu row tint', () => {
 
   it('keeps the rule outside the hover media query so touch gets the cue', async () => {
     const src = await sessionListSource()
-    // Touch has no hover to lose, and long-press opens this same menu, so for
-    // touch this rule is the ONLY indication of which row is targeted. Inside
-    // `@media (hover: hover)` it would never apply there.
+    // Touch has no hover to lose, and the ⋮ button opens this same menu there,
+    // so for touch this rule is the ONLY indication of which row is targeted.
+    // Inside `@media (hover: hover)` it would never apply there.
     const blocks = src.match(/@media \(hover: hover\)\s*\{[\s\S]*?\n\}/g) || []
     for (const b of blocks) {
       expect(b).not.toContain('.session-row.menu-open')
@@ -170,5 +170,21 @@ describe('SessionList row action button', () => {
     // `.session-archive-btn` rule would mean dead CSS outlived the markup.
     expect(src).toMatch(/\.session-more-btn\s*\{/)
     expect(src).not.toMatch(/\.session-archive-btn/)
+  })
+
+  it('insets the trailing button slightly from the panel edge', async () => {
+    const src = await sessionListSource()
+    // Flush against the right edge the tap target merged into the panel border
+    // on mobile; the fix is a small inset, not a wide gutter — the icon stays on
+    // the edge it has always sat on. jsdom has no layout engine, so assert the
+    // declaration survives rather than the measured pixels.
+    // Anchored at line start so the sortable-chosen descendant rule
+    // (`.session-row.sortable-chosen .session-more-btn`) cannot match first.
+    const rule = src.match(/(?:^|\n)\.session-more-btn\s*\{[^}]*\}/)?.[0]
+    expect(rule, '.session-more-btn should exist').toBeTruthy()
+    expect(rule).toMatch(/margin-right:\s*var\(--space-3\)/)
+    // Guard the "small" half: a wide gutter (space-6/7) is the opposite mistake,
+    // so pin the scale step rather than just "has a margin-right".
+    expect(rule).not.toMatch(/margin-right:\s*var\(--space-[678]\)/)
   })
 })

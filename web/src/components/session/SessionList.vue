@@ -43,6 +43,11 @@
              The button still opens the menu on a plain click; Sortable only
              takes over once the pointer actually moves.
 
+             Menu entry points: the ⋮ button (works on every device) and
+             right-click anywhere on the row (desktop). Sortable ignores
+             non-primary buttons, so the right-click never starts a drag. There
+             is deliberately no long-press gesture — see showMenuFromButton.
+
              Pinned rows are protected on the frontend, not just by the backend:
              `filter` keeps them from being dragged (with preventOnFilter off, so
              their ⋮ menu still opens), and the end-of-drag re-partition in
@@ -65,6 +70,7 @@
               :data-session-id="row.session.id"
               class="session-row"
               :class="rowClasses(row)"
+              @contextmenu.prevent="showContextMenu($event, row.session)"
             >
               <span v-if="row.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
               <div
@@ -160,9 +166,9 @@
     </div>
 
     <!-- Session menu (pin/rename/tags/archive/remove), opened from the row's ⋮
-         button. Reuses the shared file-manager context menu (.context-menu /
-         .context-menu-item in css/components.css) so positioning, styling and
-         viewport clamping stay in one place. -->
+         button or a right-click on the row. Reuses the shared file-manager
+         context menu (.context-menu / .context-menu-item in css/components.css)
+         so positioning, styling and viewport clamping stay in one place. -->
     <Teleport to="body">
       <div v-if="contextMenu.visible" class="context-menu visible" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }" @click.stop @contextmenu.prevent.stop>
         <div class="context-menu-item" @click.stop="togglePin(contextMenu.sessionId, contextMenu.pinned)">
@@ -198,8 +204,10 @@
           {{ t('common.remove') }}
         </div>
       </div>
-      <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu. -->
-      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" />
+      <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu.
+           Re-dispatching contextmenu through it keeps right-click-on-another-row
+           working while the menu is open (mirrors FileManagerContent). -->
+      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" @contextmenu.prevent="handleOverlayContextMenu" />
     </Teleport>
 
     <SessionTagDialog
@@ -512,8 +520,7 @@ function openContextMenu(x, y, sessionId, pinned) {
 
 /**
  * Open the session menu from the row's ⋮ button, anchored under its bottom-right
- * corner. This is the only menu entry point — the long-press and right-click
- * gestures were removed so the menu behaves the same on every device.
+ * corner. One of two entry points — see showContextMenu for the other.
  */
 function showMenuFromButton(event, session) {
   const btn = event.currentTarget
@@ -522,6 +529,41 @@ function showMenuFromButton(event, session) {
   const x = rect ? rect.right : (event.clientX ?? 0)
   const y = rect ? rect.bottom : (event.clientY ?? 0)
   openContextMenu(x, y, session.id, session.pinned)
+}
+
+/**
+ * Open the session menu at the pointer, from a right-click on the row body.
+ *
+ * Desktop-only by nature: touch has no right-click, so the ⋮ button remains the
+ * entry point there. There is deliberately NO long-press fallback — a long press
+ * on a row would fight the list's own touch scrolling and text selection, and
+ * the button is already reachable one-handed. Sortable ignores non-primary
+ * mouse buttons, so this never starts a drag.
+ */
+function showContextMenu(event, session) {
+  openContextMenu(event.clientX, event.clientY, session.id, session.pinned)
+}
+
+/**
+ * Right-click while the menu is open lands on the full-viewport overlay, not on
+ * a row. Hide the overlay for one hit-test so elementFromPoint reveals the row
+ * underneath, then re-open the menu for that row — otherwise a second
+ * right-click anywhere would just close the menu (mirrors FileManagerContent).
+ */
+function handleOverlayContextMenu(e) {
+  const overlay = e.currentTarget
+  const prev = overlay.style.pointerEvents
+  overlay.style.pointerEvents = 'none'
+  let row
+  try {
+    row = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-session-id]') || null
+  } finally {
+    overlay.style.pointerEvents = prev
+  }
+  if (!row) { closeContextMenu(); return }
+  const session = findSession(row.dataset.sessionId)
+  if (!session) { closeContextMenu(); return }
+  openContextMenu(e.clientX, e.clientY, session.id, session.pinned)
 }
 
 // ── Manual drag reordering (issue #492) ──
@@ -988,7 +1030,7 @@ onUnmounted(() => {
 }
 
 /* Selected-row tint. Declared on the row (not on .session-item) so it fills the
-   34px archive-button cell as well — when it lived on .session-item the archive
+   trailing button cell as well — when it lived on .session-item the archive
    cell kept showing the row's own background (green for a running session) and
    the selection looked cut short. Painted as a background-image rather than a
    background-color so a running row's green fill still shows through beneath
@@ -1111,7 +1153,8 @@ onUnmounted(() => {
    stronger value would also blur the distinction from .active, which means
    "this is the open conversation", not "this is the row under the menu".
    Deliberately OUTSIDE the (hover: hover) block: touch has no hover to lose,
-   and long-press opens this same menu, so for touch this is the only cue. */
+   and the ⋮ button opens this same menu there, so for touch this is the only
+   cue. */
 .session-row.menu-open {
   background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
@@ -1245,10 +1288,15 @@ onUnmounted(() => {
 
 /* Trailing action cell: opens the session menu (pin/rename/tags/archive/
    remove). It replaced the standalone archive button, which was the only
-   confirmed entry point for archiving. */
+   confirmed entry point for archiving.
+   Kept visually flush with the row's right edge (as it was originally) with
+   just a small 6px inset — enough that the tap target no longer merges into the
+   panel border on mobile, without the icon drifting away from the edge it has
+   always sat on. */
 .session-more-btn {
   flex-shrink: 0;
   width: 34px;
+  margin-right: var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-muted, #999);
@@ -1343,7 +1391,7 @@ onUnmounted(() => {
 }
 
 /* The unread badge lives at the top-right of `.session-item`, which ends where
-   the 34px archive cell begins — so it already sits clear of the wedge in the
+   the trailing button cell begins — so it already sits clear of the wedge in the
    row's own top-right corner and needs no offset. */
 
 /* The context menu itself uses the shared .context-menu / .context-menu-item

@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
 import { RunningSweepDirective } from '@/directives/runningSweep'
+import { LongPressDirective } from '@/directives/longPress'
 
 // UI zoom factor driving toFixedCSS()/getZoomedViewport() in the component's
 // clamp math. Defaults to 1 (no zoom); individual tests raise it to prove the
@@ -197,16 +198,20 @@ describe('SessionList', () => {
   async function mountList(props = {}) {
     const wrapper = mount(SessionList, {
       props: { currentSessionId: 's1', runningSessionIds: new Set(), ...props },
-      global: { directives: { 'running-sweep': RunningSweepDirective } },
+      // long-press is registered (it is global in the real app) even though the
+      // list must not use it: without it here a re-added v-long-press would be
+      // an unresolved directive, attach nothing, and the absence test would pass
+      // vacuously.
+      global: { directives: { 'running-sweep': RunningSweepDirective, 'long-press': LongPressDirective } },
     })
     await flushPromises()
     return wrapper
   }
 
   /**
-   * Open the session menu the way the ⋮ button does. The button is the only
-   * entry point now (long-press / right-click were removed), so tests click the
-   * real element rather than reaching into an internal helper.
+   * Open the session menu the way the ⋮ button does — one of the two entry
+   * points (the other is a right-click on the row, see the right-click tests).
+   * Tests click the real element rather than reaching into an internal helper.
    */
   async function openRowMenu(wrapper: any, sessionId: string) {
     const btn = wrapper.find(`[data-session-id="${sessionId}"] .session-more-btn`)
@@ -1298,6 +1303,128 @@ describe('SessionList', () => {
       // pin / rename / set-tags / share / archive / force-delete
       expect(menu!.querySelectorAll('.context-menu-item').length).toBe(6)
       expect(document.body.querySelector('.session-context-menu')).toBeNull()
+      wrapper.unmount()
+    })
+
+    // ── Right-click entry point ──
+    //
+    // The ⋮ button works on every device, but on desktop a right-click anywhere
+    // on the row must open the same menu at the pointer. Both paths call
+    // openContextMenu; these tests drive the real DOM events so a broken binding
+    // (e.g. a modifier swallowing it) is caught, not just the helper.
+
+    it('opens the menu at the pointer on a right-click on the row', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const row = wrapper.find('[data-session-id="s1"]')
+      await row.trigger('contextmenu', { clientX: 120, clientY: 80 })
+      await nextTick()
+
+      expect(wrapper.vm.contextMenu.visible).toBe(true)
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s1')
+      // Anchored at the pointer, not under the ⋮ button (jsdom reports a
+      // zero-size rect for the button, so the button path would clamp to the
+      // viewport origin — this proves the coordinates came from the event).
+      expect(wrapper.vm.contextMenu.x).toBe(120)
+      expect(wrapper.vm.contextMenu.y).toBe(80)
+      wrapper.unmount()
+    })
+
+    it('carries the right-clicked row pinned state into the menu', async () => {
+      const pinned = { ...sessionsFixture().s1, pinned: true }
+      const plain = sessionsFixture().s2
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinned, plain], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // Right-click the PINNED row: the menu must offer "unpin".
+      await wrapper.find('[data-session-id="s1"]').trigger('contextmenu', { clientX: 10, clientY: 10 })
+      await nextTick()
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s1')
+      expect(wrapper.vm.contextMenu.pinned).toBe(true)
+
+      // Right-click the plain row: the menu must offer "pin" for s2, not keep
+      // the pinned row's state.
+      await wrapper.find('[data-session-id="s2"]').trigger('contextmenu', { clientX: 20, clientY: 20 })
+      await nextTick()
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
+      expect(wrapper.vm.contextMenu.pinned).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('re-opens on the row under the cursor when right-clicking the overlay', async () => {
+      const s1 = sessionsFixture().s1
+      const s2 = sessionsFixture().s2
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1, s2], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // Open on s1 first, then right-click through the overlay onto s2's row.
+      await wrapper.find('[data-session-id="s1"]').trigger('contextmenu', { clientX: 10, clientY: 10 })
+      await nextTick()
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s1')
+
+      const s2Row = wrapper.find('[data-session-id="s2"]').element
+      const elementFromPoint = vi.fn(() => s2Row)
+      const orig = document.elementFromPoint
+      document.elementFromPoint = elementFromPoint as typeof document.elementFromPoint
+      try {
+        const overlays = document.body.querySelectorAll('.ctx-overlay')
+        const overlay = overlays[overlays.length - 1] as HTMLElement
+        overlay.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 33, clientY: 44 }))
+        await nextTick()
+        expect(elementFromPoint).toHaveBeenCalledWith(33, 44)
+        expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
+        expect(wrapper.vm.contextMenu.visible).toBe(true)
+      } finally {
+        document.elementFromPoint = orig
+        wrapper.unmount()
+      }
+    })
+
+    it('closes the menu when a right-click on the overlay misses every row', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await wrapper.find('[data-session-id="s1"]').trigger('contextmenu', { clientX: 10, clientY: 10 })
+      await nextTick()
+      expect(wrapper.vm.contextMenu.visible).toBe(true)
+
+      const orig = document.elementFromPoint
+      document.elementFromPoint = vi.fn(() => document.body) as typeof document.elementFromPoint
+      try {
+        const overlays = document.body.querySelectorAll('.ctx-overlay')
+        const overlay = overlays[overlays.length - 1] as HTMLElement
+        overlay.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }))
+        await nextTick()
+        expect(wrapper.vm.contextMenu.visible).toBe(false)
+      } finally {
+        document.elementFromPoint = orig
+        wrapper.unmount()
+      }
+    })
+
+    it('has no long-press gesture on the rows (removed on purpose)', async () => {
+      // Right-click is back, but long-press is deliberately NOT: it would fight
+      // the list's own touch scrolling and text selection, and the ⋮ button
+      // already covers touch. Pin the absence so a stray v-long-press re-add is
+      // caught — the directive is still globally registered, so nothing else
+      // would fail.
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const row = wrapper.find('[data-session-id="s1"]').element as HTMLElement
+      expect((row as any)._longPress_binding).toBeUndefined()
+      expect((row as any)._longPress_cleanup).toBeUndefined()
       wrapper.unmount()
     })
 
