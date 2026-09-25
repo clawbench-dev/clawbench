@@ -15,7 +15,8 @@
           :class="{ active: section === s.id }"
           @click="section = s.id"
         >
-          {{ t(s.labelKey) }}
+          <component :is="s.icon" :size="13" />
+          <span class="stats-tab-label">{{ t(s.labelKey) }}</span>
         </button>
       </div>
       <div class="stats-tab-actions">
@@ -41,6 +42,7 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { defineAsyncComponent } from 'vue'
+import { Coins, Files, GitCommitHorizontal } from 'lucide-vue-next'
 import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useUsageStats } from '@/composables/useUsageStats'
@@ -69,10 +71,14 @@ const GitCodeStatsPanel = defineAsyncComponent({
 })
 
 type StatsSection = 'usage' | 'cloc' | 'git'
-const sections: { id: StatsSection; labelKey: string }[] = [
-  { id: 'usage', labelKey: 'gitStats.tabUsage' },
-  { id: 'cloc', labelKey: 'gitStats.tabCloc' },
-  { id: 'git', labelKey: 'gitStats.tabDelta' },
+// Each tab carries its own glyph, following the forge tab bar. The icons name
+// what the tab measures rather than reusing the panel-internal card icons:
+// Coins = token spend, Files = code inventory on disk, GitCommitHorizontal =
+// code arriving via commits.
+const sections: { id: StatsSection; labelKey: string; icon: typeof Coins }[] = [
+  { id: 'usage', labelKey: 'gitStats.tabUsage', icon: Coins },
+  { id: 'cloc', labelKey: 'gitStats.tabCloc', icon: Files },
+  { id: 'git', labelKey: 'gitStats.tabDelta', icon: GitCommitHorizontal },
 ]
 
 const section = ref<StatsSection>('usage')
@@ -127,6 +133,8 @@ function onRefresh() {
 .stats-tab {
   display: flex;
   align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding:0 var(--space-7);
   border: none;
   background: transparent;
@@ -137,6 +145,18 @@ function onRefresh() {
   user-select: none;
   -webkit-tap-highlight-color: transparent;
   position: relative;
+}
+/* The bar is a fixed-height strip, so a label that does not fit must be
+   ellipsised rather than wrapped — wrapping would clip it mid-line. The icon
+   keeps its size and only the text shrinks. */
+.stats-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stats-tab > :deep(svg) {
+  flex-shrink: 0;
 }
 @media (hover: hover) {
   .stats-tab:hover {

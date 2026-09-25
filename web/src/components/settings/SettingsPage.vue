@@ -1,14 +1,14 @@
 <template>
   <div class="settings-page">
     <header class="settings-page__header">
-      <template v-if="navStack.length > 0">
-        <button class="settings-page__back" @click="handleBack">
-          <ChevronLeft :size="22" />
-        </button>
-        <SettingsBreadcrumb :crumbs="breadcrumbs" @navigate="handleCrumbNavigate" />
-      </template>
+      <!-- One header shape for both levels, matching the task panel's header:
+           the root level shows the section glyph + title, a drilled-down level
+           swaps in the breadcrumb. There is no back button — the root crumb
+           ("设置") is the way back, exactly as the task breadcrumb's root is,
+           and it runs through the same unsaved-changes guard. -->
+      <SettingsBreadcrumb v-if="navStack.length > 0" :crumbs="breadcrumbs" @navigate="handleCrumbNavigate" />
       <template v-else>
-        <Settings :size="20" class="settings-page__header-icon" />
+        <Settings :size="14" class="settings-page__header-icon" />
         <span class="settings-page__title">{{ t('nav.settings') }}</span>
         <span v-if="serverVersion" class="settings-page__version">{{ serverVersion }}</span>
       </template>
@@ -40,7 +40,7 @@
 
 <script setup lang="ts">
 import { computed, watch, onMounted } from 'vue'
-import { RefreshCw, ChevronLeft, Settings } from 'lucide-vue-next'
+import { RefreshCw, Settings } from 'lucide-vue-next'
 import SettingsIndex from './SettingsIndex.vue'
 import SettingsCategory from './SettingsCategory.vue'
 import SettingsRestartDialog from './SettingsRestartDialog.vue'
@@ -200,6 +200,8 @@ watch(() => props.active, (val) => {
   overflow: hidden;
 }
 
+/* Same bar geometry as the task panel header (.list-header): --header-height,
+   the same padding and gap, bg-primary with a bottom border. */
 .settings-page__header {
   display: flex;
   align-items: center;
@@ -211,33 +213,11 @@ watch(() => props.active, (val) => {
   gap: var(--space-3);
 }
 
-.settings-page__back {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  flex-shrink: 0;
-  -webkit-tap-highlight-color: transparent;
-}
-
-@media (hover: hover) {
-  .settings-page__back:hover {
-    background: var(--bg-tertiary);
-  }
-}
-
-.settings-page__back:active {
-  background: var(--bg-tertiary);
-}
-
+/* Matches the task header's title (.drilldown-title / task breadcrumb): the
+   panel title is body-sized, not a display heading — the bar is only 36px tall
+   and a 16px title read as a second, competing page title. */
 .settings-page__title {
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   white-space: nowrap;

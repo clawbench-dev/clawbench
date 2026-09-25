@@ -200,25 +200,29 @@ describe('SettingsPage — header', () => {
     expect(wrapper.text()).toContain('1.2.3')
   })
 
-  it('shows back button when navStack non-empty', () => {
+  it('shows the breadcrumb (and no back button) when navStack non-empty', () => {
     const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
-    expect(wrapper.find('.settings-page__back').exists()).toBe(true)
+    expect(wrapper.find('.settings-breadcrumb').exists()).toBe(true)
+    // The header has no back button any more — the root crumb is the way back,
+    // matching the task panel's header.
+    expect(wrapper.find('.settings-page__back').exists()).toBe(false)
   })
 
-  it('back button triggers handleBack (no guard violations)', async () => {
+  it('clicking the root crumb goes back (no guard violations)', async () => {
     const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
-    await wrapper.find('.settings-page__back').trigger('click')
+    await wrapper.findAll('.crumb')[0].trigger('click')
+    await flushPromises()
     expect(checkAllGuards).toHaveBeenCalled()
-    expect(popNav).toHaveBeenCalled()
+    expect(truncateNav).toHaveBeenCalledWith(0)
   })
 
-  it('back button cancels if confirm returns false', async () => {
+  it('root crumb cancels if confirm returns false', async () => {
     checkAllGuards.mockReturnValueOnce(false)
     mockDialogConfirm.mockResolvedValueOnce(false)
     const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
-    await wrapper.find('.settings-page__back').trigger('click')
+    await wrapper.findAll('.crumb')[0].trigger('click')
     await flushPromises()
-    expect(popNav).not.toHaveBeenCalled()
+    expect(truncateNav).not.toHaveBeenCalled()
   })
 })
 
