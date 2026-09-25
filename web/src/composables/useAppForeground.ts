@@ -4,35 +4,12 @@ import { ref } from 'vue'
 const appInForeground = ref(true)
 let initialized = false
 
-// Foreground-transition listeners. Consumers (e.g. the completion paths) use
-// these to react to a change of the foreground STATE. Kept separate from the
-// state ref because the listener must fire per actual transition, not just on
-// value reads.
-const foregroundListeners: Array<(fg: boolean) => void> = []
-
 // Resume listeners. These fire on every entry into the foreground — including
 // the case where the foreground STATE never changed because the background
-// signal was lost (see notifyAppResume below). Kept separate from
-// foregroundListeners for exactly that reason: a consumer that must re-sync on
-// return (e.g. reload the current session) cannot rely on a state transition.
+// signal was lost (see notifyAppResume below). A consumer that must re-sync on
+// return (e.g. reload the current session) cannot rely on a state transition,
+// which is why this is a separate signal from the `appInForeground` ref.
 const resumeListeners: Array<() => void> = []
-
-/**
- * Subscribe to foreground transitions. The callback fires with the new
- * foreground state on every actual change (entering or leaving the
- * foreground). Returns an unsubscribe function.
- *
- * This is a STATE-change signal: a repeated "foreground" notification with no
- * intervening "background" does NOT fire it. For "the user came back, re-sync
- * now" use onAppResume instead.
- */
-export function onAppForeground(cb: (fg: boolean) => void): () => void {
-  foregroundListeners.push(cb)
-  return () => {
-    const idx = foregroundListeners.indexOf(cb)
-    if (idx !== -1) foregroundListeners.splice(idx, 1)
-  }
-}
 
 /**
  * Subscribe to app-resume events. The callback fires every time the app enters
@@ -43,10 +20,14 @@ export function onAppForeground(cb: (fg: boolean) => void): () => void {
  * the foreground state may never have flipped to background: Android WebView
  * freezes the page while paused, so the JS call that reports the background
  * transition can be dropped entirely. When that happens the state is still
- * `true` on return, a state-transition signal never fires, and the session
+ * `true` on return, a state-transition signal would never fire, and the session
  * would stay stale until the user manually switched away and back. The native
  * onResume hook (window.__clawbenchAppResume) fires unconditionally, so the
  * resume signal does too.
+ *
+ * Consumers read the current state from `appInForeground` when they need it;
+ * there is deliberately no state-transition listener anymore (the one
+ * consumer, the chat session re-sync, needs the unconditional signal).
  */
 export function onAppResume(cb: () => void): () => void {
   resumeListeners.push(cb)
@@ -67,18 +48,14 @@ let lastResumeAt = 0
 function setForeground(fg: boolean) {
   if (appInForeground.value === fg) return
   appInForeground.value = fg
-  for (const cb of foregroundListeners) {
-    try {
-      cb(fg)
-    } catch {
-      // A listener error must never break the foreground signal chain.
-    }
-  }
 }
 
 function fireResume() {
   const now = Date.now()
-  if (now - lastResumeAt < RESUME_DEDUPE_MS) return
+  // Math.max guards against a backward wall-clock jump (NTP): a negative delta
+  // would otherwise read as "within the dedupe window" and suppress resumes
+  // until the clock caught up.
+  if (Math.max(0, now - lastResumeAt) < RESUME_DEDUPE_MS) return
   lastResumeAt = now
   for (const cb of resumeListeners) {
     try {
@@ -102,15 +79,17 @@ function notifyAppResume() {
 /**
  * Reliable app foreground/background signal for the WebView frontend.
  *
- * Background signal sources (first match wins):
+ * Background signal sources (both are installed; they can fire for the same
+ * physical resume, which is what RESUME_DEDUPE_MS collapses):
  * 1. Native host push: Android MainActivity.onPause calls the injected global
  *    `window.__setAppForeground(false)`, and onResume calls
  *    `window.__clawbenchAppResume()`. This is authoritative —
  *    document.visibilityState is unreliable in Android WebView (onPause() does
  *    not reliably flip it to 'hidden').
- * 2. Fallback: the Page Visibility API (works on desktop browsers/Electron).
+ * 2. The Page Visibility API: the only source on desktop browsers and in the
+ *    Electron shell, which have no native bridge.
  *
- * The completion paths in the chat UI use the foreground STATE to decide
+ * The completion paths in the chat UI read the foreground STATE to decide
  * whether marking a just-completed session read is a genuine user action (app
  * is visible) or a background auto-refresh that must NOT clear the unread badge
  * — the floating status window shows unread sessions only while the app is in
@@ -135,10 +114,8 @@ export function useAppForeground() {
     }
     w.__setAppForeground = setForeground
     w.__clawbenchAppResume = notifyAppResume
-    // Fallback for non-native hosts: keep in sync with the Page Visibility API.
     // `visible` is treated as a resume (not merely a state change) so desktop
-    // browsers and the Electron shell — which have no native bridge — still
-    // re-sync on tab/window return.
+    // browsers and the Electron shell still re-sync on tab/window return.
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') notifyAppResume()
       else setForeground(false)

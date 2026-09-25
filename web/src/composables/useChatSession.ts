@@ -521,6 +521,26 @@ export function useChatSession(options: UseChatSessionOptions) {
   // the cleanup path requires an explicit `false`.
   let lastAuthoritativeRunning: boolean | null = null
 
+  // Timestamp of the last completed authoritative (force=true) reload.
+  //
+  // On Android, one physical return to the foreground produces TWO resync
+  // requests that do not otherwise know about each other: the resume hook
+  // (force=true, authoritative) and the WS reconnect (force=false, lightweight)
+  // that fires once the backgrounded socket comes back. Measured against the
+  // real client log, the two land a median 0.11s apart (p90 2.1s) — and because
+  // the force path runs with `immediate=true` it bypasses the loadHistory
+  // in-flight queue, so the two fetches run concurrently and the loadHistorySeq
+  // guard discards one of them non-deterministically.
+  //
+  // The dedupe is deliberately ASYMMETRIC: a lightweight reload is skipped when
+  // an authoritative one just ran (the authoritative pass is a strict superset —
+  // it forces the reload instead of skipping on an unchanged snapshot, and it
+  // also resubscribes the stream), but an authoritative reload is NEVER skipped
+  // because a lightweight one just ran. Only the first direction is safe: the
+  // reverse would let a cheap reconnect resync swallow an explicit user refresh.
+  const AUTHORITATIVE_RELOAD_DEDUPE_MS = 5000
+  let lastAuthoritativeReloadAt = 0
+
   // Pending reload: when loadHistory is called while a load is already in-flight,
   // we record the requested parameters and execute one more load after the current
   // one completes. This prevents redundant concurrent fetches while ensuring the
@@ -883,13 +903,14 @@ export function useChatSession(options: UseChatSessionOptions) {
   // cold-restarts the app. A forced authoritative loadHistory always converges
   // the streaming placeholder (rebuildFromDb) to what the server has.
   //
-  // This listens on onAppResume, NOT onAppForeground. The latter only fires on
-  // a STATE transition, which is exactly what is missing when the WebView froze
-  // while paused: the background notification never reached JS, so the state is
-  // still `true` on return and no transition ever fires. That made the whole
-  // re-sync silently skip on Android — the reported "resume doesn't really
-  // refresh, only switching away and back works" symptom. onAppResume fires
-  // unconditionally from the native onResume hook.
+  // This listens on onAppResume, NOT on a foreground STATE transition (the
+  // composable deliberately has no transition listener). A transition signal is
+  // exactly what is missing when the WebView froze while paused: the background
+  // notification never reached JS, so the state is still `true` on return and no
+  // transition ever fires. That made the whole re-sync silently skip on Android
+  // — the reported "resume doesn't really refresh, only switching away and back
+  // works" symptom. onAppResume fires unconditionally from the native onResume
+  // hook.
   const removeForegroundReadListener = onAppResume(() => {
     const sid = currentSessionId.value
     if (!sid) return
@@ -1322,6 +1343,16 @@ export function useChatSession(options: UseChatSessionOptions) {
     if (!currentSessionId.value) return
     const { force } = opts
 
+    // A lightweight (WS reconnect) resync is redundant when an authoritative
+    // reload just ran for this same return to the foreground — see
+    // AUTHORITATIVE_RELOAD_DEDUPE_MS. Bail before the unread-marking and the
+    // session-list fetch so the duplicate costs nothing at all. Only the
+    // force=false direction is suppressed; an explicit refresh always runs.
+    if (!force && Math.max(0, Date.now() - lastAuthoritativeReloadAt) < AUTHORITATIVE_RELOAD_DEDUPE_MS) {
+      appLog.i(TAG, `WS reconnect: skipping resync — an authoritative reload ran ${Date.now() - lastAuthoritativeReloadAt}ms ago`)
+      return
+    }
+
     // WS reconnect only: if the app is in the foreground, the user has been
     // looking at this session the whole time — a WS blip is not a reason to
     // leave its unread badge lit.
@@ -1339,7 +1370,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     // genuinely backgrounded when the reply landed" (badge must survive — the
     // Android floating window shows it) from "the socket merely hiccuped while
     // the user was watching". The force path (manual refresh / foreground
-    // return) is excluded: onAppForeground already marks read there, and a
+    // return) is excluded: onAppResume already marks read there, and a
     // manual refresh is not itself evidence about what the user saw.
     //
     // Await before the loadSessionsOnce below so the session list reflects the
@@ -1477,9 +1508,15 @@ export function useChatSession(options: UseChatSessionOptions) {
    * backend". Both public handlers below just pick the authority level:
    * force=false for silent WS-reconnect resyncs, force=true for user-initiated
    * authoritative refreshes.
+   *
+   * The authoritative timestamp is recorded here rather than inside runReload's
+   * branches: every force=true exit (running / not-confirmed / finished / idle)
+   * has just done the same authoritative work, and stamping it in one place
+   * cannot drift from the branches.
    */
   async function syncCurrentSessionOnReconnect(force: boolean) {
     await runReload({ force })
+    if (force) lastAuthoritativeReloadAt = Date.now()
   }
 
   /**

@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { useAppForeground } from '../useAppForeground'
 
 describe('useAppForeground', () => {
   const originalSetAppForeground = (window as unknown as { __setAppForeground?: unknown }).__setAppForeground
@@ -98,52 +97,19 @@ describe('useAppForeground', () => {
     expect(appInForeground.value).toBe(true)
   })
 
-  it('notifies onAppForeground listeners only on actual transitions', async () => {
-    const { useAppForeground: useFG, onAppForeground: onFG } = await import('../useAppForeground')
-    const { appInForeground } = useFG()
-
-    const calls: boolean[] = []
-    const unsubscribe = onFG((fg) => calls.push(fg))
-
-    const bridge = (window as unknown as { __setAppForeground: (fg: boolean) => void }).__setAppForeground
-
-    // Background → listener fires with false.
-    bridge(false)
-    expect(calls).toEqual([false])
-    expect(appInForeground.value).toBe(false)
-
-    // Foreground → listener fires with true.
-    bridge(true)
-    expect(calls).toEqual([false, true])
-
-    // Same-state no-op (e.g. repeated onResume with no pause in between)
-    // must not fire again.
-    bridge(true)
-    expect(calls).toEqual([false, true])
-
-    // Unsubscribed listener stops receiving notifications.
-    unsubscribe()
-    bridge(false)
-    expect(calls).toEqual([false, true])
-    expect(appInForeground.value).toBe(false)
-  })
-
   it('does NOT fire onAppResume when the app goes to the background', async () => {
     // Backgrounding must never run the resume work (re-sync / mark-read) — the
     // floating status window needs the unread badge to survive while the app is
-    // away. Only the state signal fires.
-    const { useAppForeground: useFG, onAppResume, onAppForeground } = await import('../useAppForeground')
+    // away. Only the state flips.
+    const { useAppForeground: useFG, onAppResume } = await import('../useAppForeground')
     const { appInForeground } = useFG()
 
     let resumes = 0
-    const states: boolean[] = []
     onAppResume(() => { resumes++ })
-    onAppForeground((fg) => states.push(fg))
 
     const bridge = (window as unknown as { __setAppForeground: (fg: boolean) => void }).__setAppForeground
     bridge(false)
 
-    expect(states).toEqual([false])
     expect(resumes).toBe(0)
     expect(appInForeground.value).toBe(false)
   })
@@ -172,6 +138,32 @@ describe('useAppForeground', () => {
     nowSpy.mockReturnValue(Date.now() + 5000)
     resumeBridge()
     expect(resumes).toBe(2)
+  })
+
+  it('fires onAppResume from a visibilitychange alone (the desktop/Electron path)', async () => {
+    // Desktop browsers and the Electron shell have no native bridge, so the
+    // Page Visibility API is their ONLY resume source. This must be pinned on
+    // its own: a test that fires the native bridge first and merely asserts the
+    // second signal was collapsed cannot tell "visibilitychange fires a resume"
+    // from "visibilitychange does nothing at all" — the native call alone
+    // already satisfies the count.
+    let visibilityHandler: (() => void) | null = null
+    document.addEventListener = vi.fn((type: string, handler: EventListenerOrEventListenerObject) => {
+      if (type === 'visibilitychange') visibilityHandler = handler as () => void
+    }) as typeof document.addEventListener
+
+    const { useAppForeground: useFG, onAppResume } = await import('../useAppForeground')
+    const { appInForeground } = useFG()
+
+    let resumes = 0
+    onAppResume(() => { resumes++ })
+
+    // No native bridge is invoked anywhere in this test.
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    expect(appInForeground.value).toBe(true)
+    visibilityHandler?.()
+
+    expect(resumes).toBe(1)
   })
 
   it('collapses a native resume immediately followed by a visibilitychange resume', async () => {

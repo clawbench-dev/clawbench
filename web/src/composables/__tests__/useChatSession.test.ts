@@ -1610,6 +1610,94 @@ describe('foreground return marks current session read', () => {
       expect(chatFetches.length).toBeGreaterThanOrEqual(1)
     })
   })
+
+  // ── Android double-resync dedupe ──
+  //
+  // One physical return to the foreground produces both a resume (force=true)
+  // and, once the backgrounded socket reconnects, a WS-reconnect (force=false).
+  // Measured on the real client log the two land a median 0.11s apart. The
+  // lightweight one is a strict subset of the authoritative one, so it is
+  // skipped; the authoritative one is NEVER skipped (an explicit user refresh
+  // must always run).
+
+  function createDedupeTestSession() {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [], total: 0, running: false,
+      }),
+    })
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'current-s1'
+    options.loading.value = false
+    return { session, options }
+  }
+
+  const chatFetchCount = () =>
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1')).length
+
+  it('skips the WS-reconnect resync when an authoritative reload just ran', async () => {
+    const { session } = createDedupeTestSession()
+
+    await session.handleManualRefresh()
+    const afterRefresh = chatFetchCount()
+    expect(afterRefresh).toBeGreaterThan(0)
+
+    // The reconnect resync arrives moments later for the SAME return.
+    await session.handleWsReconnect()
+
+    // No additional history fetch: the authoritative pass already covered it.
+    expect(chatFetchCount()).toBe(afterRefresh)
+  })
+
+  it('does NOT skip an authoritative reload even when one just ran', async () => {
+    // The dedupe must never swallow an authoritative reload. Two manual
+    // refreshes in a row (or a resume right after a refresh) are two explicit
+    // user actions; the second must always run. This is what makes the guard
+    // asymmetric — dropping the `!force` condition must fail this test.
+    const { session } = createDedupeTestSession()
+
+    await session.handleManualRefresh()
+    const afterFirst = chatFetchCount()
+
+    await session.handleManualRefresh()
+
+    expect(chatFetchCount()).toBeGreaterThan(afterFirst)
+  })
+
+  it('does NOT let a WS-reconnect resync arm the dedupe window for the next one', async () => {
+    // Only an authoritative reload may arm the window. If a lightweight resync
+    // armed it, a genuine later reconnect would be swallowed by an earlier,
+    // cheaper one — the resync would stop working for the rest of the window.
+    const { session } = createDedupeTestSession()
+
+    await session.handleWsReconnect()
+    const afterFirst = chatFetchCount()
+
+    await session.handleWsReconnect()
+
+    expect(chatFetchCount()).toBeGreaterThan(afterFirst)
+  })
+
+  it('runs the WS-reconnect resync again once the dedupe window has passed', async () => {
+    // A later reconnect (e.g. the user backgrounded and returned again) is a
+    // genuinely new resync and must not be swallowed forever.
+    const { session } = createDedupeTestSession()
+
+    await session.handleManualRefresh()
+    const afterRefresh = chatFetchCount()
+
+    const realNow = Date.now()
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(realNow + 60_000)
+    try {
+      await session.handleWsReconnect()
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(chatFetchCount()).toBeGreaterThan(afterRefresh)
+  })
 })
 
 // ── loadSessionsOnce tests ──
@@ -4611,8 +4699,8 @@ describe('handleWsReconnect', () => {
     // Regression: the WS reconnect path (skipIfUnchanged=true) must skip the
     // message re-parse / re-dispatch when the snapshot is unchanged — the
     // messages array must not be rebuilt or rewritten. This is what makes the
-    // onAppForeground → handleWsReconnect belt-and-suspenders refresh harmless
-    // on every return to the foreground when nothing changed in the background.
+    // lightweight reconnect refresh harmless on every return to the foreground
+    // when nothing changed in the background.
     // Note: onRenderUpdate(true) is intentionally STILL called — syncSessionOnReconnect
     // forces a full re-render after any reconnect-style sync (matching the WS
     // reconnect behavior), so the test asserts the data layer stays quiet, not
@@ -4898,8 +4986,8 @@ describe('handleWsReconnect', () => {
 
   it('does NOT mark the session read on manual refresh (force path)', async () => {
     // The force path is the manual refresh button / foreground return. A manual
-    // refresh is not evidence about what the user saw, and onAppForeground
-    // already marks read on a genuine foreground transition — so the reconnect
+    // refresh is not evidence about what the user saw, and onAppResume
+    // already marks read on a genuine resume — so the reconnect
     // mark-read must stay on the non-force path only.
     mockAppInForeground.value = true
     const loading = ref(false)
