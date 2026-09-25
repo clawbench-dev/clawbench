@@ -188,3 +188,97 @@ describe('SessionList row action button', () => {
     expect(rule).not.toMatch(/margin-right:\s*var\(--space-[678]\)/)
   })
 })
+
+/**
+ * Fork-group members are INDENTED ONLY — no rail, no elbow connector.
+ *
+ * An earlier version drew a `│` rail down the members with a `└` elbow on the
+ * last one. It was dropped: the group toggle already states the relationship and
+ * the indentation carries the nesting, so the lines added visual noise without
+ * new information.
+ *
+ * History worth keeping: the rail started as the member row's `border-left`,
+ * which always spans the full row height and so could not stop at the last row's
+ * centre to turn into the elbow — the elbow then drew its own vertical
+ * alongside, producing TWO parallel lines with a horizontal arm pointing away
+ * from the content (measured in Chrome at x=0 and x=8). That is why the
+ * connector approach was dropped rather than merely re-styled.
+ *
+ * jsdom has no layout engine, so this asserts the shape of the rules.
+ */
+describe('SessionList fork-group indent', () => {
+  it('indents members without drawing a rail', async () => {
+    const src = await sessionListSource()
+    const memberRule = src.match(/\.session-row\.is-fork-member\s*\{[^}]*\}/)?.[0]
+    expect(memberRule, '.session-row.is-fork-member should exist').toBeTruthy()
+    // Indentation is the whole treatment.
+    expect(memberRule).toMatch(/margin-left:/)
+    expect(memberRule).toMatch(/padding-left:/)
+    // No border of any kind: a border-left here is the old full-height rail.
+    expect(memberRule, 'members must not draw a border').not.toMatch(/border(-left)?\s*:/)
+  })
+
+  it('has no rail or elbow pseudo-element on members', async () => {
+    const src = await sessionListSource()
+    expect(src, 'no member ::before rail').not.toMatch(
+      /\.session-row\.is-fork-member(\.is-last-in-group)?::before/,
+    )
+  })
+
+  it('has no leftover is-last-in-group class or rule', async () => {
+    const src = await sessionListSource()
+    // The class existed only to give the last member an elbow. With the
+    // connector gone it is dead markup.
+    expect(src).not.toContain('is-last-in-group')
+    expect(src).not.toContain('isLastInGroup')
+  })
+})
+
+/**
+ * The fork group is its ANCHOR ROW — there is no separate header.
+ *
+ * The control is inlined on the anchor row (third line, under the metadata), so
+ * the group is one row in both states. An earlier version rendered a standalone
+ * `SessionGroupHeader` under the anchor and shared a tint between the two, which
+ * still read as "a session, then an unrelated section".
+ */
+describe('SessionList fork-group inline toggle', () => {
+  it('styles the toggle as a reset button, not a bare span', async () => {
+    const src = await sessionListSource()
+    const rule = src.match(/\.session-fork-toggle\s*\{[^}]*\}/)?.[0]
+    expect(rule, '.session-fork-toggle should exist').toBeTruthy()
+    // It must neutralise the browser's default button chrome so it sits in the
+    // row's text flow...
+    expect(rule).toMatch(/border:\s*none/)
+    expect(rule).toMatch(/background:\s*none/)
+    expect(rule).toMatch(/font:\s*inherit/)
+    // ...while staying accent-coloured, so it reads as an affordance rather than
+    // more metadata.
+    expect(rule).toMatch(/color:\s*var\(--accent-color/)
+  })
+
+  it('rotates the chevron when collapsed', async () => {
+    const src = await sessionListSource()
+    const rule = src.match(/\.session-fork-toggle\.collapsed\s+\.fork-toggle-chevron\s*\{[^}]*\}/)?.[0]
+    expect(rule, 'the collapsed chevron rule should exist').toBeTruthy()
+    expect(rule).toMatch(/transform:\s*rotate\(-90deg\)/)
+  })
+
+  it('has no standalone fork group header rule or markup', async () => {
+    const src = await sessionListSource()
+    // Guards the structural change: either would mean the separate header came
+    // back. (The cross-project pane's headers are the shared component's own
+    // scoped rules, not anything declared here.)
+    expect(src).not.toContain('session-fork-group-header')
+    expect(src).not.toContain('--fork-group-surface')
+    // The fork title is now a tooltip on the toggle, not a visible header label.
+    expect(src).toMatch(/class="session-fork-toggle"/)
+  })
+
+  it('anchors the toggle to the row tint so the group reads as one block', async () => {
+    const src = await sessionListSource()
+    const anchorRule = src.match(/\.session-row\.is-group-anchor\s*\{[^}]*\}/)?.[0]
+    expect(anchorRule, '.session-row.is-group-anchor should exist').toBeTruthy()
+    expect(anchorRule).toMatch(/background-color:\s*color-mix\(/)
+  })
+})

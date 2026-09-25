@@ -90,6 +90,30 @@
                     <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :size="12" /> {{ getAgentName(row.session.agentId) }}</span>
                     <span v-if="row.session.model" class="session-item-model">{{ row.session.model }}</span>
                   </div>
+                  <!-- Fork-group toggle, inlined on the anchor row itself.
+                       A separate header row made the group read as "a session,
+                       then an unrelated section"; putting the control inside the
+                       row means the anchor IS the group, so there is only one
+                       thing on screen in both states.
+
+                       It is a real <button> so it can be tabbed to, and
+                       @click.stop keeps it from also selecting the session
+                       underneath (the row's own click handler). It deliberately
+                       carries no `.session-item`, because keyboard navigation
+                       maps its index onto querySelectorAll('.session-item') —
+                       an extra match here would shift every row after it. -->
+                  <button
+                    v-if="row.isAnchor"
+                    class="session-fork-toggle"
+                    :class="{ collapsed: isForkCollapsed(row.session.id) }"
+                    :aria-expanded="!isForkCollapsed(row.session.id)"
+                    :title="t('session.forkGroupTitle')"
+                    @click.stop="toggleForkCollapsed(row.session.id)"
+                  >
+                    <ChevronDown :size="11" class="fork-toggle-chevron" />
+                    <GitFork :size="11" />
+                    <span>{{ t('session.forkCount', { n: row.childCount }) }}</span>
+                  </button>
                   <div v-if="row.session.tags && row.session.tags.length" class="session-item-tags">
                     <span
                       v-for="tag in row.session.tags"
@@ -104,22 +128,6 @@
                 <MoreVertical :size="15" />
               </button>
             </div>
-            <!-- Group header for a derived-session group, directly under its
-                 anchor row (matching the issue's mock). Reuses the shared
-                 collapsible header — the same one the cross-project pane uses —
-                 so the two stay visually identical. It is a sibling of the rows,
-                 not one of them: Sortable's `draggable` selector skips it, and
-                 it carries no `.session-item`, so neither the drag index
-                 arithmetic nor keyboard navigation can see it. -->
-            <SessionGroupHeader
-              v-if="row.isAnchor"
-              :title="t('session.forkGroupTitle')"
-              :count="row.childCount"
-              :collapsed="isForkCollapsed(row.session.id)"
-              @toggle="toggleForkCollapsed(row.session.id)"
-            >
-              <template #icon><GitFork :size="12" /></template>
-            </SessionGroupHeader>
           </template>
         </VueDraggable>
       </template>
@@ -227,7 +235,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, Pin, PinOff, PencilLine, Share2, Tags, Trash2, MoreVertical, GitFork } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, Share2, Tags, Trash2, MoreVertical, GitFork } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -342,20 +350,12 @@ const visibleRows = computed(() => {
       depth: 0,
       childCount: isAnchor ? members.length : 0,
       isAnchor,
-      isLastInGroup: false,
       running: props.runningSessionIds.has(top.id),
     })
     if (!isAnchor || isForkCollapsed(top.id)) continue
-    members.forEach((member, i) => {
-      out.push({
-        ...member,
-        // Explicit rather than left to CSS `:last-of-type`: the group header is
-        // also a <div> sibling, so the last member is only the last div of its
-        // type when nothing follows the group at all.
-        isLastInGroup: i === members.length - 1,
-        running: props.runningSessionIds.has(member.session.id),
-      })
-    })
+    for (const member of members) {
+      out.push({ ...member, running: props.runningSessionIds.has(member.session.id) })
+    }
   }
   return out
 })
@@ -368,7 +368,9 @@ function rowClasses(row) {
     running: row.running,
     'is-top': row.depth === 0,
     'is-fork-member': row.depth > 0,
-    'is-last-in-group': row.isLastInGroup,
+    // Heads a fork group. Shares its tint with the group header below it so the
+    // two read as one block instead of "a session, then an unrelated section".
+    'is-group-anchor': row.isAnchor,
     'session-row-active': visibleRows.value[listNav.activeIndex.value]?.session.id === row.session.id,
     'menu-open': contextMenu.visible && contextMenu.sessionId === row.session.id,
   }
@@ -919,37 +921,65 @@ onUnmounted(() => {
 }
 
 /* ── Fork groups (issue #477) ──
-   A derived-session group renders its anchor row, then the shared group header,
-   then the members. The members are indented with a rail that continues the
-   header's leading edge, and the last one gets an elbow so the rail terminates
-   in a corner rather than dangling.
+   A derived-session group is its ANCHOR ROW plus the indented members under it.
+   There is no separate group header: the anchor row carries the collapse control
+   inline (see .session-fork-toggle), so the group is one row in both states —
+   expanded it is a row followed by its members, collapsed it is just the row.
+   An earlier version rendered a standalone header under the anchor, which made
+   the pair read as "a session, then an unrelated section".
 
-   The indent lives on the row (not on .session-item) so the running band and
+   Members are INDENTED ONLY — no rail or elbow connector. The toggle already
+   states the relationship and the indentation carries the nesting, so drawn
+   lines added visual noise without new information.
+
+   The indent lives on the row rather than .session-item so the running band and
    the selection tint — both painted on the row — are indented with it instead
-   of bleeding back to the pane edge. `padding-left` on the row would shrink
-   the row's background box, so the rail is drawn with a border-left on the row
-   and the extra space is real padding. */
-.session-row.is-fork-member {
-  /* Aligns with SessionGroupHeader's icon column (its horizontal padding). */
-  padding-left: var(--space-7);
-  border-left: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
-  margin-left: var(--space-4);
+   of bleeding back to the pane edge. The member rows keep a left margin so the
+   indent reads against the full-width rows above them. */
+.session-row.is-group-anchor {
+  background-color: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
-/* Elbow for the last member of a group: a short horizontal stub meeting the
-   rail. Drawn as a pseudo-element so it needs no extra markup, and only on the
-   final member — the earlier ones continue the vertical rail. */
-.session-row.is-fork-member.is-last-in-group::before {
-  content: '';
-  position: absolute;
-  left: calc(-1 * var(--space-4) - 1px);
-  top: 0;
-  bottom: 50%;
-  width: var(--space-4);
-  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
-  border-left: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
-  border-bottom-left-radius: var(--radius-sm);
-  pointer-events: none;
+/* The collapse control, inlined on the anchor row's third line.
+   Reset from the browser's default button look so it sits in the row's text
+   flow, but keep it a real button: it is focusable and reachable by keyboard.
+   Accent-coloured so it reads as an affordance rather than more metadata. */
+.session-fork-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  margin-top: 1px;
+  padding: 0;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--accent-color, #0066cc);
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.session-fork-toggle:hover {
+  text-decoration: underline;
+}
+.session-fork-toggle:focus-visible {
+  outline: 2px solid var(--accent-color, #0066cc);
+  outline-offset: 2px;
+}
+/* Rotates to point right when collapsed, matching the chevron convention the
+   cross-project headers use. */
+.session-fork-toggle .fork-toggle-chevron {
+  transition: transform var(--duration-slow) ease;
+  flex-shrink: 0;
+}
+.session-fork-toggle.collapsed .fork-toggle-chevron {
+  transform: rotate(-90deg);
+}
+
+.session-row.is-fork-member {
+  margin-left: var(--space-6);
+  padding-left: var(--space-4);
+  background-color: color-mix(in srgb, var(--text-primary) 2%, transparent);
 }
 
 /* Generation chip on a group member's title line ("Gen 2" / "第 2 代"). */
@@ -995,9 +1025,9 @@ onUnmounted(() => {
 }
 
 /* Selected-row tint. Declared on the row (not on .session-item) so it fills the
-   trailing button cell as well — when it lived on .session-item the archive
-   cell kept showing the row's own background (green for a running session) and
-   the selection looked cut short. Painted as a background-image rather than a
+   trailing button cell as well — when it lived on .session-item the cell kept
+   showing the row's own background (green for a running session) and the
+   selection looked cut short. Painted as a background-image rather than a
    background-color so a running row's green fill still shows through beneath
    the translucent tint instead of being replaced. */
 .session-row.active {
@@ -1356,8 +1386,8 @@ onUnmounted(() => {
 }
 
 /* The unread badge lives at the top-right of `.session-item`, which ends where
-   the trailing button cell begins — so it already sits clear of the wedge in the
-   row's own top-right corner and needs no offset. */
+   the trailing button cell begins — so it already sits clear of the wedge in
+   the row's own top-right corner and needs no offset. */
 
 /* The context menu itself uses the shared .context-menu / .context-menu-item
    styles from css/components.css (same as the file manager). */

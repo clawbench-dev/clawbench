@@ -508,11 +508,25 @@ describe('SessionList', () => {
         .toEqual(['root', 'f1', 'f2', 'other'])
     })
 
-    it('renders a group header under the anchor with the member count', async () => {
+    it('puts the collapse control on the anchor row itself, with the member count', async () => {
+      // The group has no separate header row: the anchor row IS the group, so
+      // the toggle lives inside it. An earlier version rendered a standalone
+      // header under the anchor, which read as "a session, then a section".
       const wrapper = await mountGrouped()
-      const header = wrapper.find('.session-group-header')
-      expect(header.exists()).toBe(true)
-      expect(header.find('.session-group-count').text()).toBe('2')
+      const toggle = wrapper.find('[data-session-id="root"] .session-fork-toggle')
+      expect(toggle.exists()).toBe(true)
+      expect(toggle.text()).toBe('session.forkCount')
+      // Only the anchor gets one; members and unrelated rows do not.
+      expect(wrapper.find('[data-session-id="f1"] .session-fork-toggle').exists()).toBe(false)
+      expect(wrapper.find('[data-session-id="other"] .session-fork-toggle').exists()).toBe(false)
+    })
+
+    it('renders no standalone group header in the project pane', async () => {
+      // Guards the structural change: a `.session-group-header` here would mean
+      // the old separate header came back. (The cross-project pane still uses
+      // that class — its headers are asserted separately below.)
+      const wrapper = await mountGrouped()
+      expect(wrapper.findAll('.session-rows .session-group-header').length).toBe(0)
     })
 
     it('labels each member with its generation', async () => {
@@ -523,27 +537,53 @@ describe('SessionList', () => {
       expect(wrapper.find('[data-session-id="root"] .session-fork-gen').exists()).toBe(false)
     })
 
-    it('collapses and expands the group from its header', async () => {
+    it('collapses and expands the group from the anchor row toggle', async () => {
       const wrapper = await mountGrouped()
-      await wrapper.find('.session-group-header').trigger('click')
+      await wrapper.find('.session-fork-toggle').trigger('click')
       await nextTick()
       // Collapsed: members are gone from the DOM entirely (not merely hidden),
       // so the drag and keyboard indexes only ever see visible rows.
       expect(wrapper.findAll('.session-row').map(r => r.attributes('data-session-id')))
         .toEqual(['root', 'other'])
-      expect(wrapper.find('.session-group-header .session-group-count').text()).toBe('2')
+      // The anchor row survives — it is the group, not a header that disappears.
+      expect(wrapper.find('[data-session-id="root"]').exists()).toBe(true)
+      // The toggle reports the collapsed state so the chevron can rotate.
+      expect(wrapper.find('.session-fork-toggle').classes()).toContain('collapsed')
+      expect(wrapper.find('.session-fork-toggle').attributes('aria-expanded')).toBe('false')
 
-      await wrapper.find('.session-group-header').trigger('click')
+      await wrapper.find('.session-fork-toggle').trigger('click')
       await nextTick()
       expect(wrapper.findAll('.session-row').map(r => r.attributes('data-session-id')))
         .toEqual(['root', 'f1', 'f2', 'other'])
+      expect(wrapper.find('.session-fork-toggle').classes()).not.toContain('collapsed')
+      expect(wrapper.find('.session-fork-toggle').attributes('aria-expanded')).toBe('true')
+    })
+
+    it('does not select the session when the collapse control is clicked', async () => {
+      // The toggle sits inside the row, which selects the session on click.
+      // Without @click.stop, collapsing the group would also open the anchor.
+      const wrapper = await mountGrouped()
+      await wrapper.find('.session-fork-toggle').trigger('click')
+      await flushPromises()
+      expect(wrapper.emitted('select')).toBeFalsy()
+    })
+
+    it('does not use .session-item for the fork toggle (keyboard nav index isolation)', async () => {
+      // The toggle lives inside the anchor row. If it carried .session-item it
+      // would add an extra match per anchor, so querySelectorAll('.session-item')
+      // indices would no longer line up with useListNav's count — every row
+      // after the first anchor would scroll to the wrong place on arrow keys.
+      const wrapper = await mountGrouped()
+      // root + f1 + f2 + other = 4 real rows, one .session-item each.
+      expect(wrapper.findAll('.session-item').length).toBe(4)
+      expect(wrapper.find('.session-fork-toggle').classes()).not.toContain('session-item')
     })
 
     it('expands the group holding the current session', async () => {
       // A deep link (notification / cross-project jump) can land on a member
       // whose anchor was collapsed earlier; that must not hide the open row.
       const wrapper = await mountGrouped()
-      await wrapper.find('.session-group-header').trigger('click')
+      await wrapper.find('.session-fork-toggle').trigger('click')
       await nextTick()
       expect(wrapper.find('[data-session-id="f1"]').exists()).toBe(false)
 
@@ -607,13 +647,14 @@ describe('SessionList', () => {
       const wrapper = await mountGrouped([orphan, orphanChild])
       expect(wrapper.findAll('.session-row').map(r => r.attributes('data-session-id')))
         .toEqual(['o1', 'o2'])
-      expect(wrapper.find('.session-group-count').text()).toBe('1')
+      // The orphan itself is the anchor, so it carries the toggle with count 1.
+      expect(wrapper.find('[data-session-id="o1"] .session-fork-toggle').text()).toBe('session.forkCount')
     })
 
     it('does not group an ACP-loaded session, whose source is a marker string', async () => {
       const loaded = { id: 'acp1', title: 'Loaded', sourceSessionId: 'acp:abc123', createdAt: '2025-01-01', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
       const wrapper = await mountGrouped([loaded, other])
-      expect(wrapper.findAll('.session-group-header').length).toBe(0)
+      expect(wrapper.findAll('.session-fork-toggle').length).toBe(0)
       expect(wrapper.findAll('.session-row').length).toBe(2)
     })
   })
