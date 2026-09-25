@@ -13,27 +13,37 @@ import "clawbench/internal/model"
 //     /api/tunnel/control), which are served by the always-on main HTTP server
 //     (see cmd/server/server_protocols.go).
 //
-// Because the h2 transport has no config switch that can turn it off, there is
-// no configuration in which the registry is provably unused, so it is created
-// unconditionally. The old gate was `cfg.PortForward.Enabled` alone, which made
-// port_forward.enabled=false hand every tunnel request a nil registry and a
-// 503 (internal/handler/tunnel_stream.go:59, tunnel_control.go:297). Do not
+// The registry is needed whenever either transport could carry traffic:
+//
+//	transport   | SSH enabled | registry needed | why
+//	------------+-------------+-----------------+-----------------------------
+//	ssh         | true        | yes             | SSH tunnel needs it
+//	ssh         | false       | NO              | no SSH listener, no h2
+//	h2 / both   | either      | yes             | h2 rides the main HTTP server
+//	(bad value) | either      | yes             | ApplyDefaults converges it to
+//	            |             |                 | "both", so treat it as h2-capable
+//
+// The single "no" cell is `transport: "ssh"` with PortForward.Enabled == false:
+// the SSH listener is off and h2 is explicitly excluded, so nothing can reach
+// the registry and creating it would only start a health-check goroutine and
+// restore port rows for a dead feature.
+//
+// Everything else returns true. In particular the zero-value config — an empty
+// Transport with Enabled false, which is what a caller that has not run
+// ApplyDefaults would pass — is treated as h2-capable and therefore true: the
+// old gate (`cfg.PortForward.Enabled` alone) made port_forward.enabled=false
+// hand every tunnel request a nil registry and a 503
+// (internal/handler/tunnel_stream.go:59, tunnel_control.go:297). Do not
 // reintroduce it.
 //
 // Creating the registry is side-effect-free with respect to SSH: it starts only
 // a 5s health-check goroutine and restores persisted port rows from the
 // database. It binds no port — listening remains ssh.NewServer's job, still
 // gated on PortForward.Enabled.
-//
-// T8 接入点：`port_forward.transport: ssh|h2|both` 落地后，本函数收敛为
-// 「SSH 启用 **或** transport 含 h2」。在 h2 拥有独立开关之前，h2 由主
-// HTTP 服务器无条件提供，故此处无条件返回 true。
 func shouldCreateProxyRegistry(cfg model.Config) bool {
-	// cfg is currently unread: h2 availability is a compile-time property of
-	// this binary (serverProtocols always enables an h2 variant), not a config
-	// value. T8 will read cfg.PortForward.Transport here.
-	_ = cfg
-	return true
+	// h2 is available unless the operator explicitly confined the tunnel to SSH.
+	h2Available := cfg.PortForward.Transport != model.TransportSSH
+	return cfg.PortForward.Enabled || h2Available
 }
 
 // reservedPortsFor returns the ports a reverse mapping must never bind on the

@@ -1777,6 +1777,26 @@ func reserveSSHPorts(mainPort, sshPort int) {
 func hotReloadSSH(cfg model.Config, port int) {
 	sshRef := handler.GetSSHServer()
 
+	// Ensure the shared registry exists whenever the CURRENT configuration
+	// needs it. Startup creates it under the same predicate
+	// (shouldCreateProxyRegistry), but port_forward.transport is hot-reloadable,
+	// so the one startup configuration with no registry — `transport: ssh` plus
+	// SSH disabled — can be switched to h2 at runtime. Without this the h2
+	// handlers would keep answering 503 (nil registry) until a restart, while
+	// the PATCH response said no restart was needed.
+	if service.ProxyService == nil && shouldCreateProxyRegistry(cfg) {
+		service.ProxyService = service.NewProxyRegistry(port)
+		slog.Info("hot-reload: proxy registry created (transport now needs it)")
+	}
+	// The allowed-port whitelist is shared by both transports, so it is
+	// refreshed whenever the registry exists — not only on the SSH-enabled path
+	// below. (Creating the registry above without applying it would leave
+	// NewProxyRegistry's 1024-65535 fallback in force instead of the configured
+	// range.)
+	if service.ProxyService != nil {
+		service.ProxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
+	}
+
 	if !cfg.PortForward.Enabled {
 		// SSH should be disabled. Close only the SSH listener: the registry
 		// keeps serving the h2 tunnel (see shouldCreateProxyRegistry), and its
@@ -1790,16 +1810,6 @@ func hotReloadSSH(cfg model.Config, port int) {
 		reserveSSHPorts(port, 0)
 		return
 	}
-
-	// The registry is created unconditionally at startup
-	// (shouldCreateProxyRegistry), so this nil branch is defensive only.
-	// Creating a second registry would orphan the first one's health-check
-	// goroutine and its DB-restored rows.
-	if service.ProxyService == nil {
-		service.ProxyService = service.NewProxyRegistry(port)
-		slog.Info("hot-reload: proxy registry created")
-	}
-	service.ProxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
 
 	newPort := cfg.PortForward.Port
 	if newPort == 0 {

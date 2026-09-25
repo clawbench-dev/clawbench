@@ -797,6 +797,28 @@ export function useSettingsConfig() {
     } catch { /* not in app mode */ }
   }
 
+  /**
+   * Forward `port_forward.transport` to the native tunnel.
+   *
+   * The setting is server-side (it is what the operator configured), but the
+   * tunnel itself runs natively — on desktop in the Electron main process, on
+   * Android in the background service — and neither has an authenticated
+   * config client of its own. The web app is the only component that reads
+   * `/api/config` with a session, so it pushes the value down.
+   *
+   * Only recognized values are forwarded: a missing or malformed value must
+   * leave the native default in place rather than poison the transport chain.
+   * Optional bridge method, so an older host silently keeps SSH.
+   */
+  function syncTunnelTransportToNative() {
+    try {
+      const raw = getServerValue('port_forward.transport')
+      const transport = typeof raw === 'string' ? raw : ''
+      if (transport !== 'ssh' && transport !== 'h2' && transport !== 'both') return
+      getNative()?.setTunnelTransport?.(transport)
+    } catch { /* not in app mode */ }
+  }
+
   async function loadConfig() {
     try {
       const data = await apiGet<Record<string, unknown>>('/api/config')
@@ -827,6 +849,8 @@ export function useSettingsConfig() {
     syncFloatingWindowToNative()
     // Sync Live Updates chip preference to Android native
     syncLiveUpdateToNative()
+    // Sync the tunnel transport to the native tunnel (Electron / Android)
+    syncTunnelTransportToNative()
   }
 
   async function patchConfig(changes: Record<string, unknown>): Promise<{ needsRestart: boolean; changedColdFields: string[]; warnings: string[] }> {

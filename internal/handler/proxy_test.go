@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // isProxyPortRegistered is a test helper that checks if a port is registered via ListPorts.
@@ -645,4 +647,48 @@ func TestServeProxyPorts_IncludesDirection(t *testing.T) {
 	}
 	assert.True(t, directions[model.DirectionForward])
 	assert.True(t, directions[model.DirectionReverse])
+}
+
+// With `port_forward.transport: ssh` and `enabled: false`, main() no longer
+// creates a ProxyRegistry (see cmd/server/proxy_registry_gate.go), so every
+// handler on this surface must refuse with 503 rather than dereference a nil
+// singleton. Before the gate became conditional these handlers could assume a
+// non-nil registry; the panic would surface as a middleware-recovered 500, not
+// a crash, but "port forwarding unavailable" is the honest answer.
+func TestProxyHandlers_NilRegistryReturns503(t *testing.T) {
+	origProxy := service.ProxyService
+	service.ProxyService = nil
+	defer func() { service.ProxyService = origProxy }()
+
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		method  string
+		target  string
+		body    string
+	}{
+		{name: "list ports", handler: ServeProxyPortAction, method: http.MethodGet, target: "/api/proxy/ports"},
+		{name: "register port", handler: ServeProxyPortAction, method: http.MethodPost, target: "/api/proxy/ports", body: `{"port":8080}`},
+		{name: "update port", handler: ServeProxyPortAction, method: http.MethodPut, target: "/api/proxy/ports", body: `{"localPort":8080,"port":9090}`},
+		{name: "unregister port", handler: ServeProxyPortAction, method: http.MethodDelete, target: "/api/proxy/ports?port=8080"},
+		{name: "toggle enabled", handler: ServeProxySetPortEnabled, method: http.MethodPut, target: "/api/proxy/ports/enabled", body: `{"localPort":8080,"enabled":true}`},
+		{name: "detect ports", handler: ServeProxyDetect, method: http.MethodGet, target: "/api/proxy/detect"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req *http.Request
+			if tt.body != "" {
+				req = httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+			} else {
+				req = httptest.NewRequest(tt.method, tt.target, http.NoBody)
+			}
+
+			require.NotPanics(t, func() {
+				w := callHandler(tt.handler, req)
+				assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+			})
+		})
+	}
 }

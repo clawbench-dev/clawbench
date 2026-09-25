@@ -103,6 +103,7 @@ var hotReloadFields = map[string]bool{
 	"port_forward.enabled":       true,
 	"port_forward.port":          true,
 	"port_forward.allowed_ports": true,
+	"port_forward.transport":     true,
 	// RAG — reconfigure embedder, indexer, cleanup worker
 	"rag.vector_enabled":        true,
 	"rag.base_url":              true,
@@ -330,8 +331,9 @@ type configRAG struct {
 }
 
 type configPortForward struct {
-	Enabled bool `json:"enabled"`
-	Port    int  `json:"port"`
+	Enabled   bool   `json:"enabled"`
+	Port      int    `json:"port"`
+	Transport string `json:"transport"`
 }
 
 type configFRP struct {
@@ -620,6 +622,7 @@ var PatchableConfigPaths = map[string]bool{
 	"port_forward.enabled":              true,
 	"port_forward.port":                 true,
 	"port_forward.allowed_ports":        true,
+	"port_forward.transport":            true,
 	"frp.enabled":                       true,
 	"frp.server_addr":                   true,
 	"frp.server_port":                   true,
@@ -774,8 +777,9 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			RetentionDays:  cfg.RAG.RetentionDays,
 		},
 		PortForward: configPortForward{
-			Enabled: cfg.PortForward.Enabled,
-			Port:    cfg.PortForward.Port,
+			Enabled:   cfg.PortForward.Enabled,
+			Port:      cfg.PortForward.Port,
+			Transport: cfg.PortForward.Transport,
 		},
 		FRP: configFRP{
 			Enabled:       cfg.FRP.Enabled,
@@ -1232,6 +1236,22 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
+	// port_forward.transport — the tunnel wire the client is told to use. An
+	// unknown value would leave every client probing a transport that does not
+	// exist, so it is rejected here rather than stored. (config.yaml hand-edits
+	// still converge in model.ApplyDefaults; a PATCH gets an explicit 400.)
+	if pf, ok := patch["port_forward"].(map[string]any); ok {
+		if raw, present := pf["transport"]; present {
+			v, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("port_forward.transport must be a string")
+			}
+			if !model.IsValidPortForwardTransport(v) {
+				return fmt.Errorf("port_forward.transport must be one of: ssh,h2,both")
+			}
+		}
+	}
+
 	// FRP: when enabled, server_addr must be non-empty (skip when just switching enabled on —
 	// user hasn't had a chance to fill in the address yet, frontend auto-saves one field at a time).
 
@@ -1573,6 +1593,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := pf["allowed_ports"].(string); ok {
 			cfg.PortForward.AllowedPorts = v
+		}
+		if v, ok := pf["transport"].(string); ok {
+			cfg.PortForward.Transport = v
 		}
 	}
 

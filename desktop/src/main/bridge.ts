@@ -9,7 +9,9 @@ import {
   migratePasswords, getServersForRenderer,
 } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
-  getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
+  getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel,
+  setTransportPreference, getTransportPreference, getActiveTransport } from './tunnel'
+import type { TransportPreference } from './transport'
 import { getMainWindow, createMainWindow, openSandboxWindow, showLoginPage } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
 import { setKeepScreenOnImpl } from './powersave'
@@ -86,6 +88,16 @@ export function registerBridge(): void {
   ipcMain.handle('native:is-tunnel-connected', () => isTunnelConnected())
   ipcMain.handle('native:get-tunnel-error', () => getTunnelError())
   ipcMain.handle('native:get-tunnel-error-type', () => getTunnelErrorType())
+  // port_forward.transport: the renderer owns the server config read, so it
+  // pushes the value down after loading /api/config (see the method docs in
+  // preload/index.ts for why the main process does not fetch it itself).
+  ipcMain.handle('native:set-tunnel-transport', (_e, pref: unknown) => {
+    if (pref === 'ssh' || pref === 'h2' || pref === 'both') setTransportPreference(pref)
+  })
+  ipcMain.handle('native:get-tunnel-transport', () => getTransportPreference())
+  // Which transport actually carried the last successful connect — distinct
+  // from the configured preference, and what the panel shows to the user.
+  ipcMain.handle('native:get-active-tunnel-transport', () => getActiveTransport())
   ipcMain.handle('native:add-forwarded-port', (_e, l: number, t: number, h: string) => addForwardedPort(l, t, h))
   ipcMain.handle('native:remove-forwarded-port', (_e, l: number) => rmFwd(l))
   ipcMain.handle('native:add-reverse-forwarded-port', (_e, s: number, t: number, h: string) => addReverseForwardedPort(s, t, h))

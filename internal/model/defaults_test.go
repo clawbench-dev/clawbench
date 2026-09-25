@@ -1102,3 +1102,93 @@ func TestApplyDefaults_ZeroMeansOff_NotRewritten(t *testing.T) {
 		t.Errorf("negative ArchiveRetentionDays=%d, want clamp to 0", cfg.Session.ArchiveRetentionDays)
 	}
 }
+
+// TestApplyDefaultsPortForwardTransport pins port_forward.transport's default
+// and its convergence of unrecognized values.
+//
+// "both" (not "ssh") is the default so an existing install keeps working
+// without a manual switch: the client probes h2 first and falls back to SSH, so
+// an old SSH-only server is still reachable. The zero value "" must NOT survive
+// ApplyDefaults — it is not a transport, and leaving it would send every client
+// down an empty branch of the selection.
+func TestApplyDefaultsPortForwardTransport(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "omitted (zero value) becomes both", input: "", want: TransportBoth},
+		{name: "explicit ssh preserved", input: TransportSSH, want: TransportSSH},
+		{name: "explicit h2 preserved", input: TransportH2, want: TransportH2},
+		{name: "explicit both preserved", input: TransportBoth, want: TransportBoth},
+		// Hand-edited config.yaml, or a downgrade from a build that knew more
+		// transports. Converging beats storing a value no client can interpret.
+		{name: "unknown value converges to both", input: "quic", want: TransportBoth},
+		{name: "wrong case is not normalized, it converges", input: "SSH", want: TransportBoth},
+		{name: "whitespace converges", input: " ssh ", want: TransportBoth},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupTestBinDir(t)
+			cfg := Config{}
+			cfg.PortForward.Transport = tt.input
+			ApplyDefaults(&cfg, nil)
+			if cfg.PortForward.Transport != tt.want {
+				t.Errorf("Transport = %q, want %q", cfg.PortForward.Transport, tt.want)
+			}
+		})
+	}
+}
+
+// A config that explicitly writes port_forward.transport must not have it
+// rewritten by the presence-map path (the bool trap that exists for `enabled`
+// does not apply to strings, and this pins that no such handling crept in).
+func TestApplyDefaultsPortForwardTransportPresenceNoEffect(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.PortForward.Transport = TransportSSH
+	ApplyDefaults(&cfg, map[string]bool{
+		"port_forward":           true,
+		"port_forward.transport": true,
+	})
+
+	if cfg.PortForward.Transport != TransportSSH {
+		t.Errorf("explicit Transport rewritten to %q, want %q", cfg.PortForward.Transport, TransportSSH)
+	}
+}
+
+// The transport default must not disturb the neighboring PortForward defaults,
+// and vice versa: ApplyDefaults is a single pass over the section.
+func TestApplyDefaultsPortForwardTransportDoesNotAffectOtherFields(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if !cfg.PortForward.Enabled {
+		t.Error("Enabled should still default to true")
+	}
+	if cfg.PortForward.HostKey == "" {
+		t.Error("HostKey should still be defaulted")
+	}
+	if cfg.PortForward.Transport != TransportBoth {
+		t.Errorf("Transport = %q, want %q", cfg.PortForward.Transport, TransportBoth)
+	}
+}
+
+func TestIsValidPortForwardTransport(t *testing.T) {
+	valid := []string{TransportSSH, TransportH2, TransportBoth}
+	for _, v := range valid {
+		if !IsValidPortForwardTransport(v) {
+			t.Errorf("IsValidPortForwardTransport(%q) = false, want true", v)
+		}
+	}
+	invalid := []string{"", "quic", "SSH", " ssh", "ssh ", "websocket", "h3"}
+	for _, v := range invalid {
+		if IsValidPortForwardTransport(v) {
+			t.Errorf("IsValidPortForwardTransport(%q) = true, want false", v)
+		}
+	}
+}

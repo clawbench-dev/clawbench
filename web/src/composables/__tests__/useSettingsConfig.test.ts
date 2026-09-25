@@ -1395,3 +1395,106 @@ describe('useSettingsConfig', () => {
     })
   })
 })
+
+/**
+ * `port_forward.transport` must reach the native tunnel.
+ *
+ * The value is server-side, but the tunnel runs natively (Electron main process
+ * / Android background service) and neither has an authenticated config client
+ * — the web app is the only component that reads `/api/config` with a session,
+ * so it forwards the value. These tests pin the forwarding and, just as
+ * importantly, its failure modes: a malformed value must not be forwarded, and
+ * a host without the bridge method must not break the config load.
+ */
+describe('useSettingsConfig: tunnel transport sync', () => {
+  type NativeStub = { setTunnelTransport?: (pref: string) => void }
+
+  function setNative(obj: NativeStub | undefined) {
+    if (obj === undefined) {
+      delete (window as unknown as { ClawBenchNative?: unknown }).ClawBenchNative
+      return
+    }
+    ;(window as unknown as { ClawBenchNative?: unknown }).ClawBenchNative = obj
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
+  afterEach(() => {
+    setNative(undefined)
+  })
+
+  it.each(['ssh', 'h2', 'both'])('forwards %s from /api/config to the native tunnel', async (transport) => {
+    mockedApiGet.mockResolvedValue({ port_forward: { enabled: true, transport } })
+    const setTunnelTransport = vi.fn()
+    setNative({ setTunnelTransport })
+
+    const { loadConfig } = useSettingsConfig()
+    await loadConfig()
+
+    expect(setTunnelTransport).toHaveBeenCalledWith(transport)
+  })
+
+  it('forwards nothing when the config omits port_forward', async () => {
+    mockedApiGet.mockResolvedValue({ server: { port: 20000 } })
+    const setTunnelTransport = vi.fn()
+    setNative({ setTunnelTransport })
+
+    const { loadConfig } = useSettingsConfig()
+    await loadConfig()
+
+    expect(setTunnelTransport).not.toHaveBeenCalled()
+  })
+
+  it('forwards nothing for an unrecognized value instead of poisoning the chain', async () => {
+    mockedApiGet.mockResolvedValue({ port_forward: { transport: 'quic' } })
+    const setTunnelTransport = vi.fn()
+    setNative({ setTunnelTransport })
+
+    const { loadConfig } = useSettingsConfig()
+    await loadConfig()
+
+    expect(setTunnelTransport).not.toHaveBeenCalled()
+  })
+
+  it('forwards nothing when the value is not a string', async () => {
+    mockedApiGet.mockResolvedValue({ port_forward: { transport: 2 } })
+    const setTunnelTransport = vi.fn()
+    setNative({ setTunnelTransport })
+
+    const { loadConfig } = useSettingsConfig()
+    await loadConfig()
+
+    expect(setTunnelTransport).not.toHaveBeenCalled()
+  })
+
+  it('does not throw when the host predates the method (legacy Android)', async () => {
+    mockedApiGet.mockResolvedValue({ port_forward: { transport: 'both' } })
+    setNative({})
+
+    const { loadConfig } = useSettingsConfig()
+    await expect(loadConfig()).resolves.toBeUndefined()
+  })
+
+  it('does not throw in plain web mode (no bridge at all)', async () => {
+    mockedApiGet.mockResolvedValue({ port_forward: { transport: 'h2' } })
+    setNative(undefined)
+
+    const { loadConfig } = useSettingsConfig()
+    await expect(loadConfig()).resolves.toBeUndefined()
+  })
+
+  it('does not throw when the bridge method itself throws', async () => {
+    // A native bridge that rejects the call must not abort the config load:
+    // loadConfig is awaited on the startup path, so a throw here would strand
+    // the whole settings load.
+    mockedApiGet.mockResolvedValue({ port_forward: { transport: 'both' } })
+    setNative({
+      setTunnelTransport: () => { throw new Error('bridge exploded') },
+    })
+
+    const { loadConfig } = useSettingsConfig()
+    await expect(loadConfig()).resolves.toBeUndefined()
+  })
+})

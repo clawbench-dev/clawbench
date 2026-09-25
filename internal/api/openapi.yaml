@@ -382,6 +382,12 @@ paths:
       description: |
         返回完整配置（密码等敏感字段被剥离）。`appearance.active_file` 由服务端
         按 mode/enabled/选中项解析后下发。
+
+        `port_forward` 段包含 `enabled`、`port`、`transport`（`host_key` 与
+        `allowed_ports` 不下发）。`transport` 是隧道传输方式：`ssh`（仅 SSH 通道）、
+        `h2`（仅 HTTP/2 流隧道，走主端口）、`both`（默认；客户端按
+        h2-over-TLS → h2c → SSH 探测并回退）。客户端（Electron / Android）
+        读该值后下发到原生隧道层。
       operationId: getConfig
       responses:
         "200":
@@ -393,6 +399,10 @@ paths:
         仅白名单内的键可写；类型不符直接 400（避免写入后 `yaml.Unmarshal` 失败）。
         文件名类键（`appearance.local.selected`/`local.items`/`bing.file`）不在白名单，
         须经专用端点写入。
+
+        `port_forward.transport` 为白名单键，仅接受 `ssh` / `h2` / `both`，
+        其他值返回 400（`port_forward.transport must be one of: ssh,h2,both`），
+        非字符串返回 400（`port_forward.transport must be a string`）。
       operationId: patchConfig
       requestBody:
         required: true

@@ -312,6 +312,16 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.PortForward.HostKey == "" {
 		cfg.PortForward.HostKey = filepath.Join(DataDir, "ssh_host_key")
 	}
+	// Transport selects the tunnel wire (ssh|h2|both). No presence-map check is
+	// needed here, unlike the bool above: a string's zero value is "" and no
+	// legitimate value is empty, so "omitted" and "explicitly empty" are the
+	// same state. An unrecognized value (hand-edited config.yaml, or a downgrade
+	// from a build that knew more transports) converges to the default rather
+	// than leaving the server on a transport no client can interpret — this is
+	// the only repair point, since there is no standalone validator.
+	if !IsValidPortForwardTransport(cfg.PortForward.Transport) {
+		cfg.PortForward.Transport = DefaultPortForwardTransport
+	}
 
 	// --- FRP ---
 	// FRP is disabled by default; users must explicitly enable it.

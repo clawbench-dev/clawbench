@@ -3118,3 +3118,159 @@ func TestServeConfig_Get_ExposesFirstRun(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp2))
 	assert.Equal(t, false, resp2["first_run"])
 }
+
+// --- port_forward.transport ---
+
+// The transport must survive a PATCH round trip and come back on GET. It is
+// whitelisted (PatchableConfigPaths) and hot-reloadable, so the failure mode to
+// guard against is the classic one: the write succeeds, config.yaml gets the
+// value, but ConfigInstance never sees it and the UI snaps back on the reload
+// patchConfig() performs.
+func TestServeConfigPatch_PortForwardTransport(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"port_forward":{"transport":"h2"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, model.TransportH2, model.ConfigInstance.PortForward.Transport,
+		"transport must be applied to ConfigInstance")
+
+	// Hot-reload: the change must not demand a restart.
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp["needs_restart"].(bool), "transport is a hot-reload field")
+
+	// GET must echo the stored value, or the setting resets on reload.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(getReq, model.SessionToken)
+	gw := callHandler(ServeConfig, getReq)
+	assert.Equal(t, http.StatusOK, gw.Code)
+	assert.Contains(t, gw.Body.String(), `"transport":"h2"`)
+}
+
+// Each of the three values must be accepted and stored verbatim — a validator
+// that only knows two of them would silently reject a legitimate setting.
+func TestServeConfigPatch_PortForwardTransportAcceptedValues(t *testing.T) {
+	for _, want := range []string{model.TransportSSH, model.TransportH2, model.TransportBoth} {
+		t.Run(want, func(t *testing.T) {
+			_, teardown := setupTestEnv(t)
+			defer teardown()
+
+			model.ConfigInstance = model.Config{}
+
+			body := `{"port_forward":{"transport":"` + want + `"}}`
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, want, model.ConfigInstance.PortForward.Transport)
+		})
+	}
+}
+
+// An unknown transport would leave every client probing a transport that does
+// not exist, so the PATCH is refused outright rather than stored and converged
+// later (convergence is ApplyDefaults' job for hand-edited config.yaml).
+func TestServeConfigPatch_PortForwardTransportInvalidRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	before := model.ConfigInstance.PortForward.Transport
+
+	body := `{"port_forward":{"transport":"quic"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "port_forward.transport must be one of: ssh,h2,both")
+	assert.Equal(t, before, model.ConfigInstance.PortForward.Transport,
+		"a rejected value must not be applied")
+}
+
+// A non-string transport (e.g. a number or an object) must be refused, not
+// silently ignored: ignoring it would let the value reach config.yaml through
+// mergePatchIntoRaw while never reaching the typed config, and the next startup
+// would fail to unmarshal.
+func TestServeConfigPatch_PortForwardTransportWrongTypeRejected(t *testing.T) {
+	tests := []struct{ name, body string }{
+		{name: "number", body: `{"port_forward":{"transport":2}}`},
+		{name: "boolean", body: `{"port_forward":{"transport":true}}`},
+		{name: "null is a type error too", body: `{"port_forward":{"transport":null}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, teardown := setupTestEnv(t)
+			defer teardown()
+
+			model.ConfigInstance = model.Config{}
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "port_forward.transport must be a string")
+		})
+	}
+}
+
+// Omitting the field must leave the stored value untouched — the validator must
+// not treat "absent" as "invalid".
+func TestServeConfigPatch_PortForwardTransportAbsentKeepsValue(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.PortForward.Transport = model.TransportSSH
+	model.ConfigInstance = cfg
+
+	body := `{"port_forward":{"enabled":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, model.TransportSSH, model.ConfigInstance.PortForward.Transport,
+		"an unrelated port_forward PATCH must not reset the transport")
+}
+
+// GET /api/config must expose the transport (the frontend reads it to push the
+// value down to the native tunnel), and must not expose host_key.
+func TestServeConfigGet_PortForwardExposesTransport(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.PortForward.Enabled = true
+	cfg.PortForward.Port = 2222
+	cfg.PortForward.Transport = model.TransportH2
+	cfg.PortForward.HostKey = "/secret/host_key"
+	model.ConfigInstance = cfg
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	pf, ok := resp["port_forward"].(map[string]any)
+	require.True(t, ok, "port_forward must be present")
+	assert.Equal(t, "h2", pf["transport"])
+	assert.NotContains(t, pf, "host_key", "host_key must stay server-side")
+}
