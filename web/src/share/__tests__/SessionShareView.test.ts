@@ -100,6 +100,13 @@ vi.mock('@/stores/app.ts', () => ({
   store: { state: { projectRoot: '', homeDir: '' } },
 }))
 
+// downloadBlob is mocked so the export test can assert on the exact bytes,
+// filename and MIME type instead of driving a real browser download.
+const downloadBlobMock = vi.hoisted(() => vi.fn())
+vi.mock('@/utils/download.ts', () => ({
+  downloadBlob: downloadBlobMock,
+}))
+
 import SessionShareView from '@/share/SessionShareView.vue'
 import { setShareToken, clearShareSessionData, getShareThinking, getShareToolCall } from '@/share/shareMode'
 
@@ -114,6 +121,9 @@ const i18n = createI18n({
         notFound: 'Not found',
         sharedConversation: 'Shared conversation',
         messageCount: '{count} messages',
+        totalDuration: 'Total {duration}',
+        exportJson: 'Export snapshot as JSON',
+        exportFailed: 'Could not export the snapshot',
       },
       common: { loading: 'Loading...' },
       chat: {
@@ -251,6 +261,30 @@ describe('SessionShareView', () => {
     expect(column.find('.session-share-body').exists()).toBe(true)
   })
 
+  // Layout parity with the chat area. The share page reuses ChatMessageItem, so
+  // its message layout must reproduce the chat list's spacing rules or the same
+  // thread reads differently in the two places:
+  //   .chat-messages      → padding: var(--space-6) 0; flex column; gap: var(--space-4)
+  //   .chat-messages-list → flex column; gap: var(--space-8)
+  // The share list has no wrapper list element, so it needs the LIST's gap
+  // (space-8 = 20px). Without it the container is block layout and adjacent
+  // messages touch (measured gap 0).
+  it('matches the chat area message spacing and has no horizontal inset', () => {
+    // Scoped CSS is not evaluated by jsdom, so read the component source.
+    const src = readFileSync(join(__dirname, '..', 'SessionShareView.vue'), 'utf8')
+    const rule = src.match(/\.session-share-messages\s*\{([\s\S]*?)\}/)
+    expect(rule, '.session-share-messages rule must exist').not.toBeNull()
+    const body = rule![1]
+    // No horizontal padding: an assistant card must reach the column edge, as
+    // it does in chat (the user bubble owns its own 10px inset).
+    expect(body).toMatch(/padding:\s*var\(--space-6\)\s+0/)
+    expect(body).not.toMatch(/padding:[^;]*\b\d+px\s+\d+px/)
+    // Flex column + the chat list's message gap.
+    expect(body).toContain('display: flex')
+    expect(body).toContain('flex-direction: column')
+    expect(body).toContain('gap: var(--space-8)')
+  })
+
   it('declares the vertical rules on the column, not the header', async () => {
     // Scoped CSS is not evaluated by jsdom, so read the component source.
     const src = readFileSync(
@@ -357,5 +391,175 @@ describe('SessionShareView', () => {
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('Shared conversation')
     expect(wrapper.findAll('.chat-message-stub')).toHaveLength(0)
+  })
+
+  // ── Session total duration ──
+  //
+  // The per-message duration is rendered by the shared ChatMessageItem meta bar
+  // and is not this view's concern. The view owns the SESSION total, summed
+  // from each assistant turn's wallMs.
+  it('shows the summed assistant duration in the byline', async () => {
+    const wrapper = await mountView()
+    // makePayload's single assistant turn carries wallMs: 1234 → "1.2s".
+    expect(wrapper.find('.session-share-duration').exists()).toBe(true)
+    expect(wrapper.find('.session-share-duration').text()).toContain('1.2s')
+  })
+
+  it('omits the duration entirely when no turn carries wallMs', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        session: { title: 'No timings', backend: 'codebuddy' },
+        messages: [
+          { id: 1, role: 'user', content: 'hi', createdAt: '2026-09-22T09:00:00Z' },
+          {
+            id: 2,
+            role: 'assistant',
+            content: JSON.stringify({ blocks: [{ type: 'text', text: 'ok' }], metadata: { model: 'x' } }),
+            createdAt: '2026-09-22T09:01:00Z',
+          },
+        ],
+      }),
+    } as unknown as Response)) as unknown as typeof fetch
+    const wrapper = await mountView()
+    // Not "0ms" and not an empty chip — the element must be absent so the
+    // byline's separator dots stay correct.
+    expect(wrapper.find('.session-share-duration').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('0ms')
+  })
+
+  it('does not double-count user turns', async () => {
+    // A user message with a wallMs in its metadata must be ignored: only the
+    // assistant's own turn time is meaningful.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        session: { title: 'Mixed', backend: 'codebuddy' },
+        messages: [
+          { id: 1, role: 'user', content: 'hi', metadata: { wallMs: 999999 }, createdAt: '2026-09-22T09:00:00Z' },
+          {
+            id: 2,
+            role: 'assistant',
+            content: JSON.stringify({ blocks: [{ type: 'text', text: 'ok' }], metadata: { wallMs: 2000 } }),
+            createdAt: '2026-09-22T09:01:00Z',
+          },
+        ],
+      }),
+    } as unknown as Response)) as unknown as typeof fetch
+    const wrapper = await mountView()
+    expect(wrapper.find('.session-share-duration').text()).toContain('2.0s')
+  })
+
+  // ── Snapshot JSON export ──
+  //
+  // The export contract is "the exact document this link serves". The critical
+  // property is that it is NOT the parsed/mutated state: parseMessages assigns
+  // `blocks`/`metadata` onto the payload's own message objects, so exporting
+  // the live payload would duplicate every message's content (original JSON
+  // string + derived blocks) and leak the viewer's summary-toggle state.
+  describe('snapshot JSON export', () => {
+    it('downloads the payload verbatim, without the parsed blocks', async () => {
+      const wrapper = await mountView()
+      const btn = wrapper.find('.session-share-export')
+      expect(btn.exists()).toBe(true)
+
+      await btn.trigger('click')
+
+      expect(downloadBlobMock).toHaveBeenCalledTimes(1)
+      const [content, filename, mime] = downloadBlobMock.mock.calls[0] as [string, string, string]
+      expect(mime).toBe('application/json')
+      expect(filename.endsWith('.json')).toBe(true)
+
+      const exported = JSON.parse(content)
+      // Same shape/values as the served payload.
+      expect(exported.version).toBe(1)
+      expect(exported.session.title).toBe('Fix the login bug')
+      expect(exported.messages).toHaveLength(2)
+      // The verbatim assistant message has NO derived fields…
+      const assistant = exported.messages.find((m: { role: string }) => m.role === 'assistant')
+      expect(assistant.blocks).toBeUndefined()
+      expect(assistant.metadata).toBeUndefined()
+      expect(assistant.showingSummary).toBeUndefined()
+      // …but keeps the original content string the API sent.
+      expect(typeof assistant.content).toBe('string')
+      expect(JSON.parse(assistant.content).blocks).toHaveLength(3)
+    })
+
+    it('exports the same snapshot regardless of summary toggling', async () => {
+      const wrapper = await mountView()
+      // Toggle a message between summary and original — this writes
+      // showingSummary onto the live (mutated) message object.
+      const vm = wrapper.vm as unknown as { onToggleSummary: (id: number) => void }
+      vm.onToggleSummary(12)
+      await nextTick()
+
+      await wrapper.find('.session-share-export').trigger('click')
+      const [content] = downloadBlobMock.mock.calls[0] as [string]
+      const exported = JSON.parse(content)
+      const assistant = exported.messages.find((m: { role: string }) => m.role === 'assistant')
+      expect(assistant.showingSummary).toBeUndefined()
+    })
+
+    it('sanitizes the filename derived from the session title', async () => {
+      globalThis.fetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          version: 1,
+          // A path-like title with characters no filesystem accepts.
+          session: { title: 'fix/a:b*c?"d<e>f|g', backend: 'codebuddy' },
+          messages: [{ id: 1, role: 'user', content: 'hi', createdAt: '2026-09-22T09:00:00Z' }],
+        }),
+      } as unknown as Response)) as unknown as typeof fetch
+      const wrapper = await mountView()
+      await wrapper.find('.session-share-export').trigger('click')
+      const [, filename] = downloadBlobMock.mock.calls[0] as [string, string]
+      expect(filename.endsWith('.json')).toBe(true)
+      // No path separators or reserved characters survive.
+      expect(filename).not.toMatch(/[/\\:*?"<>|]/)
+    })
+
+    it('does not split a surrogate pair when truncating a long title', async () => {
+      // 79 ASCII chars then an emoji: a naive 80-char slice cuts the emoji in
+      // half, leaving a lone surrogate in the filename.
+      globalThis.fetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          version: 1,
+          session: { title: 'a'.repeat(79) + '😀' + 'tail', backend: 'codebuddy' },
+          messages: [{ id: 1, role: 'user', content: 'hi', createdAt: '2026-09-22T09:00:00Z' }],
+        }),
+      } as unknown as Response)) as unknown as typeof fetch
+      const wrapper = await mountView()
+      await wrapper.find('.session-share-export').trigger('click')
+      const [, filename] = downloadBlobMock.mock.calls[0] as [string, string]
+      // eslint-disable-next-line no-control-regex
+      const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+      expect(loneSurrogate.test(filename)).toBe(false)
+    })
+
+    it('hides the button until the snapshot has loaded', async () => {
+      // Hold the response open so the view stays in its loading state, then
+      // settle it at the end — a promise that never settles is reported as a
+      // leak by the test runner.
+      let release: (r: Response) => void = () => {}
+      globalThis.fetch = vi.fn(
+        () => new Promise<Response>((resolve) => { release = resolve }),
+      ) as unknown as typeof fetch
+      const wrapper = mount(SessionShareView, { global: { plugins: [i18n] } })
+      mounted.push(wrapper)
+      await nextTick()
+      expect(wrapper.find('.session-share-export').exists()).toBe(false)
+      release({ ok: false, status: 404, json: async () => ({}) } as Response)
+      await flushPromises()
+    })
+
+    it('makes no extra request when exporting', async () => {
+      const wrapper = await mountView()
+      const before = fetchCalls.length
+      await wrapper.find('.session-share-export').trigger('click')
+      expect(fetchCalls).toHaveLength(before)
+    })
   })
 })

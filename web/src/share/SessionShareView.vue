@@ -6,11 +6,26 @@
     <div class="session-share-column">
       <div class="session-share-header">
         <div class="session-share-header-inner">
-          <h1 class="session-share-title" :title="title">{{ title }}</h1>
-          <!-- Byline: which CLI produced this conversation, and how long it is.
-               The model is deliberately NOT shown — it is per-message, so a
-               single session-level label would misreport a thread that switched
-               models midway. Each message keeps its own metadata modal. -->
+          <div class="session-share-title-row">
+            <h1 class="session-share-title" :title="title">{{ title }}</h1>
+            <!-- Export the snapshot verbatim (client-side; no extra request).
+                 Hidden until the payload lands, so it cannot be tapped into a
+                 no-op while loading or in the error state. -->
+            <button
+              v-if="!loading && !error && snapshot"
+              class="session-share-export"
+              :title="t('share.exportJson')"
+              :aria-label="t('share.exportJson')"
+              @click="onExportJson"
+            >
+              <Download :size="16" />
+            </button>
+          </div>
+          <!-- Byline: which CLI produced this conversation, how long it is, and
+               how long the agent actually spent on it. The model is deliberately
+               NOT shown — it is per-message, so a single session-level label
+               would misreport a thread that switched models midway. Each message
+               keeps its own metadata modal. -->
           <div class="session-share-byline">
             <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
             <span v-else-if="error" class="share-status share-error">{{ error }}</span>
@@ -23,6 +38,15 @@
               <span v-if="messageCount > 0" class="session-share-count">
                 {{ t('share.messageCount', { count: messageCount }) }}
               </span>
+              <!-- Total agent time. Summed from each assistant turn's wallMs
+                   (the same value its meta bar shows); omitted when no turn
+                   carries one, rather than rendering "0ms". -->
+              <template v-if="totalDurationMs > 0">
+                <span v-if="messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
+                <span class="session-share-duration">
+                  {{ t('share.totalDuration', { duration: formatDuration(totalDurationMs) }) }}
+                </span>
+              </template>
             </template>
           </div>
         </div>
@@ -104,7 +128,7 @@
 <script setup lang="ts">
 import { computed, onMounted, provide, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { FileX2 } from 'lucide-vue-next'
+import { Download, FileX2 } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
@@ -117,6 +141,8 @@ import { isLastAssistantMessage, isShowingSummary, normalizeDisplayMode, parseMe
 import { localConfig } from '@/composables/useSettingsConfig'
 import { getBackendDisplayName } from '@/utils/backendNames'
 import { setShareSessionData, shareApiUrl, type ShareToolCallData } from './shareMode'
+import { downloadBlob } from '@/utils/download.ts'
+import { formatDuration } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
 
@@ -133,6 +159,41 @@ const backendLabel = ref('')
 const agentName = computed(() => getBackendDisplayName(backendLabel.value))
 const messageCount = ref(0)
 const messages = ref<Record<string, unknown>[]>([])
+
+/**
+ * The snapshot payload as served, kept for the JSON export.
+ *
+ * This must be a DEEP COPY taken before `parseMessages` runs. That function
+ * mutates every message IN PLACE — it assigns `blocks`, `metadata` and
+ * `showingSummary` onto the very objects the payload owns — and the view then
+ * flips `showingSummary` on toggle. Re-serializing the live payload would
+ * therefore export a mutated, view-state-dependent document in which each
+ * message carries its content twice (the original `content` JSON string plus
+ * the derived `blocks`), which is not what the link serves.
+ *
+ * The round-trip through JSON also preserves key order (JS keeps insertion
+ * order for string keys), so the exported document matches the API's field
+ * order as well as its data.
+ */
+const snapshot = ref<Record<string, unknown> | null>(null)
+
+/**
+ * Total assistant wall-clock time, summed across the thread.
+ *
+ * Sums `metadata.wallMs` from each assistant message's parsed content — the
+ * same per-turn value the chat meta bar shows. Missing values are skipped
+ * rather than treated as 0 (older turns predate the field), so a thread with
+ * partial data reports the sum of what is known instead of under-reporting.
+ */
+const totalDurationMs = computed(() => {
+  let sum = 0
+  for (const msg of messages.value) {
+    if (msg.role !== 'assistant') continue
+    const meta = msg.metadata as { wallMs?: number } | undefined
+    if (typeof meta?.wallMs === 'number' && meta.wallMs > 0) sum += meta.wallMs
+  }
+  return sum
+})
 
 // ── Render chain ──
 // One shared instance drives every message, exactly as the chat panel does.
@@ -218,6 +279,48 @@ function onToggleSummary(msgId: string | number) {
   // Record the explicit preference; the render decision derives from it.
   msg.showingSummary = !showingNow
 }
+/**
+ * Turn the session title into a safe download filename.
+ *
+ * Titles are free text: they routinely contain '/' (paths), ':' and quotes, any
+ * of which produce a broken or silently-renamed file in a browser save dialog.
+ * Whitespace is collapsed so a newline in a title cannot split the filename.
+ * Falls back to the generic share title when nothing usable survives.
+ */
+function exportFilename(): string {
+  // \p{Cc} (Unicode "control") covers NUL through US plus DEL. Written as a
+  // property escape rather than a \u0000-\u001f range because eslint's
+  // no-control-regex rejects control characters written literally.
+  // Truncate by code POINT, not UTF-16 unit: a plain slice can cut a surrogate
+  // pair in half and leave a lone surrogate in the filename.
+  const cleaned = (title.value || t('share.sharedConversation'))
+    .replace(/[/\\:*?"<>|\p{Cc}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const base = [...cleaned].slice(0, 80).join('').trim()
+  return `${base || 'conversation'}.json`
+}
+
+/**
+ * Export the snapshot verbatim as a JSON file.
+ *
+ * Exports exactly what this link serves (no re-serialization of parsed state,
+ * no extra request): the payload is already sanitized server-side — absolute
+ * paths were relativized by the share builder — so the download carries no more
+ * than the page itself already shows.
+ */
+function onExportJson() {
+  if (!snapshot.value) return
+  try {
+    downloadBlob(JSON.stringify(snapshot.value, null, 2), exportFilename(), 'application/json')
+  } catch (err) {
+    // Download can fail in restricted WebViews (no download manager). Surface
+    // it in the byline rather than silently doing nothing on tap.
+    appLog.w(TAG, 'snapshot export failed', err)
+    error.value = t('share.exportFailed')
+  }
+}
+
 function onShowMetadata(msg: Record<string, unknown>) {
   metadataModal.value.data = (msg.metadata as Record<string, unknown>) || {}
   metadataModal.value.backend = (msg.backend as string) || backendLabel.value
@@ -285,6 +388,9 @@ async function loadSnapshot() {
       return
     }
     const payload = await resp.json()
+    // Deep-copy BEFORE parseMessages mutates the payload's message objects in
+    // place; see the `snapshot` declaration for why the live object is unusable.
+    snapshot.value = JSON.parse(JSON.stringify(payload))
 
     title.value = payload?.session?.title || t('share.sharedConversation')
     backendLabel.value = payload?.session?.backend || ''
@@ -330,10 +436,19 @@ onMounted(loadSnapshot)
   min-height: 0;
 }
 
+/* Message layout mirrors the chat area exactly (.chat-messages +
+   .chat-messages-list), so a shared conversation reads identically to the
+   in-app thread it was shared from:
+   - no horizontal padding, so an assistant card is flush with the column's
+     inner edge (the assistant bubble has no side margin and border-radius: 0;
+     the user bubble owns its own 10px right inset);
+   - flex column + `gap: var(--space-8)`, which is the chat list's message
+     spacing. Block layout would leave adjacent messages touching (gap 0). */
 .session-share-messages {
-  /* The column owns the width; the horizontal padding must match
-     .session-share-header-inner so the title and the messages share a left edge. */
-  padding: 16px 20px 48px;
+  padding: var(--space-6) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
 }
 
 /* The conversation column: a centred 900px measure framed by full-height
@@ -363,6 +478,42 @@ onMounted(loadSnapshot)
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* Title + export button. The button is pinned to the right edge while the
+   title keeps the full remaining width (min-width: 0 is required for the
+   title's line clamp to engage inside a flex row). */
+.session-share-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.session-share-title-row .session-share-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-share-export {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary, #57606a);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .session-share-export:hover {
+    background: var(--bg-tertiary, #eaeef2);
+    color: var(--accent-color, #0969da);
+  }
 }
 
 .session-share-title {
@@ -405,7 +556,8 @@ onMounted(loadSnapshot)
   opacity: .6;
 }
 
-.session-share-count {
+.session-share-count,
+.session-share-duration {
   white-space: nowrap;
 }
 

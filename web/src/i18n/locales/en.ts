@@ -2955,6 +2955,9 @@ export default {
     sourceView: 'View source',
     sharedConversation: 'Shared conversation',
     messageCount: '{count} messages',
+    totalDuration: 'Total {duration}',
+    exportJson: 'Export snapshot as JSON',
+    exportFailed: 'Could not export the snapshot',
   },
   shareDialog: {
     title: 'Share link',

@@ -2958,6 +2958,9 @@ export default {
     sourceView: '查看源码',
     sharedConversation: '分享的会话',
     messageCount: '{count} 条消息',
+    totalDuration: '总耗时 {duration}',
+    exportJson: '导出快照 JSON',
+    exportFailed: '导出快照失败',
   },
   shareDialog: {
     title: '分享链接',

@@ -29,10 +29,17 @@ describe('i18n sessionShare keys completeness', () => {
   // The viewer-side keys live in the shared `share` namespace alongside the
   // file-share ones.
   it('the share namespace has the session-viewer keys in both locales', () => {
-    for (const key of ['sharedConversation', 'messageCount']) {
+    for (const key of ['sharedConversation', 'messageCount', 'totalDuration', 'exportJson', 'exportFailed']) {
       expect((en.share as Record<string, string>)[key], `en.share.${key}`).toBeTruthy()
       expect((zh.share as Record<string, string>)[key], `zh.share.${key}`).toBeTruthy()
     }
+  })
+
+  // totalDuration interpolates the formatted duration; losing the placeholder
+  // renders the bare template with no number in it.
+  it('share.totalDuration keeps its placeholder in both locales', () => {
+    expect((en.share as Record<string, string>).totalDuration).toContain('{duration}')
+    expect((zh.share as Record<string, string>).totalDuration).toContain('{duration}')
   })
 
   // Every key the share UI references must exist. The parity check above only
