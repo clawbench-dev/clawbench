@@ -93,6 +93,7 @@ flowchart LR
 - **BackgroundService（后台服务）**：管理端口映射和原生 WebSocket 事件通道，App 在后台时仍能接收通知。端口映射有两条传输：**SSH 隧道**（默认）与 **h2 流隧道**（实验性，走主端口 20000），由**本地开关** `tunnel_transport_h2_enabled` 选择——Android **不消费服务端 `port_forward.transport` 配置**（该配置已被服务端钉死为 `both`，仅剩 web 端健康检查门控一个消费者）
   - 关键 API：`setNativePushEnabled(boolean)`（总开关）、`getTrustAllSSLContext()`（给 PendingEventsWorker 共享 TLS）、`postEventNotificationFromWorker(ctx, eventType, data)`（跨进程触发通知）
 - **PendingEventsWorker**：WS 不可达时由 WorkManager 周期调度，通过 HTTP `GET /api/ai/events/pending?after=...` 拉取漏发事件，作为离线通知回退
+- **原生通知的已读门控（NativeNotificationPolicy）**：原生通知通道没有"已读"概念，也不消费服务端的 `replayed` 标记，因此已读消息会被反复弹通知（issue #495）。三条通知路径（live WS / WS replay / HTTP pending）原先各自内联判断且互相漂移，现收敛为一个纯策略类 `NativeNotificationPolicy`：读取服务端的 `suppress_notification` 标记、HTTP pending 路径补空游标守卫（对齐 Web 端）、`permission_pending` 在客户端也**永不被抑制**（漏弹审批会静默卡住会话，重弹只多一次点击）。**游标推进与是否通知解耦**：被抑制的事件仍必须推进游标，否则会被永久重复拉取；且 `advancesCursor` 谓词必须与服务端 `IsNotifiableEvent` 逐条对齐（服务端只持久化 completed/failed/cancelled，客户端的 running 会让游标指向不存在的行 → 离线期间的完成事件永远无法恢复）
 - **BootCompletedReceiver**：设备开机后恢复 BackgroundService + 调度 PendingEventsWorker
 - **OemUtils**：厂商 ROM 适配（自启动白名单 / 后台保活 / 电池优化白名单）
 - **SharedCacheUtils**：跨进程共享缓存
