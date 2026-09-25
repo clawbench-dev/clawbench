@@ -30,9 +30,10 @@ interface Parsed {
 
 /**
  * Evaluate a url-utils.js in a bare vm sandbox and return its global
- * parseServerInput. A bare sandbox (no DOM, no Node globals) is deliberate:
- * the file must not touch document/window/ClawBenchNative, and this fails
- * loudly if it does.
+ * parseServerInput. The bare sandbox is deliberate: load-time references to
+ * document/window/ClawBenchNative throw, and any reference on an executed path
+ * throws too. (A DOM reference inside an unreached branch is not detected —
+ * the function is pure by design, so keep it that way.)
  */
 function parserFor(rel: string): (text: string) => Parsed | null {
   const sandbox: Record<string, unknown> = {}
@@ -52,12 +53,15 @@ const CASES: Array<[string, Parsed | null]> = [
   ['https://192.168.1.100:8443', { protocol: 'https', host: '192.168.1.100', port: '8443' }],
   ['http://example.com', { protocol: 'http', host: 'example.com', port: null }],
   ['https://example.com/chat?x=1', { protocol: 'https', host: 'example.com', port: null }],
+  ['https://host:8443/api', { protocol: 'https', host: 'host', port: '8443' }],
   ['192.168.1.100:8080', { protocol: null, host: '192.168.1.100', port: '8080' }],
   ['192.168.1.100', { protocol: null, host: '192.168.1.100', port: null }],
   ['not a url', null],
   // Extra edges.
   ['', null],
   ['   ', null],
+  // Whitespace around a valid URL — clipboard pastes often carry padding.
+  ['  https://host:8443  ', { protocol: 'https', host: 'host', port: '8443' }],
   // An explicit port equal to the scheme default is still explicit.
   ['http://host:80', { protocol: 'http', host: 'host', port: '80' }],
   ['HTTPS://Host:8443', { protocol: 'https', host: 'Host', port: '8443' }],
@@ -66,6 +70,7 @@ const CASES: Array<[string, Parsed | null]> = [
   ['http://', null],
   ['ftp://host', null],
   ['https://user:pass@host:8443', null],
+  ['[::1]:8080', null],
 ]
 
 describe.each([
