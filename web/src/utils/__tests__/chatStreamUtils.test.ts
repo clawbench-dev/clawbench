@@ -2135,6 +2135,155 @@ describe('duplicate message root causes (regression)', () => {
   })
 })
 
+describe('mergeStreamBlocks preserves text/tool interleaving', () => {
+  // Reported: while a turn is STILL STREAMING, the reply rendered as two
+  // stacked groups — all tool calls bunched at the top, all text bunched below
+  // — instead of the real speak → call → speak → call order. Re-opening the
+  // session mid-stream showed the same thing; only finishing/cancelling the
+  // turn restored the order. Root cause: mergeStreamBlocks (run by db_load
+  // while the placeholder is live) prepended every DB-only non-text block and
+  // moved all DB text blocks to the first live-text slot. The assertions below
+  // therefore check the BLOCK SEQUENCE, not just the concatenated text — the
+  // pre-existing tests only summed text and counted tools, which is exactly why
+  // the regression slipped through.
+  const u = (id: number) => ({ role: 'user', id, content: 'Q', blocks: [{ type: 'text', text: 'Q' }] })
+
+  it('case 0: keeps interleaved text/tool order when the live text is a short prefix', () => {
+    // The placeholder was recreated (stream_start) and has received only the
+    // first few characters; the DB flush holds the whole interleaved turn.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 42, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'text', text: 'Let me ch' },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 42, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'Let me check' },
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+        { type: 'text', text: 'Found it' },
+        { type: 'tool_use', name: 'Read', id: 'tu2', done: true },
+        { type: 'text', text: 'Done' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    // The crux: tools must NOT be hoisted above the text.
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual([
+      'text', 'tool_use', 'text', 'tool_use', 'text',
+    ])
+    const ids = (reply.blocks || []).filter((b: any) => b.type === 'tool_use').map((b: any) => b.id)
+    expect(ids).toEqual(['tu1', 'tu2'])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''))
+      .toBe('Let me checkFound itDone')
+  })
+
+  it('case 0: does not stack tools on top when the live placeholder has no text yet', () => {
+    // Strongest form of the shape: the live placeholder holds only a tool block
+    // (its tool event arrived, its text has not). The DB has the full turn.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 43, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 43, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'Let me look' },
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+        { type: 'text', text: 'Found root' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual(['text', 'tool_use', 'text'])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''))
+      .toBe('Let me lookFound root')
+  })
+
+  it('case 0: keeps a live-only tool before the text that follows it', () => {
+    // A tool whose event reached the live stream but not the DB's rate-limited
+    // flush must keep its live position — here it precedes the text, so a merge
+    // that reorders by type (text first) would visibly move it.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 44, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'tool_use', name: 'Grep', id: 'tu-live', done: false },
+        { type: 'text', text: 'pre' },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 44, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'prefix' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual(['tool_use', 'text'])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use').map((b: any) => b.id))
+      .toEqual(['tu-live'])
+  })
+
+  it('case 1: splices a DB-only tool at its DB position instead of prepending it', () => {
+    // Continuous streaming: live already covers the DB text. A tool the DB
+    // flushed before the placeholder was recreated belongs AFTER that text,
+    // where it happened — not at the top of the reply.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 45, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'text', text: 'Hello world' },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 45, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'Hello' },
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual(['text', 'tool_use'])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''))
+      .toBe('Hello world')
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use')).toHaveLength(1)
+  })
+
+  it('case 0: reproduces the reported multi-tool turn without duplicating or reordering', () => {
+    // The exact reported shape at scale: several tool calls interleaved with
+    // text, live holding only the opening text. Every DB block must appear once,
+    // in DB order.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 46, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'text', text: 'a' },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 46, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'a' },
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+        { type: 'text', text: 'b' },
+        { type: 'tool_use', name: 'Read', id: 'tu2', done: true },
+        { type: 'text', text: 'c' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual([
+      'text', 'tool_use', 'text', 'tool_use', 'text',
+    ])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''))
+      .toBe('abc')
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use').map((b: any) => b.id))
+      .toEqual(['tu1', 'tu2'])
+  })
+})
+
 describe('messageText', () => {
   it('returns block text when blocks are present', () => {
     const m = { role: 'user', content: 'raw', blocks: [{ type: 'text', text: 'Hello' }] } as any

@@ -595,6 +595,136 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: 
   return undefined
 }
 
+/** Concatenated text of the text blocks in an array, in order. */
+function joinTextBlocks(blocks: ContentBlock[]): string {
+  return blocks
+    .filter((b) => b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+    .join('')
+}
+
+/**
+ * Cumulative text spans of the DB text blocks: `index` is the block's index in
+ * `dbBlocks`, `start`/`end` its character range in the concatenated DB text.
+ * Used to anchor a live text block (or a DB-only block) at a text position.
+ */
+function dbTextSpans(dbBlocks: ContentBlock[]): Array<{ index: number; start: number; end: number }> {
+  const spans: Array<{ index: number; start: number; end: number }> = []
+  let offset = 0
+  for (let i = 0; i < dbBlocks.length; i++) {
+    const b = dbBlocks[i]
+    if (b.type !== 'text' || typeof b.text !== 'string') continue
+    spans.push({ index: i, start: offset, end: offset + b.text.length })
+    offset += b.text.length
+  }
+  return spans
+}
+
+/** DB text-block index whose span contains `offset` (the last span when the
+ *  offset is at or beyond the end of the DB text). */
+function dbTextIndexAtOffset(
+  spans: Array<{ index: number; start: number; end: number }>,
+  offset: number,
+): number {
+  for (const s of spans) {
+    if (offset < s.end) return s.index
+  }
+  return spans.length > 0 ? spans[spans.length - 1].index : -1
+}
+
+/** Index in `dbBlocks` of the block a live block corresponds to, or -1 when the
+ *  DB flush has no counterpart (a live-only tool, an in-progress thinking the
+ *  flush deliberately omits, a warning/error block). Used to anchor DB-only
+ *  blocks: a block is spliced before the first base element whose DB index is
+ *  greater than its own. */
+function dbAnchorOfLiveBlock(lb: ContentBlock, dbBlocks: ContentBlock[]): number {
+  if (lb.type === 'tool_use' && lb.id) {
+    return dbBlocks.findIndex((b) => b.type === 'tool_use' && b.id === lb.id)
+  }
+  return -1
+}
+
+/**
+ * Order-preserving merge of the DB flushed blocks into the live blocks.
+ *
+ * The result is built in LIVE order — a live block is never relocated — with
+ * the DB's text substituted for the live text when `takeDbText` is set (case 0:
+ * the DB flush is ahead, so the live text is a stale prefix). Every DB block
+ * the live placeholder lacks is then spliced in at the position of the first
+ * base element that follows it in DB order; blocks with no such anchor (the
+ * newest ones) are appended.
+ *
+ * This is what keeps text and tool_use interleaved. An earlier implementation
+ * prepended every DB-only non-text block and moved all DB text blocks to the
+ * first live-text slot, which rendered a turn as "all tools stacked on top, all
+ * text stacked below" whenever a snapshot arrived while the placeholder held
+ * little or no content.
+ */
+function mergeOrderedBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[], takeDbText: boolean): ContentBlock[] {
+  const liveToolIds = new Set(liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
+  const liveHasThinking = liveBlocks.some((b) => b.type === 'thinking')
+  const spans = dbTextSpans(dbBlocks)
+  const emittedText = new Set<number>()
+
+  const out: ContentBlock[] = []
+  const anchors: number[] = []
+  const push = (block: ContentBlock, anchor: number) => {
+    out.push(block)
+    anchors.push(anchor)
+  }
+
+  // Walk the live blocks in order, emitting the DB text in step with the live
+  // text it replaces (case 0) so a tool that sits between two text blocks in
+  // the DB is not jumped over.
+  let liveTextOffset = 0
+  let dbTextPtr = 0
+  let dbTextEmitted = 0
+  for (const lb of liveBlocks) {
+    if (lb.type === 'text') {
+      const len = typeof lb.text === 'string' ? lb.text.length : 0
+      if (takeDbText) {
+        liveTextOffset += len
+        while (dbTextPtr < spans.length && dbTextEmitted < liveTextOffset) {
+          const s = spans[dbTextPtr++]
+          push(dbBlocks[s.index], s.index)
+          emittedText.add(s.index)
+          dbTextEmitted = s.end
+        }
+      } else {
+        push(lb, dbTextIndexAtOffset(spans, liveTextOffset))
+        liveTextOffset += len
+      }
+      continue
+    }
+    push(lb, dbAnchorOfLiveBlock(lb, dbBlocks))
+  }
+
+  // Every DB block the live placeholder lacks. In case 0 the DB text blocks the
+  // live text did not reach are included here too — they are the continuation
+  // of the reply and must land after the live-covered region, not at the end of
+  // the array.
+  const extras: Array<{ block: ContentBlock; dbIndex: number }> = []
+  dbBlocks.forEach((b, i) => {
+    if (b.type === 'text') {
+      if (takeDbText && !emittedText.has(i)) extras.push({ block: b, dbIndex: i })
+      return
+    }
+    if (b.type === 'tool_use' && b.id && liveToolIds.has(b.id)) return
+    if (b.type === 'thinking' && liveHasThinking) return
+    extras.push({ block: b, dbIndex: i })
+  })
+  extras.sort((a, b) => a.dbIndex - b.dbIndex)
+
+  for (const { block, dbIndex } of extras) {
+    let p = anchors.findIndex((a) => a > dbIndex)
+    if (p === -1) p = out.length
+    out.splice(p, 0, block)
+    anchors.splice(p, 0, dbIndex)
+  }
+
+  return out
+}
+
 /**
  * Merge the DB streaming row's flushed blocks into a live placeholder that
  * already holds content. Called when the placeholder was (re)created by a
@@ -602,10 +732,11 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: 
  * loadHistory DB snapshot arrived — so the DB row's rate-limited flushed
  * history (tool_use + earlier text) may be a prefix the placeholder lacks.
  *
- * Three cases:
+ * Cases:
  *   1. Continuous streaming (liveText starts with dbText): the live text
  *      already covers the DB flush (a stale subset). Only DB non-text blocks
- *      (tool_use) that live is missing are adopted.
+ *      (tool_use) that live is missing are adopted, spliced in at their DB
+ *      position.
  *   2. Re-subscribed mid-stream (switch-back): the DB text is a true prefix
  *      the live increment does not cover. Evidence: the DB text/live text
  *      overlap at a seam, OR the DB carries a tool_use block live lacks
@@ -619,23 +750,20 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: 
  *   0. (checked first) The DB text is a SUPERSET of the live text — the DB
  *      flush got further than the live stream did. That is the shape a turn
  *      takes when this client missed increments (WS dropped / App backgrounded)
- *      while the backend kept flushing. Nothing in the three cases above covers
- *      it: case 1 asks for the opposite containment, and case 2 only prepends a
- *      DB prefix that is strictly *shorter* than live. Left unhandled it fell
+ *      while the backend kept flushing. Nothing in the cases above covers it:
+ *      case 1 asks for the opposite containment, and case 2 only prepends a DB
+ *      prefix that is strictly *shorter* than live. Left unhandled it fell
  *      through to case 3 and the live prefix silently won — which is how a
  *      finished reply got truncated to whatever had arrived before the
- *      disconnect. The DB is authoritative here, so it becomes the base and any
- *      live-only tool_use block (not yet in the DB flush) is appended.
+ *      disconnect.
+ *
+ * Every case builds the result in LIVE order (a live block is never relocated)
+ * and splices DB-only blocks in at their DB position — see mergeOrderedBlocks.
+ * The reply's text/tool interleaving is therefore preserved.
  */
 function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): ContentBlock[] {
-  const dbText = dbBlocks
-    .filter((b) => b.type === 'text' && typeof b.text === 'string')
-    .map((b) => b.text as string)
-    .join('')
-  const liveText = liveBlocks
-    .filter((b) => b.type === 'text' && typeof b.text === 'string')
-    .map((b) => b.text as string)
-    .join('')
+  const dbText = joinTextBlocks(dbBlocks)
+  const liveText = joinTextBlocks(liveBlocks)
 
   // Case 0 — the DB flush is a strict superset of the live text: the live
   // stream is behind, so the DB's text is authoritative. (Equal text is left to
@@ -652,56 +780,17 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   // for DONE thinking) — returning the DB array wholesale would silently drop
   // the reasoning the user is currently watching, along with any live
   // warning/error block. DB-only non-text blocks (tools that finished before the
-  // placeholder was recreated) are prepended, matching case 1's placement.
+  // placeholder was recreated) are spliced in at their DB position.
   if (dbText && dbText !== liveText && dbText.startsWith(liveText)) {
-    const liveToolIds = new Set(liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
-    const liveHasThinking = liveBlocks.some((b) => b.type === 'thinking')
-    const dbTextBlocks = dbBlocks.filter((b) => b.type === 'text').map((b) => ({ ...b }))
-    const dbOnlyNonText = dbBlocks.filter(
-      (b) =>
-        b.type !== 'text' &&
-        !(b.type === 'tool_use' && b.id && liveToolIds.has(b.id)) &&
-        !(b.type === 'thinking' && liveHasThinking),
-    )
-
-    // Rebuild in live order: keep every live block, but swap the FIRST live text
-    // block for the DB's text blocks (the live text is a stale prefix). A live
-    // text block is always emitted first among text, so this cannot reorder the
-    // reply's text relative to its own tool/thinking blocks.
-    const out: ContentBlock[] = []
-    let textEmitted = false
-    for (const b of liveBlocks) {
-      if (b.type !== 'text') {
-        out.push(b)
-        continue
-      }
-      if (!textEmitted) {
-        out.push(...dbTextBlocks)
-        textEmitted = true
-      }
-    }
-    if (!textEmitted) out.push(...dbTextBlocks)
-    return dbOnlyNonText.length > 0 ? [...dbOnlyNonText, ...out] : out
+    return mergeOrderedBlocks(dbBlocks, liveBlocks, true)
   }
 
   // Case 1 — live already covers the DB text. Adopt only the DB non-text
   // blocks (tool_use finished before the placeholder was recreated) that live
-  // is missing.
+  // is missing, spliced in at their DB position so the text/tool interleaving
+  // is preserved.
   if (dbText && liveText.startsWith(dbText)) {
-    const liveToolIds = new Set(liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
-    // DB slim thinking markers ({think_id, done}) reference reasoning the live
-    // stream already rendered when live holds a thinking block — adopting them
-    // would duplicate the chip. When live has NO thinking block (the placeholder
-    // was recreated after that thinking finished and replay emitted text only),
-    // the DB marker is genuinely missing and is adopted below.
-    const liveHasThinking = liveBlocks.some((b) => b.type === 'thinking')
-    const extra = dbBlocks.filter(
-      (b) =>
-        b.type !== 'text' &&
-        !(b.type === 'tool_use' && b.id && liveToolIds.has(b.id)) &&
-        !(b.type === 'thinking' && liveHasThinking),
-    )
-    return extra.length > 0 ? [...extra, ...liveBlocks] : liveBlocks
+    return mergeOrderedBlocks(dbBlocks, liveBlocks, false)
   }
 
   // Case 3 — no overlap and the DB has no non-text history live lacks: the DB
