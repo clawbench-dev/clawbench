@@ -28,7 +28,8 @@ export interface UseChatStreamOptions {
   onMessage: () => void
   onOpen: () => void
   isOpen: Ref<boolean>
-  onParseAssistantContent: (content: string) => { blocks: ContentBlock[]; metadata?: Record<string, unknown>; cancelled?: boolean }
+  /** See useChatSession's option of the same name. */
+  onParseAssistantContent: (content: string, opts?: { liveStreaming?: boolean }) => { blocks: ContentBlock[]; metadata?: Record<string, unknown>; cancelled?: boolean }
   onToast: (msg: string, opts?: { icon?: string; type?: string; duration?: number; onClick?: () => void }) => void
   onNotification: (title: string, opts?: { body?: string; onClick?: () => void }) => void
   onStreamEnd?: (reason: 'done' | 'cancelled' | 'error') => void

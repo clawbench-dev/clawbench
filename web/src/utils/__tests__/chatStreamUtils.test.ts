@@ -3012,3 +3012,89 @@ describe('queued message action (insert / interrupt)', () => {
     expect(userBubbles).toHaveLength(2, 'the remote file must render as its own bubble')
     expect(userBubbles.map((m: any) => m.files[0].path)).toContain('.clawbench/uploads/remote.pdf')
   })
+
+// ── Live placeholder ↔ streaming DB row matching ──
+//
+// Regression: a running sub-agent's Agent pill showed its green check while the
+// sub-agent was still producing output, and it recovered only on a later
+// refresh. The DB row of a streaming turn carries the CURRENT tool status, so
+// when the live placeholder failed to adopt the DB id — ws_stream_start is
+// dropped routinely — the parsed DB row replaced the live blocks and its
+// `done: true` (forced by parseAssistantContent on historical rows) won.
+//
+// The placeholder must instead be recognised as THIS turn's row even without an
+// id match, so the live block flags survive.
+describe('rebuildFromDb: live placeholder matching without an adopted id', () => {
+  const streamingRow = (id: number) => ({
+    role: 'assistant',
+    id,
+    content: '',
+    blocks: [
+      { type: 'text', text: 'text so far' },
+      // Still running: the backend writes done only when the tool completes.
+      { type: 'tool_use', name: 'Agent', id: 'call_agent', input: {}, done: false },
+    ],
+    streaming: true,
+    createdAt: '2026-09-25T10:17:36Z',
+  })
+
+  const livePlaceholder = () => ({
+    role: 'assistant',
+    id: 'drain-1758000000000-abc', // never adopted the DB id (stream_start dropped)
+    content: '',
+    blocks: [
+      { type: 'text', text: 'text so far' },
+      { type: 'tool_use', name: 'Agent', id: 'call_agent', input: {}, done: false },
+    ],
+    streaming: true,
+    createdAt: '2026-09-25T10:17:36Z',
+    seq: 1,
+  })
+
+  it('keeps the live object and its running Agent block when the snapshot has one streaming row', () => {
+    const live = livePlaceholder()
+    const merged = rebuildFromDb([live] as any, [streamingRow(53240)] as any, true)
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toBe(live)
+    const agent = (merged[0].blocks || []).find((b: any) => b.id === 'call_agent') as any
+    expect(agent.done).toBe(false)
+  })
+
+  it('adopts the DB id onto the live object (stable v-for key, clickable tool)', () => {
+    const live = livePlaceholder()
+    const merged = rebuildFromDb([live] as any, [streamingRow(53240)] as any, true)
+    expect(merged[0].id).toBe(53240)
+    expect((merged[0] as any).seq).toBeUndefined()
+  })
+
+  it('declines when TWO streaming rows exist (cannot tell which is ours)', () => {
+    // Two streaming rows cannot happen for one session (the backend allows a
+    // single turn), but if a snapshot ever carried two, guessing would render
+    // our placeholder beside an unrelated row — so we must not guess.
+    const live = livePlaceholder()
+    const merged = rebuildFromDb([live] as any, [streamingRow(53240), streamingRow(53241)] as any, true)
+    expect(merged.some((m: any) => m === live)).toBe(false)
+  })
+
+  it('does not adopt a FINALIZED row via the streaming-row channel', () => {
+    // A finalized row is not evidence of a running turn, so the fallback must
+    // not claim it: the placeholder keeps its own id instead of silently taking
+    // the id of a finished reply.
+    const live = livePlaceholder()
+    const finalized = { ...streamingRow(53240), streaming: false }
+    const merged = rebuildFromDb([live] as any, [finalized] as any, true)
+    const kept = merged.find((m: any) => m === live) as any
+    expect(kept?.id).toBe('drain-1758000000000-abc')
+  })
+
+  it('does not adopt the streaming row when the session is not running', () => {
+    // Not running → the DB is final, so the stale streaming flag must not be
+    // honoured: the placeholder is not matched to the row (it is dropped, and
+    // the DB row is rendered as the authoritative record).
+    const live = livePlaceholder()
+    const merged = rebuildFromDb([live] as any, [streamingRow(53240)] as any, false)
+    expect(merged.some((m: any) => m === live)).toBe(false)
+    expect(merged).toHaveLength(1)
+    expect(merged[0].id).toBe(53240)
+  })
+})

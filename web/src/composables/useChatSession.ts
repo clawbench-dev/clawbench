@@ -110,7 +110,10 @@ export interface UseChatSessionOptions {
   blockAskQuestions: Record<string, unknown>
   expandedTools: Ref<Record<string, boolean>>
   switching?: Ref<boolean>
-  onParseAssistantContent: (content: string) => Record<string, unknown>
+  /** Parses an assistant row's content JSON into blocks. `liveStreaming` marks a
+   *  row belonging to a turn that is still running, whose `done` flags are
+   *  current facts and must not be defaulted to "finished". */
+  onParseAssistantContent: (content: string, opts?: { liveStreaming?: boolean }) => Record<string, unknown>
   onExtractScheduledTasks: (msgs: Array<Record<string, unknown>>) => void
   onRenderUpdate: (forceFull: boolean) => void
   onScrollBottom: (force?: boolean) => void

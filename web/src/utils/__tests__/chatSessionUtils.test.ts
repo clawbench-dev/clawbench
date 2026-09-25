@@ -165,6 +165,34 @@ describe('parseMessages', () => {
     expect(result[0].fromDB).toBeUndefined()
   })
 
+  // The parser needs to know whether the row it is handed belongs to a turn
+  // that is still running, because a live row's `done` flags are current facts
+  // that must not be defaulted to "finished" (see chatBlocks.ts). Regression
+  // guard for the running sub-agent that showed its green check.
+  describe('liveStreaming flag forwarded to the parser', () => {
+    const capturingParser = vi.fn((content: string) => ({ blocks: [], metadata: null, cancelled: false }))
+
+    it('is true for a streaming row while the session is running', () => {
+      parseMessages([{ role: 'assistant', content: '{}', streaming: true }], capturingParser, undefined, true)
+      expect(capturingParser).toHaveBeenCalledWith('{}', { liveStreaming: true })
+    })
+
+    it('is false for a streaming row once the session is idle (stale flag)', () => {
+      parseMessages([{ role: 'assistant', content: '{}', streaming: true }], capturingParser, undefined, false)
+      expect(capturingParser).toHaveBeenCalledWith('{}', { liveStreaming: false })
+    })
+
+    it('is false for a finalized row', () => {
+      parseMessages([{ role: 'assistant', content: '{}' }], capturingParser, undefined, true)
+      expect(capturingParser).toHaveBeenCalledWith('{}', { liveStreaming: false })
+    })
+
+    it('is false when sessionRunning is unknown (old callers)', () => {
+      parseMessages([{ role: 'assistant', content: '{}', streaming: true }], capturingParser)
+      expect(capturingParser).toHaveBeenCalledWith('{}', { liveStreaming: false })
+    })
+  })
+
   it('handles mixed user and assistant messages', () => {
     const msgs = [
       { role: 'user', content: 'Question' },
@@ -211,7 +239,9 @@ describe('parseMessages', () => {
       { role: 'assistant', content: 'test content' },
     ]
     parseMessages(msgs, customParser)
-    expect(customParser).toHaveBeenCalledWith('test content')
+    // The parser also receives whether the row belongs to a still-running turn
+    // (see the liveStreaming describe block below).
+    expect(customParser).toHaveBeenCalledWith('test content', { liveStreaming: false })
   })
 
   it('handles user message with null content', () => {

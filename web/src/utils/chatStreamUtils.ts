@@ -893,12 +893,11 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
 
   // Find the DB streaming row that corresponds to the live placeholder.
   // Preferred channel: the DB id ws_stream_start already assigned to the
-  // placeholder. Fallback: any streaming row while the live placeholder is
-  // empty.
+  // placeholder. Fallback: the snapshot's ONLY streaming row (see below).
   let liveDb: ChatMessage | undefined
   if (live) {
-    // Exact id match. ws_stream_start assigns the DB row's id to the
-    // placeholder, so an id hit is the strongest identity proof — even
+    // Channel 1 — exact id match. ws_stream_start assigns the DB row's id to
+    // the placeholder, so an id hit is the strongest identity proof — even
     // against a finalized row (done missed while the session went idle and
     // parseMessages stripped the streaming flag): keeping the placeholder
     // object and finalizing it is smoother than dropping it (no v-for key
@@ -907,14 +906,33 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       const row = dbById.get(String(live.id))!
       if (row.role === 'assistant') liveDb = row
     }
-    if (!liveDb) {
-      liveDb = dbMessages.find(
-        (r) =>
-          r.role === 'assistant' &&
-          r.streaming === true &&
-          messageText(live) === '' &&
-          (live.blocks ?? []).length === 0,
-      )
+    // Channel 2 — the snapshot's ONLY streaming assistant row is this turn.
+    //
+    // Channel 1 requires the placeholder to have adopted the DB id, and that
+    // adoption is event-driven (ws_stream_start). When that event is dropped —
+    // a routine occurrence, not an edge case — the placeholder keeps its local
+    // `drain-*` id for the whole turn, so an id match never happens and the
+    // live object was DISCARDED in favour of the DB row. Two user-visible
+    // consequences: the reply lost whatever the live stream held beyond the
+    // last 500ms rate-limited flush, and the parsed DB row's block flags
+    // replaced the live ones — which is how a still-running sub-agent's Agent
+    // pill came to show its green check (see parseAssistantContent).
+    //
+    // Identity here is structural rather than a token: the backend runs at most
+    // ONE turn per session (TryClaimSessionRun) and the frontend holds at most
+    // one live placeholder, so a lone streaming row can only be this turn.
+    // Requiring it to be the ONLY streaming row is what keeps the anti-duplicate
+    // invariant intact: with two streaming rows we cannot tell which is ours, so
+    // we decline and fall through to the previous behaviour (drop the
+    // placeholder rather than render it beside an unrelated row).
+    //
+    // Gated on sessionRunning for the same reason the preserve guard below is: a
+    // streaming row in a snapshot of a session that is NOT running describes a
+    // finished turn (its flag is stale — parseMessages normally strips it), and
+    // adopting it would keep `streaming` on the placeholder forever.
+    if (!liveDb && sessionRunning) {
+      const streamingRows = dbMessages.filter((r) => r.role === 'assistant' && r.streaming === true)
+      if (streamingRows.length === 1) liveDb = streamingRows[0]
     }
   }
 
