@@ -12,8 +12,8 @@ import androidx.annotation.Nullable;
  * minted it, so a claim stream opened from a different client would be
  * rejected as foreign. A single holder makes that impossible to get wrong.
  *
- * <p>T10/T11 call {@link #get()} to obtain the transport; {@link #reset()} is
- * for tests and for a full teardown.
+ * <p>The port-forward transports call {@link #get()} to obtain the transport;
+ * {@link #reset()} is for tests and for a full teardown.
  */
 public final class TunnelStreams {
 
@@ -37,6 +37,18 @@ public final class TunnelStreams {
             }
             return instance;
         }
+    }
+
+    /**
+     * The shared transport if one has already been built, else {@code null}.
+     *
+     * <p>For callers that only want to observe state — a health check, the
+     * connection monitor — and must not bring an unused h2 transport into
+     * existence on an install that runs over SSH.
+     */
+    @Nullable
+    public static TunnelStream peek() {
+        return instance;
     }
 
     /**

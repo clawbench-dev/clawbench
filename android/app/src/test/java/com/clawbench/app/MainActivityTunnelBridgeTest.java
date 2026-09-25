@@ -123,7 +123,83 @@ public class MainActivityTunnelBridgeTest {
                 method.getAnnotation(android.webkit.JavascriptInterface.class));
     }
 
+    // =====================================================
+    // setTunnelTransport / getTunnelTransport bridge
+    // =====================================================
+
+    @Test
+    public void setTunnelTransport_methodExists() throws Exception {
+        Method method = webAppInterface.getClass().getDeclaredMethod("setTunnelTransport", String.class);
+        assertNotNull("setTunnelTransport method should exist", method);
+        assertNotNull("Should have @JavascriptInterface annotation",
+                method.getAnnotation(android.webkit.JavascriptInterface.class));
+    }
+
+    @Test
+    public void setTunnelTransport_appliesThePreference() throws Exception {
+        // Reset to the default so a previous test class cannot leak in.
+        BackgroundService.setTransportPreference("ssh");
+        try {
+            invoke("setTunnelTransport", "h2");
+            assertEquals(com.clawbench.app.tunnel.PortForwardTransportKind.H2,
+                    BackgroundService.getTransportPreference());
+        } finally {
+            BackgroundService.setTransportPreference("ssh");
+        }
+    }
+
+    @Test
+    public void setTunnelTransport_unknownValueKeepsTheDefault() throws Exception {
+        BackgroundService.setTransportPreference("ssh");
+        try {
+            invoke("setTunnelTransport", "gopher");
+            assertEquals("an unknown value must not switch transports",
+                    com.clawbench.app.tunnel.PortForwardTransportKind.SSH,
+                    BackgroundService.getTransportPreference());
+        } finally {
+            BackgroundService.setTransportPreference("ssh");
+        }
+    }
+
+    @Test
+    public void setTunnelTransport_acceptsNullWithoutThrowing() throws Exception {
+        BackgroundService.setTransportPreference("ssh");
+        try {
+            invoke("setTunnelTransport", (Object) null);
+            assertEquals(com.clawbench.app.tunnel.PortForwardTransportKind.SSH,
+                    BackgroundService.getTransportPreference());
+        } finally {
+            BackgroundService.setTransportPreference("ssh");
+        }
+    }
+
+    @Test
+    public void getTunnelTransport_reportsThePreference() throws Exception {
+        BackgroundService.setTransportPreference("both");
+        try {
+            assertEquals("both", invoke("getTunnelTransport"));
+        } finally {
+            BackgroundService.setTransportPreference("ssh");
+        }
+    }
+
+    @Test
+    public void getActiveTunnelTransport_methodExists() throws Exception {
+        Method method = webAppInterface.getClass().getDeclaredMethod("getActiveTunnelTransport");
+        assertNotNull("getActiveTunnelTransport method should exist", method);
+        assertNotNull("Should have @JavascriptInterface annotation",
+                method.getAnnotation(android.webkit.JavascriptInterface.class));
+    }
+
     // --- Helper methods ---
+
+    private Object invoke(String method, Object... args) throws Exception {
+        Method m = webAppInterface.getClass().getDeclaredMethod(
+                method, method.equals("setTunnelTransport") ? new Class<?>[]{String.class}
+                        : new Class<?>[0]);
+        m.setAccessible(true);
+        return m.invoke(webAppInterface, args);
+    }
 
     @SuppressWarnings("unchecked")
     private static <T> T allocate(Class<T> clazz) throws Exception {

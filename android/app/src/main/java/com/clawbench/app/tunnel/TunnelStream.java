@@ -7,8 +7,9 @@ package com.clawbench.app.tunnel;
  * forwarded TCP connection was an SSH channel. The HTTP/2 stream tunnel carries
  * the same traffic as one h2 stream per connection, over the main port only.
  * Both are driven through this shape so the port bookkeeping, persistence and
- * reconnect monitor stay exactly as they were (T10/T11 replace the
- * {@code setPortForwardingL/R} calls; this interface is what they call).
+ * reconnect monitor stay exactly as they were (the port-forward transports
+ * replace the {@code setPortForwardingL/R} calls; this interface is what they
+ * call).
  *
  * <p>The interface is deliberately thin — it opens and owns streams and the
  * session, and knows nothing about {@code forwardedPorts}, listeners or

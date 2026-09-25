@@ -2699,6 +2699,47 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Apply the server's {@code port_forward.transport} setting
+         * ({@code "ssh" | "h2" | "both"}).
+         *
+         * <p>The setting lives on the server, and only the WebView holds an
+         * authenticated config session, so the frontend reads
+         * {@code /api/config} and pushes the value here (see
+         * {@code useSettingsConfig.syncTunnelTransportToNative}). An unknown or
+         * null value is ignored by {@code PortForwardTransportKind.fromWire},
+         * which keeps the current preference rather than silently switching
+         * transports.
+         *
+         * <p>The preference is static on the Service so it applies before the
+         * Service exists and survives a restart; an already-connected tunnel
+         * keeps running until the next reconnect, which is the same
+         * "takes effect on reconnect" behaviour the desktop client has.
+         */
+        @JavascriptInterface
+        public void setTunnelTransport(String pref) {
+            AppLog.i(TAG, "JSBridge: setTunnelTransport=" + pref);
+            BackgroundService.setTransportPreference(pref);
+        }
+
+        /** The transport preference currently in effect, e.g. {@code "ssh"}. */
+        @JavascriptInterface
+        public String getTunnelTransport() {
+            return BackgroundService.getTransportPreference().wireName();
+        }
+
+        /**
+         * The wire transport that carried the last successful connect
+         * ({@code "tls" | "h2c"}), or {@code ""} while there is no live h2
+         * session. Distinct from {@link #getTunnelTransport()}: a {@code "both"}
+         * client reports whichever one actually won, which is what a status
+         * display wants.
+         */
+        @JavascriptInterface
+        public String getActiveTunnelTransport() {
+            return BackgroundService.getActiveTunnelTransport();
+        }
+
+        /**
          * Add a port to be forwarded via SSH tunnel.
          * The BackgroundService creates a local port forward: localhost:{port} → server:{port}
          * WebView can then access http://localhost:{port} directly.
