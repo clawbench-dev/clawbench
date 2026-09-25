@@ -876,8 +876,19 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
   // user bubble that a later authoritative snapshot no longer contains (e.g.
   // after a rewind). Every finished turn ends in a loadHistory that includes
   // the just-committed row, so this always fires.
-  for (const db of dbMessages) {
-    if (db.role === 'user' && db.queueId) untrackInFlightSend(db.queueId)
+  //
+  // The release is keyed off the STATE bubble's queueId matched to the DB row
+  // carrying the same id — NOT off `db.queueId`. A chat_history row has no
+  // queue_id (the column was dropped when the queue moved to its own table, and
+  // ChatMessage has no such field), so keying off the snapshot left every direct
+  // send tracked forever: the bubble then matched the in-flight branch below
+  // even though the snapshot already carried its row, and the DB row was
+  // appended as well → the SAME message rendered twice until a full reload.
+  // The bubble's adopted numeric id is the identity both sides actually share.
+  for (const m of state) {
+    if (m.role !== 'user' || !m.queueId || typeof m.id !== 'number') continue
+    const row = dbById.get(String(m.id))
+    if (row && row.role === 'user') untrackInFlightSend(m.queueId)
   }
 
   // Find the DB streaming row that corresponds to the live placeholder.

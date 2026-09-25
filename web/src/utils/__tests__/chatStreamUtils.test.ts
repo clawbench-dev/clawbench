@@ -2569,13 +2569,18 @@ describe('in-flight direct-send guard in rebuildFromDb', () => {
 
   it('releases the guard once a db_load snapshot contains the row (send fully acked)', () => {
     trackInFlightSend('pending-msg2')
+    // The POST returned, so the bubble adopted its numeric DB id
+    // (optimistic_adopt_id) and kept the string queueId as the in-flight key.
     const state: any[] = [
       u(1, 'msg1'),
       a(2, 'reply1'),
-      u('pending-msg2', 'msg2', { seq: 99, queueId: 'pending-msg2' }),
+      u(3, 'msg2', { queueId: 'pending-msg2' }),
     ]
-    // Fresh snapshot now includes the committed row (id=3).
-    const freshDb: any[] = [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2', { queueId: 'pending-msg2' })]
+    // Fresh snapshot now includes the committed row (id=3). The row carries NO
+    // queueId: chat_history has no such column (it was dropped when the queue
+    // moved to its own table), so the release must key off the bubble's adopted
+    // numeric id — not off a field the snapshot can never contain.
+    const freshDb: any[] = [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2')]
     const merged = rebuildFromDb(state, freshDb)
     // Bubble replaced by the authoritative DB row.
     expect(merged.filter((m: any) => m.role === 'user' && messageText(m) === 'msg2')).toHaveLength(1)
@@ -2584,6 +2589,36 @@ describe('in-flight direct-send guard in rebuildFromDb', () => {
     const staleDb: any[] = [u(1, 'msg1'), a(2, 'reply1')]
     const merged2 = rebuildFromDb([u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2', { queueId: 'pending-msg2' })], staleDb)
     expect(merged2.filter((m: any) => m.role === 'user' && messageText(m) === 'msg2')).toHaveLength(0)
+  })
+
+  it('does NOT duplicate an adopted bubble when the snapshot carries its row (realistic rows)', () => {
+    // Reported: sending a message showed TWO identical user bubbles; switching
+    // away and back (a full db_load) fixed it.
+    //
+    // Root cause: the guard-release loop keyed off `db.queueId`, but a real
+    // chat_history row has NO queueId (the column was dropped in the queue
+    // refactor and ChatMessage has no such field). So the guard was NEVER
+    // released for a direct send. The bubble then hit the in-flight branch,
+    // which keeps it even though the authoritative snapshot already carries the
+    // same numeric id — and the DB row was appended as well → two bubbles.
+    trackInFlightSend('pending-msg2')
+    // Direct send to an idle session: the POST returned, so the optimistic
+    // bubble adopted its numeric DB id (optimistic_adopt_id) and kept the
+    // string queueId as the in-flight key.
+    const state: any[] = [
+      u(1, 'msg1'),
+      a(2, 'reply1'),
+      u(3, 'msg2', { queueId: 'pending-msg2' }),
+    ]
+    // Authoritative snapshot containing the very same row.
+    const db: any[] = [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2')]
+    const merged = rebuildFromDb(state, db, false)
+    const msg2 = merged.filter((m: any) => m.role === 'user' && messageText(m) === 'msg2')
+    expect(msg2).toHaveLength(1)
+    // The single copy is the authoritative DB row (guard released), not the
+    // stale optimistic object.
+    expect(msg2[0].queueId).toBeUndefined()
+    expect(isInFlightSend('pending-msg2')).toBe(false)
   })
 
   it('untrackInFlightSend releases the guard on send failure', () => {
@@ -2620,8 +2655,9 @@ describe('in-flight direct-send guard in rebuildFromDb', () => {
     expect(isInFlightSend('pending-msg2')).toBe(true)
 
     // A FRESH snapshot that carries the row does release it, so a later stale
-    // rebuild drops the bubble as usual instead of resurrecting it.
-    rebuildFromDb(state, [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2', { queueId: 'pending-msg2' })])
+    // rebuild drops the bubble as usual instead of resurrecting it. The row has
+    // no queueId (real rows never do) — the release keys off the numeric id.
+    rebuildFromDb(state, [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2')])
     expect(isInFlightSend('pending-msg2')).toBe(false)
   })
 })
