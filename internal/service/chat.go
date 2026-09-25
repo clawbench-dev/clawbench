@@ -758,43 +758,66 @@ func titleSourceRank(source string) int {
 	}
 }
 
-// maybeAutoTitleSessionTx sets the session title from the first user message,
-// unless the title was deliberately chosen (title_source='custom'): a manual
-// rename, or a meaningful title supplied at creation (task, fork,
-// continue, imported session). No-op when this is not the session's first
-// message.
+// maybeAutoTitleSessionTx sets the session title from a user message, unless the
+// title was deliberately chosen (title_source='custom'): a manual rename, or a
+// meaningful title supplied at creation (task, continue, imported session).
+//
+// The gate is title_source, not the message count. A placeholder title (rank 0)
+// may be replaced; once the title becomes 'auto' (rank 1) its rank blocks every
+// later message, so only the session's FIRST user message ever re-titles it.
+//
+// Two kinds of session are placeholder and therefore auto-title:
+//
+//   - A freshly created blank session — its "New Session 3" placeholder is
+//     replaced by what the user actually asked.
+//   - A FORK, whose copied history means its own first message is never message
+//     #1. Gating on `count == 1` (as this used to) left a fork showing the
+//     inherited "🔀 <source title>" prefix forever, never describing its own
+//     topic; forks now leave the title replaceable so the first message after
+//     the fork point names it. A fork's title is still locked the moment the
+//     user renames it by hand (that writes 'custom', rank 2).
+//
+// The deliberate-title paths (task, continue-from-execution, ACP import) all
+// write 'custom', so broadening the gate to "any message while placeholder"
+// cannot clobber them.
 func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []model.FileEntry, fallbackTitle string) error {
-	var count int
-	// Only the first message auto-titles. A read error (or any other count) means
-	// "not the first message", so the historical behavior is preserved.
-	if txErr := tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr == nil && count == 1 {
-		var source string
-		// Best-effort read: a missing column (minimal test schemas) leaves the zero
-		// value, preserving the historical auto-title behavior. Any other error is
-		// unexpected and worth surfacing — it would silently overwrite a locked title.
-		if err := tx.QueryRow("SELECT COALESCE(title_source, '') FROM chat_sessions WHERE id = ?", sessionID).Scan(&source); err != nil && !strings.Contains(err.Error(), "no such column") {
+	var source string
+	columnMissing := false
+	// Best-effort read. A missing column means a minimal test schema; anything
+	// else is unexpected and worth surfacing, since it would silently overwrite a
+	// locked title.
+	if err := tx.QueryRow("SELECT COALESCE(title_source, '') FROM chat_sessions WHERE id = ?", sessionID).Scan(&source); err != nil {
+		if strings.Contains(err.Error(), "no such column") {
+			columnMissing = true
+		} else {
 			slog.Warn("chat: could not read title_source; auto-title may overwrite a locked title",
 				slog.String("session", sessionID), slog.String("err", err.Error()))
 		}
-		// Only a placeholder (rank 0) may be replaced by the auto title. A custom
-		// title (rank 2) is never clobbered; an existing auto title (rank 1) is
-		// left as-is (only one first message exists anyway).
-		if titleSourceRank(source) >= titleSourceRank(TitleSourceAuto) {
+	}
+	if columnMissing {
+		// No title_source to gate on, so the message count is the only signal
+		// available. Keep the historical "first message only" rule exactly — with
+		// no column every message would otherwise look like a placeholder.
+		var count int
+		if txErr := tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr != nil || count != 1 {
 			return nil
 		}
-		title := ExtractPlainText(content)
-		if title == "" && len(files) > 0 {
-			title = titleFromFileEntries(files)
-		}
-		if title == "" {
-			title = fallbackTitle
-		}
-		if runes := []rune(title); len(runes) > 50 {
-			title = string(runes[:50]) + "..."
-		}
-		if _, err := tx.Exec("UPDATE chat_sessions SET title = ?, title_source = ? WHERE id = ?", title, TitleSourceAuto, sessionID); err != nil {
-			return err
-		}
+	} else if titleSourceRank(source) >= titleSourceRank(TitleSourceAuto) {
+		// Already auto-titled or deliberately named — never clobber.
+		return nil
+	}
+	title := ExtractPlainText(content)
+	if title == "" && len(files) > 0 {
+		title = titleFromFileEntries(files)
+	}
+	if title == "" {
+		title = fallbackTitle
+	}
+	if runes := []rune(title); len(runes) > 50 {
+		title = string(runes[:50]) + "..."
+	}
+	if _, err := tx.Exec("UPDATE chat_sessions SET title = ?, title_source = ? WHERE id = ?", title, TitleSourceAuto, sessionID); err != nil {
+		return err
 	}
 	return nil
 }

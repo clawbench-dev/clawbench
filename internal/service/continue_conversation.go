@@ -363,9 +363,13 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	if err != nil {
 		return "", fmt.Errorf("failed to create forked session: %w", err)
 	}
-	// The fork title ("🔀 <source title>") is deliberately chosen — lock it so a
-	// first user message on a fork with no copied history cannot replace it.
-	markSessionTitleRenamed(newSessionID)
+	// The fork title ("🔀 <source title>") is a PLACEHOLDER, not a deliberate
+	// choice: the source's title says nothing about what this branch is for, and
+	// a fork copies the source history so its own first message is never message
+	// #1. Leaving the source as placeholder lets the first message after the fork
+	// point name the branch (see maybeAutoTitleSessionTx); a manual rename still
+	// locks it by writing 'custom'.
+	markSessionTitlePlaceholder(newSessionID)
 	// Inherit the agent's auto-approve default like CreateSession does, so a
 	// forked session matches a freshly created one for the same agent.
 	applyAgentAutoApproveDefault(newSessionID, agentID)
