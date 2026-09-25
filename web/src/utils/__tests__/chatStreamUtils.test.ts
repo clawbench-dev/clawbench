@@ -1825,6 +1825,117 @@ describe('duplicate message root causes (regression)', () => {
     expect((reply.blocks || []).map((b: any) => b.text).join('')).toBe(' the answer')
   })
 
+  it('a FINALIZED DB row supersedes a live placeholder holding only the pre-disconnect prefix', () => {
+    // Reported repeatedly: the session finishes while the App is backgrounded /
+    // the WS is down, and on resume the reply renders as if it stopped early —
+    // only what had arrived before the disconnect is shown, and switching
+    // sessions (a fresh loadHistory) is what finally reveals the rest.
+    //
+    // The live placeholder holds the prefix that streamed before the drop; the
+    // DB row holds the complete finalized reply. rebuildFromDb matched them and
+    // handed both to mergeStreamBlocks, which only understands "live is ahead"
+    // and "DB is a shorter prefix" — the reverse containment had no branch, so
+    // it fell through to "no evidence → keep live" and silently discarded the
+    // authoritative tail.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'Hello world' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      // Finalized (streaming=0): the whole reply, including what was produced
+      // after this client stopped receiving increments.
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'Hello world and the rest' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+
+    expect(text).toBe('Hello world and the rest')
+    // Finalized row must also stop the spinner.
+    expect(reply.streaming).toBeFalsy()
+  })
+
+  it('a FINALIZED DB row wins even when the live placeholder kept its text in content (no blocks)', () => {
+    // Same bug, second data shape: a placeholder that accumulated text into
+    // `content` rather than a text block. The old branch required db.blocks AND
+    // live.blocks to be arrays, so this shape skipped the merge entirely and the
+    // stale prefix survived just the same.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 43, content: 'Hello world', blocks: [], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 43, content: '', blocks: [{ type: 'text', text: 'Hello world and the rest' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+
+    expect(text).toBe('Hello world and the rest')
+  })
+
+  it('keeps a live-only tool_use when the DB flush got further than the live stream', () => {
+    // The DB superset case must not lose a tool call that completed locally but
+    // had not been flushed to the DB yet — the DB text is the base, and the
+    // live-only tool block is appended rather than dropped.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 44, content: '', streaming: true, parentQueueId: '1',
+        blocks: [
+          { type: 'text', text: 'Hello world' },
+          { type: 'tool_use', id: 'tu-live', name: 'Read', done: true },
+        ],
+      },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 44, content: '', streaming: true, blocks: [{ type: 'text', text: 'Hello world and more' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('Hello world and more')
+    expect((reply.blocks || []).some((b: any) => b.type === 'tool_use' && b.id === 'tu-live')).toBe(true)
+  })
+
+  it('adopts DB text when the live placeholder has ONLY a tool block and no text yet', () => {
+    // The strongest form of the DB-superset shape: the placeholder holds a
+    // tool_use block but has not received any text, while the DB already has the
+    // text that followed the tool. `liveIsEmpty` is false (there IS a block), so
+    // the merge runs — but the DB-superset branch must not require a non-empty
+    // live text, or this falls through and the DB text is dropped.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 45, content: '', streaming: true, parentQueueId: '1',
+        blocks: [{ type: 'tool_use', id: 'tu-1', name: 'Read', done: true }],
+      },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 45, content: '', streaming: true,
+        blocks: [
+          { type: 'tool_use', id: 'tu-1', name: 'Read', done: true },
+          { type: 'text', text: 'text produced after the tool' },
+        ],
+      },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('text produced after the tool')
+    // The tool must not be duplicated by the merge.
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use' && b.id === 'tu-1')).toHaveLength(1)
+  })
+
   it('does NOT preserve an unmatched placeholder when the snapshot has its own streaming row (no duplicate)', () => {
     // The preserve path above only applies when the snapshot carries NO
     // streaming row. If it does carry one — even if the placeholder could not

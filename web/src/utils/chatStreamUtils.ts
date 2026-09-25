@@ -874,6 +874,17 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: 
  *   3. No evidence (unrelated text, no tool_use anchor): leave live alone —
  *      the DB flush is stale (e.g. a content_reset boundary), and merging
  *      would duplicate unrelated content.
+ *
+ *   0. (checked first) The DB text is a SUPERSET of the live text — the DB
+ *      flush got further than the live stream did. That is the shape a turn
+ *      takes when this client missed increments (WS dropped / App backgrounded)
+ *      while the backend kept flushing. Nothing in the three cases above covers
+ *      it: case 1 asks for the opposite containment, and case 2 only prepends a
+ *      DB prefix that is strictly *shorter* than live. Left unhandled it fell
+ *      through to case 3 and the live prefix silently won — which is how a
+ *      finished reply got truncated to whatever had arrived before the
+ *      disconnect. The DB is authoritative here, so it becomes the base and any
+ *      live-only tool_use block (not yet in the DB flush) is appended.
  */
 function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): ContentBlock[] {
   const dbText = dbBlocks
@@ -884,6 +895,25 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
     .filter((b) => b.type === 'text' && typeof b.text === 'string')
     .map((b) => b.text as string)
     .join('')
+
+  // Case 0 — the DB flush is a strict superset of the live text: the live
+  // stream is behind, so the DB wins. Only live tool_use blocks the DB flush
+  // has not recorded yet are kept, so a tool that completed just before the
+  // disconnect is not lost. (Equal text is left to case 1, which preserves the
+  // existing "adopt DB non-text extras onto live" behavior.)
+  //
+  // No `liveText` truthiness requirement: an empty live text is the *strongest*
+  // form of this shape — the placeholder holds only a tool_use block and has not
+  // received its text yet, while the DB already has it. Requiring a non-empty
+  // live text sent that case to the fallthrough below, which kept the empty live
+  // and dropped the DB text.
+  if (dbText && dbText !== liveText && dbText.startsWith(liveText)) {
+    const dbToolIds = new Set(dbBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
+    const liveOnly = liveBlocks.filter(
+      (b) => b.type === 'tool_use' && b.id && !dbToolIds.has(b.id),
+    )
+    return liveOnly.length > 0 ? [...dbBlocks, ...liveOnly] : dbBlocks
+  }
 
   // Case 1 — live already covers the DB text. Adopt only the DB non-text
   // blocks (tool_use finished before the placeholder was recreated) that live
@@ -1088,7 +1118,23 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
         // while the REST loadHistory was in flight, so the first WS increments
         // appended onto an EMPTY base before db_load arrived. Merge the DB
         // blocks as a prefix (see mergeStreamBlocks for the seam handling).
-        live.blocks = mergeStreamBlocks(db.blocks, live.blocks)
+        //
+        // A FINALIZED row (streaming !== true) is the complete record of a turn
+        // that is already over, so it is adopted wholesale instead. This is the
+        // case a turn takes when the client stopped receiving increments — App
+        // backgrounded, WS dropped, then resumed after the reply finished: the
+        // DB holds the whole reply while the live placeholder holds only the
+        // prefix that had arrived before the disconnect. mergeStreamBlocks is
+        // built for the still-streaming shape (live may legitimately be AHEAD of
+        // the rate-limited DB flush) and has no branch for the reverse shape, so
+        // it fell through to "no evidence → keep live" and silently truncated
+        // the reply to that stale prefix — the reported "the session completed
+        // but everything produced in the background is missing until you switch
+        // sessions" bug. Nothing more can arrive for a finished turn, so there
+        // is no "fresher live" argument to preserve.
+        live.blocks = db.streaming === true
+          ? mergeStreamBlocks(db.blocks, live.blocks)
+          : db.blocks
       }
       merged.push(live)
       continue
