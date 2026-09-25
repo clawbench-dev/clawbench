@@ -88,3 +88,46 @@ describe('QueuedMessageBar layout + labels (source contract)', () => {
     expect([...m![1]]).toHaveLength(2)
   })
 })
+
+/**
+ * Type scale contract. The queue card is a CONTENT card, so its primary text
+ * must use the same scale as the execution-plan chip (.plan-chip__text,
+ * --font-size-sm). It previously used --font-size-2xs (10px) for everything —
+ * the BADGE size — which made the card text too small to read comfortably.
+ *
+ * Source contract because jsdom has no CSS engine.
+ */
+describe('QueuedMessageBar type scale (source contract)', () => {
+  const src = readFileSync(resolve(__dirname, '../QueuedMessageBar.vue'), 'utf8')
+  const planSrc = readFileSync(resolve(__dirname, '../PlanPanel.vue'), 'utf8')
+
+  function rule(selector: string): string {
+    const m = src.match(new RegExp(selector.replace(/[.]/g, '\\.') + '\\s*\\{([^}]*)\\}'))
+    expect(m, `${selector} rule must exist`).not.toBeNull()
+    return m![1]
+  }
+
+  it('uses the plan panel primary-text size for the card text and header', () => {
+    // Assert the plan panel actually uses sm, so this test fails loudly if the
+    // reference panel is ever restyled — rather than silently pinning a stale
+    // expectation.
+    expect(planSrc, 'reference: plan chip text is sm').toMatch(
+      /\.plan-chip__text\s*\{[^}]*font-size:\s*var\(--font-size-sm\)/,
+    )
+    expect(rule('.queued-bar-text'), 'card text must match the plan panel').toMatch(/font-size:\s*var\(--font-size-sm\)/)
+    expect(rule('.queued-bar-header'), 'header must match the plan panel').toMatch(/font-size:\s*var\(--font-size-sm\)/)
+  })
+
+  it('no longer uses the badge size (2xs) for any card text', () => {
+    // 2xs is reserved for badges/corner marks. Any text a user must READ
+    // (message body, header title, file chips, action label) must be larger.
+    for (const sel of ['.queued-bar-text', '.queued-bar-header', '.queued-bar-file', '.queued-bar-action']) {
+      expect(rule(sel), `${sel} must not use the 10px badge size`).not.toMatch(/font-size:\s*var\(--font-size-2xs\)/)
+    }
+  })
+
+  it('keeps meta (file chips, action label) one step below primary text', () => {
+    expect(rule('.queued-bar-file')).toMatch(/font-size:\s*var\(--font-size-xs\)/)
+    expect(rule('.queued-bar-action')).toMatch(/font-size:\s*var\(--font-size-xs\)/)
+  })
+})

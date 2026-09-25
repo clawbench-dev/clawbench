@@ -93,7 +93,10 @@ function fileLabel(f) {
   border: none;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
+  /* Matches the execution-plan chip title (.plan-chip__text). The queue used
+     --font-size-2xs (10px), which is the BADGE size — too small for a card's
+     primary text. */
+  font-size: var(--font-size-sm);
 }
 
 .queued-bar-spinner {
@@ -132,8 +135,12 @@ function fileLabel(f) {
 }
 
 .queued-bar-text {
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-sm);
   color: var(--text-primary);
+  /* Single-line (nowrap + ellipsis), so line-height sets the row height. Match
+     the plan panel's entry text (snug) instead of the 1.6 base, so the taller
+     font does not make each row disproportionately airy. */
+  line-height: var(--line-height-snug);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -147,7 +154,7 @@ function fileLabel(f) {
 }
 
 .queued-bar-file {
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   color: var(--text-tertiary, var(--text-secondary));
   background: rgba(127, 127, 127, 0.14);
   border-radius: var(--radius-full);
@@ -175,7 +182,7 @@ function fileLabel(f) {
   cursor: pointer;
   color: var(--text-secondary);
   padding: 1px 7px;
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   line-height: var(--line-height-relaxed);
   transition: background var(--duration-base), color var(--duration-base);
 }
