@@ -17,6 +17,7 @@ import (
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/tunnel"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -409,6 +410,133 @@ func TestTunnelStream_DialFailureReturns502BeforeAnyBody(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, resp.StatusCode,
 		"dial failure must be reported before the 200 header is written")
 	assert.NotContains(t, string(body), "200", "body must not carry a successful-stream payload")
+}
+
+// TestTunnelStream_TargetHalfCloseStillReceivesLateClientWrites is the
+// end-to-end version of the counterexample an independent verifier found by
+// driving a real downstream client through h2 -L: a target that sends FIN
+// (CloseWrite) but keeps reading must still receive bytes the client writes
+// afterwards. Over SSH the bytes arrive because relayBidir waits for both
+// directions; the h2 path used to drop them, because RelayDuplex returned as
+// soon as the target->client direction ended and the handler then closed the
+// backend. The bounded drain grace is what makes the late write land here.
+//
+// This runs over h2c (the transport the verifier used) so the assertion covers
+// the real framing, not the h1 fallback.
+func TestTunnelStream_TargetHalfCloseStillReceivesLateClientWrites(t *testing.T) {
+	restore := tunnel.SetRelayDrainGraceForTest(2 * time.Second)
+	defer restore()
+
+	url, cleanup := setupTunnelTest(t)
+	defer cleanup()
+
+	received := make(chan string, 1)
+	halfClosed := make(chan struct{})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		first := make([]byte, len("first"))
+		if _, err := io.ReadFull(conn, first); err != nil {
+			received <- "read-first-failed: " + err.Error()
+			return
+		}
+
+		// Send FIN: the response direction ends, but keep reading.
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		}
+		close(halfClosed)
+
+		// Everything else the client sends must still arrive.
+		rest, err := io.ReadAll(conn)
+		if err != nil {
+			received <- "read-rest-failed: " + err.Error()
+			return
+		}
+		received <- string(first) + string(rest)
+	}()
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	targetPort, _ := strconv.Atoi(portStr)
+
+	pw, resp := openTunnelStream(t, h2cTunnelClient(), streamURL(url, "127.0.0.1", targetPort))
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 2, resp.ProtoMajor, "the counterexample must be exercised over HTTP/2")
+
+	_, err = pw.Write([]byte("first"))
+	require.NoError(t, err)
+
+	// Wait until the target has half-closed, so the late write lands strictly
+	// after the target->client direction ended.
+	select {
+	case <-halfClosed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("target never observed the first write")
+	}
+
+	_, err = pw.Write([]byte("late"))
+	require.NoError(t, err)
+	require.NoError(t, pw.Close())
+
+	select {
+	case got := <-received:
+		assert.Equal(t, "firstlate", got,
+			"bytes written after the target half-closed must reach the still-reading target")
+	case <-time.After(5 * time.Second):
+		t.Fatal("target never reported its received bytes")
+	}
+}
+
+// TestTunnelStream_TargetCloseWhileClientBodyOpenIsBounded pins the T3
+// deadlock fix at the HTTP layer: a target that closes outright (short-lived
+// backend, or a reverse-tunnel visitor hanging up) while the client keeps its
+// request body open must not park the handler. The response body must reach
+// EOF within the grace plus margin, otherwise the client hangs forever waiting
+// for a response that never ends.
+func TestTunnelStream_TargetCloseWhileClientBodyOpenIsBounded(t *testing.T) {
+	const grace = 200 * time.Millisecond
+	restore := tunnel.SetRelayDrainGraceForTest(grace)
+	defer restore()
+
+	url, cleanup := setupTunnelTest(t)
+	defer cleanup()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = conn.Write([]byte("bye"))
+		_ = conn.Close() // close outright, not half-close
+	}()
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	targetPort, _ := strconv.Atoi(portStr)
+
+	pw, resp := openTunnelStream(t, http.DefaultClient, streamURL(url, "127.0.0.1", targetPort))
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Deliberately never close pw: the client body stays open, modeling a
+	// client that is still waiting for the response to finish.
+	start := time.Now()
+	body, err := io.ReadAll(resp.Body)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "the response must end cleanly once the grace expires")
+	assert.Equal(t, "bye", string(body), "the target's bytes must arrive before the response ends")
+	assert.Less(t, elapsed, 3*time.Second,
+		"the handler must end within the grace plus margin, not hang until the client closes its body")
+	_ = pw.Close()
 }
 
 // TestTunnelStream_HalfCloseLetsTargetKeepResponding exercises the half-close

@@ -4,7 +4,7 @@
 - 状态：设计（未实现）
 - 分支：`feat/ssh-ws-forward`
 - 取代：`docs/plans/2026-09-25-ws-tunnel-design.md`（WebSocket / CBT1 自研帧方案，已随本文件删除；内容见 git 历史）。本文继承其「现状核实」与「客户端改动清单」中仍然有效的部分，并说明为何放弃 CBT1。
-- 关联现状：现有 SSH 端口转发（`-L` / `-R`）全链路已完整存在，本方案**新增**一条等价传输通道，SSH 通道**原样保留**。
+- 关联现状：现有 SSH 端口转发（`-L` / `-R`）全链路已完整存在，本方案**新增**一条功能等价（**半关闭为有界近似，见 §4.2.1**）的传输通道，SSH 通道**原样保留**。
 
 ---
 
@@ -18,7 +18,7 @@
 
 1. 复用 20000 单端口，与现有 HTTP / WS 共用同一 `http.ServeMux`、同一 `http.Server`。**不新增监听端口。**
 2. 传输优先级链：**h2-over-TLS → h2c → SSH**。SSH 保留兼容，不删。
-3. `-L` 与 `-R` 都支持，语义与现有 SSH 转发**逐条对齐**（尤其是安全守卫）。
+3. `-L` 与 `-R` 都支持，**安全守卫**与现有 SSH 转发逐条对齐（见 §3.2 / §5.1）；**半关闭语义在 h2 允许的范围内对齐**——服务端无法在流内半关闭响应，故用一个**有界宽限期**近似 SSH 的 `wg.Wait()`，差异与理由见 §4.2.1（**不是**逐条等价，实测结论）。
 4. 落地范围：**服务端 + Electron + Android 三端一次到位**。**浏览器端不需要隧道客户端**（见 §2.3、§9）。
 5. 数据模型、DB、HTTP API、OpenAPI、前端 UI **尽量零改动复用**；`PortInfo` 持久化格式**不可变**。
 
@@ -233,6 +233,8 @@ IPC 在 `desktop/src/main/bridge.ts:84-93`，preload 在 `desktop/src/preload/in
 | h2 默认 `MaxConcurrentStreams = 250` | `net/http/h2_bundle.go:4042 http2defaultMaxStreams = 250`；单流接收窗口默认 1 MiB（`:1129`）。可经 `http.Server.HTTP2.MaxConcurrentStreams` 提升（`net/http/http.go:232-240`） |
 | 当前 `http.Server` **没有任何超时** | `cmd/server/main.go:1277` `srv := &http.Server{Handler: mux}`。长寿命流不会被 `ReadTimeout`/`WriteTimeout` 打断（**这是好事，要保持**） |
 | 现有 5 个 WS 端点无法跑 h2 | 见 §2.1 |
+| **`Flush()` 不结束响应体；`END_STREAM` 只在 handler 返回时发出** | `net/http/h2_bundle.go:6704` / `:6731` / `:6970` 的 `endStream` 都以 `rws.handlerDone` 为条件；`:6362 handlerDone()` / `:7034` 由 `runHandler` 的 defer 调用。实测：`Flush()` 后 500ms 响应体仍开放，`handler` 返回时才收 EOF。**推论：服务端无法在流内半关闭响应**（§4.2.1） |
+| **handler 返回即摧毁请求体** | `net/http/h2_bundle.go:5375 closeStream(..., http2errHandlerComplete)`。实测：handler 返回后客户端再写 → `io: read/write on closed pipe`，服务端侧 reader 得到 `stream error: stream ID 1; NO_ERROR`。**推论：响应 EOF 与请求体寿命绑定**（§4.2.1） |
 | `Alt-Svc` 全仓零使用 | `grep` 无命中 |
 
 ### 3.5 h2 客户端硬事实（本次核实）
@@ -307,7 +309,46 @@ CBT1 → h2 能力映射见 §2.1 表格。
    - `net.Dial(host:p)`；
    - 成功则 `WriteHeader(200)` + `Flush()`，然后两条泵：`r.Body`→conn、conn→`w`（每次写后 `Flush`）；
    - **dial 失败必须在写响应头之前返回 `502`**。
-4. 关闭语义：本地 socket 读到 EOF → 结束请求体（`END_STREAM`，即半关闭），对端仍可回写；任一方向错误 → 取消该 h2 流（`RST_STREAM`，只影响本流）。
+4. 关闭语义：本地 socket 读到 EOF → 结束请求体（`END_STREAM`，即半关闭），对端仍可回写；任一方向错误 → 取消该 h2 流（`RST_STREAM`，只影响本流）。服务端侧的**双向结束策略**见 §4.2.1。
+
+#### 4.2.1 半关闭与「与 SSH 等价」的边界（实测结论，**不是逐条等价**）
+
+**SSH 的行为**：`internal/ssh/server.go:685` 的 `relayBidir` 用 `wg.Wait()` **等两个方向都结束**。target 先 `CloseWrite()`（发 FIN）但继续读时，SSH channel 的写侧被 `CloseWrite()`，`channel → backend` 的 copy 继续运行，因此下游客户端在 target FIN 之后写入的字节**仍会到达 target**（无限等待）。
+
+**h2 的硬约束（实测，Go 1.26.2 stdlib）**：
+
+1. **服务端无法在流内半关闭响应。** `END_STREAM` 只在 handler 返回时发出（`net/http/h2_bundle.go:6704` / `:6731` / `:6970` 都以 `rws.handlerDone` 为条件）。**`Flush()` 不会结束响应体**——实测：`Flush()` 后 500ms 响应体仍开放，直到 handler 返回才收 EOF。因此「先 Flush 让客户端收到 FIN，再继续等另一个方向」在本实现下**做不到**。
+2. **handler 返回即摧毁请求体。** 同一步 `closeStream(..., http2errHandlerComplete)`（`h2_bundle.go:5375`）会结束流，实测此时客户端再写得到 `io: read/write on closed pipe`。
+
+也就是说 h2 上**响应 EOF 与请求体寿命是绑定的**：要么 handler 不返回（响应不结束、客户端干等），要么返回（请求体立刻死亡）。这与 SSH 的两条独立单向通道不同。
+
+**采用的策略（`internal/tunnel/relay.go` 的 `RelayDuplex`）**：
+
+- 两条 pump 并发。
+- **client → target 先结束**（客户端半关闭）：对 target `HalfCloseWrite`，然后**无期限**等 target → client 收完。这是常规请求/响应形态，与 `relayBidir` 的 `wg.Wait()` 完全一致。
+- **target → client 先结束**（target 半关闭或完全关闭）：响应侧已被 `copyToClient` 逐块 Flush；随后给 client → target 一个**有界宽限期**（`relayDrainGrace`，默认 **5s**，可经 `tunnel.SetRelayDrainGraceForTest` 覆盖以便测试）。宽限期内客户端后续字节照常送达 target；宽限期用尽则 handler 返回（= 发 `END_STREAM`）。
+- 宽限期用尽即强制结束，保证 T3 发现的死锁场景（短连接后端、`-R` 访客挂断）**有界结束**，不会永久挂起。
+
+**差异（如实写明）**：
+
+| 场景 | SSH | h2（本实现） |
+|---|---|---|
+| client 先半关闭，target 继续回写 | 等到 target 结束 | **等价**（同样无期限等待） |
+| target 先半关闭，client 继续写 | **无限**接收，直到 client 结束 | 只在 **5s 宽限期内**接收；超出则丢弃（客户端写会失败） |
+| target 完全关闭且 client body 不结束 | **永久挂起**（`wg.Wait()` 无超时；这正是 T3 要避免的） | **宽限期后结束** |
+
+因此「语义与 SSH 逐条对齐」对**安全守卫**成立，对**半关闭**只是**有界近似**：SSH 是无限等待，h2 是 5s 有限等待。这是 stdlib h2 无法在流内半关闭响应的直接后果，不是实现取舍可以消除的。
+
+**代价（实测）**：当 target 先结束而客户端**保持请求体打开**（close-delimited 响应，如 `Connection: close` 或对端已挂断但本地 socket 未关）时，响应 EOF 被推迟一个宽限期。实测 handler 级：grace=200ms → EOF 250ms；grace=1s → 1.05s；grace=5s → 5.05s。即**每一条这种流付一次宽限期**。
+
+**替代方案与为何不选**：
+
+- **无界等待（照抄 SSH）**：会重新引入 T3 的死锁——短连接后端场景 handler 永不返回、响应永不终止。**否决**。
+- **立即返回（T3 现状）**：客户端在 target FIN 后的写入被丢弃（独立验证者实测：SSH 收到 17 字节、h2 收到 0 字节）。**否决**。
+- **改小默认宽限期**：可减少代价，但缩短「target FIN 后仍能送达」的窗口。当前取 5s，与 `tunnelDialTimeout`（10s）同量级，远大于同机/同网往返，足够覆盖 FIN 与客户端尾字节的交错。
+- **改为「有进展就续期」的空闲超时**（每次 client → target 有字节就重置计时器）：更接近 SSH 的「让在途数据跑完」，但客户端持续慢速滴流时仍不有界，且实现与测试都更复杂。**当前不采用**，作为已知改进方向记录。
+- **改用其它传输形态**（如 h2 上的 CONNECT / WebSocket / 自研帧）以取得真正的流内半关闭：超出本方案范围（§1.2、§2.1），且现有 5 个 WS 端点已证明与 h2 多路复用不兼容。**记录为已知限制**。
+
 
 ### 4.3 `-R`（反向）流程
 
@@ -406,11 +447,19 @@ sequenceDiagram
     C->>S: 结束请求体 = END_STREAM（半关闭）
     S->>T: shutdown write
     T-->>S: 回写数据（仍允许）
-    S-->>C: 响应体字节 / END_STREAM
+    S-->>C: 响应体字节
+    alt client 先半关闭（常规）
+        Note over S: 无期限等 target → client 结束
+    else target 先结束而 client 未结束
+        Note over S: 有界宽限 relayDrainGrace（默认 5s）内继续收 client 字节，到期强制结束
+    end
+    S-->>C: END_STREAM（handler 返回时发出；Flush 不会结束响应体）
     Note over C,S: 任一方向错误 → RST_STREAM（只影响本流）
 ```
 
 **与 SSH 语义对齐点**：只查 `IsPortAllowed`（对齐 `handleDirectTCPIP` 在 `internal/ssh/server.go:738` 的行为）；不查 `IsPortRegistered`、不启 HTTP 反代、不改写 URL/Host。
+
+**半关闭不对齐点（实测，见 §4.2.1）**：SSH 的 `relayBidir` 对 target 先半关闭的场景**无限**等待客户端；h2 只能给一个**有界宽限期**（默认 5s），因为 stdlib h2 服务端无法在流内半关闭响应（`Flush()` 不结束响应体，`END_STREAM` 只在 handler 返回时发出）。代价是 target 先结束且客户端保持请求体打开时，响应 EOF 推迟一个宽限期。
 
 ### 5.2 `-R` 时序图
 
@@ -612,6 +661,11 @@ sequenceDiagram
 | dial 失败 → 502（**写头之前**） | — |
 | `ProxyService == nil` → 503 | — |
 | 未鉴权 401 | — |
+| **target 先 `CloseWrite()` 但继续读 → client 后续写入仍到达 target** | 无（SSH 由 `relayBidir` 的 `wg.Wait()` 天然覆盖） |
+| **client 先半关闭 → 无期限等响应，不付宽限期** | `relayBidir` 的常规路径 |
+| **target 完全关闭 + client body 保持打开 → handler 有界结束（宽限期 + 余量）** | 无（SSH 此处会永久挂起，见 §4.2.1） |
+| **宽限期到期后请求 pump 被释放（无 goroutine 泄漏）** | — |
+| **64 KiB + 半关闭组合（请求 64 KiB 后半关闭，target 回 64 KiB）** | `TestSSHPortForward_LargeDataTransfer`(:386) |
 
 **`-R` 用例**：
 
@@ -691,6 +745,7 @@ SSH 测试可照抄的脚手架：`internal/ssh/server_test.go`（1711 行 / 69 
 | 10 | **Android `PortInfo` 被持久化** | 改结构需迁移 | **不改**结构（§8.2、§13.4） |
 | 11 | **MockWebServer 半双工掩盖全双工 bug** | `Http2SocketHandler.onStream` 先读完 body 再写响应，全双工用例直接 hang | 全双工集成必须起真实 Go 服务端；单测用 fake `TunnelStream` |
 | 12 | **反代 WS 升级透传无测试** | `reverse_proxy_test.go` 零升级用例 | 本方案不经过它；**将来改动必须补测** |
+| 13 | **半关闭与 SSH 不完全等价** | stdlib h2 服务端无法在流内半关闭响应（`Flush()` 不结束响应体，`END_STREAM` 只在 handler 返回时发出，实测），故 target 先结束时只能给**有界宽限期**而非 SSH 的无限等待；且 target 先结束 + client body 不关时响应 EOF 推迟一个宽限期（实测 grace=5s → 5.05s） | 有界宽限（默认 5s，`tunnel.RelayDrainGrace`）；差异与代价见 §4.2.1；彻底等价需换传输形态，列为已知限制 |
 
 ---
 
