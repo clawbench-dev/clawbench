@@ -1095,6 +1095,33 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       continue
     }
 
+    // User bubble announced by a user_message event (a queued message that was
+    // just materialized, or a cross-device send). The backend emits
+    // user_message ONLY after the row is committed (drain's claim deletes the
+    // queue row and inserts the history row in ONE transaction; the direct-send
+    // path persists before emitting). So this bubble's numeric id IS a real DB
+    // id, and a snapshot that lacks it is provably STALE — the same
+    // read-before-write race the in-flight guard above covers, and the same
+    // reasoning as the live placeholder.
+    //
+    // Nothing else protects this case, which is why it must be handled here: a
+    // queued message's optimistic entry lived in the queue store, and
+    // removeQueued RELEASES its in-flight guard the moment this bubble is
+    // rendered — so between that release and the next authoritative snapshot
+    // the bubble is unprotected, and a stale db_load (a GET issued before the
+    // row committed) silently dropped it. The user then saw the assistant reply
+    // with no question above it until a later reload happened to include the
+    // row — the "queued message shows only the assistant reply" symptom.
+    //
+    // Numeric id only: a string-id bubble (msgId was 0) is transient and has no
+    // row to be stale about. Gated on sessionRunning so a finished session still
+    // converges strictly to the DB — a rewind must drop the bubble, and it
+    // cancels the run first, so this gate is false by the time it reloads.
+    if (m.role === 'user' && m._remote === true && typeof m.id === 'number' && sessionRunning) {
+      merged.push(m)
+      continue
+    }
+
     // Deliberately NOT pushed to `merged`.
   }
 

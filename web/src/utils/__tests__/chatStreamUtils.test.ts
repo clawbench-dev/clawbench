@@ -2660,6 +2660,43 @@ describe('in-flight direct-send guard in rebuildFromDb', () => {
     rebuildFromDb(state, [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2')])
     expect(isInFlightSend('pending-msg2')).toBe(false)
   })
+
+  // A queued message that was just DRAINED is announced with a user_message
+  // event AFTER its row commits, and the frontend renders it as a _remote
+  // bubble. removeQueued releases its in-flight guard at that moment, so
+  // nothing else protects it from a stale snapshot — which is exactly how the
+  // user's own queued message disappeared while the assistant reply stayed
+  // ("只出现助手消息" until the whole turn finished).
+  describe('announced (user_message) bubbles survive a stale snapshot', () => {
+    it('keeps a numeric-id _remote user bubble while the session is running', () => {
+      const state: any[] = [
+        u(1, 'msg1'),
+        a(2, 'reply1'),
+        u(3, 'drained', { _remote: true }),
+        a(4, 'reply2', { streaming: true }),
+      ]
+      // A GET issued before the drain committed rows 3/4.
+      const staleDb: any[] = [u(1, 'msg1'), a(2, 'reply1')]
+      const merged = rebuildFromDb(state, staleDb, true)
+      expect(merged.filter((m: any) => m.role === 'user' && messageText(m) === 'drained')).toHaveLength(1)
+    })
+
+    it('drops it once the run is over, so a rewind still converges', () => {
+      // Rewind cancels the run first, so sessionRunning is false by the time it
+      // reloads — the bubble must NOT survive the truncation.
+      const state: any[] = [u(1, 'msg1'), a(2, 'reply1'), u(3, 'drained', { _remote: true })]
+      const afterRewind: any[] = [u(1, 'msg1'), a(2, 'reply1')]
+      const merged = rebuildFromDb(state, afterRewind, false)
+      expect(merged.filter((m: any) => m.role === 'user' && messageText(m) === 'drained')).toHaveLength(0)
+    })
+
+    it('does not duplicate the bubble when the snapshot DOES carry the row', () => {
+      const state: any[] = [u(1, 'msg1'), u(3, 'drained', { _remote: true })]
+      const freshDb: any[] = [u(1, 'msg1'), u(3, 'drained')]
+      const merged = rebuildFromDb(state, freshDb, true)
+      expect(merged.filter((m: any) => m.role === 'user' && String(m.id) === '3')).toHaveLength(1)
+    })
+  })
 })
 
 describe('sub-agent parent grouping (reducer)', () => {
