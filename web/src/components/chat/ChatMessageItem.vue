@@ -472,34 +472,6 @@ function handleCopyMessage() {
 </script>
 
 <style scoped>
-/* Video player in chat */
-.chat-video-wrapper {
-  margin: var(--space-4) 0;
-}
-
-.chat-video-player {
-  width: 100%;
-  max-width: 400px;
-  max-height: 225px;
-  border-radius: var(--radius-sm);
-  outline: none;
-  background: #000;
-}
-
-/* Image thumbnails in user messages */
-.chat-image-thumb {
-  max-width: 80px;
-  max-height: 80px;
-  object-fit: cover;
-  border-radius: var(--radius-sm);
-  display: block;
-}
-
-/* Image thumbnail style */
-.chat-message .chat-img {
-  vertical-align: middle;
-}
-
 /* ── Message card (the bubble itself) ──
    The meta bar is a SIBLING of this element, so the card owns every bubble
    visual (background, radius, padding, clipping). */
@@ -1288,5 +1260,32 @@ function handleCopyMessage() {
 .chat-message .chat-audio-player::-webkit-media-controls-current-time-display,
 .chat-message .chat-audio-player::-webkit-media-controls-time-remaining-display {
   font-size: var(--font-size-xs);
+}
+
+/* ── Video player in chat (non-scoped for v-html penetration) ──
+   Same reason as the audio block above: the <video> is injected through
+   v-html by convertVideoLinks, so Vue never stamps it with this component's
+   scope attribute and a scoped rule can never match it. Without these the
+   player falls back to the video's intrinsic resolution and overflows the
+   bubble (issue #497). */
+.chat-message .chat-video-wrapper {
+  margin: var(--space-4) 0;
+}
+
+.chat-message .chat-video-player {
+  width: 100%;
+  max-width: 400px;
+  max-height: 225px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: #000;
+}
+
+/* ── Inline image alignment (non-scoped for v-html penetration) ──
+   `chat-img` is stamped on the <img> by rewriteImageUrls, i.e. also injected
+   via v-html. Sizing lives in markdown-common.css; this only cancels the
+   baseline gap. */
+.chat-message .chat-img {
+  vertical-align: middle;
 }
 </style>
