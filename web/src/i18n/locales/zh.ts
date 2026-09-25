@@ -805,7 +805,6 @@ export default {
       userMsgIndex: '用户消息索引',
       userMsgIndexTitle: '用户消息',
       conversationIndexTitle: '对话索引',
-      conversationIndexDesc: '点击消息可跳转到对应位置',
       noUserMessages: '暂无消息',
       noUserMessagesHint: '发送消息后，这里会列出对话中全部消息与助手摘要',
       userMsgIndexAttachment: '附件',

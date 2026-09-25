@@ -147,6 +147,18 @@ describe('SessionShareDialog message list is theme-safe', () => {
     }
   })
 
+  it('sizes the role chip as a square icon badge, not a text pill', () => {
+    // The chip renders only an icon now. Without an explicit box it would
+    // collapse to a sliver (an inline-flex with no content and no padding).
+    const rule = code(css).match(/\.session-share-dialog-role\s*\{([\s\S]*?)\}/)
+    expect(rule, '.session-share-dialog-role rule must exist').not.toBeNull()
+    expect(rule![1]).toMatch(/width:\s*20px/)
+    expect(rule![1]).toMatch(/height:\s*20px/)
+    expect(rule![1], 'a text pill would set horizontal padding').not.toMatch(
+      /padding:\s*0\s+var\(--space-3\)/,
+    )
+  })
+
   it('replaces the native checkbox so the OS chrome cannot leak in', () => {
     // Without `appearance: none` the UA paints a system checkbox whose colours
     // ignore the theme entirely.

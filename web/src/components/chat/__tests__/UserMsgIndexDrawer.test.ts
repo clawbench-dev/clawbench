@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
+import { h } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 
 vi.mock('lucide-vue-next', () => ({
   MessagesSquare: { name: 'MessagesSquareIcon', render: () => null },
   Split: { name: 'SplitIcon', render: () => null },
-  MousePointerClick: { name: 'MousePointerClickIcon', render: () => null },
   LoaderCircle: { name: 'LoaderCircleIcon', render: () => null },
+  // The role chip is icon-only, so these two must render something identifiable
+  // for the tests to tell the roles apart.
+  User: { name: 'UserIcon', render: () => h('i', { class: 'icon-user' }) },
+  Bot: { name: 'BotIcon', render: () => h('i', { class: 'icon-bot' }) },
 }))
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
@@ -417,11 +421,22 @@ describe('UserMsgIndexDrawer', () => {
     it('labels each row with a distinct role tag', () => {
       const wrapper = mountSheet({ messages: bothRoles })
       const items = wrapper.findAll('.msg-item')
-      expect(items[0].find('.msg-role-tag').text()).toBe('User')
+      // The chip renders an icon, not text, so the role is asserted through the
+      // glyph plus the accessible name.
+      expect(items[0].find('.msg-role-tag .icon-user').exists()).toBe(true)
       expect(items[0].find('.msg-role-tag').classes()).toContain('role-user')
-      expect(items[1].find('.msg-role-tag').text()).toBe('Assistant')
+      expect(items[0].find('.msg-role-tag').attributes('aria-label')).toBe('User')
+      expect(items[1].find('.msg-role-tag .icon-bot').exists()).toBe(true)
       expect(items[1].find('.msg-role-tag').classes()).toContain('role-assistant')
+      expect(items[1].find('.msg-role-tag').attributes('aria-label')).toBe('Assistant')
+      expect(items[2].find('.msg-role-tag .icon-user').exists()).toBe(true)
       expect(items[2].find('.msg-role-tag').classes()).toContain('role-user')
+    })
+
+    it('renders no role text in the row (icon-only chip)', () => {
+      const wrapper = mountSheet({ messages: bothRoles })
+      const tag = wrapper.find('.msg-role-tag')
+      expect(tag.text()).toBe('')
     })
 
     it('marks assistant rows with a distinct class', () => {
@@ -452,7 +467,7 @@ describe('UserMsgIndexDrawer', () => {
       await wrapper.find('.search-stub').setValue('patched')
       const items = wrapper.findAll('.msg-item')
       expect(items).toHaveLength(1)
-      expect(items[0].find('.msg-role-tag').text()).toBe('Assistant')
+      expect(items[0].find('.msg-role-tag').classes()).toContain('role-assistant')
     })
 
     it('matches the no-text placeholder in search', async () => {
@@ -463,7 +478,16 @@ describe('UserMsgIndexDrawer', () => {
       await wrapper.find('.search-stub').setValue('no text in this turn')
       const items = wrapper.findAll('.msg-item')
       expect(items).toHaveLength(1)
-      expect(items[0].find('.msg-role-tag').text()).toBe('Assistant')
+      expect(items[0].find('.msg-role-tag').classes()).toContain('role-assistant')
+    })
+  })
+
+  describe('footer hint', () => {
+    it('does not render the jump hint', () => {
+      const wrapper = mountSheet({ messages: [
+        { id: 1, role: 'user', content: 'hello' },
+      ] })
+      expect(wrapper.find('.panel-hint').exists()).toBe(false)
     })
   })
 })

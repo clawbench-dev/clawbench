@@ -802,7 +802,6 @@ export default {
       userMsgIndex: 'User message index',
       userMsgIndexTitle: 'User messages',
       conversationIndexTitle: 'Conversation index',
-      conversationIndexDesc: 'Click a message to jump to it',
       noUserMessages: 'No messages yet',
       noUserMessagesHint: 'Messages and AI summaries will be listed here',
       userMsgIndexAttachment: 'Attachment',
