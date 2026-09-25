@@ -190,47 +190,147 @@ describe('SessionList row action button', () => {
 })
 
 /**
- * Fork-group members are INDENTED ONLY — no rail, no elbow connector.
+ * Fork-group members are joined to their anchor by a TREE RAIL.
  *
- * An earlier version drew a `│` rail down the members with a `└` elbow on the
- * last one. It was dropped: the group toggle already states the relationship and
- * the indentation carries the nesting, so the lines added visual noise without
- * new information.
+ * Every member gets a horizontal arm (`├─`), and the last one closes the rail
+ * (`└─`). The arm on every member is what makes it a tree; an elbow version drew
+ * only the final corner, leaving the middle members as indented rows beside a
+ * stray vertical with nothing pointing at them.
  *
- * History worth keeping: the rail started as the member row's `border-left`,
- * which always spans the full row height and so could not stop at the last row's
- * centre to turn into the elbow — the elbow then drew its own vertical
- * alongside, producing TWO parallel lines with a horizontal arm pointing away
- * from the content (measured in Chrome at x=0 and x=8). That is why the
- * connector approach was dropped rather than merely re-styled.
+ * History worth keeping: the rail first used the member row's `border-left`. A
+ * border always spans the full row height, so the last row's rail could not stop
+ * at its centre to turn into the corner — the corner then drew its own vertical
+ * alongside, producing TWO parallel lines with the arm offset to the wrong side
+ * of the rail (measured in Chrome at x=0 and x=8). Hence background layers,
+ * which can be sized per-layer.
  *
  * jsdom has no layout engine, so this asserts the shape of the rules.
  */
-describe('SessionList fork-group indent', () => {
-  it('indents members without drawing a rail', async () => {
+describe('SessionList fork-group tree rail', () => {
+  it('indents members by padding so the tint spans the full row width', async () => {
     const src = await sessionListSource()
     const memberRule = src.match(/\.session-row\.is-fork-member\s*\{[^}]*\}/)?.[0]
     expect(memberRule, '.session-row.is-fork-member should exist').toBeTruthy()
-    // Indentation is the whole treatment.
-    expect(memberRule).toMatch(/margin-left:/)
+    // The indent must be padding, not margin. A margin sits OUTSIDE the
+    // background box, so the indent zone went unpainted and showed the pane
+    // background as a bright stripe down the left of every member row — and the
+    // row was narrower than its anchor. Measured in Chrome at 12px wide.
     expect(memberRule).toMatch(/padding-left:/)
+    expect(memberRule, 'a margin-left reopens the unpainted stripe').not.toMatch(
+      /(?:^|[^-])margin-left\s*:/,
+    )
     // No border of any kind: a border-left here is the old full-height rail.
     expect(memberRule, 'members must not draw a border').not.toMatch(/border(-left)?\s*:/)
   })
 
-  it('has no rail or elbow pseudo-element on members', async () => {
+  it('tints the indent zone deeper than the rest of the member row', async () => {
     const src = await sessionListSource()
-    expect(src, 'no member ::before rail').not.toMatch(
-      /\.session-row\.is-fork-member(\.is-last-in-group)?::before/,
+    const memberRule = src.match(/\.session-row\.is-fork-member\s*\{[^}]*\}/)?.[0]
+    expect(memberRule).toBeTruthy()
+    // With the gap gone, depth is carried by tint: a two-stop gradient paints
+    // the indent zone one step deeper. A flat background-color would leave the
+    // members looking like plain rows that merely start further right.
+    expect(memberRule, 'the indent zone needs its own deeper stop').toMatch(
+      /linear-gradient\(\s*to right/,
+    )
+    // Both stops must be tinted, and the first (indent zone) deeper than the
+    // second — reversed stops would shade the content instead of the indent.
+    const stops = [...memberRule.matchAll(/color-mix\(in srgb, var\(--text-primary\) ([\d.]+)%/g)]
+      .map(m => parseFloat(m[1]))
+    expect(stops.length, 'expected two tint stops').toBeGreaterThanOrEqual(2)
+    expect(stops[0], 'the indent-zone stop must be the deeper one').toBeGreaterThan(stops[1])
+  })
+
+  it('sets the member tint via background-image, not the background shorthand', async () => {
+    // The shorthand resets background-color, which the `active` /
+    // `session-row-active` / `menu-open` rules set. All four selectors have the
+    // same specificity (two classes), so they are ordered by source position —
+    // a shorthand here silently wipes the selection tint the moment this rule
+    // moves after them. Measured in Chrome: with the shorthand placed last, an
+    // active member row lost its accent fill.
+    const src = await sessionListSource()
+    const memberRule = src.match(/\.session-row\.is-fork-member\s*\{[^}]*\}/)?.[0]
+    expect(memberRule).toBeTruthy()
+    expect(memberRule, 'use background-image so background-color survives').toMatch(
+      /background-image:/,
+    )
+    expect(memberRule, 'the background shorthand resets background-color').not.toMatch(
+      /(?:^|[^-\w])background\s*:/,
     )
   })
 
-  it('has no leftover is-last-in-group class or rule', async () => {
+  it('draws the tree rail with background layers, not a border', async () => {
+    // A border always spans the full row height, so the last member's rail could
+    // not stop at its centre to turn into the corner — the corner then drew a
+    // second vertical alongside, producing TWO parallel lines (measured in
+    // Chrome at x=0 and x=8). Background layers can be sized per-layer, which is
+    // what lets the rail stop at 50% on the last member.
     const src = await sessionListSource()
-    // The class existed only to give the last member an elbow. With the
-    // connector gone it is dead markup.
-    expect(src).not.toContain('is-last-in-group')
-    expect(src).not.toContain('isLastInGroup')
+    const rail = src.match(/\.session-row\.is-fork-member::before\s*\{[^}]*\}/)?.[0]
+    expect(rail, 'the member ::before rail should exist').toBeTruthy()
+    // Two layers: the arm (1px tall) and the rail (1px wide).
+    expect(rail, 'the arm and rail are two background layers').toMatch(
+      /background-size:\s*100% 1px,\s*1px 100%/,
+    )
+    expect(rail, 'no border — it cannot be sized per-layer').not.toMatch(/border(-left)?\s*:/)
+    // The arm must sit on the row's centre line, where the corner is drawn.
+    expect(rail).toMatch(/background-position:\s*0 50%,\s*0 0/)
+  })
+
+  it('closes the rail on the last member only', async () => {
+    const src = await sessionListSource()
+    const last = src.match(
+      /\.session-row\.is-fork-member\.is-last-in-group::before\s*\{[^}]*\}/,
+    )?.[0]
+    expect(last, 'the last-member rule should exist').toBeTruthy()
+    // The rail layer is halved (50% tall) so it ends at the row's centre; the arm
+    // layer stays full so the corner still reads as `└─`.
+    expect(last).toMatch(/background-size:\s*100% 1px,\s*1px 50%/)
+    // Every non-last member keeps the full-height rail, which is what joins
+    // consecutive members into one continuous line (`├─`).
+  })
+
+  it('compensates the rail for the selected row accent border', async () => {
+    // `.session-row.active` adds a `border-left`, and an absolutely-positioned
+    // box is offset from the PADDING box (inside the border). Without a
+    // compensation the rail on the selected member sits one border-width further
+    // right than its neighbours, so the tree visibly breaks at that row.
+    // Measured in Chrome: rail at x=12 unselected, x=16 selected.
+    const src = await sessionListSource()
+    const fix = src.match(/\.session-row\.is-fork-member\.active::before\s*\{[^}]*\}/)?.[0]
+    expect(fix, 'the selected-member rail compensation should exist').toBeTruthy()
+    expect(fix).toMatch(/left:\s*calc\(/)
+    expect(fix, 'the offset must subtract the border width').toMatch(/-\s*var\(--row-active-border\)/)
+  })
+
+  it('derives the accent border width and both compensations from one variable', async () => {
+    // Three declarations must agree on the border width: the border itself, the
+    // rail compensation, and the text compensation. A literal in any of them can
+    // drift from the others and silently misalign the row.
+    const src = await sessionListSource()
+    // Declared once, on the list container.
+    expect(src).toMatch(/--row-active-border:\s*4px/)
+    // The border uses it rather than a literal.
+    const activeRow = src.match(/\.session-row\.active\s*\{[^}]*\}/)?.[0]
+    expect(activeRow, '.session-row.active should exist').toBeTruthy()
+    expect(activeRow).toMatch(/border-left:\s*var\(--row-active-border\)/)
+    expect(activeRow, 'no literal border width').not.toMatch(/border-left:\s*\d+px/)
+    // The text compensation does too.
+    // Anchored at line start: an unanchored match also hits the JS
+    // `row.querySelector('.session-item.active')` inside scrollActiveRowIntoView,
+    // whose following `{` is a function body — the regex would then "find" a
+    // padding-left that does not exist.
+    const activeItem = src.match(/(?:^|\n)\.session-item\.active\s*\{[^}]*\}/)?.[0]
+    expect(activeItem, '.session-item.active should exist').toBeTruthy()
+    expect(activeItem).toMatch(/padding-left:\s*calc\([^;]*var\(--row-active-border\)/)
+  })
+
+  it('marks the last member of a group in the row classes', async () => {
+    // Without the marker the rail never closes and the last member renders a
+    // full-height vertical hanging past its own arm.
+    const src = await sessionListSource()
+    expect(src).toMatch(/['"]is-last-in-group['"]\s*:\s*row\.depth > 0 && row\.isLastInGroup/)
+    expect(src, 'the flag must be computed per member').toMatch(/isLastInGroup:\s*i === members\.length - 1/)
   })
 })
 

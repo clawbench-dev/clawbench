@@ -353,9 +353,17 @@ const visibleRows = computed(() => {
       running: props.runningSessionIds.has(top.id),
     })
     if (!isAnchor || isForkCollapsed(top.id)) continue
-    for (const member of members) {
-      out.push({ ...member, running: props.runningSessionIds.has(member.session.id) })
-    }
+    members.forEach((member, i) => {
+      out.push({
+        ...member,
+        // The last member closes the tree rail (└─) instead of continuing it.
+        // Explicit rather than CSS `:last-of-type`: the group's rows are
+        // siblings of the rows around them, so the last member is not the last
+        // child of its type.
+        isLastInGroup: i === members.length - 1,
+        running: props.runningSessionIds.has(member.session.id),
+      })
+    })
   }
   return out
 })
@@ -368,6 +376,8 @@ function rowClasses(row) {
     running: row.running,
     'is-top': row.depth === 0,
     'is-fork-member': row.depth > 0,
+    // Closes the tree rail on the last member of a fork group.
+    'is-last-in-group': row.depth > 0 && row.isLastInGroup,
     // Heads a fork group. Shares its tint with the group header below it so the
     // two read as one block instead of "a session, then an unrelated section".
     'is-group-anchor': row.isAnchor,
@@ -899,6 +909,12 @@ onUnmounted(() => {
 .session-rows {
   display: flex;
   flex-direction: column;
+  /* Width of the accent bar a selected row paints (`.session-row.active`).
+     Declared once because two places must agree on it: the border itself, and
+     the tree rail's compensation (an absolutely-positioned box is offset from
+     the padding box, i.e. inside the border, so the rail would shift by exactly
+     this much on the selected row). */
+  --row-active-border: 4px;
 }
 
 /* Drag feedback (SortableJS classes). `.sortable-ghost` is the placeholder left
@@ -928,14 +944,14 @@ onUnmounted(() => {
    An earlier version rendered a standalone header under the anchor, which made
    the pair read as "a session, then an unrelated section".
 
-   Members are INDENTED ONLY — no rail or elbow connector. The toggle already
-   states the relationship and the indentation carries the nesting, so drawn
-   lines added visual noise without new information.
+   Members are indented and joined to the anchor by a tree rail: a vertical line
+   with a horizontal arm to each member, the last one closing it (`├─` / `└─`).
+   See .session-row.is-fork-member for why it is drawn with backgrounds rather
+   than borders. The indent zone is also tinted one step deeper.
 
    The indent lives on the row rather than .session-item so the running band and
    the selection tint — both painted on the row — are indented with it instead
-   of bleeding back to the pane edge. The member rows keep a left margin so the
-   indent reads against the full-width rows above them. */
+   of bleeding back to the pane edge. */
 .session-row.is-group-anchor {
   background-color: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
@@ -976,10 +992,78 @@ onUnmounted(() => {
   transform: rotate(-90deg);
 }
 
+/* Members span the FULL row width: the indent is `padding-left`, NOT
+   `margin-left`. A margin sits outside the background box, so the indent zone
+   was left unpainted and showed the pane's own background as a bright stripe
+   down the left of every member row — and it made the members narrower than
+   their anchor row.
+
+   ── Tree rail (M1) ──
+   Members are joined to their anchor by a tree: a vertical rail down the left,
+   with a horizontal arm reaching each member (`├─`), and the last one closing
+   the rail (`└─`). That arm on EVERY member is what makes it a tree rather than
+   an elbow — an earlier version drew only the final corner, so the middle
+   members were indented rows beside a stray vertical with nothing pointing at
+   them.
+
+   Drawn with ::before + background layers, NOT with a border. Two reasons:
+     - A border always spans the full row height, so the last member's rail could
+       not stop at its centre to turn; the corner then had to draw a second
+       vertical alongside, producing two parallel lines.
+     - ::after is taken by the pinned wedge (.session-row.pinned::after).
+   Two background layers paint the rail (1px at x=0 of the box) and the arm (1px
+   across the middle), so they meet exactly at the rail with no offset.
+
+   The arm spans the full indent so it reaches the content; `padding-left` then
+   starts the content just past the arm's tip. */
 .session-row.is-fork-member {
-  margin-left: var(--space-6);
-  padding-left: var(--space-4);
-  background-color: color-mix(in srgb, var(--text-primary) 2%, transparent);
+  --tree-line: color-mix(in srgb, var(--text-primary) 22%, transparent);
+  padding-left: calc(var(--space-6) + var(--space-4));
+  /* `background-image` (not the shorthand) so background-color — set by the
+     `active` / `session-row-active` / `menu-open` rules at the same specificity
+     — is left alone. */
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--text-primary) 5%, transparent) 0 var(--space-6),
+    color-mix(in srgb, var(--text-primary) 2%, transparent) var(--space-6) 100%
+  );
+}
+
+/* The rail + arm. `left` is the arm's reach: it starts at the rail and stops
+   where the content begins, so the corner lines up with the text. */
+.session-row.is-fork-member::before {
+  content: '';
+  position: absolute;
+  left: var(--space-6);
+  top: 0;
+  bottom: 0;
+  width: var(--space-4);
+  pointer-events: none;
+  /* Layer 1: the arm, 1px tall at the row's vertical centre.
+     Layer 2: the rail, 1px wide along the box's left edge, full height. */
+  background-image:
+    linear-gradient(var(--tree-line), var(--tree-line)),
+    linear-gradient(var(--tree-line), var(--tree-line));
+  background-size: 100% 1px, 1px 100%;
+  background-position: 0 50%, 0 0;
+  background-repeat: no-repeat;
+}
+
+/* Last member: the rail stops at the row's centre so the arm reads as └─
+   rather than continuing past it. */
+.session-row.is-fork-member.is-last-in-group::before {
+  background-size: 100% 1px, 1px 50%;
+}
+
+/* Selected member: `.session-row.active` adds a `border-left`, and an
+   absolutely-positioned box is offset from the PADDING box — i.e. inside the
+   border — so the rail would jump right by the border's width on the selected
+   row and no longer line up with the rows above and below it. (The row's text
+   does not move: it is compensated by `.session-item.active { padding-left:
+   8px }`. The rail needs the same compensation, which is what this is.)
+   Both widths come from --row-active-border so they cannot drift apart. */
+.session-row.is-fork-member.active::before {
+  left: calc(var(--space-6) - var(--row-active-border));
 }
 
 /* Generation chip on a group member's title line ("Gen 2" / "第 2 代"). */
@@ -1014,9 +1098,12 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-/* Accent border lives on the row so it encloses the archive button too. */
+/* Accent border lives on the row so it encloses the archive button too.
+   The padding is pulled in by exactly the border's width so the row's TEXT does
+   not shift when the selection appears. The tree rail needs its own copy of this
+   compensation — see `.session-row.is-fork-member.active::before`. */
 .session-item.active {
-  padding-left: var(--space-4);
+  padding-left: calc(var(--space-6) - var(--row-active-border));
 }
 
 .session-row.session-row-active {
@@ -1035,7 +1122,7 @@ onUnmounted(() => {
     color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent),
     color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent)
   );
-  border-left: 4px solid var(--accent-color, #0066cc);
+  border-left: var(--row-active-border) solid var(--accent-color, #0066cc);
   border-right: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
