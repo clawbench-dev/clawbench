@@ -5133,9 +5133,9 @@ func TestCreateSession_EmptySessionTypeDefaultsToChat(t *testing.T) {
 	assert.Equal(t, "chat", sessionType)
 }
 
-// ---------- GetUserMessageIndex ----------
+// ---------- GetConversationIndex ----------
 
-func TestGetUserMessageIndex_Basic(t *testing.T) {
+func TestGetConversationIndex_Basic(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Index Test")
@@ -5147,28 +5147,136 @@ func TestGetUserMessageIndex_Basic(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Second question", []model.FileEntry{{Path: "file1.go"}}, false, "NewSession")
 	assert.NoError(t, err)
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
-	assert.Len(t, msgs, 2)
+	assert.Len(t, msgs, 3)
 
 	assert.Equal(t, "user", msgs[0].Role)
 	assert.Equal(t, "First question", msgs[0].Content)
-	assert.Equal(t, "user", msgs[1].Role)
-	assert.Equal(t, "Second question", msgs[1].Content)
-	assert.Equal(t, []model.FileEntry{{Path: "file1.go"}}, msgs[1].Files)
+	assert.Nil(t, msgs[0].Summary)
+
+	// Assistant row: content is emptied, the fallback preview lands in Summary.
+	assert.Equal(t, "assistant", msgs[1].Role)
+	assert.Empty(t, msgs[1].Content)
+	require.NotNil(t, msgs[1].Summary)
+	assert.Equal(t, "Answer", *msgs[1].Summary)
+
+	assert.Equal(t, "user", msgs[2].Role)
+	assert.Equal(t, "Second question", msgs[2].Content)
+	assert.Equal(t, []model.FileEntry{{Path: "file1.go"}}, msgs[2].Files)
 }
 
-func TestGetUserMessageIndex_Empty(t *testing.T) {
+func TestGetConversationIndex_PrefersStoredSummary(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Stored Summary")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", `{"blocks":[{"type":"text","text":"raw reply text"}]}`, nil, false, "NewSession")
+	require.NoError(t, err)
+
+	// Give it a reading summary — that must win over the reply text.
+	var asstID int64
+	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant'", sid,
+	).Scan(&asstID))
+	require.NoError(t, service.SaveSummary("chat_message", asstID, "stored summary"))
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary)
+	assert.Equal(t, "stored summary", *msgs[0].Summary)
+	assert.Empty(t, msgs[0].Content, "assistant content must not cross the wire")
+}
+
+func TestGetConversationIndex_AssistantFallbackUsesLastAnswer(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Last Answer")
+
+	// The reply has tool noise plus a final answer — the index must show the
+	// conclusion, not the intermediate commentary.
+	content := `{"blocks":[` +
+		`{"type":"text","text":"Let me check that."},` +
+		`{"type":"tool_use","name":"Read","id":"t1"},` +
+		`{"type":"text","text":"The build passes."}` +
+		`]}`
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", content, nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary)
+	assert.Equal(t, "The build passes.", *msgs[0].Summary)
+}
+
+func TestGetConversationIndex_AssistantFallbackTruncates(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Truncate")
+
+	long := strings.Repeat("测", indexSummaryMaxRunesForTest+50)
+	content := `{"blocks":[{"type":"text","text":"` + long + `"}]}`
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", content, nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary)
+	assert.Equal(t, indexSummaryMaxRunesForTest+1, utf8.RuneCountInString(*msgs[0].Summary)) // + ellipsis
+	assert.True(t, strings.HasSuffix(*msgs[0].Summary, "…"))
+}
+
+// indexSummaryMaxRunesForTest mirrors the unexported cap in chat.go so the
+// assertion above states the bound explicitly instead of restating the constant.
+const indexSummaryMaxRunesForTest = 200
+
+func TestGetConversationIndex_AssistantNoText(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "No Text")
+
+	// A tool-call-only turn has no answer text — the row exists but is empty.
+	content := `{"blocks":[{"type":"tool_use","name":"Bash","id":"t1"}]}`
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", content, nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary, "an assistant row must always carry a (possibly empty) summary")
+	assert.Empty(t, *msgs[0].Summary)
+}
+
+func TestGetConversationIndex_AssistantPlainTextContent(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Plain Text")
+
+	// Non-block assistant content (no {"blocks":...}) must still produce a row.
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", "plain answer", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary)
+	assert.Equal(t, "plain answer", *msgs[0].Summary)
+}
+
+func TestGetConversationIndex_Empty(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Empty Index")
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
 	assert.Empty(t, msgs)
 }
 
-func TestGetUserMessageIndex_OnlyAssistantMessages(t *testing.T) {
+func TestGetConversationIndex_OnlyAssistantMessages(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "No User Msgs")
@@ -5178,12 +5286,14 @@ func TestGetUserMessageIndex_OnlyAssistantMessages(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sid, "assistant", "World", nil, false, "NewSession")
 	assert.NoError(t, err)
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
-	assert.Empty(t, msgs)
+	assert.Len(t, msgs, 2)
+	assert.Equal(t, "assistant", msgs[0].Role)
+	assert.Equal(t, "assistant", msgs[1].Role)
 }
 
-func TestGetUserMessageIndex_SkipsStreaming(t *testing.T) {
+func TestGetConversationIndex_SkipsStreaming(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Streaming Test")
@@ -5195,13 +5305,33 @@ func TestGetUserMessageIndex_SkipsStreaming(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Done msg", nil, false, "NewSession")
 	assert.NoError(t, err)
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 1)
 	assert.Equal(t, "Done msg", msgs[0].Content)
 }
 
-func TestGetUserMessageIndex_OrderPreserved(t *testing.T) {
+func TestGetConversationIndex_SkipsQueued(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Queued Test")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "Pending question", nil, false, "NewSession")
+	require.NoError(t, err)
+	_, err = service.UnsafeDBForTest().Exec(
+		"UPDATE chat_history SET queued = 1 WHERE session_id = ? AND content = 'Pending question'", sid,
+	)
+	require.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Real question", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "Real question", msgs[0].Content)
+}
+
+func TestGetConversationIndex_OrderPreserved(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Order Test")
@@ -5213,11 +5343,15 @@ func TestGetUserMessageIndex_OrderPreserved(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
-	assert.Len(t, msgs, 5)
-	for i, msg := range msgs {
-		assert.Equal(t, fmt.Sprintf("Question %d", i+1), msg.Content)
+	assert.Len(t, msgs, 10)
+	for i := range 5 {
+		assert.Equal(t, "user", msgs[i*2].Role)
+		assert.Equal(t, fmt.Sprintf("Question %d", i+1), msgs[i*2].Content)
+		assert.Equal(t, "assistant", msgs[i*2+1].Role)
+		require.NotNil(t, msgs[i*2+1].Summary)
+		assert.Equal(t, fmt.Sprintf("Answer %d", i+1), *msgs[i*2+1].Summary)
 	}
 }
 

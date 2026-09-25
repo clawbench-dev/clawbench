@@ -949,8 +949,11 @@ paths:
   /api/ai/chat/user-messages:
     get:
       tags: [Chat]
-      summary: 用户消息索引
-      description: 轻量返回该会话的用户消息列表（`{messages:[...]}`），供消息导航。
+      summary: 对话索引
+      description: |
+        轻量返回该会话的对话索引（`{messages:[...]}`），供消息导航。
+        按 id 升序返回全部已定稿消息（用户消息 + 助手消息），排除 streaming / queued 行。
+        用户消息带 `content` / `files`；助手消息带 `summary`（已存阅读摘要，缺失时回退为该轮回复正文抽取的预览，`content` 为空串）。
       operationId: chatUserMessages
       parameters:
         - name: session_id
@@ -960,7 +963,7 @@ paths:
             type: string
       responses:
         "200":
-          description: 用户消息索引
+          description: 对话索引
           content:
             application/json:
               schema:
@@ -970,7 +973,7 @@ paths:
                     type: array
                     items:
                       type: object
-                      description: 用户消息（含 id / content / files / createdAt / role 等）。
+                      description: 索引条目（含 id / role / createdAt；用户条目含 content / files，助手条目含 summary）。
 
   /api/ai/chat/tool-call:
     get:

@@ -37,7 +37,11 @@
             v-for="(msg, idx) in filteredMessages"
             :key="msg.id || idx"
             class="msg-item"
-            :class="{ active: msg.id === activeId, 'msg-item-active': listNav.activeIndex.value === idx }"
+            :class="{
+              active: msg.id === activeId,
+              'msg-item-active': listNav.activeIndex.value === idx,
+              'msg-item--assistant': msg.role === 'assistant',
+            }"
             :aria-current="msg.id === activeId || undefined"
             tabindex="0"
             role="button"
@@ -48,12 +52,14 @@
               <span class="msg-index">{{ msgIndex(msg) }}</span>
             </span>
             <div class="msg-body">
-              <span class="msg-text" v-html="rowHighlight(msg)"></span>
-              <span v-if="msg.createdAt" class="msg-time">{{ formatRelativeTime(msg.createdAt) }}</span>
+              <span class="msg-text" :class="{ 'msg-text--muted': isPlaceholder(msg) }" v-html="rowHighlight(msg)"></span>
+              <div class="msg-meta">
+                <span class="msg-role-tag" :class="msg.role === 'assistant' ? 'role-assistant' : 'role-user'">
+                  {{ msg.role === 'assistant' ? t('chat.messageList.conversationIndexRoleAssistant') : t('chat.messageList.conversationIndexRoleUser') }}
+                </span>
+                <span v-if="msg.createdAt" class="msg-time">{{ formatRelativeTime(msg.createdAt) }}</span>
+              </div>
             </div>
-            <button class="msg-fork-btn" @click.stop="$emit('fork', msg)" :title="t('chat.actions.forkSession')">
-              <Split :size="14" />
-            </button>
           </div>
         </div>
         <div class="panel-hint">
@@ -67,8 +73,8 @@
 
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { MessagesSquare, Split, MousePointerClick } from 'lucide-vue-next'
-import { formatUserMsg, matchUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import { MessagesSquare, MousePointerClick } from 'lucide-vue-next'
+import { formatIndexMsg, matchIndexMsg, assistantIndexText } from '@/utils/userMsgIndexUtils.ts'
 import { highlightText } from '@/utils/searchUtils'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -88,7 +94,7 @@ const props = defineProps({
   jumping: Boolean,
 })
 
-const emit = defineEmits(['close', 'select', 'fork'])
+const emit = defineEmits(['close', 'select'])
 
 const listRef = ref(null)
 const searchInputRef = ref(null)
@@ -97,11 +103,16 @@ let focusTimer = null
 const searchQuery = ref('')
 const isSearching = computed(() => searchQuery.value.trim().length > 0)
 
+/** Visible row labels (attachment-only rows, and assistant rows with no text). */
+const rowLabels = computed(() => ({
+  attachment: t('chat.messageList.userMsgIndexAttachment'),
+  noText: t('chat.messageList.conversationIndexNoText'),
+}))
+
 const filteredMessages = computed(() => {
   const q = searchQuery.value.trim()
   if (!q) return props.messages
-  const attachmentLabel = t('chat.messageList.userMsgIndexAttachment')
-  return props.messages.filter(m => matchUserMsg(m, q, attachmentLabel))
+  return props.messages.filter(m => matchIndexMsg(m, q, rowLabels.value))
 })
 
 // Full-list ordinal per message object, so the index badge keeps the message's
@@ -117,7 +128,12 @@ function msgIndex(msg) {
 }
 
 function truncateText(msg) {
-  return formatUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
+  return formatIndexMsg(msg, rowLabels.value)
+}
+
+/** Whether a row renders its "no text" placeholder (dimmed styling). */
+function isPlaceholder(msg) {
+  return msg.role === 'assistant' && !assistantIndexText(msg)
 }
 
 /** Row display text with the active query's matches wrapped in <mark>. */
@@ -390,12 +406,57 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+/* ── Role tag + time row ── */
+.msg-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.msg-role-tag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.5;
+  letter-spacing: 0.3px;
+  border: 1px solid transparent;
+}
+
+.msg-role-tag.role-user {
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color) 24%, transparent);
+}
+
+.msg-role-tag.role-assistant {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text-secondary) 24%, transparent);
+}
+
 .msg-text {
   font-size: var(--font-size-md);
   color: var(--text-primary);
   line-height: var(--line-height-normal);
   word-break: break-word;
   white-space: pre-wrap;
+}
+
+/* Placeholder rows (an assistant turn with no text) read as secondary. */
+.msg-text--muted {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Assistant rows use a hollow node so the two roles are distinguishable even
+   when the row is not the active one. */
+.msg-item--assistant .msg-node {
+  border-style: dashed;
 }
 
 .msg-text :deep(mark) {
@@ -421,43 +482,6 @@ onUnmounted(() => {
   height: 3px;
   border-radius: 50%;
   background: var(--border-color);
-}
-
-/* ── Fork button ── */
-.msg-fork-btn {
-  flex-shrink: 0;
-  min-width: 24px;
-  height: 24px;
-  margin-top: 1px;
-  padding:0 var(--space-2);
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: var(--opacity-disabled);
-  transition: opacity var(--duration-slow), background var(--duration-slow), color var(--duration-slow);
-  -webkit-tap-highlight-color: transparent;
-}
-
-@media (hover: hover) {
-  .msg-item:hover .msg-fork-btn {
-    opacity: var(--opacity-hover);
-  }
-  .msg-fork-btn:hover {
-    opacity: 1 !important;
-    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-    color: var(--accent-color);
-  }
-}
-
-.msg-fork-btn:active {
-  opacity: 1;
-  color: var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
 }
 
 /* ── Footer hint ── */

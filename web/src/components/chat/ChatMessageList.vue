@@ -121,16 +121,15 @@
     </div>
   </Transition>
 
-  <!-- User message index drawer -->
+  <!-- Conversation index drawer -->
   <UserMsgIndexDrawer
     :open="userMsgIndexDrawer.effectiveOpen.value"
     :messages="userMsgIndexList"
-    :active-id="nearestUserMsgId"
+    :active-id="nearestIndexMsgId"
     :loading="loadingIndex"
     :jumping="loadingTarget"
     @close="closeUserMsgIndex"
     @select="jumpToUserMessage"
-    @fork="$emit('fork-from-message', $event)"
   />
 
   <!-- Table row expand modal -->
@@ -493,7 +492,7 @@ let wheelActive = false
 let mouseDownActive = false
 let wheelDecayTimer = null
 
-// Throttle scrollTick for nearestUserMsgId recomputation
+// Throttle scrollTick for nearestIndexMsgId recomputation
 const scrollFrameScheduler = new StreamFrameScheduler()
 
 function handleScroll() {
@@ -1106,14 +1105,16 @@ function nearestMessageIndex(role) {
   return bestIdx
 }
 
-const nearestUserMsgId = computed(() => {
+const nearestIndexMsgId = computed(() => {
   // Gate on the drawer being open. This computed's only consumer is the index
   // drawer's `active-id`, but it depends on scrollTick, which bumps on every
   // scroll frame — including the continuous auto-scroll during streaming. With
   // a long session that meant a full message walk (getBoundingClientRect per
   // message) on every frame while the drawer was closed and nobody was looking.
   if (!userMsgIndexDrawer.effectiveOpen.value) return null
-  const idx = nearestMessageIndex('user')
+  // The index lists both roles now, so the highlight tracks the nearest message
+  // of any role rather than only the nearest user message.
+  const idx = nearestMessageIndex()
   return idx === null ? null : (props.messages[idx]?.id ?? null)
 })
 

@@ -336,7 +336,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session/fork", ServeForkSession)
 	register("/api/ai/session/reset", ServeSessionReset)
 	register("/api/ai/session/rewind", ServeSessionRewind)
-	register("/api/ai/chat/user-messages", ServeUserMessageIndex)
+	// Path kept as "user-messages" for compatibility: the frontend is served from
+	// disk (no rebuild of the Go binary needed), so a renamed path would 404 for
+	// the window where a new frontend talks to an old binary. The handler now
+	// returns assistant rows too — the name is historical, the contract is the
+	// OpenAPI description.
+	register("/api/ai/chat/user-messages", ServeConversationIndex)
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)
 	register("/api/usage/stats", ServeUsageStats)

@@ -14,6 +14,7 @@ const i18n = createI18n({
       chat: {
         messageList: {
           userMsgIndexAttachment: '附件',
+          conversationIndexNoText: '（本轮无文字回复）',
         },
       },
     },
@@ -155,7 +156,7 @@ describe('useUserMsgIndex — toggleUserMsgIndex', () => {
     fetchSpy.mockRestore()
   })
 
-  it('falls back to loaded messages on fetch error', async () => {
+  it('falls back to loaded messages on fetch error, keeping both roles', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'))
 
     const { vm } = createComposable()
@@ -163,6 +164,7 @@ describe('useUserMsgIndex — toggleUserMsgIndex', () => {
     expect(vm.showUserMsgIndex).toBe(true)
     expect(vm.userMsgIndexList).toEqual([
       { id: 1, role: 'user', content: 'Hello' },
+      { id: 2, role: 'assistant', content: 'Hi' },
       { id: 3, role: 'user', content: 'How are you?' },
     ])
 
@@ -217,21 +219,31 @@ describe('useUserMsgIndex — closeUserMsgIndex', () => {
   })
 })
 
-describe('useUserMsgIndex — formatUserMsgLabel', () => {
-  it('formats text message', () => {
+describe('useUserMsgIndex — formatIndexLabel', () => {
+  it('formats a user text message', () => {
     const { vm } = createComposable()
-    expect(vm.formatUserMsgLabel({ content: 'Hello world' })).toBe('Hello world')
+    expect(vm.formatIndexLabel({ role: 'user', content: 'Hello world' })).toBe('Hello world')
   })
 
   it('keeps the full long message', () => {
     const { vm } = createComposable()
     const longText = 'a'.repeat(50)
-    expect(vm.formatUserMsgLabel({ content: longText })).toBe(longText)
+    expect(vm.formatIndexLabel({ role: 'user', content: longText })).toBe(longText)
   })
 
-  it('formats attachment-only message', () => {
+  it('formats an attachment-only user message', () => {
     const { vm } = createComposable()
-    expect(vm.formatUserMsgLabel({ content: '', files: ['file.ts'] })).toBe('[附件]')
+    expect(vm.formatIndexLabel({ role: 'user', content: '', files: ['file.ts'] })).toBe('[附件]')
+  })
+
+  it('formats an assistant message from its summary', () => {
+    const { vm } = createComposable()
+    expect(vm.formatIndexLabel({ role: 'assistant', summary: 'the summary' })).toBe('the summary')
+  })
+
+  it('falls back to the assistant reply content when there is no summary', () => {
+    const { vm } = createComposable()
+    expect(vm.formatIndexLabel({ role: 'assistant', content: 'the reply' })).toBe('the reply')
   })
 })
 

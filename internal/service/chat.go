@@ -13,10 +13,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/summarize"
 )
 
 // GetChatHistory retrieves all chat messages for a given project path, backend, and session.
@@ -169,12 +171,32 @@ func GetFinalizedMessageCount(sessionID string) (int, error) {
 	return count, nil
 }
 
-// GetUserMessageIndex returns lightweight {id, content, files, createdAt} for all user messages
-// in a session, ordered by id ASC. Used for the user message index navigation feature.
-// Excludes queued messages — a pending bubble is not a navigable history turn yet.
-func GetUserMessageIndex(sessionID string) ([]model.ChatMessage, error) {
+// indexSummaryMaxRunes caps the fallback preview derived from an assistant
+// reply's own text when no reading summary has been stored yet. It is
+// deliberately shorter than model.ResponsePreviewMaxRunes: the index row is a
+// one-line scannable preview, and the frontend truncates to 100 code points for
+// display anyway — this just bounds what crosses the wire.
+const indexSummaryMaxRunes = 200
+
+// GetConversationIndex returns lightweight rows for every finalized message in a
+// session — both user messages and assistant replies — ordered by id ASC, for the
+// conversation index navigation feature.
+//
+// User rows carry {id, role, content, files, createdAt}. Assistant rows carry
+// {id, role, summary, createdAt}: the stored reading summary when one exists,
+// otherwise a preview extracted from the reply's own conclusion so a row is
+// never blank for a reply that does have text. Only the fallback path reads the
+// (potentially large) assistant content column.
+//
+// Excludes queued messages — a pending bubble is not a navigable history turn
+// yet — and in-flight (streaming) rows, whose content is still being written.
+func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, content, files, created_at FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND queued = 0 ORDER BY id ASC",
+		`SELECT h.id, h.role, h.content, h.files, h.created_at, COALESCE(s.summary, '')
+		 FROM chat_history h
+		 LEFT JOIN summaries s ON s.target_type = 'chat_message' AND s.target_id = h.id
+		 WHERE h.session_id = ? AND h.streaming = 0 AND h.queued = 0
+		 ORDER BY h.id ASC`,
 		sessionID,
 	)
 	if err != nil {
@@ -185,11 +207,28 @@ func GetUserMessageIndex(sessionID string) ([]model.ChatMessage, error) {
 	for rows.Next() {
 		var msg model.ChatMessage
 		var filesJSON sql.NullString
-		if err := rows.Scan(&msg.ID, &msg.Content, &filesJSON, &msg.CreatedAt); err != nil {
+		var summary string
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.CreatedAt, &summary); err != nil {
 			return nil, err
 		}
-		msg.Role = "user"
-		if filesJSON.Valid && filesJSON.String != "" {
+		if msg.Role == roleAssistant {
+			// The assistant's content column is the heavy one (full block JSON);
+			// replace it with the summary text before it leaves this function so
+			// the response stays lightweight. A stored summary wins; otherwise
+			// derive a bounded preview from the reply's conclusion.
+			text := summary
+			if text == "" {
+				if blocks, perr := parseMessageBlocks(msg.Content); perr == nil && len(blocks) > 0 {
+					text = summarize.ExtractLastAnswerFromBlocks(blocks)
+				} else {
+					// Plain-text assistant content (no block JSON) — use it as-is.
+					text = ExtractPlainText(msg.Content)
+				}
+			}
+			msg.Content = ""
+			preview := truncateIndexText(text, indexSummaryMaxRunes)
+			msg.Summary = &preview
+		} else if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
 		messages = append(messages, msg)
@@ -198,6 +237,18 @@ func GetUserMessageIndex(sessionID string) ([]model.ChatMessage, error) {
 		return nil, err
 	}
 	return messages, nil
+}
+
+// truncateIndexText caps text at maxRunes, appending an ellipsis when anything
+// was cut. Operates on runes so multi-byte characters are never split.
+func truncateIndexText(text string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(text) <= maxRunes {
+		return text
+	}
+	return string([]rune(text)[:maxRunes]) + "…"
 }
 
 // GetMessageContent returns the plain text content of a message by its ID,

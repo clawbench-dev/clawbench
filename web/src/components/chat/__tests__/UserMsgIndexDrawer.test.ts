@@ -37,7 +37,18 @@ import UserMsgIndexDrawer from '@/components/chat/UserMsgIndexDrawer.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: {} },
+  messages: {
+    en: {
+      chat: {
+        messageList: {
+          conversationIndexRoleUser: 'User',
+          conversationIndexRoleAssistant: 'Assistant',
+          conversationIndexNoText: '(no text in this turn)',
+          userMsgIndexAttachment: 'Attachment',
+        },
+      },
+    },
+  },
 })
 
 function mountSheet(props = {}, opts: { attach?: boolean } = {}) {
@@ -102,17 +113,13 @@ describe('UserMsgIndexDrawer', () => {
       expect(wrapper.emitted('select')![0]).toEqual([messages[0]])
     })
 
-    it('emits fork on fork button click', async () => {
+    it('offers no fork button (forking lives on the chat message itself)', () => {
       const messages = [
         { id: 1, content: 'Hello', role: 'user' },
-        { id: 2, content: 'World', role: 'user' },
+        { id: 2, content: 'World', role: 'assistant', summary: 'Hi' },
       ]
       const wrapper = mountSheet({ messages })
-      const forkBtns = wrapper.findAll('.msg-fork-btn')
-      expect(forkBtns).toHaveLength(2)
-      await forkBtns[0].trigger('click')
-      expect(wrapper.emitted('fork')).toBeTruthy()
-      expect(wrapper.emitted('fork')![0]).toEqual([messages[0]])
+      expect(wrapper.findAll('.msg-fork-btn')).toHaveLength(0)
     })
 
     it('shows loading state', () => {
@@ -308,7 +315,7 @@ describe('UserMsgIndexDrawer', () => {
       await wrapper.find('.search-stub').setValue('bar.ts')
       const items = wrapper.findAll('.msg-item')
       expect(items).toHaveLength(1)
-      expect(items[0].find('.msg-text').text()).toContain('userMsgIndexAttachment')
+      expect(items[0].find('.msg-text').text()).toContain('Attachment')
     })
 
     it('shows a no-results state distinct from the empty state', async () => {
@@ -388,6 +395,75 @@ describe('UserMsgIndexDrawer', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.findAll('.msg-item')).toHaveLength(1)
       expect(wrapper.vm.searchQuery).toBe('')
+    })
+  })
+
+  describe('role-aware timeline', () => {
+    const bothRoles = [
+      { id: 1, role: 'user', content: 'Fix the login bug' },
+      { id: 2, role: 'assistant', summary: 'Patched the auth guard' },
+      { id: 3, role: 'user', content: 'Thanks' },
+    ]
+
+    it('renders user and assistant rows interleaved in order', () => {
+      const wrapper = mountSheet({ messages: bothRoles })
+      const items = wrapper.findAll('.msg-item')
+      expect(items).toHaveLength(3)
+      expect(items[0].find('.msg-text').text()).toBe('Fix the login bug')
+      expect(items[1].find('.msg-text').text()).toBe('Patched the auth guard')
+      expect(items[2].find('.msg-text').text()).toBe('Thanks')
+    })
+
+    it('labels each row with a distinct role tag', () => {
+      const wrapper = mountSheet({ messages: bothRoles })
+      const items = wrapper.findAll('.msg-item')
+      expect(items[0].find('.msg-role-tag').text()).toBe('User')
+      expect(items[0].find('.msg-role-tag').classes()).toContain('role-user')
+      expect(items[1].find('.msg-role-tag').text()).toBe('Assistant')
+      expect(items[1].find('.msg-role-tag').classes()).toContain('role-assistant')
+      expect(items[2].find('.msg-role-tag').classes()).toContain('role-user')
+    })
+
+    it('marks assistant rows with a distinct class', () => {
+      const wrapper = mountSheet({ messages: bothRoles })
+      const items = wrapper.findAll('.msg-item')
+      expect(items[0].classes()).not.toContain('msg-item--assistant')
+      expect(items[1].classes()).toContain('msg-item--assistant')
+    })
+
+    it('falls back to the reply content when an assistant row has no summary', () => {
+      const wrapper = mountSheet({ messages: [
+        { id: 1, role: 'assistant', content: 'plain reply' },
+      ] })
+      expect(wrapper.find('.msg-text').text()).toBe('plain reply')
+    })
+
+    it('shows a muted placeholder for an assistant row with no text', () => {
+      const wrapper = mountSheet({ messages: [
+        { id: 1, role: 'assistant', content: '' },
+      ] })
+      const text = wrapper.find('.msg-text')
+      expect(text.text()).toBe('(no text in this turn)')
+      expect(text.classes()).toContain('msg-text--muted')
+    })
+
+    it('searches across both user text and assistant summaries', async () => {
+      const wrapper = mountSheet({ messages: bothRoles })
+      await wrapper.find('.search-stub').setValue('patched')
+      const items = wrapper.findAll('.msg-item')
+      expect(items).toHaveLength(1)
+      expect(items[0].find('.msg-role-tag').text()).toBe('Assistant')
+    })
+
+    it('matches the no-text placeholder in search', async () => {
+      const wrapper = mountSheet({ messages: [
+        { id: 1, role: 'user', content: 'question' },
+        { id: 2, role: 'assistant', content: '' },
+      ] })
+      await wrapper.find('.search-stub').setValue('no text in this turn')
+      const items = wrapper.findAll('.msg-item')
+      expect(items).toHaveLength(1)
+      expect(items[0].find('.msg-role-tag').text()).toBe('Assistant')
     })
   })
 })

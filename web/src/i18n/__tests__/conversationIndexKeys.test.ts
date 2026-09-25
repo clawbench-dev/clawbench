@@ -16,6 +16,9 @@ describe('i18n conversation-index keys completeness', () => {
     'noUserMessages',
     'noUserMessagesHint',
     'userMsgIndexAttachment',
+    'conversationIndexRoleUser',
+    'conversationIndexRoleAssistant',
+    'conversationIndexNoText',
   ]
 
   it('en and zh have all conversation-index keys', () => {
