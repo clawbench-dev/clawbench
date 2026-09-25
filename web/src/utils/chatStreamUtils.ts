@@ -586,9 +586,12 @@ export type ChatMessageAction =
 function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: string): ContentBlock | undefined {
   const wantParent = parent || ''
   for (let i = blocks.length - 1; i >= 0; i--) {
-    // Sub-agent boundary: a block belonging to a different parent (or top-level)
-    // must not absorb this event's deltas.
-    if ((blocks[i].parent_tool_call_id || '') !== wantParent) return undefined
+    // Blocks of another parent (a different sub-agent, or top-level) are
+    // stepped over, not treated as a boundary: concurrent sub-agents interleave
+    // their deltas, so agent A's next delta is normally separated from A's own
+    // previous block by several of agent B's blocks. Returning early here
+    // fragmented one continuous thought into one block per interleaved run.
+    if ((blocks[i].parent_tool_call_id || '') !== wantParent) continue
     if (blocks[i].type === type) return blocks[i]
     if (blocks[i].type === 'tool_use') return undefined
   }

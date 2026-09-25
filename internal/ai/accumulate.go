@@ -20,16 +20,29 @@ import (
 // tiny blocks when events alternate, while preserving the semantic separation
 // around tool calls.
 //
+// Sub-agent attribution (ParentToolCallID) narrows the search: an event may only
+// coalesce into a block of its own parent, and only its own parent's tool_use is
+// a boundary. Other parents' blocks are stepped over — concurrent sub-agents
+// interleave on the wire, so they are interleaving noise, not separators.
+//
 //nolint:gocognit,gocyclo // complex stream parsing logic
 func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 	// findLastBlockOfType searches backward for the most recent block of the
-	// given type, but stops at tool_use boundaries (they are natural separators)
-	// and at a sub-agent parent boundary (a block belonging to a different
-	// parent — or top-level — must not absorb a sub-agent's deltas).
+	// given type, stopping at tool_use boundaries (natural separators).
+	//
+	// Blocks belonging to a DIFFERENT parent (another sub-agent, or top-level)
+	// are skipped, not treated as a boundary. Concurrent sub-agents interleave
+	// their deltas on the wire, so agent A's next delta is usually separated
+	// from A's previous block by several of agent B's blocks. Treating the
+	// first foreign block as a boundary fragmented one continuous thought into
+	// one block per interleaved run (measured: a single agent's reasoning split
+	// into thousands of 3-70 char fragments). Skipping them lets A's deltas
+	// coalesce into A's own most recent block, which is what the sender meant;
+	// a tool_use of A's OWN parent still separates (semantic boundary).
 	findLastBlockOfType := func(typ, parent string) (int, bool) {
 		for i := len(*blocks) - 1; i >= 0; i-- {
 			if (*blocks)[i].ParentToolCallID != parent {
-				return -1, false
+				continue
 			}
 			if (*blocks)[i].Type == typ {
 				return i, true

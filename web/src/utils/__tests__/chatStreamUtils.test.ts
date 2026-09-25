@@ -2773,12 +2773,50 @@ describe('sub-agent parent grouping (reducer)', () => {
     s = chatMessageReducer(s, { type: 'ws_content', text: 'parent ' })
     s = chatMessageReducer(s, { type: 'ws_content', text: 'child', parentToolCallId: 'call_p' })
     s = chatMessageReducer(s, { type: 'ws_content', text: ' parent2' })
-    // parent text resumes must NOT merge into the child block: 3 text blocks
+    // The resumed parent text coalesces back into the PARENT's own block (the
+    // interleaved child block is another parent, so it is stepped over, not a
+    // boundary). Parent and child still never share a block.
     const texts = s[0].blocks!.filter((b: any) => b.type === 'text')
-    expect(texts.length).toBe(3)
-    expect(texts[0]).toMatchObject({ text: 'parent ' })
+    expect(texts.length).toBe(2)
+    expect(texts[0]).toMatchObject({ text: 'parent  parent2' })
+    expect(texts[0].parent_tool_call_id).toBeUndefined()
     expect(texts[1]).toMatchObject({ text: 'child', parent_tool_call_id: 'call_p' })
-    expect(texts[2]).toMatchObject({ text: ' parent2' })
+  })
+
+  it('interleaved sub-agent thinking coalesces per parent', () => {
+    let s = [streamingMsg()]
+    // Two sub-agents stream concurrently; each one's reasoning is continuous.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'Let', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'I will inspect the handler', parentToolCallId: 'call_b' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' me look at the key files', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' then the reducer', parentToolCallId: 'call_b' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: '.ts, ContentBlocks.vue.', parentToolCallId: 'call_a' })
+
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(2)
+    expect(thinks[0]).toMatchObject({
+      text: 'Let me look at the key files.ts, ContentBlocks.vue.',
+      parent_tool_call_id: 'call_a',
+    })
+    expect(thinks[1]).toMatchObject({
+      text: 'I will inspect the handler then the reducer',
+      parent_tool_call_id: 'call_b',
+    })
+  })
+
+  it('own tool_use still separates that parent\'s thinking', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'before', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_tool_use', data: { id: 't1', name: 'Read', parent_tool_call_id: 'call_a' } as any })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'after', parentToolCallId: 'call_a' })
+    // A foreign agent's interleaved thinking must not resurrect the merge.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'other', parentToolCallId: 'call_b' })
+
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(3)
+    expect(thinks[0].text).toBe('before')
+    expect(thinks[1].text).toBe('after')
+    expect(thinks[2]).toMatchObject({ text: 'other', parent_tool_call_id: 'call_b' })
   })
 
   it('ws_thinking with parentToolCallId tags the block', () => {
