@@ -1275,3 +1275,37 @@ describe('ChatMessageItem — quote message button', () => {
     expect(btn).toBeUndefined()
   })
 })
+
+// The summary/original toggle is the reading-mode control for the message, so
+// it leads the action row; the quote button and the rest of the actions follow.
+describe('ChatMessageItem — summary toggle leads the meta action row', () => {
+  const assistantMsg = {
+    id: 42, role: 'assistant', streaming: false,
+    blocks: [{ type: 'text', text: 'the assistant reply' }],
+    summary: 'a summary',
+  }
+
+  it('renders the summary anchor as the first child of .chat-meta-actions', () => {
+    const wrapper = createWrapper({ msg: assistantMsg, index: 0, active: true })
+    const actions = wrapper.find('.chat-meta-actions')
+    expect(actions.element.firstElementChild?.classList.contains('chat-summary-anchor')).toBe(true)
+  })
+
+  it('places the summary toggle before the quote button in DOM order', () => {
+    const wrapper = createWrapper({ msg: assistantMsg, index: 0, active: true })
+    const anchor = wrapper.find('.chat-summary-anchor').element
+    const quote = wrapper.findAll('button')
+      .find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')!.element
+    // anchor precedes quote
+    expect(anchor.compareDocumentPosition(quote) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('does not put the summary anchor on a user message', () => {
+    const wrapper = createWrapper({
+      msg: { id: 7, role: 'user', streaming: false, blocks: [{ type: 'text', text: 'q' }] },
+      index: 0,
+      active: true,
+    })
+    expect(wrapper.find('.chat-meta-actions .chat-summary-anchor').exists()).toBe(false)
+  })
+})

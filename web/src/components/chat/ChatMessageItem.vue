@@ -91,12 +91,24 @@
         <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': msg.role === 'assistant' && msg.metadata?.wallMs }">{{ relativeTime }}</span>
       </span>
       <div class="chat-meta-actions">
+        <!-- Summary/original toggle — deliberately FIRST in the row. It is the
+             reading-mode control for this message (which view of the reply you
+             are looking at), so it leads; everything after it is an action *on*
+             the message. Assistant-only, and hidden while streaming since there
+             is no settled content to toggle yet. -->
+        <template v-if="msg.role === 'assistant'">
+          <span v-if="!readOnly && !msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
+            <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
+            <LoadingIndicator v-else size="sm" inline />
+          </span>
+          <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
+            <LoadingIndicator size="sm" inline />
+          </span>
+        </template>
         <!-- Quote this message as a whole. Rendered for BOTH roles: quoting a
              user message (e.g. to re-ask about it) is as useful as quoting a
              reply. Gated like the rest of the meta bar, and skipped for queued
-             bubbles which have no settled content yet.
-             Deliberately FIRST in the row: it is the entry point that starts a
-             new action, while the rest are actions on the message itself. -->
+             bubbles which have no settled content yet. -->
         <button
           v-if="!readOnly && !msg.streaming && !msg.pending && quotableText"
           class="chat-action-btn"
@@ -107,13 +119,6 @@
           <MessageSquareQuote :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <span v-if="!readOnly && !msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
-            <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
-            <LoadingIndicator v-else size="sm" inline />
-          </span>
-          <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
-            <LoadingIndicator size="sm" inline />
-          </span>
           <button v-if="msgText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
             <!-- Generating states: summarizing / synthesizing -->
             <template v-if="autoSpeech.isGeneratingText(msg.id)">

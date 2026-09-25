@@ -927,6 +927,16 @@ describe('ChatInputBar', () => {
     expect(archiveBtn.classes()).toContain('disabled')
   })
 
+  it('archive button is the LAST button in the session group', () => {
+    // Archive is the terminal/destructive action on the session, so it sits at
+    // the far right of the group rather than between the navigation buttons.
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    const group = wrapper.find('.chat-action-group')
+    const buttons = group.findAll('.chat-action-btn')
+    expect(buttons.length).toBeGreaterThan(1)
+    expect(buttons[buttons.length - 1].classes()).toContain('chat-action-btn-archive')
+  })
+
   it('archive button is enabled when currentSessionId exists', () => {
     const wrapper = mountBar({ currentSessionId: 'session-1' })
     const archiveBtn = wrapper.find('.chat-action-btn-archive')

@@ -45,17 +45,19 @@
           <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
           <span class="chat-action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
         </button>
-        <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
-          @click="handleArchive"
-          :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
-          <Archive :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
-        </button>
         <button class="chat-action-btn" :class="{ disabled: !currentSessionId }"
           @click="handleShare"
           :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
           <MessageSquareShare :size="14" />
           <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
+        </button>
+        <!-- Archive sits LAST in the group: it is the destructive/terminal action
+             on the session, so it is separated from the navigation buttons. -->
+        <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
+          @click="handleArchive"
+          :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
+          <Archive :size="14" />
+          <span class="chat-action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
         </button>
       </div>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
