@@ -49,6 +49,34 @@ type FileEntry struct {
 	// It is what makes the re-rendered fence header match the pre-refactor
 	// "lang:path:lines" form instead of degrading to ":path:lines".
 	Language string `json:"language,omitempty"`
+	// SourceKind is where a Kind == "quote" entry came from: "file", "url",
+	// "message", "selection", or "terminal". "terminal" is the same shape as
+	// "selection" (a free-form selection with no addressable source) but kept
+	// separate so the client can label and icon it as a terminal quote instead
+	// of a generic "selected text".
+	//
+	// It round-trips so the detail drawer can label a reloaded quote correctly —
+	// it cannot be re-derived, since a "selection"/"terminal" quote carries no
+	// url and no path, exactly like a "message" one. Empty (legacy rows) falls
+	// back to client-side inference.
+	SourceKind string `json:"sourceKind,omitempty"`
+	// The source locators below are MACHINE-readable keys that let the client
+	// jump back to where a quote came from, and let the AI reach the origin.
+	// The human-readable name travels in Path (documented as a label).
+	//
+	// They round-trip because the quoted text carries no trace of them: after a
+	// reload nothing else identifies which commit, task, session or message a
+	// sent quote came from, so dropping one makes the quote silently unjumpable.
+	// CommitSHA is the commit a git-history or CI-pipeline quote came from.
+	CommitSHA string `json:"commitSha,omitempty"`
+	// TaskID is the scheduled task a task quote came from.
+	TaskID int64 `json:"taskId,omitempty"`
+	// SessionID is the chat session a message quote came from.
+	SessionID string `json:"sessionId,omitempty"`
+	// MessageID is the DB chat-message id the quote was taken from.
+	MessageID int64 `json:"messageId,omitempty"`
+	// ExecutionID is the task execution a run-detail quote came from.
+	ExecutionID string `json:"executionId,omitempty"`
 }
 
 // IsURL reports whether the entry is an external URL rather than a local path.
@@ -100,8 +128,6 @@ type ChatMessage struct {
 	ProjectPath  string        `json:"projectPath,omitempty"`
 	Streaming    bool          `json:"streaming,omitempty"`
 	Indexed      bool          `json:"indexed,omitempty"`
-	QueueID      string        `json:"queueId,omitempty"` // frontend-generated queueId for optimistic bubble matching
-	Queued       bool          `json:"queued,omitempty"`  // true while the message waits for the drain loop
 	CreatedAt    time.Time     `json:"createdAt"`
 	Summary      *string       `json:"summary,omitempty"`      // reading summary (nil=not summarized, ""=too short, non-empty=summary)
 	SummaryCards *SummaryCards `json:"summaryCards,omitempty"` // structured card metadata for summary view
@@ -243,19 +269,26 @@ func (m *ChatMessage) UnmarshalJSON(data []byte) error {
 
 // ChatSession represents a chat session
 type ChatSession struct {
-	ID              string     `json:"id"`
-	Title           string     `json:"title"`
-	Backend         string     `json:"backend"`
-	AgentID         string     `json:"agentId,omitempty"`
-	AgentSource     string     `json:"agentSource,omitempty"`
-	Model           string     `json:"model,omitempty"`
-	SessionType     string     `json:"sessionType,omitempty"`     // "chat" | "scheduled"
-	SourceSessionID string     `json:"sourceSessionId,omitempty"` // non-empty = continued from task
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Backend     string `json:"backend"`
+	AgentID     string `json:"agentId,omitempty"`
+	AgentSource string `json:"agentSource,omitempty"`
+	Model       string `json:"model,omitempty"`
+	SessionType string `json:"sessionType,omitempty"` // "chat" | "scheduled"
+	// SourceSessionID records where this session was derived from. Three
+	// writers share the column, so it is NOT always a session id:
+	//   - ForkSession            → the source session's id
+	//   - ContinueFromExecution  → the source session's id (task continuation)
+	//   - ServeACPLoadSession    → the marker string "acp:{acpSessionId}"
+	// Consumers that resolve it to a session must skip the "acp:" prefix.
+	SourceSessionID string     `json:"sourceSessionId,omitempty"`
 	CreatedAt       time.Time  `json:"createdAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 	Running         bool       `json:"running,omitempty"`
 	UnreadCount     int        `json:"unreadCount,omitempty"`
-	Pinned          bool       `json:"pinned,omitempty"`          // pinned to top of session list
+	Pinned          bool       `json:"pinned,omitempty"`          // pinned to the top block of the session list (leads the sort order)
+	SortOrder       int        `json:"sortOrder,omitempty"`       // manual drag order within the unpinned block; lower first (issue #492)
 	PendingApproval bool       `json:"pendingApproval,omitempty"` // ACP permission request awaiting user response
 	LastReadAt      *time.Time `json:"-"`
 	ProjectPath     string     `json:"projectPath,omitempty"` // project this session belongs to (overview grouping)
@@ -272,13 +305,18 @@ type SessionTag struct {
 	Scope string `json:"scope,omitempty"`
 }
 
-// QueuedMessage represents a message waiting in the pending queue for a session.
-// Stored in-memory only (not persisted to DB).
+// QueuedMessage represents a user message waiting in a session's queue.
+//
+// Since the queue moved out of chat_history it is a real row in the
+// queued_messages table (id is that row's id), not an in-memory record. It is
+// materialized into chat_history only when it is dequeued or injected, so this
+// type never carries a chat_history message id.
 type QueuedMessage struct {
-	QueueID   string      `json:"queueId"` // Frontend-generated unique ID for matching
+	ID        int64       `json:"id,omitempty"` // queued_messages.id
+	QueueID   string      `json:"queueId"`      // client-generated stable identity (cancel/inject address it)
 	Text      string      `json:"text"`
-	FilePaths []string    `json:"filePaths"`
-	Files     []FileEntry `json:"files"`
+	FilePaths []string    `json:"filePaths,omitempty"` // legacy channel; Files is authoritative
+	Files     []FileEntry `json:"files,omitempty"`
 	CreatedAt string      `json:"createdAt"`
 }
 

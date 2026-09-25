@@ -2712,7 +2712,7 @@ func TestSessionExecutor_SteerBoundary_SplitsReply(t *testing.T) {
 
 	// The injected question is persisted mid-turn, AFTER the "before" row but
 	// BEFORE the "after" row is created by the split.
-	_, err := AddChatMessage("/test", "test", sid, "user", "injected question", nil, false, "", "pending-inject-1")
+	injectedID, err := AddChatMessage("/test", "test", sid, "user", "injected question", nil, false, "")
 	if err != nil {
 		t.Fatalf("failed to persist injected question: %v", err)
 	}
@@ -2781,16 +2781,19 @@ func TestSessionExecutor_SteerBoundary_SplitsReply(t *testing.T) {
 		t.Errorf("row 2 content = %q, want %q", msgs[1].Content, "injected question")
 	}
 
-	// Row 3: the "after" half is a NEW row, anchored to the injected question.
+	// Row 3: the "after" half is a NEW row that sorts after the injected
+	// question by id alone. That ordering IS the contract now — the injected
+	// question was materialized before this row was created, so no queue anchor
+	// is needed (or stored).
 	if msgs[2].Role != "assistant" {
 		t.Fatalf("row 3 should be the after-half, got role=%s", msgs[2].Role)
 	}
 	if msgs[2].ID == streamMsgID {
 		t.Error("the after-half must be a NEW row, not the original streaming row")
 	}
-	if msgs[2].QueueID != "pending-inject-1" {
-		t.Errorf("after-half queueId = %q, want %q (anchors it to the injected question)",
-			msgs[2].QueueID, "pending-inject-1")
+	if msgs[2].ID <= injectedID {
+		t.Errorf("after-half id %d must exceed the injected question's id %d — id order is what places it below the question",
+			msgs[2].ID, injectedID)
 	}
 	if !strings.Contains(msgs[2].Content, "after half") {
 		t.Errorf("after-half content missing, got %q", msgs[2].Content)
@@ -2854,7 +2857,7 @@ func TestSessionExecutor_SteerBoundary_KeepsSessionRead(t *testing.T) {
 
 	// The injected question is persisted mid-turn, AFTER the "before" row but
 	// BEFORE the "after" row is created by the split.
-	if _, err := AddChatMessage("/test", "test", sid, "user", "injected question", nil, false, "", "pending-inject-1"); err != nil {
+	if _, err := AddChatMessage("/test", "test", sid, "user", "injected question", nil, false, ""); err != nil {
 		t.Fatalf("failed to persist injected question: %v", err)
 	}
 

@@ -244,13 +244,52 @@ func markdownOption(s string) (Option, bool) {
 // splitMarkdownOption splits an option on its first separator. The em dash is
 // checked first because it is the documented form and never appears inside an
 // ordinary label.
+//
+// A separator inside a `**bold**` run does not split: the bold run is part of
+// the label. Models routinely bold the whole "label — short gloss" phrase and
+// then add the explanation after it —
+//
+//   - **A — 回合结束时失效负缓存（推荐，最小改动）** — 在 ContentBlocks.vue …
+//
+// — so splitting on the inner dash truncated the label to `**A` and left the
+// unmatched `**` visible in the card (production message 52484). Splitting on
+// the dash after the bold run keeps the phrase intact and still separates the
+// description.
 func splitMarkdownOption(s string) (label, desc string) {
+	bold := reMdBold.FindAllStringIndex(s, -1)
 	for _, sep := range []string{"\u2014", "\u2013", " - "} {
-		if i := strings.Index(s, sep); i >= 0 {
+		if i := indexOutsideSpans(s, sep, bold); i >= 0 {
 			return s[:i], s[i+len(sep):]
 		}
 	}
 	return s, ""
+}
+
+// indexOutsideSpans returns the first index of sep that is not inside one of
+// the spans, or -1 when every occurrence lies inside one.
+func indexOutsideSpans(s, sep string, spans [][]int) int {
+	from := 0
+	for {
+		i := strings.Index(s[from:], sep)
+		if i < 0 {
+			return -1
+		}
+		abs := from + i
+		if !indexInSpans(abs, spans) {
+			return abs
+		}
+		from = abs + 1
+	}
+}
+
+// indexInSpans reports whether idx falls inside one of the [start,end) spans.
+func indexInSpans(idx int, spans [][]int) bool {
+	for _, sp := range spans {
+		if idx >= sp[0] && idx < sp[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanInline removes inline Markdown emphasis markers and decodes entities.

@@ -27,6 +27,23 @@ import (
 // the resolver cannot drift apart.
 const shareLocalSegment = "local"
 
+// shareSessionSegment is the URL path segment that addresses a conversation
+// share payload (see serveShareSessionPayload).
+const shareSessionSegment = "session"
+
+// shareMetaSegment is the URL path segment that reports whether a token is a
+// file share or a conversation share (see serveShareMeta). Shared by both kinds.
+const shareMetaSegment = "meta"
+
+// shareKindFile and shareKindSession are the `kind` values the share meta
+// endpoint reports, telling the share SPA which renderer to use. Kept distinct
+// from entryTypeFile, which classifies a directory-search entry rather than a
+// share.
+const (
+	shareKindFile    = "file"
+	shareKindSession = "session"
+)
+
 // shareResponse is the payload for share management endpoints.
 type shareResponse struct {
 	Token string `json:"token,omitempty"`
@@ -356,6 +373,25 @@ func resolveShareScopePath(w http.ResponseWriter, r *http.Request, sharedAbsPath
 	return absTarget, true
 }
 
+// serveShareSessionSubpath dispatches the conversation-share subpaths (meta,
+// session), returning true when it handled the request.
+//
+// Split out of ServeSharePublic so the file-share routing stays readable: the
+// conversation branches must run before the file_shares lookup (a session token
+// has no file_shares row), but they are otherwise independent of it.
+func serveShareSessionSubpath(w http.ResponseWriter, r *http.Request, token, rest string) bool {
+	switch rest {
+	case shareMetaSegment:
+		serveShareMeta(w, r, token)
+		return true
+	case shareSessionSegment:
+		serveShareSessionPayload(w, r, token)
+		return true
+	default:
+		return false
+	}
+}
+
 // ServeSharePublic serves the unauthenticated token-scoped data endpoints:
 //   - GET /api/share/{token}/file        → FileContent JSON (shared file)
 //   - GET /api/share/{token}/content?path= → FileContent JSON for a file the
@@ -372,6 +408,13 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	token, rest, ok := parseSharePublicPath(r.URL.Path)
 	if !ok || token == "" {
 		http.NotFound(w, r)
+		return
+	}
+
+	// Conversation-share subpaths are resolved BEFORE the file-share lookup:
+	// a session token has no file_shares row, so looking that up first would
+	// 404 every session request before it could reach its own branch.
+	if serveShareSessionSubpath(w, r, token, rest) {
 		return
 	}
 

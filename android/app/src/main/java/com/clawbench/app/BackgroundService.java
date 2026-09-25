@@ -2861,25 +2861,37 @@ public class BackgroundService extends Service {
                     AppLog.w(TAG, "LiveUpdate: onEvent failed", e);
                 }
 
-                // Only notify for terminal states and permission pending
+                // Only terminal session/task states are persisted server-side as
+                // notifiable, so only they advance the cursor. NOTIFYING is a
+                // separate decision (NativeNotificationPolicy): a replayed event
+                // or one whose subject is already read must still advance the
+                // cursor, or the next fetch would return it forever. Note
+                // `task_update running` notifies but is never persisted, so it
+                // must NOT advance the cursor (see advancesCursor).
                 String status = data.optString("status", "");
-                boolean shouldNotify = false;
 
-                if ("session_update".equals(event)
-                        && ("completed".equals(status) || "cancelled".equals(status) || "permission_pending".equals(status))) {
-                    shouldNotify = true;
-                } else if ("task_update".equals(event)
-                        && ("running".equals(status) || "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
-                    shouldNotify = true;
-                }
-
-                if (shouldNotify) {
-                    postEventNotification(event, data);
+                if (NativeNotificationPolicy.isNotifiableEvent(event, status)) {
+                    // `replayed` is set by the server on reconnect-buffer replays.
+                    // `suppress_notification` is currently only produced by the
+                    // HTTP pending-events path, never on a broadcast message, so
+                    // it is always false here — read anyway so the policy has one
+                    // shape and a future server-side live suppression just works.
+                    boolean replayed = msg.optBoolean("replayed", false);
+                    boolean suppress = msg.optBoolean("suppress_notification", false);
+                    if (NativeNotificationPolicy.shouldNotifyLive(event, status, replayed, suppress)) {
+                        postEventNotification(event, data);
+                    } else if (replayed) {
+                        // Caught-up history from the reconnect replay buffer. The
+                        // server replays the rolling tail on every reconnect; the
+                        // dedup set is in-memory and empty after a service
+                        // restart, so without this every reconnect re-notified
+                        // the whole tail (the reported "补弹一批历史通知").
+                        AppLog.d(TAG, "NativeWS: suppressed notification for replayed event " + eventId);
+                    }
                 }
 
                 // Update last seen event cursor for pending events fetch
-                // Only update for terminal-state events that are persisted server-side
-                if (!eventId.isEmpty() && shouldNotify) {
+                if (!eventId.isEmpty() && NativeNotificationPolicy.advancesCursor(event, status)) {
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                             .edit()
                             .putString(KEY_LAST_SEEN_EVENT_ID, eventId)
@@ -3143,6 +3155,10 @@ public class BackgroundService extends Service {
                 JSONObject eventObj = events.getJSONObject(i);
                 String payloadStr = eventObj.optString("payload", "");
                 String eventId = eventObj.optString("event_id", "");
+                // The server withholds the notification for an event whose
+                // subject is already read, but still returns it so the cursor
+                // advances past it (the event log is not pruned on read).
+                boolean suppress = eventObj.optBoolean("suppress_notification", false);
 
                 // Skip duplicates
                 if (!eventId.isEmpty() && isDuplicateEvent(eventId)) {
@@ -3158,17 +3174,10 @@ public class BackgroundService extends Service {
                 JSONObject data = msg.optJSONObject("data");
                 if (data == null) continue;
 
-                // Post notification (same logic as NativeEventListener.onMessage)
+                // Post notification (same policy as NativeEventListener.onMessage)
                 String status = data.optString("status", "");
-                boolean shouldNotify = false;
-                if ("session_update".equals(eventType)
-                        && ("completed".equals(status) || "cancelled".equals(status) || "permission_pending".equals(status))) {
-                    shouldNotify = true;
-                } else if ("task_update".equals(eventType)
-                        && ("running".equals(status) || "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
-                    shouldNotify = true;
-                }
-                if (shouldNotify) {
+                if (NativeNotificationPolicy.shouldNotifyFromBacklog(
+                        lastSeenId, eventType, status, suppress)) {
                     postEventNotification(eventType, data);
                 }
 

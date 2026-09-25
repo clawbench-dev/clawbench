@@ -43,7 +43,16 @@
     </div>
 
     <template v-else-if="detail.run.value">
-      <div class="forge-detail-body">
+      <!-- `data-quote-*` makes a selection in the run's metadata quotable with
+           its provenance: the run's web link (to reopen it) and its commit SHA
+           (so the AI can inspect the code the run built, via `git show`). -->
+      <div
+        class="forge-detail-body"
+        :data-quote-source="quoteSourceLabel"
+        :data-quote-url="detail.run.value.url"
+        :data-quote-commit="detail.run.value.sha || ''"
+        data-quote-language="pipeline"
+      >
         <!-- Title + metadata. A run has no markdown body or comments, so the
              metadata IS the content; the jobs table below is the detail. -->
         <div class="forge-detail-title-row">
@@ -192,6 +201,20 @@ const errorTitle = computed(() => {
 const durationText = computed(() => {
   const seconds = detail.run.value?.durationSeconds
   return seconds ? formatDuration(seconds) : ''
+})
+
+/**
+ * Quote-source label for a selection in the run view.
+ *
+ * Names the workflow and the run number, since a workflow has many runs and
+ * "which run" is the user's question. The run's link and commit SHA travel as
+ * separate attributes — they are what make the quote openable and inspectable.
+ */
+const quoteSourceLabel = computed(() => {
+  const run = detail.run.value
+  if (!run) return ''
+  const parts = [run.name, `#${run.number}`].filter(Boolean)
+  return parts.join(' ')
 })
 
 /**

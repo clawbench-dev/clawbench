@@ -11,6 +11,7 @@ import {
 } from '@/utils/lineRanges.ts'
 import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
+import { isShareMode } from '@/share/shareMode'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
 // NOTE: do NOT import clearWorktreeCache from useWorktreeAnnotation here —
@@ -727,6 +728,15 @@ async function drainBatch(): Promise<void> {
  * click target rather than something to strip.
  */
 export async function verifyFilePaths(paths: string[], containerEl: HTMLElement): Promise<void> {
+    // The share page is anonymous and reaches this function through a DIFFERENT
+    // pipeline than the file-preview one: the chat renderer (renderMarkdown →
+    // useChatRender → ContentBlocks.reverifyAnnotations) annotates paths WITHOUT
+    // a share branch, unlike buildMarkdownPreviewDom. Without this guard every
+    // share page fires POST /api/file/batch-exists, gets 401, and — because
+    // fetchPathTypes returns null for a non-OK response — leaves the chips
+    // unverified. Returning early keeps them inert without the request.
+    if (isShareMode()) return
+
     const unique = [...new Set(paths)]
     if (unique.length === 0) return
 
@@ -837,6 +847,34 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
     }
 }
 
+/**
+ * Drop only the NEGATIVE ('none') entries, keeping verified 'file'/'dir' ones.
+ *
+ * A 'none' result is a point-in-time observation that a path did not exist —
+ * and the frontend has no way to learn it later became real. That is fine for
+ * a path that never exists, but an AI turn routinely creates files it already
+ * mentioned earlier in the same turn: a thinking block rendered mid-stream
+ * (thinking does NOT skip enhancements, unlike text blocks) annotates the path
+ * and verifies it BEFORE the file is written, caching 'none'. When the turn's
+ * final text then reports that path, verification hits the cached 'none' and
+ * STRIPS the annotation — the file exists, yet the path stays dead until a
+ * hard refresh resets the module-level cache.
+ *
+ * Called when a turn ends (streaming true → false). The post-streaming render
+ * re-runs the full pipeline and re-verifies every span, so the just-created
+ * files resolve on that pass. Clearing here — before that render's nextTick
+ * verification — is what makes it succeed.
+ *
+ * Only negatives are dropped: 'file'/'dir' cannot be invalidated by a turn
+ * creating files, and keeping them avoids re-requesting every path in a long
+ * session on each turn boundary.
+ */
+export function invalidateNegativePathCache(): void {
+    for (const [key, value] of verifiedCache) {
+        if (value === 'none') verifiedCache.delete(key)
+    }
+}
+
 export function clearVerifiedCache(): void {
     verifiedCache.clear()
     pendingPaths = []
@@ -863,6 +901,7 @@ export function useFilePathAnnotation() {
         navToFileInManager,
         revealInFileManager,
         clearVerifiedCache,
+        invalidateNegativePathCache,
     }
 }
 
@@ -917,6 +956,15 @@ export function tryResolveCodeString(
  * If the file doesn't exist, shows a toast and does not navigate.
  */
 export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number, source?: NavigationSurface, lineRanges?: string): Promise<boolean> {
+    // Load-bearing on the public share page, and NOT redundant with the
+    // handleShareLinkClick interceptor in MarkdownPreview: that interceptor
+    // deliberately declines modified clicks (Ctrl/Cmd/Shift) so the browser can
+    // open a new tab, after which the click chain continues and reaches this
+    // function through handleAnchorClick — which routes ANY relative link here.
+    // Without this guard an anonymous reader would fire an auth-protected file
+    // request and could probe the creator's directory layout.
+    if (isShareMode()) return false
+
     const parsed = parseFileUri(resolvedPath)
     let targetPath = parsed.path
     if (!targetPath) return false

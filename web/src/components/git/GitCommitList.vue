@@ -2,6 +2,7 @@
   <div class="drilldown-page">
     <div v-if="!(commits.length === 0 && untracked) && isGit" class="drilldown-header">
       <div class="drilldown-title">
+        <GitBranch :size="14" class="drilldown-title-icon" />
         <span v-if="commits.length > 0" class="drilldown-count count-badge">
           <template v-if="searchLoading">
             <LoadingIndicator size="sm" inline />
@@ -30,7 +31,7 @@
         :title="t('git.manage.title')"
         @click.stop="$emit('manage')"
       >
-        <GitBranch :size="14" />
+        <GitFork :size="14" />
       </button>
     </div>
     <div class="drilldown-body" ref="bodyRef">
@@ -79,6 +80,9 @@
             :key="c.sha"
             class="drilldown-item"
             :class="{ 'drilldown-item-selected': c.sha === selectedSHA, 'drilldown-item-active': listNav.activeIndex.value === idx }"
+            :draggable="canDragCommit(c)"
+            @dragstart="onCommitDragStart(c, $event)"
+            @dragend="cleanupDragGhost()"
             @click="$emit('select', c)"
           >
             <div class="git-commit-info">
@@ -112,7 +116,7 @@
 </template>
 
 <script setup>
-import { FileText, Info, GitBranch } from 'lucide-vue-next'
+import { FileText, Info, GitBranch, GitFork } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
@@ -123,6 +127,8 @@ import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { refLabelText } from '@/utils/gitGraph'
 import { formatRelativeTime, formatDateTime } from '@/utils/format'
+import { startQuoteDrag, commitDragPayload } from '@/utils/quoteDrag'
+import { cleanupDragGhost } from '@/utils/attachDrag'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -144,6 +150,31 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select', 'search', 'load-more', 'refresh', 'manage'])
+
+/**
+ * Whether a commit row can be dragged into the chat as a quote.
+ *
+ * The working-tree row ("uncommitted changes") has no commit to reference, so it
+ * is not draggable — dragging it would produce a card that cannot be jumped to
+ * and that names nothing.
+ */
+function canDragCommit(c) {
+  return !c.isWT && !!c.sha
+}
+
+/**
+ * Start dragging a commit into the chat: dropping it stages a quote card for
+ * that commit (no annotation). The commit's sha is the locator, which is what
+ * lets the card jump back to the commit in git history.
+ */
+function onCommitDragStart(c, e) {
+  const payload = commitDragPayload(c)
+  if (!startQuoteDrag(e, payload)) {
+    // Nothing usable to drag — cancel so the browser does not start an empty
+    // drag that would silently drop nothing.
+    e.preventDefault()
+  }
+}
 
 const commitSearch = ref('')
 const listRef = ref(null)
@@ -276,98 +307,16 @@ defineExpose({ observeList, unobserveList, commitSearch })
 </script>
 
 <style scoped>
-.drilldown-page {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.drilldown-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  height: var(--header-height);
-  border-bottom: 1px solid var(--border-color, #dee2e6);
-  background: var(--bg-secondary, #f8f9fa);
-  flex-shrink: 0;
-  gap: var(--space-4);
-}
-
-.drilldown-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary, #212529);
-  overflow: hidden;
-  flex: 1;
-  min-width: 0;
-}
-
-.drilldown-count {
-  font-weight: var(--font-weight-bold);
-  background: var(--bg-tertiary, #e9ecef);
-  color: var(--text-muted, #999);
-}
+/* The drill-down shell, header bar, its title, the count badge's colour and the
+   header icon buttons are declared GLOBALLY (web/css/components.css, "Git
+   history panel chrome") because three components render them — see that
+   section's header for why. Only what is specific to this list lives here. */
 
 .commit-search-input {
   flex: 0 1 auto;
   max-width: 160px;
   min-width: 80px;
 }
-
-.drilldown-refresh-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: var(--bg-tertiary, #e9ecef);
-  border-radius: 50%;
-  cursor: pointer;
-  color: var(--text-muted, #999);
-  flex-shrink: 0;
-  padding: 0;
-  transition: background var(--duration-base), color var(--duration-base), transform 0.3s;
-}
-
-@media (hover: hover) {
-  .drilldown-refresh-btn:hover:not(:disabled) {
-    background: var(--accent-color, #4a90d9);
-    color: #fff;
-  }
-}
-
-.drilldown-refresh-btn:active:not(:disabled) {
-  transform: scale(0.92);
-}
-
-.drilldown-refresh-btn:disabled {
-  opacity: var(--opacity-muted);
-  cursor: not-allowed;
-}
-
-/* Stale data indicator — pulsing glow on refresh button */
-.drilldown-refresh-btn.refresh-pulse {
-  animation: refresh-pulse-glow 1.5s ease-in-out infinite;
-  color: var(--accent-color, #4a90d9);
-}
-
-@keyframes refresh-pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(74, 144, 217, 0); }
-  50% { box-shadow: 0 0 6px 2px rgba(74, 144, 217, 0.4); }
-}
-
-.drilldown-body {
-  flex: 1;
-  overflow-y: auto;
-}
-
-/* ─── Commit list: Graph + Info ─────────────────────────────────────────── */
 
 .commit-list-container {
   position: relative;

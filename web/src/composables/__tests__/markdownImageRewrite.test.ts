@@ -25,8 +25,8 @@ describe('renderMarkdown relative image handling', () => {
 
   it('keeps src and applies thumbnail + lightbox to a relative image', () => {
     const r = renderMarkdown('![a](img/logo.png)', {})
-    expect(r.html).toContain('src="/api/file/thumb?path=img/logo.png&amp;w=1200"')
-    expect(r.html).toContain('data-full-src="/api/local-file/img/logo.png"')
+    expect(r.html).toContain('src="/api/fs/thumb?target=img/logo.png&amp;w=1200"')
+    expect(r.html).toContain('data-full-src="/api/fs/raw/img/logo.png"')
     // Lifted into the unified bordered figure with a header view button.
     expect(r.html).toContain('class="image-block-wrapper"')
     expect(r.html).toContain('image-block-view-btn')
@@ -34,29 +34,29 @@ describe('renderMarkdown relative image handling', () => {
 
   it('enhances relative images inside a markdown table cell (table-row modal source)', () => {
     const r = renderMarkdown('| 列 |\n|---|\n| ![a](img/logo.png) |', {})
-    expect(r.html).toContain('src="/api/file/thumb?path=img/logo.png&amp;w=1200"')
-    expect(r.html).toContain('data-full-src="/api/local-file/img/logo.png"')
+    expect(r.html).toContain('src="/api/fs/thumb?target=img/logo.png&amp;w=1200"')
+    expect(r.html).toContain('data-full-src="/api/fs/raw/img/logo.png"')
     expect(r.html).toContain('class="chat-img lightbox-img"')
   })
 
   it('keeps src for a bare relative filename', () => {
     const r = renderMarkdown('![a](logo.png)', {})
-    expect(r.html).toContain('src="/api/file/thumb?path=logo.png&amp;w=1200"')
-    expect(r.html).toContain('data-full-src="/api/local-file/logo.png"')
+    expect(r.html).toContain('src="/api/fs/thumb?target=logo.png&amp;w=1200"')
+    expect(r.html).toContain('data-full-src="/api/fs/raw/logo.png"')
   })
 
   it('uses mobile thumbnail width when device is not PC', () => {
     _setIsPCForTest(false)
     const r = renderMarkdown('![a](img/logo.png)', {})
-    expect(r.html).toContain('src="/api/file/thumb?path=img/logo.png&amp;w=640"')
-    expect(r.html).toContain('data-full-src="/api/local-file/img/logo.png"')
+    expect(r.html).toContain('src="/api/fs/thumb?target=img/logo.png&amp;w=640"')
+    expect(r.html).toContain('data-full-src="/api/fs/raw/img/logo.png"')
   })
 
   it('does not rewrite external http(s) images but keeps src + lightbox styling', () => {
     const r = renderMarkdown('![a](https://example.com/img.png)', {})
     expect(r.html).toContain('src="https://example.com/img.png"')
     expect(r.html).toContain('class="chat-img lightbox-img"')
-    expect(r.html).not.toContain('/api/file/thumb')
+    expect(r.html).not.toContain('/api/fs/thumb')
   })
 
   it('still strips dangerous javascript: src at sanitize (XSS preserved)', () => {

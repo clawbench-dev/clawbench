@@ -2,6 +2,9 @@
   <div
     class="scheduled-task-card"
     :class="{ deleted, 'is-event': isEventTask }"
+    :data-quote-source="quoteSourceLabel"
+    :data-quote-task-id="taskIdAttr"
+    data-quote-language="task"
     @click="handleClick"
   >
     <div class="stask-header">
@@ -100,6 +103,29 @@ const statusValue = computed(() => (props.task?.status as string) || '')
 
 /** The card is only interactive once its data resolved and it still exists. */
 const actionable = computed(() => !props.deleted && !props.loading && !!props.task)
+
+/**
+ * Quote-source identity for this card.
+ *
+ * A scheduled-task card is quoted by selecting its title, so the quote must
+ * carry the task id (a machine key the jump handler and the AI can both use).
+ * The name alone is not addressable.
+ *
+ * No id is exposed for a deleted task: the task no longer exists, so offering
+ * its id would produce a quote whose jump goes nowhere. The same holds before
+ * the task record resolves.
+ */
+const taskIdAttr = computed(() => {
+  if (props.deleted || props.loading || !props.task) return ''
+  const id = props.task.id
+  return typeof id === 'number' || typeof id === 'string' ? String(id) : ''
+})
+
+const quoteSourceLabel = computed(() => {
+  const name = (props.task?.name as string) || ''
+  if (!name || !taskIdAttr.value) return ''
+  return `${name} (#${taskIdAttr.value})`
+})
 
 function handleClick() {
   if (actionable.value) emit('select')

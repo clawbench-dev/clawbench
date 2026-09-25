@@ -9,10 +9,12 @@ import {
   annotateFilePaths,
   verifyFilePaths,
   clearVerifiedCache,
+  invalidateNegativePathCache,
   openFilePath,
   navToFileInManager,
   revealInFileManager,
 } from '@/composables/useFilePathAnnotation'
+import { setShareToken } from '@/share/shareMode'
 
 // Mock escapeHtml from html utils
 vi.mock('@/utils/html', () => ({
@@ -1359,6 +1361,95 @@ describe('clearVerifiedCache', () => {
   })
 })
 
+// --- invalidateNegativePathCache ---
+
+describe('invalidateNegativePathCache', () => {
+  beforeEach(() => {
+    clearVerifiedCache()
+    if (typeof (globalThis as any).CSS === 'undefined') (globalThis as any).CSS = {}
+    if (typeof (globalThis as any).CSS.escape === 'undefined') {
+      ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&')
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('re-verifies a path that was cached as none, but keeps verified ones cached', async () => {
+    // The annotated markup as the pipeline emits it. It is the SOURCE for every
+    // rebuild below: `data-path-type` (and the stripping of a 'none' result)
+    // are live-DOM mutations only — the HTML string keeps the span, which is
+    // what lets a re-render restore an annotation that verification stripped.
+    const sourceHtml =
+      '<span class="chat-file-path" data-file-path="src/new.go">src/new.go</span>'
+      + '<span class="chat-file-path" data-file-path="src/old.go">src/old.go</span>'
+
+    // First pass: the file does not exist yet (the turn names it before writing
+    // it), so the path is cached as 'none' and its span is unwrapped.
+    const missingFirst = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/new.go': 'none', 'src/old.go': 'file' } }),
+    })
+    vi.stubGlobal('fetch', missingFirst)
+
+    const container = document.createElement('div')
+    container.innerHTML = sourceHtml
+
+    await verifyFilePaths(['src/new.go', 'src/old.go'], container)
+    expect(missingFirst).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[data-file-path="src/new.go"]')).toBeNull()
+
+    // The turn ends: only the negative entry is dropped. 'src/old.go' stays
+    // cached as a real file.
+    invalidateNegativePathCache()
+
+    // Post-turn re-render rebuilds the DOM from the cached HTML, so the span is
+    // back (still unverified) and gets re-verified on the new pass.
+    container.innerHTML = sourceHtml
+
+    // The file now exists (it was created during the turn).
+    const existsNow = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/new.go': 'file' } }),
+    })
+    vi.stubGlobal('fetch', existsNow)
+
+    await verifyFilePaths(['src/new.go', 'src/old.go'], container)
+
+    // Exactly the invalidated path is re-requested; the verified 'file' entry
+    // is still served from the cache (so it does not appear in the body).
+    expect(existsNow).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(String(existsNow.mock.calls[0][1].body)) as { paths: string[] }
+    expect(body.paths).toEqual(['src/new.go'])
+
+    // The newly created file's annotation is restored, not stripped again.
+    const el = container.querySelector('[data-file-path="src/new.go"]')!
+    expect(el.getAttribute('data-path-type')).toBe('file')
+  })
+
+  it('is a no-op when nothing negative is cached', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/real.go': 'file' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="src/real.go">src/real.go</span>'
+
+    await verifyFilePaths(['src/real.go'], container)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    invalidateNegativePathCache()
+
+    // A verified entry survives, so no re-request happens.
+    await verifyFilePaths(['src/real.go'], container)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+})
+
 // --- verifyFilePaths ---
 
 describe('verifyFilePaths', () => {
@@ -1377,6 +1468,38 @@ describe('verifyFilePaths', () => {
   if (typeof (globalThis as any).CSS.escape === 'undefined') {
     ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&')
   }
+
+  // The share page is anonymous: /api/file/batch-exists answers 401, and a
+  // non-OK response makes fetchPathTypes return null, so the chips are left
+  // unverified. The guard must stop the request entirely rather than let it
+  // fire and fail — the share page renders through the CHAT pipeline, which
+  // has no share branch of its own (unlike buildMarkdownPreviewDom).
+  it('share mode must not probe the auth-protected batch-exists endpoint', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ error: "unauthorized" }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML =
+      '<span class="chat-file-path" data-file-path="src/app.ts">src/app.ts</span>'
+
+    setShareToken('tokguard')
+    try {
+      await verifyFilePaths(['src/app.ts'], container)
+    } finally {
+      setShareToken(null)
+    }
+
+    expect(mockFetch, 'share mode must not call the auth-protected endpoint')
+      .not.toHaveBeenCalled()
+    expect(container.querySelector('.chat-file-path'),
+      'the chip must survive as inert text').not.toBeNull()
+
+    vi.unstubAllGlobals()
+  })
 
   it('removes buttons for non-existent paths (batch API returns none)', async () => {
     const mockFetch = vi.fn().mockResolvedValue({

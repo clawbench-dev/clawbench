@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage, relativizeProjectPath, buildMultiQuoteMessage, buildQuoteBlock, buildQuoteFirstMessage, getQuoteSource, messageIdFromKey } from '@/utils/quoteQuestionUtils'
+import { closestElement, getFileInfo, getLineInfo, relativizeProjectPath, getQuoteSource, messageIdFromKey } from '@/utils/quoteQuestionUtils'
 
 // --- closestElement ---
 
@@ -339,143 +339,6 @@ describe('getFileInfo', () => {
   })
 })
 
-// --- buildQuoteMessage ---
-describe('buildQuoteMessage', () => {
-  it('embeds quoted code with language and line range', () => {
-    const result = buildQuoteMessage('explain this', 'func main()', '/cmd/main.go', 'go', 10, 25)
-    expect(result).toBe('explain this\n\n```go:/cmd/main.go:10-25\nfunc main()\n```')
-  })
-
-  it('embeds quoted code with single line number', () => {
-    const result = buildQuoteMessage('what is this?', 'return nil', '/internal/handler.go', 'go', 42, 42)
-    expect(result).toBe('what is this?\n\n```go:/internal/handler.go:42\nreturn nil\n```')
-  })
-
-  it('embeds quoted code without line numbers', () => {
-    const result = buildQuoteMessage('explain', 'some text', '/README.md', '', 0, 0)
-    expect(result).toBe('explain\n\n' + '```' + ':/README.md\nsome text\n' + '```')
-  })
-
-  it('uses empty language prefix when language is empty', () => {
-    const result = buildQuoteMessage('question', 'plain text', '/notes.txt', '', 5, 5)
-    expect(result).toBe('question\n\n' + '```' + ':/notes.txt:5\nplain text\n' + '```')
-  })
-
-  it('trims user message whitespace', () => {
-    const result = buildQuoteMessage('  explain this  ', 'code', '/f.go', 'go', 1, 2)
-    expect(result).toBe('explain this\n\n```go:/f.go:1-2\ncode\n```')
-  })
-
-  it('embeds quoted code with language but no line numbers', () => {
-    const result = buildQuoteMessage('explain', 'some code', '/main.go', 'go', 0, 0)
-    expect(result).toBe('explain\n\n```go:/main.go\nsome code\n```')
-  })
-})
-
-describe('relativizeProjectPath', () => {
-  it('strips the project root prefix from an in-project absolute path', () => {
-    expect(relativizeProjectPath('/home/user/proj/src/a.ts', '/home/user/proj')).toBe('src/a.ts')
-  })
-
-  it('returns the path unchanged when not under the project root', () => {
-    expect(relativizeProjectPath('/other/dir/b.ts', '/home/user/proj')).toBe('/other/dir/b.ts')
-  })
-
-  it('returns a project-relative path unchanged', () => {
-    expect(relativizeProjectPath('src/a.ts', '/home/user/proj')).toBe('src/a.ts')
-  })
-
-  it('handles empty path and empty root', () => {
-    expect(relativizeProjectPath('', '/home/user/proj')).toBe('')
-    expect(relativizeProjectPath('src/a.ts', '')).toBe('src/a.ts')
-  })
-
-  it('does not strip a root-prefixed sibling path (e.g. proj-other)', () => {
-    expect(relativizeProjectPath('/home/user/proj-other/a.ts', '/home/user/proj')).toBe('/home/user/proj-other/a.ts')
-  })
-})
-
-describe('buildMultiQuoteMessage', () => {
-  const quotes = [
-    { text: 'const a = 1', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1, note: 'Check initialization' },
-    { text: 'return a', filePath: '/b.ts', language: 'ts', startLine: 8, endLine: 9, note: '' },
-  ]
-
-  it('places the overall question first and each note before its quote', () => {
-    expect(buildMultiQuoteMessage('Compare these', quotes)).toBe(
-      'Compare these\n\nCheck initialization\n\n```ts:/a.ts:1\nconst a = 1\n```\n\n```ts:/b.ts:8-9\nreturn a\n```',
-    )
-  })
-
-  it('allows quotes to be sent without an overall question', () => {
-    expect(buildMultiQuoteMessage('', [quotes[1]])).toBe('```ts:/b.ts:8-9\nreturn a\n```')
-  })
-
-  it('preserves quote order across selections from the same file', () => {
-    const sameFile = [
-      { ...quotes[0], note: '', startLine: 10, endLine: 12, text: 'first' },
-      { ...quotes[0], note: '', startLine: 30, endLine: 31, text: 'second' },
-    ]
-    const result = buildMultiQuoteMessage('', sameFile)
-    expect(result.indexOf('first')).toBeLessThan(result.indexOf('second'))
-    expect(result).toContain('```ts:/a.ts:10-12')
-    expect(result).toContain('```ts:/a.ts:30-31')
-  })
-})
-
-// --- buildQuoteFirstMessage (quote first, then the user's input) ---
-
-describe('buildQuoteFirstMessage', () => {
-  const block = '```issue:acme/widgets#123\nbroken build\n```'
-
-  it('puts the quoted block before the user input, separated by one newline', () => {
-    // Deliberately different from buildMultiQuoteMessage, which puts the prompt
-    // first and joins with a blank line.
-    expect(buildQuoteFirstMessage(block, 'why does this fail?')).toBe(
-      '```issue:acme/widgets#123\nbroken build\n```\nwhy does this fail?',
-    )
-  })
-
-  it('never inserts a blank line between the block and the input', () => {
-    const out = buildQuoteFirstMessage(block, 'why?')
-    expect(out).not.toContain('\n\n')
-  })
-
-  it('leaves a trailing newline when the user typed nothing', () => {
-    // The caret then lands on the line after the block, ready for input.
-    expect(buildQuoteFirstMessage(block, '')).toBe('```issue:acme/widgets#123\nbroken build\n```\n')
-    expect(buildQuoteFirstMessage(block, '   ')).toBe('```issue:acme/widgets#123\nbroken build\n```\n')
-  })
-
-  it('returns just the input when there is no quote', () => {
-    expect(buildQuoteFirstMessage('', 'hello')).toBe('hello')
-    expect(buildQuoteFirstMessage('', '')).toBe('')
-  })
-
-  it('trims the input', () => {
-    expect(buildQuoteFirstMessage(block, '  why?  ')).toBe(
-      '```issue:acme/widgets#123\nbroken build\n```\nwhy?',
-    )
-  })
-})
-
-// --- buildQuoteBlock labelling for non-file sources ---
-
-describe('buildQuoteBlock', () => {
-  it('labels an issue quote as issue:<slug>#<number>', () => {
-    expect(buildQuoteBlock({
-      text: 'broken build', filePath: 'acme/widgets#123', language: 'issue', startLine: 0, endLine: 0,
-    })).toBe('```issue:acme/widgets#123\nbroken build\n```')
-  })
-
-  it('omits the line suffix when lines are zero (non-file source)', () => {
-    // Forge bodies have no meaningful file line numbers; a ":0" would be noise.
-    expect(buildQuoteBlock({
-      text: 'x', filePath: 'a/b#1', language: 'pr', startLine: 0, endLine: 0,
-    })).not.toContain(':0')
-  })
-})
-
 // --- getQuoteSource ---
 
 describe('getQuoteSource', () => {
@@ -509,6 +372,53 @@ describe('getQuoteSource', () => {
     const inner = document.createElement('div')
     wrap.appendChild(inner)
     expect(getQuoteSource(inner)).toEqual({ label: 'a/b#1', language: '', url: '' })
+  })
+
+  // The locators are the machine keys behind the human-readable label. Without
+  // them a quote can name its source but never reach it.
+  describe('source locators', () => {
+    function sourceWith(attrs: Record<string, string>) {
+      const wrap = document.createElement('div')
+      wrap.setAttribute('data-quote-source', '每日构建 (#12)')
+      for (const [k, v] of Object.entries(attrs)) wrap.setAttribute(k, v)
+      const inner = document.createElement('div')
+      wrap.appendChild(inner)
+      return getQuoteSource(inner)
+    }
+
+    it('reads the commit', () => {
+      expect(sourceWith({ 'data-quote-commit': 'a1b2c3d' })).toMatchObject({ commitSha: 'a1b2c3d' })
+    })
+
+    it('reads the task id as a number', () => {
+      expect(sourceWith({ 'data-quote-task-id': '12' })).toMatchObject({ taskId: 12 })
+    })
+
+    it('reads the session and message ids', () => {
+      expect(sourceWith({ 'data-quote-session-id': 'sess-abc', 'data-quote-message-id': '42' }))
+        .toMatchObject({ sessionId: 'sess-abc', messageId: 42 })
+    })
+
+    it('reads the execution id', () => {
+      expect(sourceWith({ 'data-quote-execution-id': 'exec-7' })).toMatchObject({ executionId: 'exec-7' })
+    })
+
+    it('omits locators that are absent rather than setting them to undefined', () => {
+      const got = sourceWith({})
+      expect('commitSha' in got!).toBe(false)
+      expect('taskId' in got!).toBe(false)
+      expect('sessionId' in got!).toBe(false)
+      expect('messageId' in got!).toBe(false)
+      expect('executionId' in got!).toBe(false)
+    })
+
+    // A non-numeric or non-positive id is not an id. Emitting 0/NaN would make
+    // the drawer offer a jump that goes nowhere.
+    it('ignores a non-numeric or non-positive id', () => {
+      expect(sourceWith({ 'data-quote-task-id': 'abc' })).not.toHaveProperty('taskId')
+      expect(sourceWith({ 'data-quote-task-id': '0' })).not.toHaveProperty('taskId')
+      expect(sourceWith({ 'data-quote-message-id': '-3' })).not.toHaveProperty('messageId')
+    })
   })
 
   it('reads the source address so a forge quote can offer a jump action', () => {

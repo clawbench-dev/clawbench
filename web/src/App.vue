@@ -240,18 +240,37 @@
             </template>
 
             <template #right>
-              <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" :class="{ 'chat-drop-active': chatDropActive }" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
+              <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
                 <div class="col-right-chat">
                   <div class="chat-panel-row">
                   <!-- Chat column: title bar + chat panel. Keeping the title
                        bar inside this column (rather than spanning the whole
                        right pane) leaves the session sidebar full-height. -->
-                  <div class="chat-col">
+                  <!-- The drop highlight lives on THIS column, not on .col-right:
+                       .col-right also contains the session sidebar, so binding
+                       it there lit up the sidebar too and the user read that as
+                       "the whole pane is the target". The drag handlers stay on
+                       .col-right so the drop still works anywhere on the pane —
+                       the highlight previews the DESTINATION (the chat), not the
+                       cursor's location. -->
+                  <div class="chat-col" :class="{ 'chat-drop-active': chatDropActive }">
                   <div class="chat-title-bar">
                     <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
+                    <!-- Explicit rename affordance. The title text above is also
+                         clickable, but that is undiscoverable on touch; this icon
+                         surfaces the same action on the right of the header. -->
+                    <button
+                      v-if="sessionIdentity.currentSessionId.value"
+                      class="chat-title-edit-btn"
+                      data-action="rename-session"
+                      :title="t('chat.sessionRename.tooltip')"
+                      @click.stop="handleRenameSession"
+                    >
+                      <PencilLine :size="16" />
+                    </button>
                   </div>
                   <!-- Chat Tab (title bar is now the shared one above) -->
                   <TabPanel class="chat-tab-panel" noHeader tabId="chat" :activeTab="chatActive">
@@ -265,10 +284,13 @@
                       @open-session-search="sessionSearchDrawer.open()"
                     />
                   </TabPanel>
-                  </div>
+                  <!-- The hint is centered on the CHAT column, not on
+                       .chat-panel-row: that row also spans the session sidebar,
+                       so centering there would push the pill off the chat. -->
                   <div v-if="chatDropActive" class="chat-drop-hint">
                     <Paperclip :size="16" />
                     {{ t('file.dropToAttach') }}
+                  </div>
                   </div>
                   <SessionSidebar
                     ref="sessionSidebarRef"
@@ -467,7 +489,7 @@ import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -518,6 +540,7 @@ import { resetAllCrudLists } from '@/composables/useCrudList'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
 import { clearPlanState } from './composables/usePlanProgress.ts'
 import { useToast } from './composables/useToast.ts'
+import { buildRenameGenerateOptions } from '@/utils/sessionRename'
 import { useDialog } from './composables/useDialog.ts'
 import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
@@ -532,6 +555,7 @@ import { useFileEditor } from './composables/useFileEditor'
 import { useTocDockPreference } from './composables/useTocDockPreference'
 import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
+import { installDragClickGuard } from './utils/dragClickGuard'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
@@ -575,6 +599,7 @@ import type { ForgeTarget } from './composables/useForgeNavigation.ts'
 import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
+import { readQuoteDragData, hasQuoteDragData } from './utils/quoteDrag'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -585,6 +610,7 @@ import {
   setSplitRatio,
   setLeftCollapsed,
   setChatCollapsed,
+  isChatPanelVisible,
   registerWideScreenCallbacks,
   WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
@@ -1430,12 +1456,19 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
 
     const sessionId = data.session_id
     if (!sessionId) return
-    // 聊天界面在前台激活且正是当前会话时，用户正看着结果，不弹；
-    // 否则（看别的 Tab、或事件属于其他会话）都弹。
-    // 注意：PC 宽屏下聊天面板常驻右侧（ChatPanelContent :active 恒为 true），
-    // 此时 activeTab 可能是 browse/terminal 但聊天仍在前台——必须用同一判断。
-    const chatPanelActive = isWideScreen || activeTab.value === 'chat'
-    if (chatPanelActive && sessionId === sessionIdentity.currentSessionId.value) return
+    // 聊天面板真正可见且正是当前会话时，用户正看着结果，不弹；
+    // 否则（看别的 Tab、聊天面板被折叠、或事件属于其他会话）都弹。
+    //
+    // 判定必须走 isChatPanelVisible，而不是内联 `isWideScreen || ...`：
+    // isWideScreen 是 ref，<script setup> 里不会自动解包，内联写法恒为真，
+    // 会让「当前会话」的完成/审批通知在任何 tab 下都被吞掉。
+    // 该 helper 还覆盖宽屏下聊天面板被折叠（display:none）的情况。
+    const chatPanelVisible = isChatPanelVisible({
+        isWideScreen: isWideScreen.value,
+        chatCollapsed: chatCollapsed.value,
+        activeTab: activeTab.value,
+    })
+    if (chatPanelVisible && sessionId === sessionIdentity.currentSessionId.value) return
 
     // 正文与系统通知用同一份纯文本：同一事件不该因为页面是否聚焦而读起来不同。
     // permission_pending 的 response_preview 为空，用工具名代替（同系统通知）。
@@ -1496,7 +1529,15 @@ const handleReconnect = () => {
     // Re-establish project cookie — server restart invalidates the session
     // cookie, and without it all /api/dir, /api/file, /api/ai/chat calls
     // return 403 (requireProject: "project cookie is empty").
-    store.loadProject().catch(() => {})
+    //
+    // The forge badge is re-derived in the same chain: it is project-scoped, so
+    // it needs the cookie this call writes. Unlike the other refreshes below,
+    // it has NO other reconnect trigger — forge events are neither persisted for
+    // offline replay (IsNotifiableEvent) nor re-applied from the WS replay
+    // buffer (useGlobalEvents skips `replayed` forge events), and Android
+    // disconnects the WS while backgrounded. So an event missed while away
+    // leaves the header's "mark all read" button disabled next to unread rows.
+    store.loadProject().then(() => refreshForgeUnread()).catch(() => {})
     store.loadFiles(store.state.currentDir, false, 0, true)
     store.loadGitBranch()
     loadSessionsOnce()
@@ -1662,6 +1703,7 @@ async function handleRenameSession() {
       placeholder: gt('chat.sessionRename.placeholder'),
       confirmText: gt('common.confirm'),
       cancelText: gt('common.cancel'),
+      ...buildRenameGenerateOptions(sid),
     }
   )
   if (newTitle === null || newTitle.trim() === '' || newTitle === current) return
@@ -2425,7 +2467,7 @@ function handleWideDockTabClick(tab: string) {
 }
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
-const { addAttachedFile } = useChatContext()
+const { addAttachedFile, addStagedQuote } = useChatContext()
 const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
@@ -2473,19 +2515,24 @@ function isOSFileDrop(e: DragEvent) {
 
 function onChatColDragEnter(e: DragEvent) {
   const internal = hasAttachDragData(e.dataTransfer)
+  const quote = hasQuoteDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
-  if (!internal && !osFiles) return
+  if (!internal && !quote && !osFiles) return
   chatDropCounter++
   chatDropActive.value = true
 }
 
 function onChatColDragOver(e: DragEvent) {
-  // Allow the drop for internal attach drags (wide-screen) and OS file drops.
+  // Allow the drop for internal attach drags (wide-screen), quote drags, and OS
+  // file drops. A quote drag is allowed on narrow screens too: it stages a card
+  // rather than referencing a file path, so there is no wide-screen-only
+  // affordance behind it (the narrow layout IS the chat).
   const internal = hasAttachDragData(e.dataTransfer)
+  const quote = hasQuoteDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
-  if (internal || osFiles) e.preventDefault()
+  if (internal || quote || osFiles) e.preventDefault()
 }
 
 function onChatColDragLeave() {
@@ -2518,6 +2565,18 @@ function onChatColDrop(e: DragEvent) {
     } else {
       toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     }
+    return
+  }
+  // Quote drag (a commit / task / issue / PR / CI run row) → stage a quote card
+  // with NO annotation. The user is already saying "put this in the chat", so a
+  // composer detour asking for a note would be friction; they can still open the
+  // card to annotate it afterwards, while it is staged.
+  const quote = readQuoteDragData(e.dataTransfer)
+  if (quote) {
+    e.preventDefault()
+    addStagedQuote(quote)
+    switchTab('chat')
+    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: '💬', type: 'success', duration: 1800 })
     return
   }
   // OS file drop → upload & auto-attach each file.
@@ -3208,6 +3267,11 @@ function openChatSearchDrawer() {
 function openBrowseSearchDrawer() {
   fileManagerRef.value?.openSearch()
 }
+/** Ctrl+Shift+F — VSCode's "search in files". Only meaningful while the file
+ *  manager panel is the one being worked in. */
+function openBrowseContentSearch() {
+  fileManagerRef.value?.openContentSearch()
+}
 function openFileViewSearchDrawer() {
   if (searchDrawer.isOpen.value) {
     fileOverlayRef.value?.focusSearchInput()
@@ -3288,8 +3352,39 @@ function handleCtrlF(e: KeyboardEvent) {
     // Other tabs: don't preventDefault — let browser handle Ctrl+F natively
 }
 
+/**
+ * Ctrl+Shift+F — "search in files" (VSCode's content search).
+ *
+ * Handled separately from Ctrl+F because the Shift modifier makes `e.key`
+ * uppercase ('F'), so the Ctrl+F handler above deliberately ignores it. Only
+ * opens when the file manager is the active surface; elsewhere the shortcut is
+ * left to the browser.
+ */
+function handleCtrlShiftF(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key.toLowerCase() !== 'f') return
+    const target = e.target as HTMLElement | null
+    const tag = target?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    if (target?.isContentEditable) return
+    if (target?.closest?.('.terminal-panel')) return
+    if (_dlg.state.value.visible || projectDialogOpen.value) return
+
+    const browseActive = isWideScreen.value
+        ? activePane.value === PANE_LEFT && panelIsActive('browse')
+        : activeTab.value === 'browse'
+    if (!browseActive) return
+
+    e.preventDefault()
+    openBrowseContentSearch()
+}
+
  onMounted(() => {
      document.addEventListener('keydown', handleCtrlF)
+     document.addEventListener('keydown', handleCtrlShiftF)
+     // Swallow clicks that were really a drag-select (see dragClickGuard). One
+     // document-level guard replaces a per-row check that only ever reached four
+     // of the ~50 clickable rows containing selectable text.
+     stopDragClickGuard = installDragClickGuard()
      stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
          const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
            || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
@@ -3304,10 +3399,13 @@ function handleCtrlF(e: KeyboardEvent) {
  })
 
 let stopLocalLinkGuard: (() => void) | null = null
+let stopDragClickGuard: (() => void) | null = null
 
 onUnmounted(() => {
     stopLocalLinkGuard?.()
     stopLocalLinkGuard = null
+    stopDragClickGuard?.()
+    stopDragClickGuard = null
     activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()
@@ -3556,6 +3654,40 @@ onUnmounted(() => {
     border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
     overflow: hidden;
     white-space: nowrap;
+}
+/* Rename-session icon at the right end of the chat title bar. Pushed to the
+   edge with margin-left:auto so it stays put when the title is short.
+   Deliberately muted at rest (the title text next to it is the primary
+   affordance) and only takes the accent colour on hover/focus. */
+.chat-title-edit-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text-muted, #999);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-xs);
+    transition: background var(--duration-base), color var(--duration-base);
+}
+@media (hover: hover) {
+    .chat-title-edit-btn:hover {
+        color: var(--accent-color, #0066cc);
+        background: rgba(0, 102, 204, 0.1);
+    }
+}
+/* Keyboard users get the same reveal as hover — otherwise the button is
+   permanently low-contrast while tabbing through it. */
+.chat-title-edit-btn:focus-visible {
+    color: var(--accent-color, #0066cc);
+    background: rgba(0, 102, 204, 0.1);
+    outline: 2px solid var(--accent-color, #0066cc);
+    outline-offset: 1px;
 }
 /* Chat column + session sidebar live in this row below the right pane top. */
 .chat-panel-row {

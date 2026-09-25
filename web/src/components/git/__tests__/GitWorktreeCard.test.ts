@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import GitWorktreeCard from '@/components/git/GitWorktreeCard.vue'
 
@@ -33,6 +33,12 @@ function mountCard(worktree: Record<string, unknown>) {
 }
 
 describe('GitWorktreeCard inline actions', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => { vi.useRealTimers() })
+
   it('shows a main badge for the main worktree', () => {
     const wrapper = mountCard(makeWorktree({ isMain: true }))
     expect(wrapper.find('.wt-badge-main').exists()).toBe(true)
@@ -43,23 +49,54 @@ describe('GitWorktreeCard inline actions', () => {
     expect(wrapper.find('.wt-badge-main').exists()).toBe(false)
   })
 
-  it('shows delete button for a non-current worktree', () => {
+  it('shows an enabled delete button for a non-current worktree', () => {
     const wrapper = mountCard(makeWorktree())
     expect(wrapper.findAll('.wt-action-btn').length).toBe(1)
-    expect(wrapper.find('.wt-action-delete').exists()).toBe(true)
+    const btn = wrapper.find('.wt-action-delete')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeUndefined()
   })
 
-  it('hides action buttons for the current worktree', () => {
+  it('keeps the delete button visible but disabled for the current worktree', () => {
     const wrapper = mountCard(makeWorktree({ isCurrent: true }))
-    expect(wrapper.find('.wt-action-btn').exists()).toBe(false)
+    const btn = wrapper.find('.wt-action-delete')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toBe('git.manage.cannotDeleteCurrentWorktree')
+    expect(btn.classes()).toContain('is-disabled')
   })
 
-  it('keeps delete button when worktree is missing', () => {
+  it('keeps the delete button visible but disabled for the main worktree', () => {
+    // git refuses to remove the main working tree even with --force.
+    const wrapper = mountCard(makeWorktree({ isMain: true }))
+    const btn = wrapper.find('.wt-action-delete')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toBe('git.manage.cannotDeleteMainWorktree')
+  })
+
+  it('keeps the delete button visible but disabled for a locked worktree', () => {
+    // git needs `remove -f -f`; the backend only ever sends a single -f.
+    const wrapper = mountCard(makeWorktree({ locked: true }))
+    const btn = wrapper.find('.wt-action-delete')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toBe('git.manage.cannotDeleteLockedWorktree')
+  })
+
+  it('keeps delete enabled when worktree is missing', () => {
     const wrapper = mountCard(makeWorktree({ missing: true }))
-    const buttons = wrapper.findAll('.wt-action-btn')
-    // delete button still available (missing worktree can be removed)
-    expect(buttons.length).toBe(1)
-    expect(buttons[0].classes()).toContain('wt-action-delete')
+    const btn = wrapper.find('.wt-action-delete')
+    // missing worktrees still remove cleanly
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeUndefined()
+  })
+
+  it('keeps delete enabled when worktree is dirty', () => {
+    const wrapper = mountCard(makeWorktree({ dirty: true, changeCount: 2 }))
+    const btn = wrapper.find('.wt-action-delete')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeUndefined()
   })
 
   it('emits switch when the row is clicked', async () => {
@@ -77,5 +114,16 @@ describe('GitWorktreeCard inline actions', () => {
     expect(wrapper.emitted('delete')).toBeTruthy()
     expect(wrapper.emitted('delete')![0][0]).toEqual(wt)
     expect(wrapper.emitted('switch')).toBeFalsy()
+  })
+
+  it('does not emit delete for a disabled (current) worktree, even via a programmatic click', async () => {
+    const wrapper = mountCard(makeWorktree({ isCurrent: true }))
+    // `trigger` respects the `disabled` attribute and would pass vacuously.
+    // Dispatch directly to prove the handler guards itself too (real browsers
+    // do deliver programmatic clicks to disabled buttons).
+    const el = wrapper.find('.wt-action-delete').element as HTMLButtonElement
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('delete')).toBeFalsy()
   })
 })

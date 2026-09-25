@@ -44,30 +44,30 @@ afterEach(() => {
 
 describe('stripVersionParam', () => {
   it('strips a plain integer buster', () => {
-    expect(stripVersionParam('/api/local-file/a.png?t=100')).toBe('/api/local-file/a.png')
+    expect(stripVersionParam('/api/fs/raw/a.png?t=100')).toBe('/api/fs/raw/a.png')
   })
 
   it('strips the dotted <ts>.<version> form the image viewer emits', () => {
     // Regression: a digits-only pattern left the ".0" behind, turning the
     // filename into "a.png.0" and 404ing every lightbox open.
-    expect(stripVersionParam('/api/local-file/a.png?t=1758000000000.0')).toBe(
-      '/api/local-file/a.png'
+    expect(stripVersionParam('/api/fs/raw/a.png?t=1758000000000.0')).toBe(
+      '/api/fs/raw/a.png'
     )
   })
 
   it('strips a buster that is not the last param, keeping the others', () => {
-    expect(stripVersionParam('/api/file/thumb?t=1&w=200')).toBe('/api/file/thumb?w=200')
-    expect(stripVersionParam('/api/file/thumb?w=200&t=1&h=5')).toBe('/api/file/thumb?w=200&h=5')
+    expect(stripVersionParam('/api/fs/thumb?t=1&w=200')).toBe('/api/fs/thumb?w=200')
+    expect(stripVersionParam('/api/fs/thumb?w=200&t=1&h=5')).toBe('/api/fs/thumb?w=200&h=5')
   })
 
   it('handles a dotted buster followed by another param', () => {
-    expect(stripVersionParam('/api/file/thumb?path=a.png&t=1.0&w=200')).toBe(
-      '/api/file/thumb?path=a.png&w=200'
+    expect(stripVersionParam('/api/fs/thumb?target=a.png&t=1.0&w=200')).toBe(
+      '/api/fs/thumb?target=a.png&w=200'
     )
   })
 
   it('leaves a clean URL untouched', () => {
-    expect(stripVersionParam('/api/local-file/a.png')).toBe('/api/local-file/a.png')
+    expect(stripVersionParam('/api/fs/raw/a.png')).toBe('/api/fs/raw/a.png')
     expect(stripVersionParam('/api/share/tok/local?path=%2Fx.png')).toBe(
       '/api/share/tok/local?path=%2Fx.png'
     )
@@ -85,30 +85,30 @@ describe('stripVersionParam', () => {
 
 describe('withVersionParam', () => {
   it('appends t= when no query string exists', () => {
-    expect(withVersionParam('/api/local-file/a.png', 3)).toBe('/api/local-file/a.png?t=3')
+    expect(withVersionParam('/api/fs/raw/a.png', 3)).toBe('/api/fs/raw/a.png?t=3')
   })
 
   it('appends with & when a query string already exists', () => {
-    expect(withVersionParam('/api/file/thumb?path=a.png&w=200', 3)).toBe(
-      '/api/file/thumb?path=a.png&w=200&t=3'
+    expect(withVersionParam('/api/fs/thumb?target=a.png&w=200', 3)).toBe(
+      '/api/fs/thumb?target=a.png&w=200&t=3'
     )
   })
 
   it('replaces an existing t= instead of accumulating params', () => {
-    expect(withVersionParam('/api/local-file/a.png?t=1', 2)).toBe('/api/local-file/a.png?t=2')
-    expect(withVersionParam('/api/file/thumb?path=a.png&t=1&w=200', 2)).toBe(
-      '/api/file/thumb?path=a.png&w=200&t=2'
+    expect(withVersionParam('/api/fs/raw/a.png?t=1', 2)).toBe('/api/fs/raw/a.png?t=2')
+    expect(withVersionParam('/api/fs/thumb?target=a.png&t=1&w=200', 2)).toBe(
+      '/api/fs/thumb?target=a.png&w=200&t=2'
     )
   })
 
   it('replaces the dotted form without corrupting the path', () => {
-    expect(withVersionParam('/api/local-file/a.png?t=1758000000000.0', 2)).toBe(
-      '/api/local-file/a.png?t=2'
+    expect(withVersionParam('/api/fs/raw/a.png?t=1758000000000.0', 2)).toBe(
+      '/api/fs/raw/a.png?t=2'
     )
   })
 
   it('does not leave a dangling separator', () => {
-    expect(withVersionParam('/api/local-file/a.png?t=1', 5)).toBe('/api/local-file/a.png?t=5')
+    expect(withVersionParam('/api/fs/raw/a.png?t=1', 5)).toBe('/api/fs/raw/a.png?t=5')
   })
 
   it('returns empty input unchanged', () => {
@@ -117,31 +117,31 @@ describe('withVersionParam', () => {
 })
 
 describe('mediaPathFromUrl', () => {
-  it('extracts a project-relative path from /api/local-file/', () => {
-    expect(mediaPathFromUrl('/api/local-file/assets/a.png')).toBe('assets/a.png')
+  it('extracts a project-relative path from /api/fs/raw/', () => {
+    expect(mediaPathFromUrl('/api/fs/raw/assets/a.png')).toBe('assets/a.png')
   })
 
   it('ignores the cache-buster', () => {
-    expect(mediaPathFromUrl('/api/local-file/assets/a.png?t=123')).toBe('assets/a.png')
+    expect(mediaPathFromUrl('/api/fs/raw/assets/a.png?t=123')).toBe('assets/a.png')
   })
 
   it('decodes percent-encoded segments (CJK filenames)', () => {
-    expect(mediaPathFromUrl('/api/local-file/assets/%E5%9B%BE%E7%89%87.png')).toBe('assets/图片.png')
+    expect(mediaPathFromUrl('/api/fs/raw/assets/%E5%9B%BE%E7%89%87.png')).toBe('assets/图片.png')
   })
 
   it('resolves the ?path= absolute form back to project-relative', () => {
-    expect(mediaPathFromUrl('/api/local-file/?path=' + encodeURIComponent('/proj/assets/a.png'))).toBe(
+    expect(mediaPathFromUrl('/api/fs/raw/?target=' + encodeURIComponent('/proj/assets/a.png'))).toBe(
       'assets/a.png'
     )
   })
 
   it('extracts the path from the thumbnail endpoint', () => {
-    expect(mediaPathFromUrl('/api/file/thumb?path=assets%2Fa.png&w=200')).toBe('assets/a.png')
+    expect(mediaPathFromUrl('/api/fs/thumb?target=assets%2Fa.png&w=200')).toBe('assets/a.png')
   })
 
   it('keeps an absolute path outside the project as-is', () => {
     // The backend drops it; the frontend must not silently rewrite it.
-    expect(mediaPathFromUrl('/api/local-file/?path=' + encodeURIComponent('/elsewhere/a.png'))).toBe(
+    expect(mediaPathFromUrl('/api/fs/raw/?target=' + encodeURIComponent('/elsewhere/a.png'))).toBe(
       '/elsewhere/a.png'
     )
   })
@@ -155,6 +155,23 @@ describe('mediaPathFromUrl', () => {
   it('rejects the anonymous share endpoint (no watcher there)', () => {
     expect(mediaPathFromUrl('/api/share/tok123/local/a.png')).toBeNull()
   })
+
+  // The file-read endpoints were renamed off the Crawlab fingerprint
+  // (/api/file?path=). These lock the parser to the new shape: a revert to the
+  // old URLs must not be silently watchable, and the new ones must resolve.
+  it('rejects the pre-rename endpoint shapes', () => {
+    expect(mediaPathFromUrl('/api/local-file/assets/a.png')).toBeNull()
+    expect(mediaPathFromUrl('/api/local-file/?path=' + encodeURIComponent('/proj/a.png'))).toBeNull()
+    expect(mediaPathFromUrl('/api/file/thumb?path=assets%2Fa.png&w=200')).toBeNull()
+  })
+
+  it('accepts the renamed endpoint shapes', () => {
+    expect(mediaPathFromUrl('/api/fs/raw/assets/a.png')).toBe('assets/a.png')
+    expect(mediaPathFromUrl('/api/fs/raw/?target=' + encodeURIComponent('/proj/assets/a.png'))).toBe(
+      'assets/a.png'
+    )
+    expect(mediaPathFromUrl('/api/fs/thumb?target=assets%2Fa.png&w=200')).toBe('assets/a.png')
+  })
 })
 
 describe('mediaPathFromImg', () => {
@@ -163,20 +180,20 @@ describe('mediaPathFromImg', () => {
   })
 
   it('prefers data-attach-src (the decoded path)', () => {
-    const img = appendImg({ src: '/api/local-file/a.png', 'data-attach-src': 'assets/a.png' })
+    const img = appendImg({ src: '/api/fs/raw/a.png', 'data-attach-src': 'assets/a.png' })
     expect(mediaPathFromImg(img)).toBe('assets/a.png')
   })
 
   it('falls back to data-full-src when the inline src is a thumbnail', () => {
     const img = appendImg({
-      src: '/api/file/thumb?path=assets%2Fa.png&w=200',
-      'data-full-src': '/api/local-file/assets/a.png',
+      src: '/api/fs/thumb?target=assets%2Fa.png&w=200',
+      'data-full-src': '/api/fs/raw/assets/a.png',
     })
     expect(mediaPathFromImg(img)).toBe('assets/a.png')
   })
 
   it('uses src when neither data attribute is present', () => {
-    const img = appendImg({ src: '/api/local-file/assets/a.png' })
+    const img = appendImg({ src: '/api/fs/raw/assets/a.png' })
     expect(mediaPathFromImg(img)).toBe('assets/a.png')
   })
 
@@ -214,29 +231,29 @@ describe('bumpMediaVersion', () => {
   })
 
   it('rewrites the src of every on-screen element showing that path', () => {
-    const img = appendImg({ src: '/api/local-file/assets/a.png' })
+    const img = appendImg({ src: '/api/fs/raw/assets/a.png' })
 
     bumpMediaVersion('assets/a.png')
 
-    expect(img.getAttribute('src')).toBe('/api/local-file/assets/a.png?t=1')
+    expect(img.getAttribute('src')).toBe('/api/fs/raw/assets/a.png?t=1')
   })
 
   it('rewrites data-full-src too, so the lightbox gets the new bytes', () => {
     const img = appendImg({
-      src: '/api/file/thumb?path=assets%2Fa.png&w=200',
-      'data-full-src': '/api/local-file/assets/a.png',
+      src: '/api/fs/thumb?target=assets%2Fa.png&w=200',
+      'data-full-src': '/api/fs/raw/assets/a.png',
     })
 
     bumpMediaVersion('assets/a.png')
 
-    expect(img.getAttribute('data-full-src')).toBe('/api/local-file/assets/a.png?t=1')
-    expect(img.getAttribute('src')).toBe('/api/file/thumb?path=assets%2Fa.png&w=200&t=1')
+    expect(img.getAttribute('data-full-src')).toBe('/api/fs/raw/assets/a.png?t=1')
+    expect(img.getAttribute('src')).toBe('/api/fs/thumb?target=assets%2Fa.png&w=200&t=1')
   })
 
   it('patches every element rendering the same file', () => {
-    const a = appendImg({ src: '/api/local-file/assets/a.png' })
-    const b = appendImg({ 'data-attach-src': 'assets/a.png', src: '/api/local-file/assets/a.png' })
-    const other = appendImg({ src: '/api/local-file/assets/other.png' })
+    const a = appendImg({ src: '/api/fs/raw/assets/a.png' })
+    const b = appendImg({ 'data-attach-src': 'assets/a.png', src: '/api/fs/raw/assets/a.png' })
+    const other = appendImg({ src: '/api/fs/raw/assets/other.png' })
 
     bumpMediaVersion('assets/a.png')
 
@@ -246,13 +263,13 @@ describe('bumpMediaVersion', () => {
   })
 
   it('does not touch an element already at the new version twice', () => {
-    const img = appendImg({ src: '/api/local-file/assets/a.png' })
+    const img = appendImg({ src: '/api/fs/raw/assets/a.png' })
     bumpMediaVersion('assets/a.png')
     const afterFirst = img.getAttribute('src')
     // A second bump must advance the version, not duplicate the param.
     bumpMediaVersion('assets/a.png')
-    expect(img.getAttribute('src')).toBe('/api/local-file/assets/a.png?t=2')
-    expect(afterFirst).toBe('/api/local-file/assets/a.png?t=1')
+    expect(img.getAttribute('src')).toBe('/api/fs/raw/assets/a.png?t=2')
+    expect(afterFirst).toBe('/api/fs/raw/assets/a.png?t=1')
   })
 })
 
@@ -263,15 +280,15 @@ describe('patchImagesForPath', () => {
   })
 
   it('returns the number of elements patched', () => {
-    appendImg({ src: '/api/local-file/a.png' })
-    appendImg({ src: '/api/local-file/a.png' })
-    appendImg({ src: '/api/local-file/b.png' })
+    appendImg({ src: '/api/fs/raw/a.png' })
+    appendImg({ src: '/api/fs/raw/a.png' })
+    appendImg({ src: '/api/fs/raw/b.png' })
 
     expect(patchImagesForPath('a.png', 7)).toBe(2)
   })
 
   it('does not match a different file with a shared suffix', () => {
-    appendImg({ src: '/api/local-file/deep/a.png' })
+    appendImg({ src: '/api/fs/raw/deep/a.png' })
     expect(patchImagesForPath('a.png', 7)).toBe(0)
   })
 })
@@ -283,8 +300,8 @@ describe('media path discovery', () => {
   })
 
   it('collects every local image currently rendered', () => {
-    appendImg({ src: '/api/local-file/assets/a.png' })
-    appendImg({ src: '/api/file/thumb?path=assets%2Fb.png&w=200' })
+    appendImg({ src: '/api/fs/raw/assets/a.png' })
+    appendImg({ src: '/api/fs/thumb?target=assets%2Fb.png&w=200' })
     appendImg({ src: 'https://example.com/c.png' })
 
     _syncMediaPathsForTesting()
@@ -293,8 +310,8 @@ describe('media path discovery', () => {
   })
 
   it('deduplicates the same file rendered in several places', () => {
-    appendImg({ src: '/api/local-file/assets/a.png' })
-    appendImg({ 'data-attach-src': 'assets/a.png', src: '/api/local-file/assets/a.png' })
+    appendImg({ src: '/api/fs/raw/assets/a.png' })
+    appendImg({ 'data-attach-src': 'assets/a.png', src: '/api/fs/raw/assets/a.png' })
 
     _syncMediaPathsForTesting()
 
@@ -302,7 +319,7 @@ describe('media path discovery', () => {
   })
 
   it('drops a path once its element leaves the DOM', () => {
-    const img = appendImg({ src: '/api/local-file/assets/a.png' })
+    const img = appendImg({ src: '/api/fs/raw/assets/a.png' })
     _syncMediaPathsForTesting()
     expect(mediaPaths.value).toEqual(['assets/a.png'])
 
@@ -313,7 +330,7 @@ describe('media path discovery', () => {
 
   it('caps the list so one client cannot exhaust the watch budget', () => {
     for (let i = 0; i < MAX_MEDIA_WATCH_PATHS + 10; i++) {
-      appendImg({ src: `/api/local-file/assets/img-${String(i).padStart(4, '0')}.png` })
+      appendImg({ src: `/api/fs/raw/assets/img-${String(i).padStart(4, '0')}.png` })
     }
 
     _syncMediaPathsForTesting()
@@ -322,8 +339,8 @@ describe('media path discovery', () => {
   })
 
   it('produces a stable sorted order so an unchanged set is not re-sent', () => {
-    appendImg({ src: '/api/local-file/b.png' })
-    appendImg({ src: '/api/local-file/a.png' })
+    appendImg({ src: '/api/fs/raw/b.png' })
+    appendImg({ src: '/api/fs/raw/a.png' })
     _syncMediaPathsForTesting()
     const first = mediaPaths.value
 
@@ -352,7 +369,7 @@ describe('media path discovery', () => {
   })
 
   it('merges DOM and component-tracked paths without duplicates', () => {
-    appendImg({ src: '/api/local-file/assets/a.png' })
+    appendImg({ src: '/api/fs/raw/assets/a.png' })
     const release = trackMediaPath('assets/a.png')
 
     _syncMediaPathsForTesting()
@@ -376,7 +393,7 @@ describe('ensureMediaObserver', () => {
     ensureMediaObserver()
     expect(mediaPaths.value).toEqual([])
 
-    appendImg({ src: '/api/local-file/assets/late.png' })
+    appendImg({ src: '/api/fs/raw/assets/late.png' })
 
     // The observer coalesces into a rAF; flush it.
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
@@ -386,11 +403,11 @@ describe('ensureMediaObserver', () => {
   })
 
   it('picks up an in-place src swap (Vue re-render)', async () => {
-    const img = appendImg({ src: '/api/local-file/assets/a.png' })
+    const img = appendImg({ src: '/api/fs/raw/assets/a.png' })
     ensureMediaObserver()
     syncMediaPathsFromDom()
 
-    img.setAttribute('src', '/api/local-file/assets/b.png')
+    img.setAttribute('src', '/api/fs/raw/assets/b.png')
 
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
     await Promise.resolve()
@@ -402,7 +419,7 @@ describe('ensureMediaObserver', () => {
     ensureMediaObserver()
     ensureMediaObserver()
 
-    appendImg({ src: '/api/local-file/assets/a.png' })
+    appendImg({ src: '/api/fs/raw/assets/a.png' })
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
     await Promise.resolve()
 
@@ -428,7 +445,7 @@ describe('ensureMediaObserver', () => {
 
     const wrap = document.createElement('div')
     const img = document.createElement('img')
-    img.setAttribute('src', '/api/local-file/assets/nested.png')
+    img.setAttribute('src', '/api/fs/raw/assets/nested.png')
     wrap.appendChild(img)
     document.body.appendChild(wrap)
 
@@ -485,11 +502,11 @@ describe('ensureMediaObserver', () => {
 
     it('is true when an existing <img> src is swapped', async () => {
       const img = document.createElement('img')
-      img.setAttribute('src', '/api/local-file/a.png')
+      img.setAttribute('src', '/api/fs/raw/a.png')
       document.body.appendChild(img)
 
       const records = await recordsFor(() => {
-        img.setAttribute('src', '/api/local-file/b.png')
+        img.setAttribute('src', '/api/fs/raw/b.png')
       })
 
       expect(records.some(mutationTouchesMedia)).toBe(true)
@@ -533,13 +550,13 @@ describe('clearMediaWatchState', () => {
   })
 
   it('rescans immediately so the new project images are reported without a mutation', () => {
-    appendImg({ src: '/api/local-file/assets/a.png' })
+    appendImg({ src: '/api/fs/raw/assets/a.png' })
     _syncMediaPathsForTesting()
     expect(mediaPaths.value).toEqual(['assets/a.png'])
 
     // Simulate the DOM being swapped for the new project's content.
     document.body.innerHTML = ''
-    appendImg({ src: '/api/local-file/other/b.png' })
+    appendImg({ src: '/api/fs/raw/other/b.png' })
 
     clearMediaWatchState()
 
@@ -559,7 +576,7 @@ describe('clearMediaWatchState', () => {
     ensureMediaObserver()
     clearMediaWatchState()
 
-    appendImg({ src: '/api/local-file/assets/late.png' })
+    appendImg({ src: '/api/fs/raw/assets/late.png' })
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
     await Promise.resolve()
 
@@ -570,7 +587,7 @@ describe('clearMediaWatchState', () => {
 describe('resetMediaWatch', () => {
   it('clears versions and tracked paths', () => {
     document.body.innerHTML = ''
-    appendImg({ src: '/api/local-file/assets/a.png' })
+    appendImg({ src: '/api/fs/raw/assets/a.png' })
     bumpMediaVersion('assets/a.png')
     _syncMediaPathsForTesting()
     expect(mediaVersionFor('assets/a.png')).toBe(1)

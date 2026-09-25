@@ -760,15 +760,17 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 }
 
 // TestServeSessionsPaginationWithPinned verifies the HTTP layer wires
-// cursor_pinned through to the keyset cursor. Ordering is (pinned DESC,
-// created_at DESC, id DESC), so paging on created_at alone re-returns a pinned
-// row on every page; the pinned flag must travel with the cursor.
+// cursor_pinned + cursor_sort_order through to the keyset cursor. Ordering is
+// (pinned DESC, sort_order ASC, created_at DESC, id DESC); a pinned row leads
+// regardless of its position in the manual order, so paging on created_at alone
+// re-returns it on every page. Both keys must travel with the cursor.
 func TestServeSessionsPaginationWithPinned(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Six sessions, oldest created first. Pin the OLDEST one: it sorts first
-	// despite having the smallest created_at — the case that broke the cursor.
+	// Six sessions, oldest created first. Pin the OLDEST one: it must lead the
+	// list despite having the smallest created_at — the case that a
+	// created_at-only cursor mishandles.
 	var oldestID string
 	for i, title := range []string{"A", "B", "C", "D", "E", "F"} {
 		id, err := service.CreateSession(env.ProjectDir, "claude", title, "claude", "", "default", "chat")
@@ -784,12 +786,13 @@ func TestServeSessionsPaginationWithPinned(t *testing.T) {
 	}
 	require.NoError(t, service.UpdateSessionPinned(oldestID, true))
 
-	fetchPage := func(limit int, cursor, cursorID, cursorPinned string) []map[string]interface{} {
+	fetchPage := func(limit int, cursor, cursorID, cursorSortOrder, cursorPinned string) []map[string]interface{} {
 		params := url.Values{}
 		params.Set("limit", strconv.Itoa(limit))
 		if cursor != "" {
 			params.Set("cursor", cursor)
 			params.Set("cursor_id", cursorID)
+			params.Set("cursor_sort_order", cursorSortOrder)
 			params.Set("cursor_pinned", cursorPinned)
 		}
 		req := newRequest(t, http.MethodGet, "/api/ai/sessions?"+params.Encode(), nil)
@@ -806,19 +809,26 @@ func TestServeSessionsPaginationWithPinned(t *testing.T) {
 		return out
 	}
 
-	page1 := fetchPage(3, "", "", "")
+	page1 := fetchPage(3, "", "", "", "")
 	require.Len(t, page1, 3)
-	require.Equal(t, oldestID, page1[0]["id"], "pinned session must lead the first page")
+	require.Equal(t, oldestID, page1[0]["id"], "the pinned session must lead the first page")
+	require.Equal(t, true, page1[0]["pinned"])
 
 	last := page1[len(page1)-1]
 	cursor := strings.ReplaceAll(last["createdAt"].(string), "T", " ")
 	cursor = strings.TrimSuffix(cursor, "Z")
+	// sortOrder is omitempty, so an absent field means 0 (the common case after
+	// a drag, where the rest of the list still shares the default).
+	sortOrderFlag := "0"
+	if v, ok := last["sortOrder"]; ok {
+		sortOrderFlag = strconv.Itoa(int(v.(float64)))
+	}
 	pinnedFlag := "0"
 	if last["pinned"] == true {
 		pinnedFlag = "1"
 	}
 
-	page2 := fetchPage(3, cursor, last["id"].(string), pinnedFlag)
+	page2 := fetchPage(3, cursor, last["id"].(string), sortOrderFlag, pinnedFlag)
 
 	seen := map[string]int{}
 	for _, s := range append(append([]map[string]interface{}{}, page1...), page2...) {
@@ -828,4 +838,40 @@ func TestServeSessionsPaginationWithPinned(t *testing.T) {
 		assert.Equalf(t, 1, n, "session %s must appear exactly once across pages", id)
 	}
 	assert.Len(t, seen, 6, "both pages must cover every session")
+}
+
+// TestServeSessionsReorder verifies PUT /api/ai/sessions/reorder persists the
+// posted order and that the subsequent list reflects it.
+func TestServeSessionsReorder(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	a, err := service.CreateSession(env.ProjectDir, "claude", "A", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	b, err := service.CreateSession(env.ProjectDir, "claude", "B", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	c, err := service.CreateSession(env.ProjectDir, "claude", "C", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPut, "/api/ai/sessions/reorder", map[string]any{"ids": []string{c, a, b}})
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionsReorder, req)
+	assertOK(t, w)
+
+	sessions, err := service.GetSessions(env.ProjectDir, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, []string{c, a, b}, []string{sessions[0].ID, sessions[1].ID, sessions[2].ID})
+}
+
+// TestServeSessionsReorder_RequiresPut guards the method gate: a GET must be
+// rejected rather than silently writing nothing.
+func TestServeSessionsReorder_RequiresPut(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/sessions/reorder", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionsReorder, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }

@@ -3,6 +3,8 @@ SessionStreamNotFound: 未找到会话流
 SessionStreamBusy: 会话流正在其他设备上查看
 SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档旧会话
 SessionIdRequired: session_id 为必填项
+ShareSessionNoContent: 该会话暂无可分享的消息
+ShareSessionInvalidSelection: 部分选中的消息无法分享（可能仍在生成中）
 QueueIdRequired: queueId 为必填项
 QueueInjectStranded: 插入失败且消息无法回到队列，请重新发送该消息
 NewSession: 新会话
@@ -29,6 +31,9 @@ InvalidPath: 无效路径
 PathTraversal: 检测到路径穿越攻击
 InternalError: 内部服务器错误
 SessionNotFound: 会话未找到
+SummaryModelNotConfigured: 尚未配置 AI 摘要模型
+NoUserMessagesToSummarize: 没有可总结的用户消息
+GenerateTitleFailed: 生成标题失败
 TagNameRequired: 标签名为必填项
 TagDeleteFailed: 删除标签失败（该标签可能属于其他项目，或已不存在）
 NoAgentsAvailable: 没有可用的智能体
@@ -122,6 +127,7 @@ NothingToRewind: 没有可回溯的内容 — 这是会话中的最后一条消�
 InvalidAgentID: 无效的智能体 ID
 Session: 会话
 SearchQueryRequired: 请输入搜索关键词
+InvalidRegex: '正则表达式无效：{{.Error}}'
 UpgradeInProgress: 升级正在进行中
 AlreadyLatestVersion: 已是最新版本
 RAGNotAvailable: 全文检索不可用

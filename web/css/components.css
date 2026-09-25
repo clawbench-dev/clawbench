@@ -57,6 +57,130 @@
 }
 
 /* ==========================================================================
+   Git history panel chrome — drill-down shell + header bar + its buttons
+   Used by: GitCommitList.vue (commit list), GitHistoryContent.vue (history
+            dock tab), GitHistoryDrawer.vue (mobile file-history sheet)
+
+   Declared GLOBALLY, not in a component's `<style scoped>` block, for the same
+   reason as the forge chrome below: the commit-list header and its icon buttons
+   are rendered by three components, and these rules had been copy-pasted into
+   each one's scoped block — three places to drift apart. A scoped rule also only
+   applies to the component that declares it, which is what left
+   ForgePipelineDetail unstyled.
+
+   Geometry and button treatment deliberately mirror the forge panel header
+   (.forge-header / .forge-header-btn) so a panel header reads the same whichever
+   tab it belongs to: same bar height and padding, same square-round 28px icon
+   button on --bg-secondary that turns --bg-tertiary + accent on hover.
+   ========================================================================== */
+
+/* Drill-down shell. No fill of its own: the surface is owned by the page root
+   that hosts it (.git-history-content in the dock tab, the BottomSheet panel in
+   the mobile file-history drawer), so the same chrome adapts to both. */
+.drilldown-page {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* The bar inherits its fill from that host surface — in the history tab that is
+   --bg-primary, exactly the relationship .forge-header has with .forge-panel
+   (a bg-primary bar on a bg-primary page, separated only by the border). Only
+   the border is declared here, so a drawer keeps its own sheet material instead
+   of getting a second, contrasting bar stacked under the sheet header. */
+.drilldown-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--header-height);
+    padding: 0 var(--space-2) 0 var(--space-6);
+    border-bottom: 1px solid var(--border-color);
+    background: transparent;
+    flex-shrink: 0;
+    gap: var(--space-3);
+}
+
+.drilldown-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    overflow: hidden;
+    flex: 1;
+    min-width: 0;
+}
+
+/* The leading glyph. `flex-shrink: 0` keeps it at 14px when the count badge
+   beside it is long, and it inherits the title's colour (as forge's does). */
+.drilldown-title-icon {
+    flex-shrink: 0;
+}
+
+/* Colour only — shape and geometry belong to the shared .count-badge. */
+.drilldown-count {
+    font-weight: var(--font-weight-bold);
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+
+/* Icon button in the header toolbar. `border: none` is required: the class is
+   used by both <button> and RefreshButton (which renders a <button>), and a
+   bare button keeps the UA's default border. */
+.drilldown-refresh-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+    transition: background var(--duration-slow) ease, color var(--duration-slow) ease,
+        transform var(--duration-slow) ease;
+}
+
+@media (hover: hover) {
+    .drilldown-refresh-btn:hover:not(:disabled) {
+        background: var(--bg-tertiary);
+        color: var(--accent-color);
+    }
+}
+
+.drilldown-refresh-btn:active:not(:disabled) {
+    transform: scale(0.9);
+}
+
+.drilldown-refresh-btn:disabled {
+    opacity: var(--opacity-muted);
+    cursor: not-allowed;
+}
+
+/* Stale-data hint: the refresh button pulses in the THEME accent. The glow was
+   a hard-coded rgba(74,144,217,…), so it stayed the same blue under every
+   theme instead of picking up the accent the rest of the UI uses. */
+.drilldown-refresh-btn.refresh-pulse {
+    animation: refresh-pulse-glow 1.5s ease-in-out infinite;
+    color: var(--accent-color);
+}
+
+@keyframes refresh-pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50% { box-shadow: 0 0 6px 2px color-mix(in srgb, var(--accent-color) 40%, transparent); }
+}
+
+.drilldown-body {
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* ==========================================================================
    Shared Context Menu
    Used by: FileManager.vue, ProjectDialog.vue
    ========================================================================== */
@@ -92,6 +216,18 @@
 
 .context-menu-item:hover {
     background: var(--bg-tertiary);
+}
+
+/* A menu item reflecting a condition that is currently ON (e.g. the file or
+   conversation already has a public share link). Mirrors
+   .file-header-dropdown-menu .dropdown-item.active so both menus read the same. */
+.context-menu-item.active {
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+    color: var(--accent-color);
+}
+
+.context-menu-item.active:hover {
+    background: color-mix(in srgb, var(--accent-color) 18%, transparent);
 }
 
 .context-menu-item.danger {
@@ -559,4 +695,99 @@
     color: var(--text-secondary);
     background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
     border-color: color-mix(in srgb, var(--text-secondary) 35%, transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Quote attachment card (QuoteCard.vue)
+
+   Global on purpose: this card renders on TWO surfaces — the chat input
+   (ChatInputBar, scoped) and a sent bubble (ChatMessageItem, scoped). A rule
+   inside either component's <style scoped> reaches only its own surface, so a
+   per-component rule is how the two drift apart. It already had: the sent
+   bubble had NO rule at all, so a sent quote card rendered as a bare chip with
+   no background or border, indistinguishable from plain text.
+
+   The card must stay VISUALLY distinct from a normal file attachment (which is
+   a plain neutral chip), while keeping EXACTLY the same geometry — height,
+   radius, padding and max-width all come from `.chat-file-attachment` and are
+   deliberately not restated here.
+
+   Distinctiveness is therefore carried by PAINT ONLY, never by box metrics:
+     - a solid accent border instead of the old dashed one (same 1px width, so
+       no reflow);
+     - an accent spine on the left edge, drawn with an INSET box-shadow rather
+       than a border-left, because a border would add to the box and change the
+       width of every card;
+     - a subtle vertical gradient wash, so the chip reads as a "card" rather
+       than a flat tag.
+
+   Scoped to `.attachment-quote`, which only QuoteCard sets, so no normal
+   attachment is affected.
+   ══════════════════════════════════════════════════════════════════════════ */
+.chat-file-attachment.attachment-quote {
+    background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--accent-color, #4f9cf7) 13%, transparent),
+        color-mix(in srgb, var(--accent-color, #4f9cf7) 7%, transparent)
+    );
+    border: 1px solid color-mix(in srgb, var(--accent-color, #4f9cf7) 42%, transparent);
+    color: var(--accent-color, #4f9cf7);
+    cursor: pointer;
+    /* Left accent spine + a hairline inner highlight. Inset shadows paint
+       inside the border box, so the card's outer size is untouched. */
+    box-shadow:
+        inset 3px 0 0 0 var(--accent-color, #4f9cf7),
+        inset 0 1px 0 0 color-mix(in srgb, #fff 10%, transparent);
+}
+
+/* The label inherits the accent colour set above; stated explicitly so a
+   theme's generic `.attachment-filename` colour cannot win by specificity.
+
+   Deliberately NO font-weight change: a bolder label is marginally wider, and
+   the card's size must stay identical to a normal attachment's. The
+   differentiation is carried entirely by colour and the spine. */
+.chat-file-attachment.attachment-quote .attachment-filename {
+    color: var(--accent-color, #4f9cf7);
+}
+
+@media (hover: hover) {
+    .chat-file-attachment.attachment-quote:hover {
+        background: linear-gradient(
+            180deg,
+            color-mix(in srgb, var(--accent-color, #4f9cf7) 20%, transparent),
+            color-mix(in srgb, var(--accent-color, #4f9cf7) 12%, transparent)
+        );
+    }
+}
+
+/* ── On the user's own bubble ──
+   The bubble is painted with --user-msg-color, so an accent-tinted card would
+   sink into it. Flip the treatment to a translucent white card, matching how
+   the other attachment chips behave inside a user bubble. The spine stays, so
+   a quote is still recognisable as a quote here. */
+.chat-message.user .chat-file-attachment.attachment-quote {
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.22),
+        rgba(255, 255, 255, 0.12)
+    );
+    border-color: rgba(255, 255, 255, 0.5);
+    color: rgba(255, 255, 255, 0.98);
+    box-shadow:
+        inset 3px 0 0 0 rgba(255, 255, 255, 0.9),
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.18);
+}
+
+.chat-message.user .chat-file-attachment.attachment-quote .attachment-filename {
+    color: rgba(255, 255, 255, 0.98);
+}
+
+@media (hover: hover) {
+    .chat-message.user .chat-file-attachment.attachment-quote:hover {
+        background: linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.3),
+            rgba(255, 255, 255, 0.2)
+        );
+    }
 }

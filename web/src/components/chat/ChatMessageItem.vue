@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata, pending: msg.pending }]" :data-msg-key="msg.id ? 'db-' + msg.id : null">
+  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]" :data-msg-key="msg.id ? 'db-' + msg.id : null">
 
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
          element so it sits on the panel background for both roles. -->
@@ -32,6 +32,7 @@
         :getAgentName="getAgentName"
         :staticBlockCache="staticBlockCache"
         :active="active"
+        :readOnly="readOnly"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @task-card-click="$emit('task-card-click', $event)"
@@ -42,31 +43,6 @@
         @reset-session="$emit('reset-session', $event)"
 
       />
-    </div>
-
-    <!-- Pending hint for queued user messages -->
-    <div v-if="msg.pending" class="pending-hint">
-      <LoadingIndicator class="pending-spinner" size="sm" inline />
-      {{ t('chat.pending.queuing') }}
-      <!--
-        One action, two labels — the backend decides which. A backend that can
-        inject into the running turn offers "insert into the current reply"
-        (the turn keeps its work); one that cannot offers "interrupt and send"
-        (the turn is stopped, this message runs next). The label always states
-        what will actually happen, so the single button never misleads.
-      -->
-      <button
-        class="pending-action"
-        :class="{ 'pending-action-interrupt': !midTurnSupported }"
-        :disabled="pendingActionBusy"
-        :title="midTurnSupported ? t('chat.pending.insertHint') : t('chat.pending.interruptHint')"
-        @click="$emit('pending-action', msg.queueId || msg.id)"
-      >
-        <Zap v-if="midTurnSupported" :size="11" />
-        <Square v-else :size="11" fill="currentColor" />
-        {{ midTurnSupported ? t('chat.pending.insert') : t('chat.pending.interrupt') }}
-      </button>
-      <button class="pending-remove" @click="$emit('remove-pending', msg.queueId || msg.id)" :title="t('common.remove')">×</button>
     </div>
 
     <!-- File changes banner — standalone button above toolbar -->
@@ -90,14 +66,26 @@
         <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': msg.role === 'assistant' && msg.metadata?.wallMs }">{{ relativeTime }}</span>
       </span>
       <div class="chat-meta-actions">
+        <!-- Summary/original toggle — deliberately FIRST in the row. It is the
+             reading-mode control for this message (which view of the reply you
+             are looking at), so it leads; everything after it is an action *on*
+             the message. Assistant-only, and hidden while streaming since there
+             is no settled content to toggle yet. -->
+        <template v-if="msg.role === 'assistant'">
+          <span v-if="!readOnly && !msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
+            <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
+            <LoadingIndicator v-else size="sm" inline />
+          </span>
+          <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
+            <LoadingIndicator size="sm" inline />
+          </span>
+        </template>
         <!-- Quote this message as a whole. Rendered for BOTH roles: quoting a
              user message (e.g. to re-ask about it) is as useful as quoting a
              reply. Gated like the rest of the meta bar, and skipped for queued
-             bubbles which have no settled content yet.
-             Deliberately FIRST in the row: it is the entry point that starts a
-             new action, while the rest are actions on the message itself. -->
+             bubbles which have no settled content yet. -->
         <button
-          v-if="!msg.streaming && !msg.pending && quotableText"
+          v-if="!readOnly && !msg.streaming && quotableText"
           class="chat-action-btn"
           :title="t('quoteBar.quoteMessage')"
           :aria-label="t('quoteBar.quoteMessage')"
@@ -106,14 +94,7 @@
           <MessageSquareQuote :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
-            <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
-            <LoadingIndicator v-else size="sm" inline />
-          </span>
-          <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
-            <LoadingIndicator size="sm" inline />
-          </span>
-          <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
+          <button v-if="msgText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
             <!-- Generating states: summarizing / synthesizing -->
             <template v-if="autoSpeech.isGeneratingText(msg.id)">
               <Clock :size="14" class="speak-spinner" />
@@ -130,16 +111,16 @@
             </template>
           </button>
         </template>
-        <button v-if="!msg.streaming && (msg.role === 'assistant' || copyableUserText)" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
+        <button v-if="!readOnly && !msg.streaming && (msg.role === 'assistant' || copyableUserText)" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
           <span v-if="copied" class="chat-copy-copied-text">{{ t('common.copied') }}</span>
           <Copy v-else :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <button v-if="!msg.streaming && !hideSessionActions" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
+          <button v-if="!readOnly && !msg.streaming && !hideSessionActions" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
             <Split :size="14" />
           </button>
           <button
-            v-if="!msg.streaming && !hideSessionActions"
+            v-if="!readOnly && !msg.streaming && !hideSessionActions"
             class="chat-action-btn"
             :disabled="isLastMessage"
             :title="isLastMessage ? t('chat.session.nothingToRewind') : t('chat.actions.rewindSession')"
@@ -148,7 +129,7 @@
             <Rewind :size="14" />
           </button>
         </template>
-        <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
+        <button v-if="!readOnly && !msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
       </div>
@@ -184,7 +165,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind, Zap, Square, MessageSquareQuote } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind, MessageSquareQuote } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -217,19 +198,24 @@ const props = defineProps({
   /** True when this message is the very last entry in the rendered list — rewind
    *  has nothing to truncate after it, so the rewind button is disabled. */
   isLastMessage: { type: Boolean, default: false },
-  /** Whether the active backend can inject into the running turn. Drives the
-   *  queued bubble's single action label (insert vs interrupt). */
-  midTurnSupported: { type: Boolean, default: false },
-  /** True while this bubble's action request is in flight (disables the button). */
-  pendingActionBusy: { type: Boolean, default: false },
   /** Read-only hosts (task execution detail) hide the fork/rewind pair: those
    *  two actions need a live session to branch or truncate, which a finished
    *  execution record does not have. The rest of the bar (summary toggle,
    *  speak, copy, details) stays useful there. */
   hideSessionActions: { type: Boolean, default: false },
+  /** Public share page: the viewer is anonymous, so every per-message action
+   *  is suppressed — speak/fork/rewind need a live session or auth, copy/
+   *  details duplicate what the snapshot already renders (details also exposes
+   *  token/cost metadata), and quote needs a chat composer the reader does not
+   *  have. The summary/original switch is suppressed too: it is an app-side
+   *  reading preference, and a read-only transcript has no business offering a
+   *  choice the reader cannot evaluate (the snapshot always carries the original
+   *  blocks; `showSummary` falls back to the summary only when there are none).
+   *  Only the timestamp line is kept — it is information, not a control. */
+  readOnly: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'pending-action', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
@@ -305,13 +291,12 @@ const copyableUserText = computed(() => {
 })
 
 // Meta bar visibility. Assistant keeps its old gate (it owns the action bar);
-// user messages show it as soon as there is a timestamp or copyable text, and
-// never while the bubble is still queued (pending hint already occupies that row).
+// user messages show it as soon as there is a timestamp or copyable text.
 const showMetaBar = computed(() => {
   if (props.msg?.role === 'assistant') {
     return !props.msg.streaming && !!(msgText.value || props.msg.blocks?.length || props.msg.summary)
   }
-  if (props.msg?.role !== 'user' || props.msg.pending || props.msg.streaming) return false
+  if (props.msg?.role !== 'user' || props.msg.streaming) return false
   return !!(relativeTime.value || copyableUserText.value)
 })
 
@@ -341,7 +326,21 @@ const speakBtnLabel = computed(() => {
 // default display mode. While the full text is being lazily fetched in
 // original (or mixed-last-assistant) view, keep showing the summary as a
 // placeholder so the message bubble is never blank.
-const showSummary = computed(() => (props.msg ? isShowingSummary(props.msg, displayMode.value, { isLastAssistant: props.isLastAssistant }) : false))
+const showSummary = computed(() => {
+  if (!props.msg) return false
+  // readOnly (public share page) always renders the ORIGINAL content: the
+  // snapshot never strips blocks, and a read-only transcript has no business
+  // offering a summary/original switch the reader cannot evaluate.
+  //
+  // Never render blank, though: a message with a summary but no blocks (rare —
+  // the agent emitted metadata only) still shows its summary.
+  if (props.readOnly) {
+    const hasBlocks = !!props.msg.blocks?.length
+    const hasSummary = props.msg.summary != null && props.msg.summary !== ""
+    return !hasBlocks && hasSummary
+  }
+  return isShowingSummary(props.msg, displayMode.value, { isLastAssistant: props.isLastAssistant })
+})
 
 // A summarized message whose content was stripped by the backend has nothing
 // to render in original view — request the full text once. Only applies when
@@ -447,34 +446,6 @@ function handleCopyMessage() {
 </script>
 
 <style scoped>
-/* Video player in chat */
-.chat-video-wrapper {
-  margin: var(--space-4) 0;
-}
-
-.chat-video-player {
-  width: 100%;
-  max-width: 400px;
-  max-height: 225px;
-  border-radius: var(--radius-sm);
-  outline: none;
-  background: #000;
-}
-
-/* Image thumbnails in user messages */
-.chat-image-thumb {
-  max-width: 80px;
-  max-height: 80px;
-  object-fit: cover;
-  border-radius: var(--radius-sm);
-  display: block;
-}
-
-/* Image thumbnail style */
-.chat-message .chat-img {
-  vertical-align: middle;
-}
-
 /* ── Message card (the bubble itself) ──
    The meta bar is a SIBLING of this element, so the card owns every bubble
    visual (background, radius, padding, clipping). */
@@ -622,90 +593,6 @@ function handleCopyMessage() {
     to { transform: rotate(360deg); }
 }
 
-/* ── Pending (queued) user message styles ── */
-.chat-message.user.pending .msg-card {
-    color: rgba(255, 255, 255, 0.55);
-    background: color-mix(in srgb, var(--user-msg-color) 55%, transparent);
-    border: 1px dashed rgba(255, 255, 255, 0.5);
-    animation: pending-fade-in 0.25s ease-out;
-}
-
-.pending-hint {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--font-size-2xs);
-    color: rgba(255, 255, 255, 0.7);
-    flex-basis: 100%;
-    margin-top: var(--space-2);
-}
-
-/* Spinner sits on the translucent user-bubble background → keep it white */
-.pending-hint .pending-spinner {
-    --li-color: #fff;
-}
-
-/* Single adaptive action on a queued bubble: "insert into the current reply"
-   for backends that can join the running turn, "interrupt and send" otherwise.
-   Sits inside the translucent user bubble, so it uses white-ish colours like
-   .pending-hint (a theme token would be invisible on that background). */
-.pending-action {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    background: rgba(255, 255, 255, 0.14);
-    border: none;
-    border-radius: var(--radius-full);
-    cursor: pointer;
-    color: rgba(255, 255, 255, 0.9);
-    padding: 1px 7px;
-    font-size: var(--font-size-2xs);
-    line-height: var(--line-height-relaxed);
-    transition: background var(--duration-base), color var(--duration-base);
-}
-
-.pending-action:disabled {
-    opacity: var(--opacity-muted);
-    cursor: default;
-}
-
-/* The interrupt variant is destructive — tint it so it does not look like the
-   harmless insert action when the two are compared across backends. */
-.pending-action-interrupt {
-    background: rgba(255, 145, 145, 0.2);
-}
-
-@media (hover: hover) {
-  .pending-action:not(:disabled):hover {
-    background: rgba(255, 255, 255, 0.24);
-  }
-
-  .pending-action-interrupt:not(:disabled):hover {
-    background: rgba(255, 145, 145, 0.32);
-  }
-}
-
-.pending-remove {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: rgba(255, 255, 255, 0.6);
-    padding:0 var(--space-1);
-    font-size: var(--font-size-md);
-    line-height: 1;
-    transition: color var(--duration-base);
-}
-
-@media (hover: hover) {
-  .pending-remove:hover {
-    color: rgba(255, 255, 255, 1);
-  }
-}
-
-@keyframes pending-fade-in {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-}
 
 @media (hover: hover) {
   .chat-meta-bar-user:hover {
@@ -1263,5 +1150,32 @@ function handleCopyMessage() {
 .chat-message .chat-audio-player::-webkit-media-controls-current-time-display,
 .chat-message .chat-audio-player::-webkit-media-controls-time-remaining-display {
   font-size: var(--font-size-xs);
+}
+
+/* ── Video player in chat (non-scoped for v-html penetration) ──
+   Same reason as the audio block above: the <video> is injected through
+   v-html by convertVideoLinks, so Vue never stamps it with this component's
+   scope attribute and a scoped rule can never match it. Without these the
+   player falls back to the video's intrinsic resolution and overflows the
+   bubble (issue #497). */
+.chat-message .chat-video-wrapper {
+  margin: var(--space-4) 0;
+}
+
+.chat-message .chat-video-player {
+  width: 100%;
+  max-width: 400px;
+  max-height: 225px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: #000;
+}
+
+/* ── Inline image alignment (non-scoped for v-html penetration) ──
+   `chat-img` is stamped on the <img> by rewriteImageUrls, i.e. also injected
+   via v-html. Sizing lives in markdown-common.css; this only cancels the
+   baseline gap. */
+.chat-message .chat-img {
+  vertical-align: middle;
 }
 </style>

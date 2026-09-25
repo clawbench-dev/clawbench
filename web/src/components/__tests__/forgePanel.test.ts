@@ -463,6 +463,54 @@ describe('ForgePanelContent', () => {
     expect(mockSetType).toHaveBeenCalledWith('pr')
   })
 
+  it('reloads the issue/PR list when its tab is entered from the activity tab', async () => {
+    // Regression: the panel mounts on the Activity tab, and the issue/PR
+    // composable has already defaulted its type to 'issue'. setType('issue') is
+    // therefore a no-op (its guard returns early), so entering the Issues tab
+    // fetched nothing at all and showed whatever state was left over — while
+    // every other tab refreshes on entry (Pipelines loads directly, Activity
+    // remounts and its own watcher fetches). The user-visible symptom was "it
+    // does not auto-refresh the first time, but switching back from PR does".
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    // Drop the mount-time refresh so only the click's effect is observed.
+    mockLoad.mockClear()
+
+    await wrapper.findAll('.forge-tab')[1].trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(mockLoad, 'entering the Issues tab must fetch its list').toHaveBeenCalled()
+  })
+
+  it('does not double-load when the tab actually changes the item type', async () => {
+    // The complement: when setType DOES change the type it already loads, so the
+    // explicit fallback load must stay out of the way — otherwise every PR
+    // switch would fire two identical requests.
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = []
+    state.type.value = 'issue'
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    mockLoad.mockClear()
+    mockSetType.mockClear()
+
+    await wrapper.findAll('.forge-tab')[2].trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(mockSetType).toHaveBeenCalledWith('pr')
+    expect(mockLoad, 'setType already loads; a second load would duplicate it').not.toHaveBeenCalled()
+  })
+
   it('uses the GitHub brand icon for the panel identity, semantic glyphs for the type tabs', async () => {
     // The panel header keeps the GitHub brand mark (the forge integration is
     // GitHub-flavoured), but the switch carries distinct semantic glyphs: a

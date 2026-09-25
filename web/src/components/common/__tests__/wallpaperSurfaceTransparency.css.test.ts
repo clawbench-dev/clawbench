@@ -99,6 +99,20 @@ describe('wallpaper-active single-surface transparency', () => {
     expect(body).toContain('background: transparent;')
   })
 
+  it('lets the wallpaper show through the git history panel root', () => {
+    // Same treatment as .forge-panel: the history tab is a full-page surface, so
+    // its root goes fully transparent and only .tab-panel shows through.
+    const roots = ruleContaining('html.wallpaper-active .forge-panel')
+    expect(roots).toContain('html.wallpaper-active .git-history-content')
+  })
+
+  it('leaves the git history drill-down header transparent, not a tinted bar', () => {
+    // The bar is the top of the page root (transparent bg), not a contrasting
+    // chrome strip. A wallpaper tint here would put the bar back AND make the
+    // row hover tint (bg-secondary) invisible against it.
+    expect(css).not.toContain('html.wallpaper-active .drilldown-header')
+  })
+
   it('re-tints interactive states over the translucent card base as feedback', () => {
     const rule = ruleContaining('html.wallpaper-active .task-item:active')
     expect(rule).toMatch(

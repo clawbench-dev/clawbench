@@ -2,7 +2,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { flashElement } from '@/utils/domFlash'
-import { formatUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import { formatIndexMsg } from '@/utils/userMsgIndexUtils.ts'
 
 /**
  * Composable for user message index overlay logic.
@@ -39,11 +39,14 @@ export function useUserMsgIndex(options: {
   const loadingTarget = ref(false)
   const loadingIndex = ref(false)
 
-  function formatUserMsgLabel(msg: { content?: string; files?: string[] }) {
-    return formatUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
+  function formatIndexLabel(msg: { role?: string; summary?: string; content?: string; files?: string[] }) {
+    return formatIndexMsg(msg, {
+      attachment: t('chat.messageList.userMsgIndexAttachment'),
+      noText: t('chat.messageList.conversationIndexNoText'),
+    })
   }
 
-  /** Fetch (or reuse a cached) list of user messages for the current session. */
+  /** Fetch (or reuse a cached) list of messages for the current session. */
   async function ensureIndexLoaded(): Promise<void> {
     if (userMsgIndexList.value.length > 0) return
     if (!options.getCurrentSessionId()) return
@@ -55,7 +58,9 @@ export function useUserMsgIndex(options: {
         userMsgIndexList.value = data.messages || []
       }
     } catch {
-      userMsgIndexList.value = options.getMessages().filter(m => m.role === 'user')
+      // Offline fallback: the in-memory list only holds the pages loaded so far,
+      // but it already carries both roles, so the drawer stays usable.
+      userMsgIndexList.value = options.getMessages().filter(m => m.role === 'user' || m.role === 'assistant')
     } finally {
       loadingIndex.value = false
     }
@@ -189,7 +194,7 @@ export function useUserMsgIndex(options: {
     drawer,
     loadingTarget,
     loadingIndex,
-    formatUserMsgLabel,
+    formatIndexLabel,
     toggleUserMsgIndex,
     closeUserMsgIndex,
     jumpToUserMessage,

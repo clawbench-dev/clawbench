@@ -622,6 +622,13 @@ export function useForgeUnreadItems(getProjectPath: () => string) {
             if (seq !== requestSeq) return
             items.value = res.items ?? []
             loaded.value = true
+            // Re-derive the dock badge from the same moment the rows landed.
+            // The badge drives the header's "mark all read" button, so a count
+            // left stale here (the tab was opened after the event arrived, or a
+            // WS reconnect skipped the live event) shows unread rows next to an
+            // inert button. Only on success: a failed load renders an error
+            // card, so there is nothing to reconcile.
+            void useForgeUnread().refresh()
         } catch (err) {
             if (seq !== requestSeq) return
             items.value = []

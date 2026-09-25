@@ -44,6 +44,9 @@
       :key="row.itemKey"
       class="forge-row forge-overview-row"
       :class="{ unread: !isRead(row), read: isRead(row) }"
+      draggable="true"
+      @dragstart="onRowDragStart(row, $event)"
+      @dragend="cleanupDragGhost()"
       @click="onRowClick(row)"
     >
       <span class="forge-state-dot" :class="dotClass(row)"></span>
@@ -77,6 +80,8 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useForgeUnreadItems, FORGE_ACTIVITY_FILTERS } from '@/composables/useForge'
 import { forgeOverviewLabel } from '@/utils/forgeEventLabels'
 import type { ForgeUnreadItem } from '@/utils/forgeApi'
+import { startQuoteDrag, forgeUnreadDragPayload } from '@/utils/quoteDrag'
+import { cleanupDragGhost } from '@/utils/attachDrag'
 
 /**
  * The unread list, rendered INSIDE the forge panel's own "unread" tab.
@@ -142,6 +147,14 @@ function isRead(row: ForgeUnreadItem): boolean {
 /** Status dot: a pipeline shows its run outcome, an item its state. */
 function dotClass(row: ForgeUnreadItem): string {
   return row.type === 'pipeline' ? 'pipeline-unknown' : 'open'
+}
+
+/**
+ * Start dragging an activity row into the chat: dropping it stages a quote card
+ * for the referenced issue/PR or CI run (no annotation).
+ */
+function onRowDragStart(row: ForgeUnreadItem, e: DragEvent) {
+  if (!startQuoteDrag(e, forgeUnreadDragPayload(row))) e.preventDefault()
 }
 
 function onRowClick(row: ForgeUnreadItem) {

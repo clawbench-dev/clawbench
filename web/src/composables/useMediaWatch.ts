@@ -125,9 +125,9 @@ export function withVersionParam(url: string, version: number): string {
  * inline…).
  *
  * Handles both URL shapes the render pipelines emit:
- *   - `/api/local-file/<rel>?t=…`          (full-size original)
- *   - `/api/local-file/?path=<abs>`        (absolute path form)
- *   - `/api/file/thumb?path=<rel>&w=…`     (inline thumbnail)
+ *   - `/api/fs/raw/<rel>?t=…`            (full-size original)
+ *   - `/api/fs/raw/?target=<abs>`        (absolute path form)
+ *   - `/api/fs/thumb?target=<rel>&w=…`   (inline thumbnail)
  *
  * The returned path is decoded and normalized so it compares equal to the
  * project-relative path the watcher reports.
@@ -147,17 +147,17 @@ export function mediaPathFromUrl(url: string): string | null {
     return null
   }
 
-  if (pathname === '/api/file/thumb') {
-    const p = new URLSearchParams(search).get('path')
+  if (pathname === '/api/fs/thumb') {
+    const p = new URLSearchParams(search).get('target')
     return p ? normalizePath(safeDecode(p)) : null
   }
 
-  if (pathname === '/api/local-file/' || pathname === '/api/local-file') {
-    const p = new URLSearchParams(search).get('path')
+  if (pathname === '/api/fs/raw/' || pathname === '/api/fs/raw') {
+    const p = new URLSearchParams(search).get('target')
     return p ? toWatchablePath(p) : null
   }
 
-  const prefix = '/api/local-file/'
+  const prefix = '/api/fs/raw/'
   if (pathname.startsWith(prefix)) {
     const rel = pathname.slice(prefix.length).replace(/^\/+/, '')
     return rel ? toWatchablePath(safeDecode(rel)) : null

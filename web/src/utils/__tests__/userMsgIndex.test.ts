@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   extractPlainText,
-  formatUserMsg,
-  matchUserMsg,
+  formatIndexMsg,
+  matchIndexMsg,
+  assistantIndexText,
   truncateIndexText,
   INDEX_TEXT_MAX_LENGTH,
+  type IndexRowLabels,
 } from '@/utils/userMsgIndexUtils.ts'
+
+const labels: IndexRowLabels = { attachment: 'Attachment', noText: '(no text)' }
 
 describe('extractPlainText', () => {
   it('returns empty string for empty content', () => {
@@ -170,116 +174,220 @@ describe('truncateIndexText', () => {
   })
 })
 
-describe('formatUserMsg', () => {
-  const attachmentLabel = 'Attachment'
-
-  it('truncates long content with an ellipsis at the default cap', () => {
-    const result = formatUserMsg({ content: 'a'.repeat(200) }, attachmentLabel)
-    expect(result).toBe('a'.repeat(INDEX_TEXT_MAX_LENGTH) + '…')
-  })
-
+describe('formatIndexMsg — user rows (legacy formatUserMsg coverage)', () => {
   it('honors an explicit maxLen override', () => {
-    expect(formatUserMsg({ content: 'abcdef' }, attachmentLabel, 3)).toBe('abc…')
+    expect(formatIndexMsg({ role: 'user', content: 'abcdef' }, labels, 3)).toBe('abc…')
   })
 
   it('keeps short text as-is', () => {
-    expect(formatUserMsg({ content: 'Short message' }, attachmentLabel)).toBe('Short message')
+    expect(formatIndexMsg({ role: 'user', content: 'Short message' }, labels)).toBe('Short message')
   })
 
   it('handles block-format JSON content', () => {
     const content = JSON.stringify({ blocks: [{ type: 'text', text: 'Hello from blocks' }] })
-    expect(formatUserMsg({ content }, attachmentLabel)).toBe('Hello from blocks')
-  })
-
-  it('shows attachment label for empty content with files', () => {
-    expect(formatUserMsg({ content: '', files: ['file.go'] }, attachmentLabel)).toBe('[Attachment]')
+    expect(formatIndexMsg({ role: 'user', content }, labels)).toBe('Hello from blocks')
   })
 
   it('shows attachment label for no content with files', () => {
-    expect(formatUserMsg({ files: ['file.go'] }, attachmentLabel)).toBe('[Attachment]')
+    expect(formatIndexMsg({ role: 'user', files: ['file.go'] }, labels)).toBe('[Attachment]')
   })
 
   it('prefers text over attachment label', () => {
-    expect(formatUserMsg({ content: 'Has text', files: ['file.go'] }, attachmentLabel)).toBe('Has text')
+    expect(formatIndexMsg({ role: 'user', content: 'Has text', files: ['file.go'] }, labels)).toBe('Has text')
   })
 
   it('shows empty string for empty content without files', () => {
-    expect(formatUserMsg({ content: '' }, attachmentLabel)).toBe('')
+    expect(formatIndexMsg({ role: 'user', content: '' }, labels)).toBe('')
   })
 })
 
-describe('matchUserMsg', () => {
-  it('matches everything for an empty or whitespace query', () => {
-    expect(matchUserMsg({ content: 'anything' }, '')).toBe(true)
-    expect(matchUserMsg({ content: 'anything' }, '   ')).toBe(true)
-  })
+describe('matchIndexMsg — legacy matchUserMsg coverage', () => {
+  const userLabels: IndexRowLabels = { attachment: '附件', noText: '(无文字)' }
 
   it('matches content case-insensitively', () => {
-    expect(matchUserMsg({ content: 'Fix BUG in Parser' }, 'bug')).toBe(true)
-    expect(matchUserMsg({ content: 'Fix BUG in Parser' }, 'fix')).toBe(true)
-    expect(matchUserMsg({ content: 'Fix BUG in Parser' }, 'parser')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', content: 'Fix BUG in Parser' }, 'bug')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', content: 'Fix BUG in Parser' }, 'fix')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', content: 'Fix BUG in Parser' }, 'parser')).toBe(true)
   })
 
   it('matches against text inside JSON block content', () => {
     const content = JSON.stringify({ blocks: [{ type: 'text', text: 'Hello from blocks' }] })
-    expect(matchUserMsg({ content }, 'blocks')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', content }, 'blocks')).toBe(true)
   })
 
   it('matches attachment-only message by object file path basename', () => {
-    const msg = { content: '', files: [{ path: 'src/foo/bar.ts', isDir: false }] }
-    expect(matchUserMsg(msg, 'bar.ts')).toBe(true)
-  })
-
-  it('matches attachment full path (not just basename)', () => {
-    const msg = { content: '', files: [{ path: 'src/foo/bar.ts', isDir: false }] }
-    expect(matchUserMsg(msg, 'src/foo')).toBe(true)
+    const msg = { role: 'user', content: '', files: [{ path: 'src/foo/bar.ts', isDir: false }] }
+    expect(matchIndexMsg(msg, 'bar.ts')).toBe(true)
   })
 
   it('matches legacy string attachment entries', () => {
-    expect(matchUserMsg({ content: '', files: ['notes.txt'] }, 'notes')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', content: '', files: ['notes.txt'] }, 'notes')).toBe(true)
   })
 
   it('matches basename of a nested path', () => {
-    expect(matchUserMsg({ files: [{ path: '/a/b/main.go' }] }, 'main')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', files: [{ path: '/a/b/main.go' }] }, 'main')).toBe(true)
   })
 
   it('matches file path case-insensitively', () => {
-    expect(matchUserMsg({ files: [{ path: '/SRC/Main.go' }] }, 'main.go')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', files: [{ path: '/SRC/Main.go' }] }, 'main.go')).toBe(true)
   })
 
   it('handles mixed string and object attachment shapes', () => {
-    const msg = { files: ['a.txt', { path: 'b/c.go' }] }
-    expect(matchUserMsg(msg, 'c.go')).toBe(true)
+    const msg = { role: 'user', files: ['a.txt', { path: 'b/c.go' }] }
+    expect(matchIndexMsg(msg, 'c.go')).toBe(true)
   })
 
   it('matches a message with both text and attachments via its content', () => {
-    expect(matchUserMsg({ content: 'Has text', files: [{ path: 'x.ts' }] }, 'text')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', content: 'Has text', files: [{ path: 'x.ts' }] }, 'text')).toBe(true)
   })
 
   it('matches the attachment label for attachment-only messages when provided', () => {
-    const msg = { content: '', files: [{ path: 'src/foo/bar.ts', isDir: false }] }
-    expect(matchUserMsg(msg, '附件', '附件')).toBe(true)
-    expect(matchUserMsg(msg, 'attachment', 'Attachment')).toBe(true)
-    // Label not matched case-insensitively when no label is passed.
-    expect(matchUserMsg(msg, '附件')).toBe(false)
+    const msg = { role: 'user', content: '', files: [{ path: 'src/foo/bar.ts', isDir: false }] }
+    expect(matchIndexMsg(msg, '附件', userLabels)).toBe(true)
+    expect(matchIndexMsg(msg, 'attachment', { attachment: 'Attachment', noText: '(no text)' })).toBe(true)
+    // Label not matched when no labels are passed.
+    expect(matchIndexMsg(msg, '附件')).toBe(false)
   })
 
   it('does not match the attachment label when the message has no attachments', () => {
-    expect(matchUserMsg({ content: 'plain text' }, '附件', '附件')).toBe(false)
+    expect(matchIndexMsg({ role: 'user', content: 'plain text' }, '附件', userLabels)).toBe(false)
   })
 
   it('returns false when nothing matches', () => {
-    expect(matchUserMsg({ content: 'plain', files: [{ path: 'a/b.ts' }] }, 'zzz')).toBe(false)
-    expect(matchUserMsg({ content: '', files: [] }, 'zzz')).toBe(false)
+    expect(matchIndexMsg({ role: 'user', content: 'plain', files: [{ path: 'a/b.ts' }] }, 'zzz')).toBe(false)
+    expect(matchIndexMsg({ role: 'user', content: '', files: [] }, 'zzz')).toBe(false)
   })
 
   it('returns false for missing/empty message with a non-empty query', () => {
-    expect(matchUserMsg(undefined as never, 'x')).toBe(false)
-    expect(matchUserMsg(null as never, 'x')).toBe(false)
-    expect(matchUserMsg({}, 'x')).toBe(false)
+    expect(matchIndexMsg(undefined as never, 'x')).toBe(false)
+    expect(matchIndexMsg(null as never, 'x')).toBe(false)
+    expect(matchIndexMsg({}, 'x')).toBe(false)
   })
 
   it('handles Windows backslash paths', () => {
-    expect(matchUserMsg({ files: [{ path: 'C:\\src\\Main.go' }] }, 'src/Main')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', files: [{ path: 'C:\\src\\Main.go' }] }, 'src/Main')).toBe(true)
+  })
+})
+
+describe('assistantIndexText', () => {
+  it('prefers the stored summary over the reply content', () => {
+    expect(assistantIndexText({ summary: 'the summary', content: 'the full reply' })).toBe('the summary')
+  })
+
+  it('falls back to the reply content when no summary exists', () => {
+    expect(assistantIndexText({ content: 'the full reply' })).toBe('the full reply')
+  })
+
+  it('extracts text from block-format JSON content', () => {
+    const content = JSON.stringify({ blocks: [{ type: 'text', text: 'block answer' }] })
+    expect(assistantIndexText({ content })).toBe('block answer')
+  })
+
+  it('returns empty when neither summary nor content carries text', () => {
+    expect(assistantIndexText({})).toBe('')
+    expect(assistantIndexText({ content: '' })).toBe('')
+    // A tool-only turn has no answer text.
+    expect(assistantIndexText({ content: JSON.stringify({ blocks: [{ type: 'tool_use', name: 'Bash' }] }) })).toBe('')
+  })
+
+  it('falls back to parsed blocks for in-memory messages', () => {
+    // The offline fallback path passes already-parsed messages, whose text lives
+    // in `blocks` rather than raw JSON `content`.
+    expect(assistantIndexText({ blocks: [{ type: 'text', text: 'block reply' }] })).toBe('block reply')
+  })
+
+  it('ignores non-text blocks when falling back to blocks', () => {
+    const blocks = [
+      { type: 'thinking', text: 'inner' },
+      { type: 'tool_use', text: 'Bash' },
+      { type: 'text', text: 'the answer' },
+    ]
+    expect(assistantIndexText({ blocks })).toBe('the answer')
+  })
+
+  it('prefers summary over blocks', () => {
+    expect(assistantIndexText({ summary: 'sum', blocks: [{ type: 'text', text: 'blocks' }] })).toBe('sum')
+  })
+})
+
+describe('formatIndexMsg', () => {
+  it('formats a user row from its content', () => {
+    expect(formatIndexMsg({ role: 'user', content: 'Fix the bug' }, labels)).toBe('Fix the bug')
+  })
+
+  it('truncates a user row at the cap', () => {
+    const result = formatIndexMsg({ role: 'user', content: 'a'.repeat(200) }, labels)
+    expect(result).toBe('a'.repeat(INDEX_TEXT_MAX_LENGTH) + '…')
+  })
+
+  it('shows the attachment label for an attachment-only user row', () => {
+    expect(formatIndexMsg({ role: 'user', content: '', files: ['f.go'] }, labels)).toBe('[Attachment]')
+  })
+
+  it('formats an assistant row from its summary', () => {
+    expect(formatIndexMsg({ role: 'assistant', summary: 'Done, tests pass' }, labels)).toBe('Done, tests pass')
+  })
+
+  it('falls back to the reply content for an assistant row with no summary', () => {
+    expect(formatIndexMsg({ role: 'assistant', content: 'fallback text' }, labels)).toBe('fallback text')
+  })
+
+  it('truncates an assistant row at the cap', () => {
+    const result = formatIndexMsg({ role: 'assistant', summary: 'b'.repeat(200) }, labels)
+    expect(result).toBe('b'.repeat(INDEX_TEXT_MAX_LENGTH) + '…')
+  })
+
+  it('shows the no-text placeholder for a textless assistant row', () => {
+    expect(formatIndexMsg({ role: 'assistant', content: '' }, labels)).toBe('(no text)')
+  })
+
+  it('treats a row with no role as a user row', () => {
+    expect(formatIndexMsg({ content: 'legacy row' }, labels)).toBe('legacy row')
+  })
+})
+
+describe('matchIndexMsg', () => {
+  it('matches everything for an empty query', () => {
+    expect(matchIndexMsg({ role: 'assistant', summary: 'x' }, '')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', content: 'x' }, '   ')).toBe(true)
+  })
+
+  it('matches a user row on its content', () => {
+    expect(matchIndexMsg({ role: 'user', content: 'Fix the Parser' }, 'parser')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', content: 'Fix the Parser' }, 'zzz')).toBe(false)
+  })
+
+  it('matches an assistant row on its summary', () => {
+    expect(matchIndexMsg({ role: 'assistant', summary: 'Refactored the parser' }, 'refactor')).toBe(true)
+  })
+
+  it('matches an assistant row on its fallback content when there is no summary', () => {
+    expect(matchIndexMsg({ role: 'assistant', content: 'fallback needle' }, 'needle')).toBe(true)
+  })
+
+  it('does not match an assistant row on content when a summary is present', () => {
+    // The row displays the summary; content is not visible, so it must not match.
+    expect(matchIndexMsg({ role: 'assistant', summary: 'visible', content: 'hidden needle' }, 'needle')).toBe(false)
+  })
+
+  it('matches the no-text placeholder when provided', () => {
+    const msg = { role: 'assistant', content: '' }
+    expect(matchIndexMsg(msg, 'no text', labels)).toBe(true)
+    expect(matchIndexMsg(msg, 'no text')).toBe(false)
+  })
+
+  it('matches attachment path/basename on user rows', () => {
+    expect(matchIndexMsg({ role: 'user', content: '', files: [{ path: 'src/foo/bar.ts' }] }, 'bar.ts')).toBe(true)
+    expect(matchIndexMsg({ role: 'user', content: '', files: [{ path: 'src/foo/bar.ts' }] }, 'src/foo')).toBe(true)
+  })
+
+  it('matches the attachment label only when provided', () => {
+    const msg = { role: 'user', content: '', files: [{ path: 'a.ts' }] }
+    expect(matchIndexMsg(msg, 'Attachment', labels)).toBe(true)
+    expect(matchIndexMsg(msg, 'Attachment')).toBe(false)
+  })
+
+  it('returns false for a missing message with a non-empty query', () => {
+    expect(matchIndexMsg(null as never, 'x')).toBe(false)
   })
 })

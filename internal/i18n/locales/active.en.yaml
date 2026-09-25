@@ -3,6 +3,8 @@ SessionStreamNotFound: Session stream not found
 SessionStreamBusy: Session stream is being viewed on another device
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
+ShareSessionNoContent: This conversation has no shareable messages yet
+ShareSessionInvalidSelection: Some selected messages cannot be shared (they may still be generating)
 QueueIdRequired: queueId required
 QueueInjectStranded: Insert failed and the message could not be re-queued — please resend it
 NewSession: New Session
@@ -29,6 +31,9 @@ InvalidPath: invalid path
 PathTraversal: path traversal detected
 InternalError: internal server error
 SessionNotFound: session not found
+SummaryModelNotConfigured: AI summary model is not configured
+NoUserMessagesToSummarize: no user messages to summarize
+GenerateTitleFailed: failed to generate a title
 TagNameRequired: tag name required
 TagDeleteFailed: failed to delete tag (it may belong to another project, or no longer exist)
 NoAgentsAvailable: no agents available
@@ -121,6 +126,7 @@ NothingToRewind: Nothing to rewind — this is the last message in the session
 InvalidAgentID: Invalid agent ID
 Session: Untitled Session
 SearchQueryRequired: Search query is required
+InvalidRegex: 'Invalid regular expression: {{.Error}}'
 UpgradeInProgress: Upgrade already in progress
 AlreadyLatestVersion: Already on the latest version
 RAGNotAvailable: RAG is not available

@@ -1,5 +1,6 @@
 import { escapeHtml } from '@/utils/html.ts'
 import { gt } from '@/composables/useLocale'
+import { isShareMode } from '@/share/shareMode'
 
 /**
  * SVG icon markup for the commit-open button (git-commit icon).
@@ -351,6 +352,10 @@ async function resolvePending(pending: string[], containerEl: HTMLElement): Prom
  * again. Only the SHAs that remain uncovered are sent, in one batched request.
  */
 export async function verifyCommitHashes(shas: string[], containerEl: HTMLElement): Promise<void> {
+    // Anonymous share page: /api/git/verify-commits is unreachable. Leave the
+    // hashes as plain text rather than marking them unverifiable.
+    if (isShareMode()) return
+
     const unique = [...new Set(shas)]
     if (unique.length === 0) return
 

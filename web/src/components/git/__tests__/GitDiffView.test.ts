@@ -55,6 +55,53 @@ describe('GitDiffView', () => {
     expect(wrapper.find('.git-diff-scroll').classes()).toContain('no-wrap')
   })
 
+  // `data-quote-source` is what lets the quote bar name the file a selected
+  // hunk came from. It is deliberately NOT `data-file-path`: that attribute
+  // marks a markdown body as an attachable file (mdBlockAttach), which would
+  // sprout "add to chat" buttons on every block of the diff.
+  it('stamps the quote source label with the file path', () => {
+    const wrapper = mountDiff({ html: '<span>x</span>', filePath: '/a/b.ts' })
+    const scroll = wrapper.find('.git-diff-scroll')
+
+    expect(scroll.attributes('data-quote-source')).toBe('/a/b.ts')
+    expect(scroll.attributes('data-quote-language')).toBe('diff')
+    expect(scroll.attributes('data-file-path')).toBeUndefined()
+  })
+
+  // An empty label makes getQuoteSource return null, so the quote falls back to
+  // a generic "selected text" label instead of rendering an empty source row.
+  it('stamps an empty quote source when there is no file path', () => {
+    const wrapper = mountDiff({ html: '<span>x</span>' })
+
+    expect(wrapper.find('.git-diff-scroll').attributes('data-quote-source')).toBe('')
+  })
+
+  // A hunk selected in a commit view means "that commit", so the commit has to
+  // travel with the quote — the file path alone would open the file at its
+  // current state, which is not what the user selected.
+  it('stamps the commit so a quoted hunk can jump back to it', () => {
+    const wrapper = mountDiff({ html: '<span>x</span>', filePath: 'src/a.go', commitSha: 'a1b2c3d4e5' })
+    const scroll = wrapper.find('.git-diff-scroll')
+
+    expect(scroll.attributes('data-quote-commit')).toBe('a1b2c3d4e5')
+    // The label names the commit too: "which commit" is the user's question in
+    // a history view, and the path alone does not answer it.
+    expect(scroll.attributes('data-quote-source')).toBe('a1b2c3d ' + 'src/a.go')
+  })
+
+  it('labels the commit alone when the diff has no file path', () => {
+    const wrapper = mountDiff({ html: '<span>x</span>', commitSha: 'a1b2c3d4e5' })
+
+    expect(wrapper.find('.git-diff-scroll').attributes('data-quote-source')).toBe('a1b2c3d')
+  })
+
+  it('stamps no commit when the view is not commit-scoped', () => {
+    const wrapper = mountDiff({ html: '<span>x</span>', filePath: 'src/a.go' })
+
+    expect(wrapper.find('.git-diff-scroll').attributes('data-quote-commit')).toBe('')
+    expect(wrapper.find('.git-diff-scroll').attributes('data-quote-source')).toBe('src/a.go')
+  })
+
   it('opens file at line when diff-linum-new is clicked', async () => {
     const wrapper = mountDiff({ html: '<div>scroll</div>', filePath: '/a/b.ts' })
     const target = document.createElement('span')

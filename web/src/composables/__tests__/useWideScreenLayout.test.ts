@@ -14,6 +14,7 @@ import {
   setLeftCollapsed,
   setChatCollapsed,
   computeIsWideScreen,
+  isChatPanelVisible,
   WIDE_SCREEN_DOCK_TABS,
   WIDE_SCREEN_SPLIT_RATIO_KEY,
   WIDE_SCREEN_CHAT_COLLAPSED_KEY,
@@ -226,6 +227,29 @@ describe('chatCollapsed (dock chat toggle)', () => {
     setChatCollapsed(false)
     setLeftCollapsed(true)
     expect(leftCollapsed.value).toBe(true) // now allowed
+  })
+})
+
+describe('isChatPanelVisible', () => {
+  it('narrow screen: visible only while the chat tab is the active tab', () => {
+    expect(isChatPanelVisible({ isWideScreen: false, chatCollapsed: false, activeTab: 'chat' })).toBe(true)
+    expect(isChatPanelVisible({ isWideScreen: false, chatCollapsed: false, activeTab: 'browse' })).toBe(false)
+    expect(isChatPanelVisible({ isWideScreen: false, chatCollapsed: false, activeTab: 'terminal' })).toBe(false)
+  })
+
+  it('wide screen with chat expanded: always visible (the pane is docked)', () => {
+    // The wide-screen layout pins the chat column on the right regardless of
+    // which left-column tab is selected, so every left tab still shows chat.
+    expect(isChatPanelVisible({ isWideScreen: true, chatCollapsed: false, activeTab: 'chat' })).toBe(true)
+    expect(isChatPanelVisible({ isWideScreen: true, chatCollapsed: false, activeTab: 'browse' })).toBe(true)
+    expect(isChatPanelVisible({ isWideScreen: true, chatCollapsed: false, activeTab: 'terminal' })).toBe(true)
+  })
+
+  it('wide screen with chat collapsed: NOT visible on any tab', () => {
+    // Collapsing the chat pane gives it display:none (SplitView rightCollapsed),
+    // so the user cannot be looking at it — even while activeTab says "chat".
+    expect(isChatPanelVisible({ isWideScreen: true, chatCollapsed: true, activeTab: 'chat' })).toBe(false)
+    expect(isChatPanelVisible({ isWideScreen: true, chatCollapsed: true, activeTab: 'browse' })).toBe(false)
   })
 })
 

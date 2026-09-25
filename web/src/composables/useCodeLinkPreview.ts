@@ -230,7 +230,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   }
 
   // ── Media targets (image / SVG / video / audio / PDF) ────────────────────
-  // These are served as raw bytes by /api/local-file/ (correct MIME, no size
+  // These are served as raw bytes by /api/fs/raw/ (correct MIME, no size
   // cap, inline), NOT by /api/file — which is JSON, 10 MiB-capped and reports
   // every raster image as binary. The preview short-circuits the fetch for
   // them and renders a media body straight from the URL.
@@ -570,7 +570,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       return
     }
 
-    // Media files are served as raw bytes by /api/local-file/ and rendered
+    // Media files are served as raw bytes by /api/fs/raw/ and rendered
     // straight from that URL — there is no JSON content to fetch, and /api/file
     // would reject every raster image as binary (10 MiB cap + null-byte sniff).
     // Go straight to 'ready' so the media body can mount.

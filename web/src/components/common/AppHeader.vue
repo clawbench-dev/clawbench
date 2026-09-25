@@ -156,6 +156,16 @@
         >
           <GitBranch :size="14" class="item-icon" />
           <span class="item-label">{{ b.name }}</span>
+          <button
+            class="item-copy-btn"
+            :class="{ 'is-copied': copiedBranch === b.name }"
+            :title="copiedBranch === b.name ? t('common.copied') : t('appHeader.copyBranchName')"
+            :aria-label="copiedBranch === b.name ? t('common.copied') : t('appHeader.copyBranchName')"
+            @click.stop="copyBranchName(b.name)"
+          >
+            <Check v-if="copiedBranch === b.name" :size="13" />
+            <Copy v-else :size="13" />
+          </button>
         </div>
       </div>
       <div class="menu-divider"></div>
@@ -231,7 +241,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Copy, Check } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -247,6 +257,7 @@ import HintTooltip from '@/components/common/HintTooltip.vue'
 import ShortcutTipTicker from '@/components/common/ShortcutTipTicker.vue'
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
+import { copyText } from '@/utils/clipboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
@@ -438,6 +449,30 @@ async function loadBranches() {
 const dirtyModalOpen = ref(false)
 const dirtyBranch = ref('')
 const dirtyCount = ref(0)
+
+/**
+ * Copy a branch name from the quick-index, flashing a check on that row for a
+ * moment. Only the header's branch list has this button, so the feedback state
+ * lives here rather than in a shared composable.
+ */
+const copiedBranch = ref('')
+let copiedBranchTimer: ReturnType<typeof setTimeout> | null = null
+
+function copyBranchName(name: string) {
+    if (!name) return
+    copyText(name, () => {
+        copiedBranch.value = name
+        if (copiedBranchTimer) clearTimeout(copiedBranchTimer)
+        copiedBranchTimer = setTimeout(() => {
+            copiedBranch.value = ''
+            copiedBranchTimer = null
+        }, 1500)
+    })
+}
+
+onUnmounted(() => {
+    if (copiedBranchTimer) clearTimeout(copiedBranchTimer)
+})
 
 async function selectBranch(b: BranchEntry) {
     branchDropdownOpen.value = false
@@ -1485,6 +1520,51 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 .app-menu-item.active .item-remove-btn {
     color: rgba(255, 255, 255, 0.75);
+}
+
+/* Per-row copy button (branch quick-index). `margin-left: auto` pins it to the
+   right edge of the row, independent of the label's width. */
+.app-menu-item .item-copy-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    margin-left: auto;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.app-menu-item .item-copy-btn.is-copied {
+    color: var(--color-green, #16a34a);
+}
+
+/* Selected (current-branch) row: the button sits on the accent fill, so its
+   glyph must invert. Declared outside the hover query — touch devices never
+   fire hover and would otherwise keep the muted grey on the accent fill. */
+.app-menu-item.active .item-copy-btn {
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.app-menu-item.active .item-copy-btn.is-copied {
+    color: #fff;
+}
+
+@media (hover: hover) {
+  .app-menu-item .item-copy-btn:hover {
+    color: var(--accent-color);
+    background: var(--bg-tertiary);
+  }
+
+  .app-menu-item.active .item-copy-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.18);
+  }
 }
 
 .app-menu-item.other-item .item-icon {

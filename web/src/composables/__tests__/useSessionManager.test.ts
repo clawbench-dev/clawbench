@@ -40,6 +40,7 @@ vi.mock('vue', async () => {
 import { useSessionManager } from '@/composables/useSessionManager'
 import { getAskState, patchAskState, askCardKey, _resetAskStatesForTesting } from '@/utils/askQuestionState.ts'
 import { chatMessageReducer } from '@/utils/chatStreamUtils'
+import { addQueued, getQueue, resetQueuesForTest } from '@/composables/useMessageQueue.ts'
 
 function createMockOptions() {
     const messages = ref<any[]>([])
@@ -73,6 +74,7 @@ describe('useSessionManager', () => {
         mockRunningSessions.value = new Set()
         mockCancelChat.mockResolvedValue(undefined)
         _resetAskStatesForTesting()
+        resetQueuesForTest()
     })
 
     // ── cleanupActiveStream ──
@@ -128,6 +130,31 @@ describe('useSessionManager', () => {
 
             expect(streamingMsg.blocks[1].done).toBe(true)
             expect(streamingMsg.blocks[2].done).toBe(true) // was already true
+        })
+
+        it('does NOT stamp a still-running sub-agent call as done', () => {
+            // A sub-agent (task/Agent) call runs for minutes inside a child session
+            // whose inner events never reach this wire, so the sweep must exempt it —
+            // otherwise the sub-agent pill shows its finished check while it works.
+            // This mirrors the exemption the streaming tool watchdog already applies.
+            const opts = createMockOptions()
+            opts.loading.value = true
+            const streamingMsg = {
+                role: 'assistant', streaming: true,
+                blocks: [
+                    { type: 'tool_use', name: 'Agent', done: false },
+                    { type: 'tool_use', name: 'task', done: false },
+                    { type: 'tool_use', name: 'Read', done: false },
+                ],
+            }
+            opts.messages.value = [streamingMsg]
+            const mgr = useSessionManager(opts)
+
+            mgr.cleanupActiveStream()
+
+            expect(streamingMsg.blocks[0].done).toBe(false) // Agent stays running
+            expect(streamingMsg.blocks[1].done).toBe(false) // task stays running
+            expect(streamingMsg.blocks[2].done).toBe(true)  // ordinary tool is swept
         })
 
         it('calls updateRenderedContents with forceFull=true', () => {
@@ -225,17 +252,18 @@ describe('useSessionManager', () => {
     // ── createSession ──
 
     describe('createSession', () => {
-        it('clears pending messages from messages.value before creating', async () => {
+        it('clears the queue store for the current session before creating', async () => {
+            // Queued messages live in the queue store, not messages.value, so
+            // "clear pending messages" is clearQueue(currentSessionId) — the new
+            // session starts with an empty panel.
             const opts = createMockOptions()
-            opts.messages.value.push({
-                role: 'user', content: 'old', blocks: [], files: [], createdAt: '', pending: true,
-            })
+            addQueued('session-1', { queueId: 'old-1', text: 'old', files: [] })
+            addQueued('session-1', { queueId: 'old-2', text: 'old 2', files: [] })
             const mgr = useSessionManager(opts)
 
             await mgr.createSession('agent-1')
 
-            // Pending messages should be removed from messages.value
-            expect(opts.messages.value.some((m: any) => m.pending)).toBe(false)
+            expect(getQueue('session-1')).toHaveLength(0)
             expect(opts.createSessionCore).toHaveBeenCalledWith('agent-1')
         })
 
@@ -254,19 +282,47 @@ describe('useSessionManager', () => {
     // ── archiveSession ──
 
     describe('archiveSession', () => {
-        it('calls cleanup then clears queue then deletes', async () => {
+        it('calls cleanup then clears queue then deletes when archiving the CURRENT session', async () => {
             const opts = createMockOptions()
             opts.loading.value = true
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.archiveSession('session-2', 'claude')
+            await mgr.archiveSession('session-1', 'claude')
 
             expect(opts.disconnectStream).toHaveBeenCalled()
             expect(fetchSpy).toHaveBeenCalledWith(
-                expect.stringContaining('/api/ai/queue?session_id=session-2'),
+                expect.stringContaining('/api/ai/queue?session_id=session-1'),
                 { method: 'DELETE' },
             )
+            expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-1', 'claude')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('does NOT tear down the current stream when archiving a DIFFERENT session', async () => {
+            // Regression: archiving another session used to run cleanupActiveStream
+            // unconditionally, which unsubscribed the session on screen, stamped its
+            // unfinished tools done and cleared `loading` — a convincing "finished"
+            // state while the backend kept running. Its content/done events then had
+            // no subscriber and were dropped, so the reply only appeared after a
+            // switch away and back.
+            const opts = createMockOptions()
+            opts.loading.value = true
+            const streamingMsg = {
+                role: 'assistant', streaming: true,
+                blocks: [{ type: 'tool_use', id: 'tu-1', done: false }],
+            }
+            opts.messages.value = [streamingMsg]
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.archiveSession('session-2', 'claude')
+
+            expect(opts.disconnectStream).not.toHaveBeenCalled()
+            expect(opts.loading.value).toBe(true)          // spinner keeps running
+            expect(streamingMsg.streaming).toBe(true)      // bubble stays streaming
+            expect(streamingMsg.blocks[0].done).toBe(false) // tool not falsely finished
             expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-2', 'claude')
 
             fetchSpy.mockRestore()
@@ -341,18 +397,19 @@ describe('useSessionManager', () => {
             expect(deleteDraft).not.toHaveBeenCalled()
         })
 
-        it('clears pending messages from messages.value, deletes session and draft', async () => {
+        it('clears the queue store, deletes session and draft', async () => {
+            // The archived session's queue entries must be dropped locally (the
+            // backend queue DELETE runs too) — a resurrected entry would show in
+            // the panel after switching back.
             const opts = createMockOptions()
-            opts.messages.value.push({
-                role: 'user', content: 'pending', blocks: [], files: [], createdAt: '', pending: true,
-            })
+            addQueued('session-1', { queueId: 'q-archive', text: 'pending', files: [] })
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
             const mgr = useSessionManager(opts)
             const deleteDraft = vi.fn()
 
             await mgr.archiveCurrentSession(deleteDraft)
 
-            expect(opts.messages.value.some((m: any) => m.pending)).toBe(false)
+            expect(getQueue('session-1')).toHaveLength(0)
             expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-1', 'claude')
             expect(deleteDraft).toHaveBeenCalledWith('session-1')
 
@@ -440,41 +497,35 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
-        it('removes stale pending message on fetch error', async () => {
-            // When enqueueMessage fails, the locally-pushed pending message
-            // should be removed from messages.value so the user doesn't see a ghost entry.
+        it('removes the optimistic queue entry on fetch error', async () => {
+            // The optimistic entry lives in the queue store (pushed by
+            // enqueueAndMaybeStart before this call). On failure it must be
+            // removed so the user doesn't see a ghost entry with no backend row.
             const opts = createMockOptions()
-            opts.messages.value.push({
-                role: 'user', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], files: [], createdAt: '', pending: true,
-            })
+            addQueued('session-1', { queueId: 'pending-fail', text: 'hello', files: [] })
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'))
             const mgr = useSessionManager(opts)
 
-            await mgr.enqueueMessage('session-1', 'hello')
+            await mgr.enqueueMessage('session-1', 'hello', [], [], 'pending-fail')
 
-            // The pending message should have been removed on error
-            expect(opts.messages.value.some((m: any) => m.pending)).toBe(false)
+            expect(getQueue('session-1')).toHaveLength(0)
 
             fetchSpy.mockRestore()
         })
 
-        it('keeps other pending messages when removing failed one on error', async () => {
+        it('keeps other queue entries when removing the failed one on error', async () => {
             const opts = createMockOptions()
-            opts.messages.value.push({
-                role: 'user', content: 'earlier', blocks: [{ type: 'text', text: 'earlier' }], files: [], createdAt: '', pending: true,
-            })
-            opts.messages.value.push({
-                role: 'user', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], files: [], createdAt: '', pending: true,
-            })
+            addQueued('session-1', { queueId: 'pending-earlier', text: 'earlier', files: [] })
+            addQueued('session-1', { queueId: 'pending-fail', text: 'hello', files: [] })
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'))
             const mgr = useSessionManager(opts)
 
-            await mgr.enqueueMessage('session-1', 'hello')
+            await mgr.enqueueMessage('session-1', 'hello', [], [], 'pending-fail')
 
-            // Only the failed 'hello' message is removed; 'earlier' stays
-            const pendingMsgs = opts.messages.value.filter((m: any) => m.pending)
-            expect(pendingMsgs).toHaveLength(1)
-            expect(pendingMsgs[0].content).toBe('earlier')
+            // Only the failed 'hello' entry is removed; 'earlier' stays queued.
+            const queue = getQueue('session-1')
+            expect(queue).toHaveLength(1)
+            expect(queue[0].text).toBe('earlier')
 
             fetchSpy.mockRestore()
         })
@@ -540,7 +591,19 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
-        it('calls scrollBottom after enqueue', async () => {
+        // DELETED (queue-store refactor): 'calls scrollBottom after enqueue'.
+        // enqueueMessage no longer calls scrollBottom at all — the optimistic
+        // entry is pushed and rendered by enqueueAndMaybeStart (chatQueueSend.ts),
+        // whose `onPendingRendered` callback is what ChatPanelContent wires to
+        // scrollBottom(true). That behavior is pinned in
+        // web/src/utils/__tests__/chatQueueSend.test.ts
+        // ('calls onPendingRendered after pushing the message'); asserting it here
+        // would require a callback this function no longer owns.
+
+        it('returns true and adds nothing to the conversation array on success', async () => {
+            // A queued message is not part of `messages` until the backend
+            // materializes it (user_message event); enqueueMessage only POSTs and
+            // returns the delivery boolean.
             const opts = createMockOptions()
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
@@ -548,9 +611,10 @@ describe('useSessionManager', () => {
             } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.enqueueMessage('session-1', 'hello')
+            const result = await mgr.enqueueMessage('session-1', 'hello')
 
-            expect(opts.scrollBottom).toHaveBeenCalledWith(true)
+            expect(result).toBe(true)
+            expect(opts.messages.value).toHaveLength(0)
 
             fetchSpy.mockRestore()
         })
@@ -583,14 +647,10 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
-        it('removes pending message from messages.value by queueId', async () => {
+        it('removes the queue entry from the store by queueId', async () => {
             const opts = createMockOptions()
-            opts.messages.value.push({
-                role: 'user', content: 'a', blocks: [], files: [], createdAt: '', pending: true, id: 'pending-1',
-            })
-            opts.messages.value.push({
-                role: 'user', content: 'b', blocks: [], files: [], createdAt: '', pending: true, id: 'pending-2',
-            })
+            addQueued('session-1', { queueId: 'pending-1', text: 'a', files: [] })
+            addQueued('session-1', { queueId: 'pending-2', text: 'b', files: [] })
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
                 json: () => Promise.resolve({ queue: [] }),
@@ -600,9 +660,9 @@ describe('useSessionManager', () => {
             await mgr.handleRemovePending('pending-2')
 
             // Only pending-1 should remain
-            const pendingMsgs = opts.messages.value.filter((m: any) => m.pending)
-            expect(pendingMsgs).toHaveLength(1)
-            expect(pendingMsgs[0].id).toBe('pending-1')
+            const queue = getQueue('session-1')
+            expect(queue).toHaveLength(1)
+            expect(queue[0].queueId).toBe('pending-1')
 
             fetchSpy.mockRestore()
         })
@@ -661,19 +721,17 @@ describe('useSessionManager', () => {
     // ── forkSession ──
 
     describe('forkSession', () => {
-        it('calls cleanup, clears input and pending messages, then delegates to forkSessionCore', async () => {
+        it('calls cleanup, clears input and the queue store, then delegates to forkSessionCore', async () => {
             const opts = createMockOptions()
             opts.loading.value = true
-            opts.messages.value.push({
-                role: 'user', content: 'pending', blocks: [], files: [], createdAt: '', pending: true,
-            })
+            addQueued('session-1', { queueId: 'q-fork', text: 'pending', files: [] })
             const mgr = useSessionManager(opts)
 
             const result = await mgr.forkSession('session-1', 42, 'agent-2')
 
             expect(opts.disconnectStream).toHaveBeenCalled()
             expect(opts.clearInputState).toHaveBeenCalled()
-            expect(opts.messages.value.some((m: any) => m.pending)).toBe(false)
+            expect(getQueue('session-1')).toHaveLength(0)
             expect(opts.forkSessionCore).toHaveBeenCalledWith('session-1', 42, 'agent-2')
             expect(result).toBe(true)
         })
@@ -691,21 +749,45 @@ describe('useSessionManager', () => {
     // ── destroySession ──
 
     describe('destroySession', () => {
-        it('calls cleanup, cancels running session, clears queue, then destroys', async () => {
+        it('calls cleanup, cancels running session, clears queue, then destroys the CURRENT session', async () => {
             const opts = createMockOptions()
             opts.loading.value = true
-            mockRunningSessions.value = new Set(['session-2'])
+            mockRunningSessions.value = new Set(['session-1'])
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.destroySession('session-1')
+
+            expect(opts.disconnectStream).toHaveBeenCalled()
+            expect(mockCancelChat).toHaveBeenCalledWith('session-1')
+            expect(fetchSpy).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/queue?session_id=session-1'),
+                { method: 'DELETE' },
+            )
+            expect(opts.destroySessionCore).toHaveBeenCalledWith('session-1')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('does NOT tear down the current stream when destroying a DIFFERENT session', async () => {
+            // Same regression as archiveSession: a hard-delete of another session
+            // must not unsubscribe the session on screen or clear its loading state.
+            const opts = createMockOptions()
+            opts.loading.value = true
+            const streamingMsg = {
+                role: 'assistant', streaming: true,
+                blocks: [{ type: 'tool_use', id: 'tu-1', done: false }],
+            }
+            opts.messages.value = [streamingMsg]
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
             const mgr = useSessionManager(opts)
 
             await mgr.destroySession('session-2')
 
-            expect(opts.disconnectStream).toHaveBeenCalled()
-            expect(mockCancelChat).toHaveBeenCalledWith('session-2')
-            expect(fetchSpy).toHaveBeenCalledWith(
-                expect.stringContaining('/api/ai/queue?session_id=session-2'),
-                { method: 'DELETE' },
-            )
+            expect(opts.disconnectStream).not.toHaveBeenCalled()
+            expect(opts.loading.value).toBe(true)
+            expect(streamingMsg.streaming).toBe(true)
+            expect(streamingMsg.blocks[0].done).toBe(false)
             expect(opts.destroySessionCore).toHaveBeenCalledWith('session-2')
 
             fetchSpy.mockRestore()

@@ -6,11 +6,12 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, messageText, nextClientSeq, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, isSubagentToolName, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 import { markCancelRequested, reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
+import { addQueued, removeQueued, removeQueuedMany, getQueue } from '@/composables/useMessageQueue.ts'
 
 const TAG = 'ChatStream'
 
@@ -27,10 +28,19 @@ export interface UseChatStreamOptions {
   onMessage: () => void
   onOpen: () => void
   isOpen: Ref<boolean>
-  onParseAssistantContent: (content: string) => { blocks: ContentBlock[]; metadata?: Record<string, unknown>; cancelled?: boolean }
+  /** See useChatSession's option of the same name. */
+  onParseAssistantContent: (content: string, opts?: { liveStreaming?: boolean }) => { blocks: ContentBlock[]; metadata?: Record<string, unknown>; cancelled?: boolean }
   onToast: (msg: string, opts?: { icon?: string; type?: string; duration?: number; onClick?: () => void }) => void
   onNotification: (title: string, opts?: { body?: string; onClick?: () => void }) => void
   onStreamEnd?: (reason: 'done' | 'cancelled' | 'error') => void
+  /**
+   * Fires at every queue_drain turn boundary for the current session: the
+   * previous turn's reply just finalized (stamping its completed_at) and the
+   * next queued message is starting. The host decides whether the user was
+   * watching and should therefore clear the unread state — the backend cannot
+   * know (a queued message may come from another device or an IM push).
+   */
+  onQueueDrainBoundary?: (sessionId: string) => void
   onFileModified?: (filePath: string) => void
   onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
   onToolResult?: (toolId: string) => void
@@ -53,6 +63,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     isOpen,
     onNotification,
     onStreamEnd,
+    onQueueDrainBoundary,
     onFileModified,
     onExtractScheduledTasks,
     onToolResult,
@@ -74,16 +85,142 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   const TOOL_USE_TIMEOUT_MS = 30000 // 30 seconds without 'done' event = mark as done
 
+  // ── Stream stall watchdog ──
+  //
+  // A subscription can be silently lost server-side (WS reconnect replaced the
+  // connection before its re-subscribe landed, App backgrounded and dropped the
+  // StreamHub subscriber, the session list lagged so runReload wrongly tore the
+  // subscription down). The run keeps going and the backend keeps writing to the
+  // DB, but every content/done event is dropped with `reason=no_subscribers`, so
+  // the UI sits on a spinner forever — until a manual refresh reads the DB and
+  // reveals the reply was complete long ago.
+  //
+  // There is no other self-healing path: the frontend has no stream inactivity
+  // timeout (an earlier 30s one was removed because a genuinely idle session is
+  // normal) and the polling fallback was deleted. This watchdog closes that gap
+  // without resurrecting the old "reload on any silence" behaviour:
+  //
+  //   * It only acts while we believe a turn is in flight (loading=true) AND the
+  //     panel is visible — an idle session and a backgrounded tab are untouched.
+  //   * "Progress" = ANY event delivered for our session, including housekeeping.
+  //     That is deliberate and is the opposite of the backend ACP watchdog, which
+  //     had to EXCLUDE housekeeping because its heartbeat kept arriving while the
+  //     model was dead. Here the failure being detected is a lost SUBSCRIPTION,
+  //     and housekeeping is fanned out through the same HasSubscribers gate as
+  //     content — so if the subscription were gone, the heartbeat would be gone
+  //     too. Receiving anything therefore proves the transport works and the
+  //     silence is the backend's (a long tool/subagent), which must NOT be
+  //     "recovered" as if the subscription had dropped.
+  //   * The recovery is NON-destructive and idempotent — resubscribe (re-triggers
+  //     the server's OnSubscribe → stream_start re-emit) + an authoritative
+  //     history reload. It never finalizes the turn, so a long-running tool or
+  //     subagent keeps its spinner (unlike the removed timeout, which killed it).
+  //     A turn that is legitimately silent for >STREAM_STALL_MS (e.g. a Claude
+  //     subagent whose inner events are not forwarded to the parent wire) will
+  //     trip the bounded attempts below; that is a few harmless reloads, not a
+  //     failure.
+  //   * Attempts are bounded per turn so a genuinely hung backend cannot cause an
+  //     endless reload loop; the log line is the diagnostic breadcrumb.
+  const STREAM_STALL_MS = 120000 // no event at all for 2min => suspect a lost subscription
+  const STREAM_STALL_CHECK_MS = 30000
+  const MAX_STALL_RECOVERIES = 3
+
+  let lastProgressAt = 0
+  let stallRecoveries = 0
+  let stallRecoveryInFlight = false
+  let stallWatchTimer: ReturnType<typeof setInterval> | null = null
+
+  /** Record that the model produced real progress (resets the stall window). */
+  function noteStreamProgress() {
+    lastProgressAt = Date.now()
+  }
+
+  /** Reset the stall window (and, for a genuinely new turn, the budget). */
+  function resetStallWatch() {
+    lastProgressAt = Date.now()
+    stallRecoveries = 0
+  }
+
+  /**
+   * Reset only the stall WINDOW, leaving the recovery budget alone.
+   *
+   * Used by connectStream, which is also called mid-turn: a queued message sent
+   * while a run is in flight re-connects the stream with
+   * `reuseExistingStreaming`. Refilling the budget there would let a user bypass
+   * the "bounded per turn" cap indefinitely by sending during a hung turn. The
+   * budget belongs to the `loading` watcher, which resets it only on a genuine
+   * turn boundary.
+   */
+  function resetStallWindow() {
+    lastProgressAt = Date.now()
+  }
+
+  function checkStreamStall() {
+    // Only an in-flight turn on a visible panel can be "stuck". An idle session
+    // legitimately produces nothing, and a hidden panel is recovered by the
+    // foreground resync instead.
+    if (!loading.value || !isOpen.value) return
+    if (stallRecoveryInFlight) return
+    if (!currentSessionId.value) return
+    // First observation of an in-flight turn: start the window from here. Any
+    // entry path (send, session opened mid-stream, App foreground) is covered,
+    // so no explicit "turn started" hook is needed.
+    if (!lastProgressAt) { lastProgressAt = Date.now(); return }
+    const silentFor = Date.now() - lastProgressAt
+    if (silentFor < STREAM_STALL_MS) return
+    if (stallRecoveries >= MAX_STALL_RECOVERIES) {
+      // Logged once per turn, then silent: the budget is exhausted, stop
+      // hammering. It is restored when a NEW turn starts — see the `loading`
+      // watcher, which is the authoritative turn boundary.
+      if (stallRecoveries === MAX_STALL_RECOVERIES) {
+        stallRecoveries++
+        appLog.w(TAG, `stream silent ${silentFor}ms — recovery budget exhausted (${MAX_STALL_RECOVERIES}), giving up until a new turn starts`)
+      }
+      return
+    }
+    stallRecoveries++
+    // Reset the window BEFORE acting so the next tick cannot re-fire while the
+    // reload is still in flight.
+    lastProgressAt = Date.now()
+    stallRecoveryInFlight = true
+    const sid = currentSessionId.value
+    appLog.w(TAG, `stream silent ${silentFor}ms with a turn in flight — recovering (attempt ${stallRecoveries}/${MAX_STALL_RECOVERIES}, session=${sid})`)
+    try {
+      // Resubscribe forces the server to re-emit stream_start/state for a run
+      // that is still going; the reload converges the UI to the DB if it ended.
+      resubscribe(sid)
+    } catch {
+      // sendWsMessage can throw synchronously when the socket transitions
+      // between its readyState check and the send. Swallowing it here matters:
+      // an escaping throw would skip the promise chain below, leaving
+      // stallRecoveryInFlight stuck true and permanently disarming the watchdog.
+    }
+    Promise.resolve()
+      .then(() => onLoadHistory())
+      .catch(() => { /* non-critical: the subscription repair already happened */ })
+      .finally(() => { stallRecoveryInFlight = false })
+  }
+
+  function startStallWatch() {
+    if (stallWatchTimer) return
+    stallWatchTimer = setInterval(checkStreamStall, STREAM_STALL_CHECK_MS)
+  }
+
+  function stopStallWatch() {
+    if (stallWatchTimer) {
+      clearInterval(stallWatchTimer)
+      stallWatchTimer = null
+    }
+  }
+
   // Subagent (task/Agent) tool calls run for minutes inside a child session whose
   // inner events aren't forwarded over ACP, so the outer call legitimately exceeds
   // TOOL_USE_TIMEOUT_MS. Don't kill their spinner with the 30s fallback, otherwise a
   // long-running subagent looks like it already finished.
-  const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent'])
-  function isSubagentToolName(name?: string): boolean {
-    return !!name && SUBAGENT_TOOL_NAMES.has(name.toLowerCase())
-  }
+  // (isSubagentToolName is shared with the session-manager cleanup sweep so both
+  // places agree on which tool names are exempt.)
 
-  const { onEvent, sendWsMessage, connected } = useGlobalEvents()
+  const { onEvent, sendWsMessage, connected, isReplayingEvents } = useGlobalEvents()
 
   function debouncedRender() {
     // Panel not visible: drop any pending render/scroll — data still accumulates
@@ -163,23 +300,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     subscribedSessionId = null
   }
 
-  /**
-   * Find the index of the user message a new streaming placeholder should
-   * anchor to: the newest NON-pending user message (fallback: newest user
-   * message).
-   */
-  function findAnchorUserIdx(): number {
-    let idx = -1
-    let maxSeq = -1
-    messages.value.forEach((m, i) => {
-      if (m.role !== 'user' || m.pending || m.seq == null) return
-      if (m.seq > maxSeq) { maxSeq = m.seq; idx = i }
-    })
-    if (idx === -1) idx = messages.value.findLastIndex((m) => m.role === 'user' && !m.pending)
-    if (idx === -1) idx = messages.value.findLastIndex((m) => m.role === 'user')
-    return idx
-  }
-
   /** Whether an assistant message carries any renderable content (text/thinking/tool blocks). */
   function messageHasContent(m: ChatMessage): boolean {
     return messageText(m) !== '' || !!m.blocks?.length
@@ -212,21 +332,11 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
     }
 
-    // Ensure a streaming assistant message exists — create one if needed
+    // Ensure a streaming assistant message exists — create one if needed.
+    // Ordering is by DB id (the question row was materialized before the reply),
+    // so a transient placeholder simply sorts after all DB-backed messages.
     const streaming = findStreamingMsg(messages.value)
     if (!streaming) {
-      // Anchor the new placeholder right after its question so it can never
-      // sort above an earlier reply. The question is the newest NON-pending
-      // user message: queued messages (pending=true) are later turns waiting
-      // for the drain loop — anchoring to one of them would push this reply
-      // (and everything before it) below the queued bubbles, producing the
-      // wrong order (msg2, msg3 above msg1, reply1). Fall back to the last
-      // user message when every user message is pending.
-      // NOTE: prefer the user message with the largest seq (monotonic send
-      // order) — sorting moves an unadopted msg1 bubble to the front, so the
-      // newest user is not necessarily the last physical element. Messages
-      // without a seq (DB-loaded history) are excluded unless nothing else.
-      const parentUserIdx = findAnchorUserIdx()
       const newStreaming: ChatMessage = {
         role: 'assistant' as const,
         id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -236,7 +346,6 @@ export function useChatStream(options: UseChatStreamOptions) {
         createdAt: new Date().toISOString(),
         backend: currentBackend.value,
         seq: nextClientSeq(),
-        parentQueueId: parentUserIdx !== -1 ? String(messages.value[parentUserIdx].id) : undefined,
       }
       // Single write channel: the reducer pushes + re-sorts.
       dispatch({ type: 'stream_placeholder', msg: newStreaming })
@@ -252,6 +361,17 @@ export function useChatStream(options: UseChatStreamOptions) {
   function stopStreaming() {
     clearToolUseTimeouts()
     thinkingBlockCounter = 0
+    // Make the stall watchdog inert for the inter-turn gap: an idle session
+    // legitimately produces nothing, so the silence that follows a finished
+    // turn must not look like a stall. The interval itself keeps running
+    // (started once at setup): toggling it per turn would add a lifecycle that
+    // has to be kept in sync with every exit path.
+    //
+    // The recovery BUDGET is owned by the `loading` watcher, not here — see its
+    // comment. `loading` is the authoritative turn boundary, and it is the only
+    // signal that also covers turn ends which never call stopStreaming (a
+    // history response reporting the run finished).
+    lastProgressAt = 0
   }
 
   function disconnectStream() {
@@ -276,6 +396,13 @@ export function useChatStream(options: UseChatStreamOptions) {
   function connectStream(sessionId: string, options?: { reuseExistingStreaming?: boolean }) {
     // Stop any previous turn's stream state, then start a fresh one.
     stopStreaming()
+    // Start the stall window fresh, but do NOT refill the recovery budget here:
+    // this is also the mid-turn path (a queued send re-connects with
+    // reuseExistingStreaming), where refilling would let a user bypass the
+    // per-turn cap. The budget is reset by the `loading` watcher on a real turn
+    // boundary — which a normal send triggers (loading false→true) just above
+    // this call.
+    resetStallWindow()
     // Discard events buffered for the PREVIOUS turn. They are replayed on the
     // next stream_start (the only replay trigger), so leaving them here means
     // that if the previous turn never got a placeholder — the very case the
@@ -384,34 +511,34 @@ export function useChatStream(options: UseChatStreamOptions) {
     const payload = csData.payload as Record<string, unknown>
     const sessionChanged = () => currentSessionId.value !== sessionId
 
+    // Any event for OUR session proves the subscription is alive — including one
+    // we end up discarding (e.g. a tool event for a placeholder that is gone).
+    //
+    // This watchdog detects a LOST SUBSCRIPTION, not a slow model, so the
+    // progress signal is deliberately the opposite of the backend ACP watchdog's:
+    // there, housekeeping notifications had to be EXCLUDED because they kept
+    // arriving while the model was dead, blinding the check. Here they are
+    // exactly the right evidence — housekeeping is fanned out through the same
+    // `HasSubscribers` gate as content, so if a subscription were lost, the
+    // heartbeat would be dropped too and NOTHING would arrive. Receiving anything
+    // therefore means the transport is fine and the silence is the backend's
+    // doing (a long tool / subagent), which must not be "recovered".
+    if (!sessionChanged()) {
+      noteStreamProgress()
+    }
+
     switch (csData.event_type) {
       case 'stream_start': {
         if (sessionChanged()) return
         const messageId = payload.message_id as number | undefined
-        // The answered queue id (the streaming row's queue_id — the queueId of
-        // the user message this run answers). Lets the reducer re-anchor a
-        // recovery placeholder that was built before its question bubble
-        // arrived, so the reply sorts after its own question instead of above it.
-        const answeredQueueId = typeof payload.queue_id === 'string' ? payload.queue_id : undefined
         if (messageId) {
           // Event-driven placeholder: if no streaming assistant message exists
           // (e.g. client opened the session mid-stream, or the optimistic
-          // placeholder was dropped by a loadHistory), create one anchored to
-          // the current streaming id. The DB row id is used as the message id
-          // so subsequent content events (findStreamingMsg) match it.
+          // placeholder was dropped by a loadHistory), create one. The DB row id
+          // is used as the message id so subsequent content events
+          // (findStreamingMsg) match it. Ordering is by DB id, so no anchor is
+          // needed: the user row was materialized before this placeholder.
           if (!findStreamingMsg(messages.value)) {
-            // Anchor to the answered question's queue id when the backend
-            // provided it — the authoritative anchor (resolves once the
-            // question bubble is in the array, and lets rebuildFromDb Channel
-            // 2 match the DB streaming row). Fall back to the newest non-pending
-            // user message only when the backend sent no queue id (e.g.
-            // scheduled runs with no question), preserving the old behavior.
-            const anchorParent = answeredQueueId
-              ? undefined
-              : (() => {
-                  const anchorIdx = findAnchorUserIdx()
-                  return anchorIdx !== -1 ? String(messages.value[anchorIdx].id) : undefined
-                })()
             dispatch({ type: 'stream_placeholder', msg: {
               role: 'assistant',
               id: messageId,
@@ -421,16 +548,14 @@ export function useChatStream(options: UseChatStreamOptions) {
               createdAt: new Date().toISOString(),
               backend: currentBackend.value,
               seq: nextClientSeq(),
-              parentQueueId: answeredQueueId || anchorParent,
             } as ChatMessage })
             onRenderNeeded()
             onScrollBottom(false)
           }
           // ws_stream_start is idempotent: it re-sets the id on the existing
           // streaming message (a no-op when the placeholder above already
-          // carries the DB id) and re-anchors to the answered question when a
-          // recovery placeholder was anchored to a stale user message.
-          dispatch({ type: 'ws_stream_start', messageId, answeredQueueId })
+          // carries the DB id).
+          dispatch({ type: 'ws_stream_start', messageId })
         }
         // A placeholder now exists, so anything that arrived before it can be
         // applied. Done after the dispatch above so the replayed events land on
@@ -442,12 +567,12 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'stream_split': {
         if (sessionChanged()) return
         const messageId = payload.message_id as number | undefined
-        const splitQueueId = typeof payload.queue_id === 'string' ? payload.queue_id : undefined
         if (!messageId) break
         // The assistant reply was split in two at a mid-turn injection point.
         // The reducer finalizes the current bubble and pushes the new "after"
-        // bubble; the injected question sorts between them by DB id.
-        dispatch({ type: 'ws_stream_split', messageId, queueId: splitQueueId })
+        // bubble; the injected question sits between them by DB id (it was
+        // materialized at injection time).
+        dispatch({ type: 'ws_stream_split', messageId })
         onRenderNeeded()
         onScrollBottom(false)
         break
@@ -778,33 +903,27 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'user_message': {
         if (sessionChanged()) return
-        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; queued?: boolean }
+        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string }
 
-        // Skip self-echo: if the sender is this device, we already have the
-        // optimistic message. Still adopt its DB id from messageId — this is
-        // the ONLY reliable way to learn a directly-sent message's DB id
-        // without a backend that echoes msgId in the POST response. Without
-        // it the unadopted bubble sorts as a transient (after later queued
-        // messages that already adopted DB ids) — the ordering mess.
-        const myClientId = localStorage.getItem('clawbench_client_id')
-        if (userData.senderClientId && userData.senderClientId === myClientId) {
-          if (userData.messageId && userData.queueId) {
-            // The backend's own `queued` flag decides whether this bubble is
-            // still waiting for the drain loop. A message that joined the
-            // RUNNING turn (mid-turn injection) is not queued, so no drain will
-            // ever come for it — it must shed pending now or it would spin
-            // forever. Backend-driven, so this stays backend-agnostic.
-            dispatch({
-              type: 'optimistic_adopt_id',
-              id: userData.queueId,
-              dbId: userData.messageId,
-              clearPending: userData.queued !== true,
-            })
-          }
-          break
+        // A message whose queueId is still in the queue is being MATERIALIZED
+        // right now: drop the queue entry and render it inline. This covers the
+        // sender too — its optimistic bubble lives in the queue store, not the
+        // message list, so the usual self-echo skip would hide it.
+        const wasQueued = !!userData.queueId && getQueue(sessionId).some((m) => m.queueId === userData.queueId)
+        if (wasQueued) {
+          // removeQueued also releases the entry's in-flight guard.
+          removeQueued(sessionId, userData.queueId!)
+        } else {
+          // Direct send: this device already has the bubble (adopted from the
+          // POST response), so its echo is skipped.
+          const myClientId = localStorage.getItem('clawbench_client_id')
+          if (userData.senderClientId && userData.senderClientId === myClientId) break
         }
 
-        dispatch({ type: 'ws_user_message', data: { ...userData, backend: currentBackend.value } })
+        // Strip senderClientId when we decided to render: the reducer has its
+        // own self-echo guard, and a queue-originated echo from this device must
+        // still be shown.
+        dispatch({ type: 'ws_user_message', data: { ...userData, senderClientId: undefined, backend: currentBackend.value } })
 
         // debouncedRender schedules the scroll pin in the same rAF — no
         // separate onScrollBottom here (duplicate pin in the same frame).
@@ -812,24 +931,48 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
 
+      case 'queue_added': {
+        // A message was enqueued (by this device or another). It has no
+        // chat_history row yet, so it goes to the queue panel, not the list.
+        const addedData = payload as { queueId?: string; text?: string; files?: FileEntry[]; senderClientId?: string }
+        const myClientId = localStorage.getItem('clawbench_client_id')
+        if (addedData.senderClientId && addedData.senderClientId === myClientId) break
+        if (addedData.queueId) {
+          addQueued(sessionId, { queueId: addedData.queueId, text: addedData.text || '', files: addedData.files || [] })
+        }
+        break
+      }
+
       case 'queue_drain': {
+        // A queued message started its OWN turn. The real user message arrived
+        // in the preceding user_message event (content lives only there), so
+        // this is just the turn boundary: drop the entry from the queue panel
+        // and make sure a streaming placeholder exists for the reply.
         const drainData = payload as unknown as QueueEventData
         const eventSessionId = drainData.sessionId || sessionId
-
-        if (eventSessionId === currentSessionId.value) {
-          const drainText = drainData.text || ''
-          const drainFiles: FileEntry[] = [
-            ...(drainData.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-            ...(drainData.filePaths || []).map(p => ({ path: p, isDir: false })),
-          ]
-          dispatch({ type: 'ws_queue_drain', queueId: drainData.queueId || '', text: drainText, files: drainFiles, dbMessageId: drainData.messageId || undefined, backend: currentBackend.value })
-          // Extract tasks from the newly added message(s).
-          onExtractScheduledTasks?.(messages.value)
-
-          if (isOpen.value) {
-            onRenderNeeded()
-            onScrollBottom(false)
-          }
+        if (eventSessionId !== currentSessionId.value) break
+        if (drainData.queueId) removeQueued(eventSessionId, drainData.queueId)
+        // Finalize the reply that was streaming: the backend emits `done` only
+        // when the whole drain loop exits, so without this the previous bubble
+        // would keep its spinner while the next turn streams into it.
+        dispatch({ type: 'ws_queue_drain' })
+        // Turn boundary: the previous reply just finalized (its completed_at is
+        // now stamped past last_read_at), so the session would count as unread
+        // for the whole duration of the next turn even though the user may be
+        // watching. Let the host re-anchor last_read_at when it can prove the
+        // user is present. Gated on a live (non-replayed) event: a replayed
+        // drain means the user was disconnected, so the badge must survive.
+        if (!isReplayingEvents.value) {
+          onQueueDrainBoundary?.(eventSessionId)
+        }
+        // The new turn's placeholder is normally created by the stream_start
+        // that follows. Ensure one exists anyway so a lost stream_start still
+        // renders the reply.
+        ensureStreamingPlaceholder()
+        onExtractScheduledTasks?.(messages.value)
+        if (isOpen.value) {
+          onRenderNeeded()
+          onScrollBottom(false)
         }
         break
       }
@@ -838,12 +981,12 @@ export function useChatStream(options: UseChatStreamOptions) {
         // A queued message joined the RUNNING turn. Unlike queue_drain this must
         // NOT open a new assistant placeholder — the reply in flight continues
         // (the steer boundary splits it if the backend supports that). Only the
-        // bubble's pending state goes.
+        // queue entry goes; its user_message already put it in the list.
         const injectData = payload as unknown as QueueEventData
         const injectSessionId = injectData.sessionId || sessionId
         if (injectSessionId !== currentSessionId.value) break
         if (injectData.queueId) {
-          dispatch({ type: 'clear_queued_pending', queueId: injectData.queueId })
+          removeQueued(injectSessionId, injectData.queueId)
           onRenderNeeded()
         }
         break
@@ -853,8 +996,9 @@ export function useChatStream(options: UseChatStreamOptions) {
         const cancelData = payload as { sessionId?: string; queueIds?: string[] }
         const eventSessionId = cancelData.sessionId || sessionId
         if (eventSessionId !== currentSessionId.value) break
-        const ids = cancelData.queueIds || []
-        dispatch({ type: 'ws_queue_cancel', queueIds: ids })
+        const cancelled = cancelData.queueIds || []
+        removeQueuedMany(eventSessionId, cancelled)
+        for (const id of cancelled) untrackInFlightSend(id)
         onRenderNeeded()
         break
       }
@@ -862,6 +1006,11 @@ export function useChatStream(options: UseChatStreamOptions) {
   }
 
   const unsubscribeFromWs = onEvent(handleChatStreamEvent)
+
+  // Watch for a silently-lost stream subscription for the lifetime of the
+  // composable. Cheap (one 30s interval, all checks are O(1) guard reads) and
+  // inert unless a turn is in flight on a visible panel.
+  startStallWatch()
 
   async function cancelStream() {
     if (!currentSessionId.value || !loading.value) return
@@ -882,8 +1031,42 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Buffered events belong to the previous session's in-flight turn; applying
     // them to the new session's placeholder would corrupt it.
     clearBufferedEvents()
+    // The stall window is per-turn state: a new session starts a fresh one.
+    resetStallWatch()
     if (sid) subscribe(sid)
   }, { immediate: true })
+
+  // The authoritative turn boundary for the stall watchdog.
+  //
+  // `loading` is the single fact that means "a turn is in flight", so its
+  // rising edge starts a fresh stall window + recovery budget, and its falling
+  // edge makes the watchdog inert. Watching it here (rather than relying on
+  // stopStreaming being called) is deliberate: `syncSessionState` can end a
+  // turn — `loading.value = false` when a history response reports the run is
+  // no longer running — WITHOUT going through stopStreaming. That path is
+  // reachable precisely in this feature's scenario (the terminal event was
+  // dropped, so only a history reload reveals the run ended), and without this
+  // watcher the exhausted budget and stale window would leak into the next
+  // turn: the watchdog would fire immediately and get zero attempts.
+  //
+  // flush:'sync' is REQUIRED, not stylistic. With the default 'pre' flush Vue
+  // batches the callback to a microtask and re-reads the source at flush time,
+  // so a `false -> true` pair within one tick (turn ends, next turn starts
+  // immediately) coalesces back to `true` — equal to the previously observed
+  // value — and the callback is SKIPPED entirely, losing both edges. The
+  // callback only assigns a few numbers, so running it synchronously is free.
+  const stopLoadingWatch = watch(loading, (isLoading) => {
+    if (isLoading) {
+      // New turn: fresh window, full budget.
+      resetStallWatch()
+    } else {
+      // Turn over: stop counting the idle period as a stall, and restore the
+      // budget so the next turn gets its own attempts.
+      lastProgressAt = 0
+      stallRecoveries = 0
+      stallRecoveryInFlight = false
+    }
+  }, { flush: 'sync' })
 
   // Re-subscribe on WS reconnect
   // NOTE: After this watch fires, App.vue's handleReconnect runs
@@ -905,11 +1088,13 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   onUnmounted(() => {
     disconnectStream()
+    stopStallWatch()
     clearToolUseTimeouts()
     renderScheduler.cancelAll()
     unsubscribeFromWs()
     stopConnectedWatch()
     stopSessionWatch()
+    stopLoadingWatch()
   })
 
   return {

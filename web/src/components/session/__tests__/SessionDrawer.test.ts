@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import SessionDrawer from '@/components/session/SessionDrawer.vue'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 // ── Mocks ────────────────────────────────────────────────────
 vi.mock('vue-i18n', () => ({
@@ -113,11 +115,86 @@ describe('SessionDrawer', () => {
     wideScreen.isWideScreen.value = true
   })
 
+  describe('shared-sessions entry button', () => {
+    it('is hidden when the project has no shared conversation', async () => {
+      const { useSessionShare } = await import('@/composables/useSessionShare')
+      const { resetSessionShareState } = useSessionShare()
+      resetSessionShareState()
+
+      const wrapper = mountDrawer()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(false)
+    })
+
+    it('appears as soon as one conversation is shared', async () => {
+      const { useSessionShare } = await import('@/composables/useSessionShare')
+      const { resetSessionShareState, markShared } = useSessionShare()
+      resetSessionShareState()
+
+      const wrapper = mountDrawer()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(false)
+
+      markShared('s1')
+      await nextTick()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
+
+      resetSessionShareState()
+    })
+
+    it('disappears again when the last share is revoked', async () => {
+      const { useSessionShare } = await import('@/composables/useSessionShare')
+      const { resetSessionShareState, markShared, markUnshared } = useSessionShare()
+      resetSessionShareState()
+      markShared('s1')
+
+      const wrapper = mountDrawer()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
+
+      markUnshared('s1')
+      await nextTick()
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(false)
+
+      resetSessionShareState()
+    })
+
+    // The glyph must be the conversation+share mark, not a plain conversation.
+    it('uses the share glyph, not a plain conversation glyph', () => {
+      const src = readFileSync(
+        join(__dirname, '..', 'SessionDrawer.vue'),
+        'utf8',
+      )
+      expect(src).toContain('MessageSquareShare')
+      expect(src).not.toContain('MessagesSquare')
+    })
+  })
+
   describe('rendering shell', () => {
     it('renders SessionList and SessionListHeader stubs', () => {
       const wrapper = mountDrawer()
       expect(wrapper.find('.session-list-stub').exists()).toBe(true)
       expect(wrapper.find('.header-stub').exists()).toBe(true)
+    })
+
+    // Regression guard: this component renders three teleporting overlays
+    // (BottomSheet, AgentSelectorDrawer, SharedSessionsDrawer). Left as three
+    // top-level nodes it is a FRAGMENT, and a fragment root cannot inherit
+    // fallthrough attributes — a host binding v-show (a `style` fallthrough)
+    // gets "Extraneous non-props attributes (style)" and silently keeps the
+    // overlay visible. SessionSidebar shipped exactly that bug when a sibling
+    // drawer was added next to its root div.
+    it('has a single root element so hosts can apply v-show/class fallthrough', () => {
+      const src = readFileSync(
+        join(__dirname, '..', 'SessionDrawer.vue'),
+        'utf8',
+      )
+      // The template body, between the outermost <template> tags.
+      const body = src.slice(src.indexOf('<template>') + 10, src.indexOf('</template>'))
+      // Count top-level element starts: lines with exactly two leading spaces
+      // followed by a tag. Comments and blanks are ignored.
+      const roots = body
+        .split('\n')
+        .filter((l) => /^ {2}<[A-Za-z]/.test(l))
+      expect(roots).toHaveLength(1)
+      expect(roots[0]).toContain('div')
     })
   })
 

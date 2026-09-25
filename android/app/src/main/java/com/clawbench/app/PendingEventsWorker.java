@@ -136,23 +136,21 @@ public class PendingEventsWorker extends Worker {
                 JSONObject eventObj = events.getJSONObject(i);
                 String payloadStr = eventObj.optString("payload", "");
                 String eventId = eventObj.optString("event_id", "");
+                // Server withholds the notification when the subject is already
+                // read, but still returns the event so the cursor advances.
+                boolean suppress = eventObj.optBoolean("suppress_notification", false);
 
                 JSONObject msg = new JSONObject(payloadStr);
                 String eventType = msg.optString("event", "");
                 JSONObject data = msg.optJSONObject("data");
                 if (data == null) continue;
 
-                // Post notification for terminal events
+                // Post notification (shared policy with the native WS path).
+                // An empty cursor means this fetch returned the whole TTL-bounded
+                // backlog — notify none of it and just adopt the newest id.
                 String status = data.optString("status", "");
-                boolean shouldNotify = false;
-                if ("session_update".equals(eventType)
-                        && ("completed".equals(status) || "cancelled".equals(status) || "permission_pending".equals(status))) {
-                    shouldNotify = true;
-                } else if ("task_update".equals(eventType)
-                        && ("running".equals(status) || "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
-                    shouldNotify = true;
-                }
-                if (shouldNotify) {
+                if (NativeNotificationPolicy.shouldNotifyFromBacklog(
+                        lastSeenId, eventType, status, suppress)) {
                     BackgroundService.postEventNotificationFromWorker(ctx, eventType, data);
                 }
 

@@ -74,11 +74,11 @@ describe('initLocalLinkGuard', () => {
     const onOpen = vi.fn()
     const stop = initLocalLinkGuard(onOpen)
 
-    const dl = appendLink('/api/local-file/src/main.go?download=1')
+    const dl = appendLink('/api/fs/raw/src/main.go?download=1')
     dl.setAttribute('download', 'main.go')
     fireClick(dl)
 
-    fireClick(appendLink('/api/local-file/src/main.go'))
+    fireClick(appendLink('/api/fs/raw/src/main.go'))
     fireClick(appendLink('/api/some/endpoint'))
     expect(onOpen).not.toHaveBeenCalled()
 

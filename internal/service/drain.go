@@ -30,14 +30,29 @@ type DrainConfig struct {
 	ProjectPath string
 	BackendName string
 
-	// ExecuteRunWithMessage runs one AI stream execution for the given queued message.
-	// The drain loop calls this after dequeuing the message from DB and sending
-	// the queue_drain event. The message is a ChatMessage with queued=0 (already
-	// claimed) and QueueID preserved.
-	ExecuteRunWithMessage func(msg model.ChatMessage) DrainResult
+	// ExecuteRunWithMessage runs one AI stream execution for the given queued
+	// message. The drain loop calls this after claiming the message from the
+	// queue and materializing it into chat_history, so msgID is the chat_history
+	// user-message id (already persisted) and row carries the prompt/attachments.
+	ExecuteRunWithMessage func(msgID int64, row QueuedRow) DrainResult
 
 	// MarkDoneAndSendFinal sends the terminal event (done/cancelled/error).
 	MarkDoneAndSendFinal func(event ai.StreamEvent)
+
+	// OnTurnAnswered is called when a turn finished NORMALLY and more queued
+	// work remains — i.e. the drain loop is about to start the next message.
+	// Callers use it to notify the user that this answer landed, instead of
+	// waiting for the whole queue to finish.
+	//
+	// It is deliberately NOT called for the last turn: that one exits through
+	// MarkDoneAndSendFinal, whose push claims the once-per-run terminal guard.
+	// Firing here for it too would either double-notify or — because that guard
+	// permits a single push per run — silence the terminal push and lose the
+	// last turn's notification entirely. So N messages produce exactly N
+	// notifications: N-1 here plus the terminal one.
+	//
+	// Nil means no callback.
+	OnTurnAnswered func()
 
 	// AutoContinue, when non-nil, is called to resume a turn that ended
 	// abnormally instead of letting the loop terminate. It returns the result
@@ -65,9 +80,25 @@ func emitDrainEvent(sessionID string, event ai.StreamEvent) {
 // queue silently dead.
 const maxDequeueRetries = 5
 
-// dequeueQueuedMessage is an indirection over DequeueQueuedMessage so tests can
-// inject persistent/transient failures into the drain loop.
-var dequeueQueuedMessage = DequeueQueuedMessage
+// dequeueQueuedMessage is an indirection over ClaimNextAndMaterialize so tests
+// can inject persistent/transient failures into the drain loop.
+var dequeueQueuedMessage = ClaimNextAndMaterialize
+
+// emitUserMessage announces a user message that has just been materialized into
+// chat_history. It is the single source of a user bubble's content: queue_drain
+// carries no text/files and never creates a bubble, so a client can never render
+// two bubbles for the same message.
+func emitUserMessage(sessionID string, msgID int64, row QueuedRow) {
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: eventTypeUserMessage,
+		UserMessage: &ai.UserMessageData{
+			MessageID: msgID,
+			Content:   row.Content,
+			Files:     row.Files,
+			QueueID:   row.QueueID,
+		},
+	})
+}
 
 // abortDrain is the drain loop's failure exit after dequeue keeps failing past
 // the retry window. It mirrors the user-cancel branch: collect queue IDs,
@@ -99,9 +130,9 @@ func abortDrain(cfg DrainConfig, cause error) {
 // emits queue_cancel so the frontend immediately removes its pending bubbles.
 // It is shared by every terminal branch that must not leave the queue alive:
 // user cancel, the drained message failing, or an empty result. Skipping this
-// on the error branch left later queued messages stuck at queued=1 forever —
-// the drain loop had already exited, so nothing would ever dequeue them and
-// the UI's pending bubbles could not be cancelled (ISS-239).
+// on the error branch left later queued messages stuck in the queue forever —
+// the drain loop had already exited, so nothing would ever claim them and
+// the UI's queue entries could not be cancelled (ISS-239).
 func clearQueueAndEmitCancel(cfg DrainConfig) {
 	// Collect queue IDs before clearing for queue_cancel event
 	queueIDs, _ := GetQueuedQueueIDs(cfg.SessionID)
@@ -228,8 +259,9 @@ func retryDequeueAfterError(cfg DrainConfig, dequeueFailures *int, err error) bo
 }
 
 // RunDrainLoop runs the session's turn loop after an initial stream execution.
-// It checks terminal conditions, dequeues messages from chat_history (queued=1),
-// and executes them, until the queue is empty or a terminal condition is met.
+// It checks terminal conditions, claims messages from queued_messages
+// (materializing each into chat_history), and executes them, until the queue is
+// empty or a terminal condition is met.
 //
 // Exiting is the delicate part. The loop must not decide "queue is empty" and
 // leave while a concurrent send is mid-flight: that send would have seen a live
@@ -271,8 +303,9 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 			return
 		}
 
-		// Normal completion — check DB queue for next message
-		msg, ok, err := dequeueQueuedMessage(cfg.SessionID)
+		// Normal completion — claim the next queued message and materialize it
+		// into chat_history (id allocated now, before its reply).
+		row, msgID, ok, err := dequeueQueuedMessage(cfg.SessionID)
 		if err != nil {
 			if !retryDequeueAfterError(cfg, &dequeueFailures, err) {
 				return
@@ -290,38 +323,50 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 			return
 		}
 
-		// A message was successfully dequeued — the DB recovered, reset the
+		// A message was successfully claimed — the DB recovered, reset the
 		// failure counter.
 		dequeueFailures = 0
 		// A real user turn is starting: give it its own auto-continue budget.
 		autoContinueAttempts = 0
 
-		// Queue has next message — drain it (row already persisted with queued=0)
+		// The PREVIOUS turn just finished normally and more work is waiting, so
+		// this is where an intermediate answer is reported. The loop's terminal
+		// `done` only fires once the whole queue is drained, which is why a user
+		// with several queued messages used to be notified a single time — after
+		// the last one. Reporting here gives every intermediate answer its own
+		// notification (the final one is covered by the terminal push, so N
+		// messages still produce exactly N).
+		//
+		// Gated on a CLEAN completion: an interrupted or abnormally-terminated
+		// turn is not an answer worth announcing (the user cut it short, or it
+		// was abandoned), and `result` still holds that turn at this point.
+		if cfg.OnTurnAnswered != nil &&
+			result.CancelReason == "" && result.Err == "" && !result.Empty && result.AbnormalReason == "" {
+			cfg.OnTurnAnswered()
+		}
+
 		slog.Info("drain: draining queued message",
 			slog.String("session", cfg.SessionID),
-			slog.String("queueId", msg.QueueID),
-			slog.Int64("msgId", msg.ID),
-			slog.String("text", msg.Content))
+			slog.String("queueId", row.QueueID),
+			slog.Int64("msgId", msgID),
+			slog.String("text", row.Content))
 
-		// Emit queue_drain event to WS clients
+		// 1. Announce the real user message (content lives here, and only here).
+		emitUserMessage(cfg.SessionID, msgID, row)
+
+		// 2. Signal the turn boundary: finalize the previous reply, adopt the
+		//    bubble, open a placeholder. Carries no content by design.
 		emitDrainEvent(cfg.SessionID, ai.StreamEvent{
 			Type: "queue_drain",
 			QueueEvent: &ai.QueueEventData{
 				SessionID: cfg.SessionID,
-				QueueID:   msg.QueueID,
-				Text:      msg.Content,
-				MessageID: msg.ID,
-				FilePaths: filePathsFromFiles(msg.Files),
-				Files:     msg.Files,
+				QueueID:   row.QueueID,
+				MessageID: msgID,
 			},
 		})
-		slog.Info("drain: emitted queue_drain",
-			slog.String("session", cfg.SessionID),
-			slog.String("queueId", msg.QueueID),
-			slog.Int64("msgId", msg.ID))
 
 		// Execute next stream run with the dequeued message
-		result = cfg.ExecuteRunWithMessage(msg)
+		result = cfg.ExecuteRunWithMessage(msgID, row)
 		// Loop continues
 	}
 }

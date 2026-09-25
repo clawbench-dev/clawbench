@@ -2,12 +2,19 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 
-// Mock useSessionIdentity before importing the module under test
+// Mock useSessionIdentity before importing the module under test.
+//
+// The module under test imports both the composable and the module-level
+// accessors (getSessionId/getSessionTitle), so all three must be provided —
+// a whitelist that omits one makes the whole file fail to load.
 const mockSendMessage = vi.fn()
+const mockSessionState = vi.hoisted(() => ({ sessionId: '', sessionTitle: '' }))
 vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: () => ({
     sendMessage: mockSendMessage,
   }),
+  getSessionId: () => mockSessionState.sessionId,
+  getSessionTitle: () => mockSessionState.sessionTitle,
 }))
 
 // Mock useToast
@@ -771,6 +778,108 @@ describe('useQuoteQuestion', () => {
       wrapper.unmount()
     })
 
+    // Git history diffs became quotable so a selected hunk can be sent to the
+    // AI. The container carries `data-quote-source` (the file name), so the
+    // quote is labelled with the file rather than falling back to a generic
+    // "selected text" label.
+    it('shows bar for a selection inside a git diff, labelled with the file', () => {
+      const wrapper = mountWithComposable()
+      createSelectionInContainer('git-diff-scroll', {
+        'data-quote-source': 'src/main.go',
+        'data-quote-language': 'diff',
+      })
+
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value?.filePath).toBe('src/main.go')
+      expect(ctx.quoteData.value?.sourceKind).toBe('file')
+
+      wrapper.unmount()
+    })
+
+    // Without a file name the diff is still quotable, but there is nothing to
+    // open — so the kind must be 'selection', not the 'message' that inference
+    // would produce for an entry with no path and no url.
+    it('tags a diff selection with no file name as a free-form selection', () => {
+      const wrapper = mountWithComposable()
+      createSelectionInContainer('git-diff-scroll', { 'data-quote-source': '' })
+
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value?.sourceKind).toBe('selection')
+
+      wrapper.unmount()
+    })
+
+    // The terminal cannot rely on the DOM selection (xterm sets
+    // `user-select: none`, so the browser reports a COLLAPSED selection there).
+    // It pushes its selection in and pins it; the collapsed shadow must not
+    // tear the bar down, which is what the pin protects against.
+    it('keeps a pinned terminal quote alive through a collapsed xterm selectionchange', () => {
+      const wrapper = mountWithComposable()
+      const term = document.createElement('div')
+      term.className = 'xterm'
+      const inner = document.createElement('span')
+      inner.textContent = 'terminal output'
+      term.appendChild(inner)
+      document.body.appendChild(term)
+
+      // What updateSelectionFromTerm does: pin, then show.
+      const qq = useQuoteQuestion()
+      qq.pinBar()
+      qq.showBar({ text: 'terminal output', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'selection' }, { delay: 0 })
+      vi.advanceTimersByTime(10)
+      expect(qq.visible.value).toBe(true)
+
+      // The browser's collapsed shadow selection inside the terminal.
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      vi.advanceTimersByTime(0)
+      const range = document.createRange()
+      range.selectNodeContents(inner)
+      range.collapse(true)
+      sel?.addRange(range)
+      vi.advanceTimersByTime(0)
+
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value?.text).toBe('terminal output')
+
+      wrapper.unmount()
+    })
+
+    // The pin is what protects the bar — NOT a container check. Without it a
+    // collapsed selection would be read as "the user deselected" and hide the
+    // bar. This guards the terminal integration's reliance on pinBar().
+    it('hides an UNPINNED bar when a collapsed selection appears', () => {
+      const wrapper = mountWithComposable()
+      const qq = useQuoteQuestion()
+
+      // A plain file-preview quote is never pinned.
+      qq.showBar({ text: 'file code', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 2 }, { delay: 0 })
+      vi.advanceTimersByTime(10)
+      expect(qq.visible.value).toBe(true)
+
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      vi.advanceTimersByTime(0)
+
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      expect(qq.visible.value).toBe(false)
+
+      wrapper.unmount()
+    })
+
     it('hides bar when no text is selected (selection collapsed)', () => {
       const wrapper = mountWithComposable()
 
@@ -879,9 +988,47 @@ describe('useQuoteQuestion', () => {
 
         expect(ctx.quoteData.value?.messageId).toBe(42)
         expect(ctx.quoteData.value?.sourceKind).toBe('message')
-        // A chat quote has no file and no line info.
-        expect(ctx.quoteData.value?.filePath).toBe('')
+        // A chat quote carries no line info.
         expect(ctx.quoteData.value?.startLine).toBe(0)
+
+        wrapper.unmount()
+      })
+
+      // The label is the session title — that is what the user recognises — and
+      // the session id travels SEPARATELY. Without the id the quote cannot be
+      // reopened (a message id is only unique within its session).
+      it('labels the quote with the session title and carries the session id', () => {
+        mockSessionState.sessionId = 'f033de62-5b46-4f57-ab7b-99c527d37ab2'
+        mockSessionState.sessionTitle = '在界面点创建定时任务按钮的时候'
+        const wrapper = mountWithComposable()
+        const { textNode } = createChatMessage('db-42')
+        selectNode(textNode)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(ctx.quoteData.value?.filePath).toBe('在界面点创建定时任务按钮的时候')
+        expect(ctx.quoteData.value?.sessionId).toBe('f033de62-5b46-4f57-ab7b-99c527d37ab2')
+        // The id must NOT be folded into the label: the card shows the title,
+        // and the id is what makes it addressable.
+        expect(ctx.quoteData.value?.filePath).not.toContain('f033de62')
+
+        wrapper.unmount()
+      })
+
+      // A session with no title yet must not render a blank card.
+      it('falls back to the session id when the session has no title', () => {
+        mockSessionState.sessionId = 'sess-abc'
+        mockSessionState.sessionTitle = ''
+        const wrapper = mountWithComposable()
+        const { textNode } = createChatMessage('db-42')
+        selectNode(textNode)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(ctx.quoteData.value?.filePath).toBe('sess-abc')
+        expect(ctx.quoteData.value?.sessionId).toBe('sess-abc')
 
         wrapper.unmount()
       })

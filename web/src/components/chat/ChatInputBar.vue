@@ -45,6 +45,14 @@
           <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
           <span class="chat-action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
         </button>
+        <button class="chat-action-btn" :class="{ disabled: !currentSessionId }"
+          @click="handleShare"
+          :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
+          <MessageSquareShare :size="14" />
+          <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
+        </button>
+        <!-- Archive sits LAST in the group: it is the destructive/terminal action
+             on the session, so it is separated from the navigation buttons. -->
         <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
           @click="handleArchive"
           :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
@@ -66,7 +74,7 @@
     <Transition name="recommend-slide">
       <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
         <Sparkles :size="13" :stroke-width="1.5" class="recommendation-icon" />
-        <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('chat.recommendationCollapse') : t('chat.recommendationExpand')">{{ recommendation }}</span>
+        <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('tool.askUser.recommendationCollapse') : t('tool.askUser.recommendationExpand')">{{ recommendation }}</span>
         <button class="recommendation-accept" @click.stop="acceptRecommendation" :title="t('tool.askUser.recommendationFill')">{{ t('tool.askUser.recommendationFill') }}</button>
       </div>
     </Transition>
@@ -79,8 +87,10 @@
           <span>{{ t('chat.attach.uploading') }}</span>
         </div>
       </Transition>
-      <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
-      <div v-if="hasAttachmentTags" class="chat-attachment-tags">
+      <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs).
+           Wheel scrolls it sideways on PC: the scrollbar is hidden, so without this a plain
+           mouse wheel over the strip scrolls the page instead. -->
+      <div v-if="hasAttachmentTags" class="chat-attachment-tags" @wheel="onHorizontalWheel">
         <!-- Staged quote cards (shared component — same card as a sent message) -->
         <QuoteCard
           v-for="quote in quoteItems"
@@ -321,7 +331,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
@@ -336,6 +346,7 @@ import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
 import { fromStagedQuote } from '@/utils/quoteItem'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
 const QuickSendDrawer = defineAsyncComponent({ loader: () => import('@/components/chat/QuickSendDrawer.vue'), loadingComponent: AsyncComponentLoader })
@@ -597,6 +608,7 @@ const emit = defineEmits([
   'show-agent-selector',
   'archive-session',
   'destroy-session',
+  'share-session',
   'open-user-msg-index',
   'refresh-session',
   'switch-model',
@@ -1081,15 +1093,15 @@ function handleFileSelect(item) {
 
 // ── Input history navigation (ArrowUp/ArrowDown) ──────────
 // Per-session, in-memory only. Derived from the session's persisted user
-// messages (excludes pending optimistic bubbles and queued messages, matching
-// the server-side user-message index source), newest first. Each entry carries
-// both the text and the attached files so a history restore can rebuild both.
+// messages (queued messages are not in this array at all), newest first. Each
+// entry carries both the text and the attached files so a history restore can
+// rebuild both.
 const historyInputs = computed(() => {
   const msgs = props.messages || []
   const list = []
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i]
-    if (m.role !== 'user' || m.pending || m.queued) continue
+    if (m.role !== 'user') continue
     const text = typeof m.content === 'string' ? m.content.trim() : ''
     const files = Array.isArray(m.files) ? m.files : []
     if (text) list.push({ text, files })
@@ -1419,6 +1431,13 @@ async function handleArchive() {
   if (confirmed) {
     emit('archive-session')
   }
+}
+
+/** Share the current conversation. The parent owns the dialog and snapshots the
+ *  session id, so switching sessions while it is open cannot retarget it. */
+function handleShare() {
+  if (!props.currentSessionId) return
+  emit('share-session')
 }
 
 function autoResizeTextarea() {
@@ -2444,23 +2463,17 @@ defineExpose({
   .chat-attachment-tags .attachment-ref:hover {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
   }
-
-  .chat-attachment-tags .attachment-quote:hover {
-    background: color-mix(in srgb, var(--accent-color, #4f9cf7) 15%, transparent);
-  }
 }
 
-/* Quote card — accent-colored, same size as file cards.
-   Only the ROOT is styled from here: QuoteCard is a child component, so a
-   descendant selector like `.attachment-quote .attachment-filename` would not
-   match its internals (the scope attribute lives on QuoteCard's own elements).
-   The filename picks up the accent by INHERITING this `color`. */
-.chat-attachment-tags .attachment-quote {
-  background: color-mix(in srgb, var(--accent-color, #4f9cf7) 8%, transparent);
-  border: 1px dashed var(--accent-color, #4f9cf7);
-  color: var(--accent-color, #4f9cf7);
-  cursor: pointer;
-}
+/* The quote card's own appearance (accent border, left spine, gradient) lives in
+   the GLOBAL stylesheet (css/components.css), because the same card also renders
+   in a sent bubble, which this component's scoped styles cannot reach. Styling it
+   here too would leave the two surfaces free to drift apart — which is exactly
+   what had happened (the sent bubble had no rule at all).
+
+   Note the scoped attribute a <style scoped> rule carries would also OUT-SPECIFY
+   the global rule and silently win, so the quote card must not be restyled here.
+   Only the pieces unique to the input side (the close button) stay. */
 
 /* Input row.
    The vertical padding is symmetric on purpose: the row is `align-items:

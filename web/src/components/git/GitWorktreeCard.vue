@@ -2,7 +2,7 @@
   <div
     class="git-worktree-row"
     :class="{ current: worktree.isCurrent, locked: worktree.locked, missing: worktree.missing }"
-    @click="!worktree.isCurrent && !worktree.missing && $emit('switch', worktree)"
+    @click="handleRowClick"
   >
     <div class="wt-row-main">
       <div class="wt-row-name">
@@ -20,10 +20,12 @@
     </div>
     <div class="wt-row-actions">
       <button
-        v-if="!worktree.isCurrent"
         class="wt-action-btn wt-action-delete"
-        :title="t('git.manage.deleteWorktree')"
-        @click.stop="$emit('delete', worktree)"
+        :class="{ 'is-disabled': deleteDisabled }"
+        :disabled="deleteDisabled"
+        :title="deleteDisabledReason"
+        :aria-label="deleteDisabledReason"
+        @click.stop="handleDelete"
       >
         <Trash2 :size="15" />
       </button>
@@ -32,16 +34,55 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FolderTree, Trash2 } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
-defineProps({
+const props = defineProps({
   worktree: { type: Object, required: true },
 })
 
-defineEmits(['switch', 'delete'])
+const emit = defineEmits(['switch', 'delete'])
+
+function handleRowClick() {
+  if (props.worktree.isCurrent || props.worktree.missing) return
+  emit('switch', props.worktree)
+}
+
+/**
+ * Worktrees that git refuses to remove, verified against real repositories:
+ *  - `isCurrent`: the backend answers `cannot_delete_current`.
+ *  - `isMain`: git fails with "is a main working tree" — and `--force` does not
+ *    help, so there is no path to deleting it.
+ *  - `locked`: git requires `remove -f -f`; the backend only ever sends a single
+ *    `-f`, so the request can never succeed.
+ *
+ * Dirty and missing worktrees stay deletable: a missing one removes cleanly, and
+ * a dirty one goes through the existing force-confirmation flow.
+ */
+const deleteDisabled = computed(
+  () => !!(props.worktree.isCurrent || props.worktree.isMain || props.worktree.locked),
+)
+
+const deleteDisabledReason = computed(() => {
+  if (props.worktree.isCurrent) return t('git.manage.cannotDeleteCurrentWorktree')
+  if (props.worktree.isMain) return t('git.manage.cannotDeleteMainWorktree')
+  if (props.worktree.locked) return t('git.manage.cannotDeleteLockedWorktree')
+  return t('git.manage.deleteWorktree')
+})
+
+/**
+ * Guard the emit itself, not just the `disabled` attribute: a programmatic
+ * `dispatchEvent('click')` still reaches the handler on a disabled button (the
+ * browser only suppresses *user* clicks), and the backend would answer with an
+ * error toast.
+ */
+function handleDelete() {
+  if (deleteDisabled.value) return
+  emit('delete', props.worktree)
+}
 </script>
 
 <style scoped>
@@ -146,18 +187,29 @@ defineEmits(['switch', 'delete'])
 }
 
 @media (hover: hover) {
-  .wt-action-btn:hover {
+  .wt-action-btn:hover:not(:disabled) {
     color: var(--accent-color, #4a90d9);
     background: var(--bg-secondary, #e9ecef);
   }
-  .wt-action-btn:hover.wt-action-delete {
+  .wt-action-btn:hover.wt-action-delete:not(:disabled) {
     color: var(--color-red);
     background: color-mix(in srgb, var(--color-red) 10%, transparent);
   }
 }
 
-.wt-action-btn:active {
+.wt-action-btn:active:not(:disabled) {
   background: var(--bg-tertiary, #e9ecef);
+}
+
+/* Non-removable worktree (current / main / locked): keep the icon visible as an
+   affordance but make its unavailability obvious. The native `:disabled` still
+   fires the button's `title` tooltip (verified in Chromium), so the reason
+   stays discoverable. */
+.wt-action-delete.is-disabled,
+.wt-action-delete:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+  color: var(--text-muted, #999);
 }
 
 .wt-badge {

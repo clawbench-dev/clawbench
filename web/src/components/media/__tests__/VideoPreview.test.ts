@@ -8,7 +8,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 vi.mock('@/utils/download.ts', () => ({
-  buildLocalFileUrl: (path: string) => `/api/local-file/${path}`,
+  buildLocalFileUrl: (path: string) => `/api/fs/raw/${path}`,
 }))
 
 describe('VideoPreview', () => {
@@ -27,7 +27,7 @@ describe('VideoPreview', () => {
     const wrapper = mountVideo()
     const video = wrapper.find('video.video-player')
     expect(video.exists()).toBe(true)
-    expect(video.attributes('src')).toContain('/api/local-file/media/clip.mp4')
+    expect(video.attributes('src')).toContain('/api/fs/raw/media/clip.mp4')
     expect(video.attributes('src')).toMatch(/t=\d+/)
   })
 

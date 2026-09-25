@@ -324,9 +324,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/queue/inject", QueueInjectHandler)
 	register("/api/ai/queue/interrupt", QueueInterruptHandler)
 	register("/api/ai/session/update", ServeAISessionUpdate)
+	register("/api/ai/session/generate-title", ServeGenerateSessionTitle)
 	register("/api/ai/session/tags", ServeSessionTags)
 	register("/api/ai/sessions", ServeSessions)
 	register("/api/ai/sessions/overview", ServeSessionsOverview)
+	register("/api/ai/sessions/reorder", ServeSessionsReorder)
 	register("/api/ai/session/archive", ArchiveSession)
 	register("/api/ai/session/destroy", DestroySession)
 	register("/api/ai/session/resume", ServeSessionResume)
@@ -335,7 +337,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session/fork", ServeForkSession)
 	register("/api/ai/session/reset", ServeSessionReset)
 	register("/api/ai/session/rewind", ServeSessionRewind)
-	register("/api/ai/chat/user-messages", ServeUserMessageIndex)
+	// Path kept as "user-messages" for compatibility: the frontend is served from
+	// disk (no rebuild of the Go binary needed), so a renamed path would 404 for
+	// the window where a new frontend talks to an old binary. The handler now
+	// returns assistant rows too — the name is historical, the contract is the
+	// OpenAPI description.
+	register("/api/ai/chat/user-messages", ServeConversationIndex)
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)
 	register("/api/usage/stats", ServeUsageStats)
@@ -369,12 +376,20 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// exposure when the feature is unused).
 	register("/api/share", ServeShareManage)
 	register("/api/share/list", ServeShareList)
+	// Conversation (session) share links. Exact path so it is matched ahead of
+	// the public /api/share/ subtree; see ServeSessionShareManage.
+	register("/api/share/session", ServeSessionShareManage)
+	// Management list for conversation shares: GET lists this project's shares,
+	// DELETE revokes one by token or all of them. Separate from
+	// /api/share/session because that one operates on a single session id, and an
+	// archived session has no addressable id left.
+	register("/api/share/session/list", ServeSessionShareList)
 	registerPublic("/api/share/", ServeSharePublic)
 	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)
 	register("/api/file/list-tree", ServeListTree)
-	register("/api/file/thumb", FileThumb)
-	register("/api/file/", GetFile)
+	register("/api/fs/thumb", FileThumb)
+	register("/api/fs/file/", GetFile)
 	register("/api/git/branch", ServeGitBranch)
 	register("/api/git/branches", ServeGitBranches)
 	register("/api/git/project-history", ServeGitProjectHistory)
@@ -400,7 +415,13 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/file/symbols", ServeFileSymbols)
 	register("/api/recent-projects", ServeRecentProjects)
 	register("/api/conversation-projects", ServeConversationProjects)
-	register("/api/local-file/", ServeLocalFile)
+	register("/api/fs/raw/", ServeLocalFile)
+	// Backward-compatibility alias for pre-rename Android/desktop clients whose
+	// native download bridge still builds /api/local-file/ URLs and which cannot
+	// update themselves. Same handler; the legacy prefix additionally accepts the
+	// old `?path=` parameter name. See legacyLocalFilePrefix in file.go.
+	// Deprecated: remove once no pre-rename client remains in use.
+	register(legacyLocalFilePrefix, ServeLocalFile)
 	register("/api/agents", ServeAgents)
 	register("/api/agents/", ServeAgentSubRoutes)
 	register("/api/backends", ServeBackends)
@@ -452,6 +473,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	// Directory search SSE (recursive fuzzy file search)
 	register("/api/dir/search", DirSearch)
+
+	// Content search SSE (grep-style search inside file contents)
+	register("/api/file/content-search", ContentSearch)
 
 	// Port forwarding (registration & detection only; actual forwarding uses SSH tunnels)
 	register("/api/proxy/ports", ServeProxyPortAction)

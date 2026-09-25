@@ -439,7 +439,7 @@ type configLocalWallpaperItem struct {
 	UploadedAt int64  `json:"uploaded_at"`
 	Size       int64  `json:"size"`
 	// AbsPath is the file's absolute path, for callers that need to address the
-	// file directly — notably GET /api/file/thumb, which takes a path rather
+	// file directly — notably GET /api/fs/thumb, which takes a path rather
 	// than a bare name and returns a small JPEG instead of the full-size image.
 	// Resolved server-side via wallpaper.FilePath so the client never assembles
 	// a path from the theme directory layout itself. Empty when unresolvable.
@@ -545,7 +545,7 @@ func buildConfigForge(cfg model.Config) configForge {
 
 // absWallpaperPath resolves a bare wallpaper file name to its absolute path,
 // returning "" when the name is empty or cannot be resolved. Callers use it to
-// hand a path to GET /api/file/thumb (which returns a small JPEG rather than
+// hand a path to GET /api/fs/thumb (which returns a small JPEG rather than
 // the full-size image).
 //
 // The resolution goes through wallpaper.FilePath so the containment and

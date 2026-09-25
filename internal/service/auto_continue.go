@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
 	"clawbench/internal/ai"
@@ -158,7 +156,7 @@ type AutoContinueRunnerConfig struct {
 	// caller supplies it because the interactive handler and the queue/push
 	// path build their requests differently; everything else (gating, delay,
 	// cancel checks, message persistence) is shared here.
-	RunTurn func(prompt, queueID string) DrainResult
+	RunTurn func(prompt string) DrainResult
 }
 
 // autoContinueSleep waits for d, or returns false early if ctx is cancelled.
@@ -217,48 +215,33 @@ func NewAutoContinueRunner(cfg AutoContinueRunnerConfig) func(attempt int, prev 
 		}
 
 		prompt := AutoContinuePrompt()
-		queueID := newAutoContinueQueueID()
-		if _, err := PrepareAutoContinueMessage(cfg.SessionID, cfg.ProjectPath, cfg.BackendName, queueID); err != nil {
+		if _, err := PrepareAutoContinueMessage(cfg.SessionID, cfg.ProjectPath, cfg.BackendName); err != nil {
 			slog.Error("auto-continue: failed to persist continue message",
 				slog.String("session", cfg.SessionID),
 				slog.String("err", err.Error()))
 			return prev, false
 		}
-		return cfg.RunTurn(prompt, queueID), true
+		return cfg.RunTurn(prompt), true
 	}
-}
-
-// autoContinueQueueSeq disambiguates queue ids minted within the same clock tick.
-var autoContinueQueueSeq atomic.Int64
-
-// newAutoContinueQueueID mints a queue id for an auto-sent message.
-//
-// Uniqueness matters on the frontend: ws_user_message dedups by queueId, and the
-// content is identical for every attempt. A shared or empty id would let the
-// second and third "continue" bubbles be dropped as duplicates of the first
-// (they would only reappear after a reload).
-func newAutoContinueQueueID() string {
-	return fmt.Sprintf("auto-%d-%d", time.Now().UnixNano(), autoContinueQueueSeq.Add(1))
 }
 
 // PrepareAutoContinueMessage persists the "continue" message as a REAL user
 // message and announces it to every subscriber.
 //
-// It uses the direct-send primitive (AddChatMessage with queued=0) rather than
-// AddQueuedMessage on purpose: a queued row is announced with a queue_drain
-// event, and the frontend's handler for that event creates its own optimistic
-// bubble — which would then collide with the stream_start the resume turn
-// emits. A queued=0 row is exactly what a user typing "继续" produces, so the
-// bubble is real, survives a reload, and participates in normal history.
+// It writes directly to chat_history (AddChatMessage) rather than enqueueing: a
+// queued message is announced with queue_added/queue_drain, and the frontend
+// would show it in the queue panel instead of inline. A real user row is exactly
+// what a user typing "继续" produces, so the bubble is inline, survives a
+// reload, and participates in normal history.
 //
-// Ordering: the row is written BEFORE the resume turn starts, so its id
-// precedes the assistant placeholder and the reply anchors to it.
+// Ordering: the row is written BEFORE the resume turn starts, so its id precedes
+// the assistant placeholder it produces — the plain id sort is already correct.
 //
 // SenderClientID is deliberately omitted so every connected client renders the
 // bubble; a client-id would make the originating device skip its own echo.
-func PrepareAutoContinueMessage(sessionID, projectPath, backendName, queueID string) (int64, error) {
+func PrepareAutoContinueMessage(sessionID, projectPath, backendName string) (int64, error) {
 	msgID, err := AddChatMessage(projectPath, backendName, sessionID, roleUser,
-		AutoContinuePrompt(), nil, false, "", queueID)
+		AutoContinuePrompt(), nil, false, "")
 	if err != nil {
 		return 0, err
 	}
@@ -267,7 +250,6 @@ func PrepareAutoContinueMessage(sessionID, projectPath, backendName, queueID str
 		UserMessage: &ai.UserMessageData{
 			MessageID: msgID,
 			Content:   AutoContinuePrompt(),
-			QueueID:   queueID,
 		},
 	})
 	return msgID, nil

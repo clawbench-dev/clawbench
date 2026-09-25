@@ -4,34 +4,25 @@
  * Both the normal input path (ChatPanelContent.sendMessage) and the
  * AskUserQuestion-card path (ChatPanelContent.handleToolSendMessage) enqueue a
  * user message while the AI is still generating. The backend handles the
- * "session not running" race internally (EnqueueAndMaybeStart's B2 self-heal),
- * so no needs_start/resubmit round-trip is needed on the frontend.
+ * "session not running" race internally (EnqueueAndMaybeStart's self-heal), so
+ * no needs_start/resubmit round-trip is needed on the frontend.
  *
- * Side effects (pushing the message, rendering, enqueueing) are injected as
- * callbacks so the orchestration is pure and unit-testable.
+ * The optimistic entry goes into the QUEUE STORE, not the conversation
+ * `messages` array: a queued message is not part of the conversation until it
+ * is dequeued, and keeping it out is what removes every pending/queued special
+ * case from the message list.
+ *
+ * Side effects are injected as callbacks so the orchestration stays pure and
+ * unit-testable.
  */
 
 import { dedupeFiles, type FileEntry } from '@/utils/fileAttachmentUtils'
-import { nextClientSeq, trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils'
+import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils'
+import { addQueued, removeQueued } from '@/composables/useMessageQueue.ts'
 
-/** Generate a unique queue ID for matching pending messages to queue_drain events. */
+/** Generate a unique queue ID for matching a queue entry to backend events. */
 export function generateQueueId(): string {
   return `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-/** A pending user message optimistically pushed to the messages list. */
-export interface PendingUserMessage {
-  role: 'user'
-  id: string
-  content: string
-  blocks: Array<{ type: 'text'; text: string }>
-  files: FileEntry[]
-  createdAt: string
-  pending: true
-  /** Client-side monotonic sequence so this pending message sorts correctly
-   *  among the other transient (string-id) messages. Without it the message
-   *  sorts at TRANSIENT_BASE + 0, jumping above every earlier message. */
-  seq?: number
 }
 
 export interface EnqueueAndMaybeStartOptions {
@@ -40,7 +31,7 @@ export interface EnqueueAndMaybeStartOptions {
   attachedFiles: FileEntry[]
   pendingFiles: FileEntry[]
   queueId?: string
-  pushMessage: (msg: PendingUserMessage) => void
+  /** Notified after the optimistic queue entry is rendered. */
   onPendingRendered?: () => void
   enqueue: (
     sessionId: string,
@@ -52,9 +43,9 @@ export interface EnqueueAndMaybeStartOptions {
 }
 
 /**
- * Push a pending user message and enqueue it for delivery. Returns the queueId
- * of the pushed pending message. The backend persists the message (queued=1)
- * and either starts an execution or lets the running drain loop pick it up.
+ * Push an optimistic queue entry and enqueue it for delivery. Returns the
+ * queueId. The backend persists the message and either starts an execution or
+ * lets the running drain loop claim it.
  *
  * Throws when the enqueue call fails (rejects, or resolves with `false` — the
  * signal enqueueMessage returns when it swallowed a fetch error). Callers
@@ -64,39 +55,34 @@ export async function enqueueAndMaybeStart(opts: EnqueueAndMaybeStartOptions): P
   const queueId = opts.queueId || generateQueueId()
   const allFiles = dedupeFiles([...opts.pendingFiles, ...opts.attachedFiles])
 
-  opts.pushMessage({
-    role: 'user',
-    id: queueId,
-    content: opts.text || '',
-    blocks: opts.text ? [{ type: 'text', text: opts.text }] : [],
+  addQueued(opts.sessionId, {
+    queueId,
+    text: opts.text || '',
     files: allFiles,
     createdAt: new Date().toISOString(),
-    pending: true,
-    seq: nextClientSeq(),
   })
   opts.onPendingRendered?.()
 
-  // Guard this optimistic bubble against a stale loadHistory snapshot that was
-  // fetched before the enqueue POST committed its row — exactly the protection
-  // sendMessageNow applies to the direct-send path (see trackInFlightSend in
-  // chatStreamUtils). Without it, rebuildFromDb drops the pending bubble as
-  // "transient without a DB row" and nothing re-creates it: the user_message
-  // self-echo only ADOPTS an existing bubble, and an injected (mid-turn) message
-  // never emits a queue_drain that could rebuild it — the bubble stays gone until
-  // a full refresh. The registry clears itself once a db_load contains the row.
+  // Guard this optimistic entry against a stale loadHistory snapshot that was
+  // fetched before the enqueue POST committed its row. The queue store is
+  // rebuilt wholesale from loadHistory's `queue` field, so without the guard a
+  // snapshot taken before the commit would drop the entry. The registry clears
+  // itself once a db_load's queue contains the entry (see useChatSession).
   trackInFlightSend(queueId)
 
   let ok: boolean
   try {
     ok = await opts.enqueue(opts.sessionId, opts.text, opts.attachedFiles, opts.pendingFiles, queueId)
   } catch (err) {
-    // The POST never committed — release the guard so a later rebuild is not
-    // left holding a bubble that no DB row will ever back.
+    // The POST never committed — release the guard and the entry so a later
+    // rebuild is not left holding an entry no backend row will ever back.
     untrackInFlightSend(queueId)
+    removeQueued(opts.sessionId, queueId)
     throw err
   }
   if (ok === false) {
     untrackInFlightSend(queueId)
+    removeQueued(opts.sessionId, queueId)
     throw new Error('enqueue failed')
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref, nextTick } from 'vue'
 import { useChatStream } from '@/composables/useChatStream'
 import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS, chatMessageReducer } from '@/utils/chatStreamUtils'
+import { addQueued, getQueue, resetQueuesForTest } from '@/composables/useMessageQueue'
 
 // ── Timer leak prevention ──
 
@@ -39,6 +40,9 @@ vi.mock('@/utils/appLog', () => ({
 let registeredEventHandler: ((event: string, data: unknown) => void) | null = null
 let mockSendWsMessage: ReturnType<typeof vi.fn>
 let mockConnected: ReturnType<typeof ref<boolean>>
+// `isReplayingEvents` gates the onQueueDrainBoundary hook (a replayed drain
+// must NOT re-anchor the unread badge). Tests flip this to exercise both paths.
+let mockIsReplayingEvents: ReturnType<typeof ref<boolean>>
 
 vi.mock('@/composables/useGlobalEvents', () => ({
   useGlobalEvents: () => ({
@@ -48,6 +52,7 @@ vi.mock('@/composables/useGlobalEvents', () => ({
     },
     sendWsMessage: mockSendWsMessage,
     connected: mockConnected,
+    isReplayingEvents: mockIsReplayingEvents,
   }),
 }))
 
@@ -66,42 +71,6 @@ vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
   }),
   findStreamingMsg: vi.fn((messages: any[]) => {
     return messages.find((m: any) => m.role === 'assistant' && m.streaming)
-  }),
-  drainQueueMessage: vi.fn((messages: any[], queueId: string, userContent: string, userFiles: any[], currentBackend: string, callbacks: any, _drainId?: string, _dbMessageId?: number) => {
-    const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
-    if (streamingMsg) delete streamingMsg.streaming
-    // Match by queueId first, then by content
-    let pendingIdx = -1
-    if (queueId) {
-      pendingIdx = messages.findIndex((m: any) => m.role === 'user' && m.pending && m.id === queueId)
-    }
-    if (pendingIdx === -1 && userContent) {
-      pendingIdx = messages.findIndex((m: any) => m.role === 'user' && m.pending && m.content === userContent)
-    }
-    if (pendingIdx !== -1) {
-      delete messages[pendingIdx].pending
-      // Keep the existing transient string id — the numeric _dbMessageId is
-      // intentionally NOT adopted mid-stream (see drainQueueMessage).
-      if (typeof messages[pendingIdx].id !== 'string') {
-        messages[pendingIdx].id = _drainId || `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      }
-    } else if (userContent) {
-      const effectiveDrainId = _drainId || `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      messages.push({ role: 'user', id: effectiveDrainId, _drain: true, content: userContent, blocks: [{ type: 'text', text: userContent }], files: (userFiles || []).map((f: any) => typeof f === 'string' ? { path: f } : f), createdAt: new Date().toISOString() })
-    }
-    const newStreamingMsg = { role: 'assistant', content: '', blocks: [], streaming: true, createdAt: new Date().toISOString(), backend: currentBackend }
-    messages.push(newStreamingMsg)
-    return newStreamingMsg
-  }),
-  cancelPendingMessages: vi.fn((messages: any[], queueIds: string[]) => {
-    let removed = 0
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].pending && queueIds.includes(String(messages[i].id))) {
-        messages.splice(i, 1)
-        removed++
-      }
-    }
-    return removed
   }),
 }
 })
@@ -176,7 +145,9 @@ describe('useChatStream', () => {
     registeredEventHandler = null
     mockSendWsMessage = vi.fn()
     mockConnected = ref(true)
+    mockIsReplayingEvents = ref(false)
     mockAppLogW.mockClear()
+    resetQueuesForTest()
   })
 
   afterEach(() => {
@@ -237,41 +208,38 @@ describe('useChatStream', () => {
       expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'session-2' })
     })
 
-    it('should insert streaming assistant AFTER the newest non-pending user message', () => {
+    it('the streaming placeholder sorts after every DB-backed message', () => {
       const options = createOptions()
       options.messages.value.push(
         { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
-        { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
+        { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
       )
 
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
-      // The streaming reply answers A (the last non-pending user message).
-      // Queued message B (pending) is a later turn for the drain loop — the
-      // reply must NOT be pushed below it, otherwise the order becomes
-      // A, B, streaming (the queued-message reply swap).
-      expect(options.messages.value[0].role).toBe('user')
-      expect(options.messages.value[0].content).toBe('A')
-      expect(options.messages.value[1].role).toBe('assistant')
-      expect(options.messages.value[1].streaming).toBe(true)
-      expect(options.messages.value[2].role).toBe('user')
-      expect(options.messages.value[2].pending).toBe(true)
+      // Ordering is a plain DB-id sort; the transient placeholder carries a
+      // drain-* id and sorts after all DB-backed rows.
+      const order = options.messages.value.map((m: any) => m.role === 'user' ? `u:${m.content}` : `a:${m.content}`)
+      expect(order[0]).toBe('u:A')
+      expect(order[1]).toBe('a:A reply')
+      expect(order[2]).toBe('a:')
+      const placeholder = options.messages.value[2]
+      expect(placeholder.role).toBe('assistant')
+      expect(placeholder.streaming).toBe(true)
     })
 
-    it('anchors the reply to the newest SENT user (max seq), not a physical-last history message', () => {
-      // Regression: msg1 (freshly sent, has a client seq) must be the anchor —
-      // NOT the physical-last history message. History messages lack seq, so
-      // the max-seq scan finds msg1 even though it may not be the last element.
+    it('a directly-sent message keeps its DB-id position after the placeholder appears', () => {
+      // A direct send adopts its DB id from the POST response, so it sorts by
+      // that id (not in the transient seq domain). The reply placeholder then
+      // sorts after it. No anchor field is involved.
       const options = createOptions()
       options.messages.value.push(
-        // history loaded from DB (no seq)
         { role: 'user', id: 38348, content: 'old', blocks: [{ type: 'text', text: 'old' }] },
         { role: 'assistant', id: 38349, content: 'old reply', blocks: [{ type: 'text', text: 'old reply' }] },
       )
       options.dispatch({ type: 'optimistic_push', msg: {
-        role: 'user', id: 'pending-msg1', content: '1', blocks: [{ type: 'text', text: '1' }],
-        pending: false, seq: 99,
+        role: 'user', id: 38350, content: '1', blocks: [{ type: 'text', text: '1' }],
       } })
 
       const { connectStream } = useChatStream(options)
@@ -279,14 +247,13 @@ describe('useChatStream', () => {
 
       const placeholder = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
       expect(placeholder).toBeDefined()
-      // Anchor must be msg1 (the just-sent message), not the history question.
-      expect(String(placeholder.parentQueueId)).toBe('pending-msg1')
-      // Order: history, msg1, reply (msg1 is the newest message → after history).
+      // Order: history, msg1 (id 38350), reply (transient, after all DB rows).
       const order = options.messages.value.map((m: any) => m.role === 'user' ? `u:${m.content}` : `a:${m.content}`)
       expect(order[0]).toBe('u:old')
       expect(order[1]).toBe('a:old reply')
       expect(order[2]).toBe('u:1')
       expect(order[3]).toBe('a:')
+      expect(placeholder.parentQueueId).toBeUndefined()
     })
 
     it('should reuse existing streaming message only when reuseExistingStreaming is set', () => {
@@ -1410,30 +1377,24 @@ describe('useChatStream', () => {
 
       connectStream('test-session-1')
 
-      simulateWsEvent('queue_drain', { queueId: '', text: 'drain msg', filePaths: [], files: [], queue: [] })
+      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'q-1', messageId: 3 })
 
-      const lastMsg = options.messages.value[options.messages.value.length - 1]
-      expect(lastMsg.role).toBe('assistant')
-      expect(lastMsg.streaming).toBe(true)
-      expect(lastMsg.blocks).toEqual([])
+      const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
+      expect(streaming).toHaveLength(1)
+      expect(streaming[0].blocks).toEqual([])
     })
 
-    it('should match pending message by queueId and clear pending flag', () => {
+    it('should drop the queue entry by queueId (it is not in the messages array)', () => {
       const options = createOptions()
-      options.messages.value.push({
-        role: 'user', id: 'pending-abc', content: 'queued msg', pending: true,
-        blocks: [{ type: 'text', text: 'queued msg' }],
-        createdAt: new Date().toISOString(),
-      })
+      addQueued('test-session-1', { queueId: 'q-abc', text: 'queued msg', files: [] })
 
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
-      simulateWsEvent('queue_drain', { queueId: 'pending-abc', text: 'queued msg', filePaths: [], files: [], queue: [] })
+      expect(getQueue('test-session-1')).toHaveLength(1)
+      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'q-abc', messageId: 3 })
 
-      const userMsg = options.messages.value.find((m: any) => m.role === 'user' && m.content === 'queued msg')
-      expect(userMsg).toBeDefined()
-      expect(userMsg.pending).toBeUndefined()
+      expect(getQueue('test-session-1')).toHaveLength(0)
     })
 
     it('should not modify messages when session changed', () => {
@@ -1449,7 +1410,7 @@ describe('useChatStream', () => {
       options.currentSessionId.value = 'different-session'
       const msgCountBefore = options.messages.value.length
 
-      simulateWsEvent('queue_drain', { queueId: '', text: 'another queued msg', filePaths: [], files: [], queue: [] })
+      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'q-1', messageId: 3 })
 
       expect(options.messages.value.length).toBe(msgCountBefore)
     })
@@ -1464,7 +1425,7 @@ describe('useChatStream', () => {
       streamingMsg.content = ''
       streamingMsg.blocks = [{ type: 'text', text: 'A reply content' }]
 
-      simulateWsEvent('queue_drain', { queueId: '', text: 'next msg', filePaths: [], files: [], queue: [] })
+      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'q-1', messageId: 3 })
 
       const finalizedMsg = options.messages.value.find((m: any) => m.blocks?.[0]?.text === 'A reply content')
       expect(finalizedMsg).toBeDefined()
@@ -1482,61 +1443,83 @@ describe('useChatStream', () => {
 
       connectStream('test-session-1')
 
-      simulateWsEvent('queue_drain', { queueId: '', text: 'next msg', filePaths: [], files: [], queue: [] })
+      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'q-1', messageId: 3 })
 
       const newStreaming = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
       expect(newStreaming).toBeDefined()
       expect(newStreaming.backend).toBe('claude-code')
     })
+
+    it('calls onQueueDrainBoundary for a LIVE drain of the current session', () => {
+      // The hook backs the unread-badge fix: the previous reply just finalized
+      // (its completed_at now past last_read_at), so the host re-anchors
+      // last_read_at while the user is present.
+      const onQueueDrainBoundary = vi.fn()
+      const options = createOptions({ onQueueDrainBoundary })
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'q-1', messageId: 3 })
+
+      expect(onQueueDrainBoundary).toHaveBeenCalledTimes(1)
+      expect(onQueueDrainBoundary).toHaveBeenCalledWith('test-session-1')
+    })
+
+    it('does NOT call onQueueDrainBoundary when the drain event is a replay', () => {
+      // A replayed drain means the user was disconnected while it happened, so
+      // the unread badge must survive — the host must not re-anchor.
+      const onQueueDrainBoundary = vi.fn()
+      const options = createOptions({ onQueueDrainBoundary })
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      mockIsReplayingEvents.value = true
+
+      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'q-1', messageId: 3 })
+
+      expect(onQueueDrainBoundary).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call onQueueDrainBoundary for a different session', () => {
+      const onQueueDrainBoundary = vi.fn()
+      const options = createOptions({ onQueueDrainBoundary })
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('queue_drain', { sessionId: 'other-session', queueId: 'q-1', messageId: 3 })
+
+      expect(onQueueDrainBoundary).not.toHaveBeenCalled()
+    })
   })
 
   describe('WS event handling — queue_cancel', () => {
-    it('should remove pending messages matching queueIds', () => {
+    it('should remove the matching queue entries', () => {
       const options = createOptions()
-      options.messages.value.push({
-        role: 'user', id: 'pending-1', content: 'A', pending: true,
-        blocks: [{ type: 'text', text: 'A' }],
-        createdAt: new Date().toISOString(),
-      })
-      options.messages.value.push({
-        role: 'user', id: 'pending-2', content: 'B', pending: true,
-        blocks: [{ type: 'text', text: 'B' }],
-        createdAt: new Date().toISOString(),
-      })
+      addQueued('test-session-1', { queueId: 'pending-1', text: 'A', files: [] })
+      addQueued('test-session-1', { queueId: 'pending-2', text: 'B', files: [] })
 
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
       simulateWsEvent('queue_cancel', { sessionId: 'test-session-1', queueIds: ['pending-1', 'pending-2'] })
 
-      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
-      expect(pendingMsgs).toHaveLength(0)
+      expect(getQueue('test-session-1')).toHaveLength(0)
     })
 
     it('should ignore event for different session', () => {
       const options = createOptions()
-      options.messages.value.push({
-        role: 'user', id: 'pending-1', content: 'A', pending: true,
-        blocks: [{ type: 'text', text: 'A' }],
-        createdAt: new Date().toISOString(),
-      })
+      addQueued('test-session-1', { queueId: 'pending-1', text: 'A', files: [] })
 
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
       simulateWsEvent('queue_cancel', { sessionId: 'different-session', queueIds: ['pending-1'] })
 
-      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
-      expect(pendingMsgs).toHaveLength(1)
+      expect(getQueue('test-session-1')).toHaveLength(1)
     })
 
     it('should call onRenderNeeded after removing', () => {
       const options = createOptions()
-      options.messages.value.push({
-        role: 'user', id: 'pending-1', content: 'A', pending: true,
-        blocks: [{ type: 'text', text: 'A' }],
-        createdAt: new Date().toISOString(),
-      })
+      addQueued('test-session-1', { queueId: 'pending-1', text: 'A', files: [] })
 
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
@@ -1549,7 +1532,7 @@ describe('useChatStream', () => {
   })
 
   describe('WS event handling — queue_inject', () => {
-    it('should clear pending on the matching bubble without opening a new reply', () => {
+    it('should drop the queue entry without opening a new reply', () => {
       // Insert joins the RUNNING turn, so unlike queue_drain it must not create
       // a new assistant placeholder — the reply in flight continues.
       const options = createOptions()
@@ -1557,22 +1540,14 @@ describe('useChatStream', () => {
         role: 'assistant', id: 2, content: '', streaming: true,
         blocks: [], createdAt: new Date().toISOString(),
       })
-      options.messages.value.push({
-        role: 'user', id: 'pending-inj', queueId: 'pending-inj', content: 'A', pending: true,
-        blocks: [{ type: 'text', text: 'A' }],
-        createdAt: new Date().toISOString(),
-      })
+      addQueued('test-session-1', { queueId: 'pending-inj', text: 'A', files: [] })
 
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
       simulateWsEvent('queue_inject', { sessionId: 'test-session-1', queueId: 'pending-inj', messageId: 99 })
 
-      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
-      expect(pendingMsgs).toHaveLength(0)
-      // The bubble itself must stay (it is part of the conversation now).
-      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
-      expect(userMsgs).toHaveLength(1)
+      expect(getQueue('test-session-1')).toHaveLength(0)
       // No second assistant bubble was opened.
       const assistantMsgs = options.messages.value.filter((m: any) => m.role === 'assistant')
       expect(assistantMsgs).toHaveLength(1)
@@ -1580,28 +1555,19 @@ describe('useChatStream', () => {
 
     it('should ignore event for a different session', () => {
       const options = createOptions()
-      options.messages.value.push({
-        role: 'user', id: 'pending-inj', queueId: 'pending-inj', content: 'A', pending: true,
-        blocks: [{ type: 'text', text: 'A' }],
-        createdAt: new Date().toISOString(),
-      })
+      addQueued('test-session-1', { queueId: 'pending-inj', text: 'A', files: [] })
 
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
       simulateWsEvent('queue_inject', { sessionId: 'other-session', queueId: 'pending-inj', messageId: 99 })
 
-      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
-      expect(pendingMsgs).toHaveLength(1)
+      expect(getQueue('test-session-1')).toHaveLength(1)
     })
 
-    it('should call onRenderNeeded after clearing pending', () => {
+    it('should call onRenderNeeded after dropping the entry', () => {
       const options = createOptions()
-      options.messages.value.push({
-        role: 'user', id: 'pending-inj', queueId: 'pending-inj', content: 'A', pending: true,
-        blocks: [{ type: 'text', text: 'A' }],
-        createdAt: new Date().toISOString(),
-      })
+      addQueued('test-session-1', { queueId: 'pending-inj', text: 'A', files: [] })
 
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
@@ -1674,128 +1640,86 @@ describe('useChatStream', () => {
       expect(userMsgs).toHaveLength(1)
     })
 
-    it('should allow same content if existing message is pending (optimistic)', () => {
+    it('a materialized queued message is removed from the queue store and rendered inline', () => {
+      // A queued message is not in the messages array until its user_message
+      // event arrives. That event carries the queueId, so the handler drops the
+      // queue entry and renders the message inline (DB id adopted).
       const options = createOptions()
-      options.messages.value.push({
-        role: 'user', id: 'pending-1', content: 'hello', pending: true,
-        blocks: [{ type: 'text', text: 'hello' }],
-        createdAt: new Date().toISOString(),
-      })
+      addQueued('test-session-1', { queueId: 'pending-abc', text: 'hello', files: [] })
 
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
-      simulateWsEvent('user_message', { messageId: 0, content: 'hello' })
+      simulateWsEvent('user_message', { messageId: 42, content: 'hello', queueId: 'pending-abc' })
 
-      // Pending message is from this device, remote message still added
-      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
-      expect(userMsgs).toHaveLength(2)
-    })
-
-    it('should deduplicate by queueId when the pending bubble matches (self-echo)', () => {
-      // Regression: when this device enqueues a message, the backend broadcasts
-      // user_message carrying the same queueId. If the echo is not skipped, the
-      // queued message is rendered twice — once as the pending bubble and once
-      // as a remote duplicate.
-      const options = createOptions()
-      options.messages.value.push({
-        role: 'user', id: 'pending-abc', content: 'hello', pending: true,
-        blocks: [{ type: 'text', text: 'hello' }],
-        createdAt: new Date().toISOString(),
-      })
-
-      const { connectStream } = useChatStream(options)
-      connectStream('test-session-1')
-
-      simulateWsEvent('user_message', { messageId: 0, content: 'hello', queueId: 'pending-abc' })
-
-      // Same queueId → the remote echo is the pending bubble itself; no duplicate.
+      expect(getQueue('test-session-1')).toHaveLength(0)
       const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
       expect(userMsgs).toHaveLength(1)
-      expect(userMsgs[0].id).toBe('pending-abc')
+      expect(userMsgs[0].id).toBe(42)
     })
 
-    it('self-echo with MessageID>0 adopts the directly-sent bubble DB id (msg1)', () => {
-      // Regression: msg1 is sent while idle (sendMessageNow → optimistic bubble,
-      // NOT pending). The backend's user_message echo carries MessageID + the
-      // frontend queueId. The self-echo handler must adopt the DB id into the
-      // bubble (keeps old id as queueId so the reply anchor still resolves),
-      // and must NOT flip a queued (pending) bubble.
+    it('a materialized queued self-echo is rendered (not skipped)', () => {
+      // The sender's own optimistic bubble lives in the QUEUE STORE, not the
+      // messages array, so the usual self-echo skip would hide it. The queueId
+      // match wins: drop the entry and render the message.
+      const options = createOptions()
+      localStorage.setItem('clawbench_client_id', 'my-device-123')
+      addQueued('test-session-1', { queueId: 'pending-abc', text: 'hello', files: [] })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('user_message', { messageId: 42, content: 'hello', queueId: 'pending-abc', senderClientId: 'my-device-123' })
+
+      expect(getQueue('test-session-1')).toHaveLength(0)
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(1)
+      expect(userMsgs[0].content).toBe('hello')
+      localStorage.removeItem('clawbench_client_id')
+    })
+
+    it('a non-queued self-echo is skipped (directly-sent bubble already exists)', () => {
+      // sendMessageNow already pushed the optimistic bubble and adopted the DB
+      // id from the POST response, so the echo must be skipped — rendering it
+      // would duplicate the user's own message.
       const options = createOptions()
       const { connectStream } = useChatStream(options)
       localStorage.setItem('clawbench_client_id', 'my-device-123')
-      // msg1 bubble (directly sent, not pending); connectStream anchors reply1
-      // to it.
       options.dispatch({ type: 'optimistic_push', msg: {
         role: 'user', id: 'pending-1', content: '1', blocks: [{ type: 'text', text: '1' }],
-        pending: false, seq: 10,
+        seq: 10,
       } })
       connectStream('test-session-1')
-      const placeholder = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
-      expect(String(placeholder?.parentQueueId)).toBe('pending-1')
 
       simulateWsEvent('user_message', { messageId: 42, content: '1', queueId: 'pending-1', senderClientId: 'my-device-123' })
 
-      const msg1 = options.messages.value.find((m: any) => m.role === 'user')
-      expect(msg1.id).toBe(42)          // adopted DB id
-      expect(msg1.queueId).toBe('pending-1') // old id preserved for anchor
-      expect(msg1.pending).toBeUndefined()
-      // Reply anchor still resolves (no duplicate, order msg1 → reply1).
-      const order = options.messages.value.map((m: any) => m.role === 'user' ? `u:${m.id}` : `a:${String(m.id)}`)
-      expect(order[0]).toBe('u:42')
-      expect(order[1]).toContain('a:drain-')
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(1)
+      // The existing optimistic bubble is untouched (the POST response is the
+      // adoption path for a direct send).
+      expect(userMsgs[0].id).toBe('pending-1')
       localStorage.removeItem('clawbench_client_id')
     })
 
-    it('self-echo with MessageID>0 does NOT adopt a queued (pending) bubble', () => {
+    it('a queued message from another device (queueId not in the store) renders as a remote bubble', () => {
+      // Another device enqueued it; we have no local queue entry, so it is a
+      // remote message and must render. Its queueId is preserved as
+      // _remoteQueueId for later matching.
       const options = createOptions()
+      options.messages.value.push({
+        role: 'assistant', content: '', blocks: [], streaming: true,
+        createdAt: new Date().toISOString(),
+      })
+
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
-      localStorage.setItem('clawbench_client_id', 'my-device-456')
-      // queued bubble (pending) — must stay pending until drain
-      options.dispatch({ type: 'optimistic_push', msg: {
-        role: 'user', id: 'pending-2', content: '2', blocks: [{ type: 'text', text: '2' }],
-        pending: true, seq: 12,
-      } })
 
-      // `queued: true` is what the backend actually sends for a message that is
-      // still waiting for the drain loop — both emitters that pair a
-      // senderClientId with a queued bubble set it (chat.go "enqueued" path and
-      // queue.go's explicit enqueue). Without the flag the client reads the
-      // message as having joined the running turn and adopts it, which is
-      // correct for that case but not this one.
-      simulateWsEvent('user_message', { messageId: 99, content: '2', queueId: 'pending-2', senderClientId: 'my-device-456', queued: true })
+      simulateWsEvent('user_message', { messageId: 99, content: '2', queueId: 'pending-2', senderClientId: 'other-device-456' })
 
       const msg2 = options.messages.value.find((m: any) => m.role === 'user')
-      expect(msg2.id).toBe('pending-2')
-      expect(msg2.pending).toBe(true)
-      localStorage.removeItem('clawbench_client_id')
-    })
-
-    it('self-echo with queued:false adopts the pending bubble and clears pending', () => {
-      // Counterpart to the case above. `queued: false` means the message joined
-      // the RUNNING turn (mid-turn injection) instead of waiting for the drain
-      // loop, so no queue_drain will ever arrive for it. The bubble must shed
-      // `pending` here or it spins forever — see the clearPending branch in
-      // chatStreamUtils. Without the flag reaching the reducer, the guard
-      // `if (target.pending && !action.clearPending) return state` bails out
-      // and the bubble stays pending.
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-      connectStream('test-session-1')
-      localStorage.setItem('clawbench_client_id', 'my-device-456')
-      options.dispatch({ type: 'optimistic_push', msg: {
-        role: 'user', id: 'pending-3', content: '3', blocks: [{ type: 'text', text: '3' }],
-        pending: true, seq: 13,
-      } })
-
-      simulateWsEvent('user_message', { messageId: 100, content: '3', queueId: 'pending-3', senderClientId: 'my-device-456', queued: false })
-
-      const msg3 = options.messages.value.find((m: any) => m.role === 'user')
-      expect(msg3.id).toBe(100)            // adopted the DB id
-      expect(msg3.queueId).toBe('pending-3') // old id preserved for the reply anchor
-      expect(msg3.pending).toBeUndefined()
-      localStorage.removeItem('clawbench_client_id')
+      expect(msg2).toBeDefined()
+      expect(msg2.id).toBe(99)
+      expect(msg2._remoteQueueId).toBe('pending-2')
     })
 
     it('should push to end when no streaming assistant message exists', () => {
@@ -1906,6 +1830,32 @@ describe('useChatStream', () => {
 
       const userMsg = options.messages.value.find((m: any) => m.role === 'user')
       expect(userMsg._remoteQueueId).toBe('pending-abc123')
+    })
+
+    it('queue_added (from another device) inserts into the queue store, not the message list', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      const before = options.messages.value.length
+
+      simulateWsEvent('queue_added', { queueId: 'q-remote', text: 'remote queued', senderClientId: 'other-device' })
+
+      expect(getQueue('test-session-1')).toHaveLength(1)
+      expect(getQueue('test-session-1')[0].text).toBe('remote queued')
+      // No conversation message was added.
+      expect(options.messages.value.length).toBe(before)
+    })
+
+    it('queue_added self-echo is skipped (the optimistic entry is already in the store)', () => {
+      const options = createOptions()
+      localStorage.setItem('clawbench_client_id', 'my-device-123')
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('queue_added', { queueId: 'q-mine', text: 'mine', senderClientId: 'my-device-123' })
+
+      expect(getQueue('test-session-1')).toHaveLength(0)
+      localStorage.removeItem('clawbench_client_id')
     })
   })
 
@@ -2381,31 +2331,25 @@ describe('useChatStream', () => {
       expect(assistantMsg.blocks).toEqual([])
     })
 
-    it('stream_start creates placeholder anchored to newest non-pending user message', () => {
-      // Path B: a stream_start placeholder created mid-session must carry
-      // parentQueueId so rebuildFromDb's Channel 2 (r.queueId ===
-      // live.parentQueueId) can match it — even when the DB snapshot raced the
-      // new streaming row.
+    it('stream_start adopts the DB id on the placeholder; ordering is by DB id', () => {
       const options = createOptions()
       useChatStream(options)
       options.dispatch({ type: 'optimistic_push', msg: {
-        role: 'user', id: 'sent-1', content: '1', blocks: [{ type: 'text', text: '1' }],
-        pending: false, seq: 10,
-      } })
-      options.dispatch({ type: 'optimistic_push', msg: {
-        role: 'user', id: 'pending-1', content: '2', blocks: [{ type: 'text', text: '2' }],
-        pending: true, seq: 12,
+        role: 'user', id: 100, content: 'older', blocks: [{ type: 'text', text: 'older' }],
       } })
 
-      simulateWsEvent('stream_start', { message_id: 77 })
+      simulateWsEvent('stream_start', { message_id: 202 })
 
       const assistantMsg = options.messages.value.find(
         (m: any) => m.role === 'assistant' && m.streaming
       )
       expect(assistantMsg).toBeDefined()
-      expect(assistantMsg.id).toBe(77)
-      // Anchor is the newest NON-pending user message (sent-1), never the queued one.
-      expect(String(assistantMsg.parentQueueId)).toBe('sent-1')
+      expect(assistantMsg.id).toBe(202)
+      // The placeholder sorts by its DB id (202), after the question (100).
+      const order = options.messages.value.map((m: any) =>
+        m.role === 'user' ? `u:${m.content}` : `a:${m.id}`
+      )
+      expect(order).toEqual(['u:older', 'a:202'])
     })
 
     it('stream_start creates placeholder without anchor when no user messages', () => {
@@ -2422,11 +2366,10 @@ describe('useChatStream', () => {
       expect(assistantMsg.parentQueueId).toBeUndefined()
     })
 
-    it('stream_start with answeredQueueId creates placeholder anchored to the answered question', () => {
-      // Recovery create-path: no placeholder exists yet and the question bubble
-      // has not arrived. The backend's answered queue id (queue_id on the
-      // stream_start payload) must become the anchor — NOT the newest visible
-      // user message, which would be a stale question.
+    it('stream_start with a queue_id still uses the message_id for identity and DB-id order', () => {
+      // The payload's queue_id is no longer an anchor (the reply is ordered by
+      // its DB id). A recovery create-path where the question bubble has not
+      // arrived yet still lands correctly because 202 > 100.
       const options = createOptions()
       useChatStream(options)
       options.dispatch({ type: 'optimistic_push', msg: {
@@ -2440,16 +2383,17 @@ describe('useChatStream', () => {
       )
       expect(assistantMsg).toBeDefined()
       expect(assistantMsg.id).toBe(202)
-      // Anchor is the answered question's queue id, not the newest user (100).
-      expect(String(assistantMsg.parentQueueId)).toBe('pending-2')
+      const order = options.messages.value.map((m: any) =>
+        m.role === 'user' ? `u:${m.content}` : `a:${m.id}`
+      )
+      expect(order).toEqual(['u:older', 'a:202'])
     })
 
-    it('stream_start with answeredQueueId re-anchors a stale recovery placeholder', () => {
-      // The reported bug: the recovery path (session_update running while
-      // loading=false) built a placeholder anchored to the newest user message
-      // 100 BEFORE the real question bubble arrived. When the stream_start
-      // event lands carrying the answered queue id, the placeholder must be
-      // repointed so the reply sorts after its true question.
+    it('stream_start after the true question lands keeps the reply below it (DB-id order)', () => {
+      // The recovery path built a placeholder BEFORE the real question bubble
+      // arrived. stream_start adopts the DB id (202); the question lands with
+      // id 200, so a plain id sort puts the reply right after its question —
+      // no re-anchor step is needed.
       const options = createOptions()
       useChatStream(options)
       // Finalized older turn.
@@ -2459,25 +2403,24 @@ describe('useChatStream', () => {
       options.dispatch({ type: 'optimistic_push', msg: {
         role: 'assistant', id: 101, content: 'older a', blocks: [{ type: 'text', text: 'older a' }],
       } })
-      // Recovery placeholder (created by ensureStreamingPlaceholder) anchored to 100.
+      // Recovery placeholder (created by ensureStreamingPlaceholder).
       options.dispatch({ type: 'stream_placeholder', msg: {
         role: 'assistant', id: 'drain-1', content: '', blocks: [], streaming: true,
-        seq: 5, parentQueueId: '100',
+        seq: 5,
       } })
+      // The stream_start for the answer arrives, adopting its DB id.
+      simulateWsEvent('stream_start', { message_id: 202, queue_id: 'pending-2' })
       // The true question bubble arrives from the other device (cross-device echo).
       options.dispatch({ type: 'ws_user_message', data: {
         messageId: 200, content: 'real q', queueId: 'pending-2', senderClientId: 'other-device',
       } })
-      // The stream_start for the answer arrives last, carrying the answered queue id.
-      simulateWsEvent('stream_start', { message_id: 202, queue_id: 'pending-2' })
 
       const assistantMsg = options.messages.value.find(
         (m: any) => m.role === 'assistant' && m.streaming
       )
       expect(assistantMsg).toBeDefined()
       expect(assistantMsg.id).toBe(202)
-      expect(String(assistantMsg.parentQueueId)).toBe('pending-2')
-      // Order: older q, older a, real q, streaming reply.
+      // Order: older q, older a, real q, streaming reply (all by DB id).
       const order = options.messages.value.map((m: any) =>
         m.role === 'user' ? `u:${m.content}` : `a:${m.id}`
       )
@@ -2560,7 +2503,264 @@ describe('useChatStream', () => {
     })
   })
 
-  // ── isOpen guard ──
+  // ── Stream stall watchdog ──
+  // A subscription can be silently lost server-side while the run continues, so
+  // the UI sits on a spinner until a manual refresh reads the DB. The watchdog
+  // detects the silence and repairs it (resubscribe + authoritative reload)
+  // WITHOUT finalizing the turn.
+
+  describe('stream stall watchdog', () => {
+    it('resubscribes and reloads history after a long silence with a turn in flight', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+      mockSendWsMessage.mockClear()
+
+      // Past the stall window (120s) with no event at all.
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // The recovery re-establishes the subscription (forces a fresh subscribe
+      // so the server re-emits stream_start) and reloads from the DB.
+      expect(mockSendWsMessage).toHaveBeenCalledWith(
+        { type: 'subscribe', session_id: 'test-session-1' }
+      )
+      expect(options.onLoadHistory).toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('does NOT recover while the panel is hidden', async () => {
+      vi.useFakeTimers()
+      const options = createOptions({ isOpen: ref(false) })
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // A hidden panel is recovered by the foreground resync instead; firing
+      // reloads for an invisible panel would be pure churn.
+      expect(options.onLoadHistory).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('does NOT recover an idle session (loading=false)', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      // Turn already finished — silence is normal, not a stall.
+      options.loading.value = false
+      options.onLoadHistory.mockClear()
+
+      await vi.advanceTimersByTimeAsync(150000)
+
+      expect(options.onLoadHistory).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('a delivered event keeps the stream alive (no recovery)', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+
+      // Housekeeping counts as liveness here: it is fanned out through the same
+      // HasSubscribers gate as content, so receiving it proves the subscription
+      // works and the silence is the backend's doing.
+      await vi.advanceTimersByTimeAsync(90000)
+      simulateWsEvent('usage_update', { size: 10, used: 1 })
+      await vi.advanceTimersByTimeAsync(90000)
+
+      expect(options.onLoadHistory).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('bounds recovery attempts per turn', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+
+      // Keep the panel visible and the turn in flight; no events ever arrive.
+      // 4+ stall windows must NOT produce an unbounded number of reloads.
+      await vi.advanceTimersByTimeAsync(600000)
+
+      expect(options.onLoadHistory.mock.calls.length).toBeLessThanOrEqual(3)
+      expect(options.onLoadHistory).toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('does not recover a different session\'s silence', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+
+      // Inject the foreign event INSIDE the window (90s < 120s). If a foreign
+      // session's event wrongly counted as progress, the window would reset and
+      // no recovery would ever fire — so injecting it after the window (as an
+      // earlier version did) could not distinguish the two behaviours.
+      await vi.advanceTimersByTimeAsync(90000)
+      simulateWsEvent('content', { content: 'x' }, 'other-session')
+      await vi.advanceTimersByTimeAsync(90000)
+
+      expect(options.onLoadHistory).toHaveBeenCalled()
+      // And the recovery targeted the current session, not the foreign one.
+      expect(mockSendWsMessage).toHaveBeenCalledWith(
+        { type: 'subscribe', session_id: 'test-session-1' }
+      )
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('recovery is non-destructive: it does not finalize the turn', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onStreamEnd.mockClear()
+      const cleanup = vi.mocked(forceCleanupStreamingState)
+      cleanup.mockClear()
+
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // The whole point of the watchdog (vs the removed 30s timeout) is that a
+      // legitimately silent turn — a long tool or subagent — keeps running: the
+      // spinner stays, the stream is not ended, and no cleanup is forced.
+      expect(options.onStreamEnd).not.toHaveBeenCalled()
+      expect(options.loading.value).toBe(true)
+      expect(cleanup).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('restores the recovery budget when a turn ends, so the next turn gets its own attempts', async () => {
+      // A turn discovered as running via loadHistory never calls connectStream,
+      // so without a reset on turn end it would inherit an exhausted budget from
+      // a previous turn (e.g. a subagent that was silent for minutes) and a
+      // genuine subscription loss in the new turn would never be repaired.
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      // Turn 1: exhaust the budget (no events at all, panel visible).
+      options.loading.value = true
+      connectStream('test-session-1')
+      await vi.advanceTimersByTimeAsync(600000)
+      const afterTurn1 = options.onLoadHistory.mock.calls.length
+      expect(afterTurn1).toBeGreaterThan(0)
+      expect(afterTurn1).toBeLessThanOrEqual(3)
+
+      // Turn 1 ends.
+      simulateWsEvent('done', {})
+      options.onLoadHistory.mockClear()
+
+      // Turn 2 begins WITHOUT connectStream (the loadHistory-discovery path):
+      // just mark a turn in flight again.
+      options.loading.value = true
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // The new turn must get its own attempts.
+      expect(options.onLoadHistory).toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('restores the budget when a turn ends via loading=false WITHOUT stopStreaming (syncSessionState path)', async () => {
+      // The precise residual gap: `syncSessionState` ends a turn by writing
+      // `loading.value = false` directly (a history response reports the run is
+      // no longer running) — it never calls stopStreaming. That path is exactly
+      // how this feature's scenario resolves when the terminal event was
+      // dropped. If the budget were reset only in stopStreaming, an exhausted
+      // budget would leak into the next turn and the watchdog would get zero
+      // attempts. Drive `loading` directly to exercise that path.
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      // Turn 1: exhaust the budget.
+      options.loading.value = true
+      connectStream('test-session-1')
+      await vi.advanceTimersByTimeAsync(600000)
+      expect(options.onLoadHistory.mock.calls.length).toBeGreaterThan(0)
+      options.onLoadHistory.mockClear()
+
+      // Turn 1 ends the syncSessionState way — NO terminal event, NO
+      // stopStreaming, just loading flipping false.
+      options.loading.value = false
+      await nextTick()
+
+      // Turn 2 starts the loadHistory-discovery way: no connectStream, just a
+      // turn in flight again.
+      options.loading.value = true
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // The budget must have been restored on the false edge.
+      expect(options.onLoadHistory).toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('does not refill the budget when a queued send re-connects mid-turn', async () => {
+      // connectStream is also the mid-turn path: a queued message sent while a
+      // run is in flight calls it with reuseExistingStreaming. Refilling the
+      // budget there would let a user bypass the per-turn cap indefinitely by
+      // sending messages during a hung turn.
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      // Burn all 3 attempts.
+      await vi.advanceTimersByTimeAsync(600000)
+      const exhausted = options.onLoadHistory.mock.calls.length
+      expect(exhausted).toBeLessThanOrEqual(3)
+      options.onLoadHistory.mockClear()
+
+      // Mid-turn queued send: re-connect without a turn boundary.
+      connectStream('test-session-1', { reuseExistingStreaming: true })
+      await vi.advanceTimersByTimeAsync(600000)
+
+      // Still exhausted — the mid-turn reconnect must not hand out more.
+      expect(options.onLoadHistory).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+  })
 
   describe('isOpen guard — skip render and scroll when panel not visible', () => {
     it('should skip debouncedRender when isOpen=false', async () => {
@@ -2925,45 +3125,41 @@ describe('useChatStream', () => {
   })
 
   describe('queue events (queue_drain / queue_cancel)', () => {
-    it('queue_drain: finalizes the previous streaming reply and starts a new one for the queued message', () => {
+    it('queue_drain: finalizes the previous streaming reply and drops the drained queue entry', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
       options.messages.value.push(
         { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
         { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
-        { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
       )
+      addQueued('test-session-1', { queueId: 'queue-B', text: 'B', files: [] })
       connectStream('test-session-1')
 
-      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'queue-B', text: 'B', messageId: 3 })
+      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'queue-B', messageId: 3 })
 
-      // Previous assistant finalized, queued message adopts its DB id (parent
-      // message A is DB-backed → parentIsDB=true).
+      // Previous assistant finalized; its object is kept (no v-for key shift).
       const aReply = options.messages.value.find((m: any) => m.content === 'A reply')
       expect(aReply.streaming).toBeUndefined()
-      const b = options.messages.value.find((m: any) => m.content === 'B')
-      expect(b.pending).toBeUndefined()
-      expect(b.id).toBe(3)
+      // The drained entry left the queue store; it is materialized separately
+      // by its user_message event, not by queue_drain.
+      expect(getQueue('test-session-1')).toHaveLength(0)
       // A new streaming placeholder exists for B's reply.
       const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
       expect(streaming.length).toBe(1)
     })
 
-    it('queue_cancel: removes only the cancelled pending messages, leaving others queued', () => {
+    it('queue_cancel: removes only the cancelled queue entries, leaving others queued', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
-      options.messages.value.push(
-        { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
-        { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
-        { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
-        { role: 'user', id: 'queue-C', content: 'C', blocks: [{ type: 'text', text: 'C' }], pending: true },
-      )
+      addQueued('test-session-1', { queueId: 'queue-B', text: 'B', files: [] })
+      addQueued('test-session-1', { queueId: 'queue-C', text: 'C', files: [] })
       connectStream('test-session-1')
 
       simulateWsEvent('queue_cancel', { sessionId: 'test-session-1', queueIds: ['queue-B'] })
 
-      expect(options.messages.value.some((m: any) => m.content === 'B')).toBe(false)
-      expect(options.messages.value.some((m: any) => m.content === 'C')).toBe(true)
+      const remaining = getQueue('test-session-1')
+      expect(remaining.some((m: any) => m.queueId === 'queue-B')).toBe(false)
+      expect(remaining.some((m: any) => m.queueId === 'queue-C')).toBe(true)
     })
 
     it('queue_drain for a different session is ignored', () => {
@@ -2972,15 +3168,14 @@ describe('useChatStream', () => {
       options.messages.value.push(
         { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
         { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
-        { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
       )
+      addQueued('test-session-1', { queueId: 'queue-B', text: 'B', files: [] })
       connectStream('test-session-1')
 
-      simulateWsEvent('queue_drain', { sessionId: 'OTHER-SESSION', queueId: 'queue-B', text: 'B', messageId: 3 })
+      simulateWsEvent('queue_drain', { sessionId: 'OTHER-SESSION', queueId: 'queue-B', messageId: 3 })
 
       // Nothing changed for the current session.
-      const b = options.messages.value.find((m: any) => m.content === 'B')
-      expect(b.pending).toBe(true)
+      expect(getQueue('test-session-1')).toHaveLength(1)
       const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
       expect(streaming.length).toBe(1)
     })

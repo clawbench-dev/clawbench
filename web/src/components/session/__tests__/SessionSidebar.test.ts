@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { defineComponent, h, ref } from 'vue'
 import SessionSidebar from '@/components/session/SessionSidebar.vue'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 
@@ -61,6 +62,40 @@ describe('SessionSidebar', () => {
     const wrapper = mountSidebar()
     expect(wrapper.find('.session-list-stub').exists()).toBe(true)
     expect(wrapper.find('.header-stub').exists()).toBe(true)
+  })
+
+  // Regression guard: App.vue hides this sidebar with
+  //   <SessionSidebar v-show="sessionSidebar.open.value && isWideScreen" />
+  // v-show compiles to a `style` FALLTHROUGH attribute, and a fragment (multi
+  // root) component cannot inherit fallthrough attributes — Vue warns
+  // "Extraneous non-props attributes (style)" and DROPS it. Adding
+  // <SharedSessionsDrawer> as a sibling of the root div turned this component
+  // into a fragment, so the sidebar stayed visible in portrait and the close
+  // button could not hide it.
+  //
+  // The assertion must be on the RENDERED root element's style, not on the
+  // component's own markup: mounting the component alone always looks fine,
+  // because the broken part is the host's attribute landing nowhere.
+  it('is actually hidden by a v-show binding on the host', () => {
+    const Host = defineComponent({
+      components: { SessionSidebar },
+      setup() {
+        const show = ref(false)
+        return () => h('div', { class: 'host' }, [
+          h(SessionSidebar, {
+            style: show.value ? {} : { display: 'none' },
+            width: 280,
+            currentSessionId: 's1',
+            runningSessionIds: new Set(),
+          }),
+        ])
+      },
+    })
+    const host = mount(Host)
+    const root = host.find('.session-sidebar')
+    expect(root.exists()).toBe(true)
+    expect((root.element as HTMLElement).style.display).toBe('none')
+    host.unmount()
   })
 
   it('emits close when the pinned pin button clicked', async () => {

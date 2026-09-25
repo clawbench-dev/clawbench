@@ -9,9 +9,10 @@ import (
 	"clawbench/internal/service"
 )
 
-// ServeUserMessageIndex returns lightweight {id, content, files, createdAt} for all user messages
-// in a session. Used for the user message index navigation feature.
-func ServeUserMessageIndex(w http.ResponseWriter, r *http.Request) {
+// ServeConversationIndex returns lightweight rows for every finalized message in
+// a session (user messages and assistant summaries), ordered by id ASC. Used for
+// the conversation index navigation feature.
+func ServeConversationIndex(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -33,9 +34,9 @@ func ServeUserMessageIndex(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}
-	messages, err := service.GetUserMessageIndex(sessionID)
+	messages, err := service.GetConversationIndex(sessionID)
 	if err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("failed to load user message index")))
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to load conversation index")))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})

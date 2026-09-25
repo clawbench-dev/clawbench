@@ -180,8 +180,9 @@
           v-if="markdownViewMode === 'rendered'"
           ref="htmlPreviewRef"
           class="html-preview-iframe"
-          :srcdoc="file.content"
-          sandbox="allow-scripts"
+          :src="htmlPreviewSrc || undefined"
+          :srcdoc="htmlPreviewSrc ? undefined : file.content"
+          sandbox="allow-scripts allow-same-origin"
         />
         <CodeMirrorViewer
           v-else
@@ -332,6 +333,7 @@ import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
 import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
+import { isAbsolutePath } from '@/utils/path.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 import { getNative } from '@/utils/clawbenchNative'
@@ -391,6 +393,42 @@ const contentRef = ref(null)
 const pdfPreviewRef = ref(null)
 const officePreviewRef = ref(null)
 const htmlPreviewRef = ref(null)
+/** Cache-buster for the HTML preview iframe (see htmlPreviewSrc). */
+const htmlPreviewTimestamp = ref(Date.now())
+
+// HTML preview loads the document through /api/fs/raw/ rather than inlining it
+// via srcdoc, so the browser resolves the document's own relative references
+// (stylesheets, scripts, images, fonts) against its real URL instead of the
+// app's root. A srcdoc document has no URL of its own and inherits the parent's
+// base, which sent every relative reference to /<name> and 404'd.
+//
+// This REQUIRES `allow-same-origin` on the iframe sandbox: without it the frame
+// is an opaque origin, its subresource requests are cross-site, and the
+// SameSite=Lax session cookie is withheld — the document itself still loads
+// (a top-level navigation counts as same-site) but none of its assets do.
+//
+// Cost, accepted deliberately: with same-origin the previewed HTML runs with
+// the user's session. It can call any authenticated API and read/write the
+// parent document. Previewed HTML is untrusted (AI-written or downloaded), so
+// this is a real trade — see fileViewerSandbox.test.ts, which records it.
+//
+// The `?t=` cache-buster is bumped on file change so a rewritten HTML file
+// re-renders; without it the iframe would keep serving the cached document.
+//
+// Returns '' for an EXTERNAL (absolute-path) file, which falls back to srcdoc.
+// An external file is served as `/api/fs/raw/?target=/abs/dir/index.html`, and
+// the browser strips the query when deriving the base URL — so the document's
+// base becomes `/api/fs/raw/`, and `src="pic.png"` resolves to
+// `/api/fs/raw/pic.png`, i.e. `<project>/pic.png`. That is silently the WRONG
+// file whenever the project root happens to contain one of the same name, so
+// the URL form is worse than useless here. srcdoc keeps the old (also
+// unresolved, but never-wrong) behaviour for this case.
+const htmlPreviewSrc = computed(() => {
+    if (!props.file?.path) return ''
+    if (isAbsolutePath(props.file.path)) return ''
+    const base = buildLocalFileUrl(props.file.path)
+    return base + (base.includes('?') ? '&' : '?') + `t=${htmlPreviewTimestamp.value}`
+})
 
 // Edit mode (source text editing via CodeEditor).
 // Shared at module level so the global back gesture (App.vue) can exit edit
@@ -719,6 +757,10 @@ watch(() => props.file?.content, (content) => {
     if (content != null) {
         scrollRestore.onContentReady()
     }
+    // The HTML preview iframe loads the document by URL, so a content change
+    // (fsnotify-driven refresh, or an AI edit) does NOT re-render it the way the
+    // old srcdoc binding did. Bump the cache-buster to force a re-fetch.
+    if (isHtml.value) htmlPreviewTimestamp.value = Date.now()
 })
 
 // Sync scroll position when toggling rendered <-> raw view for a markdown file.

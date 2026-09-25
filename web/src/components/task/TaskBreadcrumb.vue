@@ -1,11 +1,16 @@
 <template>
   <div class="task-breadcrumb" data-horizontal-scroll="true">
-    <!-- Root crumb: 任务列表 -->
+    <!-- Root crumb: 任务列表. The glyph is the section's own dock icon, so the
+         panel header reads as the same section the dock button stands for
+         (same rule as the git history and forge headers). -->
     <span
       class="crumb"
       :class="{ current: isList, clickable: !isList }"
       @click="!isList && navigate('list')"
-    >{{ t('task.title') }}</span>
+    >
+      <Clock :size="14" class="crumb-icon" />
+      <span>{{ t('task.title') }}</span>
+    </span>
 
     <template v-if="taskName">
       <span class="crumb-sep">›</span>
@@ -36,6 +41,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { Clock } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { store } from '@/stores/app'
@@ -82,11 +88,20 @@ function navigate(target) {
 
 /* ── Crumb item ── */
 .crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
   padding:3px var(--space-3);
   border-radius: var(--radius-xs);
   white-space: nowrap;
   cursor: default;
   transition: background var(--duration-base), color var(--duration-base);
+}
+
+/* Leading glyph on the root crumb. Holds its size so a long task name in the
+   next crumb cannot squeeze it (the crumbs share one scrolling flex row). */
+.crumb-icon {
+  flex-shrink: 0;
 }
 
 /* ── Clickable crumb ── */

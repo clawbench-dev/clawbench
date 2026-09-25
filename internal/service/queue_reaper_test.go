@@ -32,8 +32,18 @@ func setupReaperTestDB(t *testing.T) *sql.DB {
 		backend TEXT NOT NULL DEFAULT 'claude',
 		streaming INTEGER NOT NULL DEFAULT 0,
 		indexed INTEGER NOT NULL DEFAULT 0,
-		queue_id TEXT DEFAULT '',
-		queued INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS queued_messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL,
+		project_path TEXT NOT NULL,
+		backend TEXT NOT NULL DEFAULT '',
+		queue_id TEXT NOT NULL,
+		content TEXT NOT NULL,
+		files TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	require.NoError(t, err)
@@ -43,11 +53,13 @@ func setupReaperTestDB(t *testing.T) *sql.DB {
 		project_path TEXT NOT NULL DEFAULT '',
 		backend TEXT NOT NULL DEFAULT 'claude',
 		title TEXT NOT NULL DEFAULT '',
+		title_source TEXT NOT NULL DEFAULT '',
 		agent_id TEXT NOT NULL DEFAULT '',
 		model TEXT NOT NULL DEFAULT '',
 		transport TEXT NOT NULL DEFAULT '',
 		auto_approve INTEGER NOT NULL DEFAULT 0,
-		archived INTEGER NOT NULL DEFAULT 0
+		archived INTEGER NOT NULL DEFAULT 0,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	require.NoError(t, err)
 	return db
@@ -61,15 +73,15 @@ func insertReaperSession(t *testing.T, db *sql.DB, sessionID string, archived in
 	require.NoError(t, err)
 }
 
-// insertQueuedRow inserts a queued=1 user message with an explicit created_at
-// so tests can control whether it is inside or outside the grace window.
-// created_at is stored the way SQLite's CURRENT_TIMESTAMP writes it (UTC).
+// insertQueuedRow inserts a queued message with an explicit created_at so tests
+// can control whether it is inside or outside the grace window. created_at is
+// stored the way SQLite's CURRENT_TIMESTAMP writes it (UTC).
 func insertQueuedRow(t *testing.T, db *sql.DB, sessionID, queueID string, age time.Duration) {
 	t.Helper()
 	createdAt := time.Now().UTC().Add(-age).Format("2006-01-02 15:04:05")
-	_, err := db.Exec(`INSERT INTO chat_history
-		(project_path, role, content, session_id, backend, streaming, indexed, queue_id, queued, created_at)
-		VALUES ('/test', 'user', 'hello', ?, 'claude', 0, 1, ?, 1, ?)`,
+	_, err := db.Exec(`INSERT INTO queued_messages
+		(project_path, session_id, backend, queue_id, content, created_at)
+		VALUES ('/test', ?, 'claude', ?, 'hello', ?)`,
 		sessionID, queueID, createdAt)
 	require.NoError(t, err)
 }
@@ -101,12 +113,13 @@ func TestQueueReaper_RecoversStrandedQueuedRow(t *testing.T) {
 	require.Len(t, *calls, 1, "stranded message must be handed to a consumer exactly once")
 	assert.Equal(t, "sess-stranded", (*calls)[0].SessionID)
 	assert.Equal(t, "hello", (*calls)[0].Message)
-	assert.Equal(t, "q-1", (*calls)[0].QueueID)
-	// The row was claimed by the reaper (queued=0) so it cannot be delivered twice.
-	var queued int
+	// The row was claimed by the reaper (removed from queued_messages and
+	// materialized into chat_history) so it cannot be delivered twice.
+	assert.Equal(t, 0, queuedCountInDB(t, db, "sess-stranded"), "the recovered row must be claimed")
+	var historyRows int
 	require.NoError(t, db.QueryRow(
-		"SELECT queued FROM chat_history WHERE session_id = ?", "sess-stranded").Scan(&queued))
-	assert.Equal(t, 0, queued, "the recovered row must be claimed")
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?", "sess-stranded").Scan(&historyRows))
+	assert.Equal(t, 1, historyRows, "the recovered row must be materialized into chat_history")
 	// The stub replaced LaunchSessionExecution, so the running flag stays set —
 	// in production the launched execution clears it when the run finishes.
 	SetSessionRunning("sess-stranded", false, true)
@@ -364,11 +377,7 @@ func TestQueueReaper_RecoveredMessageIsClaimedExactlyOnce(t *testing.T) {
 	w.reap()
 
 	require.Len(t, *calls, 1, "the message must be delivered exactly once")
-
-	var queued int
-	require.NoError(t, db.QueryRow(
-		"SELECT queued FROM chat_history WHERE session_id = ?", "sess-once").Scan(&queued))
-	assert.Equal(t, 0, queued, "the recovered row must no longer be queued")
+	assert.Equal(t, 0, queuedCountInDB(t, db, "sess-once"), "the recovered row must no longer be queued")
 }
 
 // TestEnsureConsumer_BackendInfoIsPassedThrough verifies the launched execution
@@ -414,9 +423,9 @@ func TestEnsureConsumer_CarriesAttachments(t *testing.T) {
 	// Stored the way AddQueuedMessage stores them: a JSON array of FileEntry.
 	filesJSON := `[{"path":"/proj/x/a.png"},{"path":"/proj/x/b.go","startLine":3,"endLine":9}]`
 	createdAt := time.Now().UTC().Add(-time.Minute).Format("2006-01-02 15:04:05")
-	_, err = db.Exec(`INSERT INTO chat_history
-		(project_path, role, content, files, session_id, backend, streaming, indexed, queue_id, queued, created_at)
-		VALUES ('/proj/x', 'user', 'look at these', ?, 'sess-files', 'claude', 0, 1, 'q-files', 1, ?)`,
+	_, err = db.Exec(`INSERT INTO queued_messages
+		(project_path, session_id, backend, queue_id, content, files, created_at)
+		VALUES ('/proj/x', 'sess-files', 'claude', 'q-files', 'look at these', ?, ?)`,
 		filesJSON, createdAt)
 	require.NoError(t, err)
 
@@ -445,6 +454,15 @@ func TestEnsureConsumer_NoDoubleConsumerWhenAlreadyRunning(t *testing.T) {
 
 	assert.False(t, EnsureConsumer("sess-busy"))
 	assert.Empty(t, *calls)
+}
+
+// queuedCountInDB reports how many rows remain in a session's queue.
+func queuedCountInDB(t *testing.T, db *sql.DB, sessionID string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessionID).Scan(&n))
+	return n
 }
 
 var _ = ai.StreamEvent{} // keep the ai import stable if assertions change

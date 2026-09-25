@@ -118,19 +118,6 @@
       <DropOverlay :visible="terminalFileDrop.dropActive.value" :label="t('file.dropToUpload')" />
     </div>
 
-    <Transition name="copy-bar">
-      <!-- PC 模式用键盘/右键复制（Ctrl+C 有选区时复制、Ctrl+Shift+C、Ctrl+Insert、右键）。
-           开启「选中即复制」后选区已自动进剪贴板，此时再弹复制栏是多余的第二道确认，
-           故一并隐藏；关闭该设置时 PC 仍不显示（原生选区右键即可复制），移动端显示。
-           例外：自动复制写剪贴板失败时（WebView 可能拿不到用户激活）必须把复制栏放回来，
-           否则移动端将完全失去复制入口。 -->
-      <div v-if="selectionActive && !isPC && (!copyOnSelect || autoCopyFailed)" class="selection-copy-bar">
-        <span class="selection-copy-count">{{ t('terminal.selectedChars', { n: selectedText.length }) }}</span>
-        <button class="selection-copy-btn" @click="handleCopySelection" @contextmenu.prevent>{{ t('common.copy') }}</button>
-        <button class="selection-copy-close" @click="handleDismissSelection" @contextmenu.prevent :aria-label="t('terminal.close')">✕</button>
-      </div>
-    </Transition>
-
     <!-- Virtual key toolbar -->
     <div class="terminal-toolbar" v-show="!isPC">
       <!-- Symbol bar (toggleable, above main toolbar) -->
@@ -309,6 +296,7 @@ import type { Terminal as TerminalType, ITheme } from '@xterm/xterm'
 import { copyText } from '@/utils/clipboard.ts'
 import { isCopySelectionShortcut } from '@/utils/terminalClipboardUtils'
 import { useTerminalCopyOnSelect } from '@/composables/useTerminalCopyOnSelect'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys'
@@ -364,6 +352,10 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
+// The global quote bar. A terminal selection never reaches the global
+// selectionchange handler (xterm sets user-select:none), so this component
+// pushes its selection in explicitly — see updateSelectionFromTerm.
+const quoteQuestion = useQuoteQuestion()
 const { getServerValueWithDefault } = useSettingsConfig()
 // Aggregate upload progress for files dropped onto the terminal. The state is a
 // module-level singleton inside useFileUpload, so the file manager shares it.
@@ -405,8 +397,6 @@ function applyFontSize(size: number) {
 // Refs
 const gestureHint = ref('')
 let gestureHintTimer: ReturnType<typeof setTimeout> | null = null
-const selectionActive = ref(false)
-const selectedText = ref('')
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
 const cmdBtnTopRef = ref<HTMLElement | null>(null)
@@ -634,14 +624,6 @@ const terminalKeys = useTerminalKeys((data: string) => {
 // effect on already-open terminals without a remount.
 const copyOnSelect = computed(() => localConfig.terminalCopyOnSelect !== false)
 
-// The auto-copy is a deferred clipboard write (see the settle delay in
-// useTerminalCopyOnSelect), so it runs outside the gesture that produced the
-// selection. Browsers gate clipboard writes behind transient user activation,
-// which *should* still be live — but if it is not, the write fails silently and
-// the hidden floating bar would leave the user with no way to copy at all.
-// Track the failure so the bar can come back as the fallback.
-const autoCopyFailed = ref(false)
-
 const autoCopy = useTerminalCopyOnSelect({
   isEnabled: () => copyOnSelect.value,
   // Deliberately silent on success, like every mainstream terminal: the paste
@@ -652,21 +634,49 @@ const autoCopy = useTerminalCopyOnSelect({
   // The highlight is also kept: the user still needs to see what was copied,
   // and the right-click menu operates on the live selection.
   copy: (text: string) => {
-    copyText(
-      text,
-      () => { autoCopyFailed.value = false },
-      () => { autoCopyFailed.value = true },
-    )
+    copyText(text)
   },
 })
 
+/**
+ * Feed the terminal's selection to the global quote bar.
+ *
+ * xterm owns its selection: it sets `user-select: none` on `.xterm`, so the
+ * browser selection there is always collapsed and the global `selectionchange`
+ * handler never sees it. The terminal therefore has to push its selection into
+ * the bar itself — adding a container class to the whitelist cannot work.
+ *
+ * `pinBar()` is required, not cosmetic: `showBar` does not pin, and the global
+ * handler re-evaluates on pointerup (and on a 700ms safety timer) where it sees
+ * a collapsed DOM selection and would hide the bar right after it appeared.
+ * Pinning is what makes the terminal's bar survive those re-evaluations.
+ *
+ * The working directory is attached as the quote's label so the AI knows where
+ * the quoted command ran. It is read from the tab record synchronously on
+ * purpose: this runs on EVERY selection change (a touch drag calls it per
+ * move), so an async `fetchTerminalCwd` here would fire a request per frame.
+ * The tab's cwd is the launch directory, which is a good enough hint; the
+ * precise live value is not worth a request storm.
+ */
 function updateSelectionFromTerm(term: TerminalType) {
   const text = term.getSelection() ?? ''
-  selectionActive.value = text.length > 0
-  selectedText.value = text
-  // A new selection is a fresh copy attempt, so clear the previous failure
-  // before the deferred write reports back.
-  if (text) autoCopyFailed.value = false
+  if (!text) {
+    quoteQuestion.hideBar()
+  } else {
+    quoteQuestion.pinBar()
+    const cwd = activeTab.value?.cwd || ''
+    quoteQuestion.showBar({
+      text,
+      filePath: cwd,
+      language: '',
+      startLine: 0,
+      endLine: 0,
+      // 'terminal', not 'selection': the two are the same shape (no path), but
+      // the kind is what lets the card and drawer show a terminal icon/label
+      // instead of a generic "selected text".
+      sourceKind: 'terminal',
+    }, { delay: 0 })
+  }
   autoCopy.onSelectionChanged(text)
 }
 
@@ -697,26 +707,6 @@ function handleSelectionExtend(anchorCol: number, anchorRow: number, currentCol:
   const sel = selectionCellsToSelect(anchorCol, anchorRow, currentCol, currentRow, term.buffer.active.viewportY, term.cols)
   term.select(sel.col, sel.row, sel.length)
   updateSelectionFromTerm(term)
-}
-
-function handleDismissSelection() {
-  activeTab.value?.xterm?.clearSelection()
-  selectionActive.value = false
-  selectedText.value = ''
-}
-
-function handleCopySelection() {
-  const text = selectedText.value
-  if (!text) return
-  copyText(text, () => {
-    toast.show(t('terminal.copied'), { icon: '✅', type: 'success' })
-    activeTab.value?.xterm?.clearSelection()
-    selectionActive.value = false
-    selectedText.value = ''
-    gestures.setMode('browse')
-  }, () => {
-    toast.show(t('terminal.copyFailed'), { icon: '⚠️', type: 'error' })
-  })
 }
 
 // Quick commands
@@ -932,8 +922,9 @@ watch(() => gestures.mode.value, (m) => {
   nextTick(refreshToolbarFade)
   if (m !== 'selection') {
     activeTab.value?.xterm?.clearSelection()
-    selectionActive.value = false
-    selectedText.value = ''
+    // Close the quote bar too: leaving selection mode drops the terminal's
+    // selection, so a bar still showing that snippet would be orphaned.
+    quoteQuestion.hideBar()
   }
 })
 
@@ -943,8 +934,9 @@ watch(activeTabId, () => {
   // Drop a copy still waiting to settle — it belongs to the previous tab.
   autoCopy.dispose()
   activeTab.value?.xterm?.clearSelection()
-  selectionActive.value = false
-  selectedText.value = ''
+  // The bar belongs to the previous tab's selection; without this it would
+  // linger over the new tab showing text that is no longer selected anywhere.
+  quoteQuestion.hideBar()
   nextTick(() => nextTick(() => gestures.attach()))
 })
 
@@ -1949,60 +1941,6 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 [data-app-mode] .toolbar-btn.shortcut {
   -webkit-text-stroke: 0.1px currentColor;
-}
-
-.selection-copy-bar {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-6);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--accent-color) 90%, black);
-  color: #fff;
-  font-size: var(--font-size-sm);
-  z-index: 20;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-}
-.selection-copy-count {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.selection-copy-btn {
-  border: none;
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
-  padding: var(--space-2) 14px;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-}
-.selection-copy-close {
-  border: none;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.85);
-  font-size: var(--font-size-lg);
-  line-height: 1;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-}
-.selection-copy-close:active {
-  background: rgba(255, 255, 255, 0.2);
-}
-.copy-bar-enter-active,
-.copy-bar-leave-active {
-  transition: opacity var(--duration-base) ease, transform var(--duration-base) ease;
-}
-.copy-bar-enter-from,
-.copy-bar-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
 }
 </style>
 

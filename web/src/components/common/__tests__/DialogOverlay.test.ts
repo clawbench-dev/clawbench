@@ -51,6 +51,8 @@ function setDialogState(overrides: Partial<{
   confirmText: string
   cancelText: string
   dangerous: boolean
+  generateText: string
+  onGenerate: (() => Promise<string | null>) | null
   resolve: ((v: string | boolean | null) => void) | null
 }> = {}) {
   const { state } = useDialog()
@@ -64,6 +66,8 @@ function setDialogState(overrides: Partial<{
     confirmText: '',
     cancelText: '',
     dangerous: false,
+    generateText: '',
+    onGenerate: null,
     resolve: vi.fn(),
     ...overrides,
   }
@@ -118,6 +122,8 @@ describe('DialogOverlay', () => {
       confirmText: '',
       cancelText: '',
       dangerous: false,
+      generateText: '',
+      onGenerate: null,
       resolve: null,
     }
 
@@ -265,6 +271,86 @@ describe('DialogOverlay', () => {
     expect(resolveFn).toHaveBeenCalledWith(null)
   })
 
+  // ── Auto-generate button ──
+
+  it('prompt dialog: hides the generate button when no generator is provided', async () => {
+    setDialogState({ type: 'prompt', message: 'Enter:', generateText: '' })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    expect($('.dlg-generate')).toBeNull()
+  })
+
+  it('prompt dialog: does not render the generate button for confirm dialogs', async () => {
+    setDialogState({ type: 'confirm', message: 'Sure?', generateText: 'Auto-generate', onGenerate: vi.fn() })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    expect($('.dlg-generate')).toBeNull()
+  })
+
+  it('prompt dialog: clicking generate fills the input with the generated value', async () => {
+    const onGenerate = vi.fn().mockResolvedValue('Generated Title')
+    setDialogState({ type: 'prompt', message: 'Enter:', generateText: 'Auto-generate', onGenerate })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    const genBtn = $('.dlg-generate')!
+    expect(genBtn.textContent).toContain('Auto-generate')
+    genBtn.click()
+    await nextTick()
+    await nextTick()
+
+    expect(onGenerate).toHaveBeenCalledTimes(1)
+    expect((wrapper.vm as unknown as { inputVal: string }).inputVal).toBe('Generated Title')
+  })
+
+  it('prompt dialog: a null generated value leaves the input untouched', async () => {
+    const onGenerate = vi.fn().mockResolvedValue(null)
+    setDialogState({ type: 'prompt', message: 'Enter:', value: 'existing', generateText: 'Auto-generate', onGenerate })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    $('.dlg-generate')!.click()
+    await nextTick()
+    await nextTick()
+
+    expect((wrapper.vm as unknown as { inputVal: string }).inputVal).toBe('existing')
+  })
+
+  it('prompt dialog: generate does not resolve the dialog (user still confirms)', async () => {
+    const resolveFn = vi.fn()
+    const onGenerate = vi.fn().mockResolvedValue('Generated Title')
+    setDialogState({ type: 'prompt', message: 'Enter:', generateText: 'Auto-generate', onGenerate, resolve: resolveFn })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    $('.dlg-generate')!.click()
+    await nextTick()
+    await nextTick()
+
+    expect(resolveFn).not.toHaveBeenCalled()
+  })
+
+  it('prompt dialog: a throwing generator does not reject or crash the dialog', async () => {
+    const onGenerate = vi.fn().mockRejectedValue(new Error('boom'))
+    setDialogState({ type: 'prompt', message: 'Enter:', generateText: 'Auto-generate', onGenerate })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    $('.dlg-generate')!.click()
+    await nextTick()
+    await nextTick()
+
+    expect($('.dlg-overlay')).toBeTruthy()
+  })
+
   // ── Custom button text ──
 
   it('uses custom confirmText and cancelText when provided', async () => {
@@ -380,6 +466,8 @@ describe('DialogOverlay', () => {
       confirmText: '',
       cancelText: '',
       dangerous: false,
+      generateText: '',
+      onGenerate: null,
       resolve: null,
     }
 
@@ -396,6 +484,8 @@ describe('DialogOverlay', () => {
       confirmText: '',
       cancelText: '',
       dangerous: false,
+      generateText: '',
+      onGenerate: null,
       resolve: vi.fn(),
     }
     await nextTick()

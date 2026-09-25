@@ -818,7 +818,10 @@ paths:
             type: string
       responses:
         "200":
-          description: 消息列表与状态
+          description: |
+            消息列表与状态。`messages` 只含 `chat_history` 行（对话内容）；
+            尚未出队的排队消息不在其中，而是由 `queue` 数组单独返回（与
+            `GET /api/ai/queue` 同源，按入队顺序）。
     post:
       tags: [Chat]
       summary: 发送聊天消息
@@ -949,8 +952,11 @@ paths:
   /api/ai/chat/user-messages:
     get:
       tags: [Chat]
-      summary: 用户消息索引
-      description: 轻量返回该会话的用户消息列表（`{messages:[...]}`），供消息导航。
+      summary: 对话索引
+      description: |
+        轻量返回该会话的对话索引（`{messages:[...]}`），供消息导航。
+        按 id 升序返回全部已定稿消息（用户消息 + 助手消息），排除 streaming 行。排队消息不在 `messages` 中（它们尚无 chat_history 行），由响应里的 `queue` 数组单独返回。
+        用户消息带 `content` / `files`；助手消息带 `summary`（已存阅读摘要，缺失时回退为该轮回复正文抽取的预览，`content` 为空串）。
       operationId: chatUserMessages
       parameters:
         - name: session_id
@@ -960,7 +966,7 @@ paths:
             type: string
       responses:
         "200":
-          description: 用户消息索引
+          description: 对话索引
           content:
             application/json:
               schema:
@@ -970,7 +976,7 @@ paths:
                     type: array
                     items:
                       type: object
-                      description: 用户消息（含 id / content / files / createdAt / role 等）。
+                      description: 索引条目（含 id / role / createdAt；用户条目含 content / files，助手条目含 summary）。
 
   /api/ai/chat/tool-call:
     get:
@@ -1185,12 +1191,20 @@ paths:
           in: query
           schema:
             type: string
+        - name: cursor_sort_order
+          in: query
+          description: |
+            游标；上一页最后一行的 `sortOrder`。
+            排序为 `pinned DESC, sort_order ASC, created_at DESC, id DESC`，
+            游标必须同时携带 sort_order 与 pinned，否则同一 (pinned, sort_order) 的行会在每一页重复返回。
+            省略时退回旧的 created_at-only 行为。
+          schema:
+            type: integer
         - name: cursor_pinned
           in: query
           description: |
-            游标；上一页最后一行的 `pinned`（`1`/`0`）。
-            排序为 `pinned DESC, created_at DESC, id DESC`，游标必须携带 pinned，
-            否则置顶会话会在每一页重复返回。省略时退回旧的 created_at-only 行为。
+            游标；上一页最后一行的 `pinned`（`1`/`0`）。置顶会话是固定在最前的区块，
+            游标必须携带它才能正确翻页。省略时退回旧的 created_at-only 行为。
           schema:
             type: integer
             enum: [0, 1]
@@ -1229,6 +1243,37 @@ paths:
       responses:
         "200":
           description: 新会话
+
+  /api/ai/sessions/reorder:
+    put:
+      tags: [Sessions]
+      summary: 持久化会话手动排序
+      description: |
+        拖拽排序后写回会话顺序。请求体 `ids` 是**当前可见的完整顺序**，
+        第 i 个会话的 `sort_order` 变为 i（0 在最上）。
+        只作用于当前项目、`session_type='chat'`、**未置顶且未归档**的会话：
+        置顶会话是固定在最前的区块（`pinned DESC` 为第一排序键），不参与重排，
+        出现在 ids 中也会被忽略；归档会话不在列表中，也绝不被重编号
+        （否则每次拖拽都会重写项目里全部归档行，实测 1993 行/3 秒）。
+        未出现在 ids 中的可见会话按原有相对顺序接在其后。
+        新建会话 `sort_order` 默认为 0，靠 `created_at DESC` 的并列规则落在最上。
+      operationId: sessionsReorder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: string
+                  description: 按目标顺序排列的会话 ID 列表
+      responses:
+        "200":
+          description: 已重排
 
   /api/ai/sessions/overview:
     get:
@@ -1290,6 +1335,37 @@ paths:
       responses:
         "200":
           description: 已更新
+
+  /api/ai/session/generate-title:
+    post:
+      tags: [Sessions]
+      summary: 生成会话标题
+      description: |
+        把该会话的全部用户消息交给「AI 摘要模型」（`ai_summary.*`）总结成一个候选标题并返回，
+        供重命名对话框回填。**不会写库** —— 用户确认后仍由 `PATCH /api/ai/session/update` 保存，
+        因此自动生成的标题与手动输入一样是用户的显式选择。
+        未配置摘要模型、会话没有用户消息、或模型调用失败时返回错误，不做降级。
+      operationId: sessionGenerateTitle
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 生成成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title:
+                    type: string
+        "400":
+          description: 缺少 session_id、未配置摘要模型，或没有可总结的用户消息
+        "404":
+          description: 会话不存在或不属于当前项目
 
   /api/ai/session/tags:
     get:
@@ -1500,6 +1576,10 @@ paths:
     get:
       tags: [Queue]
       summary: 列出排队消息
+      description: |
+        返回会话当前排队中的用户消息（`queued_messages` 表），按入队顺序。
+        排队消息在出队/插入当前回复前**不会**写入 `chat_history`，因此不会出现在
+        `/api/ai/chat` 的 `messages` 中，只在这里与 `GET /api/ai/chat` 的 `queue` 字段可见。
       operationId: queueList
       parameters:
         - name: session_id
@@ -1639,7 +1719,13 @@ paths:
     get:
       tags: [Events]
       summary: 拉取离线期间漏发事件
-      description: 按游标补偿，供 Android PendingEventsWorker 等离线回退使用。
+      description: |
+        按游标补偿，供 Android PendingEventsWorker 等离线回退使用。
+
+        `suppress_notification`：该事件的会话/任务已读时为 true。事件仍会返回
+        （客户端须照常推进游标，否则下次拉取会永远重复返回它），但客户端不应弹通知。
+        `permission_pending` 不参与已读判定（它是待处理的审批请求，不是已读回复）。
+        `after` 为空时服务端返回整个 TTL 窗口内的积压，客户端应只推进游标、不补弹历史。
       operationId: eventsPending
       parameters:
         - name: after
@@ -1649,6 +1735,29 @@ paths:
       responses:
         "200":
           description: 漏发事件
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        event_id:
+                          type: string
+                        event_type:
+                          type: string
+                        payload:
+                          type: string
+                        expires_at:
+                          type: string
+                        created_at:
+                          type: string
+                        suppress_notification:
+                          type: boolean
+                          description: 会话/任务已读时为 true；事件仍须推进游标但不弹通知
 
   # ── Git ───────────────────────────────────────────────────────────────────
   /api/git/branch:
@@ -1970,6 +2079,86 @@ paths:
               schema:
                 type: string
 
+  /api/file/content-search:
+    get:
+      tags: [Files]
+      summary: 文件内容搜索（SSE）
+      description: |
+        grep 风格的内容搜索，Server-Sent Events 流式返回。OpenAPI 不建模事件流。
+
+        事件序列：每个命中的文件一个 `result` 事件（该文件的所有命中行合并
+        在一个事件里），最后一个 `done` 事件。正则非法时发出 `error` 事件而
+        非 400 —— EventSource 读不到非 2xx 响应的响应体，用事件才能把原因
+        传给用户。
+
+        `result` 事件字段：`name`、`path`、`matches`（每项含 `line`、`text`、
+        `ranges`，`ranges` 是 `text` 内的 **rune** 偏移区间，供前端高亮）、
+        `total`（该文件命中总数，可能大于 `matches` 长度）、`truncated`
+        （命中数超过单文件上限被截断）、`ignored`（git 是否忽略，与
+        `/api/dir` 的 DirEntry 语义一致，便于统一灰显）。
+
+        `path` 为空或相对时按项目根解析；**绝对路径表示项目外目录**，此时
+        `result.path` 返回绝对路径而非项目相对路径（与 `/api/dir/search`
+        一致，绝对路径的前导分隔符原样保留）。
+
+        默认跳过二进制/媒体/压缩包等扩展名、含 NUL 字节的文件、超过 5MiB
+        的文件；单文件命中行数上限 200，超长行会在首个命中处开窗截断。
+      operationId: contentSearch
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: 搜索关键词（正则模式下为正则表达式）
+          schema:
+            type: string
+        - name: path
+          in: query
+          description: 搜索根目录；相对路径按项目根解析，绝对路径表示项目外目录
+          schema:
+            type: string
+        - name: recursive
+          in: query
+          description: 是否递归子目录（默认 true）
+          schema:
+            type: boolean
+        - name: regex
+          in: query
+          description: 是否按正则解释 q（默认 false，即字面量匹配）
+          schema:
+            type: boolean
+        - name: wholeWord
+          in: query
+          description: 是否全词匹配（\b 包裹；\b 为 ASCII 语义）
+          schema:
+            type: boolean
+        - name: caseSensitive
+          in: query
+          description: 是否区分大小写（默认 false）
+          schema:
+            type: boolean
+        - name: include
+          in: query
+          description: 逗号分隔的包含 glob（gitignore 语法，如 `*.ts,**/*.go`）
+          schema:
+            type: string
+        - name: exclude
+          in: query
+          description: 逗号分隔的排除 glob（gitignore 语法，如 `dist/**,*.min.js`）
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: 返回的最大文件数（默认 file_search.display_limit+1，上限 500）
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: SSE 流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
   /api/file/list-tree:
     get:
       tags: [Files]
@@ -1984,14 +2173,14 @@ paths:
         "200":
           description: 树形条目
 
-  /api/file/thumb:
+  /api/fs/thumb:
     get:
       tags: [Files]
       summary: 图片缩略图
       description: 按绝对路径服务端缩放（png/jpg/gif），SVG 需回退到壁纸原图端点。
       operationId: fileThumb
       parameters:
-        - name: path
+        - name: target
           in: query
           required: true
           schema:
@@ -2009,7 +2198,7 @@ paths:
                 type: string
                 format: binary
 
-  /api/file/{path}:
+  /api/fs/file/{path}:
     get:
       tags: [Files]
       summary: 读取文件内容
@@ -2026,7 +2215,7 @@ paths:
       operationId: fileGet
       parameters:
         - $ref: "#/components/parameters/FilePath"
-        - name: path
+        - name: target
           in: query
           description: 绝对路径（外部文件）。
           schema:
@@ -2102,17 +2291,64 @@ paths:
         "404":
           $ref: "#/components/responses/Error"
 
-  /api/local-file/{path}:
+  /api/fs/raw/{path}:
     get:
       tags: [Files]
       summary: 读取文件原始字节
-      description: 供图片/PDF/音视频等直接渲染。项目相对路径走 URL 路径，绝对路径走 `?path=`。
+      description: |
+        供图片/PDF/音视频等直接渲染。项目相对路径走 URL 路径，绝对路径走 `?target=`。
+
+        Content-Type 按扩展名判定：基础表覆盖图片/音视频/Office，另加 HTML 预览所需的
+        `.html/.htm/.xhtml/.css/.js/.mjs/.json/.woff2/.woff/.ttf/.otf`。未知扩展名回退
+        `application/octet-stream`。文件名恰为 `index.html` 时也直接返回内容（不 301）。
+        **注意**：这些网页资源类型仅在本鉴权端点生效；公开的 `/api/share/{token}/local/`
+        有意不继承它们（在免鉴权端点返回 `text/html` 会让已登录访客同源执行被分享的 HTML）。
       operationId: localFileGet
+      parameters:
+        - $ref: "#/components/parameters/FilePath"
+        - name: target
+          in: query
+          description: 绝对路径（外部文件）。
+          schema:
+            type: string
+        - name: download
+          in: query
+          description: 置 1 时强制下载（附 Content-Disposition）。
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: 原始字节
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  # Deprecated: pre-rename raw-file endpoint, kept as a backward-compatibility
+  # alias for installed Android/desktop clients whose NATIVE download bridge still
+  # builds /api/local-file/ URLs. Those builds cannot be fixed by a frontend
+  # update (the WebView loads the latest JS, but the download URL is built in
+  # native code) and cannot self-update, so without this alias every file-manager
+  # download 404s. Unlike the current endpoint it also accepts the legacy `?path=`
+  # parameter name — scoped to this prefix only.
+  # Do not use in new code; do not add the alias to the frontend.
+  /api/local-file/{path}:
+    get:
+      tags: [Files]
+      summary: 读取文件原始字节（旧端点，已废弃）
+      description: |
+        **已废弃**：请改用 `/api/fs/raw/{path}`。此端点仅为无法自更新的旧版
+        Android/桌面客户端保留（其原生下载桥仍拼 `/api/local-file/` URL）。
+        兼容点：绝对路径参数可写作 `?path=`（旧参数名）。
+      operationId: localFileGetLegacy
+      deprecated: true
       parameters:
         - $ref: "#/components/parameters/FilePath"
         - name: path
           in: query
-          description: 绝对路径（外部文件）。
+          description: 绝对路径（外部文件）。旧参数名，仅本端点接受。
           schema:
             type: string
         - name: download
@@ -2414,6 +2650,123 @@ paths:
         "200":
           description: 结果
 
+  /api/share/session:
+    get:
+      tags: [Share]
+      summary: 会话分享状态 + 可选消息列表
+      description: |
+        需要 `session_id` 查询参数。返回该会话当前的分享状态，并附带**全部**消息
+        （含仍在生成/排队的）供分享对话框渲染：生成中的消息不可勾选。
+        未分享时 `token` 为空但 `messages` 照常返回，使打开对话框只需一次请求。
+      operationId: sessionShareStatus
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 分享状态与消息列表
+    post:
+      tags: [Share]
+      summary: 创建会话分享链接
+      description: |
+        请求体 `{sessionId, messageIds?}`。`messageIds` 为空表示分享全部**已完结**
+        消息（streaming=0）。选中未完结或不属于该会话的消息返回 400。
+        快照为**冻结副本**：同时包含摘要与原文、内联 tool 输入输出与思考全文；
+        执行计划不包含。重复创建会轮换 token，旧链接立即失效。
+      operationId: sessionShareCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId]
+              properties:
+                sessionId:
+                  type: string
+                messageIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: 为空表示全部分享；选中项之外的已完结消息不进快照
+      responses:
+        "200":
+          description: 分享 token 与路径
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Share]
+      summary: 关闭会话分享
+      description: 需要 `session_id`（查询参数或请求体 `{sessionId}`）。
+      operationId: sessionShareRevoke
+      parameters:
+        - name: session_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 结果
+  /api/share/session/list:
+    get:
+      tags: [Share]
+      summary: 已分享会话抽屉数据
+      description: |
+        列出**当前项目**（请求 cookie 中的项目）的会话分享，最新在前。
+        返回数组按 `shares` 包装，无分享时为空数组。
+
+        与 `/api/share/list`（文件）不同，这里**按项目隔离**：会话标题属于私有内容，
+        列出其他项目的分享会泄露它。
+
+        `archived: true` 表示底层会话已归档。分享本身仍然有效（快照是冻结副本），
+        也**仍然可以在此撤销**——归档后会话不再可按 id 寻址，这个列表是它唯一的
+        撤销入口。前端据此隐藏「打开会话」动作。
+      operationId: sessionShareList
+      responses:
+        "200":
+          description: |
+            分享列表，形如 `{"shares": [{token, sessionId, title, backend,
+            messageCount, createdAt, archived}]}`，无分享时 `shares` 为空数组。
+        "403":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Share]
+      summary: 撤销会话分享（单条或全部）
+      description: |
+        请求体 `{token}` 撤销一条；`{token}` 也可用查询参数传入。
+        `{all: true}`（或查询参数 `all=1`）撤销**本项目**的全部会话分享。
+
+        撤销前会校验 token 归属于请求项目；未知 token 与其他项目的 token 返回
+        **同一个 404**，两者都不暴露对方是否存在。
+      operationId: sessionShareRevokeByToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                all:
+                  type: boolean
+      responses:
+        "200":
+          description: 结果
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /api/share/list:
     get:
       tags: [Share]
@@ -2439,6 +2792,10 @@ paths:
         （文档内引用的文件，同样返回 FileContent JSON）、`{token}/download`（强制下载，
         支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
         token 不存在一律 404，零信息暴露。
+
+        会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
+        `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回冻结的
+        会话快照 JSON）。两者同样免鉴权、token 不存在一律 404。
 
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
         `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限
@@ -4292,10 +4649,15 @@ components:
         附件条目，可为本地文件/目录、**外部链接**（`kind=url`），或**引用**（`kind=quote`）。
         链接条目不参与文件系统校验，且其地址会以
         `[Referenced external link: <url>]` 前缀注入 AI 的 prompt。
-        引用条目同样不参与文件系统校验，注入 prompt 的形态取决于是否有 `text`：
-        - 有 `text`（引用片段）：`[Quoted from <label>]` + 批注 + 围栏代码块（含引用正文）；
-        - 无 `text`（引用整个文件/议题）：`[Quoted from <label>]` + 批注，**不渲染围栏**——
+        引用条目同样不参与文件系统校验，注入 prompt 的形态取决于是否有 `text`。
+        每条引用以**带序号的信封**开头（`[Quote i/n] <label>`，`n` 为本次引用的总条数），
+        批注单独一行并以 `[Note] ` 开头：
+        - 有 `text`（引用片段）：`[Quote i/n] <label>` + `[Note] <批注>` + 围栏代码块（含引用正文）；
+        - 无 `text`（引用整个文件/议题）：`[Quote i/n] <label>` + `[Note] <批注>`，**不渲染围栏**——
           此时是「引用该对象」，由 AI 自行按路径读取；`url` 非空时地址附在标签后（议题/PR）。
+
+        序号与 `[Note]` 标签是必要的：空行在「引用之间 / 标题与批注之间 / 批注与正文之间」三处
+        被复用，仅凭版面无法判断一条引用到哪里结束；裸批注行也会被读成游离句子或正文的一部分。
       properties:
         path:
           type: string
@@ -4325,6 +4687,36 @@ components:
         language:
           type: string
           description: 仅 `kind=quote`：围栏代码块的语言标识（如 `go`、`issue`）。
+        sourceKind:
+          type: string
+          enum: [file, url, message, selection, terminal]
+          description: |
+            仅 `kind=quote`：引用来源。`file` 本地文件、`url` 外部链接、`message` 聊天消息、
+            `selection` 无来源地址的自由选区、`terminal` 终端选区（与 `selection` 同形，
+            分开是为了能标成「终端」而非泛化的「选中内容」）。
+            该字段会随 `files` 持久化：`selection`/`terminal` 与 `message` 都没有 path 与 url，
+            不存下来刷新后就无法区分，抽屉会把终端引用误标为「聊天消息」。
+            缺省（旧数据）由前端按 url/path 推断。
+        commitSha:
+          type: string
+          description: 仅 `kind=quote`：来源 commit（git 历史 / CI 流水线引用），用于跳转回该 commit。
+        taskId:
+          type: integer
+          description: 仅 `kind=quote`：来源计划任务 id，用于跳转回该任务；任务名在 `path` 中。
+        sessionId:
+          type: string
+          description: 仅 `kind=quote`：来源会话 id，用于跳转回该会话；会话名在 `path` 中。
+        messageId:
+          type: integer
+          description: 仅 `kind=quote`：来源消息的 DB id，用于跳转后滚动定位到该条消息。
+        executionId:
+          type: string
+          description: |
+            仅 `kind=quote`：来源任务执行 id（任务执行详情页引用），用于跳转回该次运行。
+
+            上列 `commitSha` / `taskId` / `sessionId` / `messageId` / `executionId` 均为**来源定位键**：
+            客户端据此跳回源头，AI 提示词也会带上它们（形如 `[Quote 1/1] 名称 (task: 12)`），
+            以便 AI 定位源头。它们随 `files` 持久化——引用正文里不含这些信息，不存就无法再跳转。
 
     GalleryItem:
       type: object

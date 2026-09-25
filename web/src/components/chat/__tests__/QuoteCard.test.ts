@@ -19,6 +19,46 @@ function mountCard(props: Record<string, unknown> = {}) {
 }
 
 describe('QuoteCard', () => {
+  describe('type icon', () => {
+    // The icon states what KIND of thing was quoted, so a card for a scheduled
+    // task must not look like a card for a file. Asserting the rendered svg
+    // differs is what catches a card that hard-codes one icon for everything.
+    it('renders a different icon per source type', () => {
+      const file = mountCard({ quote: quote({ sourceKind: 'file', filePath: 'src/a.go' }) })
+      const task = mountCard({ quote: quote({ sourceKind: 'file', filePath: '每日构建', taskId: 12, language: 'task' }) })
+      const terminal = mountCard({ quote: quote({ sourceKind: 'terminal', filePath: '', text: 'ls' }) })
+
+      const fileIcon = file.find('.attachment-quote-icon').html()
+      const taskIcon = task.find('.attachment-quote-icon').html()
+      const terminalIcon = terminal.find('.attachment-quote-icon').html()
+
+      expect(fileIcon).not.toBe(taskIcon)
+      expect(fileIcon).not.toBe(terminalIcon)
+      expect(taskIcon).not.toBe(terminalIcon)
+    })
+
+    it('uses the diff icon for a commit quote', () => {
+      const diff = mountCard({ quote: quote({ commitSha: 'abc123', language: 'diff' }) })
+      const file = mountCard({ quote: quote({ sourceKind: 'file', filePath: 'src/a.go' }) })
+
+      expect(diff.find('.attachment-quote-icon').html()).not.toBe(file.find('.attachment-quote-icon').html())
+    })
+
+    it('always renders exactly one type icon', () => {
+      expect(mountCard().findAll('.attachment-quote-icon')).toHaveLength(1)
+    })
+  })
+
+  // The card deliberately does NOT render the quoted text. It is a compact chip
+  // in a single-line, nowrap row shared by the input and the sent bubble, where
+  // the content does not fit — the full text lives in the detail drawer, and the
+  // tooltip carries it for an unlabelled quote.
+  it('does not render the quoted text on the card', () => {
+    const wrapper = mountCard({ quote: quote({ text: 'func main() {}' }) })
+
+    expect(wrapper.text()).not.toContain('func main() {}')
+  })
+
   it('carries the shared classes both surfaces style against', () => {
     // chat-file-attachment / attachment-quote are what make the global rules in
     // ChatMessageItem.vue (sent bubble) and the scoped rules in ChatInputBar.vue

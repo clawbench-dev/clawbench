@@ -100,6 +100,9 @@
           <button v-if="toolbarInlineIds.includes('sharedFiles')" class="toolbar-btn" @click="sharedDrawerRef?.open()" :title="t('sharedFiles.button')">
             <ScreenShare :size="16" />
           </button>
+          <button v-if="toolbarInlineIds.includes('contentSearch')" class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
+            <SearchCode :size="16" />
+          </button>
           <template v-if="showMoreDropdown">
           <div ref="moreDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" @click="moreMenuOpen = !moreMenuOpen" :title="t('nav.more')">
@@ -173,6 +176,12 @@
                 <button class="toolbar-dropdown-item" @click="sharedDrawerRef?.open(); moreMenuOpen = false">
                   <ScreenShare :size="14" />
                   <span>{{ t('sharedFiles.button') }}</span>
+                </button>
+              </template>
+              <template v-if="toolbarCollapsedIds.includes('contentSearch')">
+                <button class="toolbar-dropdown-item" @click="openContentSearch(); moreMenuOpen = false">
+                  <SearchCode :size="14" />
+                  <span>{{ t('file.contentSearch.button') }}</span>
                 </button>
               </template>
             </div>
@@ -529,6 +538,17 @@
       <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" @contextmenu.prevent="handleCtxMenu" />
     </Teleport>
     <JumpDirDialog :open="jumpOpen" @close="jumpOpen = false" @confirm="handleJumpConfirm" />
+
+    <!-- Independent content (grep) search dialog. Kept separate from the
+         resident filename filter above: that one narrows the listing you are
+         looking at, while this one searches inside file contents across the
+         tree and jumps to a line. The dialog owns its own browse-tab binding,
+         so it hides on tab switch and restores on return. -->
+    <ContentSearchDialog
+      ref="contentSearchDialogRef"
+      :current-dir="currentDir"
+      @open-file="onContentSearchOpenFile"
+    />
     <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
@@ -548,7 +568,7 @@ import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@/utils/path'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -556,7 +576,7 @@ import {
   numberedName,
 } from '@/utils/fileManager.ts'
 import { store } from '@/stores/app.ts'
-import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
+import { navToFileInManager, openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -577,6 +597,7 @@ import ExternalBadge from './ExternalBadge.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
+import ContentSearchDialog from './ContentSearchDialog.vue'
 import SharedFilesDrawer from './SharedFilesDrawer.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
 import DirPreviewBody from './DirPreviewBody.vue'
@@ -874,10 +895,16 @@ watch(moreMenuOpen, (open) => {
 // Responsive toolbar overflow. The demotable list is the same on every
 // platform — preview mode is available on mobile too, so it takes a slot like
 // any other button and can collapse into the More dropdown.
+//
+// ORDER IS PRIORITY: useToolbarOverflow keeps a PREFIX inline and collapses the
+// tail, so the first entries are the last to collapse. `contentSearch` sits
+// early (right after the create/upload basics) because it is a primary action
+// users look for in the toolbar — leaving it last made it the very first button
+// to disappear into the More menu, which reads as "the feature is missing".
 const dirToolbarRef = ref(null)
 const demotableToolbarIds = computed(() => [
-  'refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle',
-  'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles',
+  'refresh', 'newFile', 'newFolder', 'contentSearch', 'upload', 'uploadFolder',
+  'viewToggle', 'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles',
 ])
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
@@ -1088,7 +1115,7 @@ function thumbUrlFor(entry) {
     // Search results carry a project-relative path already (parent directory
     // may differ per result), so build the thumb URL straight from the path.
     if (searchHasQuery.value) {
-        return appendThumbVersion(`/api/file/thumb?path=${encodeURIComponent(entry.path)}&w=80`, entry.path)
+        return appendThumbVersion(`/api/fs/thumb?target=${encodeURIComponent(entry.path)}&w=80`, entry.path)
     }
     return appendThumbVersion(buildThumbUrl(props.currentDir || '', entry.name), joinPath(props.currentDir || '', entry.name))
 }
@@ -1110,7 +1137,7 @@ function appendThumbVersion(url, path) {
  * Thumbnails are only mounted once their row scrolls into view.
  *
  * The list renders every entry in the directory at once, so entering a folder
- * with dozens of images previously fired one /api/file/thumb request per image
+ * with dozens of images previously fired one /api/fs/thumb request per image
  * in the same tick. `loading="lazy"` does NOT prevent that: it defers the
  * browser's own fetch but still creates the <img>, and for the whole initial
  * viewport it fetches immediately — the request burst happens regardless.
@@ -1320,6 +1347,43 @@ function onSearchDockEscape() {
 /** Focus the resident search box — used by App Ctrl+F. */
 function openSearch() {
     nextTick(() => searchInputRef.value?.focus())
+}
+
+// ── Content (grep) search dialog ──
+// A separate surface from the resident filename filter: this one searches
+// inside file contents and jumps to a line. The dialog owns its open state and
+// its browse-tab binding; the parent just forwards the two entry points, which
+// are also exposed so App can bind a shortcut.
+const contentSearchDialogRef = ref(null)
+
+function openContentSearch() {
+    contentSearchDialogRef.value?.open()
+}
+
+function closeContentSearch() {
+    contentSearchDialogRef.value?.close()
+}
+
+/**
+ * A content-search hit was chosen: open the file at that line.
+ *
+ * Delegates to the shared `openFilePath`, which owns the entire open pipeline
+ * (existence check + toast, project-external handling, content fetch via
+ * `store.selectFile`, then the overlay event carrying the line target that the
+ * navigation coordinator turns into scroll + highlight). Dispatching
+ * `open-file-overlay` directly would skip the content fetch and land on an
+ * empty viewer.
+ *
+ * Source is 'browse' — the dialog lives in the file manager, so Back should
+ * return to the browse tab rather than treating this as a chat/task jump.
+ *
+ * The dialog is deliberately NOT closed here: it is tab-bound, so switching to
+ * the view tab hides it, and returning to browse restores the results the user
+ * was working through.
+ */
+function onContentSearchOpenFile(path, line) {
+    if (!path) return
+    void openFilePath(path, line, undefined, 'browse')
 }
 
 /** Enter in the search box opens the highlighted result (files keep search).
@@ -1607,6 +1671,8 @@ defineExpose({
     _setIsDragOver(val) { isDragOver.value = val },
     openSearch,
     closeSearch: exitSearch,
+    openContentSearch,
+    closeContentSearch,
     exitMultiSelect,
     focusSearchInput() { searchInputRef.value?.focus() },
 })

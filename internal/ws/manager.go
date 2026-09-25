@@ -700,6 +700,58 @@ func normalizeMetricsInterval(enabled bool, intervalMs int) int {
 	return intervalMs
 }
 
+// SubscriptionDiagnostics summarizes why an event had no subscriber, for the
+// drop log. It answers the question the counters cannot: was the client simply
+// not there, or was it connected yet no longer subscribed to this session?
+// The latter is the silent failure mode that leaves the UI stuck mid-stream.
+//
+// Cheap enough to build only on the (rate-limited) drop-logging path; it walks
+// the subscription table, so it must never be called on the hot path.
+func (m *Manager) SubscriptionDiagnostics(sessionID string) []any {
+	m.mu.Lock()
+	connected := 0
+	disconnected := 0
+	clientIDs := make([]string, 0, len(m.subscriptions))
+	for clientID, sub := range m.subscriptions {
+		sub.mu.Lock()
+		live := sub.conn != nil
+		sub.mu.Unlock()
+		if live {
+			connected++
+		} else {
+			disconnected++
+		}
+		clientIDs = append(clientIDs, clientID)
+	}
+	m.mu.Unlock()
+
+	// Query the hub AFTER releasing m.mu: m.mu → sub.mu is the only allowed
+	// nesting, and this keeps the hub's own lock out of it entirely.
+	subscribedToSession := 0
+	for _, clientID := range clientIDs {
+		if m.hub != nil && m.hub.IsSubscribed(clientID, sessionID) {
+			subscribedToSession++
+		}
+	}
+
+	// hubSubscribers is the authoritative count EmitToSession consulted when it
+	// decided there was nobody to deliver to (it must be 0 on this path — a
+	// non-zero value would mean the drop decision raced a concurrent
+	// subscribe/unsubscribe). Reported alongside the per-client breakdown so the
+	// two can be cross-checked in the log.
+	hubSubscribers := 0
+	if m.hub != nil {
+		hubSubscribers = m.hub.SubscriberCount(sessionID)
+	}
+
+	return []any{
+		slog.Int("connected_clients", connected),
+		slog.Int("disconnected_clients", disconnected),
+		slog.Int("subscribed_to_session", subscribedToSession),
+		slog.Int("hub_subscribers", hubSubscribers),
+	}
+}
+
 // CleanupStale removes stale subscriptions:
 //   - Disconnected for > staleTimeout → remove
 //   - Connected subscriptions are never cleaned up.

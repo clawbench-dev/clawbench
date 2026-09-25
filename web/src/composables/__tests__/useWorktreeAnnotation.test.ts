@@ -7,6 +7,7 @@ import {
     clearWorktreeCache,
     useWorktreeAnnotation,
 } from '@/composables/useWorktreeAnnotation'
+import { setShareToken } from '@/share/shareMode'
 
 // Mock escapeHtml to pass through (for asserting HTML structure)
 vi.mock('@/utils/html', () => ({
@@ -167,6 +168,23 @@ describe('warmWorktreeCache', () => {
         vi.unstubAllGlobals()
     })
 
+
+    // The share page is anonymous: /api/git/worktrees is auth-protected and
+    // worktree chips are inert there, so the fetch must be skipped entirely
+    // rather than firing a 401 on every shared conversation.
+    it('does not call the API on an anonymous share page', async () => {
+        const mockFetch = vi.fn()
+        vi.stubGlobal('fetch', mockFetch)
+        setShareToken('share-token')
+
+        try {
+            await warmWorktreeCache(PROJECT_ROOT)
+            expect(mockFetch).not.toHaveBeenCalled()
+        } finally {
+            setShareToken(null)
+            vi.unstubAllGlobals()
+        }
+    })
     it('does nothing when projectRoot is empty', async () => {
         const mockFetch = vi.fn()
         vi.stubGlobal('fetch', mockFetch)

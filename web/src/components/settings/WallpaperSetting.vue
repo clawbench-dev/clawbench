@@ -174,7 +174,7 @@
           @input="onOpacityInput"
           @click.stop
         />
-        <button v-if="panelOpacity !== 0.85" class="settings-item__slider-reset" @click.stop="resetOpacity" :title="t('settings.items.resetToDefault')">↺</button>
+        <button v-if="panelOpacity !== 0.85" class="settings-item__slider-reset" @click.stop="resetOpacity" :title="t('settings.resetToDefault')">↺</button>
       </div>
       <div class="settings-item__desc">{{ t('settings.items.wallpaperPanelOpacityDesc') }}</div>
     </div>
@@ -198,7 +198,7 @@
           @input="onBlurInput"
           @click.stop
         />
-        <button v-if="wallpaperBlur !== 0" class="settings-item__slider-reset" @click.stop="resetBlur" :title="t('settings.items.resetToDefault')">↺</button>
+        <button v-if="wallpaperBlur !== 0" class="settings-item__slider-reset" @click.stop="resetBlur" :title="t('settings.resetToDefault')">↺</button>
       </div>
       <div class="settings-item__desc">{{ t('settings.items.wallpaperBlurDesc') }}</div>
     </div>
@@ -661,7 +661,7 @@ onUnmounted(() => {
 }
 
 .settings-item__label {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
