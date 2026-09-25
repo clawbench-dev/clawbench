@@ -53,6 +53,12 @@ export interface ContentSearchState {
   /** How many files were actually read. */
   searched: number
   truncated: boolean
+  /**
+   * The user stopped an in-flight search. The results present are a partial
+   * prefix of the tree walk, so the counts must not be presented as final —
+   * same reason `truncated` exists.
+   */
+  stopped: boolean
   /** Non-empty when the backend rejected the pattern (e.g. invalid regex). */
   error: string
   searchBasePath: string
@@ -91,6 +97,7 @@ export function useFileContentSearch() {
     matches: 0,
     searched: 0,
     truncated: false,
+    stopped: false,
     error: '',
     searchBasePath: '',
   })
@@ -125,6 +132,21 @@ export function useFileContentSearch() {
     state.searching = false
   }
 
+  /**
+   * User-initiated stop. Distinct from `cancelSearch`, which is the silent
+   * teardown used when a new search replaces the old one (typing, include /
+   * exclude edits, scope change) — marking those as "stopped" would flash a
+   * spurious partial-results notice on every keystroke.
+   *
+   * Closing the EventSource aborts the request, which cancels the backend walk
+   * through the request context; the files already reported stay on screen.
+   */
+  function stopSearch() {
+    if (!state.searching) return
+    cancelSearch()
+    state.stopped = true
+  }
+
   function reset() {
     cancelSearch()
     state.query = ''
@@ -133,6 +155,7 @@ export function useFileContentSearch() {
     state.matches = 0
     state.searched = 0
     state.truncated = false
+    state.stopped = false
     state.error = ''
     state.searchBasePath = ''
   }
@@ -147,6 +170,7 @@ export function useFileContentSearch() {
       state.matches = 0
       state.searched = 0
       state.truncated = false
+      state.stopped = false
       state.error = ''
       return
     }
@@ -158,6 +182,7 @@ export function useFileContentSearch() {
     state.matches = 0
     state.searched = 0
     state.truncated = false
+    state.stopped = false
     state.error = ''
 
     const searchDir = state.scope === 'global' ? '' : dir
@@ -253,6 +278,7 @@ export function useFileContentSearch() {
     loadedMatches,
     startSearch,
     cancelSearch,
+    stopSearch,
     reset,
     getDisplayLimit,
   }

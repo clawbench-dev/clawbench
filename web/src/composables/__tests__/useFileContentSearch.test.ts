@@ -266,6 +266,91 @@ describe('useFileContentSearch', () => {
     expect(api.state.searching).toBe(false)
   })
 
+  it('cancelSearch does NOT mark the search as stopped', () => {
+    // cancelSearch is the silent teardown used when a new search replaces the
+    // old one (every keystroke). Marking it stopped would flash a
+    // "stopped — partial results" notice on each character typed.
+    const api = startAndConnect('needle')
+    api.cancelSearch()
+    expect(api.state.stopped).toBe(false)
+  })
+
+  it('stopSearch aborts the stream and marks the results partial', () => {
+    const api = startAndConnect('needle')
+    const es = MockEventSource.instances[0]
+    es.emit('result', {
+      name: 'a.go', path: 'a.go', total: 1,
+      matches: [{ line: 1, text: 'needle', ranges: [] }],
+    })
+
+    api.stopSearch()
+
+    // Closing the EventSource aborts the request, which cancels the backend
+    // walk via the request context.
+    expect(es.closed).toBe(true)
+    expect(api.state.searching).toBe(false)
+    expect(api.state.stopped).toBe(true)
+    // Already-delivered results stay on screen.
+    expect(api.state.results).toHaveLength(1)
+  })
+
+  it('stopSearch is a no-op when nothing is in flight', () => {
+    const api = useFileContentSearch()
+    api.stopSearch()
+    // Otherwise a stray click would brand the next search as stopped.
+    expect(api.state.stopped).toBe(false)
+  })
+
+  it('a new search clears the stopped flag', () => {
+    const api = startAndConnect('needle')
+    api.stopSearch()
+    expect(api.state.stopped).toBe(true)
+
+    api.state.query = 'other'
+    api.startSearch('')
+
+    expect(api.state.stopped).toBe(false)
+  })
+
+  it('an empty query also clears the stopped flag', () => {
+    // Clearing the box after a stop must not leave the partial-results notice
+    // attached to the empty state.
+    const api = startAndConnect('needle')
+    api.stopSearch()
+    api.state.query = ''
+    api.startSearch('')
+
+    expect(api.state.stopped).toBe(false)
+  })
+
+  it('reset clears the stopped flag', () => {
+    const api = startAndConnect('needle')
+    api.stopSearch()
+    api.reset()
+    expect(api.state.stopped).toBe(false)
+  })
+
+  it('a stopped search keeps the counts that arrived, not the done totals', () => {
+    // `done` never arrives after a stop, so `matches` stays 0 (only the `done`
+    // event sets it) while `files` tracks results.length live. The UI therefore
+    // derives match counts from `loadedMatches`, not from state.matches.
+    const api = startAndConnect('needle')
+    const es = MockEventSource.instances[0]
+    es.emit('result', {
+      name: 'a.go', path: 'a.go', total: 2,
+      matches: [
+        { line: 1, text: 'needle', ranges: [] },
+        { line: 5, text: 'needle', ranges: [] },
+      ],
+    })
+    api.stopSearch()
+
+    expect(api.state.files).toBe(1)
+    expect(api.state.matches).toBe(0)
+    expect(api.state.results).toHaveLength(1)
+    expect(api.loadedMatches.value).toBe(2)
+  })
+
   it('reset clears every field including options', () => {
     const api = startAndConnect('needle')
     api.state.include = '*.go'

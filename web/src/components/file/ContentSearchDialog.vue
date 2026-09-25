@@ -8,11 +8,13 @@
   >
     <template #header>
       <SearchCode :size="16" class="bs-header-icon" />
-      <span class="bs-header-title">{{ t('file.contentSearch.title') }}</span>
-      <!-- Scope is surfaced in the header so the search root is never a
-           surprise; the buttons below toggle it. -->
-      <span class="cs-header-scope">
-        {{ scopeLabel }}
+      <!-- Fixed prefix + a muted, dynamic suffix naming what gets searched.
+           The suffix carries scope AND recursion, so the header states the
+           search root outright instead of leaving it to the FolderTree
+           button's highlight to convey. -->
+      <span class="bs-header-title">
+        {{ t('file.contentSearch.title') }}
+        <span class="cs-header-scope">{{ scopeSuffix }}</span>
       </span>
     </template>
 
@@ -127,7 +129,25 @@
         </template>
 
         <template v-else-if="search.state.searching && search.state.results.length === 0">
-          <LoadingIndicator size="md" :label="t('file.search.searching')" />
+          <!-- Nothing has matched yet. The stop button belongs here too: on a
+               large tree the first hit can take a while, and waiting for one
+               just to be able to abort is exactly when you want out. -->
+          <div class="cs-loading">
+            <LoadingIndicator size="md" :label="t('file.search.searching')" />
+            <button class="cs-stop-btn" :title="t('file.contentSearch.stop')" @click="search.stopSearch()">
+              <Square :size="12" fill="currentColor" />
+              <span>{{ t('file.contentSearch.stop') }}</span>
+            </button>
+          </div>
+        </template>
+
+        <template v-else-if="search.state.results.length === 0 && search.state.stopped">
+          <!-- Stopped before anything matched. "No files found" would be a lie:
+               the walk never finished, so the absence of hits proves nothing. -->
+          <div class="cs-empty">
+            <SearchX :size="56" :stroke-width="1.25" class="cs-empty-icon" />
+            <p class="cs-empty-text">{{ t('file.contentSearch.stoppedEmpty') }}</p>
+          </div>
         </template>
 
         <template v-else-if="search.state.results.length === 0">
@@ -140,9 +160,26 @@
 
         <template v-else>
           <div class="cs-summary">
-            {{ search.state.truncated
-              ? t('file.contentSearch.summaryPlus', { files: search.getDisplayLimit(), matches: search.state.matches })
-              : t('file.contentSearch.summary', { files: search.state.files, matches: search.state.matches }) }}
+            <!-- Live counts while the walk is still running. state.matches is
+                 only finalised by the `done` event, so reading it mid-flight
+                 would show "N files, 0 matches" next to visibly arriving
+                 results; loadedMatches sums what has actually landed. -->
+            <span class="cs-summary-text">
+              <LoadingIndicator v-if="search.state.searching" size="sm" inline />
+              {{ summaryText }}
+            </span>
+            <!-- Stop an in-flight search. Only meaningful while searching: the
+                 walk can take a while on a large tree, and the partial results
+                 stay on screen afterwards. -->
+            <button
+              v-if="search.state.searching"
+              class="cs-stop-btn"
+              :title="t('file.contentSearch.stop')"
+              @click="search.stopSearch()"
+            >
+              <Square :size="12" fill="currentColor" />
+              <span>{{ t('file.contentSearch.stop') }}</span>
+            </button>
           </div>
 
           <div class="cs-results">
@@ -192,7 +229,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   SearchCode, SearchX, CaseSensitive, WholeWord, Regex, FolderTree, Globe,
-  ListFilter, ChevronRight, TriangleAlert,
+  ListFilter, ChevronRight, TriangleAlert, Square,
 } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
@@ -234,9 +271,59 @@ const hasQuery = computed(() => !!search.state.query.trim())
 const isGlobalScope = computed(() => search.state.scope === 'global')
 const isRecursiveEffective = computed(() => search.effectiveRecursive.value)
 
-const scopeLabel = computed(() =>
-  isGlobalScope.value ? t('file.search.wordGlobal') : t('file.search.wordCurrent'),
-)
+/**
+ * The muted suffix after the "Search in files" prefix, naming what gets
+ * searched. Three states, because scope and recursion are two independent
+ * toggles but only three combinations are reachable:
+ *
+ *   current, non-recursive -> "only this directory"
+ *   current, recursive     -> "this directory and below"
+ *   global                 -> "the whole project"
+ *
+ * Global always recurses (the recursive toggle is disabled and rendered
+ * active), so it collapses to one label instead of a scope+recursion pair —
+ * naming recursion there would imply a state the user cannot turn off.
+ *
+ * Deliberately a separate i18n namespace from the filename search's
+ * `wordCurrent` / `wordGlobal` phrases: those read as a sentence fragment
+ * ("in the current directory") for the search placeholder, whereas this is a
+ * standalone noun phrase in the header.
+ */
+const scopeSuffix = computed(() => {
+  if (isGlobalScope.value) return t('file.contentSearch.scopeProject')
+  return isRecursiveEffective.value
+    ? t('file.contentSearch.scopeRecursive')
+    : t('file.contentSearch.scopeCurrent')
+})
+
+/**
+ * The result-count line, shown while streaming and after completion.
+ *
+ * Counts come from what has actually arrived (`loadedMatches`, and
+ * `results.length`) while the walk runs, because `state.files` / `state.matches`
+ * are only finalised by the `done` event — using them mid-flight would render
+ * "3 files, 0 matches" beside three files full of visible hits.
+ *
+ * Once finished, a stopped search is labelled as partial: the walk never
+ * completed, so its counts are a lower bound, not a total. This is the same
+ * reason `truncated` gets its own wording.
+ */
+const summaryText = computed(() => {
+  // state.matches is only finalised by the `done` event, so it is still 0 both
+  // while streaming AND after a stop (the stop aborts the request, so `done`
+  // never arrives). loadedMatches sums what has actually landed in either case.
+  const finalised = !search.state.searching && !search.state.stopped
+  const files = finalised ? search.state.files : search.state.results.length
+  const matches = finalised ? search.state.matches : search.loadedMatches.value
+
+  if (search.state.stopped) {
+    return t('file.contentSearch.summaryStopped', { files, matches })
+  }
+  if (finalised && search.state.truncated) {
+    return t('file.contentSearch.summaryPlus', { files: search.getDisplayLimit(), matches })
+  }
+  return t('file.contentSearch.summary', { files, matches })
+})
 
 function isCollapsed(path: string) {
   return collapsed.value.has(path)
@@ -393,6 +480,16 @@ defineExpose({
 </script>
 
 <style scoped>
+/* The muted scope suffix in the header. Sits inside .bs-header-title (whose
+   color is --text-primary), so it re-colors itself down to a secondary tone and
+   drops the weight the prefix carries — the prefix names the tool, the suffix
+   is the current setting. */
+.bs-header-title .cs-header-scope {
+  font-weight: var(--font-weight-normal);
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+}
+
 .cs-body {
   flex: 1;
   min-height: 0;
@@ -548,11 +645,54 @@ defineExpose({
   position: sticky;
   top: 0;
   z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
   padding: var(--space-3) var(--space-6);
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   background: var(--bg-tertiary, #f8f8f8);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.cs-summary-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Stop button for an in-flight search. Muted at rest and tinted on hover: it
+   sits in a low-emphasis count line, but is the only way out of a long walk. */
+.cs-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary, #fff);
+  color: var(--text-secondary, #666);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .cs-stop-btn:hover {
+    color: var(--color-red);
+    border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+  }
+}
+
+/* Initial "nothing yet" state: the spinner plus the same stop affordance. */
+.cs-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  padding: 40px var(--space-6);
 }
 
 /* ── Grouped results ── */

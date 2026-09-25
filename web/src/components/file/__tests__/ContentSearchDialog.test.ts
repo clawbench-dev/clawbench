@@ -36,12 +36,19 @@ const searchState = reactive({
   matches: 0,
   searched: 0,
   truncated: false,
+  stopped: false,
   error: '',
   searchBasePath: '',
 })
 
 const mockStartSearch = vi.fn()
 const mockCancelSearch = vi.fn()
+// The real stopSearch flips `searching` off and marks `stopped`; the dialog
+// reads both, so the mock must do the same or the stopped UI is untestable.
+const mockStopSearch = vi.fn(() => {
+  searchState.searching = false
+  searchState.stopped = true
+})
 const mockReset = vi.fn()
 
 vi.mock('@/composables/useFileContentSearch', () => ({
@@ -49,9 +56,12 @@ vi.mock('@/composables/useFileContentSearch', () => ({
     state: searchState,
     effectiveDir: computed(() => (searchState.scope === 'global' ? '' : 'src')),
     effectiveRecursive: computed(() => searchState.scope === 'global' || searchState.recursive),
-    loadedMatches: computed(() => 0),
+    loadedMatches: computed(() =>
+      searchState.results.reduce((sum, f) => sum + f.matches.length, 0),
+    ),
     startSearch: mockStartSearch,
     cancelSearch: mockCancelSearch,
+    stopSearch: mockStopSearch,
     reset: mockReset,
     getDisplayLimit: () => 100,
   }),
@@ -80,7 +90,10 @@ const i18n = createI18n({
           wordCurrent: 'current directory',
         },
         contentSearch: {
-          title: 'Search in files',
+          title: 'File content search',
+          scopeCurrent: 'only this directory',
+          scopeRecursive: 'this directory and below',
+          scopeProject: 'the whole project',
           placeholder: 'Search file contents...',
           button: 'Search in files',
           caseSensitive: 'Match case',
@@ -95,6 +108,9 @@ const i18n = createI18n({
           noResultsHint: 'Try a shorter term, or adjust the include / exclude and scope',
           summary: '{files} files, {matches} matches',
           summaryPlus: '{files}+ files, {matches}+ matches',
+          summaryStopped: 'Stopped — found {files} files, {matches} matches',
+          stop: 'Stop',
+          stoppedEmpty: 'Stopped before anything matched',
           fileTruncated: '{total} matches in this file — open it to see all',
         },
       },
@@ -198,6 +214,59 @@ describe('ContentSearchDialog', () => {
   it('shows the hint before a query is typed', async () => {
     const wrapper = await mountDialog()
     expect(wrapper.find('.cs-empty').text()).toContain('Type to search')
+  })
+
+  // ── Header title: fixed prefix + muted scope suffix ──
+
+  it('shows the fixed prefix followed by a muted scope suffix', async () => {
+    const wrapper = await mountDialog()
+    const title = wrapper.find('.bs-header-title')
+
+    expect(title.text()).toContain('File content search')
+    // The suffix is a separate element so it can be styled down; the old header
+    // had an unstyled chip and no recursion in the title at all.
+    const suffix = title.find('.cs-header-scope')
+    expect(suffix.exists()).toBe(true)
+    expect(suffix.text()).toBe('only this directory')
+  })
+
+  it('suffix names recursion when the current directory is searched recursively', async () => {
+    searchState.recursive = true
+    const wrapper = await mountDialog()
+
+    expect(wrapper.find('.cs-header-scope').text()).toBe('this directory and below')
+  })
+
+  it('suffix collapses to the project label under global scope', async () => {
+    // Global always recurses, so scope+recursion collapses to ONE label:
+    // naming recursion here would imply a state the user cannot turn off (the
+    // recursive toggle is disabled and pinned active).
+    searchState.scope = 'global'
+    const wrapper = await mountDialog()
+
+    expect(wrapper.find('.cs-header-scope').text()).toBe('the whole project')
+  })
+
+  it('global scope does not also claim recursion in the suffix', async () => {
+    searchState.scope = 'global'
+    searchState.recursive = true
+    const wrapper = await mountDialog()
+
+    const suffix = wrapper.find('.cs-header-scope').text()
+    expect(suffix).toBe('the whole project')
+    expect(suffix).not.toContain('below')
+  })
+
+  it('suffix tracks a live toggle without remounting', async () => {
+    const wrapper = await mountDialog()
+    expect(wrapper.find('.cs-header-scope').text()).toBe('only this directory')
+
+    // The recursive toggle is the 4th cs-toggle-btn (case, whole word, regex,
+    // recursive, scope, filters).
+    await wrapper.findAll('.cs-toggle-btn')[3].trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.cs-header-scope').text()).toBe('this directory and below')
   })
 
   it('renders a large icon in the pre-query empty state', async () => {
@@ -312,6 +381,130 @@ describe('ContentSearchDialog', () => {
     const wrapper = await mountDialog()
     expect(wrapper.find('.cs-summary').text()).toContain('3 files')
     expect(wrapper.find('.cs-summary').text()).toContain('7 matches')
+  })
+
+  // ── Streaming progress + stop ──
+
+  it('counts what has arrived while still searching, not the final totals', async () => {
+    // state.files / state.matches are only finalised by the `done` event, so
+    // they are still 0 mid-flight. Reading them here would render
+    // "0 files, 0 matches" beside files whose matches are visibly on screen.
+    searchState.query = 'needle'
+    searchState.searching = true
+    searchState.files = 0
+    searchState.matches = 0
+    searchState.results = [
+      { name: 'a.go', path: 'a.go', matches: [{ line: 1, text: 'needle', ranges: [] }], total: 1 },
+      { name: 'b.go', path: 'b.go', matches: [
+        { line: 2, text: 'needle', ranges: [] },
+        { line: 9, text: 'needle', ranges: [] },
+      ], total: 2 },
+    ]
+    const wrapper = await mountDialog()
+
+    const summary = wrapper.find('.cs-summary').text()
+    expect(summary).toContain('2 files')
+    expect(summary).toContain('3 matches')
+  })
+
+  it('shows a spinner in the summary while searching with results present', async () => {
+    // The old header only rendered progress when there were ZERO results, so
+    // once the first file arrived the in-flight state became invisible.
+    searchState.query = 'needle'
+    searchState.searching = true
+    searchState.results = [
+      { name: 'a.go', path: 'a.go', matches: [{ line: 1, text: 'needle', ranges: [] }], total: 1 },
+    ]
+    const wrapper = await mountDialog()
+
+    expect(wrapper.find('.cs-summary .loading-indicator').exists()).toBe(true)
+  })
+
+  it('offers a stop button only while searching', async () => {
+    searchState.query = 'needle'
+    searchState.searching = true
+    searchState.results = [
+      { name: 'a.go', path: 'a.go', matches: [{ line: 1, text: 'needle', ranges: [] }], total: 1 },
+    ]
+    const wrapper = await mountDialog()
+    expect(wrapper.find('.cs-summary .cs-stop-btn').exists()).toBe(true)
+
+    searchState.searching = false
+    await nextTick()
+    expect(wrapper.find('.cs-summary .cs-stop-btn').exists()).toBe(false)
+  })
+
+  it('stops the search from the summary button', async () => {
+    searchState.query = 'needle'
+    searchState.searching = true
+    searchState.results = [
+      { name: 'a.go', path: 'a.go', matches: [{ line: 1, text: 'needle', ranges: [] }], total: 1 },
+    ]
+    const wrapper = await mountDialog()
+
+    await wrapper.find('.cs-summary .cs-stop-btn').trigger('click')
+    await nextTick()
+
+    expect(mockStopSearch).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers stop before the first result arrives', async () => {
+    // A slow first hit is exactly when the user wants out; hiding the button
+    // until something matches would trap them.
+    searchState.query = 'needle'
+    searchState.searching = true
+    searchState.results = []
+    const wrapper = await mountDialog()
+
+    expect(wrapper.find('.cs-loading .cs-stop-btn').exists()).toBe(true)
+    await wrapper.find('.cs-loading .cs-stop-btn').trigger('click')
+    expect(mockStopSearch).toHaveBeenCalledTimes(1)
+  })
+
+  it('labels a stopped search as partial instead of showing final counts', async () => {
+    searchState.query = 'needle'
+    searchState.searching = false
+    searchState.stopped = true
+    // Finalised totals never arrive (the stop aborts the request), so they are
+    // still zero while results are on screen.
+    searchState.files = 0
+    searchState.matches = 0
+    searchState.results = [
+      { name: 'a.go', path: 'a.go', matches: [
+        { line: 1, text: 'needle', ranges: [] },
+        { line: 4, text: 'needle', ranges: [] },
+      ], total: 2 },
+    ]
+    const wrapper = await mountDialog()
+
+    const summary = wrapper.find('.cs-summary').text()
+    expect(summary).toContain('Stopped')
+    expect(summary).toContain('1 files')
+    expect(summary).toContain('2 matches')
+  })
+
+  it('does not claim "no files found" when stopped before any match', async () => {
+    // The walk never finished, so the absence of hits proves nothing.
+    searchState.query = 'needle'
+    searchState.searching = false
+    searchState.stopped = true
+    searchState.results = []
+    const wrapper = await mountDialog()
+
+    expect(wrapper.find('.cs-empty').text()).toContain('Stopped before anything matched')
+    expect(wrapper.find('.cs-empty').text()).not.toContain('No files found')
+  })
+
+  it('hides the stop button once stopped', async () => {
+    searchState.query = 'needle'
+    searchState.searching = false
+    searchState.stopped = true
+    searchState.results = [
+      { name: 'a.go', path: 'a.go', matches: [{ line: 1, text: 'needle', ranges: [] }], total: 1 },
+    ]
+    const wrapper = await mountDialog()
+
+    expect(wrapper.find('.cs-stop-btn').exists()).toBe(false)
   })
 
   it('emits openFile with the path and line when a match is clicked', async () => {

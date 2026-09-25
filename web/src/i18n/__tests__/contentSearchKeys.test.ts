@@ -24,10 +24,11 @@ describe('i18n content-search keys completeness', () => {
     // Spelled out rather than derived from the component so adding a new
     // t('file.contentSearch.X') without a translation fails here.
     const used = [
-      'title', 'placeholder', 'button', 'caseSensitive', 'wholeWord', 'regex',
+      'title', 'scopeCurrent', 'scopeRecursive', 'scopeProject',
+      'placeholder', 'button', 'caseSensitive', 'wholeWord', 'regex',
       'filters', 'includeLabel', 'includePlaceholder', 'excludeLabel',
       'excludePlaceholder', 'hint', 'noResultsHint', 'summary', 'summaryPlus',
-      'fileTruncated',
+      'summaryStopped', 'stop', 'stoppedEmpty', 'fileTruncated',
     ]
     const enCs = (en.file as Record<string, Record<string, string>>).contentSearch
     const zhCs = (zh.file as Record<string, Record<string, string>>).contentSearch
@@ -51,7 +52,7 @@ describe('i18n content-search keys completeness', () => {
   it('placeholder-bearing keys keep their interpolation placeholders in both locales', () => {
     const enCs = (en.file as Record<string, Record<string, string>>).contentSearch
     const zhCs = (zh.file as Record<string, Record<string, string>>).contentSearch
-    for (const key of ['summary', 'summaryPlus', 'fileTruncated']) {
+    for (const key of ['summary', 'summaryPlus', 'summaryStopped', 'fileTruncated']) {
       expect(enCs[key], `en ${key} placeholders`).toMatch(/\{\w+\}/)
       expect(zhCs[key], `zh ${key} placeholders`).toMatch(/\{\w+\}/)
     }

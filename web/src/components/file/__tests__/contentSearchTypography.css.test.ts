@@ -100,3 +100,37 @@ describe('content-search result text matches the file browser', () => {
     }
   })
 })
+
+describe('header scope suffix reads as secondary', () => {
+  /** Declarations of `.bs-header-title .cs-header-scope`. */
+  function suffixDecls(): string {
+    const m = dialog.match(
+      /\.bs-header-title\s+\.cs-header-scope\s*\{([^}]*)\}/,
+    )
+    expect(m, '.bs-header-title .cs-header-scope rule must exist').not.toBeNull()
+    return m![1]
+  }
+
+  it('is muted and lighter than the prefix, not the same emphasis', () => {
+    // The prefix names the tool; the suffix is the current setting. Rendering
+    // it at the title's own colour/weight would make it read as part of the
+    // name rather than a value that changes.
+    const decls = suffixDecls()
+    expect(decls).toMatch(/color:\s*var\(--text-muted\)/)
+    expect(decls).toMatch(/font-weight:\s*var\(--font-weight-normal\)/)
+  })
+
+  it('is smaller than the title it sits in', () => {
+    // .bs-header-title is --font-size-lg; the suffix must step down from it.
+    const m = suffixDecls().match(/font-size:\s*([^;]+);/)
+    expect(m, 'the suffix must declare a font-size').not.toBeNull()
+    expect(tokenPx(m![1].trim())).toBeLessThan(tokenPx('var(--font-size-lg)'))
+  })
+
+  it('scopes itself under .bs-header-title so it can beat the title colour', () => {
+    // .bs-header-title sets --text-primary at the same specificity as a bare
+    // class, and it lives in BottomSheet's GLOBAL stylesheet while this rule is
+    // scoped — so the descendant form is what makes the muted colour win.
+    expect(dialog).toMatch(/\.bs-header-title\s+\.cs-header-scope\s*\{/)
+  })
+})
