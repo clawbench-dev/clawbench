@@ -2,11 +2,33 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 让安卓与 Electron 登录页在用户把完整 URL 粘贴进主机框时，自动解析出协议并填充协议单选框与端口框。
+**Goal:** 让安卓与 Electron 登录页在用户把完整 URL 填入主机框后（粘贴或手输，离开字段时），自动解析出协议并填充协议单选框与端口框。
 
-**Architecture:** 把纯解析逻辑抽到一个无 DOM 依赖的全局函数 `parseServerInput(text)`，放在两份 `login.html` 各自的同级 `url-utils.js` 中；`login.html` 通过 `<script src="url-utils.js">` 加载，并只在 `#addHost` 上挂 `paste` 监听调用它。两份副本各自独立，用一个表驱动 vitest 同时断言两份以保证不漂移。
+**Architecture:** 把纯解析逻辑抽到一个无 DOM 依赖的全局函数 `parseServerInput(text)`，放在两份 `login.html` 各自的同级 `url-utils.js` 中；`login.html` 通过 `<script src="url-utils.js">` 加载，并只在 `#addHost` 上挂 `blur` 监听调用它。两份副本各自独立，用一个表驱动 vitest 同时断言两份以保证不漂移。
 
 **Tech Stack:** 原生浏览器 JS（无框架）、vitest（仓库根 `npm test`，jsdom 环境）、Android Gradle assets、electron-builder extraResources
+
+---
+
+> **修订说明（务必先读）**：本计划最初以 **`paste`** 为触发方式编写并实施；此后按用户要求
+> 在 commit **`c1aa60ee`**（"refactor(login): 触发方式由 paste 改为 blur"）改为 **`blur`**。
+> 行为表**完全不变**（同样输入得到同样解析结果），仅触发时机不同。本次变更的要点：
+> 监听器改为 `addEventListener('blur', function() {...})`，读取
+> `document.getElementById('addHost').value`（不再读 `e.clipboardData.getData('text')`），
+> 回调不再接收事件参数、**不再调用 `e.preventDefault()`**（blur 不可取消）；开头注释改为
+> `// Event: blur on the host field -> normalize a full URL into protocol + port.`；
+> paste 版 jsdom 功能测试改写为 blur 版并移除全部 `defaultPrevented` 断言，测试数由 51 增至 **53**。
+> 正文各 Task 的「预期输出」数字（28 / 30）是**当时中间态**的实测值，当前测试文件为 **53 个用例**
+> （已实测 `Tests 53 passed (53)`）。
+> 另有一项**用户已确认接受**的限制：`#addConnectBtn` 是 `type="submit"`，在 `#addHost` 里按 Enter
+> 会走表单 `submit` 监听器并拼出错误 URL（点击连接按钮因先触发 blur 而不受影响）；用户选择接受，
+> 不加 Enter/keydown 守卫。设计文档
+> `docs/plans/2026-09-25-android-url-autofill-design.md` 的「变更记录」「已知限制」两节为权威记录。
+>
+> 下文正文中的行号为**实施前的勘察值**（会随插入内容而漂移，已就地标注当前实测位置）。
+> 文中的内联代码块（监听器、静态断言、验证 grep）**已整体替换为 blur 版**，以免读者照抄一份
+> 已废弃的实现；仅「修订说明」及历史叙述中保留 `paste` 字样。当前权威实现以已提交的
+> `login.html` / `url-utils.js` 为准。
 
 ---
 
@@ -186,18 +208,18 @@ npx vitest run web/src/__tests__/loginUrlUtils.test.ts
 
 ```js
 /**
- * Parse a pasted server address into protocol / host / port.
+ * Parse a server address into protocol / host / port.
  *
  * Pure and dependency-free on purpose: it must be evaluable in a bare sandbox
  * (no DOM, no ClawBenchNative). Deliberately NOT built on `new URL()`:
  *   new URL('192.168.1.100:8080')  -> throws Invalid URL
  *   new URL('example.com:8080')    -> protocol "example.com:", hostname ""
- * so the scheme-less form users actually paste cannot go through it. A single
+ * so the scheme-less form users actually type cannot go through it. A single
  * regex treats both "with scheme" and "without scheme" uniformly.
  *
  * Returns { protocol: 'http'|'https'|null, host: string, port: string|null },
  * or null when the input is not a server address we understand. Callers must
- * treat null as "leave the default paste alone".
+ * treat null as "leave the field alone".
  */
 function parseServerInput(text) {
   if (typeof text !== 'string') return null;
@@ -343,7 +365,10 @@ npx vitest run web/src/__tests__/loginUrlUtils.test.ts
   var connecting = false;
 ```
 
-**Step 2: 加 paste 监听**
+**Step 2: 加 blur 监听**
+
+> 下述代码块已更新为**当前 blur 版**（原计划为 paste 版，见文首「修订说明」）。
+> 行号为实施前勘察值；当前 android 的监听器（含开头注释）位于 `login.html:1490-1510`。
 
 已实测：提交处理器在 `login.html:1456-1487`（`document.getElementById('addServerForm').addEventListener('submit', ...)`），
 紧接其后的 `1489` 是 `// Event: show add form` 注释。把新监听插在
@@ -354,16 +379,15 @@ npx vitest run web/src/__tests__/loginUrlUtils.test.ts
 插入的完整代码：
 
 ```js
-    // Event: paste a full URL into the host field -> fill protocol + port.
-    // Only `paste` is handled (no blur/input): typing an address by hand must
-    // not be rewritten mid-keystroke.
-    document.getElementById('addHost').addEventListener('paste', function(e) {
-      var text = (e.clipboardData && e.clipboardData.getData('text')) || '';
-      var parsed = parseServerInput(text);
-      // Unparseable -> do not intercept; let the browser paste normally.
+    // Event: blur on the host field -> normalize a full URL into protocol + port.
+    // Blur, not paste/input: the field is only rewritten after the user leaves it,
+    // so typing is never disturbed mid-keystroke. Reading .value (rather than
+    // clipboard data) also sidesteps WebView clipboard restrictions.
+    document.getElementById('addHost').addEventListener('blur', function() {
+      var parsed = parseServerInput(document.getElementById('addHost').value);
+      // Not a URL we understand -> leave the field exactly as the user typed it.
       if (!parsed) return;
 
-      e.preventDefault();
       hideError('addErrorMsg');
       document.getElementById('addHost').value = parsed.host;
       // Only override the port when the URL carried one explicitly; the field
@@ -383,7 +407,7 @@ npx vitest run web/src/__tests__/loginUrlUtils.test.ts
 ```js
     });
 
-    // Event: paste a full URL into the host field -> fill protocol + port.
+    // Event: blur on the host field -> normalize a full URL into protocol + port.
     // ...（如上）
     });
 
@@ -403,7 +427,7 @@ const DESKTOP_LOGIN = 'desktop/assets/login.html'
 
 /**
  * Static wiring guard. Robolectric cannot execute JS (ShadowWebView
- * .evaluateJavascript is a no-op), so the paste handler cannot be exercised
+ * .evaluateJavascript is a no-op), so the blur handler cannot be exercised
  * end-to-end in a unit test. These assertions catch the wiring being forgotten
  * — a missing <script> tag or an unwired listener — which would otherwise ship
  * silently (no CSP, no error, the feature just does nothing).
@@ -413,10 +437,10 @@ describe('login.html wiring', () => {
     ['android', ANDROID_LOGIN],
     ['desktop', DESKTOP_LOGIN],
   ] as const) {
-    it(`${label} loads url-utils.js and wires a paste listener on #addHost`, () => {
+    it(`${label} loads url-utils.js and wires a blur listener on #addHost`, () => {
       const html = readRepoFile(rel)
       expect(html).toContain('<script src="url-utils.js"></script>')
-      expect(html).toMatch(/getElementById\('addHost'\)\.addEventListener\('paste'/)
+      expect(html).toMatch(/getElementById\('addHost'\)\.addEventListener\('blur'/)
       expect(html).toContain('parseServerInput')
     })
   }
@@ -435,7 +459,7 @@ npx vitest run web/src/__tests__/loginUrlUtils.test.ts
 
 **Step 5: 人工验收（JS 无法单测，必须人工确认）**
 
-按 Task 6 的验证清单构建并运行 App 实测粘贴行为。
+按 Task 6 的验证清单构建并运行 App 实测 blur 归一化行为（粘贴或手输后离开字段触发）。
 
 ---
 
@@ -453,7 +477,10 @@ npx vitest run web/src/__tests__/loginUrlUtils.test.ts
 <script src="url-utils.js"></script>
 ```
 
-**Step 2: 加 paste 监听**
+**Step 2: 加 blur 监听**
+
+> 下述代码块已更新为**当前 blur 版**（原计划为 paste 版，见文首「修订说明」）。
+> 当前 desktop 的监听器（含开头注释）位于 `login.html:1515-1535`。
 
 **不要用 +11 推算行号**——实测两文件行偏移不是常量（+0/+4/+6/+11/+13/+21/+25/+33/+34/+31）。
 desktop 的提交处理器在 `login.html:1477-1512`（android 1456-1487，偏移 **+21**），
@@ -466,16 +493,15 @@ desktop 与 android 的差异集中在 bridge 包装、`onConnectError`、i18n�
 本监听器不属于任何一类。
 
 ```js
-    // Event: paste a full URL into the host field -> fill protocol + port.
-    // Only `paste` is handled (no blur/input): typing an address by hand must
-    // not be rewritten mid-keystroke.
-    document.getElementById('addHost').addEventListener('paste', function(e) {
-      var text = (e.clipboardData && e.clipboardData.getData('text')) || '';
-      var parsed = parseServerInput(text);
-      // Unparseable -> do not intercept; let the browser paste normally.
+    // Event: blur on the host field -> normalize a full URL into protocol + port.
+    // Blur, not paste/input: the field is only rewritten after the user leaves it,
+    // so typing is never disturbed mid-keystroke. Reading .value (rather than
+    // clipboard data) also sidesteps WebView clipboard restrictions.
+    document.getElementById('addHost').addEventListener('blur', function() {
+      var parsed = parseServerInput(document.getElementById('addHost').value);
+      // Not a URL we understand -> leave the field exactly as the user typed it.
       if (!parsed) return;
 
-      e.preventDefault();
       hideError('addErrorMsg');
       document.getElementById('addHost').value = parsed.host;
       // Only override the port when the URL carried one explicitly; the field
@@ -501,12 +527,16 @@ npx vitest run web/src/__tests__/loginUrlUtils.test.ts
 **Step 4: 验证两份副本未漂移（Task 3 只保证 url-utils.js 相同，这里确认监听器也相同）**
 
 ```bash
-grep -A14 "addEventListener('paste'" android/app/src/main/assets/login.html > /tmp/a.txt
-grep -A14 "addEventListener('paste'" desktop/assets/login.html > /tmp/d.txt
+grep -A16 "addEventListener('blur'" android/app/src/main/assets/login.html > /tmp/a.txt
+grep -A16 "addEventListener('blur'" desktop/assets/login.html > /tmp/d.txt
 diff /tmp/a.txt /tmp/d.txt && echo "LISTENERS IDENTICAL"
 ```
 
 **预期输出：** `LISTENERS IDENTICAL`
+
+（`-A16` 恰好覆盖从 `addEventListener('blur'` 到收尾 `});` 的整块——再多一行就会吃到下一个
+handler 的注释。测试文件里的 `login.html blur listener copies > are byte-identical` 用例用
+`// Event: blur on the host field` 作锚点做同样的比对，二者互为补充。）
 
 ---
 
@@ -566,17 +596,25 @@ git rev-parse --short HEAD
    - Android：`./build.sh` 后安装 APK，或直接 `cd android && ./gradlew assembleDebug` 装机。
    - Electron：在 `desktop/` 下打包运行（**务必确认 `extraResources` 生效**——
      打包产物里要有 `resources/url-utils.js`；若缺失，页面会静默失去该功能）。
-2. 打开登录页 → 点「添加服务器」展开表单，逐条粘贴并确认：
+2. 打开登录页 → 点「添加服务器」展开表单，逐条把内容填入主机框（粘贴或手输均可），
+   **然后让主机框失焦**（点表单别处或 Tab 到下一个控件），确认：
 
-| 粘贴内容 | 期望协议单选框 | 期望主机框 | 期望端口框 |
+| 主机框内容 | 期望协议单选框 | 期望主机框 | 期望端口框 |
 |---|---|---|---|
 | `https://192.168.1.100:8443` | https 选中 | `192.168.1.100` | `8443` |
 | `http://example.com` | http 选中 | `example.com` | `20000`（不变） |
 | `https://example.com/chat?x=1` | https 选中 | `example.com` | `20000`（不变） |
 | `192.168.1.100:8080` | 保持原选中项不变 | `192.168.1.100` | `8080` |
 | `192.168.1.100` | 保持原选中项不变 | `192.168.1.100` | 不变 |
-| `not a url` | 不变 | 原样粘贴（浏览器默认行为） | 不变 |
+| `not a url` | 不变 | 保持用户原样输入 | 不变 |
 
-3. 确认粘贴后**没有残留错误提示**（`hideError('addErrorMsg')` 生效）。
-4. 确认**手动逐字输入**主机名不会被改写（只有 paste 触发）。
+3. 确认归一化后**没有残留错误提示**（`hideError('addErrorMsg')` 生效）。
+4. 确认触发方式**只有 blur**：**手动逐字输入**主机名时，输入过程中字段不会被改写，
+   只有离开字段（失焦）后才归一化。
 5. 点「添加并连接」，确认拼出的 URL 正确（如 `https://192.168.1.100:8443`）。
+
+> **已知限制（已接受，非缺陷修复项）**：`#addConnectBtn` 是 `type="submit"`，在 `#addHost`
+> 中按 **Enter** 会触发表单 `submit`，此时读到的仍是**未归一化**的主机值，拼出的 URL 错误
+> （如 `https://https://192.168.1.100:8443:20000`）。**点击**「连接」按钮不受影响——点击会先
+> 让主机框失焦，blur 先于 submit 触发，归一化已完成。用户已审阅并选择**接受**该取舍，未加
+> Enter/keydown 守卫；验收时请按「点击连接」路径确认，不要期待 Enter 也正确。
