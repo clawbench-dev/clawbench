@@ -83,6 +83,8 @@ var mimeTypes = map[string]string{
 // Without these entries the fallback is application/octet-stream: stylesheets
 // are silently dropped, ES modules are refused, and the document itself is not
 // rendered at all (the browser downloads it instead).
+//
+//nolint:goconst // font extension literals repeat across the MIME / hashed-asset / custom-font maps; extracting a shared constant per extension is overkill
 var webAssetMimeTypes = map[string]string{
 	".html":  "text/html",
 	".htm":   "text/html",
@@ -676,8 +678,8 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 		fileName := filepath.Base(absPath)
 		w.Header().Set("Content-Disposition", contentDispositionAttachment(fileName))
 		w.Header().Set("Content-Type", mime)
-		f, err := os.Open(absPath)
-		if err != nil {
+		f, openErr := os.Open(absPath)
+		if openErr != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("cannot open file")))
 			return
 		}

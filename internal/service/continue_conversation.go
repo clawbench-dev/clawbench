@@ -681,7 +681,7 @@ func CountMessagesAfterAnchor(sessionID string, anchorID int64) (int, error) {
 // The caller (handler) is responsible for resetting the AI-side session state
 // (clearing external_session_id and closing the ACP connection) — this function
 // only rewrites the local DB history.
-func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult, error) {
+func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult, error) { //nolint:gocyclo // rewind validation + queue drain + transactional delete are inherently branchy
 	var res RewindResult
 
 	// 1. Validate the anchor message: must exist, be an assistant message and finalized.

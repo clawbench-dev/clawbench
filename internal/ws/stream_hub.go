@@ -260,7 +260,7 @@ func EmitToSession(sessionID string, event ai.StreamEvent) {
 // StreamEventToPayload converts an ai.StreamEvent to the payload data
 // that was previously written as SSE `data:` fields. The payload format
 // is kept identical to the SSE format for frontend compatibility.
-func StreamEventToPayload(event ai.StreamEvent) any {
+func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one branch per stream-event type; splitting would not simplify it
 	// Simple empty-payload signal events
 	switch event.Type {
 	case "thinking_done", "done", "replay_done":

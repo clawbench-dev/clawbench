@@ -829,7 +829,9 @@ func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []mode
 		// no column every message would otherwise look like a placeholder.
 		var count int
 		if txErr := tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr != nil || count != 1 {
-			return nil
+			// A read failure here means "cannot prove this is the first message",
+			// so skip titling rather than risk clobbering a locked title.
+			return nil //nolint:nilerr // best-effort title; a failed count read must not fail the message insert
 		}
 	} else if titleSourceRank(source) >= titleSourceRank(TitleSourceAuto) {
 		// Already auto-titled or deliberately named — never clobber.
