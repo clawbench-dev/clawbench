@@ -1274,6 +1274,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	handler.SetTriggerBingSyncFunc(service.TriggerBingSync)
 	service.StartBingWallpaperWorker()
 
+	// Protocols is assigned below, once `scheme` is known: it must enable
+	// HTTP/1.1 explicitly (the WebSocket endpoints need http.Hijacker, which
+	// h2 lacks) alongside the h2 variant matching this deployment.
 	srv := &http.Server{Handler: mux}
 
 	// Optional localhost-only HTTP dev listener (for Vite dev proxy)
@@ -1303,6 +1306,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.Info("starting with HTTP")
 		}
 	}
+
+	// Enable HTTP/1.1 + h2 on the main listener. `scheme` is the same switch
+	// that selects ServeTLS/Serve below, so the protocol set always matches
+	// how this instance is actually served.
+	srv.Protocols = serverProtocols(scheme == "https")
 
 	// Pre-bind the main listener to detect port conflicts BEFORE printing the banner.
 	// Without this, PrintBanner shows a password for an instance that immediately fails

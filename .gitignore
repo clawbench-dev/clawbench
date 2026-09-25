@@ -60,7 +60,10 @@ auto-password
 # Git worktrees
 .worktrees/
 dist/
-server
+# Local `go build -o server ./cmd/server` output. Anchored: a bare `server`
+# also matches the cmd/server directory component, silently ignoring every
+# new file under it.
+/server
 .venv/
 
 # Docs - local only
