@@ -2,6 +2,8 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, h, nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import QueuedMessageBar from '../QueuedMessageBar.vue'
 import { queuedMessages, addQueued, setActiveQueueSession, resetQueuesForTest } from '@/composables/useMessageQueue'
 import enLocale from '@/i18n/locales/en'
@@ -48,5 +50,41 @@ describe('QueuedMessageBar (collapsed count)', () => {
     addQueued('s1', { queueId: 'q3', text: 'three' })
     await nextTick()
     expect(wrapper.text(), 'and three').toContain('Queued · 3')
+  })
+})
+
+/**
+ * Layout + label contract, checked against the SOURCE because jsdom has no CSS
+ * engine and no layout. Both are deliberate and easy to undo by accident:
+ *
+ *   - The delete control is pinned to the RIGHT edge. The actions row is a flex
+ *     row whose first child is the action button; without `margin-left: auto`
+ *     the × sits immediately after it, so the row reads as one cluster instead
+ *     of "action left, destructive control right".
+ *   - The insert action is a SHORT two-character label ("插话"). The old
+ *     "插入当前回复" was a sentence crammed into a pill button.
+ */
+describe('QueuedMessageBar layout + labels (source contract)', () => {
+  const src = readFileSync(resolve(__dirname, '../QueuedMessageBar.vue'), 'utf8')
+
+  it('pins the remove (×) button to the right edge', () => {
+    const m = src.match(/\.queued-bar-remove\s*\{([^}]*)\}/)
+    expect(m, '.queued-bar-remove rule must exist').not.toBeNull()
+    expect(m![1], 'the × must be pushed right, away from the action button').toMatch(/margin-left:\s*auto/)
+  })
+
+  it('renders the remove button AFTER the action button in the flex row', () => {
+    const actionIdx = src.indexOf('class="queued-bar-action"')
+    const removeIdx = src.indexOf('class="queued-bar-remove"')
+    expect(actionIdx).toBeGreaterThan(-1)
+    expect(removeIdx).toBeGreaterThan(actionIdx)
+  })
+
+  it('uses a two-character insert label', () => {
+    const zh = readFileSync(resolve(__dirname, '../../../i18n/locales/zh.ts'), 'utf8')
+    const m = zh.match(/^\s*insert:\s*'([^']*)',/m)
+    expect(m, 'chat.pending.insert must exist').not.toBeNull()
+    expect(m![1], 'the insert label must stay short').toBe('插话')
+    expect([...m![1]]).toHaveLength(2)
   })
 })

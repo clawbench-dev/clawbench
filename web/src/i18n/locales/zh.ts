@@ -818,7 +818,7 @@ export default {
       uploadedAttachment: '上传附件',
       fileReference: '文件引用',
       queuing: '排队中',
-      insert: '插入当前回复',
+      insert: '插话',
       insertHint: '把这条消息并入正在生成的回复，本轮的工作继续',
       interrupt: '中断并发送',
       interruptHint: '停止正在生成的回复，立即改做这条消息',

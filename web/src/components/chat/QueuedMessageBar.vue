@@ -205,6 +205,8 @@ function fileLabel(f) {
   font-size: var(--font-size-md);
   line-height: 1;
   transition: color var(--duration-base);
+  /* Pin the delete control to the right edge; the action button stays left. */
+  margin-left: auto;
 }
 
 @media (hover: hover) {
