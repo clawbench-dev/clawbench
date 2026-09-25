@@ -259,6 +259,18 @@
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
+                    <!-- Explicit rename affordance. The title text above is also
+                         clickable, but that is undiscoverable on touch; this icon
+                         surfaces the same action on the right of the header. -->
+                    <button
+                      v-if="sessionIdentity.currentSessionId.value"
+                      class="chat-title-edit-btn"
+                      data-action="rename-session"
+                      :title="t('chat.sessionRename.tooltip')"
+                      @click.stop="handleRenameSession"
+                    >
+                      <PencilLine :size="16" />
+                    </button>
                   </div>
                   <!-- Chat Tab (title bar is now the shared one above) -->
                   <TabPanel class="chat-tab-panel" noHeader tabId="chat" :activeTab="chatActive">
@@ -477,7 +489,7 @@ import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -3632,6 +3644,40 @@ onUnmounted(() => {
     border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
     overflow: hidden;
     white-space: nowrap;
+}
+/* Rename-session icon at the right end of the chat title bar. Pushed to the
+   edge with margin-left:auto so it stays put when the title is short.
+   Deliberately muted at rest (the title text next to it is the primary
+   affordance) and only takes the accent colour on hover/focus. */
+.chat-title-edit-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text-muted, #999);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-xs);
+    transition: background var(--duration-base), color var(--duration-base);
+}
+@media (hover: hover) {
+    .chat-title-edit-btn:hover {
+        color: var(--accent-color, #0066cc);
+        background: rgba(0, 102, 204, 0.1);
+    }
+}
+/* Keyboard users get the same reveal as hover — otherwise the button is
+   permanently low-contrast while tabbing through it. */
+.chat-title-edit-btn:focus-visible {
+    color: var(--accent-color, #0066cc);
+    background: rgba(0, 102, 204, 0.1);
+    outline: 2px solid var(--accent-color, #0066cc);
+    outline-offset: 1px;
 }
 /* Chat column + session sidebar live in this row below the right pane top. */
 .chat-panel-row {
