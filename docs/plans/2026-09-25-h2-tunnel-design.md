@@ -75,6 +75,8 @@ CBT1 方案（见被取代文档 §3）在一根 WebSocket 上自研了一套二
 - h2c：明文部署下走 prior-knowledge（不做 Upgrade 协商）。
 - SSH：前两者都失败时回退到既有 20001 通道。
 
+**这条链是 `both` 的探测顺序。** `port_forward.transport` 是**客户端传输提示**，不是服务端闸门：它只决定客户端探测哪条线——`ssh` 只探测 SSH，`h2` 只探测 h2-over-TLS → h2c，`both` 走上面的完整链。该值存放在服务端配置里、随 `/api/config` 下发给客户端，但**服务端不据此启停任何监听器或端点**：SSH 监听器只由 `port_forward.enabled` 控制，h2 的两个端点只要注册表存在就始终可用（详见 §11.1）。
+
 **明文部署下首次连接会白付一次 TLS 失败**（很快：握手即被拒，不是超时）。因此客户端**记住上次成功的传输方式，重连时优先复用**；仅首次连接严格按上述顺序探测。
 
 **浏览器端既不需要也做不到**：`fetch()` 的 Fetch 规范 `RequestDuplex` enum **只有 `"half"`**，原文「'half' is the only valid value and it is for initiating a half-duplex fetch (i.e., the user agent sends the entire request before processing the response). 'full' is reserved for future use」；Node 24 实测 `duplex:full` 被拒，`duplex:half` 时即使服务端先写响应，响应头也被憋到请求体 close 之后（实测 2043ms 仍未 settle）。浏览器支持面：`duplex` 与 `ReadableStream` 请求体**只有 Chromium 支持**（Firefox/Safari 均 `false`）。`WebTransport`（HTTP/3）需 HTTPS + 显式端口，默认明文 20000 不可用。**结论：浏览器端零改动。**
@@ -136,7 +138,7 @@ HTTP 与 WebSocket 共用 20000：
 - `internal/ssh/server.go:616-624` `isReservedPort` = `port<=0 || port==mainPort || port==sshPort || portReg.IsPortReserved(port)`；
 - 正向路径（`handleDirectTCPIP`，`:710-782`）**只**查 `IsPortAllowed(targetPort)`（`:738`），注释明确「transport layer 中继不需要 URL 改写元数据」，即**不查** `IsNonLocalhostTarget`、不启 HTTP 反代。
 
-**注册表创建门控**（`cmd/server/main.go:1064-1088`）：`ProxyRegistry` **只在** `cfg.PortForward.Enabled` 时创建（注释明说「没有 SSH 隧道它没有独立用途」）；`:1074` `SetReservedPorts(port, sshPort)`；随后赋给 `service.ProxyService`。热重载路径 `reserveSSHPorts`（`:1739-1747`）由 `hotReloadSSH`（`:1749-1812`）调用。**不改这个门控，隧道 handler 永远拿到 nil 只能全拒——这是服务端最关键的生命周期改动（见 §6）。**
+**注册表创建门控**（`cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry`，调用点在 `cmd/server/main.go:1064-1088`）：`ProxyRegistry` 由 `cfg.PortForward.Enabled || cfg.PortForward.Transport != model.TransportSSH` 创建。原实现**只在** `cfg.PortForward.Enabled` 时创建（注释明说「没有 SSH 隧道它没有独立用途」），已放宽。`:1074` `SetReservedPorts(port, sshPort)`；随后赋给 `service.ProxyService`。热重载路径 `reserveSSHPorts`（`:1739-1747`）由 `hotReloadSSH`（`:1749-1812`）调用。**唯一不创建注册表的组合是 `enabled:false && transport:ssh`**（此时 SSH 监听关闭且 h2 被显式排除）——其余组合都会创建，否则隧道 handler 拿到 nil 只能全拒 503（见 §11.1）。
 
 现有 nil 守卫先例：`internal/handler/ssh_info.go:117`（`if service.ProxyService != nil`）。
 
@@ -268,7 +270,7 @@ IPC 在 `desktop/src/main/bridge.ts:84-93`，preload 在 `desktop/src/preload/in
 | `Protocols` 非 nil 覆盖默认 | 只设 `SetUnencryptedHTTP2(true)` 会关掉 h1 与 h2-over-TLS | 同时 `SetHTTP1(true)`；TLS 加 `SetHTTP2(true)`（§6） |
 | h1 半双工 | 不调 `EnableFullDuplex` 时 body 被吞（`net/http/server.go:1392`） | 若保留 h1 兜底，handler 显式调 `http.NewResponseController(w).EnableFullDuplex()`（h2 下是 no-op，无害） |
 | 现有 WS 端点 | `coder/websocket` 硬依赖 `http.Hijacker`，h2 无 hijack | 必须保留 `SetHTTP1(true)`；隧道走裸 HTTP 流 |
-| `ProxyRegistry` 门控 | 只在 `cfg.PortForward.Enabled` 时创建（`cmd/server/main.go:1064`） | 放宽创建条件（§6） |
+| `ProxyRegistry` 门控 | 原先只在 `cfg.PortForward.Enabled` 时创建（`cmd/server/main.go:1064`）；`transport` 是客户端提示而非服务端闸门，不能靠它启停 SSH 监听 | 放宽为 `Enabled || Transport != "ssh"`（`shouldCreateProxyRegistry`，§3.2 / §6） |
 | OpenAPI 漂移 | `openapi_drift_test.go:27-87` 对**任何** `/api/` 前缀注册路由做反向检查 | 新端点必须写进 `openapi.yaml` + 计数 +1（§6） |
 | OkHttp 默认 10s 超时 | `Http2Stream$StreamTimeout` 超时会 `closeLater(CANCEL)` RST 整流 | 必须 `readTimeout(0)`+`writeTimeout(0)`（§8） |
 | OkHttp `enqueue()` 排队 | `maxRequestsPerHost=5` 会让第 6 条流永久 queued | 每个流用专用线程的 `execute()`（§8） |
@@ -403,7 +405,7 @@ CBT1 → h2 能力映射见 §2.1 表格。
 | 端口被保留 / 已占用（`-R` bind） | `409` | 对应 `isReservedPort` / 监听失败 |
 | 服务端 `net.Dial` 失败 | `502` | **必须在写响应头之前** |
 | `claim` token 无效 / 过期 / 已使用 | `403` | |
-| `ProxyService == nil`（未启用任何转发） | `503` | nil 守卫（先例 `ssh_info.go:117`） |
+| `ProxyService == nil`（注册表未创建，唯一组合是 `enabled:false && transport:ssh`） | `503` | nil 守卫（先例 `ssh_info.go:117`）；`transport` 本身不构成闸门（§11.1） |
 | 内部错误 | `500` | |
 
 控制流上的 `bind_err.code` 取值与上表对齐（`2`=不允许 / `3`=保留或占用 / `4`=`net.Listen` 失败 / `6`=内部错误）。
@@ -529,14 +531,14 @@ sequenceDiagram
 | `internal/handler/tunnel_control.go` | — | **新增** | `-R` 控制流 handler：NDJSON 读写、`bind`/`unbind`、挂起连接表、`incoming` 推送、`claim` 匹配 |
 | `internal/handler/handler.go` | :272 `RegisterRoutes`；`register`(:278) / `registerPublic`(:286)；SSH 段 :463-476（`:474`/`:475`） | **需改** | 在 `:475` 之后加 `register("/api/tunnel/stream", TunnelStream)`、`register("/api/tunnel/control", TunnelControl)`（注意 `RegisterRoutes` 是路由唯一来源；`Route` 结构 :237-240，`routeTable` :247） |
 | `cmd/server/main.go` | :1277 | **需改** | 配 `srv.Protocols`：`SetHTTP1(true)` + `SetUnencryptedHTTP2(true)`；TLS 部署再加 `SetHTTP2(true)`。**三协议必须共存**（`Protocols` 非 nil 会覆盖默认值，只设 h2c 会让 h1 与 h2-over-TLS 全挂——见 §3.4） |
-| `cmd/server/main.go` | :1064-1088 | **需改** | **放宽 `ProxyRegistry` 创建门控**：不再只依赖 `cfg.PortForward.Enabled`，改为「SSH 或 h2 任一启用」都创建，使隧道 handler 不会拿到 nil 全拒 |
-| `cmd/server/main.go` | :1739-1747 / :1749-1812 | **需改** | `reserveSSHPorts` / `hotReloadSSH` 需覆盖「仅 h2 隧道启用」的情况，保证 reserved 端口（mainPort / sshPort）仍被登记 |
+| `cmd/server/main.go` | :1064-1088 | **需改** | **放宽 `ProxyRegistry` 创建门控**：不再只依赖 `cfg.PortForward.Enabled`，改为 `Enabled || Transport != model.TransportSSH`（见 `cmd/server/proxy_registry_gate.go`）。**注意 `transport` 不是服务端闸门**——它只影响注册表是否需要创建；SSH 监听器仍只由 `Enabled` 控制，h2 端点在注册表存在时始终可用（§11.1） |
+| `cmd/server/main.go` | :1739-1747 / :1749-1812 | **需改** | `reserveSSHPorts` / `hotReloadSSH` 需覆盖「注册表因 `transport != ssh` 而存在、但 SSH 未启用」的情况，保证 reserved 端口仍被登记，并在运行期从 `transport: ssh` 切到 h2 时补建注册表 |
 | `internal/api/openapi.yaml` | 新条目 | **需改** | 新增 `/api/tunnel/stream`、`/api/tunnel/control`：`post` + duplex 说明（对齐 :1619/:2331 的既有 WS 收录写法）。`operationId` 必须全局唯一（`internal/api/render_test.go:296`） |
-| `docs/spec/api/README.md` | :7（「150 个路径 / 189 个操作」）、:26（WS/不可建模端点表） | **需改** | 计数 **+2**（两条新路径 → 152 路径 / 191 操作）；把新端点加入不可建模端点表 |
-| `docs/spec/README.md` | :64（「150 路径 / 189 操作」） | **需改** | 计数 **+2**（→ 152 / 191） |
+| `docs/spec/api/README.md` | :7（计数）、:26（WS/不可建模端点表） | **需改** | 计数改为实测值（**154 路径 / 193 操作**，见实施计划 T5）；把新端点加入不可建模端点表 |
+| `docs/spec/README.md` | :64（计数） | **需改** | 计数改为实测值（**154 路径 / 193 操作**） |
 | `internal/model/port_forward.go` | 全文 | **需改** | 新增 `transport` 字段（见 §11） |
-| `internal/model/defaults.go` | :306-314 | **需改** | `transport` 默认值 |
-| `internal/handler/settings.go` | :103-105 / :223 / :332-335 / :620-622 / :776-779 / :964 / :1567-1577 | **需改** | 把 `port_forward.transport` 接入 hotReload / 填充 / Patchable / 校验 / apply 五处 |
+| `internal/model/defaults.go` | :322-324 | **需改** | `transport` 默认值收敛 |
+| `internal/handler/settings.go` | :106 / :333-337 / :625 / :782 / :1239-1251 / :1598-1600 | **需改** | 把 `port_forward.transport` 接入 hotReload / 填充 / Patchable / 校验 / apply 五处 |
 
 **明确不做**：**不**复用 `internal/handler/ssh_info.go` 的 `SetSSHServer` 全局注入。隧道 handler 是**无状态**的，只依赖 `service.ProxyService`，且**必须 nil 守卫**（未启用任何转发时 `ProxyService == nil`；先例 `ssh_info.go:117`）。
 
@@ -586,7 +588,7 @@ sequenceDiagram
 ### 7.3 约束与前置
 
 - **零新增 npm 依赖**（比 WS 方案少一个 `ws`）。因此 `desktop/electron-builder.yml:16-19` 的 `files`、`desktop/scripts/stage-payload.mjs:77-85` 的 `REQUIRED`、`.github/workflows/release.yml:918-919` / `:1326-1327`、`desktop/scripts/stage-payload.test.ts:58-60` 夹具**全部不需要改**。
-- **现有 34 个用例在保留 SSH 为默认传输时继续全绿**（已实测：`npx vitest run src/main/tunnel.test.ts` → 34 passed）。注入方式是 `vi.mock('ssh2', () => ({ Client: FakeClient }))`(:218) + `FakeClient` 用 `vi.hoisted` 定义(:119-216)；`vi.mock('node:http')`/`node:https`(:256/:257) 只 mock 了 `get`。
+- **现有 34 个用例在传输偏好为 SSH 时继续全绿**（已实测：`npx vitest run src/main/tunnel.test.ts` → 34 passed）。这里的「默认 SSH」指 `tunnel.ts` 模块级 `transportPreference` 的初值（`'ssh'`，T8 接线前/未推送偏好时生效），**不是** `port_forward.transport` 的配置默认值——后者是 `both`（§11.1）。注入方式是 `vi.mock('ssh2', () => ({ Client: FakeClient }))`(:218) + `FakeClient` 用 `vi.hoisted` 定义(:119-216)；`vi.mock('node:http')`/`node:https`(:256/:257) 只 mock 了 `get`。
 - 新增 h2 测试用 `vi.mock('./h2Transport')`（首选）或 `vi.mock('node:http2')`（已实测可行，`node:http2` 在 jsdom 下可 import）。
 - **`desktop/node_modules` 当前缺失**（只有 `.vite/`），必须先 `cd desktop && npm ci`（不带 lock 的 `npm install` 会因 npm arborist bug 失败），否则 `Failed to resolve import "electron-store"`。
 - 坑：`http2.ClientHttp2Stream` **不是运行时导出**（只是 TS 类型），判 Duplex 要用 `node:stream` 的 `Duplex`；`stream.end()` 后再 `write()` 会异步 emit `ERR_STREAM_WRITE_AFTER_END`；**不要用 `session.socket.pause()`**（抛 `ERR_HTTP2_NO_SOCKET_MANIPULATION`）。
@@ -694,7 +696,7 @@ SSH 测试可照抄的脚手架：`internal/ssh/server_test.go`（1711 行 / 69 
 ### 10.2 Electron
 
 - 新增平行的 **`tunnel.h2.test.ts`**，注入 fake transport（`vi.mock('./h2Transport')` 首选；`vi.mock('node:http2')` 亦可，已实测）。
-- 现有 **`tunnel.test.ts` 的 34 个用例**在保留 SSH 为默认传输时**必须继续全绿**（已实测 34 passed）。
+- 现有 **`tunnel.test.ts` 的 34 个用例**在传输偏好为 SSH（模块级初值，见 §7.3）时**必须继续全绿**（已实测 34 passed）。
 - 前置：`cd desktop && npm ci`（`desktop/node_modules` 当前缺失）。
 - **零新增 npm 依赖**（无需 `ws`）。
 
@@ -719,17 +721,42 @@ SSH 测试可照抄的脚手架：`internal/ssh/server_test.go`（1711 行 / 69 
 
 新增 `port_forward.transport: ssh | h2 | both`。
 
-- 默认值需保兼容：建议 **`both`**（对已启用 SSH 的用户行为不变，同时提供 h2），或保守取 **`ssh`**（完全等价旧行为，用户显式切换）。
+**语义（用户已拍板，实现已固化）：`enabled` 只管 SSH 监听，`transport` 只管客户端走哪条线。** `transport` 是**客户端传输提示**，不是**服务端端点闸门**：
+
+- `enabled`（`port_forward.enabled`）控制 **SSH 监听器**是否启动，并参与注册表是否需要创建（`shouldCreateProxyRegistry`，见 §3.2）。`transport` **不参与** SSH 监听的启停。
+- `transport` 只决定**客户端**用哪条传输线：`ssh` = 只用 SSH；`h2` = 只用 h2（h2-over-TLS → h2c）；`both` = 优先 h2，失败回退 SSH。
+- **服务端两种端点（`POST /api/tunnel/stream`、`POST /api/tunnel/control`）在注册表存在时始终可用，与 `transport` 取值无关。**
+- **唯一关闭 h2 端点的组合：`enabled:false && transport:ssh`**——此时注册表为 nil，两个端点返回 `503 PortForwardUnavailable`。
+
+`shouldCreateProxyRegistry(cfg)` = `cfg.PortForward.Enabled || cfg.PortForward.Transport != model.TransportSSH`（`cmd/server/proxy_registry_gate.go`）。该语义由 `cmd/server/proxy_registry_gate_test.go` 的表格测试钉死。
+
+**实测行为表**（fresh-start，每行独立端口 + data-dir；探测目标端口无监听者，故「`502` = 到达数据面但 dial 失败」与「`503` = 门控拒绝」是区分依据）：
+
+| `enabled` | `transport` | `/api/tunnel/stream` | `/api/tunnel/control` | SSH（mainPort+1） | panic |
+|---|---|---|---|---|---|
+| true | ssh | 502（数据面可达，目标不可达） | 200 | 监听 | 0 |
+| true | both | 502 | 200 | 监听 | 0 |
+| true | h2 | 502 | 200 | **监听** | 0 |
+| false | both | 502 | 200 | 不监听 | 0 |
+| false | ssh | **503** | **503** | 不监听 | 0 |
+
+表中两处与直觉不符、但均为已确认的正确行为：
+
+1. **`transport: h2` 时 SSH 仍监听 mainPort+1**——SSH 监听器只由 `enabled` 控制，`transport` 不参与。
+2. **`transport: ssh` 时 h2 端点仍返回 502 而非 503**——注册表因 `enabled:true` 而被创建，端点可用；502 只是探测目标端口无人监听。
+
+**默认值 `both`**（`model.DefaultPortForwardTransport`，`internal/model/defaults.go` 的 `ApplyDefaults` 在值非法或缺失时收敛到它）。对已启用 SSH 的用户行为不变，同时提供 h2。
+
 - 涉及文件：
   - `internal/model/port_forward.go`（结构体字段；现有字段 `Enabled` / `Port` / `HostKey` / `AllowedPorts`）
-  - `internal/model/defaults.go:306-314`（默认值）
-  - `internal/handler/settings.go`：`:332-335 configPortForward`、`:776-779` 填充、`:620-622 PatchableConfigPaths`、`:103-105 hotReloadFields`、`:1567-1577 applyConfigPatch`、`:964 validatePatchValues`
+  - `internal/model/defaults.go:322-324`（默认值收敛）
+  - `internal/handler/settings.go`：`:106 hotReloadFields`、`:333-337 configPortForward`、`:625 PatchableConfigPaths`、`:782` 填充、`:1239-1251 validatePatchValues`、`:1598-1600 applyConfigPatch`
 - **SSH 服务器代码与 20001 监听原样保留**（`internal/ssh/` 不动；`cmd/server/main.go` 的 `ssh.NewServer` 分支保留）。
 
 ### 11.2 迁移
 
-- **无 DB 迁移、无 SharedPreferences 迁移**：`ForwardedPort` / `PortInfo` 结构不变，`transport` 只是新增的**服务器侧配置**，不进入已持久化的端口行。
-- 现有 `forward` / `reverse` 行在 `h2` 模式下直接由 h2 流承载，前端 UI 无需感知差异。
+- **无 DB 迁移、无 SharedPreferences 迁移**：`ForwardedPort` / `PortInfo` 结构不变，`transport` 只是新增的**服务端配置**（下发给客户端作传输提示），不进入已持久化的端口行。
+- 现有 `forward` / `reverse` 行在客户端选用 h2 时直接由 h2 流承载，前端 UI 无需感知差异。
 
 ### 11.3 健康检查放宽
 
@@ -747,9 +774,9 @@ SSH 测试可照抄的脚手架：`internal/ssh/server_test.go`（1711 行 / 69 
 | 4 | **250 流上限** | `MAX_CONCURRENT_STREAMS=250`（`h2_bundle.go:4042`）单连接上限；用户开大量页面时超出需排队或多连接 | 可经 `http.Server.HTTP2.MaxConcurrentStreams` 提升；客户端可多连接 |
 | 5 | **claim token 安全** | token 若可猜/可重放/跨连接使用，他人可窃取 `-R` 连接 | `crypto/rand` + 单次 + 绑定所属已认证连接 + 挂起超时 |
 | 6 | **Android ALPN 未在真机验证** | 本机验证用 JVM `sun.security.ssl.SSLSocketFactoryImpl`，非 Android 真机 | h2c 是默认形态不涉及 ALPN，不阻塞主路径；见 §14 |
-| 7 | **`ProxyRegistry` 门控** | 只在 `cfg.PortForward.Enabled` 时创建；不改则 handler 永远 nil 全拒 | 放宽创建条件 + 热重载覆盖「仅 h2」 |
+| 7 | **`ProxyRegistry` 门控** | 原先只在 `cfg.PortForward.Enabled` 时创建；不改则 `enabled:false && transport:ssh` 以外的组合都可能拿到 nil 全拒 | 放宽创建条件为 `Enabled || transport != "ssh"` + 热重载覆盖「运行期切到 h2」（见 §11.1） |
 | 8 | **前端 SSH 门控残留** | `info?.enabled` 会跳过健康检查 | 放宽为「SSH 或 h2 任一可用」 |
-| 9 | **`openapi_drift_test.go` 强制同步 spec** | 新 `/api/` 路由不写 spec 必挂 CI | 新增两条目 + 计数 +2 + 文档计数同步 |
+| 9 | **`openapi_drift_test.go` 强制同步 spec** | 新 `/api/` 路由不写 spec 必挂 CI | 新增两条目 + 文档计数同步为实测值（154 / 193，见 §6） |
 | 10 | **Android `PortInfo` 被持久化** | 改结构需迁移 | **不改**结构（§8.2、§13.4） |
 | 11 | **MockWebServer 半双工掩盖全双工 bug** | `Http2SocketHandler.onStream` 先读完 body 再写响应，全双工用例直接 hang | 全双工集成必须起真实 Go 服务端；单测用 fake `TunnelStream` |
 | 12 | **反代 WS 升级透传无测试** | `reverse_proxy_test.go` 零升级用例 | 本方案不经过它；**将来改动必须补测** |

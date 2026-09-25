@@ -833,7 +833,7 @@ npx vitest run src/main/tunnel.h2.test.ts
 
 **Step 4: 实现接入**
 
-按上面 7 处改。保持 SSH 为默认传输（`transport` 默认 `'ssh'`）。
+按上面 7 处改。本任务只接线桌面传输偏好，桌面模块级 `transportPreference` 初值保持 `'ssh'`（`port_forward.transport` 的**配置默认值是 `both`**，由 T8 接线后覆盖该初值——两者不是同一个东西，见设计文档 §11.1）。
 
 **Step 5: 跑两个测试文件**
 

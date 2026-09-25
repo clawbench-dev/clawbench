@@ -98,19 +98,46 @@ sequenceDiagram
 
 ## 传输方式
 
-端口转发支持两种线缆，由 `port_forward.transport` 选择（`internal/model/port_forward.go`）：
+端口转发支持两种线缆，由 `port_forward.transport` 选择（`internal/model/port_forward.go`）。
 
-| 值 | 含义 | 服务器端口 |
+**关键语义（已固化在实现里）：`enabled` 只管 SSH 监听，`transport` 只管客户端走哪条线。** 也就是说 **`transport` 是「客户端传输提示」，不是「服务端端点闸门」**——它随 `/api/config` 下发给客户端，由客户端决定探测哪条线，服务端**不据此启停任何监听器或端点**。
+
+| 值 | 客户端行为 | 服务端效果 |
 |---|---|---|
-| `ssh` | 只用 SSH 通道（旧行为） | SSH 监听 `mainPort+1`（默认 20001） |
-| `h2` | 只用 HTTP/2 流隧道 | 复用 20000 主 HTTP 端口 |
-| `both` | **默认**。优先 h2，失败回退 SSH | 20000 + 20001 |
+| `ssh` | 只探测 SSH 通道（旧行为） | 无（不影响任何服务端监听/端点） |
+| `h2` | 只探测 h2（h2-over-TLS → h2c） | 无 |
+| `both` | **默认**。优先 h2，失败回退 SSH | 无 |
 
-**默认值 `both`**（`model.DefaultPortForwardTransport`，`internal/model/defaults.go` 的 `ApplyDefaults` 在值非法或缺失时收敛到它）。对已启用 SSH 的用户行为不变，同时提供 h2；`transport` 是**服务器侧配置**，不进入已持久化的端口行，因此**无 DB / SharedPreferences 迁移**。
+`transport` 与两个服务端事实的关系：
+
+- **SSH 监听器只由 `port_forward.enabled` 控制**（`cmd/server/main.go` 的 `ssh.NewServer` 分支），`transport` 不参与。因此 **`transport: h2` 时 SSH 仍监听 `mainPort+1`**。
+- **h2 的两个端点（`POST /api/tunnel/stream`、`POST /api/tunnel/control`）只要注册表存在就始终可用**，与 `transport` 取值无关。因此 **`transport: ssh` 时 h2 端点仍然可用**（不会因 `transport` 而关闭）。
+- 注册表是否需要创建由 `shouldCreateProxyRegistry` 决定（见下文「端口守卫与注册表门控」）：`cfg.PortForward.Enabled || cfg.PortForward.Transport != model.TransportSSH`。**唯一让 h2 端点返回 `503 PortForwardUnavailable` 的组合是 `enabled:false && transport:ssh`**（此时注册表为 nil）。
+
+**默认值 `both`**（`model.DefaultPortForwardTransport`，`internal/model/defaults.go` 的 `ApplyDefaults` 在值非法或缺失时收敛到它）。对已启用 SSH 的用户行为不变，同时提供 h2；`transport` 不进入已持久化的端口行，因此**无 DB / SharedPreferences 迁移**。
+
+### 服务端端点可用性（实测）
+
+fresh-start，每行独立端口 + data-dir。探测目标端口无监听者，故「`502` = 到达数据面但 dial 失败」与「`503` = 门控拒绝」是区分依据：
+
+| `enabled` | `transport` | `/api/tunnel/stream` | `/api/tunnel/control` | SSH（mainPort+1） |
+|---|---|---|---|---|
+| true | ssh | 502（数据面可达，目标不可达） | 200 | 监听 |
+| true | both | 502 | 200 | 监听 |
+| true | h2 | 502 | 200 | **监听** |
+| false | both | 502 | 200 | 不监听 |
+| false | ssh | **503** | **503** | 不监听 |
+
+表中两处与直觉不符、但均为已确认的正确行为：
+
+1. **`transport: h2` 时 SSH 仍监听 `mainPort+1`**——SSH 监听器只由 `enabled` 控制。
+2. **`transport: ssh` 时 h2 端点仍返回 502 而非 503**——注册表因 `enabled:true` 而被创建，端点可用；502 只是探测目标端口无人监听。
+
+该语义由 `cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry` 与 `cmd/server/proxy_registry_gate_test.go` 的表格测试钉死。
 
 ### 传输优先级链
 
-客户端首次连接严格按顺序探测：**h2-over-TLS → h2c → SSH**。
+`transport: both` 时，客户端首次连接严格按顺序探测：**h2-over-TLS → h2c → SSH**。`transport` 只是把这条链裁剪成子集：`ssh` → 只探测 SSH，`h2` → 只探测 h2-over-TLS → h2c。
 
 - **h2-over-TLS**：实例开了 TLS 时，`ServeTLS` 自动协商 ALPN `h2`——即「只要开了 TLS，20000 今天就在跑 h2」，多路复用层无需新端口。
 - **h2c**：明文部署走 prior-knowledge（不做 Upgrade 协商）。
