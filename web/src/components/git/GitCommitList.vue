@@ -31,7 +31,7 @@
         :title="t('git.manage.title')"
         @click.stop="$emit('manage')"
       >
-        <GitBranch :size="14" />
+        <GitFork :size="14" />
       </button>
     </div>
     <div class="drilldown-body" ref="bodyRef">
@@ -116,7 +116,7 @@
 </template>
 
 <script setup>
-import { FileText, Info, GitBranch } from 'lucide-vue-next'
+import { FileText, Info, GitBranch, GitFork } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'

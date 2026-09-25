@@ -219,3 +219,40 @@ describe('the header title carries its glyph', () => {
     expect(baseRule(componentsCss, 'drilldown-title-icon')).toMatch(/flex-shrink:\s*0/)
   })
 })
+
+describe('the manage button does not repeat the title glyph', () => {
+  it('uses a different icon from the title', () => {
+    // The title carries GitBranch. The manage button opens the branch/worktree/
+    // tag panel, so it originally reused GitBranch too — which, once the title
+    // gained the same glyph, put two identical icons in one bar. It now uses
+    // GitFork. This pins that they stay distinct: a future "tidy up the icons"
+    // pass could otherwise silently collapse them again.
+    const src = readWebFile('src/components/git/GitCommitList.vue')
+    const title = src.match(/<div class="drilldown-title">([\s\S]*?)<\/div>/)
+    expect(title, 'the title block must exist').not.toBeNull()
+    const titleIcon = title![1].match(/<([A-Z][A-Za-z0-9]*)\s[^>]*drilldown-title-icon/)
+    expect(titleIcon, 'the title must render an icon').not.toBeNull()
+
+    const manageBtn = src.match(
+      /<button[\s\S]*?@click\.stop="\$emit\('manage'\)"[\s\S]*?<\/button>/,
+    )
+    expect(manageBtn, 'the manage button must exist').not.toBeNull()
+    const manageIcon = manageBtn![0].match(/<([A-Z][A-Za-z0-9]*)\s+:/)
+    expect(manageIcon, 'the manage button must render an icon').not.toBeNull()
+
+    expect(
+      manageIcon![1],
+      'the manage button must not reuse the title icon',
+    ).not.toBe(titleIcon![1])
+    expect(manageIcon![1]).toBe('GitFork')
+  })
+
+  it('imports the manage icon so the button is not empty', () => {
+    // A missing import renders an empty <svg>-less button that no existence
+    // assertion would catch — see concurrent_git_safety §9.
+    const src = readWebFile('src/components/git/GitCommitList.vue')
+    const imports = src.match(/import\s*\{([^}]*)\}\s*from\s*'lucide-vue-next'/)
+    expect(imports, 'a lucide import must exist').not.toBeNull()
+    expect(imports![1]).toContain('GitFork')
+  })
+})
