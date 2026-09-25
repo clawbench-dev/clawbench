@@ -44,9 +44,11 @@
              takes over once the pointer actually moves.
 
              Menu entry points: the ⋮ button (works on every device) and
-             right-click anywhere on the row (desktop). Sortable ignores
+             right-click anywhere on the row (DESKTOP ONLY). Sortable ignores
              non-primary buttons, so the right-click never starts a drag. There
-             is deliberately no long-press gesture — see showMenuFromButton.
+             is deliberately no long-press gesture — a touch long-press
+             synthesizes a `contextmenu` event on mobile, which showContextMenu
+             filters back out so it cannot open this menu.
 
              Pinned rows are protected on the frontend, not just by the backend:
              `filter` keeps them from being dragged (with preventOnFilter off, so
@@ -70,7 +72,7 @@
               :data-session-id="row.session.id"
               class="session-row"
               :class="rowClasses(row)"
-              @contextmenu.prevent="showContextMenu($event, row.session)"
+              @contextmenu="showContextMenu($event, row.session)"
             >
               <span v-if="row.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
               <div
@@ -207,7 +209,7 @@
       <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu.
            Re-dispatching contextmenu through it keeps right-click-on-another-row
            working while the menu is open (mirrors FileManagerContent). -->
-      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" @contextmenu.prevent="handleOverlayContextMenu" />
+      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" @contextmenu="handleOverlayContextMenu" />
     </Teleport>
 
     <SessionTagDialog
@@ -534,14 +536,47 @@ function showMenuFromButton(event, session) {
 /**
  * Open the session menu at the pointer, from a right-click on the row body.
  *
- * Desktop-only by nature: touch has no right-click, so the ⋮ button remains the
- * entry point there. There is deliberately NO long-press fallback — a long press
- * on a row would fight the list's own touch scrolling and text selection, and
- * the button is already reachable one-handed. Sortable ignores non-primary
- * mouse buttons, so this never starts a drag.
+ * DESKTOP ONLY. A touch long-press must not open this menu, and that is the
+ * whole reason this handler inspects the event instead of just opening on any
+ * `contextmenu`:
+ *
+ *   Android WebView and iOS Safari synthesize a `contextmenu` event for a
+ *   long-press — it is how the platform raises its native text-selection menu
+ *   (Blink dispatches it from the renderer, so no Android View-layer hook can
+ *   see or suppress it). A bare `@contextmenu.prevent` therefore re-creates the
+ *   long-press menu on mobile that was deliberately removed, *and* its
+ *   preventDefault kills the native selection callout — the exact opposite of
+ *   what a long-press on a row should do.
+ *
+ * The discriminator is the input device, not the button number: a synthesized
+ * touch `contextmenu` is not guaranteed to carry `button === 2`. `pointerType`
+ * is 'mouse' for a real right-click and 'touch' for the long-press synthesis
+ * (measured in Chromium: mouse right-click → pointerType 'mouse', button 2).
+ * `sourceCapabilities.firesTouchEvents` is the documented fallback for engines
+ * that do not populate `pointerType` on this event.
+ *
+ * Returning WITHOUT preventDefault for touch is deliberate: the browser must be
+ * free to show its own selection menu, and the row's tap/scroll gestures stay
+ * untouched. Sortable ignores non-primary buttons, so a mouse right-click never
+ * starts a drag either.
  */
 function showContextMenu(event, session) {
+  if (isTouchContextMenu(event)) return
+  event.preventDefault()
   openContextMenu(event.clientX, event.clientY, session.id, session.pinned)
+}
+
+/**
+ * Whether a `contextmenu` event came from a touch long-press rather than a real
+ * right-click. See showContextMenu for why the two must be told apart.
+ */
+function isTouchContextMenu(event) {
+  if (event.pointerType === 'touch' || event.pointerType === 'pen') return true
+  const caps = event.sourceCapabilities
+  // Only trust firesTouchEvents when it says true: engines that do not implement
+  // the API leave it undefined, and treating undefined as "touch" would disable
+  // right-click on every desktop browser without it.
+  return caps?.firesTouchEvents === true
 }
 
 /**
@@ -549,8 +584,14 @@ function showContextMenu(event, session) {
  * a row. Hide the overlay for one hit-test so elementFromPoint reveals the row
  * underneath, then re-open the menu for that row — otherwise a second
  * right-click anywhere would just close the menu (mirrors FileManagerContent).
+ *
+ * Touch long-presses are ignored here too (see showContextMenu): a long-press on
+ * the overlay must fall through to the browser's own selection handling, not
+ * retarget the menu.
  */
 function handleOverlayContextMenu(e) {
+  if (isTouchContextMenu(e)) return
+  e.preventDefault()
   const overlay = e.currentTarget
   const prev = overlay.style.pointerEvents
   overlay.style.pointerEvents = 'none'

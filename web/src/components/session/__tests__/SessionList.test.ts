@@ -1411,12 +1411,102 @@ describe('SessionList', () => {
       }
     })
 
-    it('has no long-press gesture on the rows (removed on purpose)', async () => {
-      // Right-click is back, but long-press is deliberately NOT: it would fight
-      // the list's own touch scrolling and text selection, and the ⋮ button
-      // already covers touch. Pin the absence so a stray v-long-press re-add is
-      // caught — the directive is still globally registered, so nothing else
-      // would fail.
+    // ── Touch long-press must NOT open the menu ──
+    //
+    // Android WebView / iOS Safari synthesize a `contextmenu` event for a
+    // long-press (it is how the platform raises its native selection menu), so a
+    // naive `@contextmenu` binding re-creates the mobile long-press menu that was
+    // deliberately removed — and its preventDefault would also kill the native
+    // text-selection callout. These drive real contextmenu events with touch
+    // provenance and assert the menu stays shut.
+
+    it('ignores a touch long-press contextmenu on the row (pointerType)', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const row = wrapper.find('[data-session-id="s1"]')
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 })
+      Object.defineProperty(ev, 'pointerType', { value: 'touch' })
+      row.element.dispatchEvent(ev)
+      await nextTick()
+
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
+      // The event must NOT be prevented: the browser needs to show its own
+      // selection callout on a long-press.
+      expect(ev.defaultPrevented).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('ignores a touch long-press contextmenu on the row (firesTouchEvents fallback)', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // Engines that do not populate pointerType on contextmenu still expose
+      // sourceCapabilities.firesTouchEvents.
+      const row = wrapper.find('[data-session-id="s1"]')
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 })
+      Object.defineProperty(ev, 'sourceCapabilities', { value: { firesTouchEvents: true } })
+      row.element.dispatchEvent(ev)
+      await nextTick()
+
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
+      expect(ev.defaultPrevented).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('still opens for a real mouse right-click (firesTouchEvents false)', async () => {
+      // The inverse guard: the filter must not be so broad that it disables the
+      // desktop entry point. A real right-click carries pointerType 'mouse' and
+      // firesTouchEvents false (measured in Chromium).
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const row = wrapper.find('[data-session-id="s1"]')
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 })
+      Object.defineProperty(ev, 'pointerType', { value: 'mouse' })
+      Object.defineProperty(ev, 'sourceCapabilities', { value: { firesTouchEvents: false } })
+      row.element.dispatchEvent(ev)
+      await nextTick()
+
+      expect(wrapper.vm.contextMenu.visible).toBe(true)
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s1')
+      wrapper.unmount()
+    })
+
+    it('ignores a touch long-press contextmenu on the overlay too', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await wrapper.find('[data-session-id="s1"]').trigger('contextmenu', { clientX: 10, clientY: 10 })
+      await nextTick()
+      expect(wrapper.vm.contextMenu.visible).toBe(true)
+
+      const overlays = document.body.querySelectorAll('.ctx-overlay')
+      const overlay = overlays[overlays.length - 1] as HTMLElement
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })
+      Object.defineProperty(ev, 'pointerType', { value: 'touch' })
+      overlay.dispatchEvent(ev)
+      await nextTick()
+
+      // Still open, unchanged: a long-press on the overlay must not retarget it.
+      expect(wrapper.vm.contextMenu.visible).toBe(true)
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s1')
+      expect(ev.defaultPrevented).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('has no long-press directive on the rows (removed on purpose)', async () => {
+      // The directive is still globally registered, so a re-added v-long-press
+      // would attach silently; assert it is absent. (The touch-contextmenu tests
+      // above cover the other way a long-press could reach the menu.)
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
