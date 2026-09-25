@@ -122,7 +122,7 @@ var clientInjectedStripRules = []stripRule{
 	// consumer of these rules on a live prompt is the ACP-replay fallback,
 	// which already faced the same fence before quotes were structured.
 	{model.QuotePromptPrefix, stripToNewline, ""},
-	// The annotation line, labelled "[Note] ". It is its own rule (rather than
+	// The annotation line, labeled "[Note] ". It is its own rule (rather than
 	// being swallowed by the quote header's stripToNewline) because it sits on
 	// a SEPARATE line, and stripToNewline consumes exactly one line.
 	{model.QuoteNotePrefix, stripToNewline, ""},

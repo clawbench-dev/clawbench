@@ -2261,7 +2261,7 @@ func migrateQueuedMessagesToOwnTable() error {
 		return err
 	}
 	defer writeMu.Unlock()
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`
 		INSERT INTO queued_messages (session_id, project_path, backend, queue_id, content, files, created_at)

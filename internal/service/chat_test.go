@@ -6094,9 +6094,11 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 	}
 	assert.Equal(t, 1, startedCount, "exactly one enqueue should win the idle claim")
 
-	// Both messages must exist in the DB — no message may be lost. The loser
-	// stays queued for the drain loop (the winner's goroutine is blocked on the
-	// gate, so the B2 self-heal has not claimed it yet).
+	// Both messages must exist — no message may be lost. Under the queue model
+	// the winner's message is materialized into chat_history while the loser's
+	// stays in queued_messages for the drain loop (the winner's goroutine is
+	// blocked on the gate, so the drain has not claimed it yet). The count that
+	// must hold is the total across BOTH stores.
 	msgs, err := service.GetChatHistory("/project", backendID, sid)
 	assert.NoError(t, err)
 	userCount := 0
@@ -6105,7 +6107,9 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 			userCount++
 		}
 	}
-	assert.Equal(t, 2, userCount, "both enqueued user messages must be present in DB")
+	queuedCount := service.GetQueuedCount(sid)
+	assert.Equal(t, 2, userCount+queuedCount,
+		"both enqueued user messages must be present across chat_history and queued_messages")
 
 	// Clean up: cancel kills the running session and releases the gate.
 	service.CancelSession(sid)
@@ -6387,7 +6391,7 @@ func TestReorderSessionsIgnoresPinned(t *testing.T) {
 		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", pinned).Scan(&after))
 	assert.Equal(t, before, after, "a pinned row's sort_order must not be rewritten")
 
-	// The unpinned pair still honours the posted order.
+	// The unpinned pair still honors the posted order.
 	assert.Equal(t, []string{a, b}, []string{sessions[1].ID, sessions[2].ID})
 }
 

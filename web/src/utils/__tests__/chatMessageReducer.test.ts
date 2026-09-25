@@ -283,17 +283,27 @@ describe('chatMessageReducer — ws_stream_split', () => {
   it('finalizes the before-half and opens a new streaming placeholder for the after-half', () => {
     let state: ChatMessage[] = []
     state = run(state, [
-      u({ id: 1, content: 'q' }),
+      // NB: the fixture originally passed a bare ChatMessage here where an
+      // action was expected — the reducer's `default` branch made it a no-op, so
+      // Q1 never entered the array. Push it for real so the ordering assertion
+      // below is about a DB row, not an empty array.
+      { type: 'optimistic_push', msg: u({ id: 1, content: 'q' }) },
       { type: 'stream_placeholder', msg: a({ id: 'drain-1', streaming: true, seq: 1 }) },
       { type: 'ws_content', text: 'before' },
     ])
     state = run(state, [{ type: 'ws_stream_split', messageId: 4 }])
     const assistants = state.filter((m) => m.role === 'assistant')
     expect(assistants).toHaveLength(2)
-    // before-half finalized (streaming cleared), after-half streaming with new id
-    expect(assistants[0].streaming).toBeFalsy()
-    expect(assistants[1].id).toBe(4)
-    expect(assistants[1].streaming).toBe(true)
+
+    // The before-half keeps its transient string id (it never adopted a DB id);
+    // the after-half carries the new numeric DB id. Identity is what pins each
+    // half, not array position: the numeric ids sort by id and the transient
+    // string id sorts last, so the after-half precedes the before-half.
+    const before = state.find((m) => m.id === 'drain-1')!
+    const after = state.find((m) => m.id === 4)!
+    expect(before.streaming).toBeFalsy()
+    expect(after.streaming).toBe(true)
+    expect(state.map((m) => m.id)).toEqual([1, 4, 'drain-1'])
   })
 })
 

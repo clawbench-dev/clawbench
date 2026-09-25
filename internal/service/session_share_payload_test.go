@@ -81,6 +81,16 @@ func setupTestDBForSessionSharePayload(t *testing.T) *sql.DB {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(target_type, target_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS queued_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			project_path TEXT NOT NULL DEFAULT '',
+			backend TEXT NOT NULL DEFAULT '',
+			queue_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			files TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	} {
 		_, err = db.Exec(ddl)
 		require.NoError(t, err)
@@ -107,11 +117,23 @@ func seedSession(t *testing.T, db *sql.DB, sessionID string) { //nolint:unparam 
 
 // seedMessage inserts a finalized message and returns its id. sessionID stays a
 // parameter so the helper mirrors the schema rather than hard-coding one id.
-func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, _queued int) int64 { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
+//
+// queued != 0 seeds a queued message instead: those no longer live in
+// chat_history (the dedicated queued_messages table holds them until dequeue),
+// so the snapshot must exclude them simply because they are not history rows.
+func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, queued int) int64 { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
 	t.Helper()
-	// The `queued` argument is retained so existing call sites read unchanged,
-	// but chat_history has no such column any more: queued messages live in
-	// queued_messages and only enter chat_history at dequeue time.
+	if queued != 0 {
+		res, err := db.Exec(
+			`INSERT INTO queued_messages (project_path, session_id, backend, queue_id, content)
+			 VALUES (?, ?, 'codebuddy', ?, ?)`,
+			testProjectRoot, sessionID, content, content,
+		)
+		require.NoError(t, err)
+		id, err := res.LastInsertId()
+		require.NoError(t, err)
+		return id
+	}
 	res, err := db.Exec(
 		`INSERT INTO chat_history (project_path, session_id, role, content, backend, streaming)
 		 VALUES (?, ?, ?, ?, 'codebuddy', ?)`,

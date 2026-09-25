@@ -53,7 +53,7 @@ type AttachmentPromptParts struct {
 // QuotePrompt is one quote entry reduced to what the prompt renderer needs.
 type QuotePrompt struct {
 	// Label identifies the source: "path", "path:10-20" for a file quote, or
-	// the forge/chat label the client supplied. Empty for an unlabelled quote.
+	// the forge/chat label the client supplied. Empty for an unlabeled quote.
 	Label string
 	// Language is the fence info string's language prefix (may be empty).
 	Language string
@@ -272,7 +272,7 @@ func ApplyAttachmentPrefixes(prompt string, filePaths, dirPaths []string, parts 
 	// Appended after everything, including the user's own words.
 	//
 	// Each quote is wrapped in a NUMBERED envelope ("[Quote i/n] …") and its
-	// annotation is labelled ("[Note] …"). Both exist because the same blank
+	// annotation is labeled ("[Note] …"). Both exist because the same blank
 	// line separates every structural boundary here — between quotes, between a
 	// header and its note, and between a note and the content — so the layout
 	// alone gave no cue for where one quote ended and the next began, and a bare

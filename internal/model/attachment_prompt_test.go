@@ -255,7 +255,7 @@ func TestApplyAttachmentPrefixes_QuoteWithoutNote(t *testing.T) {
 	got := ApplyAttachmentPrefixes("问题", nil, nil, parts)
 
 	assert.Equal(t, "问题\n\n[Quote 1/1] \n\n```:\npicked text\n```", got,
-		"an unlabelled quote still gets its header line")
+		"an unlabeled quote still gets its header line")
 }
 
 // A whole-file / whole-issue quote references the object instead of inlining
@@ -309,10 +309,10 @@ func TestApplyAttachmentPrefixes_QuoteHeaderIsOneLine(t *testing.T) {
 		"the header must open with a closed envelope on its own line, got %q", lines[2])
 	assert.Contains(t, lines[2], "/src/a.go:10-20")
 	assert.Contains(t, lines[2], "https://example.com/x")
-	// The annotation is on its own LABELLED line, so it cannot be read as part
+	// The annotation is on its own LABELED line, so it cannot be read as part
 	// of the header or the quoted content.
 	assert.True(t, strings.HasPrefix(lines[3], QuoteNotePrefix),
-		"the annotation must be labelled on its own line, got %q", lines[3])
+		"the annotation must be labeled on its own line, got %q", lines[3])
 }
 
 // A quote-only message has empty content; the renderer must not open with

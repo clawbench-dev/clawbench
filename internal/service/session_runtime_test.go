@@ -1034,8 +1034,10 @@ func TestGetAssistantRawContents_ReturnsUnmodifiedContent(t *testing.T) {
 	// Streaming assistant message must be excluded
 	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-raw-1', 'claude', 1)", `{"blocks":[{"type":"text","text":"流式中"}]}`)
 	require.NoError(t, err)
-	// Queued assistant message must be excluded
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, queued) VALUES ('/test', 'assistant', ?, 'session-raw-1', 'claude', 1)", `{"blocks":[{"type":"text","text":"排队中"}]}`)
+	// Queued message must be excluded. It lives in queued_messages now (no
+	// chat_history row until dequeue), so seeding it there is what pins the
+	// exclusion: nothing from the queue may leak into the raw contents.
+	_, err = db.Exec("INSERT INTO queued_messages (project_path, session_id, backend, queue_id, content) VALUES ('/test', 'session-raw-1', 'claude', 'q-raw-1', ?)", `{"blocks":[{"type":"text","text":"排队中"}]}`)
 	require.NoError(t, err)
 
 	contents, err := GetAssistantRawContents("session-raw-1")

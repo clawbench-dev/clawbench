@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
@@ -27,6 +27,20 @@ import zh from '@/i18n/locales/zh'
  * and by the enum maps those features iterate.
  */
 describe('i18n literal keys', () => {
+  /**
+   * Resolve the frontend source root, tolerating either working directory the
+   * test runner may use. A bare `vitest` from `web/` has cwd = web/, while the
+   * official `npm test` → scripts/vitest-run.sh cds to the repo root; resolving
+   * against a single assumed cwd passes locally and fails in CI with ENOENT.
+   */
+  function webSrcRoot(): string {
+    for (const base of [process.cwd(), resolve(process.cwd(), 'web'), resolve(process.cwd(), '../web')]) {
+      const candidate = resolve(base, 'src')
+      if (existsSync(candidate)) return candidate
+    }
+    throw new Error(`web/src not found from cwd: ${process.cwd()}`)
+  }
+
   /** Every .ts/.vue under src/, excluding tests (fixtures use arbitrary keys). */
   function sourceFiles(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {
@@ -57,7 +71,7 @@ describe('i18n literal keys', () => {
   }
 
   it('resolves every literal t() key in both locales', () => {
-    const root = resolve(process.cwd(), 'src')
+    const root = webSrcRoot()
     const missing: string[] = []
 
     for (const file of sourceFiles(root)) {
@@ -81,7 +95,7 @@ describe('i18n literal keys', () => {
   // The scan is only meaningful if it actually reads the tree and finds keys —
   // a broken glob would report "0 missing" forever and silently stop guarding.
   it('actually scans the tree (guard is not vacuous)', () => {
-    const root = resolve(process.cwd(), 'src')
+    const root = webSrcRoot()
     const files = sourceFiles(root)
     expect(files.length).toBeGreaterThan(100)
 

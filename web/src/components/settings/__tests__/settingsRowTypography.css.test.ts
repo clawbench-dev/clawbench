@@ -45,6 +45,22 @@ function readWebFile(relPath: string): string {
   throw new Error(`${relPath} not found from cwd: ` + process.cwd())
 }
 
+/**
+ * List a directory under web/, probing both candidate roots for the same
+ * reason readWebFile does — a bare `vitest` from web/ vs `npm test` from the
+ * repo root disagree on cwd.
+ */
+function readWebDir(relPath: string): string[] {
+  for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
+    try {
+      return readdirSync(join(base, relPath))
+    } catch {
+      // try the next candidate root
+    }
+  }
+  throw new Error(`${relPath} not found from cwd: ` + process.cwd())
+}
+
 function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '')
 }
@@ -151,7 +167,7 @@ describe('no settings row label was left behind', () => {
     // Selectors for non-text elements (✓ glyph, icon-sized button) and headings
     // (2xl) are handled elsewhere and are not flagged here.
     const offenders: string[] = []
-    for (const file of readdirSync(join(process.cwd(), SETTINGS_DIR))) {
+    for (const file of readWebDir(SETTINGS_DIR)) {
       if (!file.endsWith('.vue')) continue
       const css = stripComments(styleBlocks(readWebFile(`${SETTINGS_DIR}/${file}`)))
       for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {

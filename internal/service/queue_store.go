@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -96,7 +97,7 @@ func AddQueuedMessage(projectPath, backend, sessionID, content string, files []m
 
 	// Guard: reject messages to archived sessions, mirroring AddChatMessage.
 	var isArchived int
-	if err := dbRead.QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
+	if err := dbRead.QueryRowContext(context.Background(), "SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
 		return 0, fmt.Errorf("cannot add message to archived session %s", sessionID)
 	}
 
@@ -153,7 +154,7 @@ func claimQueuedRowTx(tx *sql.Tx, sessionID string, where string, args ...any) (
 
 	var row QueuedRow
 	var filesJSON sql.NullString
-	err := tx.QueryRow(query, qargs...).Scan(
+	err := tx.QueryRowContext(context.Background(), query, qargs...).Scan(
 		&row.ID, &row.SessionID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -166,7 +167,7 @@ func claimQueuedRowTx(tx *sql.Tx, sessionID string, where string, args ...any) (
 		row.Files = unmarshalFilesJSON(filesJSON.String)
 	}
 
-	res, err := tx.Exec("DELETE FROM queued_messages WHERE id = ?", row.ID)
+	res, err := tx.ExecContext(context.Background(), "DELETE FROM queued_messages WHERE id = ?", row.ID)
 	if err != nil {
 		return QueuedRow{}, false, err
 	}
@@ -219,7 +220,7 @@ func claimAndMaterialize(sessionID, where string, args []any) (QueuedRow, int64,
 		return QueuedRow{}, 0, false, err
 	}
 	defer writeMu.Unlock()
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	row, ok, err := claimQueuedRowTx(tx, sessionID, where, args...)
 	if err != nil || !ok {
@@ -250,12 +251,12 @@ func RequeueMaterialized(row QueuedRow, msgID int64) error {
 		return err
 	}
 	defer writeMu.Unlock()
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Only remove a row that is still a plain user message and not streaming:
 	// if the drain loop somehow already took it, deleting it would destroy real
 	// conversation content.
-	res, err := tx.Exec("DELETE FROM chat_history WHERE id = ? AND session_id = ? AND role = 'user' AND streaming = 0", msgID, row.SessionID)
+	res, err := tx.ExecContext(context.Background(), "DELETE FROM chat_history WHERE id = ? AND session_id = ? AND role = 'user' AND streaming = 0", msgID, row.SessionID)
 	if err != nil {
 		return err
 	}
@@ -269,7 +270,7 @@ func RequeueMaterialized(row QueuedRow, msgID int64) error {
 		data, _ := json.Marshal(row.Files)
 		filesJSON = string(data)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(context.Background(),
 		"INSERT INTO queued_messages (session_id, project_path, backend, queue_id, content, files, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		row.SessionID, row.ProjectPath, row.Backend, row.QueueID, row.Content, filesJSON, row.CreatedAt,
 	); err != nil {
@@ -294,14 +295,14 @@ func ClearQueuedMessages(sessionID string) error {
 // GetQueuedQueueIDs returns the non-empty queue_ids of a session's queued
 // messages, oldest first. Used to emit queue_cancel with the exact ids.
 func GetQueuedQueueIDs(sessionID string) ([]string, error) {
-	rows, err := dbRead.Query(
+	rows, err := dbRead.QueryContext(context.Background(),
 		"SELECT queue_id FROM queued_messages WHERE session_id = ? AND queue_id != '' ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []string
 	for rows.Next() {
 		var id string
@@ -316,20 +317,20 @@ func GetQueuedQueueIDs(sessionID string) ([]string, error) {
 // GetQueuedCount returns the number of queued messages for a session.
 func GetQueuedCount(sessionID string) int {
 	var count int
-	dbRead.QueryRow("SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessionID).Scan(&count)
+	_ = dbRead.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessionID).Scan(&count)
 	return count
 }
 
 // GetQueuedMessages returns the queued messages of a session, oldest first.
 func GetQueuedMessages(sessionID string) ([]model.QueuedMessage, error) {
-	rows, err := dbRead.Query(
+	rows, err := dbRead.QueryContext(context.Background(),
 		"SELECT id, session_id, project_path, backend, queue_id, content, files, created_at FROM queued_messages WHERE session_id = ? ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []model.QueuedMessage{}
 	for rows.Next() {
 		var row QueuedRow
@@ -369,17 +370,17 @@ func UpdateQueuedMessageQuoteNote(sessionID, queueID, quoteID, note string) ([]m
 		return nil, err
 	}
 	defer writeMu.Unlock()
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var filesJSON sql.NullString
-	if err := tx.QueryRow(
+	if qErr := tx.QueryRowContext(context.Background(),
 		"SELECT files FROM queued_messages WHERE session_id = ? AND queue_id = ?",
 		sessionID, queueID,
-	).Scan(&filesJSON); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	).Scan(&filesJSON); qErr != nil {
+		if errors.Is(qErr, sql.ErrNoRows) {
 			return nil, ErrChatQuoteNotFound
 		}
-		return nil, err
+		return nil, qErr
 	}
 
 	entries := unmarshalFilesJSON(filesJSON.String)
@@ -399,7 +400,7 @@ func UpdateQueuedMessageQuoteNote(sessionID, queueID, quoteID, note string) ([]m
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec("UPDATE queued_messages SET files = ? WHERE session_id = ? AND queue_id = ?", string(data), sessionID, queueID); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "UPDATE queued_messages SET files = ? WHERE session_id = ? AND queue_id = ?", string(data), sessionID, queueID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

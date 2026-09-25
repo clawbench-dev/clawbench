@@ -2333,15 +2333,23 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
-    it('excludes pending and queued messages from history', async () => {
+    it('builds history from the messages array only (queued messages are not in it)', async () => {
+      // The old test excluded rows carrying `pending`/`queued` flags. Those
+      // fields no longer exist on a chat message: a queued message lives in the
+      // queue store (useMessageQueue) and is never passed to ChatInputBar via
+      // `messages`, so historyInputs has no queue filter at all — it is simply
+      // every user row with text, newest first. Pin that source-of-truth
+      // contract (and that assistant rows are skipped).
       const wrapper = mountBar({
         currentSessionId: 's1',
         messages: [
           { id: 1, role: 'user', content: 'confirmed message' },
-          { id: 2, role: 'user', content: 'still pending', pending: true },
-          { id: 3, role: 'user', content: 'still queued', queued: true },
+          { id: 2, role: 'assistant', content: 'a reply' },
+          { id: 3, role: 'user', content: 'later question' },
         ],
       })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('later question')
       await pressArrow(wrapper, 'ArrowUp')
       expect(wrapper.vm.inputText).toBe('confirmed message')
       wrapper.unmount()

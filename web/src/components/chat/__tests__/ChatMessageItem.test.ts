@@ -189,23 +189,22 @@ describe('ChatMessageItem', () => {
     expect(wrapper.find('.chat-message').classes()).toContain('assistant')
   })
 
-  it('shows pending hint for pending messages', () => {
+  // The old 'shows pending hint for pending messages' / 'applies pending class'
+  // tests asserted a `pending` marker that no longer exists on a chat message:
+  // a queued message is NOT a chat message any more, it lives in the queue store
+  // and is rendered by QueuedMessageBar.vue (which owns the spinner, the
+  // insert/interrupt action and the × control — see QueuedMessageBar.test.ts).
+  // Pin the replacement invariant instead: the queue chrome must never leak into
+  // the message list, even when a stale `pending` field is present on the row.
+  it('never renders queue-panel chrome, even for a row carrying a stale pending flag', () => {
     const wrapper = createWrapper({
       msg: { id: '3', role: 'user', content: 'hello', blocks: [], pending: true },
     })
-    expect(wrapper.find('.pending-hint').exists()).toBe(true)
-  })
-
-  it('does not show pending hint for non-pending messages', () => {
-    const wrapper = createWrapper()
     expect(wrapper.find('.pending-hint').exists()).toBe(false)
-  })
-
-  it('applies pending class when message is pending', () => {
-    const wrapper = createWrapper({
-      msg: { id: '4', role: 'user', content: 'hello', blocks: [], pending: true },
-    })
-    expect(wrapper.find('.chat-message').classes()).toContain('pending')
+    expect(wrapper.find('.pending-remove').exists()).toBe(false)
+    expect(wrapper.find('.pending-action').exists()).toBe(false)
+    expect(wrapper.find('.queued-bar').exists()).toBe(false)
+    expect(wrapper.find('.chat-message').classes()).not.toContain('pending')
   })
 
   it('renders meta bar for non-streaming assistant message with content', () => {
@@ -350,14 +349,11 @@ describe('ChatMessageItem', () => {
     expect(wrapper.find('.chat-meta-time').exists()).toBe(false)
   })
 
-  it('emits remove-pending when pending remove button is clicked', async () => {
-    const wrapper = createWrapper({
-      msg: { id: '8', role: 'user', content: 'hello', blocks: [], pending: true },
-    })
-    const btn = wrapper.find('.pending-remove')
-    await btn.trigger('click')
-    expect(wrapper.emitted('remove-pending')).toBeTruthy()
-  })
+  // DELETED (queue-store refactor): 'emits remove-pending when pending remove
+  // button is clicked'. ChatMessageItem no longer renders a `.pending-remove`
+  // button nor declares a `remove-pending` emit — removing a queued entry is the
+  // × button in QueuedMessageBar.vue, which emits `remove` (covered by
+  // QueuedMessageBar.test.ts and wired to handleRemovePending in ChatPanelContent).
 
   it('renders data-msg-key attribute with msg id', () => {
     const wrapper = createWrapper({
@@ -981,11 +977,16 @@ describe('ChatMessageItem', () => {
       expect(wrapper.find('button[title="chat.actions.rewindSession"]').exists()).toBe(false)
     })
 
-    it('omits the user meta bar while the message is still queued', () => {
+    // The old 'omits the user meta bar while the message is still queued' test
+    // gated the meta bar on `!msg.pending`. That gate is gone: a queued message
+    // is not in this list at all (it lives in the queue store / QueuedMessageBar),
+    // so a user row's meta bar now depends only on having a timestamp or
+    // copyable text. Pin that the old pending gate cannot suppress it.
+    it('renders the user meta bar for a content row regardless of a stale pending flag', () => {
       const wrapper = createWrapper({
         msg: { id: 'um2', role: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }], pending: true },
       })
-      expect(wrapper.find('.chat-meta-bar').exists()).toBe(false)
+      expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
     })
 
     it('renders the user meta bar outside the bubble card', () => {
@@ -1255,15 +1256,11 @@ describe('ChatMessageItem — quote message button', () => {
     expect(btn).toBeUndefined()
   })
 
-  it('hides the quote button on a queued (pending) bubble', () => {
-    const wrapper = createWrapper({
-      msg: { ...userMsg, pending: true, queueId: 'q-1' },
-      index: 0,
-      active: true,
-    })
-    const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')
-    expect(btn).toBeUndefined()
-  })
+  // DELETED (queue-store refactor): 'hides the quote button on a queued
+  // (pending) bubble'. There is no queued bubble in the message list any more —
+  // a queued message lives in the queue store and renders in QueuedMessageBar
+  // (which has no quote action), so the `!msg.pending` gate this pinned is gone.
+  // The remaining gate (`!msg.streaming`) is already covered by the test above.
 
   it('hides the quote button when there is no text to quote', () => {
     const wrapper = createWrapper({

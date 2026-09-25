@@ -261,7 +261,7 @@ func minimalMetadata() *ai.Metadata {
 	return &ai.Metadata{Model: "test-model", TotalTokens: 5}
 }
 
-// ---------- TruncateSessionAfterMessage: queued rows beyond the anchor are deleted ----------
+// ---------- TruncateSessionAfterMessage: queued messages beyond the anchor are discarded ----------
 
 func TestRewindSession_DeletesQueuedRowsAfterAnchor(t *testing.T) {
 	setupDB(t)
@@ -273,18 +273,21 @@ func TestRewindSession_DeletesQueuedRowsAfterAnchor(t *testing.T) {
 	asstID, err := service.AddChatMessage("/project", "claude", sessID, "assistant", "A1", nil, false, "")
 	assert.NoError(t, err)
 
-	// Simulate a queued user message typed after A1 (assigned an id > asstID).
+	// A queued user message typed after A1. It lives in queued_messages (no
+	// chat_history row), so the rewind discards it and reports it separately:
+	// DeletedCount counts history rows, QueuedCount counts discarded queue rows.
 	_, err = service.AddQueuedMessage("/project", "claude", sessID, "queued followup", nil, "q-1", "queued followup")
 	assert.NoError(t, err)
 
 	res, err := service.TruncateSessionAfterMessage(sessID, asstID)
 	assert.NoError(t, err)
-	assert.Equal(t, int64(1), res.DeletedCount)
+	assert.Equal(t, int64(0), res.DeletedCount, "no chat_history rows follow the anchor")
+	assert.Equal(t, int64(1), res.QueuedCount, "the queued message must be counted as discarded")
 	assert.Equal(t, "queued followup", res.RestoredText)
 
-	// No queued rows remain.
+	// No queued rows remain (queued messages live in their own table now).
 	var queuedCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queued = 1", sessID).Scan(&queuedCount)
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessID).Scan(&queuedCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, queuedCount)
 

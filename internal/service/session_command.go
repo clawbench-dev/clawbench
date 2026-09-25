@@ -434,11 +434,18 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 		row, matMsgID, ok, cerr := ClaimByIDAndMaterialize(cfg.SessionID, queueRowID)
 		if cerr != nil || !ok {
 			// The row we just inserted is gone — a concurrent cancel/clear took
-			// it. Nothing to run; report failure so the caller restores input.
+			// it, or materializing it failed. Nothing to run; report failure so
+			// the caller restores input.
+			//
+			// The claim MUST be released here: we created the runner, so leaving
+			// it claimed would strand the session as "running" with nothing
+			// consuming it — the user could never send again and no drain loop
+			// would ever run (this path never reaches LaunchSessionExecution).
 			slog.Warn("enqueue: queued row vanished before materialize",
 				slog.String("session", cfg.SessionID),
 				slog.Int64("queue_row_id", queueRowID),
 				slog.Any("error", cerr))
+			FinishSessionRun(cfg.SessionID)
 			return false, 0, fmt.Errorf("queued message could not be materialized")
 		}
 		// Announce the real user message so every device renders it inline.

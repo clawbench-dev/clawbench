@@ -2871,64 +2871,52 @@ describe('sub-agent thinking_done', () => {
 // Mid-turn injection (steer) — the message joined the running turn instead of
 // being queued, so it must never wait for a drain event that will not arrive.
 // ---------------------------------------------------------------------------
-describe('mid-turn injection (steer) pending handling', () => {
-  it('optimistic_adopt_id clears pending when the caller opts in', () => {
-    // An injected message: the optimistic bubble was pushed pending (the enqueue
-    // path always does), but the backend reported it joined the running turn.
-    // No queue_drain will ever arrive for it, so it must shed pending now.
+describe('mid-turn injection (steer) — no pending chrome on chat messages', () => {
+  it('optimistic_adopt_id adopts the DB id for an injected message', () => {
+    // An injected message's user_message event lands it in the conversation with
+    // its committed DB id, and the optimistic bubble pushed for it adopts that
+    // id. There is no `pending` marker to clear any more: a queued message never
+    // enters this array (it lives in the queue store until dequeued or injected),
+    // and its queue entry is dropped by removeQueued (useMessageQueue) when the
+    // backend reports the injection succeeded — see handlePendingAction.
     const messages: any[] = [
-      { role: 'user', id: 'pending-1', queueId: 'pending-1', content: 'steered', blocks: [{ type: 'text', text: 'steered' }], pending: true, seq: nextClientSeq() },
+      { role: 'user', id: 'pending-1', queueId: 'pending-1', content: 'steered', blocks: [{ type: 'text', text: 'steered' }], seq: nextClientSeq() },
     ]
     const next = chatMessageReducer(messages, {
-      type: 'optimistic_adopt_id', id: 'pending-1', dbId: 7, clearPending: true,
+      type: 'optimistic_adopt_id', id: 'pending-1', dbId: 7,
     })
     const m = next.find((x: any) => x.content === 'steered')!
     expect(m.id).toBe(7)
     expect(m.queueId).toBe('pending-1')
-    expect(m.pending).toBeUndefined()
     expect(m.seq).toBeUndefined()
   })
 
-  it('optimistic_adopt_id keeps a queued bubble pending by default', () => {
-    // A genuinely queued message: the drain loop will carry its id, so the
-    // bubble must stay pending until then (pre-existing behavior, unchanged).
-    const messages: any[] = [
-      { role: 'user', id: 'queue-B', queueId: 'queue-B', content: 'queued', blocks: [{ type: 'text', text: 'queued' }], pending: true, seq: nextClientSeq() },
-    ]
-    const next = chatMessageReducer(messages, {
-      type: 'optimistic_adopt_id', id: 'queue-B', dbId: 9,
-    })
-    const m = next.find((x: any) => x.content === 'queued')!
-    expect(m.pending).toBe(true)
-    expect(m.id).toBe('queue-B')
-  })
+  // DELETED: 'optimistic_adopt_id keeps a queued bubble pending by default'.
+  // The premise is inverted by the queue-store refactor: a queued message is not
+  // in the conversation array at all, so there is no "queued bubble" here to keep
+  // pending — and optimistic_adopt_id adopts the DB id unconditionally instead of
+  // leaving a queued bubble's string id in place.
 
-  it('clear_queued_pending drops the pending marker for the injected message', () => {
-    // The /api/ai/queue path returns {injected:true} — no drain will follow.
-    const messages: any[] = [
-      { role: 'user', id: 'q-inj', queueId: 'q-inj', content: 'inj', blocks: [{ type: 'text', text: 'inj' }], pending: true, queued: true, seq: nextClientSeq() },
-      { role: 'user', id: 'q-keep', queueId: 'q-keep', content: 'kept', blocks: [{ type: 'text', text: 'kept' }], pending: true, queued: true, seq: nextClientSeq() },
-    ]
-    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-inj' })
+  // DELETED: 'clear_queued_pending drops the pending marker for the injected
+  // message'. The `clear_queued_pending` action no longer exists: removing a
+  // queue entry is removeQueued(sessionId, queueId) in useMessageQueue.ts
+  // (covered by useMessageQueue.test.ts and useSessionManager's
+  // handlePendingAction), and a chat message carries no pending marker.
 
-    const injected = next.find((x: any) => x.content === 'inj')!
-    expect(injected.pending).toBeUndefined()
-    expect(injected.queued).toBeUndefined()
-
-    // Other queued messages are untouched.
-    const kept = next.find((x: any) => x.content === 'kept')!
-    expect(kept.pending).toBe(true)
-  })
-
-  it('ws_user_message keeps an injected remote bubble non-pending', () => {
-    // Cross-device: the backend emits queued=false for an injected message, so
-    // the receiving device must not render it as waiting in the queue.
+  it('ws_user_message lands an injected message as a normal committed bubble', () => {
+    // Cross-device: an injected message is a committed chat_history row, so the
+    // receiving device renders it as an ordinary remote bubble with no queue
+    // chrome (the reducer has no pending/queued state to set).
     const next = chatMessageReducer([], {
       type: 'ws_user_message',
-      data: { messageId: 11, content: 'remote injected', queueId: 'r-1', senderClientId: 'other-device', queued: false },
+      data: { messageId: 11, content: 'remote injected', queueId: 'r-1', senderClientId: 'other-device' },
     } as any)
-    const m = next[0]
+    const m = next[0] as any
+    expect(m.id).toBe(11)
+    expect(m._remote).toBe(true)
+    expect(m._remoteQueueId).toBe('r-1')
     expect(m.pending).toBeUndefined()
+    expect(m.queued).toBeUndefined()
   })
 })
 
@@ -2938,16 +2926,19 @@ describe('mid-turn injection (steer) pending handling', () => {
 // that is still streaming.
 // ---------------------------------------------------------------------------
 describe('ws_stream_split (mid-turn assistant split)', () => {
-  it('finalizes the current bubble and opens a new anchored one', () => {
-    // Live state: Q1, the streaming reply, and the just-injected Q2.
+  it('finalizes the current bubble and opens a new streaming one at its DB id', () => {
+    // Live state: Q1, the streaming reply, and the just-injected Q2. The
+    // injected question was materialized into chat_history before the "after"
+    // row, so the DB ids already encode the conversational order — no anchor
+    // field (the removed parentQueueId) is needed.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }] },
       { role: 'assistant', id: 2, content: '', blocks: [{ type: 'text', text: 'before half' }], streaming: true },
-      { role: 'user', id: 3, queueId: 'pending-inject-1', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }] },
+      { role: 'user', id: 3, content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }] },
     ]
 
     const next = chatMessageReducer(messages, {
-      type: 'ws_stream_split', messageId: 4, queueId: 'pending-inject-1',
+      type: 'ws_stream_split', messageId: 4,
     })
 
     const before = next.find((m: any) => m.id === 2)!
@@ -2957,13 +2948,13 @@ describe('ws_stream_split (mid-turn assistant split)', () => {
     const after = next.find((m: any) => m.id === 4)!
     expect(after.role).toBe('assistant')
     expect(after.streaming).toBe(true)
-    expect(after.parentQueueId).toBe('pending-inject-1')
+    // No anchor field on the new half — ordering is the DB id alone.
+    expect(after.parentQueueId).toBeUndefined()
     expect(after.blocks).toEqual([])
 
-    // The injected question must sort BETWEEN the halves.
-    const contents = next.map((m: any) => m.content)
-    expect(contents.indexOf('before half') < contents.indexOf('Q2')).toBe(true)
-    expect(contents.indexOf('Q2') < next.indexOf(after)).toBe(true)
+    // The injected question sorts BETWEEN the halves by DB id.
+    const ids = next.map((m: any) => m.id)
+    expect(ids).toEqual([1, 2, 3, 4])
   })
 
   it('marks unfinished tool blocks done on the before-half', () => {
@@ -2984,8 +2975,8 @@ describe('ws_stream_split (mid-turn assistant split)', () => {
     const messages: any[] = [
       { role: 'assistant', id: 2, content: '', streaming: true, blocks: [] },
     ]
-    const once = chatMessageReducer(messages, { type: 'ws_stream_split', messageId: 6, queueId: 'q' })
-    const twice = chatMessageReducer(once, { type: 'ws_stream_split', messageId: 6, queueId: 'q' })
+    const once = chatMessageReducer(messages, { type: 'ws_stream_split', messageId: 6 })
+    const twice = chatMessageReducer(once, { type: 'ws_stream_split', messageId: 6 })
     expect(twice.filter((m: any) => m.role === 'assistant')).toHaveLength(2)
   })
 
@@ -3011,63 +3002,43 @@ describe('ws_stream_split (mid-turn assistant split)', () => {
 
 // ---------------------------------------------------------------------------
 // Queued-message action: "insert into the current reply" / "interrupt and send"
+//
+// Both actions now live OUTSIDE this reducer. The queue entry is removed by
+// removeQueued(sessionId, queueId) in useMessageQueue.ts, driven by
+// useSessionManager.handlePendingAction (insert) and the queue_inject /
+// queue_drain / queue_cancel WS handlers in useChatStream.ts. A chat message
+// carries no pending/queued state, so the old clear_queued_pending action — and
+// the pending-marker assertions built on it — have no reducer-level equivalent.
+// removeQueued is covered by useMessageQueue.test.ts.
 // ---------------------------------------------------------------------------
-describe('queued message action (insert / interrupt)', () => {
-  it('clear_queued_pending clears pending without removing the bubble', () => {
-    // Insert: the message becomes part of the conversation, so its bubble must
-    // STAY (only the pending spinner goes) — unlike cancel, which removes it.
-    const messages: any[] = [
-      { role: 'user', id: 'q-1', queueId: 'q-1', content: 'queued', blocks: [{ type: 'text', text: 'queued' }], pending: true, queued: true, seq: 1 },
-    ]
-    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-1' })
-    expect(next).toHaveLength(1)
-    expect(next[0].pending).toBeUndefined()
-    expect(next[0].queued).toBeUndefined()
-  })
+describe('queued message action (insert / interrupt) — reducer boundary', () => {
+  // DELETED: 'clear_queued_pending clears pending without removing the bubble'.
+  // The action no longer exists; the equivalent behavior is the queue entry
+  // being dropped by removeQueued, asserted in useMessageQueue.test.ts.
 
-  it('clear_queued_pending leaves other queued bubbles alone', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'q-1', queueId: 'q-1', content: 'a', blocks: [], pending: true, queued: true, seq: 1 },
-      { role: 'user', id: 'q-2', queueId: 'q-2', content: 'b', blocks: [], pending: true, queued: true, seq: 2 },
-    ]
-    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-1' })
-    expect(next.find((m: any) => m.queueId === 'q-1')!.pending).toBeUndefined()
-    expect(next.find((m: any) => m.queueId === 'q-2')!.pending).toBe(true)
-  })
+  // DELETED: 'clear_queued_pending leaves other queued bubbles alone'.
+  // Same reason: removeQueued only drops the named queueId, covered in
+  // useMessageQueue.test.ts ('removeQueued' describe).
 
-  it('clear_queued_pending clears a cross-device bubble via _remoteQueueId', () => {
-    // A bubble created from another device's queued user_message has a numeric
-    // id and NO queueId — only _remoteQueueId carries the queue identity. If the
-    // reducer only matched id/queueId, this bubble would spin forever after an
-    // insert (until some later loadHistory happened to drop it).
-    const messages: any[] = [
-      { role: 'user', id: 12345, content: 'from device B', blocks: [], pending: true, queued: true, _remote: true, _remoteQueueId: 'q-remote-1' },
-    ]
-    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-remote-1' })
-    expect(next).toHaveLength(1)
-    expect(next[0].pending).toBeUndefined()
-    expect(next[0].queued).toBeUndefined()
-  })
+  // DELETED: 'clear_queued_pending clears a cross-device bubble via
+  // _remoteQueueId'. There is no pending marker on a cross-device bubble any
+  // more — its user_message event lands it as a committed row, and the queue
+  // entry is keyed by queueId in the store.
 
-  it('ws_queue_drain opens a new reply; clear_queued_pending does not', () => {
-    // The distinction that matters: a drained message starts its OWN turn (new
-    // assistant placeholder), an inserted one joins the running turn (none).
+  it('ws_queue_drain finalizes the streaming reply in place without pushing a new assistant', () => {
+    // A drained message starts its OWN turn, but the reducer only owns the turn
+    // BOUNDARY: it finalizes the reply that was streaming (the backend emits
+    // `done` only when the whole drain loop exits). The next turn's placeholder
+    // is created by the following stream_start event — or by
+    // ensureStreamingPlaceholder in useChatStream when that event is lost.
     const base: any[] = [
       { role: 'assistant', id: 2, content: '', blocks: [], streaming: true },
-      { role: 'user', id: 'q-1', queueId: 'q-1', content: 'queued', blocks: [], pending: true, queued: true, seq: 1 },
     ]
+    const afterDrain = chatMessageReducer(base.map((m) => ({ ...m })), { type: 'ws_queue_drain' })
 
-    const afterInsert = chatMessageReducer(
-      base.map((m) => ({ ...m })),
-      { type: 'clear_queued_pending', queueId: 'q-1' },
-    )
-    expect(afterInsert.filter((m: any) => m.role === 'assistant')).toHaveLength(1)
-
-    const afterDrain = chatMessageReducer(
-      base.map((m) => ({ ...m })),
-      { type: 'ws_queue_drain', queueId: 'q-1', text: 'queued', files: [], dbMessageId: 5 },
-    )
-    expect(afterDrain.filter((m: any) => m.role === 'assistant').length).toBeGreaterThan(1)
+    expect(afterDrain.filter((m: any) => m.role === 'assistant')).toHaveLength(1)
+    expect(afterDrain[0].id).toBe(2)
+    expect(afterDrain[0].streaming).toBeUndefined()
   })
 })
 

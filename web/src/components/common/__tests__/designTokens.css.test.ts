@@ -349,6 +349,11 @@ describe('token references across the app', () => {
   for (const text of [...sources.map((s) => s.text), ...collectScripts()]) {
     for (const m of text.matchAll(/['"](--[a-z0-9-]+)['"]\s*:/g)) runtimeSet.add(m[1])
     for (const m of text.matchAll(/setProperty\(\s*['"](--[a-z0-9-]+)['"]/g)) runtimeSet.add(m[1])
+    // A token routed through an exported constant (e.g. `SVG_AR_PROP = '--svg-ar'`
+    // then `setProperty(SVG_AR_PROP, …)`) is set at runtime too. Without this the
+    // constant indirection read as an undeclared token — the guard only saw the
+    // `setProperty(SVG_AR_PROP,` call and never the string.
+    for (const m of text.matchAll(/=\s*['"](--[a-z0-9-]+)['"]/g)) runtimeSet.add(m[1])
   }
 
   it('never references a token that nothing declares', () => {

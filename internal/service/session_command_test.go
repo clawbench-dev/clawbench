@@ -59,11 +59,21 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
-			queue_id TEXT DEFAULT '',
-			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
 		);
+		CREATE TABLE IF NOT EXISTS queued_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			project_path TEXT NOT NULL,
+			backend TEXT NOT NULL DEFAULT '',
+			queue_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			files TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_queued_session ON queued_messages(session_id, id);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_queued_identity ON queued_messages(session_id, queue_id);
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			target_type TEXT NOT NULL,
@@ -2553,10 +2563,15 @@ func (m *mockQueueBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest) (<
 	return ch, nil
 }
 
-// TestDrainWritesReplyQueueID runs a real LaunchSessionExecution cycle: message 1
-// executes directly, message 2 is enqueued and drained by the loop. The reply to
-// message 2 must carry message 2's queue_id so the frontend can anchor it.
-func TestDrainWritesReplyQueueID(t *testing.T) {
+// TestDrainReplyFollowsItsQuestion runs a real LaunchSessionExecution cycle:
+// message 1 executes directly, message 2 is enqueued and drained by the loop.
+//
+// The queue refactor removed the reply's queue_id anchor entirely: a queued
+// message is materialized into chat_history only when it is dequeued, so its
+// row id is necessarily SMALLER than the assistant reply it produces. DB id
+// order IS conversational order, which is what lets the frontend drop the whole
+// anchoring mechanism. This test pins that invariant.
+func TestDrainReplyFollowsItsQuestion(t *testing.T) {
 	ai.RegisterBackend("mock-queue", func() ai.AIBackend { return &mockQueueBackend{} })
 
 	db := setupTestDBForSessionCommand(t)
@@ -2567,7 +2582,7 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	model.Agents["mock-agent"] = &model.Agent{ID: "mock-agent", Backend: "cli", Command: "echo"}
 	defer func() { model.Agents = origAgents }()
 
-	sid := "queue-reply-qid"
+	sid := "queue-reply-order"
 	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'mock-queue', 'Q', 'mock-agent')", sid)
 	require.NoError(t, err)
 
@@ -2599,11 +2614,15 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	assert.True(t, started2)
 	require.Eventually(t, func() bool { return !IsSessionRunning(sid) }, 10*time.Second, 50*time.Millisecond)
 
-	// The reply to message 2 (the LATEST assistant row) must carry queue_id pending-2.
-	var qid string
-	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&qid)
-	assert.NoError(t, err, "assistant reply row should exist")
-	assert.Equal(t, "pending-2", qid, "drain reply must record the consumed message's queue_id")
+	// The last user row must come before the last assistant row: the reply
+	// follows its own question with no anchor column needed.
+	var lastUserID, lastAssistantID int64
+	require.NoError(t, db.QueryRow(
+		"SELECT id FROM chat_history WHERE role='user' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&lastUserID))
+	require.NoError(t, db.QueryRow(
+		"SELECT id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&lastAssistantID))
+	assert.Less(t, lastUserID, lastAssistantID,
+		"the drained question's row id must precede its reply's — id order is conversational order")
 }
 
 // ============================================================================
@@ -2613,6 +2632,10 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 // TestSendMessageToSessionFromDingTalk_WithFilesPersistsAttachments verifies a
 // bare attachment message (empty text) is persisted with its files, which is
 // what a file/image sent from IM produces.
+//
+// The session is running, so the message is QUEUED — its files must survive in
+// queued_messages, because the drain loop re-reads that row (not the original
+// request) when it materializes the message.
 func TestSendMessageToSessionFromDingTalk_WithFilesPersistsAttachments(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
@@ -2633,7 +2656,7 @@ func TestSendMessageToSessionFromDingTalk_WithFilesPersistsAttachments(t *testin
 
 	var content, filesJSON string
 	require.NoError(t, dbRead.QueryRow(
-		"SELECT content, files FROM chat_history WHERE session_id = ? AND role = 'user'", sessionID,
+		"SELECT content, files FROM queued_messages WHERE session_id = ?", sessionID,
 	).Scan(&content, &filesJSON))
 
 	assert.Equal(t, "", content, "an attachment-only message has empty text")
@@ -2720,23 +2743,18 @@ func TestFeishuLastSessionID_RoundTrip(t *testing.T) {
 }
 
 // ============================================================================
-// Push queue-id anchoring (reply ordering)
+// Push queue identity
 // ============================================================================
 
 // TestSendMessageToSessionFromPush_CarriesQueueID is the regression guard for
-// the "reply appears above its own question" bug.
+// the queue entry a push message creates while the session is busy.
 //
-// The queue id is the only anchor tying a streaming reply to the question it
-// answers: run_turn stores it on the streaming assistant row and streams it as
-// stream_start.queue_id, and the client re-anchors the reply to the question
-// bubble carrying the same queueId. The push path used to pass no queue id, so
-// the client fell back to "newest user message" — and because the execution is
-// launched asynchronously BEFORE the user_message event is emitted, that
-// fallback anchored the reply to the PREVIOUS question. The reply then rendered
-// above its own question until a reload rebuilt the order from the DB.
-//
-// The test asserts the anchor exists on both sides: the user row carries the
-// queue id, and the emitted user_message event advertises the same value.
+// A busy session's message is queued, not materialized: it has no chat_history
+// row yet, so the queue_id is the ONLY handle the UI and the drain loop have on
+// it (cancel / inject address the row by it). The push path mints one because an
+// IM backend has no client-side id, and the emitted queue_added event must
+// advertise that SAME id — otherwise the sender holds an entry it can never
+// match to its later queue_drain, and the queue panel sticks.
 func TestSendMessageToSessionFromPush_CarriesQueueID(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
@@ -2757,30 +2775,30 @@ func TestSendMessageToSessionFromPush_CarriesQueueID(t *testing.T) {
 	// subscriber for the session and drops the event instead of buffering it.
 	mgr.StreamHub().Subscribe("test-client-qid", sessionID)
 
-	// Mark running so no execution is launched: this test is about the event and
-	// the persisted row, not about running a backend.
+	// Mark running so the message is queued (no execution is launched): this
+	// test is about the queue identity, not about running a backend.
 	SetSessionRunning(sessionID, true, false)
 	defer SetSessionRunning(sessionID, false, true)
 
 	require.NoError(t, SendMessageToSessionFromDingTalk(sessionID, "hello from dingtalk", nil))
 
-	// The persisted user row must carry a queue id — that is what the drain loop
-	// reads back to anchor its own stream_start.
+	// The queued row must carry a queue id — that is what the drain loop and the
+	// UI address it by.
 	var rowQueueID string
 	require.NoError(t, dbRead.QueryRow(
-		"SELECT queue_id FROM chat_history WHERE session_id = ? AND role = 'user'", sessionID,
+		"SELECT queue_id FROM queued_messages WHERE session_id = ?", sessionID,
 	).Scan(&rowQueueID))
-	assert.NotEmpty(t, rowQueueID, "the persisted user row must carry a queue id")
+	assert.NotEmpty(t, rowQueueID, "the queued row must carry a queue id")
 
-	// The emitted user_message must advertise the same queue id so the client can
-	// anchor the reply to this bubble.
+	// The emitted queue_added must advertise the same queue id so the sender can
+	// match the entry it holds to the row the backend stored.
 	var eventQueueID string
 	for _, m := range sub.GetBufferedEvents() {
 		if m.Event != "chat_stream" {
 			continue
 		}
 		csd, ok := m.Data.(ws.ChatStreamData)
-		if !ok || csd.EventType != "user_message" {
+		if !ok || csd.EventType != "queue_added" {
 			continue
 		}
 		payload, ok := csd.Payload.(map[string]any)
@@ -2791,9 +2809,9 @@ func TestSendMessageToSessionFromPush_CarriesQueueID(t *testing.T) {
 			eventQueueID = v
 		}
 	}
-	require.NotEmpty(t, eventQueueID, "user_message must carry the queue id")
+	require.NotEmpty(t, eventQueueID, "queue_added must carry the queue id")
 	assert.Equal(t, rowQueueID, eventQueueID,
-		"the event's queue id must match the persisted row so the reply anchors to this question")
+		"the event's queue id must match the stored row so the client can cancel/inject it")
 }
 
 // TestNewPushQueueID_UniqueWithinSecond verifies ids minted in a tight burst do

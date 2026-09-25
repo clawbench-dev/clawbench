@@ -82,7 +82,7 @@ function fileLabel(f) {
   margin: 0 var(--space-5) var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  background: var(--surface-color, var(--bg-secondary));
+  background: var(--bg-secondary);
   overflow: hidden;
 }
 
@@ -164,7 +164,7 @@ function fileLabel(f) {
 
 .queued-bar-file {
   font-size: var(--font-size-xs);
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-secondary);
   background: rgba(127, 127, 127, 0.14);
   border-radius: var(--radius-full);
   padding: 0 var(--space-2);
@@ -216,7 +216,7 @@ function fileLabel(f) {
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-secondary);
   padding: 0 var(--space-1);
   font-size: var(--font-size-md);
   line-height: 1;

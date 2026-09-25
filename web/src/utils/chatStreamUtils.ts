@@ -450,16 +450,22 @@ const TRANSIENT_BASE = Number.MAX_SAFE_INTEGER / 4
 /**
  * Numeric sort value for a message.
  *
- * - DB-backed (numeric id, not streaming): the id itself.
- * - Transient (streaming placeholder, optimistic send with a string id):
- *   TRANSIENT_BASE + seq, ordering purely by send order and after every
- *   DB-backed message.
+ * - DB-backed (numeric id): the id itself — INCLUDING a still-streaming
+ *   placeholder once it has adopted its DB row id. The row's id is its real
+ *   conversational position (the question row was materialized before the
+ *   reply), so a streaming reply must sort at its id, not float to the end.
+ *   Floating it would push a reply below questions materialized AFTER it
+ *   (e.g. a drained message's row) — the "reply appears below the next
+ *   question" ordering bug.
+ * - Transient (string id: optimistic send, or a streaming placeholder that has
+ *   not yet learned its DB id): TRANSIENT_BASE + seq, ordering purely by send
+ *   order and after every DB-backed message.
  *
  * A queued message is not in this array at all (it lives in the queue store
  * until dequeued), so no queueId handling is needed.
  */
 export function messageSortValue(m: ChatMessage): number {
-  const isLive = m.streaming === true || typeof m.id !== 'number'
+  const isLive = typeof m.id !== 'number'
   if (!isLive) return m.id as number
   return TRANSIENT_BASE + (m.seq ?? 0)
 }

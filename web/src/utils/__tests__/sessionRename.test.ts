@@ -71,21 +71,35 @@ describe('buildRenameGenerateOptions', () => {
 // would apply to only one). Behavior tests cannot catch that — each entry point
 // would still work on its own — so this asserts the shared builder is used.
 describe('rename generate options are shared, not duplicated', () => {
+  // The frontend lives in web/, but the two ways to run the suite disagree on
+  // cwd (bare `vitest` from web/ vs `npm test` → scripts/vitest-run.sh from the
+  // repo root). Probe both so this guard cannot pass locally and ENOENT in CI.
+  function webFile(relPath: string): string {
+    for (const base of [process.cwd(), resolve(process.cwd(), 'web'), resolve(process.cwd(), '../web')]) {
+      try {
+        return readFileSync(resolve(base, relPath), 'utf8')
+      } catch {
+        // try the next candidate root
+      }
+    }
+    throw new Error(`${relPath} not found from cwd: ${process.cwd()}`)
+  }
+
   const files = {
-    'App.vue': resolve(process.cwd(), 'src/App.vue'),
-    'SessionList.vue': resolve(process.cwd(), 'src/components/session/SessionList.vue'),
+    'App.vue': 'src/App.vue',
+    'SessionList.vue': 'src/components/session/SessionList.vue',
   }
 
   it('both entry points call the shared builder', () => {
-    for (const [name, path] of Object.entries(files)) {
-      const src = readFileSync(path, 'utf8')
+    for (const [name, relPath] of Object.entries(files)) {
+      const src = webFile(relPath)
       expect(src, `${name} must use the shared builder`).toContain('buildRenameGenerateOptions(')
     }
   })
 
   it('neither entry point inlines the gating or the generate payload', () => {
-    for (const [name, path] of Object.entries(files)) {
-      const src = readFileSync(path, 'utf8')
+    for (const [name, relPath] of Object.entries(files)) {
+      const src = webFile(relPath)
       // The config path and the onGenerate producer must live only in the builder.
       expect(src, `${name} must not re-implement the summary-model gate`).not.toContain('ai_summary')
       expect(src, `${name} must not re-implement the generate payload`).not.toContain('generateSessionTitle(')

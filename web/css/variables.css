@@ -47,6 +47,8 @@
     --space-6: 12px;
     --space-7: 16px;
     --space-8: 20px;
+    --space-9: 24px;
+    --space-10: 28px;
 
     /* ── Transition durations for colour / opacity / small state changes.
        Longer durations are deliberately NOT tokenized: the 0.25s+ values

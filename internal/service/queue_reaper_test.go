@@ -53,11 +53,13 @@ func setupReaperTestDB(t *testing.T) *sql.DB {
 		project_path TEXT NOT NULL DEFAULT '',
 		backend TEXT NOT NULL DEFAULT 'claude',
 		title TEXT NOT NULL DEFAULT '',
+		title_source TEXT NOT NULL DEFAULT '',
 		agent_id TEXT NOT NULL DEFAULT '',
 		model TEXT NOT NULL DEFAULT '',
 		transport TEXT NOT NULL DEFAULT '',
 		auto_approve INTEGER NOT NULL DEFAULT 0,
-		archived INTEGER NOT NULL DEFAULT 0
+		archived INTEGER NOT NULL DEFAULT 0,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	require.NoError(t, err)
 	return db
