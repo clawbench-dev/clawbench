@@ -4,7 +4,7 @@
 
 > 移动原因：规格需通过 `go:embed` 编入二进制，用于渲染内置斜杠命令注入给 AI 的接口说明；而 `go:embed` 不能跨模块目录向上引用。**编辑规格请改 `internal/api/openapi.yaml`。**
 
-它是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部 150 个路径 / 189 个操作。
+它是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部 154 个路径 / 193 个操作。
 
 ## 使用方式
 
@@ -27,6 +27,10 @@
 | SSE | `/api/dir/search`、`/api/tts/stream/{jobId}` |
 
 聊天流式内容统一经 `/api/ai/events/ws` 推送，不在本文件建模。
+
+**例外：HTTP/2 流隧道是正式建模的。** `POST /api/tunnel/stream`（`operationId: tunnelStream`）与 `POST /api/tunnel/control`（`operationId: tunnelControl`）是**普通 POST 端点**（不是 WebSocket 升级，也不是 SSE），因此它们**不在上表之列**——规格里有完整的 `tags` / `summary` / `parameters` / 响应状态码，Swagger UI 可直接展示，`openapi_drift_test.go` 也双向校验它们。
+
+但两者的**请求体与响应体没有 schema**：它们是 **duplex 字节流**（`stream` 请求体承载 client→server 字节、响应体承载 server→client 字节，无 `Content-Length`；`control` 是 NDJSON），OpenAPI 3.0 无法表达这种全双工流式载荷。因此载荷形态**只能写在 `description` 里**（含 `-R` 控制流的 NDJSON 消息表）。这是「路径已建模、载荷靠散文」的中间态，与上表「路径无法用 OpenAPI 表达」的 WS/SSE 端点不同。详见 [SSH 隧道](../infra/ssh-tunnel.md) 的「h2 流隧道」章节与 [h2 隧道设计文档](../../plans/2026-09-25-h2-tunnel-design.md) §4。
 
 ## Tag 分组
 
@@ -63,4 +67,6 @@ Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、G
 - 留意通配路由的子路径分发：`/api/tasks/`（`{id}` 与 `executions` 子路径）、`/api/agents/`、`/api/file/`、`/api/share/`、`/api/chat/quick-send/` 等。
 - 鉴权变化须同步 `security` 标注（默认 `cookieAuth` 或本机 AI 的 `aiToken`，免鉴权端点显式写 `security: []`）。
 - 已移除的端点（如 `/api/files`、`/api/git/status`、`/api/terminal/config`）在相关操作的 `description` 中标注了取代者。
+- **本文件与 `docs/spec/README.md` 的散文计数（「154 个路径 / 193 个操作」）必须手工同步**：`openapi_drift_test.go` 只校验路径与鉴权的双向一致，**不校验计数与文字**，所以计数漂移 CI 不会报。计数口径是 `paths:` 下的**全部路径键**（含非 `/api/` 的 `/login` 与 `/share/{token}`）与全部 HTTP 方法数。改动规格后跑 `grep -c "^  /" internal/api/openapi.yaml` 与 `grep -cE "^    (get|post|put|patch|delete):" internal/api/openapi.yaml` 复核（2026-09-25 实测 154 / 193）。
+- **全双工流式端点无法用 schema 表达请求/响应体**：`/api/tunnel/stream`、`/api/tunnel/control` 是 duplex 字节流（无 `Content-Length`），OpenAPI 3.0 没有对应模型。这类端点的载荷形态（字段、消息类型、关闭语义）**必须写进 operation 的 `description`**，路径与方法照常建模。
 - 改完自检：路由无遗漏无多余、YAML 合法、无重复 `operationId`、`$ref` 可解析。
