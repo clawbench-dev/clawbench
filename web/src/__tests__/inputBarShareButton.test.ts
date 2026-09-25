@@ -37,9 +37,26 @@ describe('conversation share in the input action bar', () => {
 
     expect(block).toContain('@click="handleShare"')
     expect(block).toContain("t('chat.actions.shareSession')")
-    // The icon must actually be imported, or the template renders an empty button.
-    expect(readWebFile(BAR)).toMatch(/import\s*\{[^}]*\bShare2\b[^}]*\}\s*from\s*'lucide-vue-next'/)
-    expect(block).toContain('<Share2')
+    expect(block).toContain('<MessageSquareShare')
+  })
+
+  /**
+   * The icon must match the session list's "shared conversations" button, so the
+   * two entry points to the same feature read as one. Asserting the literal tag
+   * (not just "some icon") is what stops a later edit from drifting back to the
+   * plain Share2 glyph.
+   */
+  it('uses the same icon as the session list share button', () => {
+    const src = readWebFile(BAR)
+
+    expect(src).toMatch(/import\s*\{[^}]*\bMessageSquareShare\b[^}]*\}\s*from\s*'lucide-vue-next'/)
+    expect(src, 'Share2 is the wrong glyph for this button').not.toMatch(/\bShare2\b/)
+
+    // …and the session list headers really do use that same icon, so this test
+    // fails if THEY change rather than silently passing on a stale assumption.
+    for (const host of ['src/components/session/SessionSidebar.vue', 'src/components/session/SessionDrawer.vue']) {
+      expect(readWebFile(host), `${host} must render MessageSquareShare`).toContain('<MessageSquareShare')
+    }
   })
 
   it('disables the share button when there is no session', () => {
