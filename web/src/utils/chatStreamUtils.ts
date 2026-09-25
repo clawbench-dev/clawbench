@@ -1306,10 +1306,24 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       const userFiles: FileEntry[] = (data.files || []).map((f) => typeof f === 'string' ? { path: f, isDir: false } : f)
       const msgId = data.messageId || 0
       const remoteQueueId = data.queueId || ''
+      // Identity is the DB id, or the queueId tying this announcement to the
+      // optimistic bubble that asked for it. Text is NEVER identity: different
+      // messages legitimately share text (the same prompt sent three times), and
+      // matching on it silently swallowed the 2nd and 3rd — the reported "queued
+      // messages only appear once the whole queue finishes". They surfaced later
+      // only because a final loadHistory rebuilt from the DB, which had them all
+      // along.
+      //
+      // So an announcement that carries identity is decided by identity alone.
+      // The content fallback survives ONLY for an announcement with neither id
+      // (a legacy/IM path), where it remains the last-resort guard against
+      // duplicating this device's own optimistic bubble.
+      const hasIdentity = msgId > 0 || remoteQueueId !== ''
       const alreadyExists = state.some((m) => {
         if (m.role !== 'user') return false
         if (msgId > 0 && m.id === msgId) return true
         if (remoteQueueId && (m.id === remoteQueueId || m.queueId === remoteQueueId)) return true
+        if (hasIdentity) return false
         // Content is only a dedup key when it actually identifies the message.
         // An attachment-only message (a file/image sent from IM) has content "",
         // so matching on it would collapse every such message into the first

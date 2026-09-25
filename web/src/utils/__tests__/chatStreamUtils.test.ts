@@ -1522,6 +1522,53 @@ describe('duplicate message root causes (regression)', () => {
     expect(continues.map((m: any) => m.id).sort()).toEqual([501, 503])
   })
 
+  it('renders a drained message whose text repeats an earlier message (identity, not text)', () => {
+    // Reported: with several queued messages, NONE of their user bubbles appeared
+    // until the WHOLE queue finished. The repro used the same prompt three times
+    // ("Sleep 5 秒钟。"), which is what exposed it: the dedup matched on CONTENT,
+    // so the 2nd and 3rd announcements were swallowed as "already exists". They
+    // reappeared only when a final loadHistory rebuilt from the DB — which had
+    // held them all along, proving the messages were never lost server-side.
+    //
+    // Text is not identity: three identical prompts are three messages.
+    let s: any[] = []
+    // The first message was sent directly and adopted its DB id.
+    s = chatMessageReducer(s, { type: 'optimistic_push', msg: { role: 'user', id: 'p-a', content: 'Sleep 5', blocks: [], seq: 1 } } as any)
+    s = chatMessageReducer(s, { type: 'optimistic_adopt_id', id: 'p-a', dbId: 100 } as any)
+
+    // The queued copy drains and is announced with a NEW id.
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 101, content: 'Sleep 5', queueId: 'q-b' },
+    } as any)
+    expect(s.filter((m: any) => m.role === 'user'), 'the drained bubble must render').toHaveLength(2)
+
+    // A third identical one drains too.
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 102, content: 'Sleep 5', queueId: 'q-c' },
+    } as any)
+    expect(s.filter((m: any) => m.role === 'user'), 'every identical message renders its own bubble').toHaveLength(3)
+  })
+
+  it('still dedups the same announcement replayed (idempotent, identity-based)', () => {
+    // Narrowing the content rule must NOT break real dedup: a replay of the SAME
+    // id is still one message.
+    let s: any[] = []
+    s = chatMessageReducer(s, { type: 'ws_user_message', data: { messageId: 201, content: 'X', queueId: 'q1' } } as any)
+    s = chatMessageReducer(s, { type: 'ws_user_message', data: { messageId: 201, content: 'X', queueId: 'q1' } } as any)
+    expect(s.filter((m: any) => m.role === 'user')).toHaveLength(1)
+  })
+
+  it('still dedups the sender own optimistic bubble by queueId (no double bubble)', () => {
+    // The device's own optimistic bubble carries the queueId it sent; the echo
+    // must adopt it rather than append a second bubble.
+    let s: any[] = []
+    s = chatMessageReducer(s, { type: 'optimistic_push', msg: { role: 'user', id: 'p-a', content: 'X', blocks: [], seq: 1 } } as any)
+    s = chatMessageReducer(s, { type: 'ws_user_message', data: { messageId: 301, content: 'X', queueId: 'p-a' } } as any)
+    expect(s.filter((m: any) => m.role === 'user')).toHaveLength(1)
+  })
+
   it('ws_user_message without queued flag creates normal remote bubble', () => {
     // A non-queued (immediately started) message must keep the existing
     // behavior: a normal _remote bubble with no pending marker.
