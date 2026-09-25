@@ -80,7 +80,7 @@ describe('SessionList context-menu row tint', () => {
   // and although the `menu-open` class was already being computed and applied,
   // no rule ever styled it — so the row went plain at exactly the moment the
   // user needed to see which row the menu targeted. It read as worse than not
-  // right-clicking at all.
+  // opening the menu at all.
   //
   // The existing class-application test could not catch this: the class was
   // always applied correctly. Only a source check can.
@@ -91,12 +91,12 @@ describe('SessionList context-menu row tint', () => {
     expect(rule).toMatch(/background-color:/)
   })
 
-  it('matches the hover tint so the row does not jump on right-click', async () => {
+  it('matches the hover tint so the row does not jump when the menu opens', async () => {
     const src = await sessionListSource()
     // Compare the two declared values rather than hardcoding 6%: if hover is
-    // retuned, menu-open must follow, or the row flickers brighter on
-    // right-click. A stronger value would also blur the distinction from
-    // .active, which means "this is the open conversation".
+    // retuned, menu-open must follow, or the row flickers brighter as the menu
+    // opens. A stronger value would also blur the distinction from .active,
+    // which means "this is the open conversation".
     const hoverRule = src.match(/\.session-row:hover\s*\{[^}]*\}/)?.[0]
     const menuRule = src.match(/\.session-row\.menu-open\s*\{[^}]*\}/)?.[0]
     expect(hoverRule, '.session-row:hover should exist').toBeTruthy()
