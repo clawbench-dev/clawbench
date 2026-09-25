@@ -134,10 +134,24 @@ export function useChatStream(options: UseChatStreamOptions) {
     lastProgressAt = Date.now()
   }
 
-  /** Reset the stall window and the per-turn recovery budget. */
+  /** Reset the stall window (and, for a genuinely new turn, the budget). */
   function resetStallWatch() {
     lastProgressAt = Date.now()
     stallRecoveries = 0
+  }
+
+  /**
+   * Reset only the stall WINDOW, leaving the recovery budget alone.
+   *
+   * Used by connectStream, which is also called mid-turn: a queued message sent
+   * while a run is in flight re-connects the stream with
+   * `reuseExistingStreaming`. Refilling the budget there would let a user bypass
+   * the "bounded per turn" cap indefinitely by sending during a hung turn. The
+   * budget belongs to the `loading` watcher, which resets it only on a genuine
+   * turn boundary.
+   */
+  function resetStallWindow() {
+    lastProgressAt = Date.now()
   }
 
   function checkStreamStall() {
@@ -155,9 +169,8 @@ export function useChatStream(options: UseChatStreamOptions) {
     if (silentFor < STREAM_STALL_MS) return
     if (stallRecoveries >= MAX_STALL_RECOVERIES) {
       // Logged once per turn, then silent: the budget is exhausted, stop
-      // hammering. The budget is per-turn and is restored by the next turn's
-      // start (see resetStallWatch call sites) — a turn that ends resets it,
-      // so a later turn in the same session still gets its own attempts.
+      // hammering. It is restored when a NEW turn starts — see the `loading`
+      // watcher, which is the authoritative turn boundary.
       if (stallRecoveries === MAX_STALL_RECOVERIES) {
         stallRecoveries++
         appLog.w(TAG, `stream silent ${silentFor}ms — recovery budget exhausted (${MAX_STALL_RECOVERIES}), giving up until a new turn starts`)
@@ -171,9 +184,16 @@ export function useChatStream(options: UseChatStreamOptions) {
     stallRecoveryInFlight = true
     const sid = currentSessionId.value
     appLog.w(TAG, `stream silent ${silentFor}ms with a turn in flight — recovering (attempt ${stallRecoveries}/${MAX_STALL_RECOVERIES}, session=${sid})`)
-    // Resubscribe forces the server to re-emit stream_start/state for a run that
-    // is still going; the reload converges the UI to the DB if it already ended.
-    resubscribe(sid)
+    try {
+      // Resubscribe forces the server to re-emit stream_start/state for a run
+      // that is still going; the reload converges the UI to the DB if it ended.
+      resubscribe(sid)
+    } catch {
+      // sendWsMessage can throw synchronously when the socket transitions
+      // between its readyState check and the send. Swallowing it here matters:
+      // an escaping throw would skip the promise chain below, leaving
+      // stallRecoveryInFlight stuck true and permanently disarming the watchdog.
+    }
     Promise.resolve()
       .then(() => onLoadHistory())
       .catch(() => { /* non-critical: the subscription repair already happened */ })
@@ -342,20 +362,17 @@ export function useChatStream(options: UseChatStreamOptions) {
   function stopStreaming() {
     clearToolUseTimeouts()
     thinkingBlockCounter = 0
-    // The turn is over (or being replaced). Clearing the window makes the stall
-    // watchdog inert until the next turn records progress — the idle period that
-    // follows a completed turn is normal and must never look like a stall. The
-    // interval itself keeps running (started once at setup): toggling it per turn
-    // would add a lifecycle that has to be kept in sync with every exit path.
+    // Make the stall watchdog inert for the inter-turn gap: an idle session
+    // legitimately produces nothing, so the silence that follows a finished
+    // turn must not look like a stall. The interval itself keeps running
+    // (started once at setup): toggling it per turn would add a lifecycle that
+    // has to be kept in sync with every exit path.
+    //
+    // The recovery BUDGET is owned by the `loading` watcher, not here — see its
+    // comment. `loading` is the authoritative turn boundary, and it is the only
+    // signal that also covers turn ends which never call stopStreaming (a
+    // history response reporting the run finished).
     lastProgressAt = 0
-    // Restore the recovery budget for the NEXT turn. This is what makes the
-    // budget per-turn rather than per-composable: a turn discovered as running
-    // via loadHistory (server-side run started while backgrounded, foreground
-    // resync) never calls connectStream, so without this reset it would inherit
-    // an exhausted budget from a previous turn in the same session — e.g. a
-    // subagent silent for minutes burns all 3 attempts — and a genuine
-    // subscription loss in the new turn would get zero attempts and never heal.
-    stallRecoveries = 0
   }
 
   function disconnectStream() {
@@ -380,8 +397,13 @@ export function useChatStream(options: UseChatStreamOptions) {
   function connectStream(sessionId: string, options?: { reuseExistingStreaming?: boolean }) {
     // Stop any previous turn's stream state, then start a fresh one.
     stopStreaming()
-    // New turn: start the stall window fresh and restore the recovery budget.
-    resetStallWatch()
+    // Start the stall window fresh, but do NOT refill the recovery budget here:
+    // this is also the mid-turn path (a queued send re-connects with
+    // reuseExistingStreaming), where refilling would let a user bypass the
+    // per-turn cap. The budget is reset by the `loading` watcher on a real turn
+    // boundary — which a normal send triggers (loading false→true) just above
+    // this call.
+    resetStallWindow()
     // Discard events buffered for the PREVIOUS turn. They are replayed on the
     // next stream_start (the only replay trigger), so leaving them here means
     // that if the previous turn never got a placeholder — the very case the
@@ -1015,6 +1037,38 @@ export function useChatStream(options: UseChatStreamOptions) {
     if (sid) subscribe(sid)
   }, { immediate: true })
 
+  // The authoritative turn boundary for the stall watchdog.
+  //
+  // `loading` is the single fact that means "a turn is in flight", so its
+  // rising edge starts a fresh stall window + recovery budget, and its falling
+  // edge makes the watchdog inert. Watching it here (rather than relying on
+  // stopStreaming being called) is deliberate: `syncSessionState` can end a
+  // turn — `loading.value = false` when a history response reports the run is
+  // no longer running — WITHOUT going through stopStreaming. That path is
+  // reachable precisely in this feature's scenario (the terminal event was
+  // dropped, so only a history reload reveals the run ended), and without this
+  // watcher the exhausted budget and stale window would leak into the next
+  // turn: the watchdog would fire immediately and get zero attempts.
+  //
+  // flush:'sync' is REQUIRED, not stylistic. With the default 'pre' flush Vue
+  // batches the callback to a microtask and re-reads the source at flush time,
+  // so a `false -> true` pair within one tick (turn ends, next turn starts
+  // immediately) coalesces back to `true` — equal to the previously observed
+  // value — and the callback is SKIPPED entirely, losing both edges. The
+  // callback only assigns a few numbers, so running it synchronously is free.
+  const stopLoadingWatch = watch(loading, (isLoading) => {
+    if (isLoading) {
+      // New turn: fresh window, full budget.
+      resetStallWatch()
+    } else {
+      // Turn over: stop counting the idle period as a stall, and restore the
+      // budget so the next turn gets its own attempts.
+      lastProgressAt = 0
+      stallRecoveries = 0
+      stallRecoveryInFlight = false
+    }
+  }, { flush: 'sync' })
+
   // Re-subscribe on WS reconnect
   // NOTE: After this watch fires, App.vue's handleReconnect runs
   // loadSessionsOnce() which refreshes runningSessions. If the session
@@ -1041,6 +1095,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     unsubscribeFromWs()
     stopConnectedWatch()
     stopSessionWatch()
+    stopLoadingWatch()
   })
 
   return {

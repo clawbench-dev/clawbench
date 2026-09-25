@@ -1434,7 +1434,13 @@ export function useChatSession(options: UseChatSessionOptions) {
         await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
         onRenderUpdate(true)
       } catch {
-        loading.value = false
+        // Only touch `loading` while we are still on the session we started
+        // with. This catch runs BEFORE the session-change guard below, so an
+        // unconditional write would clear the spinner of whatever session the
+        // user switched to — even a running one.
+        if (currentSessionId.value === sid) {
+          loading.value = false
+        }
       }
       // The user may have switched sessions while the verification load was in
       // flight. Everything below acts on ONE session — the resubscribe sends a

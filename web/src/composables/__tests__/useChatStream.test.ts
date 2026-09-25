@@ -2696,6 +2696,70 @@ describe('useChatStream', () => {
       vi.advanceTimersByTime(10000)
       vi.useRealTimers()
     })
+
+    it('restores the budget when a turn ends via loading=false WITHOUT stopStreaming (syncSessionState path)', async () => {
+      // The precise residual gap: `syncSessionState` ends a turn by writing
+      // `loading.value = false` directly (a history response reports the run is
+      // no longer running) — it never calls stopStreaming. That path is exactly
+      // how this feature's scenario resolves when the terminal event was
+      // dropped. If the budget were reset only in stopStreaming, an exhausted
+      // budget would leak into the next turn and the watchdog would get zero
+      // attempts. Drive `loading` directly to exercise that path.
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      // Turn 1: exhaust the budget.
+      options.loading.value = true
+      connectStream('test-session-1')
+      await vi.advanceTimersByTimeAsync(600000)
+      expect(options.onLoadHistory.mock.calls.length).toBeGreaterThan(0)
+      options.onLoadHistory.mockClear()
+
+      // Turn 1 ends the syncSessionState way — NO terminal event, NO
+      // stopStreaming, just loading flipping false.
+      options.loading.value = false
+      await nextTick()
+
+      // Turn 2 starts the loadHistory-discovery way: no connectStream, just a
+      // turn in flight again.
+      options.loading.value = true
+      await vi.advanceTimersByTimeAsync(150000)
+
+      // The budget must have been restored on the false edge.
+      expect(options.onLoadHistory).toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('does not refill the budget when a queued send re-connects mid-turn', async () => {
+      // connectStream is also the mid-turn path: a queued message sent while a
+      // run is in flight calls it with reuseExistingStreaming. Refilling the
+      // budget there would let a user bypass the per-turn cap indefinitely by
+      // sending messages during a hung turn.
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      // Burn all 3 attempts.
+      await vi.advanceTimersByTimeAsync(600000)
+      const exhausted = options.onLoadHistory.mock.calls.length
+      expect(exhausted).toBeLessThanOrEqual(3)
+      options.onLoadHistory.mockClear()
+
+      // Mid-turn queued send: re-connect without a turn boundary.
+      connectStream('test-session-1', { reuseExistingStreaming: true })
+      await vi.advanceTimersByTimeAsync(600000)
+
+      // Still exhausted — the mid-turn reconnect must not hand out more.
+      expect(options.onLoadHistory).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
   })
 
   describe('isOpen guard — skip render and scroll when panel not visible', () => {
