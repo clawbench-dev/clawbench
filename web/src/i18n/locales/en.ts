@@ -1101,6 +1101,8 @@ export default {
       eventNoManualRun: 'Runs only when a matching event occurs — it cannot be run manually, because the prompt relies on the event details injected at trigger time.',
       eventContext: 'Event context',
       eventContextSample: 'Sample',
+      showEventContext: 'Show event context',
+      hideEventContext: 'Collapse event context',
       eventContextHint: 'At trigger time these variables are replaced with real values and injected before your prompt.',
       eventSampleTitle: '(sample) Fix login timeout',
       eventSampleComment: '(sample) Still reproducible on v1.2',

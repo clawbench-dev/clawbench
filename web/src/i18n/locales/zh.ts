@@ -1104,6 +1104,8 @@ export default {
       eventNoManualRun: '仅在匹配的事件发生时执行，不支持手动执行——提示词依赖触发时注入的事件详情。',
       eventContext: '事件上下文',
       eventContextSample: '示例值',
+      showEventContext: '展开事件上下文',
+      hideEventContext: '收起事件上下文',
       eventContextHint: '触发时以下变量会替换为真实值，并固定注入在提示词之前。',
       eventSampleTitle: '（示例）修复登录超时问题',
       eventSampleComment: '（示例）这个问题在 v1.2 仍然存在',
