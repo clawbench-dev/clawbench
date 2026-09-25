@@ -1,0 +1,96 @@
+/* style.css — 与 index.html 同目录，用相对路径引用。
+ *
+ * 这个文件存在本身就是测试点之一：修复前 /api/fs/raw/ 对它返回
+ * application/octet-stream，浏览器会静默丢弃样式表（不报错，只是不生效）。
+ */
+
+:root {
+  /* app.js 读取这个自定义属性判断「外部样式表是否真的生效」。
+   * 它只定义在本文件里，所以内联样式表无法伪造这个值。 */
+  --accent: #2563eb;
+  --ok: #16a34a;
+  --fail: #dc2626;
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 24px;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--border); }
+
+.subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.card .label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* 用 CSS 自带的 url() 引用图片：这是「CSS 文件内部的相对路径」测试点。
+ * 它相对 CSS 自身的 URL 解析，而不是相对 HTML —— 修复后应能正确加载。 */
+.deco {
+  width: 100%;
+  height: 90px;
+  border-radius: 8px;
+  background: url("../images/img_cute_cat.svg") center / contain no-repeat;
+  background-color: #fef3c7;
+}
+
+.result {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.result.pass { background: rgba(22, 163, 74, .12); color: var(--ok); }
+.result.fail { background: rgba(220, 38, 38, .12); color: var(--fail); }
+.result.wait { background: rgba(100, 116, 139, .12); color: var(--muted); }
+
+.thumb { max-width: 100%; border-radius: 8px; display: block; }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+th { background: #f1f5f9; font-size: 12px; color: var(--muted); }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+       background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
+
+.note {
+  margin-top: 28px;
+  padding: 14px 16px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  font-size: 13px;
+}

@@ -1349,6 +1349,99 @@ func TestServeLocalFile_UnknownMime(t *testing.T) {
 	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
 }
 
+// The HTML file preview loads a document through /api/fs/raw/ and lets the
+// browser fetch its own subresources relative to it. Every asset type the
+// browser will accept must therefore be served with its real MIME type: the
+// octet-stream fallback silently drops stylesheets, refuses ES modules, and
+// makes the browser download the document instead of rendering it.
+func TestServeLocalFile_WebAssets_CorrectMime(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cases := []struct{ name, wantMime string }{
+		{"index.html", "text/html"},
+		{"page.htm", "text/html"},
+		{"style.css", "text/css"},
+		{"app.js", "text/javascript"},
+		{"mod.mjs", "text/javascript"},
+		{"data.json", "application/json"},
+		{"font.woff2", "font/woff2"},
+		{"font.woff", "font/woff"},
+		{"font.ttf", "font/ttf"},
+	}
+	for _, tc := range cases {
+		createTestFile(t, env.ProjectDir, tc.name, "x")
+
+		req := newRequest(t, http.MethodGet, "/api/fs/raw/"+tc.name, nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeLocalFile, req)
+		assert.Equal(t, http.StatusOK, w.Code, tc.name)
+		assert.Equal(t, tc.wantMime, w.Header().Get("Content-Type"), tc.name)
+	}
+}
+
+// http.ServeFile treats a file named "index.html" as a directory index and
+// answers 301 to "./". That breaks the HTML preview, whose iframe points
+// straight at .../index.html: the redirect rewrites the URL to the parent
+// directory and the preview renders a directory error instead of the document.
+// ServeContent has no such special case.
+func TestServeLocalFile_IndexHtml_NoRedirect(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "index.html", "<h1>hi</h1>")
+
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/index.html", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusOK, w.Code, "index.html must be served, not redirected")
+	assert.Empty(t, w.Header().Get("Location"), "must not redirect")
+	assert.Equal(t, "text/html", w.Header().Get("Content-Type"))
+	assert.Equal(t, "<h1>hi</h1>", w.Body.String())
+}
+
+// Same fix on the absolute ?target= form, which the preview also uses for files
+// outside the project directory.
+func TestServeLocalFile_IndexHtml_TargetForm_NoRedirect(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "index.html", "<h1>hi</h1>")
+	abs := filepath.Join(env.ProjectDir, "index.html")
+
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/?target="+url.QueryEscape(abs), nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, w.Header().Get("Location"))
+	assert.Equal(t, "text/html", w.Header().Get("Content-Type"))
+}
+
+// The web-asset MIME additions must NOT leak into the base table, because that
+// table is shared with the PUBLIC token-scoped share endpoint. Serving text/html
+// from an unauthenticated endpoint turns any shared .html file into same-origin
+// script execution for a logged-in visitor (it would run with their session
+// cookie). Verified in a browser: with text/html the shared page reached
+// authenticated APIs; with the octet-stream fallback the browser downloads it.
+func TestWebAssetMimeTypes_NotSharedWithPublicShareEndpoint(t *testing.T) {
+	for _, ext := range []string{".html", ".htm", ".xhtml", ".js", ".mjs", ".css"} {
+		_, inBase := mimeTypes[ext]
+		assert.False(t, inBase,
+			"%s must not be in mimeTypes: that table is served by the unauthenticated share endpoint", ext)
+	}
+
+	// The authenticated resolver still yields them.
+	assert.Equal(t, "text/html", mimeForLocalFile(".html"))
+	assert.Equal(t, "text/css", mimeForLocalFile(".css"))
+	assert.Equal(t, "text/javascript", mimeForLocalFile(".js"))
+	// ...and the base table's own entries still win / fall through correctly.
+	assert.Equal(t, "image/png", mimeForLocalFile(".png"))
+	assert.Equal(t, "application/octet-stream", mimeForLocalFile(".xyz"))
+}
+
 // --- ServeProjects method handling ---
 
 func TestServeProjects_NonExistentDir_Returns404or400(t *testing.T) {

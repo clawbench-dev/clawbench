@@ -2295,7 +2295,14 @@ paths:
     get:
       tags: [Files]
       summary: 读取文件原始字节
-      description: 供图片/PDF/音视频等直接渲染。项目相对路径走 URL 路径，绝对路径走 `?target=`。
+      description: |
+        供图片/PDF/音视频等直接渲染。项目相对路径走 URL 路径，绝对路径走 `?target=`。
+
+        Content-Type 按扩展名判定：基础表覆盖图片/音视频/Office，另加 HTML 预览所需的
+        `.html/.htm/.xhtml/.css/.js/.mjs/.json/.woff2/.woff/.ttf/.otf`。未知扩展名回退
+        `application/octet-stream`。文件名恰为 `index.html` 时也直接返回内容（不 301）。
+        **注意**：这些网页资源类型仅在本鉴权端点生效；公开的 `/api/share/{token}/local/`
+        有意不继承它们（在免鉴权端点返回 `text/html` 会让已登录访客同源执行被分享的 HTML）。
       operationId: localFileGet
       parameters:
         - $ref: "#/components/parameters/FilePath"

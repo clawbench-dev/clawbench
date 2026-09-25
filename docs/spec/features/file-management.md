@@ -152,6 +152,7 @@ sequenceDiagram
 - **fsnotify 防抖**：文件保存可能触发多个底层事件（写入、属性变更、close），防抖避免前端反复刷新
 - **缩略图是按需生成的**：不预生成所有图片的缩略图，而是请求时才生成——节省存储空间，且缩略图可从原图随时重建
 - **预览器按能力分流**：`FileViewer` 根据文件类型选择 `OfficePreview`、`OpenApiPreview`、`PdfPreview`、`AudioPreview`（内联播放器）、`VideoPreview`（内联播放器）、`CodeMirrorViewer`（代码浏览+编辑）或 `MarkdownPreview`；所有本地资源统一通过[本地文件服务](../infra/local-file-serving.md)加载
+- **HTML 预览靠文档自身 URL 解析相对引用，代价是必须放开 `allow-same-origin`**：HTML 文件经 `/api/fs/raw/` 以真实 URL 载入 iframe（项目内文件为 `/api/fs/raw/<目录>/x.html`），浏览器便以该文档的 URL 为基准解析它的相对引用，从而正确加载同目录的 CSS/JS/图片/字体。此前用 `srcdoc` 内联，`about:srcdoc` 没有自己的 URL、继承父页面的 base，所有相对引用都打到应用根目录而 404。**该方案必须同时给 sandbox 加 `allow-same-origin`**：否则 iframe 是不透明 origin，子资源请求算跨站，`SameSite=Lax` 的会话 Cookie 不下发——文档本身仍能加载（顶层导航算 same-site），但它的资源全部失败。**代价是预览的 HTML 以用户会话运行**（可调任意鉴权接口、读写父页面 DOM），而预览内容不可信（AI 生成或下载而来）。这是主动取舍，`web/src/components/__tests__/fileViewerSandbox.test.ts` 记录该决策及其成本（该测试原先断言相反的行为）。两个配套约束：①网页资源 MIME（`.html/.css/.js/.woff2` 等）**只加在鉴权端点**，公开的 `/api/share/{token}/local/` 有意不继承——在免鉴权端点返回 `text/html` 会让已登录访客同源执行被分享的 HTML（实测可读取鉴权接口并外传）；②**项目外（绝对路径）HTML 回退到 `srcdoc`**，因为其 URL 形如 `/api/fs/raw/?target=/abs/x.html`，浏览器取 base 时会丢掉查询串，相对引用会解析成 `<项目根>/pic.png`——同名文件存在时静默加载错误文件，比 404 更危险
 - **符号提取有文件大小限制**：超过 1MB 的文件跳过符号提取，避免大文件拖慢响应。Markdown 文件特殊处理，提取标题层级而非代码符号
 - **CodeMirror 浏览/编辑双模式**：同一组件通过 `editable` prop 切换浏览与编辑模式。编辑模式使用特殊引用管理避免 Vue reactive proxy 破坏 CodeMirror 的 undo/redo；未保存时退出触发确认对话框。代码编辑是文件查看的自然延伸——用户看完代码后直接修改，无需切换工具
 - **Markdown 标题锚定滚动同步**：在 Markdown 渲染预览与源码编辑之间切换时，通过最近 TOC 标题锚定滚动位置。标题对齐为主策略，百分比比率为降级方案——解决切换视图后丢失阅读位置的问题

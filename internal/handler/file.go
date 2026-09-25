@@ -65,6 +65,50 @@ var mimeTypes = map[string]string{
 	".ppt":  "application/vnd.ms-powerpoint",
 }
 
+// webAssetMimeTypes maps the additional extensions the HTML file preview needs,
+// on top of mimeTypes.
+//
+// Kept SEPARATE from mimeTypes on purpose. mimeTypes is shared with the public,
+// token-scoped share endpoint (serveShareRaw), which is unauthenticated. Serving
+// text/html there would turn any shared .html file into same-origin script
+// execution the moment a LOGGED-IN user opens the link: the document would run
+// with that user's session cookie. Verified — with text/html the shared page
+// could call authenticated APIs and exfiltrate the response; with the previous
+// application/octet-stream fallback the browser merely downloaded it.
+//
+// The authenticated /api/fs/raw/ endpoint has no such problem: the document it
+// serves already runs inside a sandboxed iframe that the user opened
+// deliberately (see FileViewer.vue), so active types are granted only here.
+//
+// Without these entries the fallback is application/octet-stream: stylesheets
+// are silently dropped, ES modules are refused, and the document itself is not
+// rendered at all (the browser downloads it instead).
+var webAssetMimeTypes = map[string]string{
+	".html":  "text/html",
+	".htm":   "text/html",
+	".xhtml": "application/xhtml+xml",
+	".css":   "text/css",
+	".js":    "text/javascript",
+	".mjs":   "text/javascript",
+	".json":  "application/json",
+	".woff2": "font/woff2",
+	".woff":  "font/woff",
+	".ttf":   "font/ttf",
+	".otf":   "font/otf",
+}
+
+// mimeForLocalFile resolves the Content-Type for the authenticated raw-file
+// endpoint: the base table, then the web-asset additions, then octet-stream.
+func mimeForLocalFile(ext string) string {
+	if mime := mimeTypes[ext]; mime != "" {
+		return mime
+	}
+	if mime := webAssetMimeTypes[ext]; mime != "" {
+		return mime
+	}
+	return mimeOctetStream
+}
+
 // ListDir returns the contents of a directory within the current project.
 func ListDir(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
@@ -618,10 +662,10 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(absPath))
-	mime := mimeTypes[ext]
-	if mime == "" {
-		mime = mimeOctetStream
-	}
+	// This is the AUTHENTICATED endpoint, so the web-asset additions (text/html
+	// and friends) apply. The public share endpoint deliberately does not get
+	// them — see webAssetMimeTypes.
+	mime := mimeForLocalFile(ext)
 
 	// If ?download=1 is present, force download with Content-Disposition header.
 	// Use http.ServeContent instead of http.ServeFile to avoid a 301 redirect
@@ -642,8 +686,21 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use http.ServeContent rather than http.ServeFile: ServeFile treats a file
+	// named "index.html" as a directory index and answers 301 to "./". That
+	// breaks the HTML file preview, whose iframe points straight at
+	// .../index.html — the redirect rewrites the URL to the parent directory and
+	// the preview ends up loading a directory listing error instead of the
+	// document. ServeContent has no such special case. (The ?download=1 branch
+	// below already worked around this for the same reason.)
 	w.Header().Set("Content-Type", mime)
-	http.ServeFile(w, r, absPath)
+	f, err := os.Open(absPath)
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("cannot open file")))
+		return
+	}
+	defer func() { _ = f.Close() }()
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
 // ServeProjects handles GET (list directory) and POST (create directory) for projects.
