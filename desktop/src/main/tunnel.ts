@@ -1,6 +1,7 @@
 import net from 'node:net'
 import http from 'node:http'
 import https from 'node:https'
+import type { Duplex } from 'node:stream'
 import { Client } from 'ssh2'
 import { getPassword } from './secrets'
 import { getStore } from './store'
@@ -211,8 +212,8 @@ async function monitorTick(): Promise<void> {
   }
   reconnectAttempt++
   lastAttemptAt = Date.now()
-  // On success the ready handler runs rebuildAllForwards(), restoring every
-  // desired port; failures are retried on subsequent ticks with longer delays.
+  // On success ensureTunnel() rebuilds every desired port; failures are retried
+  // on subsequent ticks with longer delays.
   await ensureTunnel()
 }
 
@@ -359,11 +360,11 @@ function openClient(host: string, port: number, username: string): Promise<boole
       state.error = ''
       state.errorType = ''
       reconnectAttempt = 0
-      // Rebuild every desired forward on the fresh channel. This is what makes
-      // a reconnect (and a startup sync) actually restore reachability.
-      rebuildAllForwards()
-        .then(() => done(true))
-        .catch(() => done(true))
+      // The ready-time rebuild is NOT done here any more. It moved to
+      // ensureTunnel()'s success path so that BOTH transports rebuild: h2's
+      // connect() only flips state.connected, so a reconnect used to leave
+      // every local listener dead while reporting success (see ensureTunnel).
+      done(true)
     })
       // 'tcp connection' is not in @types/ssh2's Client overloads even though
       // ssh2 emits it for forwarded-tcpip channels, so the handler is attached
@@ -378,15 +379,14 @@ function openClient(host: string, port: number, username: string): Promise<boole
           reject()
           return
         }
-        const upstream = net.connect(entry.targetPort, entry.host || '127.0.0.1')
+        const upstream = net.connect({ port: entry.targetPort, host: entry.host || '127.0.0.1', allowHalfOpen: true })
         upstream.on('connect', () => {
           const stream = accept()
-          // Both ends need an 'error' handler: a bare pipe() chain does not
-          // forward errors, so a reset would become an uncaught exception in the
-          // main process (same trap as listenForward).
-          upstream.on('error', () => { upstream.destroy(); stream.destroy() })
-          stream.on('error', () => { stream.destroy(); upstream.destroy() })
-          upstream.pipe(stream).pipe(upstream)
+          // Both ends need an 'error' handler and a half-close-aware splice —
+          // see spliceDuplex. The upstream dial opts into allowHalfOpen for the
+          // same reason the local listener does: without it, the target's FIN
+          // would auto-destroy the socket and drop any bytes still owed to it.
+          spliceDuplex(upstream, stream)
         })
         upstream.on('error', () => { reject() })
       }) as never)
@@ -549,6 +549,42 @@ export function disconnectTunnel(): void {
 }
 
 /**
+ * Splice a local socket to a tunnel stream, preserving TCP half-close.
+ *
+ * `net.createServer` defaults to `allowHalfOpen: false`, which destroys the
+ * whole socket the moment the local peer sends FIN. The target's reply then has
+ * nowhere to land: a request/response where the client half-closes after the
+ * request lost the entire response (measured: expected a trailer, received "").
+ * The listener below therefore opts in to `allowHalfOpen: true`.
+ *
+ * That option moves the closing responsibility to us: with the default Node
+ * destroyed the socket for us, but with it on an accepted socket whose peer is
+ * gone stays open until BOTH directions end. A plain `pipe()` chain cannot
+ * express that — pipe propagates 'end' but never 'close' — so the fd leak this
+ * option classically causes is closed explicitly here:
+ *
+ *   - either side reaching 'close' (a clean FIN-after-FIN, an RST/ECONNRESET,
+ *     or a remote destroy) destroys the other side;
+ *   - an 'error' on either side tears both down.
+ *
+ * `pipe()` still carries the bytes and the half-close itself: a local FIN ends
+ * the stream's writable side (END_STREAM on h2, CloseWrite on the SSH channel)
+ * while the readable side keeps delivering the target's reply. Only the final
+ * reclamation is ours. Both ends need the 'error' handler: a bare pipe chain
+ * does not forward errors, so an ECONNRESET from either side (the tunnel
+ * channel being torn down mid-transfer is the common case) becomes an UNCAUGHT
+ * exception and takes the whole main process down with Electron's
+ * "A JavaScript error occurred in the main process" dialog.
+ */
+function spliceDuplex(local: Duplex, remote: Duplex): void {
+  local.on('close', () => { if (!remote.destroyed) remote.destroy() })
+  remote.on('close', () => { if (!local.destroyed) local.destroy() })
+  local.on('error', () => { local.destroy(); remote.destroy() })
+  remote.on('error', () => { remote.destroy(); local.destroy() })
+  local.pipe(remote).pipe(local)
+}
+
+/**
  * Bind localhost:localPort and pipe each accepted socket through the SSH
  * channel to host:targetPort.
  *
@@ -567,22 +603,16 @@ function listenForward(localPort: number, targetPort: number, host: string): Pro
   const p = new Promise<boolean>((resolve) => {
     const t = transport
     if (!t || !t.isConnected()) { resolve(false); return }
-    const server = net.createServer((socket) => {
+    // allowHalfOpen: see spliceDuplex — without it the local FIN destroys the
+    // socket and the target's response is lost.
+    const server = net.createServer({ allowHalfOpen: true }, (socket) => {
       // Re-read the transport per connection: a reconnect may have replaced it
       // since the listener was created (the listener itself survives, since
       // only the SSH/h2 channel died).
       const cur = transport
       if (!cur || !cur.isConnected()) { socket.destroy(); return }
       cur.openStream(host, targetPort).then((stream) => {
-        // Both ends need an 'error' handler. A bare `pipe()` chain does not
-        // forward errors, so an ECONNRESET from either side (the tunnel channel
-        // being torn down mid-transfer is the common case) becomes an
-        // UNCAUGHT exception and takes the whole main process down with
-        // Electron's "A JavaScript error occurred in the main process" dialog.
-        // Destroying the peer on error is also what makes the pipe clean up.
-        socket.on('error', () => { socket.destroy(); stream.destroy() })
-        stream.on('error', () => { stream.destroy(); socket.destroy() })
-        socket.pipe(stream).pipe(socket)
+        spliceDuplex(socket, stream)
       }).catch(() => {
         // The stream could not be opened (dial failed, port not allowed,
         // unauthenticated): drop the local socket instead of piping it into
@@ -695,14 +725,11 @@ function wireH2Incoming(msg: ControlMessage): void {
   const t = transport
   if (!t) return
 
-  const upstream = net.connect(entry.targetPort, entry.host || '127.0.0.1')
+  const upstream = net.connect({ port: entry.targetPort, host: entry.host || '127.0.0.1', allowHalfOpen: true })
   upstream.on('connect', () => {
     t.openClaimStream(msg.token as string).then((stream) => {
-      // Both ends need an 'error' handler, same trap as listenForward: a bare
-      // pipe() chain turns a reset into an uncaught main-process exception.
-      upstream.on('error', () => { upstream.destroy(); stream.destroy() })
-      stream.on('error', () => { stream.destroy(); upstream.destroy() })
-      upstream.pipe(stream).pipe(upstream)
+      // Half-close-aware splice, same as the SSH accept() branch above.
+      spliceDuplex(upstream, stream)
     }).catch(() => {
       // Claim failed (expired token, stream refused): drop the local dial.
       upstream.destroy()
@@ -890,6 +917,14 @@ async function attemptTransport(
  * probes h2 first and falls back to SSH. Only the SSH path needs the
  * `/api/ssh/info` prelude (the SSH port and username) — h2 uses the main URL's
  * own host and port.
+ *
+ * Rebuilding every desired forward is done HERE, once, for both transports
+ * (see the success path below). It used to live in the ssh2 `'ready'` handler,
+ * which meant h2 — whose `connect()` only flips `state.connected` — never
+ * rebuilt: `reconnectTunnel()` (disconnect + reconnect) reported success and
+ * `isTunnelConnected()` agreed, while every local listener stayed closed. The
+ * UI's own `testPortReachable` follow-up then failed and told the user the
+ * reconnect had failed, contradicting `ok === true`.
  */
 export function ensureTunnel(): Promise<boolean> {
   if (state.connected && transport && transport.isConnected()) return Promise.resolve(true)
@@ -914,24 +949,36 @@ export function ensureTunnel(): Promise<boolean> {
     }
 
     for (const kind of candidates) {
+      let ok = false
       if (kind === 'ssh') {
         const opts = await loadSshOpts()
         // openClient() populates state.error/errorType itself; only the
         // "no client was even created" path leaves them empty.
-        if (await attemptTransport('ssh', opts, () => {
+        ok = await attemptTransport('ssh', opts, () => {
           if (!state.error) {
             state.error = 'SSH connection failed'
             state.errorType = 'unknown'
           }
-        })) return true
+        })
       } else {
         const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80))
         const opts: TransportConnectOptions = { host: url.hostname, port, ...(lastH2Kind ? { prefer: lastH2Kind } : {}) }
-        if (await attemptTransport('h2', opts, (t) => {
+        ok = await attemptTransport('h2', opts, (t) => {
           state.error = t.getLastError() || 'h2 connection failed'
           state.errorType = classifyError(Object.assign(new Error(state.error), { code: h2ErrorCode(state.error) }))
-        })) return true
+        })
       }
+      if (!ok) continue
+
+      // Single success sink: rebuild the listeners on the fresh channel for
+      // EVERY transport. This is what makes a reconnect (and a startup sync)
+      // actually restore reachability — `listenForward`/`listenReverse` are
+      // idempotent (single-flight + close-before-bind), so re-running this
+      // never duplicates a listener or leaks one. Best-effort: a rebuild
+      // failure must not turn a live connection into a reported failure, which
+      // is what the ssh2 `'ready'` handler did with `.catch(() => done(true))`.
+      try { await rebuildAllForwards() } catch { /* best effort — the tunnel is up */ }
+      return true
     }
 
     return false
@@ -966,6 +1013,14 @@ export async function reconnectTunnel(): Promise<boolean> {
   }
   disconnectTunnel()
   return ensureTunnel()
+}
+
+/**
+ * Test helper — re-run the forward rebuild directly, so its idempotency (no
+ * duplicate listeners, no leak) can be asserted without contriving a reconnect.
+ */
+export function _rebuildAllForwardsForTesting(): Promise<void> {
+  return rebuildAllForwards()
 }
 
 /**

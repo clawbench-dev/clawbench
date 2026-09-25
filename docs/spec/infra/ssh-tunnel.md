@@ -252,9 +252,9 @@ sequenceDiagram
     S->>R: SetReverseBound(实际端口, false)
 ```
 
-### 半关闭：与 SSH **不是逐条等价**（如实记录）
+### 半关闭：服务端 relay 与 SSH **不是逐条等价**（客户端监听器层已对齐，如实记录）
 
-设计文档 §4.2.1 有完整差异表。**关键事实：h2 上响应 EOF 与请求体寿命是绑定的（stdlib 硬限制），所以 target 先半关闭时，客户端后续写入只在有界宽限期内被接收；而 SSH 是无限接收。这是 stdlib h2 无法在流内半关闭响应的直接后果，不是实现取舍可以消除的。**
+设计文档 §4.2.1 有完整差异表。**关键事实：h2 上响应 EOF 与请求体寿命是绑定的（stdlib 硬限制），所以 target 先半关闭时，客户端后续写入只在有界宽限期内被接收；而 SSH 是无限接收。这是 stdlib h2 无法在流内半关闭响应的直接后果，不是实现取舍可以消除的。** 这是**服务端 relay** 层的差异；**客户端本地监听器**层曾是另一个独立缺陷，已修复，见本节末。
 
 **SSH 的行为**：`relayBidir` 用 `wg.Wait()` 等两个方向都结束。target 先 `CloseWrite()`（发 FIN）但继续读时，`channel → backend` 的 copy 继续运行，因此下游客户端在 target FIN 之后写入的字节**仍会到达 target**（无限等待）。
 
@@ -285,6 +285,10 @@ sequenceDiagram
 **代价（实测）**：当 target 先结束而客户端**保持请求体打开**（close-delimited 响应，如 `Connection: close` 或对端已挂断但本地 socket 未关）时，响应 EOF 被推迟一个宽限期。实测 handler 级：grace=200ms → EOF 250ms；grace=1s → 1.05s；grace=5s → 5.05s。即**每一条这种流付一次宽限期**。
 
 **被否决的替代方案**：无界等待（照抄 SSH）会重新引入短连接后端的死锁——handler 永不返回、响应永不终止；立即返回则丢弃 target FIN 后的客户端写入（实测 SSH 收到 17 字节、h2 收到 0 字节）。彻底等价需换传输形态（h2 CONNECT / WebSocket / 自研帧），已列为已知限制。
+
+**客户端本地监听器层（Electron `desktop/src/main/tunnel.ts`，独立缺陷，已修复）**：上面的差异只描述**服务端 relay**。客户端把本地 TCP socket 接到隧道流的那层最初用 `net.createServer(cb)` 的默认 `allowHalfOpen: false`——**本地 socket 一发 FIN，Node 就销毁整条 socket**，target 随后到达的响应字节无处可去。隔离实测（纯 TCP 代理）：`allowHalfOpen:false` 收到 `""`，`allowHalfOpen:true` 收到 `TRAILER:request-body`。**该缺陷与传输无关，SSH 路径同样失败**，是 pre-existing 的本地 wiring 问题，不是 h2 回归；Android 侧实现本就正确。
+
+修复：监听器改用 `net.createServer({ allowHalfOpen: true }, cb)`，并把裸 `pipe()` 链换成显式的半关闭感知 splice（`spliceDuplex`）——`pipe()` 只传播 `'end'`、不传播 `'close'`，开启 `allowHalfOpen` 后必须由我们负责在**两个方向都结束后**回收 socket（任一方向 `'close'`/`'error'` 即销毁对端），否则就是该选项的经典 fd 泄漏。修复后 SSH 与 h2 的本地半关闭都正确，fd 计数归零；`-R` 的对端 dial 同样处理。**结论：服务端 relay 半关闭仍是有界近似，客户端本地监听器半关闭已与 SSH 一致。**
 
 ### 端口守卫与注册表门控
 

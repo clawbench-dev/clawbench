@@ -66,7 +66,11 @@ vi.mock('./h2Transport', async () => {
   /** A real duplex whose writable side records every chunk the module writes. */
   function makeStream(): any {
     const written: Buffer[] = []
+    // allowHalfOpen mirrors the REAL tunnel stream (h2Transport.wrapStream sets
+    // it): ending the writable side must NOT auto-end the readable side, or a
+    // half-close test could not push the target's trailing response.
     const s: any = new Duplex({
+      allowHalfOpen: true,
       read() { /* the test pushes explicitly */ },
       write(chunk: Buffer, _enc: BufferEncoding, cb: (e?: Error | null) => void) {
         written.push(Buffer.from(chunk))
@@ -144,6 +148,58 @@ vi.mock('./h2Transport', async () => {
 
 vi.mock('ssh2', () => ({ Client: FakeSshClient }))
 
+/**
+ * Real `net` — every socket below is genuine, so a local port that the module
+ * fails to re-bind is actually unreachable. The mock only OBSERVES: it wraps
+ * `createServer` to record each server and the sockets it accepts, which is how
+ * the fd-reclamation and "exactly one listener" assertions get a handle on the
+ * module's listener without exporting it.
+ */
+const { netState } = vi.hoisted(() => ({
+  netState: {
+    /** Every server the module (or a test helper) created, with its accepts. */
+    servers: [] as Array<{ server: any; accepted: any[] }>,
+  },
+}))
+
+vi.mock('node:net', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:net')>()
+  const createServer = (...args: unknown[]) => {
+    const entry = { server: null as any, accepted: [] as any[] }
+    const wrapped = args.map((a) =>
+      typeof a === 'function'
+        ? (socket: import('node:net').Socket) => {
+            entry.accepted.push(socket)
+            ;(a as (s: unknown) => void)(socket)
+          }
+        : a,
+    )
+    const server = (actual.createServer as (...a: unknown[]) => net.Server)(...wrapped)
+    entry.server = server
+    netState.servers.push(entry)
+    return server
+  }
+  // `tunnel.ts` does `import net from 'node:net'`, so keep the default export in
+  // sync with the named one.
+  return { ...actual, createServer, default: { ...actual, createServer } }
+})
+
+/** The entry whose server is CURRENTLY bound to `port`, or undefined. */
+function listeningServer(port: number): { server: any; accepted: any[] } | undefined {
+  return netState.servers.find((e) => {
+    const a = e.server.address()
+    return !!a && typeof a === 'object' && a.port === port
+  })
+}
+
+/** How many of the recorded servers are still listening on `port`. */
+function liveListeners(port: number): number {
+  return netState.servers.filter((e) => {
+    const a = e.server.address()
+    return !!a && typeof a === 'object' && a.port === port
+  }).length
+}
+
 vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => false, encryptString: (s: string) => Buffer.from(s), decryptString: (b: Buffer) => b.toString() },
 }))
@@ -185,7 +241,8 @@ import {
   addForwardedPort, addReverseForwardedPort, removeForwardedPort, ensureTunnel,
   getForwardedPorts, isTunnelConnected, disconnectTunnel, getTunnelErrorType,
   getActiveTransport, getTunnelTransportKind, setTransportPreference,
-  testPortReachable, _resetTransportForTesting,
+  testPortReachable, reconnectTunnel, _resetTransportForTesting,
+  _rebuildAllForwardsForTesting,
 } from './tunnel'
 
 const PORT_A = 28941
@@ -275,6 +332,7 @@ beforeEach(() => {
   h2State.claimError = null
   h2State.control = null
   h2State.closeCalls = 0
+  netState.servers.length = 0
   FakeSshClient.instances = []
   storeData.serverUrl = 'https://127.0.0.1:20000'
 })
@@ -589,5 +647,242 @@ describe('tunnel/h2: error classification', () => {
 
     expect(await p).toBe(false)
     expect(getTunnelErrorType()).toBe('auth')
+  })
+})
+
+/**
+ * These cases exist because the original h2 suite mocked `openStream` and never
+ * dialled the local port, which hid two real defects:
+ *
+ *  - `reconnectTunnel()` returned true under h2 while every listener stayed
+ *    closed (the rebuild only ran in ssh2's `'ready'` handler);
+ *  - the local listener used the default `allowHalfOpen: false`, so a local
+ *    half-close destroyed the socket and the target's reply was lost.
+ *
+ * Every assertion below therefore dials a REAL local port; a listener the
+ * module failed to restore is genuinely unreachable, not merely unbookkept.
+ */
+describe('tunnel/h2: reconnect really rebinds the local listener', () => {
+  it('makes the port reachable again after reconnectTunnel', async () => {
+    await connectH2()
+    expect(await addForwardedPort(PORT_A, 20000, '')).toBe(true)
+    expect(await testPortReachable(PORT_A)).toBe(true)
+
+    // reconnectTunnel = disconnectTunnel (closes every listener) + ensureTunnel.
+    // Under h2 the old code only flipped state.connected, so the port came back
+    // dead while this call still resolved true.
+    expect(await reconnectTunnel()).toBe(true)
+
+    expect(isTunnelConnected()).toBe(true)
+    expect(getForwardedPorts()).toEqual([{ port: PORT_A, host: '', direction: 'forward' }])
+    // The load-bearing assertion: a real dial, not a bookkeeping check.
+    expect(await testPortReachable(PORT_A)).toBe(true)
+  })
+
+  it('keeps exactly one listener bound for the port after a reconnect', async () => {
+    await connectH2()
+    await addForwardedPort(PORT_A, 20000, '')
+    expect(await reconnectTunnel()).toBe(true)
+
+    // A rebuild that forgot to close the previous listener would leave two
+    // servers fighting for the port; `closeForwardServer` runs first so exactly
+    // one is left.
+    expect(liveListeners(PORT_A)).toBe(1)
+    expect(await testPortReachable(PORT_A)).toBe(true)
+  })
+
+  it('restores a reverse-only mapping on reconnect without a local listener', async () => {
+    await connectH2()
+    expect(await bindReverse(PORT_A, 3000, '')).toBe(true)
+
+    // The reconnect re-issues the bind on the FRESH control stream, so the
+    // server's reply has to be driven for it to complete.
+    const p = reconnectTunnel()
+    await vi.waitFor(() => expect(h2State.control?.sent.length).toBeGreaterThan(0))
+    expect(h2State.control.sent[0]).toEqual({ type: 'bind', port: PORT_A })
+    h2State.control.emit({ type: 'bound', port: PORT_A })
+    expect(await p).toBe(true)
+
+    expect(getForwardedPorts()).toEqual([{ port: PORT_A, host: '', direction: 'reverse' }])
+  })
+
+  it('the monitor path keeps the port reachable after a session drop', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      await connectH2()
+      await addForwardedPort(PORT_A, 20000, '')
+      expect(await testPortReachable(PORT_A)).toBe(true)
+
+      // The session dies without an explicit teardown; only the monitor runs.
+      h2State.connected = false
+      await vi.advanceTimersByTimeAsync(15001)
+      vi.useRealTimers()
+
+      expect(isTunnelConnected()).toBe(true)
+      expect(await testPortReachable(PORT_A)).toBe(true)
+      expect(liveListeners(PORT_A)).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rebuildAllForwards is idempotent (no duplicate listeners)', async () => {
+    await connectH2()
+    await addForwardedPort(PORT_A, 20000, '')
+    expect(liveListeners(PORT_A)).toBe(1)
+
+    // Two extra rebuilds, as a reconnect plus a monitor tick could produce.
+    await _rebuildAllForwardsForTesting()
+    await _rebuildAllForwardsForTesting()
+
+    expect(liveListeners(PORT_A)).toBe(1)
+    expect(await testPortReachable(PORT_A)).toBe(true)
+  })
+})
+
+describe('tunnel/h2: local listener preserves TCP half-close', () => {
+  /** Dial the local forwarded port, collecting bytes and watching for EOF. */
+  async function dialHalfOpen(port: number): Promise<{ client: net.Socket; chunks: Buffer[]; ended: () => boolean }> {
+    const client = net.connect({ host: '127.0.0.1', port, allowHalfOpen: true })
+    await new Promise<void>((resolve, reject) => {
+      client.once('connect', () => resolve())
+      client.once('error', reject)
+    })
+    const chunks: Buffer[] = []
+    let ended = false
+    client.on('data', (c: Buffer) => chunks.push(c))
+    client.on('end', () => { ended = true })
+    return { client, chunks, ended: () => ended }
+  }
+
+  it('delivers the target response after the local socket half-closes', async () => {
+    await connectH2()
+    await addForwardedPort(PORT_A, 20000, '')
+
+    const { client, chunks, ended } = await dialHalfOpen(PORT_A)
+    await vi.waitFor(() => expect(h2State.streams.length).toBe(1))
+    const stream = h2State.streams[0]
+
+    // The request is written, then the local side half-closes (FIN). This is
+    // the request/response shape a client that closes its write side uses.
+    client.write('request-body')
+    client.end()
+    // The half-close must reach the tunnel as an END_STREAM / stream.end(),
+    // NOT as a socket teardown.
+    await vi.waitFor(() => expect(stream.writableEnded).toBe(true))
+
+    // The target's reply arrives after our FIN and must still be delivered.
+    stream.push(Buffer.from('TRAILER:request-body'))
+    stream.push(null)
+
+    await vi.waitFor(() => expect(ended()).toBe(true))
+    expect(chunks.map((b) => b.toString()).join('')).toBe('TRAILER:request-body')
+    client.destroy()
+  })
+
+  it('does not auto-destroy the socket when the local side half-closes', async () => {
+    await connectH2()
+    await addForwardedPort(PORT_A, 20000, '')
+
+    const { client } = await dialHalfOpen(PORT_A)
+    await vi.waitFor(() => expect(netState.servers.length).toBeGreaterThan(0))
+    const entry = listeningServer(PORT_A)
+    expect(entry).toBeDefined()
+
+    client.write('ping')
+    client.end()
+    await vi.waitFor(() => expect(entry!.accepted.length).toBe(1))
+
+    // allowHalfOpen:false would have destroyed the module's socket on the FIN.
+    await vi.waitFor(() => expect(entry!.accepted[0].readableEnded).toBe(true))
+    expect(entry!.accepted[0].destroyed).toBe(false)
+
+    // Clean up: end the tunnel side so the splice releases the socket.
+    h2State.streams[0].push(null)
+    await vi.waitFor(() => expect(entry!.accepted[0].destroyed).toBe(true))
+    client.destroy()
+  })
+
+  it('reclaims sockets after repeated half-close and full-close cycles', async () => {
+    await connectH2()
+    await addForwardedPort(PORT_A, 20000, '')
+    const entry = () => listeningServer(PORT_A)!
+
+    for (let i = 0; i < 6; i++) {
+      const { client, chunks, ended } = await dialHalfOpen(PORT_A)
+      await vi.waitFor(() => expect(h2State.streams.length).toBe(i + 1))
+      const stream = h2State.streams[i]
+
+      if (i % 2 === 0) {
+        // Half-close first, target replies, then the response ends. Both
+        // directions finish, so the splice must reclaim the socket.
+        client.write('request-body')
+        client.end()
+        await vi.waitFor(() => expect(stream.writableEnded).toBe(true))
+        stream.push(Buffer.from('TRAILER:request-body'))
+        stream.push(null)
+        await vi.waitFor(() => expect(ended()).toBe(true))
+        expect(chunks.map((b) => b.toString()).join('')).toBe('TRAILER:request-body')
+      } else {
+        // The target closes first; the local side then finishes its write.
+        stream.push(Buffer.from('TRAILER:request-body'))
+        stream.push(null)
+        await vi.waitFor(() => expect(ended()).toBe(true))
+        client.write('request-body')
+        client.end()
+        await vi.waitFor(() => expect(stream.writableEnded).toBe(true))
+      }
+
+      // Each cycle's socket must be gone before the next one starts.
+      await vi.waitFor(() => {
+        expect(entry().accepted[i].destroyed).toBe(true)
+      })
+    }
+
+    // The classic allowHalfOpen trap: without explicit reclamation these would
+    // all still be open. Both the accepted sockets and the server's connection
+    // count must drain to zero.
+    await vi.waitFor(() => {
+      expect(entry().accepted.filter((s: net.Socket) => !s.destroyed).length).toBe(0)
+    })
+    const conns = await new Promise<number>((r) => entry().server.getConnections((_e: unknown, c: number) => r(c)))
+    expect(conns).toBe(0)
+  })
+
+  it('reclaims the socket on an abrupt client reset', async () => {
+    await connectH2()
+    await addForwardedPort(PORT_A, 20000, '')
+    const entry = () => listeningServer(PORT_A)!
+
+    const { client } = await dialHalfOpen(PORT_A)
+    await vi.waitFor(() => expect(h2State.streams.length).toBe(1))
+    const stream = h2State.streams[0]
+    client.write('request-body')
+    await vi.waitFor(() => expect(stream.written.length).toBeGreaterThan(0))
+
+    // resetAndDestroy() forces an RST (destroy() alone is a clean FIN, which
+    // legitimately leaves the socket waiting for the target's reply).
+    client.resetAndDestroy()
+
+    await vi.waitFor(() => expect(entry().accepted[0].destroyed).toBe(true))
+    expect(stream.destroyed).toBe(true)
+  })
+
+  it('releases the socket when the tunnel stream errors mid-transfer', async () => {
+    await connectH2()
+    await addForwardedPort(PORT_A, 20000, '')
+
+    const { client } = await dialHalfOpen(PORT_A)
+    await vi.waitFor(() => expect(h2State.streams.length).toBe(1))
+    const stream = h2State.streams[0]
+    client.write('request-body')
+    await vi.waitFor(() => expect(stream.written.length).toBeGreaterThan(0))
+
+    const escaped = await collectUncaught(async () => {
+      stream.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))
+      await vi.waitFor(() => expect(listeningServer(PORT_A)!.accepted[0].destroyed).toBe(true))
+    })
+    expect(escaped.map((e) => e.message)).toEqual([])
+    client.destroy()
   })
 })

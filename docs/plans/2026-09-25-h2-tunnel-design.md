@@ -4,7 +4,7 @@
 - 状态：设计（未实现）
 - 分支：`feat/ssh-ws-forward`
 - 取代：`docs/plans/2026-09-25-ws-tunnel-design.md`（WebSocket / CBT1 自研帧方案，已随本文件删除；内容见 git 历史）。本文继承其「现状核实」与「客户端改动清单」中仍然有效的部分，并说明为何放弃 CBT1。
-- 关联现状：现有 SSH 端口转发（`-L` / `-R`）全链路已完整存在，本方案**新增**一条功能等价（**半关闭为有界近似，见 §4.2.1**）的传输通道，SSH 通道**原样保留**。
+- 关联现状：现有 SSH 端口转发（`-L` / `-R`）全链路已完整存在，本方案**新增**一条功能等价的传输通道（**服务端 relay 的半关闭为有界近似，客户端本地监听器的半关闭已对齐，见 §4.2.1**），SSH 通道**原样保留**。
 
 ---
 
@@ -165,13 +165,13 @@ HTTP 与 WebSocket 共用 20000：
 | `unforwardReverse` | 144 | **需改**（`transport.unbind`） |
 | `isTunnelConnected/getTunnelError/getTunnelErrorType/getForwardedPorts` | 158-163 | 复用 |
 | `classifyError` | 165 | **需改**（加 h2 / `ERR_HTTP2_*` / `ECONNREFUSED` 映射） |
-| `openClient`（ssh2 生命周期；`:237-257` 的 `'tcp connection'` 是 ssh2 专有） | 181-304 | **需改**（→ `transport.connect()`） |
+| `openClient`（ssh2 生命周期；`:237-257` 的 `'tcp connection'` 是 ssh2 专有） | 181-304 | **需改**（→ `transport.connect()`；`'ready'` 里的 rebuild 上移到 `ensureTunnel`，见下） |
 | `disconnectTunnel` | 311 | **需改**（`client.end()` → `transport.close()`） |
 | `pendingBinds` | 339 | 复用 |
-| `listenForward`（**唯一**真正调 `forwardOut` 的是 :350 一行） | 341-383 | **需改**（:350 → `transport.openStream(host,port)`，其余 `net.createServer`/错误处理/单飞全保留） |
+| `listenForward`（**唯一**真正调 `forwardOut` 的是 :350 一行） | 341-383 | **需改**（:350 → `transport.openStream(host,port)`；`net.createServer` 加 `allowHalfOpen:true`，裸 pipe → `spliceDuplex`，见 §4.2.1 末段） |
 | `pendingReverseBinds` | 396 | 复用 |
 | `listenReverse`（用 `forwardIn`） | 398-425 | **需改**（→ `transport.bind()`） |
-| `rebuildAllForwards` | 434 | 复用 |
+| `rebuildAllForwards` | 434 | 复用（**幂等**：`listenForward`/`listenReverse` 的单飞 + `closeForwardServer` 先关后绑；可在 `ensureTunnel` 成功后无条件重跑） |
 | `addForwardedPort` | 445 | 复用 |
 | `addReverseForwardedPort` | 462 | 复用 |
 | `removeForwardedPort` | 472 | 复用 |
@@ -179,10 +179,12 @@ HTTP 与 WebSocket 共用 20000：
 | `testPortReachable` | 492 | 复用 |
 | `fetchSshInfo` | 510-531 | SSH 专有保留 |
 | `DEFAULT_SSH_USER` / `SshInfo` | 501 | SSH 专有保留 |
-| `ensureTunnel` | 541 | **需改**（按传输分派） |
-| `reconnectTunnel` | 564 | 复用 |
+| `ensureTunnel` | 541 | **需改**（按传输分派；**成功后统一调 `rebuildAllForwards()`**） |
+| `reconnectTunnel` | 564 | 复用（依赖 `ensureTunnel` 的 rebuild；h2 下曾假报成功，见下） |
 
 IPC 在 `desktop/src/main/bridge.ts:84-93`，preload 在 `desktop/src/preload/index.ts:70-87`。桌面读 cookie 的现成实现：`desktop/src/main/clientLog.ts:88-96 getSessionCookie()`（按 `clawbench_session` / `*_clawbench_session` 后缀匹配，纯字符串拼接不依赖 HTTP 库）；服务端 `internal/middleware/auth.go:70` 用 `r.Cookie(model.ScopedCookieName(model.SessionCookie))`，`internal/model/config.go:386-391` 的 `ScopedCookieName` 对 20000 返回裸名、非 20000 返回 `cb<port>_clawbench_session`，与后缀匹配完全一致。h2 请求头里作为普通 `cookie` header 传。
+
+> **`rebuildAllForwards` 的调用点（T7 实施后修正）**：最初 `rebuildAllForwards()` 只在 ssh2 的 `client.on('ready')` 里调用。h2 的 `connect()` 只置 `state.connected = true`，**从不 rebuild**，于是 `reconnectTunnel()`（= `disconnectTunnel()` 关掉所有本地监听器 + `ensureTunnel()`）在 h2 下返回 `true`、`isTunnelConnected()` 也为 `true`、`state.forwarded` 完整，**但本地端口已死**——前端 `usePortForward.ts` 的 `reconnectPort` 随后用 `testPortReachable` 复查失败，提示「重连失败」，与底层 `ok===true` 矛盾。修法：把 rebuild 从 `'ready'` 移到 **`ensureTunnel()` 的成功收口**，对 SSH 与 h2 同时生效（`rebuildAllForwards` 幂等，SSH 行为不变）。monitor 路径本就正确（会话掉线走 `monitorTick` → `ensureTunnel`，不经 `disconnectTunnel`，监听器存活），修复未引入重复重建或监听器泄漏。
 
 **Android**（`android/app/src/main/java/com/clawbench/app/BackgroundService.java`）：
 
@@ -309,7 +311,7 @@ CBT1 → h2 能力映射见 §2.1 表格。
    - `net.Dial(host:p)`；
    - 成功则 `WriteHeader(200)` + `Flush()`，然后两条泵：`r.Body`→conn、conn→`w`（每次写后 `Flush`）；
    - **dial 失败必须在写响应头之前返回 `502`**。
-4. 关闭语义：本地 socket 读到 EOF → 结束请求体（`END_STREAM`，即半关闭），对端仍可回写；任一方向错误 → 取消该 h2 流（`RST_STREAM`，只影响本流）。服务端侧的**双向结束策略**见 §4.2.1。
+4. 关闭语义：本地 socket 读到 EOF → 结束请求体（`END_STREAM`，即半关闭），对端仍可回写；任一方向错误 → 取消该 h2 流（`RST_STREAM`，只影响本流）。**这要求本地监听器 `allowHalfOpen: true`**——否则 Node 会在本地 FIN 时直接销毁 socket，响应字节全部丢失（§4.2.1 末段）。服务端侧的**双向结束策略**见 §4.2.1。
 
 #### 4.2.1 半关闭与「与 SSH 等价」的边界（实测结论，**不是逐条等价**）
 
@@ -348,6 +350,12 @@ CBT1 → h2 能力映射见 §2.1 表格。
 - **改小默认宽限期**：可减少代价，但缩短「target FIN 后仍能送达」的窗口。当前取 5s，与 `tunnelDialTimeout`（10s）同量级，远大于同机/同网往返，足够覆盖 FIN 与客户端尾字节的交错。
 - **改为「有进展就续期」的空闲超时**（每次 client → target 有字节就重置计时器）：更接近 SSH 的「让在途数据跑完」，但客户端持续慢速滴流时仍不有界，且实现与测试都更复杂。**当前不采用**，作为已知改进方向记录。
 - **改用其它传输形态**（如 h2 上的 CONNECT / WebSocket / 自研帧）以取得真正的流内半关闭：超出本方案范围（§1.2、§2.1），且现有 5 个 WS 端点已证明与 h2 多路复用不兼容。**记录为已知限制**。
+
+**客户端本地监听器（Electron `desktop/src/main/tunnel.ts`，独立于上面的服务端结论）**：上述差异只描述**服务端 relay**。客户端把本地 TCP socket 接到隧道流的那层最初用 `net.createServer(cb)` 的默认 `allowHalfOpen: false`，于是**本地 socket 一发 FIN，Node 就销毁整条 socket**，target 随后到达的响应字节无处可去。实测（独立验证者，纯 TCP 代理隔离）：`allowHalfOpen:false` → 收到 `""`；`allowHalfOpen:true` → 收到 `TRAILER:request-body`。**该缺陷与传输无关，SSH 路径同样失败**（`[SSH-B5] … ""`），是 pre-existing 的本地 wiring 问题，不是 h2 回归。
+
+修复：监听器改用 `net.createServer({ allowHalfOpen: true }, cb)`，并把裸 `socket.pipe(stream).pipe(socket)` 换成显式的半关闭感知 splice（`spliceDuplex`）——`pipe()` 只传播 `'end'`、不传播 `'close'`，所以开启 `allowHalfOpen` 后必须由我们负责在**两个方向都结束后**回收 socket（任一方向 `'close'` 或 `'error'` 即销毁对端），否则就是该选项的经典 fd 泄漏。修复后 SSH 与 h2 **两个传输的本地半关闭都正确**，且 fd 计数归零（连续半关闭 + 完整关闭循环后 `server.getConnections` 为 0）。反向（`-R`）的对端 dial 同样改成 `allowHalfOpen: true` + `spliceDuplex`，原因相同。
+
+因此：**服务端 relay 半关闭仍是「有界近似」**（5s 宽限期，见上表），而**客户端本地监听器的半关闭在修复后与 SSH 行为一致**（都正确传递 FIN 并保留反向数据）。两者是不同层面，不要混为一谈。
 
 
 ### 4.3 `-R`（反向）流程
@@ -745,7 +753,7 @@ SSH 测试可照抄的脚手架：`internal/ssh/server_test.go`（1711 行 / 69 
 | 10 | **Android `PortInfo` 被持久化** | 改结构需迁移 | **不改**结构（§8.2、§13.4） |
 | 11 | **MockWebServer 半双工掩盖全双工 bug** | `Http2SocketHandler.onStream` 先读完 body 再写响应，全双工用例直接 hang | 全双工集成必须起真实 Go 服务端；单测用 fake `TunnelStream` |
 | 12 | **反代 WS 升级透传无测试** | `reverse_proxy_test.go` 零升级用例 | 本方案不经过它；**将来改动必须补测** |
-| 13 | **半关闭与 SSH 不完全等价** | stdlib h2 服务端无法在流内半关闭响应（`Flush()` 不结束响应体，`END_STREAM` 只在 handler 返回时发出，实测），故 target 先结束时只能给**有界宽限期**而非 SSH 的无限等待；且 target 先结束 + client body 不关时响应 EOF 推迟一个宽限期（实测 grace=5s → 5.05s） | 有界宽限（默认 5s，`tunnel.RelayDrainGrace`）；差异与代价见 §4.2.1；彻底等价需换传输形态，列为已知限制 |
+| 13 | **服务端 relay 半关闭与 SSH 不完全等价** | stdlib h2 服务端无法在流内半关闭响应（`Flush()` 不结束响应体，`END_STREAM` 只在 handler 返回时发出，实测），故 target 先结束时只能给**有界宽限期**而非 SSH 的无限等待；且 target 先结束 + client body 不关时响应 EOF 推迟一个宽限期（实测 grace=5s → 5.05s）。**注意：这是服务端 relay 层的差异；客户端本地监听器层已修复为与 SSH 一致（见 §4.2.1 末段）** | 有界宽限（默认 5s，`tunnel.RelayDrainGrace`）；差异与代价见 §4.2.1；彻底等价需换传输形态，列为已知限制 |
 
 ---
 
