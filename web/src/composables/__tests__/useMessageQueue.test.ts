@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+import { nextTick, watchEffect } from 'vue'
 import {
   queuedMessages,
   queuedCount,
@@ -35,6 +36,61 @@ describe('useMessageQueue', () => {
     expect(typeof api.removeQueued).toBe('function')
     expect(typeof api.removeQueuedMany).toBe('function')
     expect(typeof api.clearQueue).toBe('function')
+  })
+})
+
+// The queue panel's COLLAPSED header renders `messages.length`. That count is
+// derived from `queuedMessages`, a computed over a plain Map — so the store must
+// publish a NEW array on every mutation. Mutating in place and bumping the
+// version ref is NOT enough: Vue skips notifying dependents when the computed
+// produces the same reference it produced last time. The bug was exactly this:
+// the FIRST add worked (the `|| []` fallback happened to allocate a fresh
+// array) while every later add reused that array, freezing the collapsed count
+// at 1 until expanding the panel forced a re-render.
+describe('queuedMessages reactivity (collapsed panel count)', () => {
+  it('notifies dependents on EVERY add, not just the first', async () => {
+    setActiveQueueSession('s1')
+    const seen: number[] = []
+    watchEffect(() => {
+      seen.push(queuedMessages.value.length)
+    })
+    await nextTick()
+
+    addQueued('s1', { queueId: 'q1', text: 'one' })
+    await nextTick()
+    addQueued('s1', { queueId: 'q2', text: 'two' })
+    await nextTick()
+    addQueued('s1', { queueId: 'q3', text: 'three' })
+    await nextTick()
+
+    expect(queuedMessages.value.length).toBe(3)
+    expect(seen, `the collapsed count must track every add; saw ${JSON.stringify(seen)}`).toEqual([0, 1, 2, 3])
+  })
+
+  it('publishes a new array reference on each add (the mechanism)', () => {
+    setActiveQueueSession('s1')
+    addQueued('s1', { queueId: 'q1', text: 'one' })
+    const first = queuedMessages.value
+    addQueued('s1', { queueId: 'q2', text: 'two' })
+    expect(queuedMessages.value, 'same reference = dependents never re-run').not.toBe(first)
+  })
+
+  it('notifies when an existing entry is refreshed by the same queueId', async () => {
+    setActiveQueueSession('s1')
+    addQueued('s1', { queueId: 'q1', text: 'first' })
+    await nextTick()
+
+    const seen: string[] = []
+    watchEffect(() => {
+      seen.push(queuedMessages.value[0]?.text ?? '')
+    })
+    await nextTick()
+
+    addQueued('s1', { queueId: 'q1', text: 'updated' })
+    await nextTick()
+
+    expect(getQueue('s1')[0].text).toBe('updated')
+    expect(seen, 'a content refresh must reach the panel').toContain('updated')
   })
 })
 

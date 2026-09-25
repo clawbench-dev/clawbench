@@ -138,13 +138,18 @@ export function addQueued(sessionId: string, wire: QueuedMessageWire): void {
   const list = queues.get(sessionId) || []
   const idx = list.findIndex((m) => m.queueId === wire.queueId)
   const next = fromWire(wire)
-  if (idx === -1) {
-    list.push(next)
-  } else {
-    // Already known (e.g. the sender's optimistic entry) — refresh its content.
-    list[idx] = next
-  }
-  queues.set(sessionId, list)
+  // Always publish a NEW array. Mutating `list` in place and calling bump()
+  // does NOT re-render dependents: `queuedMessages` is a computed that returns
+  // the stored array, and Vue skips notifying when the value it produces is
+  // the same reference it produced before. The first add happens to work only
+  // because `queues.get()` returned undefined and the `|| []` fallback created
+  // a fresh array — so the reference changed. Every LATER add reused that same
+  // array, so the collapsed panel's count froze at 1 until something else
+  // (expanding the panel) forced a re-render.
+  //
+  // removeQueued/removeQueuedMany already publish new arrays (filter), which is
+  // why only the add path was broken.
+  queues.set(sessionId, idx === -1 ? [...list, next] : list.map((m, i) => (i === idx ? next : m)))
   bump()
 }
 
