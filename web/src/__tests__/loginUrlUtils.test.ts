@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
 
@@ -18,6 +18,18 @@ function readRepoFile(rel: string): string {
     } catch {
       // try the next candidate
     }
+  }
+  throw new Error(`${rel} not found from cwd: ${process.cwd()}`)
+}
+
+/**
+ * Resolve a repo-relative path to an absolute one, using the same cwd-then-parent
+ * candidate search as readRepoFile so both helpers agree on the repo root.
+ */
+function resolveRepo(rel: string): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), '..')]) {
+    const candidate = resolve(base, rel)
+    if (existsSync(candidate)) return candidate
   }
   throw new Error(`${rel} not found from cwd: ${process.cwd()}`)
 }
@@ -82,4 +94,43 @@ describe.each([
       expect(parserFor(rel)(input)).toEqual(expected)
     })
   }
+})
+
+const ANDROID_LOGIN = 'android/app/src/main/assets/login.html'
+const DESKTOP_LOGIN = 'desktop/assets/login.html'
+
+/**
+ * Static wiring guard. Robolectric cannot execute JS (ShadowWebView
+ * .evaluateJavascript is a no-op), so the paste handler cannot be exercised
+ * end-to-end in a unit test. These assertions catch the wiring being forgotten
+ * — a missing <script> tag or an unwired listener — which would otherwise ship
+ * silently (no CSP, no error, the feature just does nothing).
+ */
+describe('login.html wiring', () => {
+  for (const [label, rel] of [
+    ['android', ANDROID_LOGIN],
+    ['desktop', DESKTOP_LOGIN],
+  ] as const) {
+    it(`${label} loads url-utils.js and wires a paste listener on #addHost`, () => {
+      const html = readRepoFile(rel)
+      expect(html).toContain('<script src="url-utils.js"></script>')
+      expect(html).toMatch(/getElementById\('addHost'\)\.addEventListener\('paste'/)
+      expect(html).toContain('parseServerInput')
+    })
+  }
+})
+
+/**
+ * Byte-equality guard for the duplicated url-utils.js. The plan accepts two
+ * copies (no build-time single-source merge), so the only thing keeping them
+ * honest is that they are identical. The behavioural table above catches drift
+ * that changes output on one of its inputs; this catches the rest (a widened
+ * regex on an unexercised shape, a renamed internal, a stray whitespace edit).
+ */
+describe('url-utils.js copies', () => {
+  it('are byte-identical', () => {
+    const android = readFileSync(resolveRepo(ANDROID_UTILS))
+    const desktop = readFileSync(resolveRepo(DESKTOP_UTILS))
+    expect(android.equals(desktop)).toBe(true)
+  })
 })
