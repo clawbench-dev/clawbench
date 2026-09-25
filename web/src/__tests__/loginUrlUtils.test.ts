@@ -112,11 +112,16 @@ describe('login.html wiring', () => {
     ['android', ANDROID_LOGIN],
     ['desktop', DESKTOP_LOGIN],
   ] as const) {
-    it(`${label} loads url-utils.js and wires a blur listener on #addHost`, () => {
+    it(`${label} loads url-utils.js, wires a blur listener on #addHost, and defines hideError`, () => {
       const html = readRepoFile(rel)
       expect(html).toContain('<script src="url-utils.js"></script>')
       expect(html).toMatch(/getElementById\('addHost'\)\.addEventListener\('blur'/)
       expect(html).toContain('parseServerInput')
+      // The listener calls hideError('addErrorMsg') *before* it writes the host,
+      // so deleting or renaming the page's real top-level hideError makes that
+      // call throw and aborts the whole normalization. The behaviour tests below
+      // inject their own stub, so only this static check can catch that.
+      expect(html).toMatch(/function hideError\s*\(/)
     })
 
     /**
