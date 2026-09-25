@@ -3995,6 +3995,57 @@ paths:
         "200":
           description: 完整 SSH 信息
 
+  /api/tunnel/stream:
+    post:
+      tags: [SSH/FRP]
+      summary: HTTP/2 流隧道 -L 数据面
+      description: |
+        需鉴权。`-L`（正向）转发的数据面：**一条 HTTP/2 流承载一条被转发的 TCP 连接**，
+        因此客户端只需放行主端口即可完成端口转发（与 SSH 通道等价，SSH 保留为兜底）。
+
+        请求体承载 client→server 字节，响应体承载 server→client 字节，**双向同时流式**
+        （请求体为 duplex，无 `Content-Length`）。客户端每 accept 一条本地连接就开一条流。
+
+        查询参数 `host` 为空或 `localhost` 时按 `127.0.0.1` 处理；`port` 必须是 1..65535 的整数。
+        校验顺序：先解析参数与白名单，**再** `net.Dial`；拨号失败发生在写任何响应头之前，
+        因此能可靠返回 502（写了 200 后状态码无法更改）。
+
+        端口白名单**只**查 `allowed_ports` 范围，与 SSH 的 `direct-tcpip` 语义逐条对齐：
+        不要求端口已注册、不查 `IsNonLocalhostTarget`、不启用 HTTP 反向代理。
+
+        关闭语义：客户端读到 EOF 即结束请求体（`END_STREAM`，半关闭），服务端对目标做
+        `CloseWrite`，对端仍可回写；任一方向出错即取消该流（`RST_STREAM`，只影响本流）。
+      operationId: tunnelStream
+      parameters:
+        - name: host
+          in: query
+          required: false
+          description: 目标主机。空或 `localhost` 视为 `127.0.0.1`。
+          schema:
+            type: string
+        - name: port
+          in: query
+          required: true
+          description: 目标端口，1..65535。
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 65535
+      responses:
+        "200":
+          description: |
+            双向流已建立。响应体为 server→client 字节，客户端可继续写请求体。
+        "400":
+          description: 参数缺失或非法（缺 `port`、端口非数字或越界）。
+        "401":
+          description: 未鉴权。
+        "403":
+          description: 目标端口不在 `allowed_ports` 范围内。
+        "502":
+          description: 目标不可达（`net.Dial` 失败），响应头未被提前写出。
+        "503":
+          description: 未启用端口转发（`ProxyService == nil`），无白名单可执行。
+
   /api/frp/info:
     get:
       tags: [SSH/FRP]

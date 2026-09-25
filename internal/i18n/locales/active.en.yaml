@@ -129,3 +129,5 @@ RAGResetFailed: Index rebuild failed
 RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Rebuilding now would replace correctly segmented text with unsplit text and break Chinese search — restart the service and try again."
 RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
+PortForwardUnavailable: port forwarding is not available
+TunnelTargetUnreachable: tunnel target is unreachable
