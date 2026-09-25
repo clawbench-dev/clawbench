@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -451,8 +453,16 @@ func TestContentSearch_ExternalAbsoluteRoot(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// An absolute root outside the project must be refused.
-	req := contentSearchRequest(t, env.ProjectDir, "path="+urlQueryEscape("/etc")+"&q=root")
+	// A real absolute path outside the project must be refused. Use a temp dir
+	// rather than a POSIX literal like "/etc": filepath.IsAbs("/etc") is false
+	// on Windows (it needs a drive or UNC prefix), so the request would take the
+	// project-RELATIVE branch and answer 200 instead of 403 — the test passed on
+	// Linux and failed only on the Windows runner. t.TempDir() is absolute on
+	// every platform and is guaranteed outside the project root.
+	outside := filepath.Join(t.TempDir(), "outside")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+
+	req := contentSearchRequest(t, env.ProjectDir, "path="+urlQueryEscape(outside)+"&q=root")
 	w := callHandler(ContentSearch, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
