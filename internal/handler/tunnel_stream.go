@@ -18,8 +18,14 @@ import (
 // timeout maps cleanly onto 502.
 const tunnelDialTimeout = 10 * time.Second
 
-// TunnelStream handles POST /api/tunnel/stream — the -L (forward) data plane
-// of the HTTP/2 stream tunnel.
+// TunnelStream handles POST /api/tunnel/stream — the data plane of the HTTP/2
+// stream tunnel. It serves two shapes:
+//
+//   - `-L` (forward): `?host=<h>&port=<p>`. The server dials the target and
+//     relays it over this stream.
+//   - `-R` (reverse) claim: `?claim=<token>`. The server looks up the parked
+//     connection the token was minted for (see TunnelControl) and relays it
+//     over this stream. `host`/`port` are ignored when `claim` is present.
 //
 // Protocol: the request body carries client -> server bytes and the response
 // body carries server -> client bytes, both streaming simultaneously. One
@@ -38,7 +44,8 @@ const tunnelDialTimeout = 10 * time.Second
 // Error mapping (documented in internal/api/openapi.yaml):
 //   - 400 target parameters missing/invalid
 //   - 401 handled by middleware.Auth
-//   - 403 target port outside the configured allowed range
+//   - 403 target port outside the configured allowed range, or an invalid /
+//     expired / already-used / foreign claim token
 //   - 502 target unreachable (dial failed)
 //   - 503 no port registry configured (no forwarding enabled at all)
 func TunnelStream(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +58,14 @@ func TunnelStream(w http.ResponseWriter, r *http.Request) {
 	// refused rather than silently allowed.
 	if service.ProxyService == nil {
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "PortForwardUnavailable")
+		return
+	}
+
+	// The claim branch is checked first and ignores host/port entirely: a
+	// token names an already-accepted connection, so letting host/port alter
+	// the destination would be a second, unchecked dial path.
+	if token := r.URL.Query().Get("claim"); token != "" {
+		claimStream(w, r, token)
 		return
 	}
 

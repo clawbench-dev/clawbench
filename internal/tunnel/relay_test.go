@@ -112,6 +112,78 @@ func TestRelayDuplex_FlushesWhileStreaming(t *testing.T) {
 	}
 }
 
+// TestRelayDuplex_TargetCloseEndsRelayEvenWhileClientBodyStaysOpen pins the
+// deadlock fix. When the target closes its side (the normal end of a short
+// request/response, and exactly what a reverse-tunnel visitor does when it
+// hangs up), the relay must return even though the client's request body is
+// still open — the client is waiting for the response to end, so waiting for
+// both directions would park the handler forever and the response would never
+// terminate.
+func TestRelayDuplex_TargetCloseEndsRelayEvenWhileClientBodyStaysOpen(t *testing.T) {
+	relaySide, targetSide, err := tcpPair()
+	if err != nil {
+		t.Fatalf("tcpPair: %v", err)
+	}
+
+	// A body that never reaches EOF: models a client that keeps the stream open.
+	clientIn, clientInWriter := io.Pipe()
+	defer func() { _ = clientInWriter.Close() }()
+	var out bytes.Buffer
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RelayDuplex(relaySide, clientIn, &out, nil)
+	}()
+
+	if _, err := targetSide.Write([]byte("answer")); err != nil {
+		t.Fatalf("target write: %v", err)
+	}
+	// The target closes, ending the response direction.
+	_ = targetSide.Close()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RelayDuplex must return once the target closes, even with the client body still open")
+	}
+
+	if out.String() != "answer" {
+		t.Fatalf("client got %q, want answer", out.String())
+	}
+}
+
+// TestRelayDuplex_ClientDisconnectEndsRelay covers the other direction: a client
+// that goes away must not leave the relay blocked on the target.
+func TestRelayDuplex_ClientDisconnectEndsRelay(t *testing.T) {
+	relaySide, targetSide, err := tcpPair()
+	if err != nil {
+		t.Fatalf("tcpPair: %v", err)
+	}
+	defer targetSide.Close()
+
+	clientIn, clientInWriter := io.Pipe()
+	var out bytes.Buffer
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RelayDuplex(relaySide, clientIn, &out, nil)
+	}()
+
+	// The client abandons the stream. The caller closes the target (as the
+	// handlers do on request-context cancellation), which unblocks the reader.
+	_ = clientInWriter.CloseWithError(errors.New("client gone"))
+	_ = relaySide.Close()
+	_ = targetSide.Close()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RelayDuplex did not return after the connection was closed")
+	}
+}
+
 func TestHalfCloseWrite_NonTCPFallsBackToClose(t *testing.T) {
 	c1, c2 := net.Pipe()
 	defer c2.Close()
