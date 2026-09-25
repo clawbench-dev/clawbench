@@ -1057,25 +1057,39 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		service.StartForgePoller(syncer, limiter, func() model.Config { return model.ConfigInstance })
 	}
 
-	// Initialize proxy service (port forwarding) and SSH tunnel server.
-	// ProxyRegistry is only created when SSH tunnel is enabled — it has no
-	// standalone purpose without the SSH tunnel to transport traffic.
+	// Initialize the shared port registry (port forwarding) and, when enabled,
+	// the SSH tunnel server.
+	//
+	// The registry is shared by BOTH transports: the SSH server below and the
+	// h2 stream tunnel handlers, which ride the always-on main HTTP server (see
+	// server_protocols.go). It used to be created only when SSH was enabled,
+	// which handed the tunnel handlers a nil registry and a blanket 503 — see
+	// shouldCreateProxyRegistry.
 	var sshServerRef *ssh.Server
-	if cfg.PortForward.Enabled {
+	if shouldCreateProxyRegistry(cfg) {
 		proxyService := service.NewProxyRegistry(port)
 		// Always apply config — empty AllowedPorts means "allow all ports"
 		proxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
-		// Reverse mappings bind ports on the server, so ClawBench's own HTTP and
-		// SSH ports must never be handed out (that would take the platform down).
-		sshPort := cfg.PortForward.Port
-		if sshPort == 0 {
-			sshPort = port + 1
+
+		// Reverse mappings bind ports on the server, so ClawBench's own HTTP
+		// port must never be handed out. The SSH port is protected only when
+		// SSH is enabled: sshPort == 0 means "none", not "auto" (the SSH
+		// server's own mainPort+1 default is already hard-denied by the h2
+		// guard's SSHPort field — see tunnelGuard).
+		sshPort := 0
+		if cfg.PortForward.Enabled {
+			sshPort = cfg.PortForward.Port
+			if sshPort == 0 {
+				sshPort = port + 1
+			}
 		}
-		proxyService.SetReservedPorts(port, sshPort)
+		proxyService.SetReservedPorts(reservedPortsFor(port, sshPort)...)
 		service.ProxyService = proxyService
 		defer proxyService.Stop()
+	}
 
-		sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, proxyService)
+	if cfg.PortForward.Enabled {
+		sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
 		handler.SetSSHServer(sshServerRef)
 		go func() {
 			if err := sshServerRef.ListenAndServe(); err != nil {
@@ -1738,85 +1752,94 @@ func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
 	}
 }
 
-// reserveSSHPorts marks ClawBench's own HTTP port and the SSH port as
-// unbindable by reverse port mappings. Called on every (re)configuration so a
-// changed SSH port is protected too.
+// reserveSSHPorts marks ClawBench's own HTTP port as unbindable by reverse port
+// mappings, plus the SSH port when SSH is enabled. Called on every
+// (re)configuration so a changed SSH port is protected too.
 //
-// sshPort may be 0 ("auto"), which means mainPort+1 — the same default
-// ssh.NewServer applies.
+// sshPort == 0 means "no SSH port to protect" (SSH disabled). It is
+// deliberately NOT expanded to mainPort+1: with SSH off nothing listens there,
+// and the h2 tunnel's own guard already hard-denies model.ServerPort+1
+// (internal/handler/tunnel_control.go tunnelGuard). mainPort stays reserved
+// unconditionally. SetReservedPorts drops p <= 0, so 0 is safe to pass.
 func reserveSSHPorts(mainPort, sshPort int) {
 	if service.ProxyService == nil {
 		return
 	}
-	if sshPort == 0 {
-		sshPort = mainPort + 1
-	}
-	service.ProxyService.SetReservedPorts(mainPort, sshPort)
+	service.ProxyService.SetReservedPorts(reservedPortsFor(mainPort, sshPort)...)
 }
 
-// hotReloadSSH reconfigures or toggles the SSH tunnel / port-forward server on hot-reload.
+// hotReloadSSH reconfigures or toggles the SSH tunnel / port-forward server on
+// hot-reload.
+//
+// The ProxyRegistry it touches is shared with the h2 stream tunnel handlers, so
+// this function may never stop or nil it while those handlers are reachable.
+// Only the SSH listener is SSH's to own.
 func hotReloadSSH(cfg model.Config, port int) {
 	sshRef := handler.GetSSHServer()
 
-	if cfg.PortForward.Enabled {
-		if sshRef != nil {
-			// SSH is running — check if port changed
-			newPort := cfg.PortForward.Port
-			if newPort == 0 {
-				newPort = port + 1
-			}
-			if sshRef.Port() != newPort {
-				// Port changed — close old server, start new one
-				sshRef.Close()
-				reserveSSHPorts(port, newPort)
-				newSrv := ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
-				handler.SetSSHServer(newSrv)
-				go func() {
-					if err := newSrv.ListenAndServe(); err != nil {
-						slog.Error("SSH server failed", slog.String("err", err.Error()))
-					}
-				}()
-				slog.Info("hot-reload: SSH tunnel restarted on new port", slog.Int("port", newPort))
-			} else {
-				// Port unchanged — just update allowed ports if ProxyService exists
-				if service.ProxyService != nil {
-					service.ProxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
-				}
-				reserveSSHPorts(port, newPort)
-				slog.Info("hot-reload: SSH tunnel reconfigured (allowed_ports)")
-			}
-		} else {
-			// SSH was disabled, now enabled — create ProxyRegistry + SSH server
-			proxySvc := service.NewProxyRegistry(port)
-			proxySvc.SetAllowedPorts(cfg.PortForward.AllowedPorts)
-			service.ProxyService = proxySvc
-			reserveSSHPorts(port, cfg.PortForward.Port)
-
-			newSrv := ssh.NewServer(cfg.PortForward, port, cfg.Password, proxySvc)
-			handler.SetSSHServer(newSrv)
-			go func() {
-				if err := newSrv.ListenAndServe(); err != nil {
-					slog.Error("SSH server failed", slog.String("err", err.Error()))
-					// Clean up: SSH failed, stop the proxy registry we just created
-					proxySvc.Stop()
-					service.ProxyService = nil
-					handler.SetSSHServer(nil)
-				}
-			}()
-			slog.Info("hot-reload: SSH tunnel enabled")
-		}
-	} else {
-		// SSH should be disabled
+	if !cfg.PortForward.Enabled {
+		// SSH should be disabled. Close only the SSH listener: the registry
+		// keeps serving the h2 tunnel (see shouldCreateProxyRegistry), and its
+		// reverse mappings stay usable over h2. Only the SSH port stops being
+		// reserved — mainPort stays protected.
 		if sshRef != nil {
 			sshRef.Close()
 			handler.SetSSHServer(nil)
-			if service.ProxyService != nil {
-				service.ProxyService.Stop()
-				service.ProxyService = nil
-			}
 			slog.Info("hot-reload: SSH tunnel disabled")
 		}
+		reserveSSHPorts(port, 0)
+		return
 	}
+
+	// The registry is created unconditionally at startup
+	// (shouldCreateProxyRegistry), so this nil branch is defensive only.
+	// Creating a second registry would orphan the first one's health-check
+	// goroutine and its DB-restored rows.
+	if service.ProxyService == nil {
+		service.ProxyService = service.NewProxyRegistry(port)
+		slog.Info("hot-reload: proxy registry created")
+	}
+	service.ProxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
+
+	newPort := cfg.PortForward.Port
+	if newPort == 0 {
+		newPort = port + 1
+	}
+	reserveSSHPorts(port, newPort)
+
+	if sshRef == nil {
+		// SSH was disabled, now enabled — start the SSH server. The registry
+		// already exists (created above if missing); do not create another.
+		newSrv := ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
+		handler.SetSSHServer(newSrv)
+		go func() {
+			if err := newSrv.ListenAndServe(); err != nil {
+				slog.Error("SSH server failed", slog.String("err", err.Error()))
+				// Only the SSH listener failed. The registry is shared with the
+				// h2 tunnel handlers, which remain usable, so leave it in place.
+				handler.SetSSHServer(nil)
+			}
+		}()
+		slog.Info("hot-reload: SSH tunnel enabled")
+		return
+	}
+
+	if sshRef.Port() != newPort {
+		// Port changed — close old server, start new one.
+		sshRef.Close()
+		newSrv := ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
+		handler.SetSSHServer(newSrv)
+		go func() {
+			if err := newSrv.ListenAndServe(); err != nil {
+				slog.Error("SSH server failed", slog.String("err", err.Error()))
+			}
+		}()
+		slog.Info("hot-reload: SSH tunnel restarted on new port", slog.Int("port", newPort))
+		return
+	}
+
+	// Port unchanged — allowed ports were already refreshed above.
+	slog.Info("hot-reload: SSH tunnel reconfigured (allowed_ports)")
 }
 
 // hotReloadTerminal reconfigures or toggles the terminal subsystem on hot-reload.
