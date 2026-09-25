@@ -947,6 +947,8 @@ export default {
       success: '会话已重命名',
       failed: '重命名失败',
       tooltip: '点击重命名会话',
+      generate: '自动生成',
+      generateFailed: '生成标题失败，请检查摘要模型配置',
     },
     localhost: {
       openFailed: '打开本地地址失败',

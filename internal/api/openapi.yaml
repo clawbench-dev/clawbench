@@ -1333,6 +1333,37 @@ paths:
         "200":
           description: 已更新
 
+  /api/ai/session/generate-title:
+    post:
+      tags: [Sessions]
+      summary: 生成会话标题
+      description: |
+        把该会话的全部用户消息交给「AI 摘要模型」（`ai_summary.*`）总结成一个候选标题并返回，
+        供重命名对话框回填。**不会写库** —— 用户确认后仍由 `PATCH /api/ai/session/update` 保存，
+        因此自动生成的标题与手动输入一样是用户的显式选择。
+        未配置摘要模型、会话没有用户消息、或模型调用失败时返回错误，不做降级。
+      operationId: sessionGenerateTitle
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 生成成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title:
+                    type: string
+        "400":
+          description: 缺少 session_id、未配置摘要模型，或没有可总结的用户消息
+        "404":
+          description: 会话不存在或不属于当前项目
+
   /api/ai/session/tags:
     get:
       tags: [Sessions]

@@ -25,6 +25,16 @@
           ></textarea>
           <div class="dlg-actions">
             <button
+              v-if="dlg.state.value.type === 'prompt' && dlg.state.value.generateText"
+              class="dlg-btn dlg-generate"
+              :disabled="generating"
+              @click="handleGenerate"
+            >
+              <Loader2 v-if="generating" :size="14" class="dlg-generate-spin" />
+              <Sparkles v-else :size="14" />
+              {{ dlg.state.value.generateText }}
+            </button>
+            <button
               v-if="dlg.state.value.extraText && dlg.state.value.type !== 'alert'"
               class="dlg-btn dlg-extra"
               :class="{ 'dlg-extra-primed': extraPrimed }"
@@ -50,10 +60,11 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Info, MessageSquareText } from 'lucide-vue-next'
+import { Info, MessageSquareText, Loader2, Sparkles } from 'lucide-vue-next'
 import { useDialog } from '@/composables/useDialog'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { useSelectAllDeleteRecovery } from '@/composables/useSelectAllDeleteRecovery'
+import { appLog } from '@/utils/appLog'
 
 const { t } = useI18n()
 const dlg = useDialog()
@@ -61,6 +72,7 @@ const inputVal = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const overlayRef = ref<HTMLElement | null>(null)
 const extraPrimed = ref(false)
+const generating = ref(false)
 let unregisterBack: (() => void) | null = null
 
 // Android WebView: deleting the whole selection (which `select()` below creates)
@@ -80,6 +92,7 @@ watch(() => dlg.state.value.visible, async (v) => {
   }
   inputVal.value = dlg.state.value.value ?? ''
   extraPrimed.value = false
+  generating.value = false
   await nextTick()
   if (dlg.state.value.type === 'prompt') {
     inputRef.value?.focus()
@@ -128,6 +141,25 @@ function handleExtraClick() {
     dlg.resolve(null)
   } else {
     extraPrimed.value = true
+  }
+}
+
+// Fill the input with a generated value. The caller owns error feedback (it
+// has the toast); a null result simply leaves the field untouched. The dialog
+// stays open and the value is NOT auto-saved — the user still confirms.
+async function handleGenerate() {
+  const gen = dlg.state.value.onGenerate
+  if (!gen || generating.value) return
+  generating.value = true
+  try {
+    const value = await gen()
+    // The dialog may have been closed while the request was in flight; writing
+    // the field then would leak into whatever dialog opens next.
+    if (value && dlg.state.value.visible) inputVal.value = value
+  } catch (err) {
+    appLog.e('DialogOverlay', 'generate failed:', err)
+  } finally {
+    generating.value = false
   }
 }
 
@@ -259,6 +291,31 @@ onBeforeUnmount(() => {
   font-size: var(--font-size-sm);
   padding:5px var(--space-5);
   transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base);
+}
+
+/* Auto-generate sits opposite the confirm/cancel pair: margin-right:auto
+   pushes it to the left of the right-aligned actions row without a modifier
+   class (and without affecting dialogs that have no generate button). */
+.dlg-generate {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  background: transparent;
+  color: var(--accent-color, #0066cc);
+  border: 1px solid var(--accent-color, #0066cc);
+  font-size: var(--font-size-sm);
+  padding: 5px var(--space-5);
+  transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base);
+}
+
+.dlg-generate:disabled {
+  opacity: var(--opacity-muted);
+  cursor: not-allowed;
+}
+
+.dlg-generate-spin {
+  animation: refresh-spin 0.8s linear infinite;
 }
 
 .dlg-extra-primed {

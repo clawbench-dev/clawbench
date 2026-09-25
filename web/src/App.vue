@@ -559,6 +559,7 @@ import { resetAllCrudLists } from '@/composables/useCrudList'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
 import { clearPlanState } from './composables/usePlanProgress.ts'
 import { useToast } from './composables/useToast.ts'
+import { buildRenameGenerateOptions } from '@/utils/sessionRename'
 import { useDialog } from './composables/useDialog.ts'
 import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
@@ -1725,6 +1726,7 @@ async function handleRenameSession() {
       placeholder: gt('chat.sessionRename.placeholder'),
       confirmText: gt('common.confirm'),
       cancelText: gt('common.cancel'),
+      ...buildRenameGenerateOptions(sid),
     }
   )
   if (newTitle === null || newTitle.trim() === '' || newTitle === current) return

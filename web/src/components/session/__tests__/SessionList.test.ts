@@ -8,17 +8,23 @@ import { RunningSweepDirective } from '@/directives/runningSweep'
 // clamp math. Defaults to 1 (no zoom); individual tests raise it to prove the
 // menu is clamped in getBoundingClientRect() space rather than raw viewport px.
 const scaleHolder = vi.hoisted(() => ({ value: 1 }))
+// The rename dialog offers "auto-generate" only when the AI summary model is
+// configured. serverConfig is a real ref so the component's read is reactive.
+const settingsHolder = vi.hoisted(() => ({ serverConfig: null as any }))
 vi.mock('@/composables/useSettingsConfig', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/composables/useSettingsConfig')>()
+  const { ref } = await import('vue')
+  settingsHolder.serverConfig = ref<Record<string, unknown>>({})
   return {
     ...actual,
     getUIScale: () => scaleHolder.value,
     toFixedCSS: (v: number) => v / scaleHolder.value,
     getZoomedViewport: () => ({ width: 1024, height: 768 }),
+    useSettingsConfig: () => ({ serverConfig: settingsHolder.serverConfig }),
   }
 })
 
-const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState, mockDraggable, mockToastShow } = await vi.hoisted(async () => {
+const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState, mockDraggable, mockToastShow, mockGenerateSessionTitle } = await vi.hoisted(async () => {
   // The real store exposes a reactive() state, so tests that mutate
   // state.projectRoot (or sessionListVersion) must trigger the component's
   // watchers. A plain object would silently not, making such a test vacuous.
@@ -55,6 +61,7 @@ const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRu
     // props the component bound (notably `handle`).
     mockDraggable: { emit: null as null | ((event: string, ...args: any[]) => void), props: null as null | Record<string, unknown> },
     mockToastShow: vi.fn(),
+    mockGenerateSessionTitle: vi.fn(),
   }
 })
 
@@ -114,6 +121,7 @@ vi.mock('@/composables/useDialog', () => ({
 vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: () => ({ runningSessionsVersion: { value: 0 } }),
   reconcileRunningSessions: mockReconcileRunningSessions,
+  generateSessionTitle: mockGenerateSessionTitle,
 }))
 vi.mock('@/composables/useCrossProjectSessions', async () => {
   // Real refs, not plain {value} boxes: Vue only auto-unwraps actual refs in
@@ -179,6 +187,7 @@ describe('SessionList', () => {
     mockCrossState.loaded.value = true
     mockCrossState.total.value = 0
     scaleHolder.value = 1
+    settingsHolder.serverConfig.value = {}
   })
 
   afterEach(() => {
@@ -1197,6 +1206,54 @@ describe('SessionList', () => {
       // Only s2's title updated locally.
       expect(wrapper.vm.sessions.find((s: any) => s.id === 's2').title).toBe('Renamed B')
       expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').title).toBe('Session 1')
+    })
+
+    it('rename from the menu omits the generate option when no summary model is configured', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
+      settingsHolder.serverConfig.value = {}
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await wrapper.vm.renameSessionFromMenu('s1')
+
+      expect(mockDialogHolder.lastOptions.generateText).toBeUndefined()
+      expect(mockDialogHolder.lastOptions.onGenerate).toBeUndefined()
+    })
+
+    it('rename from the menu offers generate when the summary model is configured', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
+      settingsHolder.serverConfig.value = { ai_summary: { api: { base_url: 'https://summary.example.com' } } }
+      mockGenerateSessionTitle.mockResolvedValue('Generated Title')
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await wrapper.vm.renameSessionFromMenu('s1')
+
+      expect(mockDialogHolder.lastOptions.generateText).toBe('chat.sessionRename.generate')
+      const title = await mockDialogHolder.lastOptions.onGenerate()
+      expect(title).toBe('Generated Title')
+      // The generator is bound to the session being renamed, not the current one.
+      expect(mockGenerateSessionTitle).toHaveBeenCalledWith('s1')
+    })
+
+    it('rename from the menu toasts when generation yields no title', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
+      settingsHolder.serverConfig.value = { ai_summary: { api: { base_url: 'https://summary.example.com' } } }
+      mockGenerateSessionTitle.mockResolvedValue(null)
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await wrapper.vm.renameSessionFromMenu('s1')
+      const result = await mockDialogHolder.lastOptions.onGenerate()
+
+      expect(result).toBeNull()
+      expect(mockToastShow).toHaveBeenCalledWith('chat.sessionRename.generateFailed', expect.anything())
     })
 
     it('pin from the menu toggles the button-owning session', async () => {

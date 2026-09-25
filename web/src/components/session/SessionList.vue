@@ -244,6 +244,7 @@ import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
+import { buildRenameGenerateOptions } from '@/utils/sessionRename'
 
 const props = defineProps({
   currentSessionId: String,
@@ -667,6 +668,7 @@ async function renameSessionFromMenu(sessionId) {
       placeholder: t('chat.sessionRename.placeholder'),
       confirmText: t('common.confirm'),
       cancelText: t('common.cancel'),
+      ...buildRenameGenerateOptions(sessionId),
     }
   )
   if (newTitle === null || newTitle.trim() === '' || newTitle.trim() === current) return

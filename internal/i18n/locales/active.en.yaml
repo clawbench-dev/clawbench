@@ -31,6 +31,9 @@ InvalidPath: invalid path
 PathTraversal: path traversal detected
 InternalError: internal server error
 SessionNotFound: session not found
+SummaryModelNotConfigured: AI summary model is not configured
+NoUserMessagesToSummarize: no user messages to summarize
+GenerateTitleFailed: failed to generate a title
 TagNameRequired: tag name required
 TagDeleteFailed: failed to delete tag (it may belong to another project, or no longer exist)
 NoAgentsAvailable: no agents available

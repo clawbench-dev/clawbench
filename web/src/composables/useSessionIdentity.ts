@@ -7,6 +7,7 @@ import { useChatContext } from '@/composables/useChatContext'
 import { buildSendPayload } from '@/utils/fileAttachmentUtils'
 import { getRecentSession, clearRecentSession, registerSessionIdRef } from '@/composables/useRecentSession'
 import { store } from '@/stores/app.ts'
+import { apiPost } from '@/utils/api'
 
 const TAG = 'SessionIdentity'
 
@@ -454,6 +455,25 @@ export async function renameSession(title: string): Promise<boolean> {
   } catch (err) {
     appLog.e(TAG, 'Failed to rename session:', err)
     return false
+  }
+}
+
+/** Ask the server to summarize the session's user messages into a title. */
+export async function generateSessionTitle(sessionId: string): Promise<string | null> {
+  if (!sessionId) return null
+  try {
+    const data = await apiPost<{ title?: string }>(
+      `/api/ai/session/generate-title?session_id=${encodeURIComponent(sessionId)}`,
+      {},
+      // The LLM call is bounded server-side by 60s; the default 10s client
+      // timeout would abort it mid-generation and surface a false failure.
+      { timeoutMs: 60_000 },
+    )
+    const title = (data.title ?? '').trim()
+    return title || null
+  } catch (err) {
+    appLog.e(TAG, 'Failed to generate session title:', err)
+    return null
   }
 }
 
@@ -920,6 +940,7 @@ export function useSessionIdentity() {
     loadModePref,
     toggleAutoApprove,
     renameSession,
+    generateSessionTitle,
     // SelectState instances (for unified access)
     modeState,
     thinkingEffortState,

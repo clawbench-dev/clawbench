@@ -944,6 +944,8 @@ export default {
       success: 'Session renamed',
       failed: 'Failed to rename session',
       tooltip: 'Click to rename session',
+      generate: 'Auto-generate',
+      generateFailed: 'Failed to generate a title. Check the summary model config.',
     },
     localhost: {
       openFailed: 'Failed to open localhost URL',
