@@ -107,6 +107,7 @@
       @show-agent-selector="handleShowAgentSelector"
       @archive-session="() => manager.archiveCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @destroy-session="() => manager.destroyCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
+      @share-session="handleOpenSessionShare"
       @open-user-msg-index="handleOpenUserMsgIndex"
       @refresh-session="handleRefreshSession"
       @switch-model="handleSwitchModel"
@@ -176,6 +177,13 @@
     @update:open="v => { if (v) forkAgentSelectorDrawer.open(); else { forkAgentSelectorDrawer.close(); forkPending.value = null } }"
     @select="handleForkAgentSelect"
   />
+
+  <!-- Conversation share (opened from the input action bar) -->
+  <SessionShareDialog
+    :open="sessionShareOpen"
+    :session-id="sessionShareId"
+    @close="sessionShareOpen = false"
+  />
 </template>
 
 <script setup>
@@ -232,6 +240,7 @@ import { store } from '@/stores/app.ts'
 import { useDialog } from '@/composables/useDialog'
 
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
+import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
 
@@ -294,6 +303,10 @@ const metadataModal = ref({
 const metadataDrawer = useTabDrawer('chat')
 const forkAgentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 const forkPending = ref(null) // { sessionId, beforeMessageId }
+/** Conversation-share dialog state. The id is captured on open so the dialog
+ *  keeps targeting that session even if the user switches away. */
+const sessionShareOpen = ref(false)
+const sessionShareId = ref('')
 const toast = useToast()
 const acpSyncing = ref(false)
 const acpSession = useAcpSession({ currentAgentId: identity.currentAgentId })
@@ -929,6 +942,18 @@ function handleSwitchTransport(transport) {
 
 function handleOpenUserMsgIndex() {
   messageListRef.value?.toggleUserMsgIndex()
+}
+
+/**
+ * Open the conversation-share dialog for the current session. The id is
+ * snapshotted into a ref so the dialog keeps its target if the user switches
+ * sessions while it is open (the dialog loads its data on open, not per render).
+ */
+function handleOpenSessionShare() {
+  const sid = identity.currentSessionId.value
+  if (!sid) return
+  sessionShareId.value = sid
+  sessionShareOpen.value = true
 }
 
 async function handleForkFromMessage(msg) {

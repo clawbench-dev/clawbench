@@ -51,6 +51,12 @@
           <Archive :size="14" />
           <span class="chat-action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
         </button>
+        <button class="chat-action-btn" :class="{ disabled: !currentSessionId }"
+          @click="handleShare"
+          :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
+          <Share2 :size="14" />
+          <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
+        </button>
       </div>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
         @click="$emit('toggle-auto-speech')"
@@ -323,7 +329,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, Share2 } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
@@ -600,6 +606,7 @@ const emit = defineEmits([
   'show-agent-selector',
   'archive-session',
   'destroy-session',
+  'share-session',
   'open-user-msg-index',
   'refresh-session',
   'switch-model',
@@ -1422,6 +1429,13 @@ async function handleArchive() {
   if (confirmed) {
     emit('archive-session')
   }
+}
+
+/** Share the current conversation. The parent owns the dialog and snapshots the
+ *  session id, so switching sessions while it is open cannot retarget it. */
+function handleShare() {
+  if (!props.currentSessionId) return
+  emit('share-session')
 }
 
 function autoResizeTextarea() {

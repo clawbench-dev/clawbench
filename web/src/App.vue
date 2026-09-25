@@ -259,30 +259,18 @@
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
-                    <!-- Session actions on the right of the header. Grouped so
-                         the first button's margin-left:auto pins the whole set
-                         to the edge instead of only the first one. -->
-                    <div v-if="sessionIdentity.currentSessionId.value" class="chat-title-actions">
-                      <button
-                        class="chat-title-edit-btn"
-                        data-action="share-session"
-                        :title="t('sessionShare.button')"
-                        @click.stop="openSessionShareDialog"
-                      >
-                        <Share2 :size="16" />
-                      </button>
-                      <!-- Explicit rename affordance. The title text above is also
-                           clickable, but that is undiscoverable on touch; this icon
-                           surfaces the same action on the right of the header. -->
-                      <button
-                        class="chat-title-edit-btn"
-                        data-action="rename-session"
-                        :title="t('chat.sessionRename.tooltip')"
-                        @click.stop="handleRenameSession"
-                      >
-                        <PencilLine :size="16" />
-                      </button>
-                    </div>
+                    <!-- Explicit rename affordance. The title text above is also
+                         clickable, but that is undiscoverable on touch; this icon
+                         surfaces the same action on the right of the header. -->
+                    <button
+                      v-if="sessionIdentity.currentSessionId.value"
+                      class="chat-title-edit-btn"
+                      data-action="rename-session"
+                      :title="t('chat.sessionRename.tooltip')"
+                      @click.stop="handleRenameSession"
+                    >
+                      <PencilLine :size="16" />
+                    </button>
                   </div>
                   <!-- Chat Tab (title bar is now the shared one above) -->
                   <TabPanel class="chat-tab-panel" noHeader tabId="chat" :activeTab="chatActive">
@@ -339,12 +327,6 @@
         :open="shareLinkOpen"
         :file="currentFile"
         @close="shareLinkOpen = false"
-      />
-
-      <SessionShareDialog
-        :open="sessionShareOpen"
-        :session-id="sessionShareId"
-        @close="sessionShareOpen = false"
       />
 
       <FileDetailsDrawer
@@ -507,7 +489,7 @@ import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine, Share2 } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -531,7 +513,6 @@ import UpgradePromptOverlay from './components/UpgradePromptOverlay.vue'
 import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import ShareLinkDialog from './components/file/ShareLinkDialog.vue'
-import SessionShareDialog from './components/session/SessionShareDialog.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
 import CompletionPopover from './components/common/CompletionPopover.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
@@ -1702,18 +1683,6 @@ function handleOpenFromSearch(session: SessionSearchResult) {
   handleSessionSelect(session.session_id, session.backend)
 }
 
-/**
- * Open the session-share dialog for the current session. The id is snapshotted
- * into a separate ref so the dialog keeps its target if the user switches
- * sessions while it is open (the dialog loads its data on open, not per render).
- */
-function openSessionShareDialog() {
-  const sid = sessionIdentity.currentSessionId.value
-  if (!sid) return
-  sessionShareId.value = sid
-  sessionShareOpen.value = true
-}
-
 async function handleRenameSession() {
   const sid = sessionIdentity.currentSessionId.value
   if (!sid) return
@@ -1960,10 +1929,6 @@ async function handleLoginSuccess() {
 
 const projectDialogOpen = ref(false)
 const shareLinkOpen = ref(false)
-/** Session-share dialog (chat header). The id is captured when opening so the
- *  dialog keeps targeting that session even if the user switches away. */
-const sessionShareOpen = ref(false)
-const sessionShareId = ref('')
 const welcomeOverlay = ref<InstanceType<typeof WelcomeOverlay> | null>(null)
 const upgradePromptOverlay = ref<InstanceType<typeof UpgradePromptOverlay> | null>(null)
 const upgradeDialogRef = ref<InstanceType<typeof UpgradeDialog> | null>(null)
@@ -2144,7 +2109,6 @@ async function handleNavigateDir(path: string) {
 // happened" symptom, so those must be tried last.
 const overlayClosersAboveDrawers = [
   { open: () => shareLinkOpen.value, close: () => { shareLinkOpen.value = false } },
-  { open: () => sessionShareOpen.value, close: () => { sessionShareOpen.value = false } },
 ]
 
 // In-flow panels inside the file view. They have no handler of their own, and
@@ -3683,21 +3647,12 @@ onUnmounted(() => {
     overflow: hidden;
     white-space: nowrap;
 }
-/* Header action group (share + rename) at the right end of the chat title bar.
-   Pushed to the edge with margin-left:auto so it stays put when the title is
-   short. The buttons themselves must NOT carry margin-left:auto — that would
-   split the group apart and push only the first button right. */
-.chat-title-actions {
-    margin-left: auto;
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-}
-/* Rename-session / share-session icons in the chat title bar.
-   Deliberately muted at rest (the title text next to them is the primary
-   affordance) and only taking the accent colour on hover/focus. */
+/* Rename-session icon at the right end of the chat title bar. Pushed to the
+   edge with margin-left:auto so it stays put when the title is short.
+   Deliberately muted at rest (the title text next to it is the primary
+   affordance) and only takes the accent colour on hover/focus. */
 .chat-title-edit-btn {
+    margin-left: auto;
     flex-shrink: 0;
     width: 24px;
     height: 24px;
