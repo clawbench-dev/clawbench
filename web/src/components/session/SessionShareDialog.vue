@@ -302,12 +302,12 @@ watch(() => props.open, (isOpen) => {
 .session-share-dialog-error {
   padding: 24px 0;
   text-align: center;
-  color: var(--text-muted, #656d76);
+  color: var(--text-muted);
   font-size: var(--font-size-sm);
 }
 
 .session-share-dialog-error {
-  color: #cf222e;
+  color: var(--color-red);
 }
 
 .session-share-dialog-toolbar {
@@ -330,53 +330,141 @@ watch(() => props.open, (isOpen) => {
   font-size: var(--font-size-xs, 12px);
 }
 
-/* The list is the scroll region so the dialog height stays bounded on a long
-   conversation; the footer actions must remain reachable. */
+/* ── Message list ──
+   The scroll region, so the dialog height stays bounded on a long conversation
+   and the footer actions remain reachable. A bordered card on the dialog
+   surface, matching how every other list in the app is framed. */
 .session-share-dialog-list {
   max-height: 320px;
   overflow-y: auto;
-  border: 1px solid var(--border-color, #d0d7de);
-  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
 }
 
+/* ── Row ──
+   Dense by design: ~7px vertical padding keeps roughly nine rows visible in the
+   320px window, the same density as before the restyle. */
 .session-share-dialog-row {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: 8px 10px;
+  gap: var(--space-4);
+  padding: 7px var(--space-5);
   cursor: pointer;
-  border-bottom: 1px solid var(--border-color-subtle, #eaeef2);
+  /* Separator derived from the theme border rather than a second, undefined
+     token: the previous `--border-color-subtle` was declared nowhere, so every
+     theme silently fell through to its light-only #eaeef2 fallback. */
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent);
+  transition: background var(--duration-fast);
 }
 
 .session-share-dialog-row:last-child {
   border-bottom: none;
 }
 
+/* Selected rows carry the accent wash the session list uses for its active
+   row, dialled down to 7% because many rows are selected at once — the point
+   is to show what is included, not to shout. */
 .session-share-dialog-row.is-checked {
-  background: var(--bg-tertiary, #f6f8fa);
+  background: color-mix(in srgb, var(--accent-color) 7%, transparent);
+}
+
+@media (hover: hover) {
+  .session-share-dialog-row:not(.is-unselectable):hover {
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  }
+  /* A checked row keeps its accent identity while hovered (more specific than
+     the plain hover rule above, so it wins). */
+  .session-share-dialog-row.is-checked:not(.is-unselectable):hover {
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  }
 }
 
 .session-share-dialog-row.is-unselectable {
   cursor: default;
-  opacity: 0.6;
 }
 
+/* An in-flight turn cannot be shared yet: mute its text rather than fading the
+   whole row, so the reason flag stays legible. Mirrors the muted-placeholder
+   treatment in UserMsgIndexDrawer. */
+.session-share-dialog-row.is-unselectable .session-share-dialog-preview {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Checkbox ──
+   Native checkbox chrome is drawn by the OS and ignores the theme entirely, so
+   it is replaced with the app's standard custom box (same construction as
+   QuickCommandEditModal / the settings toggles). */
 .session-share-dialog-check {
   flex-shrink: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  border: 1.5px solid color-mix(in srgb, var(--text-secondary) 55%, transparent);
+  border-radius: var(--radius-xs);
+  background: var(--bg-primary);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--duration-base), border-color var(--duration-base);
 }
 
+.session-share-dialog-check:checked {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
+.session-share-dialog-check:checked::after {
+  content: '';
+  position: absolute;
+  left: 3.5px;
+  top: 0.5px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.session-share-dialog-check:disabled {
+  cursor: default;
+  opacity: var(--opacity-muted);
+}
+
+.session-share-dialog-check:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* ── Role tag ──
+   The app's standard role chip: square-ish, tinted from a theme colour, no
+   hardcoded palette. Identical construction to the conversation-index drawer's
+   .msg-role-tag so the two message lists read as one family. */
 .session-share-dialog-role {
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
-  font-size: var(--font-size-xs, 12px);
-  padding: 1px 7px;
-  border-radius: 20px;
-  background: var(--bg-tertiary, #f6f8fa);
-  color: var(--text-muted, #656d76);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.6;
+  letter-spacing: 0.3px;
+}
+
+.session-share-dialog-role.role-user {
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color) 24%, transparent);
 }
 
 .session-share-dialog-role.role-assistant {
-  background: #eaf6ef;
-  color: #2f6b4a;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text-secondary) 24%, transparent);
 }
 
 .session-share-dialog-preview {
@@ -386,22 +474,32 @@ watch(() => props.open, (isOpen) => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-size-sm);
+  color: var(--text-primary);
 }
 
+/* An excluded row reads as secondary. This is what makes the selection legible
+   at a glance, since every row starts checked. */
+.session-share-dialog-row:not(.is-checked) .session-share-dialog-preview {
+  color: var(--text-muted);
+}
+
+/* Tabular figures so the timestamps form a clean right edge down the list. */
 .session-share-dialog-time,
 .session-share-dialog-flag {
   flex-shrink: 0;
-  font-size: var(--font-size-xs, 12px);
-  color: var(--text-muted, #656d76);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .session-share-dialog-flag {
-  color: #9a6700;
+  color: var(--color-yellow);
+  font-variant-numeric: normal;
 }
 
 .session-share-dialog-more {
   text-align: center;
-  font-size: var(--font-size-xs, 12px);
-  color: var(--text-muted, #656d76);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }
 </style>
