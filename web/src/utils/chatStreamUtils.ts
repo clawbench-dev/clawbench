@@ -897,22 +897,50 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
     .join('')
 
   // Case 0 — the DB flush is a strict superset of the live text: the live
-  // stream is behind, so the DB wins. Only live tool_use blocks the DB flush
-  // has not recorded yet are kept, so a tool that completed just before the
-  // disconnect is not lost. (Equal text is left to case 1, which preserves the
-  // existing "adopt DB non-text extras onto live" behavior.)
+  // stream is behind, so the DB's text is authoritative. (Equal text is left to
+  // case 1, which preserves the existing "adopt DB non-text extras onto live"
+  // behavior.)
   //
   // No `liveText` truthiness requirement: an empty live text is the *strongest*
-  // form of this shape — the placeholder holds only a tool_use block and has not
-  // received its text yet, while the DB already has it. Requiring a non-empty
-  // live text sent that case to the fallthrough below, which kept the empty live
-  // and dropped the DB text.
+  // form of this shape — the placeholder holds only a tool block and has not
+  // received its text yet, while the DB already has it.
+  //
+  // Only the TEXT is taken from the DB. The live non-text blocks stay in place,
+  // in their original order, because the DB's rate-limited flush deliberately
+  // omits in-progress thinking (session_executor.go only writes a slim marker
+  // for DONE thinking) — returning the DB array wholesale would silently drop
+  // the reasoning the user is currently watching, along with any live
+  // warning/error block. DB-only non-text blocks (tools that finished before the
+  // placeholder was recreated) are prepended, matching case 1's placement.
   if (dbText && dbText !== liveText && dbText.startsWith(liveText)) {
-    const dbToolIds = new Set(dbBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
-    const liveOnly = liveBlocks.filter(
-      (b) => b.type === 'tool_use' && b.id && !dbToolIds.has(b.id),
+    const liveToolIds = new Set(liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
+    const liveHasThinking = liveBlocks.some((b) => b.type === 'thinking')
+    const dbTextBlocks = dbBlocks.filter((b) => b.type === 'text').map((b) => ({ ...b }))
+    const dbOnlyNonText = dbBlocks.filter(
+      (b) =>
+        b.type !== 'text' &&
+        !(b.type === 'tool_use' && b.id && liveToolIds.has(b.id)) &&
+        !(b.type === 'thinking' && liveHasThinking),
     )
-    return liveOnly.length > 0 ? [...dbBlocks, ...liveOnly] : dbBlocks
+
+    // Rebuild in live order: keep every live block, but swap the FIRST live text
+    // block for the DB's text blocks (the live text is a stale prefix). A live
+    // text block is always emitted first among text, so this cannot reorder the
+    // reply's text relative to its own tool/thinking blocks.
+    const out: ContentBlock[] = []
+    let textEmitted = false
+    for (const b of liveBlocks) {
+      if (b.type !== 'text') {
+        out.push(b)
+        continue
+      }
+      if (!textEmitted) {
+        out.push(...dbTextBlocks)
+        textEmitted = true
+      }
+    }
+    if (!textEmitted) out.push(...dbTextBlocks)
+    return dbOnlyNonText.length > 0 ? [...dbOnlyNonText, ...out] : out
   }
 
   // Case 1 — live already covers the DB text. Adopt only the DB non-text
@@ -1099,13 +1127,41 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       // falls back to the raw DB-id sort domain — landing BEFORE a still-queued
       // or drained-but-later message instead of right after its own question.
       if (db.queueId && !live.queueId) live.queueId = db.queueId
-      // Backfill partial content: if the live placeholder is empty (e.g. freshly
-      // created by a stream_start event after a re-subscribe) but the DB row has
-      // already-flushed content, copy it in so previously-streamed text isn't lost.
-      // Never overwrite a live placeholder that already has content — its live
-      // stream is fresher than the DB's 500ms rate-limited flush.
+      // A FINALIZED, summary-stripped row is the whole record of a turn that is
+      // already over, and it carries NO blocks on purpose: the backend replaces
+      // the content of a summarized non-streaming assistant row with
+      // {"blocks":[]} (summarizeContentForView) and keeps the summary in a
+      // separate table. Summarization runs synchronously inside Finalize, so by
+      // the time a backgrounded client resumes, the reply it missed has already
+      // been summarized and stripped.
+      //
+      // The live placeholder must therefore be EMPTIED rather than merged. Both
+      // merge branches below require db.blocks to be non-empty, so a stripped
+      // row skipped them entirely and the stale pre-disconnect prefix survived.
+      // That produced the reported symptom twice over: the reply rendered
+      // truncated (in 'mixed'/'original' mode the last reply renders as
+      // original, i.e. exactly those stale blocks), AND because blocks were
+      // non-empty, `shouldShowSummary` and `needsLazyOriginal` both concluded
+      // "content is present" — so neither the summary was shown nor the full
+      // content lazily fetched. Switching sessions rebuilds the array from the
+      // DB row, which is why that appeared to fix it.
+      //
+      // Clearing blocks + content restores the intended contract: empty content
+      // + a summary is exactly the state that renders the summary and triggers
+      // the lazy original fetch. This must be an exclusive branch — falling
+      // through to the backfill below would copy db.content (which IS the
+      // stripped `{"blocks":[]}` JSON) straight back in.
+      const dbBlocksEmpty = !Array.isArray(db.blocks) || db.blocks.length === 0
       const liveIsEmpty = (live.blocks ?? []).length === 0 && messageText(live) === ''
-      if (liveIsEmpty) {
+      if (db.streaming !== true && dbBlocksEmpty && db.summary) {
+        live.blocks = []
+        live.content = ''
+      } else if (liveIsEmpty) {
+        // Backfill partial content: if the live placeholder is empty (e.g. freshly
+        // created by a stream_start event after a re-subscribe) but the DB row has
+        // already-flushed content, copy it in so previously-streamed text isn't lost.
+        // Never overwrite a live placeholder that already has content — its live
+        // stream is fresher than the DB's 500ms rate-limited flush.
         if (Array.isArray(db.blocks) && db.blocks.length > 0) {
           live.blocks = db.blocks
         } else if (db.content) {
@@ -1117,24 +1173,19 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
         // placeholder was recreated by a stream_start after a session switch
         // while the REST loadHistory was in flight, so the first WS increments
         // appended onto an EMPTY base before db_load arrived. Merge the DB
-        // blocks as a prefix (see mergeStreamBlocks for the seam handling).
+        // blocks (see mergeStreamBlocks for the containment rules).
         //
-        // A FINALIZED row (streaming !== true) is the complete record of a turn
-        // that is already over, so it is adopted wholesale instead. This is the
-        // case a turn takes when the client stopped receiving increments — App
-        // backgrounded, WS dropped, then resumed after the reply finished: the
-        // DB holds the whole reply while the live placeholder holds only the
-        // prefix that had arrived before the disconnect. mergeStreamBlocks is
-        // built for the still-streaming shape (live may legitimately be AHEAD of
-        // the rate-limited DB flush) and has no branch for the reverse shape, so
-        // it fell through to "no evidence → keep live" and silently truncated
-        // the reply to that stale prefix — the reported "the session completed
-        // but everything produced in the background is missing until you switch
-        // sessions" bug. Nothing more can arrive for a finished turn, so there
-        // is no "fresher live" argument to preserve.
-        live.blocks = db.streaming === true
-          ? mergeStreamBlocks(db.blocks, live.blocks)
-          : db.blocks
+        // Deliberately NOT special-cased on "the row is finalized": the
+        // streaming flag cannot distinguish "the turn is over" from "this
+        // snapshot was read before the turn ended". The handler reads the
+        // history rows and only afterwards samples IsSessionRunning, and
+        // parseMessages deletes `streaming` whenever that sample says the
+        // session is idle — so a snapshot taken mid-finalize arrives looking
+        // finalized while holding only the last rate-limited flush. Adopting
+        // such a snapshot wholesale would discard the newer live tail.
+        // mergeStreamBlocks' containment checks are order-agnostic and handle
+        // both directions correctly without needing that flag.
+        live.blocks = mergeStreamBlocks(db.blocks, live.blocks)
       }
       merged.push(live)
       continue

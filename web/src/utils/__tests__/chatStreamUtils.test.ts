@@ -1826,17 +1826,18 @@ describe('duplicate message root causes (regression)', () => {
   })
 
   it('a FINALIZED DB row supersedes a live placeholder holding only the pre-disconnect prefix', () => {
-    // Reported repeatedly: the session finishes while the App is backgrounded /
-    // the WS is down, and on resume the reply renders as if it stopped early —
-    // only what had arrived before the disconnect is shown, and switching
-    // sessions (a fresh loadHistory) is what finally reveals the rest.
+    // The session finishes while the App is backgrounded / the WS is down, and
+    // on resume the reply renders as if it stopped early — only what had arrived
+    // before the disconnect is shown, and switching sessions (a fresh
+    // loadHistory) is what finally reveals the rest.
     //
     // The live placeholder holds the prefix that streamed before the drop; the
-    // DB row holds the complete finalized reply. rebuildFromDb matched them and
-    // handed both to mergeStreamBlocks, which only understands "live is ahead"
-    // and "DB is a shorter prefix" — the reverse containment had no branch, so
-    // it fell through to "no evidence → keep live" and silently discarded the
-    // authoritative tail.
+    // DB row holds the complete reply. mergeStreamBlocks only understood "live
+    // is ahead" and "DB is a shorter prefix" — the reverse containment had no
+    // branch, so it fell through to "no evidence → keep live" and silently
+    // discarded the authoritative tail. (This is the non-summarized variant; the
+    // summary-stripped variant — the one that dominates in practice — has its
+    // own test below.)
     const messages: any[] = [
       { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
       { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'Hello world' }], streaming: true, parentQueueId: '1' },
@@ -1858,10 +1859,11 @@ describe('duplicate message root causes (regression)', () => {
   })
 
   it('a FINALIZED DB row wins even when the live placeholder kept its text in content (no blocks)', () => {
-    // Same bug, second data shape: a placeholder that accumulated text into
-    // `content` rather than a text block. The old branch required db.blocks AND
-    // live.blocks to be arrays, so this shape skipped the merge entirely and the
-    // stale prefix survived just the same.
+    // Same shape, second data variant: a placeholder that accumulated text into
+    // `content` rather than a text block. The liveIsEmpty check reads
+    // messageText(live), which does consult `content`, so this must reach the
+    // merge just like the blocks variant — if it did not, the stale prefix would
+    // survive unchanged.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
       { role: 'assistant', id: 43, content: 'Hello world', blocks: [], streaming: true, parentQueueId: '1' },
@@ -1934,6 +1936,144 @@ describe('duplicate message root causes (regression)', () => {
     expect(text).toBe('text produced after the tool')
     // The tool must not be duplicated by the merge.
     expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use' && b.id === 'tu-1')).toHaveLength(1)
+  })
+
+  it('clears the stale prefix when the finalized row is SUMMARY-STRIPPED (the real resume shape)', () => {
+    // The dominant shape on resume, and the one that kept this bug alive: the
+    // backend runs summarization synchronously inside Finalize, and
+    // summarizeContentForView replaces the content of a summarized
+    // non-streaming assistant row with {"blocks":[]} — the summary itself lives
+    // in a separate table. So the snapshot carries NO blocks.
+    //
+    // Both merge branches require db.blocks to be non-empty, so a stripped row
+    // skipped them and the stale pre-disconnect prefix survived. Worse, because
+    // blocks were then non-empty, shouldShowSummary AND needsLazyOriginal both
+    // concluded "content is present": the summary was not shown and the full
+    // content was never lazily fetched. Net effect = completed-looking bubble
+    // showing a truncated reply, fixed only by switching sessions (which
+    // rebuilds the array straight from the DB row).
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 46, content: '', blocks: [{ type: 'text', text: 'Hello world' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 46,
+        content: '{"blocks":[]}',   // stripped by the backend
+        blocks: [],                 // parsed result
+        summary: 'A summary of the whole reply',
+        // no `streaming` — parseMessages deleted it (session not running)
+      },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+
+    // Content must be cleared, NOT the stale prefix.
+    expect(reply.blocks ?? []).toEqual([])
+    expect(reply.content || '').toBe('')
+    // The summary must be present so the bubble renders something meaningful…
+    expect(reply.summary).toBe('A summary of the whole reply')
+    // …and the spinner must be gone (it is a finished turn).
+    expect(reply.streaming).toBeFalsy()
+  })
+
+  it('does NOT clear a live prefix when the DB row has real blocks (stripped-clear must not overreach)', () => {
+    // Guard for the branch above: clearing is only correct when the DB row is
+    // genuinely empty. If the row has content, the merge must still run and
+    // produce the full text — clearing here would blank a good reply.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 47, content: '', blocks: [{ type: 'text', text: 'Hello world' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 47, content: '', blocks: [{ type: 'text', text: 'Hello world and the rest' }], summary: 's' },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('Hello world and the rest')
+  })
+
+  it('keeps live in-progress thinking when the DB text is a superset (flush omits it)', () => {
+    // The DB rate-limited flush deliberately omits in-progress thinking (only
+    // DONE thinking gets a slim marker), so the DB-superset branch must take
+    // ONLY the text from the DB and leave the live thinking/warning blocks in
+    // place. Returning the DB array wholesale would silently drop the reasoning
+    // the user is currently watching.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 48, content: '', streaming: true, parentQueueId: '1',
+        blocks: [
+          { type: 'thinking', text: 'live reasoning the DB flush omits' },
+          { type: 'text', text: 'Hello world' },
+          { type: 'warning', text: 'live warning' },
+        ],
+      },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 48, content: '', streaming: true, blocks: [{ type: 'text', text: 'Hello world and more' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const blocks = reply.blocks || []
+    const text = blocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+
+    expect(text).toBe('Hello world and more')
+    expect(blocks.some((b: any) => b.type === 'thinking' && b.text === 'live reasoning the DB flush omits')).toBe(true)
+    expect(blocks.some((b: any) => b.type === 'warning' && b.text === 'live warning')).toBe(true)
+  })
+
+  it('keeps live block order when swapping in the DB text', () => {
+    // The live tool block must not be moved to the end — the reply must keep its
+    // original tool→text order after the text is replaced.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 49, content: '', streaming: true, parentQueueId: '1',
+        blocks: [
+          { type: 'tool_use', id: 'tu-live', name: 'Read', done: true },
+          { type: 'text', text: 'Hello world' },
+        ],
+      },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 49, content: '', streaming: true, blocks: [{ type: 'text', text: 'Hello world and more' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const types = (reply.blocks || []).map((b: any) => b.type)
+    expect(types).toEqual(['tool_use', 'text'])
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('Hello world and more')
+  })
+
+  it('does NOT clear the live prefix for a finalized row with no blocks AND no summary', () => {
+    // Guard for the stripped-clear branch: clearing is only correct when the DB
+    // row has a summary to render in place of the content. A finalized row with
+    // neither blocks nor summary has nothing to show — blanking the bubble would
+    // replace a readable (if partial) reply with an empty one.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 50, content: '', blocks: [{ type: 'text', text: 'Hello world' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 50, content: '', blocks: [] },  // no summary
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('Hello world')
   })
 
   it('does NOT preserve an unmatched placeholder when the snapshot has its own streaming row (no duplicate)', () => {
