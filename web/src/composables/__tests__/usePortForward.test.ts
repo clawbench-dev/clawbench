@@ -53,6 +53,31 @@ vi.mock('@/composables/useAppMode', () => ({
     useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
+// The transport preference lives in the server config (the SAME source
+// useSettingsConfig.syncTunnelTransportToNative() pushes to the native tunnel).
+// This mock mirrors that reader so the health gate can be driven per test.
+const mockServerConfig = ref<Record<string, unknown>>({})
+const mockServerDefaults: Record<string, unknown> = { 'port_forward.transport': 'both' }
+function readDotPath(source: Record<string, unknown>, dotPath: string): unknown {
+    const parts = dotPath.split('.')
+    let current: unknown = source
+    for (const p of parts) {
+        if (current == null || typeof current !== 'object') return undefined
+        current = (current as Record<string, unknown>)[p]
+    }
+    return current
+}
+vi.mock('@/composables/useSettingsConfig', () => ({
+    useSettingsConfig: () => ({
+        serverConfig: mockServerConfig,
+        getServerValue: (dotPath: string) => readDotPath(mockServerConfig.value, dotPath),
+        getServerValueWithDefault: (dotPath: string) => {
+            const value = readDotPath(mockServerConfig.value, dotPath)
+            return value !== undefined ? value : mockServerDefaults[dotPath]
+        },
+    }),
+}))
+
 vi.mock('@/composables/useLocale', () => ({
     gt: (key: string) => key,
 }))
@@ -100,6 +125,7 @@ describe('usePortForward', () => {
         mockToastShow.mockReset()
         mockTunnelStatusFromPorts.mockReset()
         mockTunnelStatusFromPorts.mockImplementation(() => 'ok')
+        mockServerConfig.value = {}
         delete (window as any).ClawBenchNative
     })
 
@@ -310,6 +336,270 @@ describe('usePortForward', () => {
 
             // Should be reset
             expect(tunnelError.value).toBe('')
+        })
+    })
+
+    /**
+     * The SSH gate used to be `if (!info?.enabled) return`, which skipped the
+     * whole health check whenever the server had SSH disabled — so an h2-only
+     * install (the transport that does NOT need the SSH listener) never showed
+     * any tunnel status. The gate must now be "SSH enabled OR the transport
+     * allows h2".
+     */
+    describe('tunnel health gate (ssh OR h2)', () => {
+        it('still checks health when SSH is disabled but the transport allows h2', async () => {
+            mockIsAppMode.value = true
+            // SSH listener off; transport left at its server default ('both').
+            mockServerConfig.value = { port_forward: { transport: 'both' } }
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info/full') return { enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null }
+                return {}
+            })
+            const mockIsTunnelConnected = vi.fn(async () => true)
+            ;(window as any).ClawBenchNative = { isTunnelConnected: mockIsTunnelConnected }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelChecking } = usePortForward()
+
+            await checkTunnelHealth()
+
+            // The gate let it through, so the native (h2) status was consulted
+            // and the tunnel reported healthy.
+            expect(mockIsTunnelConnected).toHaveBeenCalled()
+            expect(tunnelStatus.value).toBe('ok')
+            expect(tunnelChecking.value).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('still checks health with an explicit h2-only preference', async () => {
+            mockIsAppMode.value = true
+            mockServerConfig.value = { port_forward: { transport: 'h2' } }
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info/full') return { enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null }
+                return {}
+            })
+            const mockIsTunnelConnected = vi.fn(async () => true)
+            ;(window as any).ClawBenchNative = { isTunnelConnected: mockIsTunnelConnected }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(mockIsTunnelConnected).toHaveBeenCalled()
+            expect(tunnelStatus.value).toBe('ok')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('skips the health check when SSH is disabled and the transport is ssh-only', async () => {
+            mockIsAppMode.value = true
+            mockServerConfig.value = { port_forward: { transport: 'ssh' } }
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info/full') return { enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null }
+                return {}
+            })
+            const mockIsTunnelConnected = vi.fn(async () => true)
+            ;(window as any).ClawBenchNative = { isTunnelConnected: mockIsTunnelConnected }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelChecking } = usePortForward()
+
+            await checkTunnelHealth()
+
+            // No SSH listener and no h2 on the wire: nothing to check.
+            expect(mockIsTunnelConnected).not.toHaveBeenCalled()
+            expect(tunnelStatus.value).toBe('unknown')
+            expect(tunnelChecking.value).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('treats an unrecognized transport as ssh-only rather than assuming h2', async () => {
+            mockIsAppMode.value = true
+            // A value from a newer build the client cannot interpret: falling
+            // back to "assume h2" would probe a transport that may not exist.
+            mockServerConfig.value = { port_forward: { transport: 'quic' } }
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info/full') return { enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null }
+                return {}
+            })
+            const mockIsTunnelConnected = vi.fn(async () => true)
+            ;(window as any).ClawBenchNative = { isTunnelConnected: mockIsTunnelConnected }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(mockIsTunnelConnected).not.toHaveBeenCalled()
+            expect(tunnelStatus.value).toBe('unknown')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not crash when the SSH info fetch fails but h2 keeps the check alive', async () => {
+            // /api/ssh/info/full is authenticated; a transient failure nulls
+            // sshInfo while the transport still allows h2. The old code read
+            // info.connectionStats unguarded, so this path must stay null-safe.
+            mockIsAppMode.value = true
+            mockServerConfig.value = { port_forward: { transport: 'both' } }
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info/full') throw new Error('network')
+                return {}
+            })
+            // No native tunnel status available → falls through to server stats.
+            ;(window as any).ClawBenchNative = {}
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelChecking } = usePortForward()
+
+            await expect(checkTunnelHealth()).resolves.toBeUndefined()
+
+            // No stats to consult: leave the status unknown rather than
+            // reporting a tunnel state the server never told us about.
+            expect(tunnelStatus.value).toBe('unknown')
+            expect(tunnelChecking.value).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('keeps checking when SSH is enabled regardless of the transport', async () => {
+            // Regression guard: the widened gate must not *replace* the SSH
+            // path — an SSH-enabled install still runs the check even if the
+            // config says h2-only (e.g. a stale SSH client).
+            mockServerConfig.value = { port_forward: { transport: 'h2' } }
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info/full') return {
+                    enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c',
+                    connectionStats: { connected: false, clientCount: 0, activeChannels: 0 },
+                }
+                return {}
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('disconnected')
+        })
+    })
+
+    describe('activeTransport', () => {
+        it('reports the transport that actually carried the session', async () => {
+            mockIsAppMode.value = true
+            ;(window as any).ClawBenchNative = {
+                getActiveTunnelTransport: async () => 'h2',
+                getTunnelTransport: async () => 'both',
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await refreshActiveTransport()
+
+            // The concrete winner, not the 'both' preference.
+            expect(activeTransport.value).toBe('h2')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('falls back to the preference when no transport has won yet', async () => {
+            mockIsAppMode.value = true
+            ;(window as any).ClawBenchNative = {
+                getActiveTunnelTransport: async () => '',
+                getTunnelTransport: () => 'both',
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await refreshActiveTransport()
+
+            expect(activeTransport.value).toBe('both')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('degrades to unknown when the host predates the transport methods', async () => {
+            mockIsAppMode.value = true
+            // Android / older Electron: neither method exists. Must not throw
+            // and must not invent a value.
+            ;(window as any).ClawBenchNative = { isTunnelConnected: async () => true }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await expect(refreshActiveTransport()).resolves.toBeUndefined()
+            expect(activeTransport.value).toBe('')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('degrades to unknown when the bridge throws', async () => {
+            mockIsAppMode.value = true
+            ;(window as any).ClawBenchNative = {
+                getActiveTunnelTransport: async () => { throw new Error('bridge') },
+                getTunnelTransport: async () => { throw new Error('bridge') },
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await refreshActiveTransport()
+
+            expect(activeTransport.value).toBe('')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('ignores a malformed transport value', async () => {
+            mockIsAppMode.value = true
+            ;(window as any).ClawBenchNative = {
+                getActiveTunnelTransport: async () => 42,
+                getTunnelTransport: async () => 'websocket',
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await refreshActiveTransport()
+
+            expect(activeTransport.value).toBe('')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('reports unknown in web mode (no native tunnel exists)', async () => {
+            mockIsAppMode.value = false
+            ;(window as any).ClawBenchNative = { getActiveTunnelTransport: async () => 'h2' }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await refreshActiveTransport()
+
+            expect(activeTransport.value).toBe('')
+
+            delete (window as any).ClawBenchNative
         })
     })
 

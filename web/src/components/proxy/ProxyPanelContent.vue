@@ -17,6 +17,13 @@
     <div class="proxy-panel">
       <!-- App mode: tunnel status banners -->
       <template v-if="isAppMode">
+        <!-- Current transport (ssh / h2 / auto). Hidden when the host cannot
+             report one (older Android/Electron bridge) rather than guessing. -->
+        <div v-if="transportLabel" class="tunnel-transport">
+          <span class="tunnel-transport-key">{{ t('proxy.transportLabel') }}</span>
+          <span class="tunnel-transport-value">{{ transportLabel }}</span>
+        </div>
+
         <div v-if="tunnelStatus === 'disconnected'" class="tunnel-banner error">
           <XCircle :size="16" />
           <div class="tunnel-banner-content">
@@ -332,8 +339,20 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, copyServerAddress, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, copyServerAddress, reconnectPort } = usePortForward()
 const toast = useToast()
+
+// Human label for the transport currently carrying the tunnel. '' when the
+// host cannot report it (optional bridge methods absent on Android / older
+// Electron), so the row is hidden instead of showing a made-up value.
+const transportLabel = computed(() => {
+  switch (activeTransport.value) {
+    case 'ssh': return t('proxy.transportSsh')
+    case 'h2': return t('proxy.transportH2')
+    case 'both': return t('proxy.transportAuto')
+    default: return ''
+  }
+})
 
 // Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.
 const scanDrawer = useTabDrawer('proxy')
@@ -618,6 +637,24 @@ async function handleRetryTunnel() {
 
 .create-btn:active {
   transform: scale(0.9);
+}
+
+/* Current-transport row (app mode) */
+.tunnel-transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+}
+
+.tunnel-transport-key {
+  color: var(--text-muted, #999);
+}
+
+.tunnel-transport-value {
+  color: var(--text-secondary, #666);
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Tunnel status banner */

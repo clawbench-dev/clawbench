@@ -67,6 +67,7 @@ vi.mock('@/composables/usePortForward.ts', () => ({
     tunnelChecking: ref(false),
     tunnelError: ref(''),
     tunnelErrorType: ref(''),
+    activeTransport: ref(''),
     connectingPorts: ref(new Set()),
     localReachable: ref(new Map()),
     scanning: state.scanning,
