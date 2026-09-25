@@ -131,3 +131,55 @@ describe('QueuedMessageBar type scale (source contract)', () => {
     expect(rule('.queued-bar-action')).toMatch(/font-size:\s*var\(--font-size-xs\)/)
   })
 })
+
+/**
+ * Density + coexistence contract with the execution-plan card.
+ *
+ * Two cards stack directly above the input (PlanPanel, then QueuedMessageBar).
+ * When both are visible they must read as ONE column, so the queue card adopts
+ * the plan card's geometry: the same horizontal inset and bottom rhythm as
+ * .plan-panel, and the same radius as its collapsed chip (.plan-chip). It also
+ * must not grow without bound, or expanding both would squeeze the message area.
+ *
+ * Source contract because jsdom has no CSS engine.
+ */
+describe('QueuedMessageBar density + coexistence (source contract)', () => {
+  const src = readFileSync(resolve(__dirname, '../QueuedMessageBar.vue'), 'utf8')
+  const planSrc = readFileSync(resolve(__dirname, '../PlanPanel.vue'), 'utf8')
+
+  function rule(selector: string): string {
+    const m = src.match(new RegExp(selector.replace(/[.]/g, '\\.') + '\\s*\\{([^}]*)\\}'))
+    expect(m, `${selector} rule must exist`).not.toBeNull()
+    return m![1]
+  }
+
+  it('uses the same horizontal inset as the plan card', () => {
+    expect(planSrc, 'reference: plan panel inset').toMatch(/\.plan-panel\s*\{[^}]*margin:\s*0\s+var\(--space-5\)/)
+    expect(rule('.queued-bar'), 'queue card must share the plan card column').toMatch(
+      /margin:\s*0\s+var\(--space-5\)\s+var\(--space-4\)/,
+    )
+  })
+
+  it('matches the plan chip corner radius', () => {
+    expect(planSrc, 'reference: plan chip radius').toMatch(/\.plan-chip\s*\{[^}]*border-radius:\s*var\(--radius-lg\)/)
+    expect(rule('.queued-bar')).toMatch(/border-radius:\s*var\(--radius-lg\)/)
+  })
+
+  it('is no longer cramped: header uses the plan chip box, rows breathe', () => {
+    // .plan-chip is 4px/10px with a 6px gap — the reference rhythm.
+    expect(rule('.queued-bar-header')).toMatch(/padding:\s*var\(--space-2\)\s+var\(--space-5\)/)
+    expect(rule('.queued-bar-header')).toMatch(/gap:\s*var\(--space-3\)/)
+    expect(rule('.queued-bar-item'), 'rows must have room to breathe').toMatch(
+      /padding:\s*var\(--space-2\)\s+var\(--space-3\)/,
+    )
+    // Row gap one step up from the old space-1 (2px).
+    expect(rule('.queued-bar-list')).toMatch(/gap:\s*var\(--space-2\)/)
+  })
+
+  it('is height-bounded so it cannot crowd out the message area', () => {
+    // The plan timeline is capped at 240px; the queue list must be bounded too,
+    // otherwise expanding both would leave the conversation almost no room.
+    expect(planSrc, 'reference: plan timeline cap').toMatch(/\.plan-expanded__timeline\s*\{[^}]*max-height:\s*240px/)
+    expect(rule('.queued-bar-list'), 'the queue list must be capped').toMatch(/max-height:\s*min\(40vh,\s*240px\)/)
+  })
+})

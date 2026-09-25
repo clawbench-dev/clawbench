@@ -76,9 +76,12 @@ function fileLabel(f) {
 <style scoped>
 .queued-bar {
   flex-shrink: 0;
-  margin: 0 var(--space-3) var(--space-2);
+  /* Same horizontal inset + bottom rhythm as the plan card (.plan-panel) and
+     the same corner radius as its collapsed chip (.plan-chip), so the two
+     cards stack as one column when both are visible. */
+  margin: 0 var(--space-5) var(--space-4);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--surface-color, var(--bg-secondary));
   overflow: hidden;
 }
@@ -86,9 +89,11 @@ function fileLabel(f) {
 .queued-bar-header {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  /* Matches .plan-chip's rhythm: a 4px/10px box with a 6px gap. The old
+     2px/4px box with a 4px gap is what made the card feel cramped. */
+  gap: var(--space-3);
   width: 100%;
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-5);
   background: none;
   border: none;
   cursor: pointer;
@@ -120,16 +125,20 @@ function fileLabel(f) {
 .queued-bar-list {
   list-style: none;
   margin: 0;
-  padding: 0 var(--space-2) var(--space-2);
+  /* Inset matches the header's horizontal padding so rows line up with the
+     title text, and the bottom inset gives the last row room to breathe. */
+  padding: 0 var(--space-5) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  max-height: 40vh;
+  gap: var(--space-2);
+  /* Bounded so this list can never crowd out the message area when the plan
+     card is ALSO expanded (its timeline is capped at 240px the same way). */
+  max-height: min(40vh, 240px);
   overflow-y: auto;
 }
 
 .queued-bar-item {
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary, rgba(127, 127, 127, 0.08));
 }
@@ -150,7 +159,7 @@ function fileLabel(f) {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .queued-bar-file {
@@ -169,7 +178,7 @@ function fileLabel(f) {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
 }
 
 .queued-bar-action {
