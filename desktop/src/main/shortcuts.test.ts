@@ -14,6 +14,7 @@ function key(over: Partial<KeyInput> = {}): KeyInput {
   return {
     type: 'keyDown',
     key: '',
+    code: '',
     control: false,
     shift: false,
     alt: false,
@@ -25,16 +26,20 @@ function key(over: Partial<KeyInput> = {}): KeyInput {
 describe('handleShortcut', () => {
   let onHardReload: () => void
   let onToggleDevTools: () => void
+  let onZoom: (action: 'in' | 'out' | 'reset') => void
   let hardReloadSpy: ReturnType<typeof vi.fn>
   let devToolsSpy: ReturnType<typeof vi.fn>
+  let zoomSpy: ReturnType<typeof vi.fn>
   let handlers: ShortcutHandlers
 
   beforeEach(() => {
     hardReloadSpy = vi.fn()
     devToolsSpy = vi.fn()
+    zoomSpy = vi.fn()
     onHardReload = hardReloadSpy as unknown as () => void
     onToggleDevTools = devToolsSpy as unknown as () => void
-    handlers = { onHardReload, onToggleDevTools }
+    onZoom = zoomSpy as unknown as (a: 'in' | 'out' | 'reset') => void
+    handlers = { onHardReload, onToggleDevTools, onZoom }
   })
 
   describe('Ctrl+Shift+R hard reload', () => {
@@ -96,6 +101,77 @@ describe('handleShortcut', () => {
     })
   })
 
+  describe('page zoom', () => {
+    it('claims Ctrl+= / Cmd+= to zoom in', () => {
+      expect(handleShortcut(key({ code: 'Equal', key: '=', control: true }), false, handlers)).toBe(true)
+      expect(zoomSpy).toHaveBeenCalledWith('in')
+      expect(handleShortcut(key({ code: 'Equal', key: '=', meta: true }), true, handlers)).toBe(true)
+      expect(zoomSpy).toHaveBeenCalledTimes(2)
+    })
+
+    it('claims Ctrl+- to zoom out', () => {
+      expect(handleShortcut(key({ code: 'Minus', key: '-', control: true }), false, handlers)).toBe(true)
+      expect(zoomSpy).toHaveBeenCalledWith('out')
+    })
+
+    it('claims Ctrl+0 to reset', () => {
+      expect(handleShortcut(key({ code: 'Digit0', key: '0', control: true }), false, handlers)).toBe(true)
+      expect(zoomSpy).toHaveBeenCalledWith('reset')
+    })
+
+    it('claims the numpad variants, which carry unrelated key names', () => {
+      // Matched on `code` for exactly this reason: Numpad0 reports key
+      // 'Insert' and NumpadAdd reports '+' only on some layouts, so a
+      // key-based table would silently miss the numpad.
+      expect(handleShortcut(key({ code: 'NumpadAdd', key: '+' , control: true }), false, handlers)).toBe(true)
+      expect(zoomSpy).toHaveBeenLastCalledWith('in')
+      expect(handleShortcut(key({ code: 'NumpadSubtract', key: '-', control: true }), false, handlers)).toBe(true)
+      expect(zoomSpy).toHaveBeenLastCalledWith('out')
+      expect(handleShortcut(key({ code: 'Numpad0', key: 'Insert', control: true }), false, handlers)).toBe(true)
+      expect(zoomSpy).toHaveBeenLastCalledWith('reset')
+    })
+
+    it('leaves Ctrl+Shift+Minus to the page', () => {
+      // Ctrl+Shift+Minus is Ctrl+_ (0x1f), which readline binds to undo. The
+      // terminal must keep it, so only the unshifted chord zooms out.
+      expect(handleShortcut(key({ code: 'Minus', key: '_', control: true, shift: true }), false, handlers)).toBe(false)
+      expect(zoomSpy).not.toHaveBeenCalled()
+    })
+
+    it('leaves AltGr chords alone', () => {
+      // AltGr is delivered as Ctrl+Alt on Windows. Without the alt guard,
+      // typing AltGr+0 (a brace on many European layouts) would reset the zoom
+      // instead of inserting a character.
+      for (const k of [
+        key({ code: 'Digit0', key: '0', control: true, alt: true }),
+        key({ code: 'Equal', key: '=', control: true, alt: true }),
+        key({ code: 'Minus', key: '-', control: true, alt: true }),
+      ]) {
+        expect(handleShortcut(k, false, handlers), JSON.stringify(k)).toBe(false)
+      }
+      expect(zoomSpy).not.toHaveBeenCalled()
+    })
+
+    it('ignores the chords without a modifier', () => {
+      for (const k of [
+        key({ code: 'Equal', key: '=' }),
+        key({ code: 'Minus', key: '-' }),
+        key({ code: 'Digit0', key: '0' }),
+      ]) {
+        expect(handleShortcut(k, false, handlers), JSON.stringify(k)).toBe(false)
+      }
+      expect(zoomSpy).not.toHaveBeenCalled()
+    })
+
+    it('does not zoom on keyUp', () => {
+      // Auto-repeat/hold must not keep stepping the zoom.
+      expect(
+        handleShortcut(key({ code: 'Equal', key: '=', control: true, type: 'keyUp' }), false, handlers),
+      ).toBe(false)
+      expect(zoomSpy).not.toHaveBeenCalled()
+    })
+  })
+
   describe('keys that must fall through to the page', () => {
     it('leaves a bare F5 to the renderer', () => {
       // F5 must reach the page, which decides what it means: the terminal
@@ -119,6 +195,23 @@ describe('handleShortcut', () => {
       for (const k of ['F1', 'F2', 'F9', 'F11']) {
         expect(handleShortcut(key({ key: k }), false, handlers), k).toBe(false)
       }
+      expect(devToolsSpy).not.toHaveBeenCalled()
+    })
+
+    it('leaves Ctrl+C/V/S and other Ctrl chords to the page', () => {
+      // The zoom branch must not widen into a general "Ctrl + punctuation"
+      // claim: these all belong to the renderer.
+      for (const k of [
+        key({ code: 'KeyC', key: 'c', control: true }),
+        key({ code: 'KeyV', key: 'v', control: true }),
+        key({ code: 'KeyS', key: 's', control: true }),
+        key({ code: 'KeyF', key: 'f', control: true }),
+        key({ code: 'Backquote', key: '`', control: true }),
+      ]) {
+        expect(handleShortcut(k, false, handlers), JSON.stringify(k)).toBe(false)
+      }
+      expect(zoomSpy).not.toHaveBeenCalled()
+      expect(hardReloadSpy).not.toHaveBeenCalled()
       expect(devToolsSpy).not.toHaveBeenCalled()
     })
 

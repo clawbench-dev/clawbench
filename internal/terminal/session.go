@@ -436,11 +436,36 @@ func (s *Session) ProjectPath() string {
 	return s.projectPath
 }
 
-// Cwd returns the current working directory of the session.
+// CwdProbeSupported reports whether this platform can resolve the shell's live
+// working directory (see Session.Cwd). When false, Cwd returns the launch
+// directory only. Callers that must not act on a stale directory — e.g. a file
+// drop that would upload into the wrong folder — should gate on this.
+func CwdProbeSupported() bool {
+	return cwdProbeSupported
+}
+
+// Cwd returns the shell's CURRENT working directory.
+//
+// The directory is probed live from the PTY's foreground process group, so it
+// tracks `cd` (including inside nested shells) rather than reporting the
+// directory the session was launched in. When the platform probe is
+// unavailable or fails, it falls back to that launch directory.
+//
+// The probe is an ioctl plus a readlink, so it is done OUTSIDE the lock — and
+// callers must never invoke this while already holding s.mu (e.g. from inside
+// Connect), which would deadlock.
 func (s *Session) Cwd() string {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.cwd
+	ptmx := s.ptmx
+	fallback := s.cwd
+	s.mu.Unlock()
+
+	if ptmx != nil {
+		if dir, err := foregroundCwd(ptmx); err == nil && dir != "" {
+			return dir
+		}
+	}
+	return fallback
 }
 
 // HasClient reports whether the session currently has an active WebSocket client.

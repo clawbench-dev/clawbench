@@ -2,18 +2,35 @@
  * Pure functions extracted from FileAttachmentList.vue for testability.
  */
 
-/** FileEntry represents a file, directory, or external URL attachment.
+/** FileEntry represents a file, directory, external URL, or quoted snippet.
  *
- * `kind` distinguishes a local path ("file", the default) from an external URL
- * ("url"). A URL entry carries its address in `url` and is never treated as a
- * filesystem path by the backend. */
+ * `kind` distinguishes three shapes:
+ * - "file" (default): a local path;
+ * - "url": an external address in `url`, never treated as a filesystem path by
+ *   the backend;
+ * - "quote": a quoted snippet — its payload is `text` + `note`, and `path` is
+ *   only a human-readable label (empty for a quote taken from a chat message),
+ *   so it is likewise never resolved as a path. */
 export interface FileEntry {
   path: string
   isDir?: boolean
   startLine?: number
   endLine?: number
-  kind?: 'file' | 'url'
+  kind?: 'file' | 'url' | 'quote'
   url?: string
+  /** Quote-only: stable identity, used to edit the annotation after sending. */
+  id?: string
+  /** Quote-only: the quoted content, verbatim. */
+  text?: string
+  /** Quote-only: the user's annotation. */
+  note?: string
+  /** Quote-only: fence language (e.g. "go", "issue"). */
+  language?: string
+}
+
+/** Whether an entry is a quoted snippet rather than a file or URL. */
+export function isQuoteEntry(f: FileEntry): boolean {
+  return f.kind === 'quote'
 }
 
 /** Whether an entry is an external URL rather than a local path. */
@@ -52,6 +69,13 @@ export function normalizeFileEntry(f: string | FileEntry): FileEntry {
     // URL into a bogus local path.
     ...(f.kind ? { kind: f.kind } : {}),
     ...(f.url ? { url: f.url } : {}),
+    // Quote payloads must survive too. This function runs on EVERY render and
+    // dedupe pass, so dropping them here loses the quoted text and annotation
+    // silently — the card would render blank and the AI would receive nothing.
+    ...(f.id ? { id: f.id } : {}),
+    ...(f.text !== undefined ? { text: f.text } : {}),
+    ...(f.note !== undefined ? { note: f.note } : {}),
+    ...(f.language ? { language: f.language } : {}),
   }
 }
 
@@ -75,6 +99,10 @@ export function isImageFile(path: string | null | undefined): boolean {
 function entryKey(f: FileEntry): string {
   // URL entries dedupe by their address; local entries by path + line range.
   if (isUrlEntry(f)) return `url|${f.url}`
+  // Quotes dedupe by their stable id. Two quotes of the SAME range with
+  // different text/notes are genuinely different attachments and must both
+  // survive, so path+range would be wrong here.
+  if (isQuoteEntry(f)) return `quote|${f.id ?? ''}|${f.path}|${f.startLine ?? 0}|${f.endLine ?? 0}|${f.text ?? ''}`
   return `${f.path}|${f.startLine ?? 0}|${f.endLine ?? 0}`
 }
 
@@ -129,12 +157,20 @@ export function buildSendPayload(
 export function buildSendChannels(files: FileEntry[]): { filePaths: string[]; entries: FileEntry[] } {
   // URL entries are not filesystem paths: they always travel through the
   // entries channel so the backend sees kind/url and skips path resolution.
-  const rangedPaths = new Set(files.filter(f => !isUrlEntry(f) && f.startLine !== undefined).map(f => f.path))
+  const rangedPaths = new Set(files.filter(f => !isUrlEntry(f) && !isQuoteEntry(f) && f.startLine !== undefined).map(f => f.path))
   const entries: FileEntry[] = []
   const filePaths: string[] = []
   const seenFilePaths = new Set<string>()
   for (const f of files) {
     const norm = normalizeFileEntry(f)
+    // Quotes must be routed to the entries channel BEFORE the filePaths
+    // fallback below. A chat-message quote has path === '' and no line range,
+    // so it would otherwise be pushed as an empty string into filePaths, and
+    // the backend would reject the whole send resolving "" as a path.
+    if (isQuoteEntry(norm)) {
+      entries.push(norm)
+      continue
+    }
     if (isUrlEntry(norm)) {
       entries.push(norm)
       continue

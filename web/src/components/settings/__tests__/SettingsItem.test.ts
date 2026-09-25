@@ -279,6 +279,37 @@ describe('SettingsItem', () => {
       expect(wrapper.find('.settings-item__slider-value').text()).toBe('')
     })
 
+    it('keeps the thumb in range when max is raised above the old ceiling', async () => {
+      // Regression: Vue patches attributes in template order, and a range input
+      // clamps an out-of-range value on assignment. With `value` bound before
+      // `max`, setting 2 while max was still 1.5 clamped the thumb to 1.5 and
+      // raising max afterwards did NOT restore it — the 4K auto-scale case
+      // showed the label reading 200% while the thumb sat at 150%.
+      const wrapper = mountItem({ type: 'slider', modelValue: 1, min: 0.8, max: 1.5, step: 0.05, displayFormat: 'percent' })
+
+      await wrapper.setProps({ modelValue: 2, max: 2 })
+      await wrapper.vm.$nextTick()
+
+      const input = wrapper.find('input[type="range"]').element as HTMLInputElement
+      expect(input.max).toBe('2')
+      expect(input.value).toBe('2')
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('200%')
+    })
+
+    it('keeps the thumb consistent with the label when lowering max back', async () => {
+      // The reverse direction: auto turned off drops max from 2 back to 1.5.
+      const wrapper = mountItem({ type: 'slider', modelValue: 2, min: 0.8, max: 2, step: 0.05, displayFormat: 'percent' })
+      expect((wrapper.find('input[type="range"]').element as HTMLInputElement).value).toBe('2')
+
+      await wrapper.setProps({ modelValue: 1, max: 1.5 })
+      await wrapper.vm.$nextTick()
+
+      const input = wrapper.find('input[type="range"]').element as HTMLInputElement
+      expect(input.max).toBe('1.5')
+      expect(input.value).toBe('1')
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('100%')
+    })
+
     it('debounces slider input — only emits final value after delay', async () => {
       vi.useFakeTimers()
       const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1 })

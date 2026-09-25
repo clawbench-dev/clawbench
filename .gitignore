@@ -2,7 +2,10 @@
 .DS_Store
 
 # Configuration files (keep local config private)
-config/config.yaml
+# `**/` 而非裸 `config/config.yaml`：writeConfigYAML 按进程 CWD 解析路径，
+# `go test ./internal/handler`（CWD=该包目录）会写入 internal/handler/config/。
+# 锚定仓库根会让这些测试产物可见并可被提交（已多次误入库）。
+**/config/config.yaml
 *.bak
 .env
 
@@ -82,7 +85,6 @@ acp-spec/
 *.jks
 clawbench-release
 .playwright-cli/
-config/config.yaml
 .dev-build/
 
 # Playwright E2E test artifacts

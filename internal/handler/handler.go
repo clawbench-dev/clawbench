@@ -318,6 +318,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/project", ServeProjectSet)
 	register("/api/ai/chat", AIChat)
 	register("/api/ai/chat/cancel", CancelChat)
+	register("/api/ai/chat/quote", UpdateChatQuoteNote)
 	register("/api/ai/chat/read", MarkChatRead)
 	register("/api/ai/queue", QueueHandler)
 	register("/api/ai/queue/inject", QueueInjectHandler)

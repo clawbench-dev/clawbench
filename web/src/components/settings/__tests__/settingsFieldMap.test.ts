@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions } from '@/components/settings/settingsFieldMap'
+import { UI_SCALE_STEP } from '@/utils/uiScale'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -163,6 +164,50 @@ describe('settingsFieldMap', () => {
   it('includes recent_projects.max_count', () => {
     const map = getServerFieldToLabelKey()
     expect(map['recent_projects.max_count']).toBeTruthy()
+  })
+
+  it('appearance exposes an auto-scale switch ahead of the manual scale slider', () => {
+    const entries = categoryItems['appearance']
+    const autoEntry = entries.find(e => e.type === 'item' && e.spec.key === 'uiScaleAuto')
+    expect(autoEntry).toBeDefined()
+    if (autoEntry!.type !== 'item') throw new Error('expected item entry for uiScaleAuto')
+    expect(autoEntry.spec.type).toBe('switch')
+    expect(autoEntry.spec.source).toBe('local')
+    // Android is excluded from auto scaling, so the switch is hidden there.
+    expect(autoEntry.spec.hideInAndroidApp).toBe(true)
+    expect(autoEntry.spec.sectionHeader).toBe('settings.items.appearanceDisplaySection')
+
+    const autoIdx = entries.findIndex(e => e.type === 'item' && e.spec.key === 'uiScaleAuto')
+    const sliderIdx = entries.findIndex(e => e.type === 'item' && e.spec.key === 'uiScale')
+    expect(autoIdx).toBeGreaterThanOrEqual(0)
+    expect(sliderIdx).toBeGreaterThan(autoIdx)
+  })
+
+  it('disables the manual scale slider unless auto-scale is off', () => {
+    const entries = categoryItems['appearance']
+    const slider = entries.find(e => e.type === 'item' && e.spec.key === 'uiScale')
+    expect(slider).toBeDefined()
+    if (slider!.type !== 'item') throw new Error('expected item entry for uiScale')
+    // Inverted on purpose: disableUnless fires when the condition is UNMET, so
+    // `uiScaleAuto === false` means "disabled while auto is ON".
+    expect(slider.spec.disableUnless).toEqual({ key: 'uiScaleAuto', value: false })
+    expect(slider.spec.min).toBe(0.8)
+    expect(slider.spec.max).toBe(1.5)
+    expect(slider.spec.defaultValue).toBe(1)
+  })
+
+  it('the scale slider step grid matches UI_SCALE_STEP and is anchored at min', () => {
+    // The auto factor is snapped to UI_SCALE_STEP so the slider can represent
+    // it exactly. That only holds while the slider's own `step` is the same
+    // value AND its `min` sits on the grid — snapping is done relative to 0, so
+    // a min of 0.83 would shift the grid and reintroduce the thumb/label drift.
+    const slider = categoryItems['appearance']
+      .find(e => e.type === 'item' && e.spec.key === 'uiScale')
+    if (slider!.type !== 'item') throw new Error('expected item entry for uiScale')
+    expect(slider.spec.step).toBe(UI_SCALE_STEP)
+
+    const stepsFromZero = slider.spec.min! / UI_SCALE_STEP
+    expect(Math.abs(stepsFromZero - Math.round(stepsFromZero))).toBeLessThan(1e-9)
   })
 
   it('recent_projects.max_count is in projectFiles category items', () => {

@@ -2,6 +2,16 @@
   <div class="share-view">
     <!-- Read-only top bar (not the app FileHeader) -->
     <div class="share-topbar">
+      <button
+        v-if="canGoBack"
+        class="share-btn share-back-btn"
+        type="button"
+        :title="t('share.back')"
+        :aria-label="t('share.back')"
+        @click="goBack"
+      >
+        <ArrowLeft :size="16" />
+      </button>
       <span class="share-file-name" :title="file?.name || ''">{{ file?.name || '' }}</span>
       <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
       <span v-else-if="error" class="share-status share-error">{{ error }}</span>
@@ -49,8 +59,12 @@
         <!-- Error / invalid link -->
         <div v-else-if="error" class="share-error-state">
           <FileX2 :size="40" />
-          <div class="share-error-title">{{ t('share.invalidTitle') }}</div>
+          <div class="share-error-title">{{ t(linkError ? 'share.linkUnavailableTitle' : 'share.invalidTitle') }}</div>
           <div class="share-error-desc">{{ error }}</div>
+          <button v-if="linkError" class="share-btn share-error-back" type="button" @click="goBack">
+            <ArrowLeft :size="14" />
+            {{ t('share.back') }}
+          </button>
         </div>
 
         <template v-else-if="file">
@@ -196,9 +210,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, defineAsyncComponent, provide, readonly } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, defineAsyncComponent, provide, readonly, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Download, Eye, FileX2, List } from 'lucide-vue-next'
+import { Download, Eye, FileX2, List, ArrowLeft } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import Lightbox from '@/components/media/Lightbox.vue'
@@ -214,6 +228,7 @@ import { getFileType } from '@/utils/fileType.ts'
 import { flashElement } from '@/utils/domFlash'
 import { extractToc, type TocItem } from '@/utils/toc.ts'
 import { setShareToken, setSharedFile, shareApiUrl } from '@/share/shareMode'
+import { SHARE_OPEN_FILE_EVENT, shareDeepLink } from '@/share/shareLinks'
 import { buildLocalFileUrl } from '@/utils/download'
 import { store } from '@/stores/app.ts'
 
@@ -245,7 +260,21 @@ const { t } = useI18n()
 // ─── State ───
 const loading = ref(true)
 const error = ref('')
+/** True when the failure is a followed link (not the shared file itself). */
+const linkError = ref(false)
 const file = ref<ShareFile | null>(null)
+/**
+ * Absolute path of the file currently on screen. Empty = the shared file
+ * itself. When a relative link inside the document is followed this holds the
+ * referenced file's path, and the document switches in place.
+ */
+const currentPath = ref('')
+/** Absolute path of the shared file (the link's original target). */
+const sharedPath = ref('')
+/** History entries this view pushed, so Back only unwinds its own stack.
+ *  A ref (not a plain counter): the Back affordance is derived from it and must
+ *  re-render when a link is followed. */
+const pushedDepth = ref(0)
 const tocOpen = ref(true)
 /** Narrow layout (<900px): TOC moves to a slide-in drawer over the content. */
 const isNarrow = ref(false)
@@ -267,10 +296,22 @@ function parseTokenFromPath(): string {
   return m ? decodeURIComponent(m[1]) : ''
 }
 
+/** Download URL for the file on screen: the referenced file when the document
+ *  was switched by following a link, otherwise the shared file itself. */
 const downloadUrl = computed(() => {
   if (!file.value) return ''
-  return shareApiUrl('download')
+  const url = shareApiUrl('download')
+  if (!isSharedFile.value && file.value.path) {
+    return `${url}?path=${encodeURIComponent(file.value.path)}`
+  }
+  return url
 })
+
+/** True while the original shared file is on screen (not a followed link). */
+const isSharedFile = computed(() => !currentPath.value || currentPath.value === sharedPath.value)
+
+/** Whether Back should be offered: this view pushed at least one entry. */
+const canGoBack = computed(() => pushedDepth.value > 0)
 
 /** Full-size token-scoped URL for the single-file image / SVG preview. */
 const shareImageUrl = computed(() => {
@@ -355,23 +396,48 @@ function decorateFile(data: ShareFile): ShareFile {
   return data
 }
 
-async function loadFile() {
+/**
+ * Load the shared file (targetPath === '') or a file the document references
+ * (?path= on the token-scoped content endpoint). Both return the same
+ * FileContent JSON, so every preview branch below is reused unchanged.
+ */
+async function loadFile(targetPath: string) {
   loading.value = true
   error.value = ''
+  linkError.value = false
   // A fresh file always opens in its rendered/preview view. (Mirrors the App's
   // file-view reset on file change — guards against reusing this instance for
   // another file while still toggled to source.)
   viewMode.value = 'rendered'
+  // Reset the TOC up front: a failed load must not leave the previous file's
+  // outline on screen.
+  tocItems.value = []
   try {
-    const resp = await fetch(shareApiUrl('file'))
+    const url = targetPath
+      ? `${shareApiUrl('content')}?path=${encodeURIComponent(targetPath)}`
+      : shareApiUrl('file')
+    const resp = await fetch(url)
     if (!resp.ok) {
-      error.value = t('share.notFound')
+      // A followed link can fail while the shared file itself is still fine
+      // (deleted target, directory, or outside the share's scope) — say which,
+      // and keep Back available so the reader is not stranded.
+      if (targetPath) {
+        linkError.value = true
+        error.value = t('share.linkUnavailable')
+      } else {
+        error.value = t('share.notFound')
+      }
+      file.value = null
       return
     }
     const data = await resp.json()
     decorateFile(data)
     file.value = data
-    setSharedFile(data.path, data.name)
+    currentPath.value = targetPath || data.path || ''
+    if (!targetPath) {
+      sharedPath.value = data.path || ''
+      setSharedFile(data.path, data.name)
+    }
 
     // Build TOC for markdown / text content.
     if (isTextContent.value) {
@@ -387,9 +453,59 @@ async function loadFile() {
     // Desktop opens with the TOC rail visible; narrow screens default closed
     // (opened on demand via the top-bar button → slide-in drawer).
     tocOpen.value = !isNarrow.value
+    // A newly opened document starts at the top. Done after the DOM swap
+    // (nextTick) so the new content's height is in place before we reset.
+    await nextTick()
+    contentRef.value?.scrollTo({ top: 0 })
   } finally {
     loading.value = false
   }
+}
+
+/** A deep-link target from the URL (?path=), or '' for the shared file. */
+function targetFromUrl(): string {
+  try {
+    return new URLSearchParams(location.search).get('path') || ''
+  } catch {
+    return ''
+  }
+}
+
+/** Follow a relative link inside the document: switch in place, push history. */
+function openLinkedFile(target: string) {
+  if (!target || target === currentPath.value) return
+  try {
+    history.pushState({ sharePath: target }, '', shareDeepLink(target))
+    pushedDepth.value += 1
+  } catch {
+    // History unavailable (rare); the in-place switch still works.
+  }
+  void loadFile(target)
+}
+
+function goBack() {
+  if (pushedDepth.value > 0) {
+    // popstate handler performs the actual load.
+    history.back()
+    return
+  }
+  // No history entry to unwind (e.g. reloaded directly on a deep link): fall
+  // back to the shared file itself.
+  void loadFile('')
+}
+
+/** Browser Back/Forward within this share. */
+function onPopState() {
+  const target = targetFromUrl()
+  if (target === currentPath.value) return
+  if (pushedDepth.value > 0) pushedDepth.value -= 1
+  void loadFile(target)
+}
+
+/** A link inside the rendered document was clicked (shareLinks.ts). */
+function onShareOpenFile(e: Event) {
+  const path = (e as CustomEvent).detail?.path
+  if (typeof path === 'string' && path) openLinkedFile(path)
 }
 
 function scrollToHeading(id: string) {
@@ -494,12 +610,17 @@ onMounted(() => {
     return
   }
   setShareToken(token)
-  void loadFile()
+  // A deep link (?path=) opens straight to a referenced file.
+  void loadFile(targetFromUrl())
+  window.addEventListener(SHARE_OPEN_FILE_EVENT, onShareOpenFile)
+  window.addEventListener('popstate', onPopState)
 })
 
 onBeforeUnmount(() => {
   tocMq?.removeEventListener('change', syncNarrow)
   tocMq = null
+  window.removeEventListener(SHARE_OPEN_FILE_EVENT, onShareOpenFile)
+  window.removeEventListener('popstate', onPopState)
 })
 </script>
 
@@ -573,6 +694,17 @@ onBeforeUnmount(() => {
   color: #fff;
   text-decoration: none;
   font-size: var(--font-size-lg);
+  cursor: pointer;
+}
+
+/* Back affordance shown when the reader followed a link into another file. */
+.share-back-btn { flex-shrink: 0; }
+
+.share-error-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
   cursor: pointer;
 }
 

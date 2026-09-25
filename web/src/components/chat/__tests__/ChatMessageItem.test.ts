@@ -1152,3 +1152,66 @@ describe('ChatMessageItem — .chat-message must not use content-visibility', ()
     expect(src).toContain('DO NOT reintroduce `content-visibility: auto`')
   })
 })
+
+describe('ChatMessageItem — quote message button', () => {
+  const assistantMsg = {
+    id: 42, role: 'assistant', streaming: false,
+    blocks: [{ type: 'text', text: 'the assistant reply' }],
+  }
+  const userMsg = {
+    id: 7, role: 'user', streaming: false,
+    blocks: [{ type: 'text', text: 'the user question' }],
+  }
+
+  it('shows the quote button on an assistant message with text', () => {
+    const wrapper = createWrapper({ msg: assistantMsg, index: 0, active: true })
+    const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')
+    expect(btn).toBeDefined()
+  })
+
+  it('shows the quote button on a user message too', () => {
+    // Quoting your own earlier question (to re-ask about it) is as useful.
+    const wrapper = createWrapper({ msg: userMsg, index: 0, active: true })
+    const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')
+    expect(btn).toBeDefined()
+  })
+
+  it('emits quote-message with the message when clicked', async () => {
+    const wrapper = createWrapper({ msg: assistantMsg, index: 0, active: true })
+    const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')!
+
+    await btn.trigger('click')
+
+    expect(wrapper.emitted('quote-message')![0][0]).toMatchObject({ id: 42, role: 'assistant' })
+  })
+
+  it('hides the quote button while streaming', () => {
+    const wrapper = createWrapper({
+      msg: { ...assistantMsg, streaming: true },
+      index: 0,
+      active: true,
+    })
+    const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')
+    expect(btn).toBeUndefined()
+  })
+
+  it('hides the quote button on a queued (pending) bubble', () => {
+    const wrapper = createWrapper({
+      msg: { ...userMsg, pending: true, queueId: 'q-1' },
+      index: 0,
+      active: true,
+    })
+    const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')
+    expect(btn).toBeUndefined()
+  })
+
+  it('hides the quote button when there is no text to quote', () => {
+    const wrapper = createWrapper({
+      msg: { id: 9, role: 'assistant', streaming: false, blocks: [] },
+      index: 0,
+      active: true,
+    })
+    const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')
+    expect(btn).toBeUndefined()
+  })
+})

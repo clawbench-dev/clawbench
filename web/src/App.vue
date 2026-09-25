@@ -32,7 +32,7 @@
       <AppHeader
         :project-root="projectRoot"
         :home-dir="homeDir"
-        :current-file-name="currentFile?.name"
+        :current-file-name="currentFileNameForHeader"
         :current-file-path="currentFile?.path"
         :recent-files-available="recentFilesCount"
         @open-project-dialog="handleOpenProjectDialog"
@@ -94,6 +94,7 @@
                       @navigate-dir="handleNavigateDir"
                       @navigate-back="handleNavigateBack"
                       @select-file="handleBrowseSelectFile"
+                      @new-file="handleNewFile"
                       @toggle-sort="handleToggleSort"
                       @toggle-hidden="toggleHidden"
                       @rename="handleRename"
@@ -138,6 +139,7 @@
                       @close-git-history="fileHistoryDrawer.close()"
                       @open-file="handleOverlayOpenFile"
                       @overlay-close="handleOverlayClose"
+                      @close-untitled="handleCloseUntitled"
                       @navigate-back="handleFileHistoryBack"
                       @navigate-forward="handleFileHistoryForward"
                       @capture-scroll="handleCaptureFileScroll"
@@ -457,12 +459,13 @@ import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, define
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
+import { attemptSavedPasswordLogin } from '@/utils/savedPasswordLogin'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
 import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
-import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
 import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
@@ -533,7 +536,7 @@ import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { flashElement } from './utils/domFlash'
-import { useGlobalEvents, plainPreview, type ServerEvent } from './composables/useGlobalEvents'
+import { useGlobalEvents, plainPreview, type ServerEvent, type ForgeEventIdentity } from './composables/useGlobalEvents'
 import { eventKindLabel, unreadReasonLabel } from './utils/forgeEventLabels'
 
 /** Payload carried by a server event (see useGlobalEvents). */
@@ -567,6 +570,9 @@ import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
+import { setPendingForgeTarget, clearPendingForgeTarget, forgeTargetFromDetail } from './composables/useForgeNavigation.ts'
+import type { ForgeTarget } from './composables/useForgeNavigation.ts'
+import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
@@ -1008,22 +1014,53 @@ function handleOpenTask(e: Event) {
   }
 }
 
-/** Payload of the `clawbench-open-forge` event (forge system notification tap). */
-interface OpenForgeDetail { projectPath?: string }
+/**
+ * Payload of the `clawbench-open-forge` event (forge system notification tap).
+ *
+ * `target` and `forgeTarget` are the SAME value under two names, because the
+ * event has two producers with different shapes:
+ *   - the renderer's own paths (in-page notification onClick, completion card)
+ *     dispatch `{ projectPath, target }`;
+ *   - the native shell (Electron) forwards its whole `NotificationNav` verbatim
+ *     through preload as the event detail, and that object names the field
+ *     `forgeTarget`.
+ * Reading only one of them silently drops the deep link on the other path —
+ * which is exactly what happened on Electron (the click opened the tab and
+ * stopped there). Accept both.
+ */
+interface OpenForgeDetail { projectPath?: string; target?: ForgeTarget; forgeTarget?: ForgeTarget }
 
 /**
  * Handle clawbench-open-forge — dispatched when a forge (GitHub/GitLab) system
- * notification is clicked.
+ * notification is clicked, or when the in-app completion card is tapped.
  *
  * The forge panel is project-scoped: it shows the repository bound to the
  * ACTIVE project. A change in a repository bound by another project must
  * therefore switch projects first, or the user lands on a panel that has no
- * such row (and the notification looks like a lie). The panel has no item-level
- * deep link, so the destination is the Issues & PRs tab either way.
+ * such row (and the notification looks like a lie).
+ *
+ * The item to open is published as a module-level pending target rather than
+ * passed down as a prop: the panel is mounted lazily and, when the forge tab is
+ * already active, `switchTab` is a no-op — so the ref itself is the only signal
+ * that reaches it. See useForgeNavigation.
  */
 function handleOpenForge(e: Event) {
   const detail = (e as CustomEvent<OpenForgeDetail>).detail
   const projectPath = detail?.projectPath
+  // Accept either name — see forgeTargetFromDetail. The native shell sends the
+  // whole NotificationNav (field `forgeTarget`), the in-page producers `target`.
+  const target = forgeTargetFromDetail(detail)
+
+  // Publish the target before switching tabs so the panel sees it whichever
+  // path it takes to become visible (mount, activation, or ref change).
+  //
+  // The target is stamped with the project it belongs to. Without a concrete
+  // destination the panel's own project gate has nothing to compare against and
+  // a still-mounted old-project panel would consume a target meant for another
+  // project. `projectPath` here is the attribution the server sent; empty means
+  // "whatever project is active", which is exactly the same-project case.
+  if (target) setPendingForgeTarget({ ...target, projectPath })
+
   if (!projectPath || projectPath === store.state.projectRoot) {
     // Same project (or the event carried no attribution): nothing to switch.
     switchTab('forge')
@@ -1034,8 +1071,17 @@ function handleOpenForge(e: Event) {
   // the attempt settles either way. That is also the right fallback: the user
   // lands on the forge panel they can actually see, instead of nothing happening.
   hotSwitchProject(projectPath)
+    .then(() => {
+      // The switch was refused (project gone / not under the configured roots),
+      // so the panel that is actually on screen is the CURRENT project's — which
+      // cannot hold this item. Drop the target rather than leave it armed: it
+      // would otherwise fire on some later activation whose project happened to
+      // match.
+      if (store.state.projectRoot !== projectPath) clearPendingForgeTarget()
+    })
     .catch(() => {
       appLog.w(TAG, 'clawbench-open-forge: project switch threw, opening current project')
+      clearPendingForgeTarget()
     })
     .finally(() => switchTab('forge'))
 }
@@ -1289,6 +1335,35 @@ const TASK_STATUS_META: Record<string, { label: string; tone: 'success' | 'dange
     cancelled: { label: 'chat.push.taskCancelled', tone: 'warning' },
 }
 
+/**
+ * Build the deep-link target for a forge completion card / system notification.
+ *
+ * The opaque read key is built by forgeTargetItemKey so its shape cannot drift
+ * from the Go side's forge.ItemKey: an issue/PR key is "<type>/<number>", a
+ * pipeline's is "pipeline/run:<id>" (its number is always 0).
+ *
+ * Returns undefined when the event carries no usable item type — the card then
+ * only raises the forge panel, which is the pre-deep-link behaviour.
+ */
+function forgeTargetFromEvent(
+    ev: ForgeEventIdentity,
+    data: NonNullable<ServerEventData>,
+    projectPath: string | undefined,
+    num: number | undefined,
+): ForgeTarget | undefined {
+    const type = ev.item_type || data.item?.type
+    if (type !== 'issue' && type !== 'pr' && type !== 'pipeline') return undefined
+    const number = num || 0
+    const runId = ev.run_id || 0
+    return {
+        projectPath: projectPath || undefined,
+        type,
+        number,
+        runId,
+        itemKey: forgeTargetItemKey(type, number, runId),
+    }
+}
+
 function handleCompletionEvent(event: string, data: ServerEventData, skipReplay = false) {
     if (!data) return
     // 重放阶段（页面刷新/断线重连补发的历史）不弹：
@@ -1320,6 +1395,10 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
         // 逐条排队会把队列堵死。groupKey 用仓库标识而非条目——用户关心的是
         // "这个仓库有动静"，不是每一个议题各弹一次。
         const groupKey = `forge:${slug}`
+        // 条目级已读键与跳转目标由同一个 helper 构造，二者天然一致（都与后端
+        // forge.ItemKey 的格式对齐）。流水线的身份是 run id（number 恒为 0），
+        // 键形如 "pipeline/run:<id>"。
+        const forgeTarget = forgeTargetFromEvent(ev, data, forgeProjectPath, num)
         completionPopover.push({
             groupKey,
             kind: 'forge',
@@ -1331,11 +1410,9 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
             eventTone: 'info',
             title: slug,
             body: data.item?.title || reason,
-            // 条目级已读键。流水线没有可派生的 run id（真实 id 未下发），
-            // 故留空 → 该条只跳转不标记已读。
-            forgeItemKey: ev.item_type && ev.item_type !== 'pipeline' && num
-                ? `${ev.item_type}/${num}`
-                : undefined,
+            // 跳转目标（点击卡片时定位到具体条目，并由面板标记该条已读）。
+            // 事件没带可用 item_type 时为 undefined，卡片退化为"只打开面板"。
+            forgeTarget,
             projectPath: forgeProjectPath,
             projectName: forgeProjectPath ? baseName(forgeProjectPath) : '',
         })
@@ -1793,7 +1870,9 @@ async function handleLoginSuccess() {
     // Clean up legacy localStorage keys (no longer used)
     Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
     await nextTick()
-    applyUIScale(Number(localConfig.uiScale ?? 1))
+    // Applies the auto-derived factor on the web/Electron paths; CSS zoom in
+    // the browser, native webContents zoom in the Electron shell.
+    applyEffectiveUIScale()
     applyFontConfig()
     startDockResize()
     // Measure dock height and set --dock-height CSS variable for fixed-position elements
@@ -1850,6 +1929,9 @@ const theme = ref(resolveThemeId(_rawTheme))
 const dirEntries = computed(() => store.state.dirEntries)
 const currentDir = computed(() => store.state.currentDir)
 const currentFile = computed(() => store.state.currentFile)
+// An unsaved Untitled buffer has no name; show the localized placeholder in the
+// app header instead of an empty segment.
+const currentFileNameForHeader = computed(() => (currentFile.value?.untitled ? t('file.untitled') : currentFile.value?.name))
 // The view pane is a CodeMirror-rendered file (code, markdown raw/editing)
 // when it's not the rendered markdown/HTML/OpenAPI preview. Such views use
 // CodeMirror's built-in search; only rendered previews need the SearchDrawer.
@@ -2220,7 +2302,10 @@ watch(() => inlineOverflowTabs.value.length, () => {
 // ResizeObserver may not fire when CSS zoom on <html> changes, so we
 // must explicitly re-measure to recalculate overflow layout.
 // Use requestAnimationFrame to ensure browser has reflowed after the zoom change.
-watch(() => localConfig.uiScale, () => {
+// uiScaleAuto is watched too: toggling it changes the applied factor without
+// touching uiScale (and on Electron the zoom is applied natively, where no
+// ResizeObserver fires at all).
+watch([() => localConfig.uiScale, () => localConfig.uiScaleAuto], () => {
   requestAnimationFrame(() => {
     startDockResize()
     // Also update --dock-height CSS variable for fixed-position elements
@@ -2268,6 +2353,14 @@ watch(isWideScreen, (val) => {
   if (val) {
     // Continuity-first (Q1A): adopt activeTab if non-chat, else keep persisted leftTab
     const next = resolveLeftTabOnEnter(activeTab.value, leftTab.value)
+    // Focus continuity is resolved from the tab we ENTERED with, captured before
+    // the block below rewrites `activeTab` to a left-column tab. Passing the
+    // post-rewrite value made resolveActivePaneOnEnter's `chat` branch
+    // unreachable — `activeTab` had already been overwritten with `next` (never
+    // 'chat'), so focus landed on the left pane on every entry into wide-screen
+    // and the chat shortcuts (Ctrl+K/U/←) stayed dead until the user clicked the
+    // chat pane.
+    const enteredTab = activeTab.value
     if (leftTab.value !== next) {
       switchLeftTab(next) // updates leftTab + activeTab + side effects
     } else if (activeTab.value !== next) {
@@ -2283,7 +2376,7 @@ watch(isWideScreen, (val) => {
     // If the chat pane is collapsed (persisted), focus must stay on the left
     // pane — the chat pane is invisible, so right-pane shortcuts would fire
     // against a hidden panel.
-    setActivePane(chatCollapsed.value ? PANE_LEFT : resolveActivePaneOnEnter(activeTab.value))
+    setActivePane(chatCollapsed.value ? PANE_LEFT : resolveActivePaneOnEnter(enteredTab))
     // Wide-screen: the bottom dock is hidden, so bottom-sheet drawers must sit
     // flush with the screen bottom — don't let a stale --dock-height leave a gap.
     document.documentElement.style.setProperty('--dock-height', '0px')
@@ -2784,6 +2877,41 @@ function handleOpenFileManager() {
     switchTab('browse')
 }
 
+/**
+ * New File from the file manager: open an empty Untitled buffer in the viewer
+ * and enter edit mode. No filename is requested and nothing is written to disk
+ * — the name is asked for on the first save.
+ *
+ * Modelled on handleBrowseSelectFile: this is a browse-initiated visit, so Back
+ * returns to the file manager rather than to whatever file was open before.
+ */
+async function handleNewFile(dir: string) {
+    fileNav.closeOverlay()
+    browseFileSession.value = true
+    // No name yet, so this is never markdown/HTML — it renders as plain source.
+    store.openUntitledFile(dir)
+    await nextTick()
+    // The nav stack entry uses an empty path: currentFile.path is empty too, so
+    // nothing path-backed runs against a file that does not exist yet. Back
+    // leaves the visit (there is no previous file in this browse session).
+    fileNav.openFile('')
+    switchTab('view')
+}
+
+/**
+ * Close an unsaved Untitled buffer.
+ *
+ * A dedicated path rather than handleOverlayClose: that routes through the back
+ * state machine, which is still mid-step (busy) when the viewer's exit flow
+ * settles and would swallow the close. Closing an untitled visit always returns
+ * to the file manager it was created from.
+ */
+function handleCloseUntitled() {
+    closeOverlayAndSync()
+    browseFileSession.value = false
+    switchTab('browse', true)
+}
+
 function handleNavigateToCommit(e: Event) {
     const sha = (e as CustomEvent<{ sha?: string }>)?.detail?.sha
     if (!sha) return
@@ -2878,17 +3006,38 @@ onMounted(async () => {
     }
     if (!resp.ok) {
         if (resp.status === 401 || resp.status === 403) {
+            // Saved-password auto-login. Every failure used to fall straight to
+            // the login page with NO message, so a stale/rotated password
+            // looked like the app silently bouncing the user out.
             if (isAppMode.value && getNative()?.getPassword) {
-                const savedPwd = await getNative()?.getPassword?.()
-                if (savedPwd) {
-                    try {
-                        const loginRes = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: savedPwd }) })
-                        if (loginRes.ok) {
-                            await getNative()?.setSSHPassword?.(savedPwd)
-                        } else { isAuthenticated.value = false; dismissSplash(); return }
-                    } catch { isAuthenticated.value = false; dismissSplash(); return }
-                } else { isAuthenticated.value = false; dismissSplash(); return }
-            } else { isAuthenticated.value = false; dismissSplash(); return }
+                const outcome = await attemptSavedPasswordLogin({
+                    getSavedPassword: () => getNative()?.getPassword?.(),
+                    login: (password) => fetch('/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password }),
+                    }),
+                    persistPassword: (password) => getNative()?.setSSHPassword?.(password),
+                })
+                if (outcome === 'authenticated') {
+                    // Fall through to app initialization.
+                } else {
+                    isAuthenticated.value = false
+                    if (outcome === 'auth-failed') {
+                        toast.show(t('toast.authFailed'), { icon: '⚠️', type: 'error', duration: 5000 })
+                    } else if (outcome === 'network-error') {
+                        toast.show(t('toast.serverUnreachableApp'), { icon: '⚠️', type: 'error', duration: 5000 })
+                    }
+                    // 'no-password' needs no toast: the login page IS the
+                    // expected destination, not a failure.
+                    dismissSplash()
+                    return
+                }
+            } else {
+                isAuthenticated.value = false
+                dismissSplash()
+                return
+            }
         } else {
             isAuthenticated.value = false
             if (isAppMode.value) {
@@ -2918,7 +3067,9 @@ onMounted(async () => {
     })
     if (!initOk) return
     await nextTick()
-    applyUIScale(Number(localConfig.uiScale ?? 1))
+    // Applies the auto-derived factor on the web/Electron paths; CSS zoom in
+    // the browser, native webContents zoom in the Electron shell.
+    applyEffectiveUIScale()
     applyFontConfig()
     startDockResize()
     welcomeOverlay.value?.show()
@@ -2980,8 +3131,32 @@ onMounted(async () => {
             const nav = await getNative()?.getPendingNavigation?.()
             if (nav) {
               const parsed = JSON.parse(nav)
-              const { sessionId, taskId, executionId, projectPath } = parsed
-              if (taskId) {
+              const { sessionId, taskId, executionId, projectPath, forge } = parsed
+              // Same resolver as the live-click handler: the native shell names
+              // this field `forgeTarget`, and routing both entry points through
+              // one function is what keeps them from drifting apart.
+              const forgeTarget = forgeTargetFromDetail(parsed)
+              if (forge && forgeTarget) {
+                // Forge notification navigation. The target is published before
+                // any tab switch so the panel picks it up on whichever path it
+                // becomes visible — and stamped with its project so a
+                // still-mounted panel of another project leaves it alone.
+                pollCleared = true
+                setPendingForgeTarget({ ...forgeTarget, projectPath })
+                if (projectPath && projectPath !== store.state.projectRoot) {
+                  hotSwitchProject(projectPath)
+                    .then(() => {
+                      // Refused switch: the panel on screen is the current
+                      // project's and cannot hold this item — drop the target
+                      // rather than leave it armed for a later activation.
+                      if (store.state.projectRoot !== projectPath) clearPendingForgeTarget()
+                    })
+                    .catch(() => clearPendingForgeTarget())
+                    .finally(() => switchTab('forge'))
+                } else {
+                  switchTab('forge')
+                }
+              } else if (taskId) {
                 // Task notification navigation
                 pollCleared = true
                 if (projectPath && projectPath !== store.state.projectRoot) {

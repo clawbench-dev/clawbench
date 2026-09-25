@@ -76,6 +76,7 @@ vi.mock('@/composables/useTaskHistory.ts', async () => {
       hasMore: false,
       allExecutions: ref(executions),
       isRunning: () => false,
+      isScriptPhase: () => false,
       isJustCompleted: () => false,
       loadExecutions: vi.fn().mockResolvedValue(undefined),
       loadMoreExecutions: vi.fn(),

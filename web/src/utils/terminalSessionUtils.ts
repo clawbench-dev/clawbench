@@ -38,7 +38,7 @@ export interface TerminalSessionState {
 export interface TerminalCallbacks {
   onOutput?: ((data: string) => void) | null
   onReplay?: ((data: string) => void) | null
-  onStatus?: ((status: { running: boolean; cwd: string }) => void) | null
+  onStatus?: ((status: { running: boolean; cwd: string; sessionId?: string }) => void) | null
   onExit?: ((code: number) => void) | null
   onError?: ((message: string, code: string) => void) | null
 }
@@ -66,7 +66,12 @@ export function processTerminalMessage(
       if (msg.sessionId) {
         updates.sessionId = msg.sessionId
       }
-      callbacks.onStatus?.({ running: msg.running ?? true, cwd: msg.cwd ?? '' })
+      // The session id is passed through as well as returned in `updates`:
+      // consumers that hold their own copy (the tab record) must be able to take
+      // it HERE, because this callback fires before `updates.sessionId` is
+      // applied to the session ref. Without it such a copy can stay empty until
+      // some unrelated path re-syncs it.
+      callbacks.onStatus?.({ running: msg.running ?? true, cwd: msg.cwd ?? '', sessionId: msg.sessionId })
       return updates
     }
     case 'exit':

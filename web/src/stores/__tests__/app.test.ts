@@ -27,8 +27,9 @@ vi.mock('@/composables/useDialog', () => ({
 }))
 
 // Mock useFileNavStack
+const mockReplaceCurrentPath = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useFileNavStack', () => ({
-  useFileNavStack: () => ({ removePath: vi.fn() }),
+  useFileNavStack: () => ({ removePath: vi.fn(), replaceCurrentPath: mockReplaceCurrentPath }),
 }))
 
 describe('saveBrowseDir / loadBrowseDir', () => {
@@ -345,6 +346,68 @@ describe('markSaved', () => {
     store.state.currentFile = null
     store.markSaved('/tmp/main.go', 'new')
     expect(store.state.currentFile).toBeNull()
+  })
+})
+
+describe('openUntitledFile / adoptUntitledPath', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    store.state.projectRoot = '/project'
+    store.state.currentFile = null
+    mockReplaceCurrentPath.mockReset()
+  })
+
+  it('opens an empty, path-less editable buffer in the target dir', () => {
+    store.openUntitledFile('docs')
+    expect(store.state.currentFile).toMatchObject({
+      name: '',
+      path: '',
+      content: '',
+      untitled: true,
+      targetDir: 'docs',
+    })
+  })
+
+  it('leaves the persisted reopen record untouched', () => {
+    store.state.currentFile = { name: 'main.go', path: 'main.go', content: '' }
+    localStorage.setItem('clawbench-open-file:/project', 'main.go')
+
+    store.openUntitledFile('')
+
+    // An unsaved buffer cannot be restored after a reload, so its placeholder
+    // must not replace the previous file's record — reopening main.go is more
+    // useful than a dangling empty path.
+    expect(localStorage.getItem('clawbench-open-file:/project')).toBe('main.go')
+  })
+
+  it('adopts the real path in place, keeping the same object identity', () => {
+    store.openUntitledFile('docs')
+    const buffer = store.state.currentFile
+
+    expect(store.adoptUntitledPath('docs/notes.md', 'hello')).toBe(true)
+    // Identity matters: replacing the object would trip FileViewer's props.file
+    // watcher and bounce the user out of the editor on their first save.
+    expect(store.state.currentFile).toBe(buffer)
+    expect(store.state.currentFile).toMatchObject({
+      name: 'notes.md',
+      path: 'docs/notes.md',
+      content: 'hello',
+      untitled: false,
+    })
+    expect(store.state.currentFile?.targetDir).toBeUndefined()
+    expect(mockReplaceCurrentPath).toHaveBeenCalledWith('docs/notes.md')
+    expect(localStorage.getItem('clawbench-open-file:/project')).toBe('docs/notes.md')
+  })
+
+  it('refuses to adopt when the open file is not an untitled buffer', () => {
+    store.state.currentFile = { name: 'main.go', path: 'main.go', content: 'x' }
+    expect(store.adoptUntitledPath('other.go', 'y')).toBe(false)
+    expect(store.state.currentFile.path).toBe('main.go')
+    expect(mockReplaceCurrentPath).not.toHaveBeenCalled()
+  })
+
+  it('refuses to adopt when no file is open', () => {
+    expect(store.adoptUntitledPath('a.txt', 'x')).toBe(false)
   })
 })
 

@@ -408,6 +408,121 @@ describe('FileViewer', () => {
       return (wrapper.vm as any).$.setupState
     }
 
+    // ── Untitled (new, not-yet-named) buffer ──
+
+    describe('untitled buffer', () => {
+      const untitledFile = {
+        name: '',
+        path: '',
+        content: '',
+        untitled: true,
+        targetDir: 'docs',
+      }
+
+      it('opens directly in edit mode (no read-only form exists)', async () => {
+        const wrapper = mountViewer({ file: untitledFile })
+        await nextTick()
+        expect(setupState(wrapper).editing).toBe(true)
+      })
+
+      it('renders the always-editable editor for the buffer', async () => {
+        const wrapper = mountViewer({ file: untitledFile })
+        await nextTick()
+        expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(true)
+        // Not the rendered-markdown preview: an untitled buffer is always source.
+        expect(wrapper.findComponent({ name: 'MarkdownPreview' }).exists()).toBe(false)
+      })
+
+      it('saves against the empty path so the save flow can prompt for a name', async () => {
+        mockSaveFile.mockResolvedValue(true)
+        const wrapper = mountViewer({ file: untitledFile })
+        const ss = setupState(wrapper)
+        await nextTick()
+        await ss.handleSave('hello')
+        // Empty path is the signal that this is a first save, not a no-op.
+        expect(mockSaveFile).toHaveBeenCalledWith('', 'hello')
+      })
+
+      // The first save clears `untitled`, which is what kept the editor
+      // editable — without an explicit flag the buffer would turn read-only
+      // immediately after being saved.
+      it('stays in edit mode after the first save clears the untitled flag', async () => {
+        mockSaveFile.mockResolvedValue(true)
+        // The store adopts the real path by mutating the SAME object (replacing
+        // it would trip the props.file watcher and reset edit mode).
+        const buffer = { ...untitledFile }
+        const wrapper = mountViewer({ file: buffer })
+        const ss = setupState(wrapper)
+        await nextTick()
+        expect(ss.editing).toBe(true)
+
+        await ss.handleSave('hello')
+        Object.assign(buffer, { name: 'notes.md', path: 'docs/notes.md', content: 'hello', untitled: false })
+        await nextTick()
+
+        expect(ss.editing).toBe(true)
+      })
+
+      it('closes via the back-gesture exit request (the step navigates nowhere)', async () => {
+        mockHandleExit.mockReset()
+        mockHandleExit.mockResolvedValue(true)
+        const wrapper = mountViewer({ file: untitledFile })
+        const ss = setupState(wrapper)
+        await nextTick()
+        ss.handleExitEditRequest()
+        await flushPromises()
+        expect(wrapper.emitted('closeUntitled')).toBeTruthy()
+      })
+
+      it('stays open via the back-gesture exit request when cancelled', async () => {
+        mockHandleExit.mockReset()
+        mockHandleExit.mockResolvedValue(false)
+        const wrapper = mountViewer({ file: untitledFile })
+        const ss = setupState(wrapper)
+        await nextTick()
+        ss.handleExitEditRequest()
+        await flushPromises()
+        expect(wrapper.emitted('closeUntitled')).toBeFalsy()
+      })
+
+      // The first save prompts for a name asynchronously; the close must wait so
+      // it cannot tear the dialog down mid-save.
+      it('waits for an in-flight first save before closing', async () => {
+        let resolveSave: (v: boolean) => void = () => {}
+        mockSaveFile.mockReturnValue(new Promise<boolean>((r) => { resolveSave = r }))
+        mockHandleExit.mockReset()
+        mockHandleExit.mockResolvedValue(true)
+
+        const wrapper = mountViewer({ file: untitledFile })
+        const ss = setupState(wrapper)
+        await nextTick()
+        ss.handleSaveAndExit('hello') // starts the save, does not resolve it
+        await flushPromises()
+        ss.handleExitEditRequest()
+        await flushPromises()
+        expect(wrapper.emitted('closeUntitled')).toBeFalsy()
+
+        resolveSave(true)
+        await flushPromises()
+        expect(wrapper.emitted('closeUntitled')).toBeTruthy()
+      })
+
+      it('stays open when the first save fails (e.g. cancelled name prompt)', async () => {
+        mockSaveFile.mockResolvedValue(false)
+        mockHandleExit.mockReset()
+        mockHandleExit.mockResolvedValue(true)
+
+        const wrapper = mountViewer({ file: untitledFile })
+        const ss = setupState(wrapper)
+        await nextTick()
+        ss.handleSaveAndExit('hello')
+        await flushPromises()
+        ss.handleExitEditRequest()
+        await flushPromises()
+        expect(wrapper.emitted('closeUntitled')).toBeFalsy()
+      })
+    })
+
     it('enters edit mode via FileHeader toggleEdit emit', async () => {
       const wrapper = mountViewer({ file: editableFile })
       const ss = setupState(wrapper)

@@ -28,7 +28,7 @@
 
     <!-- Region 1: File name -->
     <div class="file-name-wrap">
-      <span class="file-path-hint" :class="{ 'file-path-draggable': isWideScreen }" :draggable="isWideScreen" @click="$emit('showDetails')" @dragstart="handleFileNameDragStart" @dragend="handleFileNameDragEnd" :title="file.name">{{ file.name }}</span>
+      <span class="file-path-hint" :class="{ 'file-path-draggable': isWideScreen && !isUntitled }" :draggable="isWideScreen && !isUntitled" @click="$emit('showDetails')" @dragstart="handleFileNameDragStart" @dragend="handleFileNameDragEnd" :title="displayName">{{ displayName }}</span>
       <!-- The viewer can open any path a chat annotation names, including files
            outside the project; without this the header looks identical to a
            project file and the user has no cue where the file came from. -->
@@ -60,7 +60,7 @@
            single entry point, and an attached file is removed from its chip in
            the chat input. -->
       <button v-if="toolbarInlineIds.includes('attach')" ref="attachBtnRef" class="file-header-btn" @click.stop="handleQuoteInChat" :title="t('file.header.quoteInChat')" :aria-label="t('file.header.quoteInChat')">
-        <MessageSquare :size="14" />
+        <MessageSquareQuote :size="14" />
       </button>
 
       <!-- Lightbox view button (image / svg files only): opens the image full-size
@@ -169,7 +169,7 @@
               {{ t('file.header.fitWidth') }}
             </button>
             <button v-if="toolbarCollapsedIds.includes('attach')" class="dropdown-item" @click="handleQuoteInChat(); menuOpen = false">
-              <MessageSquare :size="14" />
+              <MessageSquareQuote :size="14" />
               {{ t('file.header.quoteInChat') }}
             </button>
             <button v-if="isImageFile && toolbarCollapsedIds.includes('viewImage')" class="dropdown-item" @click="handleViewImage(); menuOpen = false">
@@ -221,7 +221,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquareQuote, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -262,6 +262,17 @@ const { refreshFileShare, isFileShared } = useFileShare()
  *  path the server exposes; the viewer opens them like any other file). */
 const isExternalFile = computed(() => isAbsolutePath(props.file?.path || ''))
 
+/**
+ * A new, not-yet-saved buffer. It has no path on disk, so every path-backed
+ * action (refresh, download, share, delete, details, history, open-directory,
+ * quote-in-chat, set-as-wallpaper) is meaningless and is hidden rather than
+ * offered as a button that would fail.
+ */
+const isUntitled = computed(() => !!props.file?.untitled)
+
+/** Header label: the real filename, or the localized placeholder until saved. */
+const displayName = computed(() => (isUntitled.value ? t('file.untitled') : props.file?.name || ''))
+
 // Whether the currently open file has an active public share link. Mirrors the
 // ShareLinkDialog state via the module-level Set so the button highlights as
 // soon as a link is created/revoked without extra prop plumbing.
@@ -298,19 +309,21 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
   () => headerActionsRef.value,
   () => {
     const ids = []
-    if (hasTextContent.value) ids.push('refresh')
+    // Refresh / attach / download all read from the file's path on disk, which
+    // an unsaved Untitled buffer does not have yet.
+    if (hasTextContent.value && !isUntitled.value) ids.push('refresh')
     if (hasToc.value) ids.push('toc')
     if (hasSearch.value) ids.push('search')
     if (hasFitWidth.value) ids.push('fitWidth')
-    ids.push('attach')
+    if (!isUntitled.value) ids.push('attach')
     if (isImageFile.value) ids.push('viewImage')
     if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value)) ids.push('toggleView')
     // Edit always sits right next to the preview toggle: the two form a single
     // view-mode control pair with no other buttons in between.
     if (isEditable.value) ids.push('edit')
     // Extra actions demote to the More dropdown when space runs out.
-    if (isAppMode.value) ids.push('shareExternal')
-    ids.push('download')
+    if (isAppMode.value && !isUntitled.value) ids.push('shareExternal')
+    if (!isUntitled.value) ids.push('download')
     return ids
   },
   { inlineCount: 1, gap: 8 },
@@ -363,7 +376,12 @@ const isWallpaperSource = computed(() => {
 })
 // Editable: text/source files in raw view (excludes media).
 // Markdown is always editable (even in rendered view) so users can edit the source.
+//
+// An Untitled buffer is excluded: it is always in edit mode, so an "edit" toggle
+// would only offer to drop it back to a read-only view of a file that does not
+// exist. Its exit affordance is the close button / Back.
 const isEditable = computed(() => {
+    if (isUntitled.value) return false
     if (!hasTextContent.value || isMediaFile.value) return false
     if (isMarkdown.value) return true
     // Other templated types (HTML/OpenAPI) are only editable in source view
@@ -396,19 +414,25 @@ const hasFitWidth = computed(() => {
 // these inline.
 const permanentMenuIds = computed(() => {
   const ids = []
-  ids.push('details')
-  ids.push('openDirectory')
-  ids.push('gitHistory')
-  if (!props.editing) ids.push('shareLink')
-  if (props.file?.isBinary) ids.push('openAsText')
-  if (isMarkdown.value && effectiveViewMode.value === 'rendered') ids.push('exportHtml')
-  if (isWallpaperSource.value) ids.push('setAsBackground')
+  // Every entry below acts on the file's path on disk. An unsaved Untitled
+  // buffer has none yet, so the whole permanent group (details/openDirectory/
+  // gitHistory/shareLink/openAsText/exportHtml/setAsBackground/delete) is
+  // omitted — only editor preferences remain.
+  if (!isUntitled.value) {
+    ids.push('details')
+    ids.push('openDirectory')
+    ids.push('gitHistory')
+    if (!props.editing) ids.push('shareLink')
+    if (props.file?.isBinary) ids.push('openAsText')
+    if (isMarkdown.value && effectiveViewMode.value === 'rendered') ids.push('exportHtml')
+    if (isWallpaperSource.value) ids.push('setAsBackground')
+  }
   if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) {
     ids.push('wordWrap')
     ids.push('lineNumbers')
     ids.push('stickyScroll')
   }
-  ids.push('delete')
+  if (!isUntitled.value) ids.push('delete')
   return ids
 })
 

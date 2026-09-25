@@ -79,7 +79,11 @@ describe('processTerminalMessage', () => {
         sessionId: 'abc123',
         currentCwd: '/home/user/project',
       })
-      expect(onStatus).toHaveBeenCalledWith({ running: true, cwd: '/home/user/project' })
+      // The session id is handed to the callback as well as returned in the
+      // result: holders of a separate copy (the tab record) must be able to take
+      // it here, because this callback fires before the result is applied to the
+      // session ref.
+      expect(onStatus).toHaveBeenCalledWith({ running: true, cwd: '/home/user/project', sessionId: 'abc123' })
     })
 
     it('does not update sessionId when not provided', () => {
@@ -98,7 +102,9 @@ describe('processTerminalMessage', () => {
         makeState(),
         { onStatus }
       )
-      expect(onStatus).toHaveBeenCalledWith({ running: true, cwd: '/home' })
+      // No sessionId on the wire → passed through as undefined (the tab record
+      // keeps its previous value rather than being cleared).
+      expect(onStatus).toHaveBeenCalledWith({ running: true, cwd: '/home', sessionId: undefined })
     })
 
     it('defaults cwd to empty string when not provided', () => {
@@ -109,7 +115,7 @@ describe('processTerminalMessage', () => {
         { onStatus }
       )
       expect(result.currentCwd).toBe('')
-      expect(onStatus).toHaveBeenCalledWith({ running: true, cwd: '' })
+      expect(onStatus).toHaveBeenCalledWith({ running: true, cwd: '', sessionId: undefined })
     })
   })
 

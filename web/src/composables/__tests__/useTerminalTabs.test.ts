@@ -572,6 +572,39 @@ describe('useTerminalTabs', () => {
       expect(tab.title).toBe('newproject')
     })
 
+    it('takes the session id from the status callback', () => {
+      // Regression: the status message is the authoritative source of the
+      // session id, and this callback fires before the session ref is updated.
+      // Without taking it here, tab.sessionId (a separate copy only written by
+      // explicit syncTabSessionId() calls, which on first connect run BEFORE the
+      // message arrives) stayed empty — so consumers reading it, like the
+      // drag-drop upload and the "open current directory" button, silently got
+      // nothing and fell back to the launch directory.
+      const mgr = createTabManager()
+      const tab = mgr.createTab('/home/old')
+      const rawSession = getRawSession(tabIndex(mgr, tab))
+
+      expect(tab.sessionId).toBe('')
+
+      const setCallbacksCall = rawSession.setCallbacks.mock.calls[0][0]
+      setCallbacksCall.onStatus({ running: true, cwd: '/home/old', sessionId: 'sess-abc' })
+
+      expect(tab.sessionId).toBe('sess-abc')
+    })
+
+    it('keeps the existing session id when a status carries none', () => {
+      // A status message without a session id must not blank the tab's copy.
+      const mgr = createTabManager()
+      const tab = mgr.createTab('/home/old')
+      const rawSession = getRawSession(tabIndex(mgr, tab))
+      const setCallbacksCall = rawSession.setCallbacks.mock.calls[0][0]
+
+      setCallbacksCall.onStatus({ running: true, cwd: '/home/old', sessionId: 'sess-abc' })
+      setCallbacksCall.onStatus({ running: true, cwd: '/home/other' })
+
+      expect(tab.sessionId).toBe('sess-abc')
+    })
+
     it('does nothing for nonexistent tab', () => {
       const mgr = createTabManager()
       expect(() => mgr.updateTabCwd('nonexistent-id', '/home')).not.toThrow()

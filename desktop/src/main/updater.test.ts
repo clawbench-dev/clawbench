@@ -42,6 +42,17 @@ describe('compareVersions', () => {
     expect(compareVersions('2.0.0', '1.99.99')).toBeGreaterThan(0)
     expect(compareVersions('1.0.1', '1.0.0')).toBeGreaterThan(0)
   })
+
+  it('compares v-prefixed versions, which is how the server reports them', () => {
+    // Regression guard: the server sends `v0.99.1` (git describe) while
+    // app.getVersion() sends `0.99.1`. Without normalization parseInt('v1') is
+    // NaN -> 0, so compareVersions('v1.0.0', '0.99.1') was negative and the
+    // update check would go permanently silent at the v1.0.0 release.
+    expect(compareVersions('v1.0.0', '0.99.1')).toBeGreaterThan(0)
+    expect(compareVersions('v0.99.2', '0.99.1')).toBeGreaterThan(0)
+    expect(compareVersions('v0.99.1', '0.99.1')).toBe(0)
+    expect(compareVersions('v0.99.0', '0.99.1')).toBeLessThan(0)
+  })
 })
 
 describe('platformKey', () => {
@@ -137,5 +148,66 @@ describe('checkForUpdate', () => {
     ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(Buffer.from('<html>not json</html>'))
     const info = await checkForUpdate()
     expect(info.hasUpdate).toBe(false)
+  })
+
+  it('surfaces the payload URLs for the running platform', async () => {
+    // Keyed off the RUNNING platform so the assertion does not silently depend
+    // on the suite executing on Linux.
+    const key = platformKey(process.platform, process.arch)
+    mockStore('https://example.com:20000')
+    ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
+      Buffer.from(JSON.stringify({
+        version: '2.0.0',
+        tag: 'v2.0.0',
+        downloads: { [key]: ['https://mirror/full.zip'] },
+        payloads: { [key]: ['https://mirror/payload.zip', 'https://github.com/payload.zip'] },
+      })),
+    )
+
+    const info = await checkForUpdate()
+    expect(info.hasUpdate).toBe(true)
+    // Order preserved so the client tries the mirror before github.com.
+    expect(info.payloadUrls).toEqual([
+      'https://mirror/payload.zip',
+      'https://github.com/payload.zip',
+    ])
+    expect(info.urls).toEqual(['https://mirror/full.zip'])
+  })
+
+  it('reports no payload for a platform the server does not publish one for', async () => {
+    // macOS: the server omits the key entirely. That must read as "download the
+    // full package", not as an error or an update-less state.
+    const key = platformKey(process.platform, process.arch)
+    const other = key === 'win32-x64' ? 'linux-x64' : 'win32-x64'
+    mockStore('https://example.com:20000')
+    ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
+      Buffer.from(JSON.stringify({
+        version: '2.0.0',
+        tag: 'v2.0.0',
+        downloads: { [key]: ['https://mirror/full.zip'] },
+        payloads: { [other]: ['https://mirror/payload.zip'] },
+      })),
+    )
+
+    const info = await checkForUpdate()
+    expect(info.hasUpdate).toBe(true)
+    expect(info.payloadUrls).toEqual([])
+  })
+
+  it('reports no payload against a server that predates the field', async () => {
+    // Backward compatibility: an older server returns no `payloads` at all.
+    const key = platformKey(process.platform, process.arch)
+    mockStore('https://example.com:20000')
+    ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
+      Buffer.from(JSON.stringify({
+        version: '2.0.0',
+        tag: 'v2.0.0',
+        downloads: { [key]: ['https://mirror/full.zip'] },
+      })),
+    )
+
+    const info = await checkForUpdate()
+    expect(info.hasUpdate).toBe(true)
+    expect(info.payloadUrls).toEqual([])
   })
 })

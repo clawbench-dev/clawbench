@@ -59,6 +59,7 @@ import { store } from '@/stores/app.ts'
 import { dirName } from '@/utils/path.ts'
 import { flashElement } from '@/utils/domFlash'
 import { buildMarkdownPreviewDom } from '@/composables/useMarkdownRenderPipeline.ts'
+import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import MarkdownSearchBar from '@/components/file/MarkdownSearchBar.vue'
@@ -73,6 +74,7 @@ import { handleDiffMarkerClick } from '@/composables/useDiffMarkerClick.ts'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { captureMarkdownScroll } from '@/composables/useFileScrollRestore.ts'
 import { setFileScroll, type FileScrollEntry } from '@/utils/fileScrollCache.ts'
+import { handleShareLinkClick } from '@/share/shareLinks'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import '@/assets/diff-marker.css'
 
@@ -156,6 +158,9 @@ function captureCurrentScrollState(): FileScrollEntry | null {
 }
 
 function onImageLoad() {
+    // An SVG file's intrinsic size is only known once it has decoded, so the
+    // proportional fill-width sizing is re-stamped on every media load.
+    stampSvgFigures(bodyRef.value)
     window.dispatchEvent(new CustomEvent('realign-file-scroll'))
 }
 
@@ -210,6 +215,12 @@ function onMarkdownDragEnd(e: DragEvent) {
 }
 
 function handleClick(event: MouseEvent) {
+    // Share mode: a relative link inside the shared document switches the
+    // share view in place. Must run FIRST — the fallback chain below ends in
+    // openFilePath, which resolves against the (empty) project root and hits
+    // auth-protected endpoints that an anonymous reader cannot use.
+    if (handleShareLinkClick(event)) return
+
     // Touch image attach badge — first in the chain so its stopPropagation
     // prevents the click from reaching the image/lightbox handlers below.
     if (handleMdImageAttachClick(event, mdImageAttachActions)) return
@@ -384,6 +395,10 @@ async function doRender(f: { content: string; path?: string; error?: boolean }) 
     const mermaidTarget = el.querySelector('.markdown-content') as HTMLElement || el
     await renderMermaidInElement(mermaidTarget, 'md-preview')
 
+    // Proportional fill-width sizing for SVG media (inline <svg> needs no load,
+    // so this resolves it immediately; SVG files are re-stamped on load).
+    stampSvgFigures(mermaidTarget)
+
     // Update last block list cache and compute marker positions after rendering completes
     if (renderId === currentRenderId) {
         lastBlockList.value = extractBlocks(el.querySelector('.markdown-content') || el)
@@ -416,6 +431,9 @@ watch(() => props.viewMode, async (mode) => {
     if (!el) return
     const mermaidTarget = el.querySelector('.markdown-content') as HTMLElement || el
     await renderMermaidInElement(mermaidTarget, 'md-preview')
+    // Mermaid re-renders here (returning to the rendered view); the diagrams are
+    // freshly produced, so re-stamp their proportional sizing.
+    stampSvgFigures(mermaidTarget)
     window.dispatchEvent(new CustomEvent('realign-file-scroll'))
 })
 

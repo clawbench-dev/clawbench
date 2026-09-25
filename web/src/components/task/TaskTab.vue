@@ -4,6 +4,13 @@
     <TaskDetailPage v-else-if="currentView === 'settings' && !execDetailOpen && !formViewOpen && selectedTaskData" :task="selectedTaskData" @edit="onEdit" @deleted="onTaskDeleted" />
     <TaskExecDetail v-else-if="execDetailOpen && !formViewOpen" :execDetail="selectedExecData" :taskName="selectedTaskData?.name" :taskId="selectedTaskId" @close="closeExecDetail" @open-file="onOpenFile" />
     <TaskFormPage v-else-if="formViewOpen" :mode="formMode" :task="(formMode === 'edit' ? selectedTaskData : null) as Record<string, unknown> | null" @close="closeForm" @saved="onFormSaved" />
+    <!-- Advisory hint shown before the manual create form. Teleports to <body>,
+         so its position here is for readability only. -->
+    <TaskCreateHintDialog
+      :open="createHintOpen"
+      @close="closeCreateHint"
+      @manual="onManualCreate"
+    />
   </div>
 </template>
 
@@ -13,8 +20,10 @@ import TaskListPage from '@/components/task/TaskListPage.vue'
 import TaskDetailPage from '@/components/task/TaskDetailPage.vue'
 import TaskExecDetail from '@/components/task/TaskExecDetail.vue'
 import TaskFormPage from '@/components/task/TaskFormPage.vue'
+import TaskCreateHintDialog from '@/components/task/TaskCreateHintDialog.vue'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
+import { isTaskCreateHintDismissed } from '@/composables/useTaskCreateHint'
 import { store } from '@/stores/app'
 
 const props = defineProps<{
@@ -43,7 +52,25 @@ const selectedTaskData = computed(() =>
 
 const listPageRef = ref<InstanceType<typeof TaskListPage> | null>(null)
 
+// The "+" button leads to the manual form, but AI-managed tasks are the
+// smoother route, so an advisory hint is shown first. It is skipped entirely
+// once dismissed (localStorage), in which case "+" opens the form directly.
+const createHintOpen = ref(false)
+
 function onCreate() {
+  if (isTaskCreateHintDismissed()) {
+    openCreateForm()
+    return
+  }
+  createHintOpen.value = true
+}
+
+function closeCreateHint() {
+  createHintOpen.value = false
+}
+
+function onManualCreate() {
+  createHintOpen.value = false
   openCreateForm()
 }
 

@@ -4,6 +4,12 @@ import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ForgePanelContent from '@/components/forge/ForgePanelContent.vue'
 import { canNavigateBack, handleBackNavigation, _resetHandlers } from '@/composables/useBackHandler'
+import {
+  setPendingForgeTarget,
+  clearPendingForgeTarget,
+  consumePendingForgeTarget,
+  pendingForgeTarget,
+} from '@/composables/useForgeNavigation'
 
 // Panels keep timers/watchers alive after a test; auto-unmount every wrapper so
 // one test's panel cannot affect the next.
@@ -127,6 +133,7 @@ vi.mock('@/composables/useForgeUnread', async () => {
 const mockFetchRemotes = vi.fn(async () => ({ remotes: [] }))
 const mockSetBinding = vi.fn(async () => ({ binding: {} }))
 const mockDeleteBinding = vi.fn(async () => undefined)
+const mockMarkForgeRead = vi.fn(async () => ({ count: 0 }))
 vi.mock('@/utils/forgeApi', async () => {
   const actual = await vi.importActual<typeof import('@/utils/forgeApi')>('@/utils/forgeApi')
   return {
@@ -134,6 +141,7 @@ vi.mock('@/utils/forgeApi', async () => {
     fetchForgeRemotes: (...a: unknown[]) => mockFetchRemotes(...a),
     setForgeBinding: (...a: unknown[]) => mockSetBinding(...a),
     deleteForgeBinding: (...a: unknown[]) => mockDeleteBinding(...a),
+    markForgeRead: (...a: unknown[]) => mockMarkForgeRead(...a),
   }
 })
 
@@ -1498,5 +1506,208 @@ describe('ForgePanelContent non-official host warning', () => {
     )
 
     wrapper.unmount()
+  })
+})
+
+/**
+ * Notification deep-link: a clicked forge notification (or completion card)
+ * publishes a target that the panel must open — including when the forge tab is
+ * ALREADY active, where switchTab() is a no-op and the module-level ref change
+ * is the only signal the panel gets.
+ */
+describe('ForgePanelContent forge deep-link', () => {
+  const opts = {
+    ...globalOpts,
+    plugins: [makeI18n()],
+    stubs: {
+      ...globalOpts.stubs,
+      ForgeDetail: { name: 'ForgeDetail', props: ['type', 'number'], template: '<div />' },
+      ForgePipelineDetail: { name: 'ForgePipelineDetail', props: ['runId'], template: '<div />' },
+      ForgeOverviewList: {
+        name: 'ForgeOverviewList',
+        props: ['active', 'projectPath'],
+        emits: ['open-item'],
+        template: '<div class="overview-stub" />',
+      },
+    },
+  }
+
+  beforeEach(() => {
+    _resetHandlers()
+    vi.clearAllMocks()
+    clearPendingForgeTarget()
+    state.items.value = []
+    state.binding.value = { slug: 'acme/widgets' }
+    state.suggested.value = null
+    state.loading.value = false
+    state.error.value = null
+    state.isBound.value = true
+    state.type.value = 'issue'
+    state.state.value = 'open'
+    state.mineFilter.value = 'all'
+  })
+
+  it('opens a PR target on mount when the panel was not mounted yet', async () => {
+    // The target is published while the user has never opened the forge tab, so
+    // the panel's lazy TabPanel mounts it afterwards — mount is the only chance
+    // it gets to see the target.
+    setPendingForgeTarget({ type: 'pr', number: 455, runId: 0, itemKey: 'pr/455' })
+
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    const detail = wrapper.findComponent({ name: 'ForgeDetail' })
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('type')).toBe('pr')
+    expect(detail.props('number')).toBe(455)
+  })
+
+  it('opens a pipeline target by run id, not by its number', async () => {
+    // A pipeline's number is always 0; routing on it would open run 0.
+    setPendingForgeTarget({ type: 'pipeline', number: 0, runId: 555, itemKey: 'pipeline/run:555' })
+
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    const detail = wrapper.findComponent({ name: 'ForgePipelineDetail' })
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('runId')).toBe(555)
+  })
+
+  it('opens a target that arrives while the panel is already active', async () => {
+    // The regression this guards: switchTab('forge') is a no-op when the tab is
+    // already active, so nothing would ever look at the target without the ref
+    // watcher.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ForgeDetail' }).exists()).toBe(false)
+
+    setPendingForgeTarget({ type: 'issue', number: 9, runId: 0, itemKey: 'issue/9' })
+    await flushPromises()
+
+    const detail = wrapper.findComponent({ name: 'ForgeDetail' })
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('type')).toBe('issue')
+    expect(detail.props('number')).toBe(9)
+  })
+
+  it('opens a target that arrived while the panel was inactive, on activation', async () => {
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: false, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    setPendingForgeTarget({ type: 'pr', number: 12, runId: 0, itemKey: 'pr/12' })
+    await flushPromises()
+    // Inactive: nothing should have opened yet.
+    expect(wrapper.findComponent({ name: 'ForgeDetail' }).exists()).toBe(false)
+
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+
+    const detail = wrapper.findComponent({ name: 'ForgeDetail' })
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('number')).toBe(12)
+  })
+
+  it('consumes the target exactly once', async () => {
+    setPendingForgeTarget({ type: 'pr', number: 455, runId: 0, itemKey: 'pr/455' })
+
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    expect(pendingForgeTarget.value).toBeNull()
+    expect(consumePendingForgeTarget()).toBeNull()
+  })
+
+  it('leaves a target for ANOTHER project alone (the old panel is still mounted)', async () => {
+    // handleOpenForge publishes the target BEFORE hotSwitchProject, because the
+    // destination panel must not miss it. At that instant the previous project's
+    // panel is still mounted and would see it first — consuming it there would
+    // open the wrong project's repository and mark the wrong item read.
+    //
+    // The destination panel then gets it on its own mount: the project switch
+    // replaces the keyed subtree, so a fresh instance consumes it. (That path is
+    // covered by "opens a PR target on mount" above.)
+    setPendingForgeTarget({
+      projectPath: '/other',
+      type: 'pr',
+      number: 455,
+      runId: 0,
+      itemKey: 'pr/455',
+    })
+
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'ForgeDetail' }).exists()).toBe(false)
+    expect(mockMarkForgeRead).not.toHaveBeenCalled()
+    // Still armed for the panel that will own it.
+    expect(pendingForgeTarget.value?.itemKey).toBe('pr/455')
+  })
+
+  it('opens a target with no project attribution (same-project click)', async () => {
+    setPendingForgeTarget({ type: 'pr', number: 455, runId: 0, itemKey: 'pr/455' })
+
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'ForgeDetail' }).exists()).toBe(true)
+  })
+
+  it('opens a cross-project target once the destination panel mounts', async () => {
+    // The destination half of the gate: after hotSwitchProject, the new project's
+    // panel mounts with projectPath === target.projectPath and must consume it.
+    setPendingForgeTarget({
+      projectPath: '/other',
+      type: 'pipeline',
+      number: 0,
+      runId: 555,
+      itemKey: 'pipeline/run:555',
+    })
+
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/other' },
+      global: opts,
+    })
+    await flushPromises()
+
+    const detail = wrapper.findComponent({ name: 'ForgePipelineDetail' })
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('runId')).toBe(555)
+    expect(pendingForgeTarget.value).toBeNull()
+  })
+
+  it('marks the deep-linked item read with its opaque key', async () => {
+    // A pipeline's key cannot be rebuilt from (type, number) — it must be sent
+    // verbatim, or the run stays unread forever.
+    setPendingForgeTarget({ type: 'pipeline', number: 0, runId: 555, itemKey: 'pipeline/run:555' })
+
+    mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    expect(mockMarkForgeRead).toHaveBeenCalledWith('pipeline/run:555')
   })
 })

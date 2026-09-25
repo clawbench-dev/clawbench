@@ -22,6 +22,7 @@ func TestServeDesktopLatest(t *testing.T) {
 			Version:   "v0.98.0",
 			Tag:       "v0.98.0",
 			Downloads: map[string][]string{"win32-x64": {"https://github.com/o/r/releases/download/v0.98.0/x.zip"}},
+			Payloads:  map[string][]string{"win32-x64": {"https://github.com/o/r/releases/download/v0.98.0/p.zip"}},
 		}, nil
 	}
 
@@ -36,6 +37,13 @@ func TestServeDesktopLatest(t *testing.T) {
 	assert.Equal(t, "v0.98.0", body.Tag)
 	require.Len(t, body.Downloads["win32-x64"], 1)
 	assert.Equal(t, "https://github.com/o/r/releases/download/v0.98.0/x.zip", body.Downloads["win32-x64"][0])
+	// The payload list must survive the JSON round-trip; the desktop client
+	// reads it to decide whether it can skip the full download.
+	require.Len(t, body.Payloads["win32-x64"], 1)
+	assert.Equal(t, "https://github.com/o/r/releases/download/v0.98.0/p.zip", body.Payloads["win32-x64"][0])
+	// macOS has no payload, so the key must be absent rather than an empty list.
+	_, hasDarwin := body.Payloads["darwin-arm64"]
+	assert.False(t, hasDarwin, "macOS must have no payload key")
 }
 
 // A dev server has no matching release, so it must answer 200 with an empty
@@ -50,6 +58,7 @@ func TestServeDesktopLatest_DevBuildReturnsEmptyDownloads(t *testing.T) {
 			Version:   "dev",
 			Tag:       "",
 			Downloads: map[string][]string{},
+			Payloads:  map[string][]string{},
 		}, nil
 	}
 
@@ -62,6 +71,7 @@ func TestServeDesktopLatest_DevBuildReturnsEmptyDownloads(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
 	assert.Equal(t, "dev", body.Version)
 	assert.Empty(t, body.Downloads)
+	assert.Empty(t, body.Payloads)
 }
 
 func TestServeDesktopLatest_FetchError(t *testing.T) {

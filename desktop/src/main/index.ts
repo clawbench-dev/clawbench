@@ -3,7 +3,13 @@ import { initStore } from './store'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { checkForUpdate } from './updater'
-import { downloadAndInstall, restartInto, handOffToPointedVersion } from './install'
+import {
+  downloadAndInstall,
+  restartInto,
+  handOffToPointedVersion,
+  installPayload,
+  appRoot,
+} from './install'
 import { recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
 
@@ -66,8 +72,27 @@ async function promptAndInstallUpdate(): Promise<void> {
   })
   if (response !== 0) return
 
+  // Prefer the small payload archive: it carries only our app code (~3MB) and
+  // reuses the installed Electron runtime, instead of re-downloading ~150MB.
+  //
+  // macOS is excluded because replacing resources/app.asar inside a signed
+  // .app breaks the code-signature seal (Apple Silicon requires a valid one),
+  // and the server publishes no payload for it either. Any payload failure —
+  // a dead mirror, an ABI mismatch, a malformed archive — falls through to the
+  // full download below rather than failing the upgrade.
+  let installed = false
+  if (process.platform !== 'darwin' && info.payloadUrls.length > 0) {
+    try {
+      await installPayload(info.payloadUrls, info.version, appRoot())
+      installed = true
+    } catch (err) {
+      console.error('[main] payload install failed, falling back to full download:', err)
+      recordError('Install', err)
+    }
+  }
+
   try {
-    await downloadAndInstall(info.urls, info.version, '')
+    if (!installed) await downloadAndInstall(info.urls, info.version, '')
   } catch (err) {
     await dialog.showMessageBox(parent as BrowserWindow, {
       type: 'error',

@@ -7,6 +7,7 @@ import { useDirectoryReturn, _resetForTesting as resetDirectoryReturn } from '..
 import { useNavigationCoordinator } from '../useNavigationCoordinator'
 import { PANE_LEFT, PANE_RIGHT, type ActivePane } from '../useWideScreenLayout'
 import { setFileScroll } from '@/utils/fileScrollCache'
+import { gt } from '@/composables/useLocale'
 
 describe('useNavigationCoordinator', () => {
   const navigation = useNavigationContext()
@@ -559,6 +560,47 @@ describe('useNavigationCoordinator', () => {
       } finally {
         window.dispatchEvent = origDispatch
       }
+    })
+
+    it('records a terminal origin when the terminal opens its cwd in the manager', async () => {
+      // The terminal toolbar's "open current directory" button dispatches this
+      // event with source 'terminal'. Without an origin the Back affordance
+      // would fall back to walking up the directory tree instead of returning
+      // to the terminal the user just left.
+      //
+      // The user is ON the terminal tab when they click, so the origin's `tab`
+      // comes from the live activeTab (resolveJumpOriginTab records it) — this
+      // is also what makes Back land on the terminal rather than whatever tab
+      // preceded it.
+      activeTab.value = 'terminal'
+      const coord = createCoordinator()
+      coord.handleOpenDirectoryFromEvent({
+        detail: { path: '/tmp/scratch', source: 'terminal' },
+      } as any)
+      await flushPromises()
+
+      expect(fakeStore.navigateToDir).toHaveBeenCalledWith('/tmp/scratch')
+      expect(navigation.hasOrigin.value).toBe(true)
+      expect(navigation.origin.value?.surface).toBe('terminal')
+      expect(navigation.origin.value?.tab).toBe('terminal')
+    })
+
+    it('labels the terminal origin "Back to Terminal"', async () => {
+      activeTab.value = 'terminal'
+      const coord = createCoordinator()
+      coord.handleOpenDirectoryFromEvent({
+        detail: { path: '/tmp/scratch', source: 'terminal' },
+      } as any)
+      await flushPromises()
+
+      // Resolve the key through the real i18n bundle rather than hardcoding a
+      // translation: the active locale depends on detectLocale() (cookie/UA), so
+      // a literal string would pass or fail by environment. What matters is that
+      // the label is the terminal-specific one and not the generic "Back".
+      const backToTerminal = gt('file.nav.backToTerminal')
+      const genericBack = gt('common.back')
+      expect(navigation.origin.value?.label).toBe(backToTerminal)
+      expect(navigation.origin.value?.label).not.toBe(genericBack)
     })
 
     it('handles open file overlay with task and history sources', () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 // Mock fetch for image embedding + path verification + KaTeX font requests.
 const mockFetch = vi.fn()
@@ -17,6 +18,11 @@ configureMarkedRenderer()
 // container with an <svg> like mermaid.ts does on success.
 vi.mock('@/utils/mermaid.ts', () => ({
   renderMermaidInElement: vi.fn(async (el: HTMLElement, prefix = 'mermaid', specificBlocks?: NodeList) => {
+    // Mirrors the real renderer: after a successful render it arms the figure
+    // (armMermaidFigureForContext → armMermaidFigure). The failed branch does
+    // NOT arm — matching production, where the error container is left bare for
+    // handleFailedMermaid to replace.
+    const { armMermaidFigure } = await import('@/utils/mediaBlockFactory.ts')
     const blocks = specificBlocks || el.querySelectorAll('pre.mermaid:not([data-rendered])')
     for (const block of Array.from(blocks)) {
       const pre = block as HTMLElement
@@ -32,9 +38,12 @@ vi.mock('@/utils/mermaid.ts', () => ({
         container.innerHTML = '<pre class="mermaid-error-pre">Mermaid Error: syntax</pre><button class="mermaid-retry-btn" type="button">Retry</button>'
       } else {
         container.setAttribute('data-mermaid', source)
-        container.innerHTML = '<svg class="mermaid-svg"><g /></svg>'
+        // Mermaid's real output shape: an inline max-width carrying its natural
+        // size, plus width="100%" so it can grow to the container.
+        container.innerHTML = '<svg class="mermaid-svg" width="100%" viewBox="0 0 1008.125 70" style="max-width: 1008.125px;"><g /></svg>'
       }
       pre.replaceWith(container)
+      if (!container.dataset.mermaidError) armMermaidFigure(container, { attach: false })
     }
   }),
   initMermaid: vi.fn(),
@@ -478,5 +487,61 @@ describe('exportMarkdownToHtml', () => {
     document.body.innerHTML = ''
     const result = await exportMarkdownToHtml(opts({ content: '# Solo title' }))
     expect(result.html).toContain('<h1')
+  })
+
+  it('stamps inline svg figures with the ratio-driven fill-width sizing', async () => {
+    // An inline <svg> block must be lifted into a figure and marked `.svg-fit`
+    // with its aspect ratio, so the exported document sizes it exactly like the
+    // in-app preview. The ratio is derived from the viewBox (no image load).
+    const result = await exportMarkdownToHtml(
+      opts({ content: '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>' }),
+    )
+    expect(result.html).toContain('image-block-wrapper svg-fit')
+    expect(result.html).toContain('--svg-ar: 4')
+  })
+
+  it('carries the svg-fit CSS rules into the standalone export', async () => {
+    // The sizing lives in media-block.css, which the hit-detection serializer
+    // copies only for rules that match the exported DOM. A document with SVG
+    // media must therefore bring the ratio-driven width rule along — otherwise
+    // the export would show the media at its intrinsic size.
+    //
+    // jsdom starts with NO stylesheets (the app links its CSS from index.html,
+    // which the test never loads), so the real media-block.css is injected here
+    // to exercise the production hit-detection path against the real rule text.
+    const css = readWebFile('css/media-block.css')
+    const style = document.createElement('style')
+    style.textContent = css
+    document.head.appendChild(style)
+    try {
+      const result = await exportMarkdownToHtml(
+        opts({ content: '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>' }),
+      )
+      expect(result.html).toContain('.image-block-wrapper.svg-fit')
+      expect(result.html).toContain('min(100%, calc(60dvh * var(--svg-ar, 1)))')
+    } finally {
+      style.remove()
+    }
+  })
+
+  it('sizes mermaid diagrams like other SVG media, overriding the inline max-width', async () => {
+    // Mermaid emits `style="max-width: Npx"` inline (its natural size). The
+    // exported document must (a) stamp the figure with its aspect ratio and
+    // (b) carry the !important stylesheet override — without it a wide
+    // flowchart stays squashed at its natural width in the standalone file.
+    const css = readWebFile('css/media-block.css')
+    const style = document.createElement('style')
+    style.textContent = css
+    document.head.appendChild(style)
+    try {
+      const result = await exportMarkdownToHtml(
+        opts({ content: '```mermaid\ngraph LR; A-->B\n```' }),
+      )
+      expect(result.html).toContain('image-block-wrapper svg-fit')
+      expect(result.html).toContain('--svg-ar:')
+      expect(result.html).toContain('max-width: 100% !important')
+    } finally {
+      style.remove()
+    }
   })
 })

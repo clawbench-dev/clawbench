@@ -17,17 +17,13 @@
           @focusin="pauseAutoDismiss"
           @focusout="resumeAutoDismiss"
         >
-          <div class="completion-notify-main">
+          <!-- 头部：图标 + 主类别徽章 + 事件类型标题 + 关闭。
+               类别是分类（会话/任务/议题与合并），事件是结果——两者层级不同，
+               因此类别保持徽章形态，事件用纯文字标题。 -->
+          <div class="completion-notify-header">
             <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-notify-icon" />
-            <div class="completion-notify-text">
-              <div class="completion-notify-head">
-                <!-- 两枚 chip：类别定归属（会话/任务/议题与合并），事件定内容 -->
-                <span v-if="active.kindLabel" class="completion-notify-kind is-category">{{ active.kindLabel }}</span>
-                <span class="completion-notify-kind" :class="`is-${active.eventTone}`">{{ displayKind }}</span>
-                <span class="completion-notify-title">{{ active.title }}</span>
-              </div>
-              <div v-if="active.body" class="completion-notify-body">{{ active.body }}</div>
-            </div>
+            <span v-if="active.kindLabel" class="completion-notify-category">{{ active.kindLabel }}</span>
+            <span class="completion-notify-kind" :class="`is-${active.eventTone}`">{{ displayKind }}</span>
             <button
               class="completion-notify-close"
               type="button"
@@ -36,6 +32,11 @@
             >
               <X :size="14" />
             </button>
+          </div>
+          <!-- 正文：标题段（谁 / 哪个仓库）+ 内容段（摘要），两段分开排版 -->
+          <div class="completion-notify-main">
+            <div class="completion-notify-title">{{ active.title }}</div>
+            <div v-if="active.body" class="completion-notify-body">{{ active.body }}</div>
           </div>
           <!-- 外部项目区隔带：跨项目通知才出现。负 margin 抵消卡片内边距后铺满
                整宽，accent 淡底 + 上边框把它从正文里分离出来——塞进正文行会被
@@ -102,6 +103,10 @@ const navigateLabel = computed(() => {
  *
  * 已读是 fire-and-forget：跳转不该等一个网络往返，且标记失败也不该阻止
  * 用户到达目标位置（角标会由下一次刷新自我修正）。
+ *
+ * forge 的已读不在这里做：条目级已读的前提是"知道是哪一条"，而那需要 run id
+ * 之类的条目身份，统一由面板在打开详情时用不透明的 itemKey 写入。卡片再写一遍
+ * 只会对同一次点击发两次 POST，且两个组件各自持有一份"已读"的真相。
  */
 function activate(): void {
     const item = active.value
@@ -113,7 +118,9 @@ function activate(): void {
         }))
     } else if (item.kind === 'forge') {
         window.dispatchEvent(new CustomEvent('clawbench-open-forge', {
-            detail: { projectPath: item.projectPath },
+            // 带上条目级目标，点击直接落到该条目详情而不是只打开页签。
+            // 目标缺失（事件没带 item_type）时退化为"只打开页签"。
+            detail: { projectPath: item.projectPath, target: item.forgeTarget },
         }))
     } else {
         window.dispatchEvent(new CustomEvent('clawbench-open-session', {
@@ -139,14 +146,8 @@ function markRead(item: NonNullable<typeof active.value>): void {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'read', executionId: item.executionId }),
             }).catch(() => {})
-        } else if (item.kind === 'forge' && item.forgeItemKey) {
-            // 流水线事件没有可派生的条目键（run id 未下发），只跳转不标记。
-            void fetch('/api/forge/read', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ itemKey: item.forgeItemKey }),
-            }).catch(() => {})
         }
+        // forge: 由面板打开详情时标记（见 activate 的注释）。
     } catch {
         // Non-critical
     }
@@ -204,12 +205,29 @@ function markRead(item: NonNullable<typeof active.value>): void {
     background: color-mix(in srgb, var(--accent-color) 6%, var(--bg-tertiary));
 }
 
-/* 卡片主体行（图标 + 文本 + 关闭），与底部的项目区隔带分开 */
-.completion-notify-main {
+/* ── 头部区：图标 + 类型标签 + 关闭 ──
+   类型信息（类别/事件）集中在这里，与正文区分开——头部回答"这是什么通知"，
+   正文回答"具体什么事"。关闭按钮靠 margin-left:auto 推到最右。 */
+.completion-notify-header {
     display: flex;
-    align-items: flex-start;
-    gap: var(--space-4);
-    /* 有区隔带时补上被卡片 padding 让出的下边距 */
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    /* 无项目区隔带时由 main 承担底部间距，这里只留与正文的间隔 */
+    margin-bottom: var(--space-3);
+}
+
+.completion-notify-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 正文区：标题段 + 内容段 */
+.completion-notify-main {
+    min-width: 0;
+    /* 有项目区隔带时补上被卡片 padding 让出的下边距 */
     padding-bottom: var(--space-4);
 }
 
@@ -230,36 +248,38 @@ function markRead(item: NonNullable<typeof active.value>): void {
     display: flex;
     align-items: center;
     justify-content: center;
-    /* 与标题首行文字对齐（卡片是 flex-start，图标需自带上边距补偿行高） */
-    padding-top: 1px;
 }
 
-.completion-notify-text {
-    flex: 1;
-    min-width: 0;
-}
-
-/* 标识行：事件类型 chip + 主体标题同行。标题占据剩余宽度并省略号截断，
-   chip 永远完整（它是判断"要不要点"的依据，截断它比截断标题更糟）。 */
-.completion-notify-head {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-}
-
-/* 事件类型 chip：accent 系描边小标签，与 SessionList 的 session-item-badge、
-   forge 面板的 forge-chip 同一套"细描边 + 淡底 + 小圆角"语言。 */
-.completion-notify-kind {
+/* 主类别徽章（会话 / 任务 / 议题与合并）：中性灰的细描边小标签，与 SessionList
+   的 session-item-badge 同一套语言。刻意中性——它回答"哪个子系统"属于分类，
+   不该和事件标题的语义色抢注意力。 */
+.completion-notify-category {
     flex-shrink: 0;
     padding: 1px 6px;
-    font-size: var(--font-size-2xs);
+    font-size: var(--font-size-sm);
     line-height: var(--line-height-snug);
     font-weight: var(--font-weight-medium);
     white-space: nowrap;
     border-radius: var(--radius-xs);
-    border: 1px solid currentColor;
-    background: color-mix(in srgb, currentColor 12%, transparent);
+    color: var(--text-muted);
+    border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+    background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+/* 事件类型标题（如「会话已完成」）：头部的主文字，**不是徽章**——无边框、
+   无底色、无内边距，只有语义色。它回答"发生了什么"，是卡片上最该一眼看到的
+   信息，所以用 lg（14px，与对话框标题同档）而非更小的标签字号。
+   允许省略号截断（forge 的「合并请求 #42 · 已合并」较长），不再像徽章那样
+   强制完整显示——它是唯一文本，截断尾部仍可读。 */
+.completion-notify-kind {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--font-size-lg);
+    line-height: var(--line-height-snug);
+    font-weight: var(--font-weight-semibold);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* 语义配色：绿=成功、红=失败、黄=中断、蓝=进行中/中性（含 forge 的六类事件）。
@@ -269,18 +289,9 @@ function markRead(item: NonNullable<typeof active.value>): void {
 .completion-notify-kind.is-warning { color: var(--color-yellow); }
 .completion-notify-kind.is-info { color: var(--color-info); }
 
-/* 类别 chip（会话 / 任务 / 议题与合并）保持中性灰：它回答"哪个子系统"，
-   属于分类而非结果，不该和语义色抢注意力。更硬的原因是调色板不够——会话
-   若也用绿色，就会和"成功"那枚并排出现且同色，两枚 chip 反而分不清。 */
-.completion-notify-kind.is-category {
-    color: var(--text-muted);
-}
-
+/* 标题段：正文区第一段，单行省略。字号与聊天正文同级
+   （.chat-message 也是 --font-size-md + --line-height-snug）。 */
 .completion-notify-title {
-    flex: 1;
-    min-width: 0;
-    /* 与聊天正文同级（.chat-message 也是 --font-size-md + --line-height-snug），
-       通知读起来应和对话里的文字一样大。 */
     font-size: var(--font-size-md);
     line-height: var(--line-height-snug);
     font-weight: var(--font-weight-semibold);
@@ -290,7 +301,7 @@ function markRead(item: NonNullable<typeof active.value>): void {
     text-overflow: ellipsis;
 }
 
-/* 正文：最多 4 行，超出用省略号收尾。单行时摘要几乎读不出信息（"已完成
+/* 内容段：最多 4 行，超出用省略号收尾。单行时摘要几乎读不出信息（"已完成
    登录流程重构…" 后面全被截掉），放宽到 4 行才能在卡片内判断结果好坏——
    但仍要封顶，否则一段长回复会把通知撑成面板。
    字号/行高对齐聊天正文（.chat-message），不再降一档——用户反馈"字体有点小"。
@@ -325,14 +336,15 @@ function markRead(item: NonNullable<typeof active.value>): void {
     min-width: 0;
 }
 
-/* "外部"徽章：accent 描边小标签，提示这是其他项目的会话 */
+/* "外部"徽章：accent 描边小标签，提示这是其他项目的会话。
+   与事件类型标题不同——这个仍是真正的徽章（描边+淡底），字号留在 sm。 */
 .completion-notify-project-badge {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
-    padding: 1px 5px;
-    font-size: var(--font-size-2xs);
+    padding: 1px 6px;
+    font-size: var(--font-size-sm);
     line-height: var(--line-height-snug);
     font-weight: var(--font-weight-medium);
     color: var(--accent-color);
@@ -371,6 +383,7 @@ function markRead(item: NonNullable<typeof active.value>): void {
    必须显式 border: none —— 该 class 若从 <a> 复用会被 UA 样式带出边框。 */
 .completion-notify-close {
     flex-shrink: 0;
+    /* 关闭按钮靠右侧：事件类型标题带 flex:1 撑开剩余空间，天然把它推到底。 */
     display: flex;
     align-items: center;
     justify-content: center;

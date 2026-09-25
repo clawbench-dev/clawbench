@@ -883,6 +883,54 @@ paths:
         "200":
           description: 已取消
 
+  /api/ai/chat/quote:
+    patch:
+      tags: [Chat]
+      summary: 修改已发送消息中引用的批注
+      description: |
+        引用以结构化条目（`kind=quote`）持久化在消息的 `files` 中，因此发送后修改批注
+        是一次定向写入，而非重写消息文本。
+        引用按其稳定 `quoteId` 定位（见 `FileEntry.id`）；用数组下标在条目增删后会错位。
+        修改只影响**下一轮** AI 看到的提示词（每轮由存储的 `files` 重建），
+        不会追溯改变已在执行中的回合。
+      operationId: chatQuoteUpdateNote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messageId, quoteId]
+              properties:
+                sessionId:
+                  type: string
+                  description: 目标会话；缺省时回退到查询参数 / Cookie。
+                messageId:
+                  type: integer
+                  description: 承载该引用的用户消息 ID。
+                quoteId:
+                  type: string
+                  description: 引用的稳定 ID（`FileEntry.id`）。
+                note:
+                  type: string
+                  description: 新的批注内容（可为空字符串以清空）。
+      responses:
+        "200":
+          description: 已更新，返回该消息更新后的附件条目
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  files:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FileEntry"
+        "404":
+          description: 未找到该引用（消息不存在、非用户消息、或 quoteId 不匹配）
+
   /api/ai/chat/read:
     post:
       tags: [Chat]
@@ -2387,18 +2435,20 @@ paths:
       tags: [Share]
       summary: 公开分享数据（token 即凭证）
       description: |
-        免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/download`
-        （强制下载）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
+        免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/content?path=`
+        （文档内引用的文件，同样返回 FileContent JSON）、`{token}/download`（强制下载，
+        支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
         token 不存在一律 404，零信息暴露。
 
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
-        `{token}/file` 需要把内容内联进 JSON，故对超过内联上限（10MB）的文件
-        返回 200 但 `content` 为空、`tooLarge: true`（仅元数据），由分享页降级为
-        下载入口；`{token}/download` 与 `{token}/local/...` 流式返回，无大小上限。
+        `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限
+        （10MB）的文件返回 200 但 `content` 为空、`tooLarge: true`（仅元数据），由分享页
+        降级为下载入口；`{token}/download` 与 `{token}/local/...` 流式返回，无大小上限。
 
         `?path=` 仅接受落在**该分享自身范围**内的绝对路径，范围在创建分享时确定并
         随分享记录持久化（文件在所选项目内 → 项目根；否则 → 该文件所在目录）。
-        范围之外的路径返回 404，与 `RootPaths` 无关。
+        范围之外的路径返回 404，与 `RootPaths` 无关。`{token}/content` 对目录返回 404
+        （token 端点不提供目录列举能力）。
       operationId: sharePublic
       security: []
       responses:
@@ -3140,9 +3190,15 @@ paths:
       tags: [Terminal]
       summary: 终端可用状态
       description: |
-        返回 `enabled`、`platform_supported`、`sessions`、`session_count`；
+        返回 `enabled`、`platform_supported`、`cwd_probe_supported`、`sessions`、`session_count`；
         带 `session` 查询参数时另返回 `hasSession`/`sessionId`/`cwd`/`running`。
         取代已移除的 `/api/terminal/config`。
+
+        `cwd` 是 shell 的**实时**工作目录：由后端读取 PTY 前台进程组的 `/proc/<pid>/cwd`
+        得到，因此会跟随 `cd`（含嵌套子 shell）。`cwd_probe_supported` 表示该探测在当前
+        **服务端**平台是否可用（仅 Linux/Android；macOS 需 cgo libproc，Windows 无 PTY）；
+        为 false 时 `cwd` 退化为会话启动目录。这是服务端能力，前端不可用
+        `navigator.userAgent` 推断（浏览器与服务端可能不同平台）。
       operationId: terminalStatus
       responses:
         "200":
@@ -3327,6 +3383,17 @@ paths:
                 event_types:
                   type: string
                   description: 逗号分隔的事件订阅，`trigger_mode=event` 时必填。
+                script:
+                  type: string
+                  description: |
+                    可选预执行脚本，AI 调用前执行，工作目录为项目路径；仅 cron 任务生效。
+                    退出码 0 且无输出 → 跳过 AI 且不发通知；有输出或非 0/超时 → 注入 prompt 后照常调用 AI。
+                script_timeout:
+                  type: integer
+                  minimum: 0
+                  description: |
+                    脚本超时秒数；0 表示默认 300 秒。负数为非法值，返回 400
+                    `TaskScriptTimeoutInvalid`。
       responses:
         "200":
           description: 新任务
@@ -3371,6 +3438,18 @@ paths:
                 executionId:
                   type: string
                   description: 仅 `deleteExecution` 需要（字符串形式）。
+                script:
+                  type: string
+                  description: |
+                    可选预执行脚本（仅 cron）。`action=update` 时生效。
+                    **省略该字段表示保持不变**（与 `name` / `prompt` 等一致的部分更新语义）；
+                    传空字符串表示清除脚本。
+                script_timeout:
+                  type: integer
+                  minimum: 0
+                  description: |
+                    脚本超时秒数；0 表示默认 300 秒。`action=update` 时生效。
+                    省略该字段表示保持不变。负数为非法值，返回 400 `TaskScriptTimeoutInvalid`。
       responses:
         "200":
           description: 结果
@@ -3812,6 +3891,15 @@ paths:
       tags: [Proxy]
       summary: 端口转发列表
       operationId: proxyPortsList
+      description: |
+        返回已注册的端口映射。每项含 `direction` 字段：
+        - `forward`（默认，ssh -L）：`port` = 服务器侧目标端口，`localPort` = 客户端监听端口，
+          `host` = 服务器侧目标主机。
+        - `reverse`（ssh -R）：`port` = 客户端本地待暴露端口，`localPort` = 服务器侧绑定端口，
+          `host` = 客户端侧目标主机。
+
+        反向映射的 `active` 表示服务器侧 `127.0.0.1:{localPort}` 是否已由客户端 SSH 会话绑定，
+        与正向映射（探测目标端口）的语义不同。
       responses:
         "200":
           description: 端口列表
@@ -3819,6 +3907,11 @@ paths:
       tags: [Proxy]
       summary: 新增端口转发
       operationId: proxyPortsCreate
+      description: |
+        请求体：`{port, host, name, protocol, direction}`。
+        `direction` 为 `forward`（默认）或 `reverse`；非法值按 `forward` 处理。
+        返回 `{status, localPort}` —— `localPort` 是实际分配的监听端口（正向为客户端侧，
+        反向为服务器侧；端口被占用时会自动改分配，故不要假定与 `port` 相同）。
       responses:
         "200":
           description: 结果
@@ -3826,6 +3919,10 @@ paths:
       tags: [Proxy]
       summary: 更新端口转发
       operationId: proxyPortsUpdate
+      description: |
+        请求体：`{localPort, port, host, name, protocol, direction}`。
+        `localPort` 是不可变键；正向映射在目标端口变化时可能重新分配 `localPort`，
+        反向映射的 `localPort`（服务器绑定端口）保持不变。
       responses:
         "200":
           description: 结果
@@ -3833,6 +3930,7 @@ paths:
       tags: [Proxy]
       summary: 删除端口转发
       operationId: proxyPortsDelete
+      description: 查询参数 `port` 为条目的 `localPort`。
       responses:
         "200":
           description: 结果
@@ -4086,6 +4184,13 @@ paths:
 
         每个平台给出**候选 URL 列表**：国内优先走 GitHub 代理镜像，直连
         github.com 始终作为最后兜底。镜像为社区服务，不保证可用，故逐个降级。
+
+        `payloads` 是**增量升级**用的载荷包：只含应用自身的 `resources/`
+        （约 3MB），不含 Electron 运行时（约 150MB）。客户端把它安装到从
+        当前运行版本克隆出的目录上，从而复用运行时。**仅覆盖可安全替换
+        `app.asar` 的平台**（linux-x64 / linux-arm64 / win32-x64）；macOS
+        因替换会破坏 `.app` 的代码签名封条而不提供该键。键**缺席**（而非空
+        数组）即表示该平台只能走全量下载。
       operationId: desktopLatest
       security: []
       responses:
@@ -4108,6 +4213,17 @@ paths:
                       平台键（linux-x64 / linux-arm64 / darwin-x64 /
                       darwin-arm64 / win32-x64）到**候选 URL 数组**，
                       按推荐顺序排列，客户端依次尝试。
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  payloads:
+                    type: object
+                    description: |
+                      平台键（仅 linux-x64 / linux-arm64 / win32-x64）到
+                      **载荷包候选 URL 数组**。载荷包只含应用代码，客户端
+                      据此跳过 Electron 运行时的重复下载。macOS 与未知平台
+                      **没有该键**——键缺席即表示只能全量下载。
                     additionalProperties:
                       type: array
                       items:
@@ -4173,13 +4289,17 @@ components:
     FileEntry:
       type: object
       description: |
-        附件条目，可为本地文件/目录，也可为**外部链接**（`kind=url`）。
+        附件条目，可为本地文件/目录、**外部链接**（`kind=url`），或**引用**（`kind=quote`）。
         链接条目不参与文件系统校验，且其地址会以
         `[Referenced external link: <url>]` 前缀注入 AI 的 prompt。
+        引用条目同样不参与文件系统校验，注入 prompt 的形态取决于是否有 `text`：
+        - 有 `text`（引用片段）：`[Quoted from <label>]` + 批注 + 围栏代码块（含引用正文）；
+        - 无 `text`（引用整个文件/议题）：`[Quoted from <label>]` + 批注，**不渲染围栏**——
+          此时是「引用该对象」，由 AI 自行按路径读取；`url` 非空时地址附在标签后（议题/PR）。
       properties:
         path:
           type: string
-          description: 本地路径；`kind=url` 时为人类可读标签（如 `owner/repo#123`）。
+          description: 本地路径；`kind=url`/`kind=quote` 时为人类可读标签（如 `owner/repo#123`，引用聊天消息时可为空）。
         isDir:
           type: boolean
         startLine:
@@ -4188,11 +4308,23 @@ components:
           type: integer
         kind:
           type: string
-          enum: [file, url]
-          description: 缺省为本地文件；`url` 表示外部地址。
+          enum: [file, url, quote]
+          description: 缺省为本地文件；`url` 表示外部地址；`quote` 表示引用。
         url:
           type: string
           description: 外部地址，仅当 `kind=url` 时使用；只接受 http(s)。
+        id:
+          type: string
+          description: 仅 `kind=quote`：引用条目的稳定身份，用于发送后修改批注。
+        text:
+          type: string
+          description: 仅 `kind=quote`：引用原文。
+        note:
+          type: string
+          description: 仅 `kind=quote`：用户对该引用的批注。
+        language:
+          type: string
+          description: 仅 `kind=quote`：围栏代码块的语言标识（如 `go`、`issue`）。
 
     GalleryItem:
       type: object

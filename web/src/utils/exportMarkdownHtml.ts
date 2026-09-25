@@ -25,6 +25,7 @@
  */
 
 import { buildMarkdownPreviewDom } from '@/composables/useMarkdownRenderPipeline.ts'
+import { stampSvgFiguresAsync } from '@/utils/svgMediaFit.ts'
 import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { isDarkTheme } from '@/utils/themeMeta.ts'
@@ -1166,6 +1167,14 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
 
         // 5. Inline images as data URIs.
         const inlineResult = await inlineImages(contentEl)
+
+        // 5b. Proportional fill-width sizing for SVG media. Must run AFTER
+        //     inlining: an SVG file's intrinsic size is only known once the
+        //     (now self-contained) image has decoded, so the async pass waits
+        //     for that before stamping the ratio. Inline <svg> resolves
+        //     synchronously. The exported markup therefore carries the same
+        //     `.svg-fit` marker + `--svg-ar` the in-app preview computes.
+        await stampSvgFiguresAsync(contentEl)
 
         // 6. Replace failed Mermaid blocks with static errors.
         handleFailedMermaid(contentEl)

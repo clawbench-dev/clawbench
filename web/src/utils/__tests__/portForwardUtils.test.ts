@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasActivePort, tunnelStatusFromPorts, buildPortUrl, enabledPorts, sshInstallHint } from '@/utils/portForwardUtils'
+import { hasActivePort, tunnelStatusFromPorts, buildPortUrl, buildServerAddress, isReversePort, enabledPorts, sshInstallHint } from '@/utils/portForwardUtils'
 import type { ForwardedPort } from '@/utils/portForwardUtils'
 
 describe('portForwardUtils', () => {
@@ -183,5 +183,43 @@ describe('portForwardUtils', () => {
       const hint = sshInstallHint({ windows: true, macDesktop: true, linuxDesktop: true })
       expect(hint?.kind).toBe('windows')
     })
+  })
+})
+
+describe('buildServerAddress', () => {
+  it('builds a loopback URL with the server-side port', () => {
+    expect(buildServerAddress(9000, 'http')).toBe('http://127.0.0.1:9000')
+  })
+
+  it('uses https when the protocol is https', () => {
+    expect(buildServerAddress(9443, 'https')).toBe('https://127.0.0.1:9443')
+  })
+
+  it('omits the port when it is the protocol default', () => {
+    expect(buildServerAddress(80, 'http')).toBe('http://127.0.0.1')
+    expect(buildServerAddress(443, 'https')).toBe('https://127.0.0.1')
+  })
+
+  it('defaults to http for an unknown protocol', () => {
+    expect(buildServerAddress(8080, undefined)).toBe('http://127.0.0.1:8080')
+  })
+})
+
+describe('isReversePort', () => {
+  const base: ForwardedPort = {
+    port: 3000, localPort: 9000, host: '', name: 'svc',
+    protocol: 'http', active: false, enabled: true,
+  }
+
+  it('is true only for direction=reverse', () => {
+    expect(isReversePort({ ...base, direction: 'reverse' })).toBe(true)
+  })
+
+  it('is false for direction=forward', () => {
+    expect(isReversePort({ ...base, direction: 'forward' })).toBe(false)
+  })
+
+  it('treats a missing direction as forward (older backends)', () => {
+    expect(isReversePort(base)).toBe(false)
   })
 })

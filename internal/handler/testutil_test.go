@@ -134,6 +134,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			cron_expr TEXT NOT NULL,
 			agent_id TEXT NOT NULL,
 			prompt TEXT NOT NULL,
+			script TEXT NOT NULL DEFAULT '',
+			script_timeout INTEGER NOT NULL DEFAULT 0,
 			session_id TEXT,
 			trigger_mode TEXT NOT NULL DEFAULT 'cron',
 			event_types TEXT NOT NULL DEFAULT '',

@@ -348,6 +348,12 @@ func validateQueueFiles(w http.ResponseWriter, r *http.Request, projectPath stri
 
 	// files (structured entries with optional line ranges) → validated entries.
 	for _, fEntry := range fileEntries {
+		// Quote entries carry text, not a path. Their Path is a label and may
+		// be empty, so resolving it would 404 the whole enqueue.
+		if fEntry.IsQuote() {
+			validated = append(validated, validatedQuoteEntry(fEntry))
+			continue
+		}
 		// URL entries carry an external address, not a local path. Resolving one
 		// as a path would 404 ("File not found: owner/repo#123") and drop the
 		// attachment — which is what happened before the chat endpoint's URL

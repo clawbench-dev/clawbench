@@ -55,6 +55,13 @@ public class BackgroundServicePortHostTest {
         fpField.setAccessible(true);
         fpField.set(service, new ConcurrentHashMap<Integer, BackgroundService.PortInfo>());
 
+        // reversePorts is also a field initializer, so it is null under Unsafe
+        // allocation too. removePortForward()/cleanup paths consult it, so seed it
+        // even though these tests are about the forward direction.
+        Field rpField = BackgroundService.class.getDeclaredField("reversePorts");
+        rpField.setAccessible(true);
+        rpField.set(service, new ConcurrentHashMap<Integer, BackgroundService.PortInfo>());
+
         // Set static fields for consistent test state
         setStaticField("instance", service);
         setStaticField("isRunning", true);

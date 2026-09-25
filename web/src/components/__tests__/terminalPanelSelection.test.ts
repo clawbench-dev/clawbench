@@ -160,4 +160,75 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('@close="helpDrawer.close()"')
     expect(source).toContain("const helpDrawer = useTabDrawer('terminal')")
   })
+
+  it('uploads dropped OS files into the shell live cwd', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // The drop listeners are bound as an object so the whole set can be omitted
+    // on platforms where the server cannot resolve a live cwd — with no correct
+    // target directory, intercepting the drop would upload into the wrong place.
+    expect(source).toContain('v-on="terminalDropHandlers"')
+    expect(source).toContain("if (cwdProbeSupported.value !== true) return {}")
+    // The live cwd is fetched per-drag from the status endpoint, not from the
+    // tab's launch directory (which goes stale after `cd`).
+    expect(source).toContain('getSessionId: () => activeTab.value?.sessionId')
+    expect(source).toContain('getFallbackDir: () => activeTab.value?.cwd')
+    // Reuse the shared overlay + progress bar rather than bespoke markup.
+    expect(source).toContain('<DropOverlay :visible="terminalFileDrop.dropActive.value"')
+    expect(source).toContain('<UploadProgressBar')
+    expect(source).toContain('@cancel="cancelDirUpload"')
+  })
+
+  it('opens the shell current directory in the file manager from both toolbars', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // PC tab bar AND the mobile virtual-key toolbar each get the button, so the
+    // action is reachable on every form factor.
+    const pcButton = source.indexOf('class="terminal-tab-add"\n        @click="openCurrentDirInFileManager"')
+    const mobileButton = source.indexOf('btn-func" @click="openCurrentDirInFileManager"')
+    expect(pcButton).toBeGreaterThan(-1)
+    expect(mobileButton).toBeGreaterThan(-1)
+
+    // Reuses the shared directory-jump event rather than inventing a new emit,
+    // and tags the source so Back returns to the terminal.
+    expect(source).toContain("window.dispatchEvent(new CustomEvent('open-directory-from-context'")
+    expect(source).toContain("source: 'terminal'")
+    expect(source).toContain('FolderOpen as FolderOpenIcon')
+  })
+
+  it('resolves the cwd live on click instead of reading the stale tab record', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // A tab's `cwd` is written once from the one-shot WS status message at
+    // connect time (the LAUNCH dir), so reading it made the button always open
+    // the project root after a `cd`. It must be fetched on demand — the same
+    // live source the drag-drop upload uses.
+    expect(source).toContain('async function openCurrentDirInFileManager()')
+    expect(source).toContain('await fetchTerminalCwd(activeTab.value?.sessionId)')
+    expect(source).toContain("import { fetchTerminalCwd } from '@/utils/terminalCwd'")
+
+    // Fallback chain: live value, else the launch dir — and never '' (which
+    // would resolve to the project root, i.e. the bug being fixed).
+    expect(source).toContain('const dir = live || activeTab.value?.cwd')
+    expect(source).not.toContain('const dir = activeTab.value?.cwd')
+
+    // The tab title comes from that same one-shot message, so refresh it too
+    // when we happen to have the live value.
+    expect(source).toContain('tabManager.updateTabCwd(activeTab.value.id, live)')
+  })
+
+  it('hides the open-directory buttons when the server cannot resolve a live cwd', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // Strict `=== true` (not a truthy check): the ref starts as null while the
+    // status request is in flight, and a truthy gate would flash the button on
+    // macOS before it disappears.
+    const gates = source.match(/v-if="cwdProbeSupported === true"/g) ?? []
+    expect(gates).toHaveLength(2)
+
+    // Guard against an empty cwd (tab not connected yet): dispatching '' would
+    // navigate the file manager to the project root by accident.
+    expect(source).toContain("if (!dir) {")
+    expect(source).toContain("t('terminal.cwdUnavailable')")
+  })
 })

@@ -37,6 +37,7 @@ vi.mock('lucide-vue-next', () => {
     ChevronRight: stub('ChevronRight'),
     ExternalLink: stub('ExternalLink'),
     MessageSquare: stub('MessageSquare'),
+    MessageSquareQuote: stub('MessageSquareQuote'),
     AlertCircle: stub('AlertCircle'),
     Activity: stub('Activity'),
   }
@@ -340,12 +341,14 @@ describe('ForgeDetail quote action (header)', () => {
     expect(quoteButton(wrapper), 'the header must expose a quote action').toBeTruthy()
   })
 
-  it('uses the plain message bubble, not the plus variant', () => {
-    // MessageSquarePlus draws a "+" inside the bubble, which reads as a stray
-    // ring/cross next to the external-link icon. The plain bubble is intended.
+  it('uses the quote-bubble icon, not the plain comment bubble', () => {
+    // MessageSquare is the COMMENTS counter's icon (same header, a few rows
+    // below). Reusing it for the quote action made two unrelated things look
+    // alike; MessageSquareQuote is the shared icon across every quote entry
+    // point (chat message, file header, code preview, forge detail).
     const wrapper = mountDetail()
     const icon = quoteButton(wrapper)!.find('svg')
-    expect(icon.attributes('data-icon')).toBe('MessageSquare')
+    expect(icon.attributes('data-icon')).toBe('MessageSquareQuote')
   })
 
   it('emits quote without the full body, so nothing is quoted by default', () => {
@@ -424,6 +427,10 @@ describe('ForgeDetail double-click copy → quote', () => {
       language: 'issue',
       startLine: 0,
       endLine: 0,
+      // The address rides along so the quote's detail drawer can offer a real
+      // jump-to-source action.
+      sourceKind: 'url',
+      url: 'https://example.com/7',
     })
   })
 

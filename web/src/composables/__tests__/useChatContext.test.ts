@@ -207,6 +207,55 @@ describe('useChatContext', () => {
 
       expect(ctx.stagedQuotes.value.map(item => item.id)).toEqual([secondItem.id])
     })
+
+    it('treats the same text from two different messages as two quotes', () => {
+      // Regression guard: messageId is part of the quote's identity. Before it
+      // was included, quoting the same sentence out of two chat messages
+      // collapsed into one and the first annotation was silently kept.
+      const quoted = { ...first, sourceKind: 'message' as const }
+      const fromFirst = ctx.addStagedQuote({ ...quoted, messageId: 11 }, 'first')
+      const fromSecond = ctx.addStagedQuote({ ...quoted, messageId: 22 }, 'second')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(2)
+      expect(fromFirst.id).not.toBe(fromSecond.id)
+    })
+
+    it('still deduplicates the same text from the same message', () => {
+      const quoted = { ...first, sourceKind: 'message' as const, messageId: 11 }
+      const original = ctx.addStagedQuote(quoted, 'old')
+      const duplicate = ctx.addStagedQuote({ ...quoted }, 'new')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(duplicate.id).toBe(original.id)
+      expect(ctx.stagedQuotes.value[0].note).toBe('new')
+    })
+
+    it('updateStagedQuoteNote rewrites the addressed quote only', () => {
+      const target = ctx.addStagedQuote(first, 'before')
+      ctx.addStagedQuote({ ...first, text: 'const b = 2', startLine: 2, endLine: 2 }, 'untouched')
+
+      ctx.updateStagedQuoteNote(target.id, 'after')
+
+      expect(ctx.stagedQuotes.value.map(item => item.note)).toEqual(['after', 'untouched'])
+    })
+
+    it('updateStagedQuoteNote trims the note', () => {
+      const target = ctx.addStagedQuote(first)
+      ctx.updateStagedQuoteNote(target.id, '  padded  ')
+      expect(ctx.stagedQuotes.value[0].note).toBe('padded')
+    })
+
+    it('updateStagedQuoteNote can clear a note', () => {
+      const target = ctx.addStagedQuote(first, 'remove me')
+      ctx.updateStagedQuoteNote(target.id, '')
+      expect(ctx.stagedQuotes.value[0].note).toBe('')
+    })
+
+    it('updateStagedQuoteNote is a no-op for an unknown id', () => {
+      ctx.addStagedQuote(first, 'keep')
+      ctx.updateStagedQuoteNote('does-not-exist', 'changed')
+      expect(ctx.stagedQuotes.value[0].note).toBe('keep')
+    })
   })
 
   describe('clearAll', () => {

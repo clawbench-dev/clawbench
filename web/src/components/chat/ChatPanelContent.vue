@@ -24,6 +24,7 @@
       @show-tool-detail="handleShowToolDetail"
       @show-metadata="showMetadata"
       @file-tag-click="handleFileTagClick"
+      @quote-message="handleQuoteMessage"
       @load-more="handleLoadMore"
       @task-card-click="(taskId) => $emit('task-card-click', taskId)"
       @send-message="handleToolSendMessage"
@@ -117,6 +118,19 @@
 
   </div>
 
+  <!-- Quote detail drawer — a SINGLETON, opened for whichever quote card was
+       clicked (input chip or sent bubble). Not mounted per message: the drawer
+       shows one quote at a time, and ChatMessageItem already mounts two drawers
+       per message. -->
+  <QuoteDetailDrawer
+    :open="quoteDetail.open.value"
+    :quote="quoteDetail.quote.value"
+    :saving="quoteNoteSaving"
+    @close="quoteDetail.close()"
+    @save="saveQuoteNote"
+    @jump="jumpToQuoteSource"
+  />
+
   <!-- Metadata Modal -->
   <ChatMetadataModal
     :show="metadataDrawer.effectiveOpen.value"
@@ -168,11 +182,12 @@ import { ref, computed, watch, onUnmounted, onMounted, inject, provide, toRef, n
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { NEAR_BOTTOM_PX } from '@/utils/scrollState'
-import { apiGet, apiPost } from '@/utils/api'
+import { apiGet, apiPost, apiPatch } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import ChatMetadataModal from './ChatMetadataModal.vue'
 import ToolDetailDrawer from './ToolDetailDrawer.vue'
+import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import PlanPanel from './PlanPanel.vue'
@@ -195,8 +210,11 @@ import { localConfig } from '@/composables/useSettingsConfig'
 import { nextClientSeq } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
-import { buildMultiQuoteMessage, relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
+import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
+import { fromStagedQuote, fromFileEntry, materializeQuotes } from '@/utils/quoteItem.ts'
+import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
+import { openExternalUrl } from '@/utils/externalLink.ts'
 import { buildSendPayload } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
@@ -314,8 +332,15 @@ const notification = useNotification()
 const autoSpeech = useAutoSpeech()
 const theme = inject('theme', ref('light'))
 const { openFilePath } = useFilePathAnnotation()
+const quoteDetail = useQuoteDetail()
 
 async function handleFileTagClick(fileEntry) {
+    // A quote card routes here through the shared file-tag-click event (the
+    // quote branch is taken first so a quote never reaches path resolution).
+    if (typeof fileEntry !== 'string' && fileEntry?.kind === 'quote') {
+        handleSentQuoteClick(fileEntry)
+        return
+    }
     // AttachmentTags emits the full FileEntry; history file cards may pass a path string.
     const filePath = typeof fileEntry === 'string' ? fileEntry : fileEntry?.path
     const startLine = typeof fileEntry === 'string' ? undefined : fileEntry?.startLine
@@ -327,6 +352,37 @@ async function handleFileTagClick(fileEntry) {
         // openFilePath decides the destination tab itself (file → view, dir → browse).
         await openFilePath(relPath, startLine, endLine, 'chat')
     }
+}
+
+/**
+ * Quote a whole chat message (the meta bar's 引用 button).
+ *
+ * The captured text is what the user reads: for an assistant reply that is
+ * extractSpeakableText (which skips tool/thinking noise), for a user message its
+ * content. Staging it here — rather than building a message — puts it on the
+ * exact same path as a selection quote: a card in the input, clickable into the
+ * detail drawer.
+ */
+function handleQuoteMessage(msg) {
+    if (!msg) return
+    const isUser = msg.role === 'user'
+    const text = (isUser
+        ? (extractSpeakableText(msg.blocks || []) || msg.content || '')
+        : (extractSpeakableText(msg.blocks || []) || msg.summary || '')).trim()
+    if (!text) return
+
+    const id = msg.id !== undefined && msg.id !== null ? Number(msg.id) : NaN
+    addStagedQuote({
+        text,
+        filePath: '',
+        language: '',
+        startLine: 0,
+        endLine: 0,
+        sourceKind: 'message',
+        // Optimistic/local messages have no DB id; the quote is still valid, it
+        // just cannot be addressed later (and the drawer hides the jump action).
+        ...(Number.isFinite(id) && id > 0 ? { messageId: id } : {}),
+    }, '')
 }
 
 /** Remove an attached reference entry (from AttachmentTags cards or AttachDrawer
@@ -345,13 +401,88 @@ function handleRemoveAttachedEntry(entry) {
     if (startLine === undefined) removePendingByPath(path)
 }
 
-async function handleQuoteClick(q) {
-    if (!q?.filePath) return
-    // Quote paths from the editor may be absolute project paths; strip the
-    // projectRoot prefix so openFilePath doesn't treat them as external.
+/**
+ * Open the quote detail drawer for a staged (un-sent) quote card.
+ *
+ * The drawer shows the quoted content plus the annotation (editable), and a
+ * jump-to-source button for file/forge quotes. It replaces the old behaviour of
+ * navigating straight to the file, which gave no way to read or edit the note.
+ */
+function handleQuoteClick(q) {
+    if (!q) return
+    quoteDetail.openQuoteDetail(fromStagedQuote(q), { mode: 'staged' })
+}
+
+/**
+ * Open the quote detail drawer for a quote that was already sent.
+ *
+ * The annotation is persisted on the message, so saving goes through the PATCH
+ * endpoint (saveQuoteNote).
+ */
+function handleSentQuoteClick(entry) {
+    if (!entry) return
+    quoteDetail.openQuoteDetail(fromFileEntry(entry), { mode: 'sent' })
+}
+
+/** True while the annotation save request is in flight (disables the button). */
+const quoteNoteSaving = ref(false)
+
+/**
+ * Persist an edited annotation.
+ *
+ * Staged quotes are edited locally — they have not been sent, so there is
+ * nothing in the DB yet. Sent quotes go through the PATCH endpoint, addressed
+ * by the message id and the quote's stable id.
+ */
+async function saveQuoteNote(note) {
+    const q = quoteDetail.quote.value
+    if (!q) return
+
+    if (quoteDetail.mode.value === 'staged') {
+        updateStagedQuoteNote(q.id, note)
+        quoteDetail.close()
+        return
+    }
+
+    if (!q.messageId || !q.id) return
+    quoteNoteSaving.value = true
+    try {
+        await apiPatch('/api/ai/chat/quote', {
+            sessionId: identity.currentSessionId.value,
+            messageId: q.messageId,
+            quoteId: q.id,
+            note,
+        })
+        // Keep the open drawer in sync so `dirty` resets and a second edit
+        // starts from the saved value.
+        quoteDetail.quote.value = { ...q, note }
+        // Reflect the change in the rendered message without a full reload.
+        const msg = messages.value.find(m => String(m.id) === String(q.messageId))
+        if (msg && Array.isArray(msg.files)) {
+            const entry = msg.files.find(f => f?.kind === 'quote' && f.id === q.id)
+            if (entry) entry.note = note
+        }
+    } catch (err) {
+        appLog.w(TAG, 'save quote note failed', err)
+        toast.show(t('quoteBar.sendFailed', { error: err?.message || String(err) }), { icon: '⚠️', type: 'error' })
+    } finally {
+        quoteNoteSaving.value = false
+    }
+}
+
+/**
+ * Jump from the drawer to the quote's source: a file opens at its line range, a
+ * forge quote opens its address. A chat-message quote has neither, and the
+ * drawer hides the button for it.
+ */
+async function jumpToQuoteSource(q) {
+    if (!q) return
+    if (q.sourceKind === 'url' && q.url) {
+        openExternalUrl(q.url)
+        return
+    }
+    if (!q.filePath) return
     const relPath = relativizeProjectPath(q.filePath, store.state.projectRoot)
-    // openFilePath opens the file (→ view tab) and dispatches open-file-overlay
-    // with the line range, so the quoted selection is scrolled into view and flashed.
     await openFilePath(relPath, q.startLine, q.endLine, 'chat')
 }
 
@@ -559,7 +690,7 @@ const stream = useChatStream({
 })
 
 const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, removePendingByPath, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
-const { stagedQuotes, removeStagedQuote, clearAll, removeAttachedFileByPath, snapshotAttachments, restoreAttachments, discardAttachmentDraft } = useChatContext()
+const { stagedQuotes, addStagedQuote, removeStagedQuote, updateStagedQuoteNote, clearAll, removeAttachedFileByPath, snapshotAttachments, restoreAttachments, discardAttachmentDraft } = useChatContext()
 
 const manager = useSessionManager({
   messages,
@@ -806,18 +937,16 @@ function persistSessionUpdate(fields) {
 }
 
 async function sendMessage(text) {
-    let inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
+    const inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
 
-    const quotes = [...stagedQuotes.value]
-    if (quotes.length > 0) {
-      for (const q of quotes) {
-        if (!q.filePath) continue
-        addAttachedFile(q.filePath, false, q.startLine, q.endLine)
-      }
-      inputText = buildMultiQuoteMessage(inputText || '', quotes)
-    }
+     // Quotes ride as structured attachment cards, not as text baked into the
+     // message. Materialise the staged quotes into FileEntry form here (the one
+     // conversion point) so both the direct and the enqueue path carry them —
+     // the enqueue path used to rely on the quotes already being in `inputText`,
+     // which silently dropped them whenever the session was busy.
+     const quoteEntries = materializeQuotes(stagedQuotes.value)
 
-     const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quotes.length > 0
+     const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quoteEntries.length > 0
 
      if ((!inputText && !hasFiles) || inputDisabled.value) return false
 
@@ -831,7 +960,7 @@ async function sendMessage(text) {
      // If AI is generating, enqueue the message instead of sending immediately
      if (loading.value) {
        // Capture file arrays before clearing (they're passed by reference)
-       const capturedAttached = [...attachedFiles.value]
+       const capturedAttached = [...attachedFiles.value, ...quoteEntries]
        const capturedPending = pendingFiles.value.filter(f => f.path).map(f => ({ path: f.path, isDir: false }))
        // Clear input state synchronously so user sees immediate feedback
        clearAll()
@@ -869,11 +998,12 @@ async function sendMessage(text) {
        return true
      }
 
-    // Build file paths and entries from attachedFiles (unified channel).
-    // buildSendPayload preserves kind/url on URL attachments and routes
-    // line-range entries through the entries channel only (never filePaths) or
-    // the backend would strip their ranges.
-    const { allFiles, filePaths } = buildSendPayload(pendingFiles.value, attachedFiles.value)
+    // Build file paths and entries from attachedFiles + the materialised quote
+    // cards (unified channel). buildSendPayload preserves kind/url on URL
+    // attachments and routes line-range and quote entries through the entries
+    // channel only (never filePaths) or the backend would strip their ranges or
+    // reject an empty path.
+    const { allFiles, filePaths } = buildSendPayload(pendingFiles.value, [...attachedFiles.value, ...quoteEntries])
 
     // Clear input state before async request
     clearAll()

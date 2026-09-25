@@ -264,6 +264,41 @@ describe('useFileNavStack', () => {
     })
   })
 
+  describe('replaceCurrentPath', () => {
+    it('re-points the current visit without adding history', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/src/a.ts')
+      nav.openFile('') // untitled placeholder
+      expect(nav.currentFilePath.value).toBe('')
+
+      nav.replaceCurrentPath('/src/new.ts')
+      expect(nav.currentFilePath.value).toBe('/src/new.ts')
+      // Still one step back — to the file before the untitled buffer.
+      expect(nav.goBack()).toBe('/src/a.ts')
+    })
+
+    it('is a no-op when there is no current visit', () => {
+      const nav = useFileNavStack()
+      nav.replaceCurrentPath('/src/new.ts')
+      expect(nav.currentFilePath.value).toBeNull()
+    })
+  })
+
+  // An untitled placeholder has no path to reopen, so leaving it must not leave
+  // a back-stack destination that goBackFile would fail to restore.
+  describe('untitled placeholder entries', () => {
+    it('drops the empty-path entry when navigating to a real file', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/src/a.ts')
+      nav.openFile('')
+      nav.openFile('/src/b.ts')
+
+      expect(nav.currentFilePath.value).toBe('/src/b.ts')
+      // Back skips the un-restorable placeholder and lands on the real file.
+      expect(nav.goBack()).toBe('/src/a.ts')
+    })
+  })
+
   describe('scrollTop and previousLocation', () => {
     it('records and updates scrollTop via updateCurrent', () => {
       const nav = useFileNavStack()

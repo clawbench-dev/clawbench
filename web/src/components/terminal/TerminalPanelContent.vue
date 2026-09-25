@@ -50,6 +50,14 @@
       </button>
       <template v-if="isPC">
       <button
+        v-if="cwdProbeSupported === true"
+        class="terminal-tab-add"
+        @click="openCurrentDirInFileManager"
+        :title="t('terminal.openCurrentDir')"
+      >
+        <FolderOpenIcon :size="14" />
+      </button>
+      <button
         class="terminal-tab-add"
         @click="openThemeMenu"
         :title="t('terminal.theme')"
@@ -67,8 +75,18 @@
       </template>
     </div>
 
+    <!-- Upload progress for files dropped onto the terminal (shared state with
+         the file manager, which is never visible at the same time). -->
+    <UploadProgressBar
+      :visible="dirUploading"
+      :progress="dirUploadProgress"
+      :done="dirUploadDone"
+      :total="dirUploadTotal"
+      @cancel="cancelDirUpload"
+    />
+
     <!-- Terminal viewport — one container per tab -->
-    <div class="terminal-viewport">
+    <div class="terminal-viewport" v-on="terminalDropHandlers">
       <div
         v-for="tab in tabs"
         :key="tab.id"
@@ -94,6 +112,10 @@
           <div v-if="gestureHint" class="gesture-hint">{{ gestureHint }}</div>
         </Transition>
       </div>
+
+      <!-- Drop-to-upload overlay. Inside the viewport (not the panel) so it
+           covers the terminal area only, and only exists when a tab is open. -->
+      <DropOverlay :visible="terminalFileDrop.dropActive.value" :label="t('file.dropToUpload')" />
     </div>
 
     <Transition name="copy-bar">
@@ -153,6 +175,9 @@
             </button>
             <button ref="cmdBtnRef" class="toolbar-btn btn-action btn-func" @click="openCommands" :title="t('terminal.quickCommands')">
               <ZapIcon :size="14" />
+            </button>
+            <button v-if="cwdProbeSupported === true" class="toolbar-btn btn-action btn-func" @click="openCurrentDirInFileManager" :title="t('terminal.openCurrentDir')">
+              <FolderOpenIcon :size="14" />
             </button>
             <button class="toolbar-btn btn-action btn-func" @click="openThemeMenu" :title="t('terminal.theme')">
               <PaletteIcon :size="14" />
@@ -272,6 +297,8 @@ import '@xterm/xterm/css/xterm.css'
 
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import DropOverlay from '@/components/common/DropOverlay.vue'
+import UploadProgressBar from '@/components/common/UploadProgressBar.vue'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
@@ -285,6 +312,10 @@ import { useTerminalCopyOnSelect } from '@/composables/useTerminalCopyOnSelect'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys'
+import { useTerminalFileDrop } from '@/composables/useTerminalFileDrop'
+import { useTerminalStatus } from '@/composables/useTerminalStatus'
+import { fetchTerminalCwd } from '@/utils/terminalCwd'
+import { useFileUpload } from '@/composables/useFileUpload'
 import { selectionCellsToSelect, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
@@ -318,7 +349,7 @@ import {
   lightTheme,
 } from '@/utils/terminalThemes'
 
-import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon, CircleHelp as CircleHelpIcon, Settings as SettingsIcon, Sun, Moon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon, CircleHelp as CircleHelpIcon, Settings as SettingsIcon, Sun, Moon, FolderOpen as FolderOpenIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -334,6 +365,9 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const { getServerValueWithDefault } = useSettingsConfig()
+// Aggregate upload progress for files dropped onto the terminal. The state is a
+// module-level singleton inside useFileUpload, so the file manager shares it.
+const { dirUploading, dirUploadProgress, dirUploadDone, dirUploadTotal, cancelDirUpload } = useFileUpload()
 
 // Font size with persistence
 const fontSize = ref<number>((localConfig.terminalFontSize as number) || DEFAULT_FONT_SIZE)
@@ -742,6 +776,71 @@ const tabManager = useTerminalTabs(getWsUrl, {
 })
 
 const { tabs, activeTabId, activeTab } = tabManager
+
+// ── Drag-and-drop upload into the shell's live cwd ──
+// Dropped OS files are uploaded into whatever directory the shell is currently
+// in (resolved live by the backend from the PTY's foreground process group).
+// Only mounted when the server can actually resolve that directory — otherwise
+// the drop would silently target the tab's launch directory instead.
+const { cwdProbeSupported } = useTerminalStatus()
+
+const terminalFileDrop = useTerminalFileDrop({
+  getSessionId: () => activeTab.value?.sessionId || undefined,
+  getFallbackDir: () => activeTab.value?.cwd || '',
+})
+
+/**
+ * Bound with `v-on="…"` rather than `@drop`/`@dragover` so the whole listener
+ * set can be omitted. On platforms without a live-cwd probe there is no correct
+ * upload target, so we do not intercept the drop at all.
+ */
+const terminalDropHandlers = computed(() => {
+  if (cwdProbeSupported.value !== true) return {}
+  if (props.platformUnsupported) return {}
+  return {
+    dragenter: terminalFileDrop.onDragEnter,
+    dragover: terminalFileDrop.onDragOver,
+    dragleave: terminalFileDrop.onDragLeave,
+    drop: terminalFileDrop.onDrop,
+  }
+})
+
+/**
+ * Open the shell's current directory in the file manager.
+ *
+ * The mirror of the file manager's "open terminal here": that one emits
+ * `openTerminal` upward to App, this one dispatches the same
+ * `open-directory-from-context` event every other "reveal a directory" caller
+ * uses, so the jump records `terminal` as its return origin and Back comes back
+ * here. Going through the event (rather than a new emit) keeps this component
+ * from needing to know how App wires navigation.
+ *
+ * `source: 'terminal'` is what makes the return label read "Back to Terminal"
+ * instead of falling through to the generic "Back".
+ */
+async function openCurrentDirInFileManager() {
+  // Resolve the cwd LIVE instead of reading tab.cwd. A tab's cwd is written once
+  // from the one-shot WS `status` message at connect time, which carries the
+  // LAUNCH directory — so after a `cd` it is stale, and for a tab created with no
+  // explicit cwd it is the project root. That is why the button used to always
+  // open the project root while drag-drop upload (which fetches live) worked.
+  const live = await fetchTerminalCwd(activeTab.value?.sessionId)
+  // Fall back to the launch directory: when the live probe is unavailable it is
+  // still an honest target, and it matches what the tab title shows. Never fall
+  // back to '': navigateToDir('') opens the project root, which is the bug.
+  const dir = live || activeTab.value?.cwd
+  if (!dir) {
+    toast.show(t('terminal.cwdUnavailable'), { icon: '⚠️', type: 'info', duration: 2000 })
+    return
+  }
+  // The tab title comes from that same one-shot status message, so it is stale
+  // too. We already have the live value — refresh cwd + title with it. This
+  // happens on click only; there is no polling.
+  if (live && activeTab.value) tabManager.updateTabCwd(activeTab.value.id, live)
+  window.dispatchEvent(new CustomEvent('open-directory-from-context', {
+    detail: { path: dir, source: 'terminal' },
+  }))
+}
 
 // React to mono font changes from the Settings panel: when the chosen font is
 // a self-hosted bundled webfont, wait for it to finish loading BEFORE setting

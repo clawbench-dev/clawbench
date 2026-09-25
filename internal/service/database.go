@@ -497,6 +497,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			cron_expr TEXT NOT NULL,
 			agent_id TEXT NOT NULL,
 			prompt TEXT NOT NULL,
+			script TEXT NOT NULL DEFAULT '',
+			script_timeout INTEGER NOT NULL DEFAULT 0,
 			session_id TEXT DEFAULT '',
 			status TEXT DEFAULT 'active',
 			repeat_mode TEXT DEFAULT 'unlimited',
@@ -623,6 +625,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			host TEXT NOT NULL DEFAULT '',
 			name TEXT NOT NULL DEFAULT '',
 			protocol TEXT NOT NULL DEFAULT 'http',
+			direction TEXT NOT NULL DEFAULT 'forward',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -952,6 +955,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	for _, col := range []struct{ name, ddl string }{
 		{"trigger_mode", "ALTER TABLE scheduled_tasks ADD COLUMN trigger_mode TEXT NOT NULL DEFAULT 'cron'"},
 		{"event_types", "ALTER TABLE scheduled_tasks ADD COLUMN event_types TEXT NOT NULL DEFAULT ''"},
+		{"script", "ALTER TABLE scheduled_tasks ADD COLUMN script TEXT NOT NULL DEFAULT ''"},
+		{"script_timeout", "ALTER TABLE scheduled_tasks ADD COLUMN script_timeout INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var exists int
 		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name=?", col.name).Scan(&exists)
@@ -1275,6 +1280,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasForwardedPortEnabled == 0 {
 		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"); err != nil {
 			return fmt.Errorf("failed to add enabled column to forwarded_ports: %w", err)
+		}
+	}
+
+	// Migrate: add direction column for reverse (ssh -R) port mappings.
+	// Existing rows are classic ssh -L forwards (backward compatible).
+	var hasForwardedPortDirection int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='direction'").Scan(&hasForwardedPortDirection)
+	if hasForwardedPortDirection == 0 {
+		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN direction TEXT NOT NULL DEFAULT 'forward'"); err != nil {
+			return fmt.Errorf("failed to add direction column to forwarded_ports: %w", err)
 		}
 	}
 

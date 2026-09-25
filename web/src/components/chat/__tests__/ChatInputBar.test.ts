@@ -258,13 +258,14 @@ vi.mock('@/composables/useUploadRecent.ts', () => ({
   useUploadRecent: () => ({ recentUploads: mockRecentUploads, fetchRecentUploads: mockFetchRecentUploads }),
 }))
 
-vi.mock('@/utils/fileAttachmentUtils.ts', () => ({
+vi.mock('@/utils/fileAttachmentUtils.ts', async (importOriginal) => ({
+  // Spread the real module first: a hand-written whitelist silently breaks
+  // every test in this file the moment a component imports one more helper
+  // (QuoteCard added isQuoteEntry). Only the two predicates whose real
+  // behaviour would touch the DOM/filesystem are overridden.
+  ...(await importOriginal<typeof import('@/utils/fileAttachmentUtils.ts')>()),
   isImageFile: () => false,
   isUploadPath: () => false,
-  // URL attachments are part of the attachment model; the mock must expose the
-  // predicate AttachmentTags.vue imports.
-  isUrlEntry: (f: any) => f?.kind === 'url' && !!f?.url,
-  normalizeFileEntry: (f: any) => (typeof f === 'string' ? { path: f, isDir: false } : { path: f?.path || '', isDir: f?.isDir ?? false, startLine: f?.startLine, endLine: f?.endLine, ...(f?.kind ? { kind: f.kind } : {}), ...(f?.url ? { url: f.url } : {}) }),
 }))
 
 vi.mock('@/utils/fileManager.ts', () => ({

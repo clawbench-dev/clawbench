@@ -43,6 +43,14 @@ export function useTaskForm(options: UseTaskFormOptions) {
     // Comma-separated forge event subscription (event mode). The watched
     // repository is always the project's binding, so it is not form state.
     eventTypes: '',
+    // Optional pre-AI shell script (cron tasks only). Runs before the AI call;
+    // exit 0 with no output skips the run entirely.
+    script: '',
+    // Script timeout in seconds. Kept as '' so the input renders empty (the
+    // 300s default is shown as a placeholder instead, mirroring how maxRuns
+    // treats "unset"); '' coerces to 0 in submit(), the backend's "use the
+    // default" sentinel.
+    scriptTimeout: '' as number | string,
   })
 
   const errors = ref<Record<string, string>>({})
@@ -63,6 +71,10 @@ export function useTaskForm(options: UseTaskFormOptions) {
         maxRuns: (taskData.maxRuns as number) || 0,
         triggerMode: (taskData.triggerMode as string) || 'cron',
         eventTypes: (taskData.eventTypes as string) || '',
+        script: (taskData.script as string) || '',
+        // A stored 0 is the backend default, so it is shown as an empty field
+        // (with the 300s placeholder) rather than a literal "0".
+        scriptTimeout: (taskData.scriptTimeout as number) || '',
       }
     } else {
       form.value = {
@@ -75,6 +87,8 @@ export function useTaskForm(options: UseTaskFormOptions) {
         maxRuns: 0,
         triggerMode: 'cron',
         eventTypes: '',
+        script: '',
+        scriptTimeout: '',
       }
     }
   }
@@ -84,6 +98,18 @@ export function useTaskForm(options: UseTaskFormOptions) {
     if (!form.value.name.trim()) e.name = 'task.form.nameRequired'
     if (!form.value.agentId) e.agentId = 'task.form.agentRequired'
     if (!form.value.prompt.trim()) e.prompt = 'task.form.promptRequired'
+    // A timeout is only meaningful as a non-negative whole number of seconds;
+    // a negative or fractional value would be rejected (or silently truncated)
+    // by the backend, so catch it here instead. An empty input coerces to 0,
+    // which is valid and means "use the backend default". Checked only in cron
+    // mode: the script section (and so the field) is hidden for event tasks, so
+    // an error there would be unreachable.
+    if (form.value.triggerMode !== 'event') {
+      const timeout = Number(form.value.scriptTimeout)
+      if (!Number.isInteger(timeout) || timeout < 0) {
+        e.scriptTimeout = 'task.form.scriptTimeoutInvalid'
+      }
+    }
     errors.value = e
     return Object.keys(e).length === 0
   }
@@ -106,6 +132,12 @@ export function useTaskForm(options: UseTaskFormOptions) {
       max_runs: form.value.maxRuns,
       trigger_mode: form.value.triggerMode,
       event_types: isEvent ? form.value.eventTypes : '',
+      // A script is a cron-task precondition: an event task's prompt is driven
+      // by the injected event context, so the field is cleared like event_types
+      // is for the cron mode.
+      script: isEvent ? '' : form.value.script,
+      // 0 means "use the backend default" (300s); an empty input coerces to 0.
+      script_timeout: isEvent ? 0 : Number(form.value.scriptTimeout) || 0,
     }
 
     try {

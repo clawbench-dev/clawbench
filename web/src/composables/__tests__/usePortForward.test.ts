@@ -79,6 +79,14 @@ vi.mock('@/utils/portForwardUtils', () => ({
         }
         return `${scheme}://localhost:${port}${urlPath}`
     },
+    buildServerAddress: (serverPort: number, protocol?: string) => {
+        const scheme = protocol === 'https' ? 'https' : 'http'
+        if ((scheme === 'http' && serverPort === 80) || (scheme === 'https' && serverPort === 443)) {
+            return `${scheme}://127.0.0.1`
+        }
+        return `${scheme}://127.0.0.1:${serverPort}`
+    },
+    isReversePort: (p: { direction?: string }) => p.direction === 'reverse',
 }))
 
 describe('usePortForward', () => {
@@ -649,7 +657,7 @@ describe('usePortForward', () => {
             const result = await registerPort(3000, 'App', 'http')
 
             expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports', {
-                port: 3000, host: '', name: 'App', protocol: 'http',
+                port: 3000, host: '', name: 'App', protocol: 'http', direction: 'forward',
             })
             // Port should be in connecting state
             expect(connectingPorts.value.has(3000)).toBe(true)
@@ -682,7 +690,7 @@ describe('usePortForward', () => {
             const result = await registerPort(3000, 'App', 'http', '192.168.1.1')
 
             expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports', {
-                port: 3000, host: '192.168.1.1', name: 'App', protocol: 'http',
+                port: 3000, host: '192.168.1.1', name: 'App', protocol: 'http', direction: 'forward',
             })
             expect(mockAddForwardedPort).toHaveBeenCalledWith(3000, 3000, '192.168.1.1')
             expect(result).toBe(3000)
@@ -701,7 +709,7 @@ describe('usePortForward', () => {
             const result = await registerPort(3000)
 
             expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports', {
-                port: 3000, host: '', name: '', protocol: 'http',
+                port: 3000, host: '', name: '', protocol: 'http', direction: 'forward',
             })
             // When API returns no localPort, falls back to port number
             expect(result).toBe(3000)
@@ -719,7 +727,7 @@ describe('usePortForward', () => {
             await updatePort(3000, 3000, '192.168.1.1', 'App', 'http')
 
             expect(mockApiPut).toHaveBeenCalledWith('/api/proxy/ports', {
-                localPort: 3000, port: 3000, host: '192.168.1.1', name: 'App', protocol: 'http',
+                localPort: 3000, port: 3000, host: '192.168.1.1', name: 'App', protocol: 'http', direction: 'forward',
             })
         })
 
@@ -1055,7 +1063,7 @@ describe('usePortForward', () => {
             const result = await ensurePortRegistered(5173, 'http')
 
             expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports', {
-                port: 5173, host: '', name: '', protocol: 'http',
+                port: 5173, host: '', name: '', protocol: 'http', direction: 'forward',
             })
             expect(result).toBe(5173)
         })
@@ -2041,4 +2049,168 @@ describe('usePortForward', () => {
             mockIsAppMode.value = false
         })
     })
+    describe('reverse direction (ssh -R)', () => {
+        it('sends direction=reverse when registering a reverse mapping', async () => {
+            mockApiPost.mockResolvedValue({ localPort: 9000 })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            const localPort = await registerPort(3000, 'svc', 'http', '', 'reverse')
+
+            expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports', {
+                port: 3000, host: '', name: 'svc', protocol: 'http', direction: 'reverse',
+            })
+            expect(localPort).toBe(9000)
+        })
+
+        it('uses the reverse native channel in app mode', async () => {
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 9000 })
+            const mockAddReverse = vi.fn().mockResolvedValue(true)
+            const mockAddForward = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: mockAddForward,
+                removeForwardedPort: vi.fn(),
+                addReverseForwardedPort: mockAddReverse,
+                removeReverseForwardedPort: vi.fn(),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            await registerPort(3000, 'svc', 'http', '', 'reverse')
+
+            expect(mockAddReverse).toHaveBeenCalledWith(9000, 3000, '')
+            expect(mockAddForward).not.toHaveBeenCalled()
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('tears down a reverse mapping through the reverse native channel', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockResolvedValue({
+                ports: [
+                    { port: 3000, localPort: 9000, host: '', name: 'svc', protocol: 'http', direction: 'reverse', active: true, enabled: true },
+                ],
+            })
+            mockApiDelete.mockResolvedValue({})
+            const mockRemoveReverse = vi.fn().mockResolvedValue(undefined)
+            const mockRemoveForward = vi.fn().mockResolvedValue(undefined)
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn(),
+                removeForwardedPort: mockRemoveForward,
+                addReverseForwardedPort: vi.fn(),
+                removeReverseForwardedPort: mockRemoveReverse,
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { loadPorts, unregisterPort } = usePortForward()
+            await loadPorts()
+
+            await unregisterPort(9000)
+
+            expect(mockRemoveReverse).toHaveBeenCalledWith(9000)
+            expect(mockRemoveForward).not.toHaveBeenCalled()
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not probe reachability for reverse mappings', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockResolvedValue({
+                ports: [
+                    { port: 3000, localPort: 9000, host: '', name: 'svc', protocol: 'http', direction: 'reverse', active: true, enabled: true },
+                    { port: 8080, localPort: 8080, host: '', name: 'API', protocol: 'http', direction: 'forward', active: true, enabled: true },
+                ],
+            })
+            const mockProbe = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn(),
+                removeForwardedPort: vi.fn(),
+                testPortReachable: mockProbe,
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { loadPorts, localReachable } = usePortForward()
+            await loadPorts()
+
+            // Only the forward mapping has a local listener worth probing.
+            expect(mockProbe).toHaveBeenCalledTimes(1)
+            expect(mockProbe).toHaveBeenCalledWith(8080)
+            expect(localReachable.value.has(9000)).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('syncs reverse mappings via addReverseForwardedPort', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockResolvedValue({
+                ports: [
+                    { port: 3000, localPort: 9000, host: '', name: 'svc', protocol: 'http', direction: 'reverse', active: false, enabled: true },
+                ],
+            })
+            const mockAddReverse = vi.fn().mockResolvedValue(true)
+            const mockAddForward = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: mockAddForward,
+                removeForwardedPort: vi.fn(),
+                addReverseForwardedPort: mockAddReverse,
+                removeReverseForwardedPort: vi.fn(),
+                getForwardedPorts: async () => JSON.stringify([]),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { syncToNative } = usePortForward()
+            await syncToNative()
+
+            expect(mockAddReverse).toHaveBeenCalledWith(9000, 3000, '')
+            expect(mockAddForward).not.toHaveBeenCalled()
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('skips reverse mappings when the host predates reverse support', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockResolvedValue({
+                ports: [
+                    { port: 3000, localPort: 9000, host: '', name: 'svc', protocol: 'http', direction: 'reverse', active: false, enabled: true },
+                ],
+            })
+            const mockAddForward = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: mockAddForward,
+                removeForwardedPort: vi.fn(),
+                getForwardedPorts: async () => JSON.stringify([]),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { syncToNative } = usePortForward()
+
+            // Must not throw, and must not fall back to the forward channel.
+            await syncToNative()
+            expect(mockAddForward).not.toHaveBeenCalled()
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('copies the server-side address of a reverse mapping', async () => {
+            const writeText = vi.fn().mockResolvedValue(undefined)
+            Object.assign(navigator, { clipboard: { writeText } })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { copyServerAddress } = usePortForward()
+
+            await copyServerAddress(9000, 'http')
+
+            expect(writeText).toHaveBeenCalledWith('http://127.0.0.1:9000')
+            expect(mockToastShow).toHaveBeenCalledWith('proxy.serverAddressCopied', expect.anything())
+        })
+    })
+
 })

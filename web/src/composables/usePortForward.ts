@@ -3,18 +3,20 @@ import { apiGet, apiPost, apiPut, apiDelete } from '@/utils/api'
 import { useAppMode } from './useAppMode.ts'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
-import { tunnelStatusFromPorts as tunnelStatusFromPortsUtil, buildPortUrl } from '@/utils/portForwardUtils.ts'
+import { tunnelStatusFromPorts as tunnelStatusFromPortsUtil, buildPortUrl, buildServerAddress, isReversePort } from '@/utils/portForwardUtils.ts'
+import type { PortDirection } from '@/utils/portForwardUtils.ts'
 import { store } from '@/stores/app'
 import { useSessionIdentity } from './useSessionIdentity'
 import { getNative, reconnectTunnel as nativeReconnectTunnel } from '@/utils/clawbenchNative'
 import type { ClawBenchNative } from '@/utils/clawbenchNative'
 
 interface ForwardedPort {
-  port: number        // Target port on remote host
-  localPort: number   // Local listening port (auto-assigned)
+  port: number        // Target port (server-side for forward, client-side for reverse)
+  localPort: number   // Listening port (client-side for forward, server-side for reverse)
   host: string
   name: string
   protocol: string
+  direction?: PortDirection
   active: boolean
   enabled: boolean
 }
@@ -146,6 +148,9 @@ let probingReachability = false
 function effectivePorts(): ForwardedPort[] {
   if (!isAppMode.value || localReachable.value.size === 0) return ports.value
   return ports.value.map(p => {
+    // A reverse mapping has no client-side listener to probe: its `active` flag
+    // comes from the server-side bind, which is already the honest answer.
+    if (isReversePort(p)) return p
     const reachable = localReachable.value.get(p.localPort)
     if (reachable === undefined) return p
     return { ...p, active: reachable && p.active }
@@ -246,7 +251,9 @@ export function usePortForward() {
     try {
       const next = new Map<number, boolean>()
       for (const p of ports.value) {
-        if (!p.enabled) continue
+        // Reverse mappings have no local listener — probing would always fail
+        // and paint every reverse entry as tunnel-down.
+        if (!p.enabled || isReversePort(p)) continue
         try {
           next.set(p.localPort, (await native.testPortReachable(p.localPort)) === true)
         } catch {
@@ -268,12 +275,24 @@ export function usePortForward() {
    * false error on every Android call, and swallowing false (the old behaviour)
    * left a dead mapping looking healthy.
    */
-  function addNativeForward(localPort: number, targetPort: number, host: string): void {
+  function addNativeForward(localPort: number, targetPort: number, host: string, direction?: PortDirection): void {
     const native = getNative()
-    if (!native?.addForwardedPort) return
-    Promise.resolve(native.addForwardedPort(localPort, targetPort, host || ''))
+    const isReverse = direction === 'reverse'
+    const method = isReverse ? native?.addReverseForwardedPort : native?.addForwardedPort
+    if (!method) return
+    // For a reverse mapping the roles flip: `localPort` is the server-side bind
+    // port and `targetPort` the local service to relay to.
+    Promise.resolve(method.call(native, localPort, targetPort, host || ''))
       .then(ok => { if (ok === false) reportForwardFailure(localPort) })
       .catch(() => reportForwardFailure(localPort))
+  }
+
+  /** Tear down a native forward of either direction. */
+  function removeNativeForward(localPort: number, direction?: PortDirection): void {
+    const native = getNative()
+    const method = direction === 'reverse' ? native?.removeReverseForwardedPort : native?.removeForwardedPort
+    if (!method) return
+    Promise.resolve(method.call(native, localPort)).catch(() => {})
   }
 
   /** Clear the pending indicator and tell the user the port could not be bound. */
@@ -285,8 +304,8 @@ export function usePortForward() {
     toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
   }
 
-  async function registerPort(port: number, name?: string, protocol?: string, host?: string): Promise<number> {
-    const result = await apiPost<{ localPort: number }>('/api/proxy/ports', { port, host: host || '', name: name || '', protocol: protocol || 'http' })
+  async function registerPort(port: number, name?: string, protocol?: string, host?: string, direction?: PortDirection): Promise<number> {
+    const result = await apiPost<{ localPort: number }>('/api/proxy/ports', { port, host: host || '', name: name || '', protocol: protocol || 'http', direction: direction || 'forward' })
     // PRIVILEGED PORT POLICY: localPort may differ from port when the target port is
     // privileged (< 1024) — the backend remaps it to >= 1024 for Android/non-root.
     // Do NOT change this to assume localPort === port.
@@ -300,9 +319,9 @@ export function usePortForward() {
     ensurePortForwardListener()
     connectingPorts.value.add(localPort)
     connectingPorts.value = new Set(connectingPorts.value)
-    // Register with Android native layer: pass localPort, targetPort, host
+    // Register with the native layer: pass localPort, targetPort, host
     if (isAppMode.value) {
-      addNativeForward(localPort, port, host || '')
+      addNativeForward(localPort, port, host || '', direction)
     }
     // Fire-and-forget: refresh port list and SSH info in the background.
     // Do NOT await — the caller needs localPort immediately to open the WebView.
@@ -311,20 +330,23 @@ export function usePortForward() {
     return localPort
   }
 
-  async function updatePort(localPort: number, port: number, host: string, name: string, protocol: string) {
-    await apiPut('/api/proxy/ports', { localPort, port, host, name, protocol })
+  async function updatePort(localPort: number, port: number, host: string, name: string, protocol: string, direction?: PortDirection) {
+    await apiPut('/api/proxy/ports', { localPort, port, host, name, protocol, direction: direction || 'forward' })
     // Re-sync native layer after update: remove old, add new with correct localPort
     if (isAppMode.value) {
-      Promise.resolve(getNative()?.removeForwardedPort?.(localPort)).catch(() => {})
-      addNativeForward(localPort, port, host || '')
+      removeNativeForward(localPort, direction)
+      addNativeForward(localPort, port, host || '', direction)
     }
     await Promise.all([loadPorts(true), loadSSHInfo()])
   }
 
   async function unregisterPort(localPort: number) {
+    // Look up the direction BEFORE deleting, so the native teardown targets the
+    // right mapping (forward and reverse have separate native maps).
+    const existing = ports.value.find(p => p.localPort === localPort)
     await apiDelete(`/api/proxy/ports?port=${localPort}`)
     if (isAppMode.value) {
-      Promise.resolve(getNative()?.removeForwardedPort?.(localPort)).catch(() => {})
+      removeNativeForward(localPort, existing?.direction)
     }
     await Promise.all([loadPorts(true), loadSSHInfo()])
   }
@@ -359,11 +381,10 @@ export function usePortForward() {
     await loadPorts(true)
     if (isAppMode.value) {
       const p = ports.value.find(x => x.localPort === localPort)
-      const native = getNative()
       if (enabled && p) {
-        addNativeForward(p.localPort, p.port, p.host || '')
+        addNativeForward(p.localPort, p.port, p.host || '', p.direction)
       } else if (!enabled) {
-        Promise.resolve(native?.removeForwardedPort?.(localPort)).catch(() => {})
+        removeNativeForward(localPort, p?.direction)
       }
     }
   }
@@ -404,11 +425,11 @@ export function usePortForward() {
 
     if (typeof native.getForwardedPorts === 'function') {
       try {
-        const current: Array<{ port?: number; host?: string }> = JSON.parse((await native.getForwardedPorts()) || '[]')
+        const current: Array<{ port?: number; host?: string; direction?: string }> = JSON.parse((await native.getForwardedPorts()) || '[]')
         for (const item of current) {
           const lp = item && item.port
           if (lp && !enabledLocalPorts.has(lp)) {
-            Promise.resolve(native.removeForwardedPort?.(lp)).catch(() => {})
+            removeNativeForward(lp, item.direction as PortDirection | undefined)
           }
         }
       } catch {
@@ -420,7 +441,14 @@ export function usePortForward() {
       // Sequential: the native layer shares one SSH tunnel, and concurrent
       // connects used to cancel each other (each add cancelled the in-flight
       // one), leaving every mapping dead. Awaiting keeps them strictly ordered.
-      const ok = await Promise.resolve(native.addForwardedPort?.(p.localPort, p.port, p.host || '')).catch(() => false)
+      const method = isReversePort(p) ? native.addReverseForwardedPort : native.addForwardedPort
+      if (!method) {
+        // Host predates reverse forwarding — nothing to bind natively.
+        if (isReversePort(p)) continue
+        reportForwardFailure(p.localPort)
+        continue
+      }
+      const ok = await Promise.resolve(method.call(native, p.localPort, p.port, p.host || '')).catch(() => false)
       if (ok === false) reportForwardFailure(p.localPort)
     }
     // Re-probe now that the forwards have been (re)established, so the dots
@@ -763,6 +791,26 @@ export function usePortForward() {
     await loadPorts(true)
   }
 
+  /**
+   * Copy a reverse mapping's server-side address to the clipboard.
+   *
+   * Reverse mappings bind the server's loopback, so there is no browser to open
+   * on this device — the useful action is handing the user the address to use in
+   * a shell on the server host.
+   */
+  async function copyServerAddress(serverPort: number, protocol?: string) {
+    const address = buildServerAddress(serverPort, protocol)
+    const toast = useToast()
+    try {
+      await navigator.clipboard.writeText(address)
+      toast.show(gt('proxy.serverAddressCopied'), { icon: '📋', type: 'success' })
+    } catch {
+      // Clipboard API needs a secure context / permission; fall back to showing
+      // the address so the user can still copy it by hand.
+      toast.show(address, { icon: '📋' })
+    }
+  }
+
   /** Open a forwarded port in external/system browser */
   function openInExternalBrowser(localPort: number, protocol?: string, host?: string) {
     if (isAppMode.value) {
@@ -784,14 +832,16 @@ export function usePortForward() {
    * Used by localhost URL click handler to auto-setup port forwarding.
    */
   async function ensurePortRegistered(port: number, protocol: string, host?: string): Promise<number> {
-    const existing = ports.value.find(p => p.port === port && p.host === (host || ''))
+    // Only forward mappings can satisfy a localhost URL click: a reverse entry
+    // with a matching client-side port exposes it on the SERVER, not here.
+    const existing = ports.value.find(p => p.port === port && p.host === (host || '') && !isReversePort(p))
     if (existing) {
       if (!existing.enabled) {
         await setPortEnabled(existing.localPort, true)
       }
       return existing.localPort
     }
-    return registerPort(port, '', protocol, host)
+    return registerPort(port, '', protocol, host, 'forward')
   }
 
   return {
@@ -826,6 +876,7 @@ export function usePortForward() {
     openPort,
     openPortWithCheck,
     openInExternalBrowser,
+    copyServerAddress,
     reconnectPort,
     ensurePortRegistered,
   }

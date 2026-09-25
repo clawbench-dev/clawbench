@@ -314,4 +314,68 @@ describe('MarkdownPreviewBody.vue', () => {
     await btn.trigger('click')
     expect(attachedFiles.value.some(f => f.startLine === 15)).toBe(false)
   })
+
+  // ── SVG media: proportional fill-width sizing on image load ──────────────
+  //
+  // An SVG FILE's aspect ratio is only knowable once the browser has decoded
+  // it, so the figure is (re-)stamped on the media `load` event. Inline <svg>
+  // needs no load and is stamped by the render pass instead, which means a
+  // regression that drops this `@load.capture` wiring would silently leave
+  // every SVG *file* unsized while the render-pass tests stayed green.
+  describe('svg file sizing on media load', () => {
+    const SVG_FIGURE =
+      '<div class="image-block-wrapper"><span class="lightbox-img-wrap">'
+      + '<img class="lightbox-img" src="/api/local-file/docs/chart.svg?t=1"></span></div>'
+
+    /** jsdom never loads images, so the decoded intrinsic size must be injected. */
+    function injectNaturalSize(img: Element, w: number, h: number): void {
+      Object.defineProperty(img, 'naturalWidth', { value: w, configurable: true })
+      Object.defineProperty(img, 'naturalHeight', { value: h, configurable: true })
+    }
+
+    it('stamps an SVG file figure with its ratio once the image has loaded', async () => {
+      const { wrapper } = mountBody({ renderedHtml: SVG_FIGURE })
+      const figure = wrapper.find('.image-block-wrapper')
+      const img = wrapper.find('img.lightbox-img')
+
+      // Not yet decoded → no ratio, so the figure keeps its previous sizing.
+      expect(figure.classes()).not.toContain('svg-fit')
+
+      injectNaturalSize(img.element, 400, 100)
+      await img.trigger('load')
+
+      expect(figure.classes()).toContain('svg-fit')
+      expect((figure.element as HTMLElement).style.getPropertyValue('--svg-ar')).toBe('4')
+    })
+
+    it('re-stamps with the corrected ratio when a later load reveals a new size', async () => {
+      const { wrapper } = mountBody({ renderedHtml: SVG_FIGURE })
+      const img = wrapper.find('img.lightbox-img')
+      const figure = wrapper.find('.image-block-wrapper')
+
+      injectNaturalSize(img.element, 400, 100)
+      await img.trigger('load')
+      expect((figure.element as HTMLElement).style.getPropertyValue('--svg-ar')).toBe('4')
+
+      // A responsive SVG reports a different intrinsic size after a resize /
+      // reload; the stamp must overwrite rather than keep the stale ratio.
+      injectNaturalSize(img.element, 100, 400)
+      await img.trigger('load')
+      expect((figure.element as HTMLElement).style.getPropertyValue('--svg-ar')).toBe('0.25')
+      expect(figure.classes()).toContain('svg-fit')
+    })
+
+    it('leaves a raster image figure unsized on load', async () => {
+      const { wrapper } = mountBody({
+        renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap">'
+          + '<img class="lightbox-img" src="/api/local-file/docs/photo.png?t=1"></span></div>',
+      })
+      const img = wrapper.find('img.lightbox-img')
+      injectNaturalSize(img.element, 400, 100)
+      await img.trigger('load')
+
+      // Only SVG media opts in; a PNG must not be stretched to the column.
+      expect(wrapper.find('.image-block-wrapper').classes()).not.toContain('svg-fit')
+    })
+  })
 })

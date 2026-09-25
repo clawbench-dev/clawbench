@@ -119,9 +119,10 @@ func TestRenderCommand_Deterministic(t *testing.T) {
 }
 
 // TestRenderCommand_SizeBudget keeps the injected fragments from creeping back
-// toward the size of the full spec. The budget is generous (roughly 2x current)
-// so ordinary spec growth does not break the build, but a switch back to
-// tag-based selection would blow past it immediately.
+// toward the size of the full spec. The budget leaves headroom for ordinary
+// spec growth (adding a documented field to the task body is legitimate) while
+// staying far below the full spec, so a switch back to tag-based selection
+// would blow past it immediately.
 func TestRenderCommand_SizeBudget(t *testing.T) {
 	budgets := map[Command]int{
 		// chatsearch grew when the project-list endpoint joined it, so the AI
@@ -129,8 +130,10 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// still sits far below the full spec, so a switch back to tag-based
 		// selection would blow past it.
 		CommandChatSearch: 2600,
-		CommandTask:       7000,
-		CommandUsage:      2000,
+		// The task body grew when the pre-AI custom-script fields (script,
+		// script_timeout) joined it; the headroom is deliberate, not drift.
+		CommandTask:  8000,
+		CommandUsage: 2000,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)

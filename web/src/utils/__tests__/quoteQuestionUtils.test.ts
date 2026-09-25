@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage, relativizeProjectPath, buildMultiQuoteMessage, buildQuoteBlock, buildQuoteFirstMessage, getQuoteSource } from '@/utils/quoteQuestionUtils'
+import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage, relativizeProjectPath, buildMultiQuoteMessage, buildQuoteBlock, buildQuoteFirstMessage, getQuoteSource, messageIdFromKey } from '@/utils/quoteQuestionUtils'
 
 // --- closestElement ---
 
@@ -180,6 +180,25 @@ describe('getLineInfo', () => {
     const focus = makeCodeLine('15')
     const sel = mockSelection(textNode, focus)
     expect(getLineInfo(sel)).toEqual({ startLine: 12, endLine: 15 })
+  })
+
+  it('resolves a selection inside a table ROW to that row, not the table start', () => {
+    // Regression: only <table> carried data-source-line, so selecting any row
+    // reported the table's first line. Each <tr> now carries its own line.
+    const table = document.createElement('table')
+    table.setAttribute('data-source-line', '10')
+    table.setAttribute('data-source-end', '13')
+    table.innerHTML = [
+      '<thead><tr data-source-line="10"><th>列A</th></tr></thead>',
+      '<tbody>',
+      '<tr data-source-line="12"><td id="row1">1</td></tr>',
+      '<tr data-source-line="13"><td id="row2">3</td></tr>',
+      '</tbody>',
+    ].join('')
+    const row1 = table.querySelector('#row1')!
+    const row2 = table.querySelector('#row2')!
+    const sel = mockSelection(row1.firstChild, row2.firstChild)
+    expect(getLineInfo(sel)).toEqual({ startLine: 12, endLine: 13 })
   })
 })
 
@@ -467,7 +486,7 @@ describe('getQuoteSource', () => {
     const inner = document.createElement('div')
     wrap.appendChild(inner)
 
-    expect(getQuoteSource(inner)).toEqual({ label: 'acme/widgets#123', language: 'issue' })
+    expect(getQuoteSource(inner)).toEqual({ label: 'acme/widgets#123', language: 'issue', url: '' })
   })
 
   it('returns null outside a labelled region so callers can fall back', () => {
@@ -489,6 +508,43 @@ describe('getQuoteSource', () => {
     wrap.setAttribute('data-quote-source', 'a/b#1')
     const inner = document.createElement('div')
     wrap.appendChild(inner)
-    expect(getQuoteSource(inner)).toEqual({ label: 'a/b#1', language: '' })
+    expect(getQuoteSource(inner)).toEqual({ label: 'a/b#1', language: '', url: '' })
+  })
+
+  it('reads the source address so a forge quote can offer a jump action', () => {
+    // Without the address the label alone is not openable, and the quote detail
+    // drawer would have no jump target.
+    const wrap = document.createElement('div')
+    wrap.setAttribute('data-quote-source', 'acme/widgets#123')
+    wrap.setAttribute('data-quote-url', 'https://github.com/acme/widgets/issues/123')
+    const inner = document.createElement('div')
+    wrap.appendChild(inner)
+
+    expect(getQuoteSource(inner)?.url).toBe('https://github.com/acme/widgets/issues/123')
+  })
+})
+
+// --- messageIdFromKey ---
+
+describe('messageIdFromKey', () => {
+  it('parses a db-prefixed key', () => {
+    expect(messageIdFromKey('db-42')).toBe(42)
+  })
+
+  it('returns undefined for an absent key (optimistic message)', () => {
+    expect(messageIdFromKey(null)).toBeUndefined()
+    expect(messageIdFromKey(undefined)).toBeUndefined()
+    expect(messageIdFromKey('')).toBeUndefined()
+  })
+
+  it('rejects a key that is not db-prefixed', () => {
+    expect(messageIdFromKey('local-3')).toBeUndefined()
+    expect(messageIdFromKey('42')).toBeUndefined()
+  })
+
+  it('rejects a non-numeric or non-positive id', () => {
+    expect(messageIdFromKey('db-abc')).toBeUndefined()
+    expect(messageIdFromKey('db-0')).toBeUndefined()
+    expect(messageIdFromKey('db--5')).toBeUndefined()
   })
 })

@@ -1,7 +1,11 @@
 import { ref, computed, type ComputedRef } from 'vue'
 import type { FileScrollEntry } from '@/utils/fileScrollCache'
 
-export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history' | 'forge'
+// `terminal` is a jump source: the terminal toolbar can open the shell's current
+// directory in the file manager, and Back must return to the terminal. It needs
+// no SURFACE_TAB entry — surfaceToTab() already resolves it through PANEL_TABS,
+// which lists every panel tab id (terminal included).
+export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history' | 'forge' | 'terminal'
 
 export interface NavigationOrigin {
   surface: NavigationSurface

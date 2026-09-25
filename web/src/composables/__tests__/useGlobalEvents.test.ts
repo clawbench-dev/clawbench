@@ -1172,7 +1172,7 @@ describe('useGlobalEvents', () => {
             expect(mockShowBrowserNotification).not.toHaveBeenCalled()
         })
 
-        it('notification onClick dispatches clawbench-open-forge with the project path', () => {
+        it('notification onClick dispatches clawbench-open-forge with the project path and item target', () => {
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
             const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
@@ -1197,11 +1197,68 @@ describe('useGlobalEvents', () => {
 
             // The panel is project-scoped, so the destination project must travel
             // with the event — without it the click opens the ACTIVE project's
-            // panel, where this repository's row does not exist.
+            // panel, where this repository's row does not exist. The item target
+            // makes the click land on the item itself, not just the tab.
             expect(dispatchSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     type: 'clawbench-open-forge',
-                    detail: { projectPath: '/home/u/proj-b' },
+                    detail: {
+                        projectPath: '/home/u/proj-b',
+                        target: {
+                            projectPath: '/home/u/proj-b',
+                            type: 'pr',
+                            number: 42,
+                            runId: 0,
+                            itemKey: 'pr/42',
+                        },
+                    },
+                })
+            )
+            dispatchSpy.mockRestore()
+        })
+
+        it('builds a pipeline target from run_id (a pipeline has no number)', () => {
+            // Regression: a pipeline event stores number 0 for every run, so
+            // (item_type, number) cannot name one. run_id is the only identity,
+            // and the read key must be "pipeline/run:<id>" — not "pipeline/0".
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'forge_event',
+                data: forgeEventData({
+                    event: {
+                        platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets',
+                        item_type: 'pipeline', number: 0, run_id: 555, event_type: 'pipeline_done',
+                        project_path: '/home/u/proj-b',
+                    },
+                    // A real pipeline event carries number 0 on the item too —
+                    // the syncer builds it that way. Keeping the fixture
+                    // faithful matters: the title/target code falls back to
+                    // item.number when ev.number is falsy, so a non-zero item
+                    // number here would mask a pipeline being rendered as a
+                    // numbered item.
+                    item: { type: 'pipeline', number: 0, title: 'CI', url: 'https://ci/run/555' },
+                }),
+            })
+
+            mockShowBrowserNotification.mock.calls[0][1].onClick()
+
+            expect(dispatchSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: 'clawbench-open-forge',
+                    detail: expect.objectContaining({
+                        target: expect.objectContaining({
+                            type: 'pipeline',
+                            number: 0,
+                            runId: 555,
+                            itemKey: 'pipeline/run:555',
+                        }),
+                    }),
                 })
             )
             dispatchSpy.mockRestore()
@@ -1222,7 +1279,7 @@ describe('useGlobalEvents', () => {
             expect(dispatchSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
                     type: 'clawbench-open-forge',
-                    detail: { projectPath: undefined },
+                    detail: expect.objectContaining({ projectPath: undefined }),
                 })
             )
             dispatchSpy.mockRestore()

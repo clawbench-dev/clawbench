@@ -1,9 +1,8 @@
 <template>
-  <!-- Button mode: inline toggle in chat meta bar -->
-  <button v-if="mode === 'button'" class="chat-action-btn chat-action-btn--wide" @click.stop="$emit('toggle')">
+  <!-- Button mode: inline toggle in chat meta bar (icon-only) -->
+  <button v-if="mode === 'button'" class="chat-action-btn" :title="buttonLabel" :aria-label="buttonLabel" @click.stop="$emit('toggle')">
     <Sparkles v-if="!showingSummary" :size="14" />
     <FileText v-else :size="14" />
-    <span>{{ showingSummary ? labelOriginal : labelSummary }}</span>
   </button>
   <!-- Tab mode: page tabs in task exec detail -->
   <div v-else class="summary-toggle-bar">
@@ -39,6 +38,9 @@ const { t } = useI18n()
 // Tab mode uses short labels (tabSummary/tabOriginal), button mode uses action labels (summaryViewSummary/summaryViewOriginal)
 const labelSummary = computed(() => t(`${props.i18nPrefix}.${props.mode === 'tab' ? 'tabSummary' : 'summaryViewSummary'}`))
 const labelOriginal = computed(() => t(`${props.i18nPrefix}.${props.mode === 'tab' ? 'tabOriginal' : 'summaryViewOriginal'}`))
+
+// Button mode is icon-only, so the label only surfaces as a tooltip/accessible name
+const buttonLabel = computed(() => (props.showingSummary ? labelOriginal.value : labelSummary.value))
 </script>
 
 <style scoped>

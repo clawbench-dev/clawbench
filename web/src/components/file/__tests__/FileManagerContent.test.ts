@@ -55,8 +55,12 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 const mockIsAppMode = ref(false)
+// Mutable so a test can flip the desktop-shell flag: the shortcut gate must
+// distinguish "Android WebView" from "Electron desktop shell", and BOTH report
+// isAppMode === true.
+const mockIsDesktopApp = ref(false)
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: mockIsDesktopApp }),
 }))
 
 const mockDialogConfirm = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
@@ -465,6 +469,7 @@ beforeEach(() => {
   mockHandleFolderSelect.mockResolvedValue(undefined)
   mockIsPC.value = false
   mockIsAppMode.value = false
+  mockIsDesktopApp.value = false
   mockIsRefreshing.value = false
   mockToolbarCollapsedIds.length = 0
   mockDirUploading.value = false
@@ -2192,6 +2197,59 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     expect(wrapper.emitted('delete')![0]).toEqual(['test.ts'])
   })
 
+  /**
+   * Regression: the Android-only skip must NOT disable the desktop shell.
+   *
+   * `isAppMode` is just `isNativeApp()`, so it is true on Electron too. Gating
+   * the whole handler on it (as it was) made EVERY shortcut in this block dead
+   * on the desktop shell, while the identical build worked in a browser — the
+   * regression shipped because the Electron shell had been removed when the
+   * guard was written and was restored later.
+   */
+  describe('app-mode gating', () => {
+    it('keeps shortcuts working in the Electron desktop shell', async () => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = true
+
+      const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+      await nextTick()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+      await nextTick()
+
+      expect(wrapper.emitted('delete')).toBeTruthy()
+      expect(wrapper.emitted('delete')![0]).toEqual(['test.ts'])
+    })
+
+    it('still skips them in the Android WebView shell', async () => {
+      // Android reports isAppMode without isDesktopApp. Its shortcuts are
+      // gesture-driven, so the handler must keep bailing out here.
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = false
+
+      const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+      await nextTick()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+      await nextTick()
+
+      expect(wrapper.emitted('delete')).toBeFalsy()
+    })
+
+    it('keeps shortcuts working in a plain browser', async () => {
+      mockIsAppMode.value = false
+      mockIsDesktopApp.value = false
+
+      const wrapper = mountKeyboardContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+      await nextTick()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+      await nextTick()
+
+      expect(wrapper.emitted('delete')).toBeTruthy()
+    })
+  })
+
   it('Delete emits delete for the highlighted selection before falling back to the current file', async () => {
     const wrapper = mountKeyboardContent({ currentFile: { path: 'other.ts', name: 'other.ts' } })
     await nextTick()
@@ -3267,18 +3325,17 @@ describe('FileManagerContent — create file/folder', () => {
     vi.unstubAllGlobals()
   })
 
-  it('doNewFile via toolbar button creates a file and emits refresh', async () => {
+  it('doNewFile via toolbar button opens an Untitled editor (emits newFile)', async () => {
     const wrapper = mountContent()
     const btns = wrapper.findAll('.toolbar-btn')
     const newFileBtn = btns.find(b => b.attributes('title') === '新建文件')
     expect(newFileBtn).toBeTruthy()
     await newFileBtn!.trigger('click')
     await nextTick()
-    await nextTick()
 
-    expect(mockDialogPrompt).toHaveBeenCalled()
-    expect(wrapper.emitted('refresh')).toBeTruthy()
-    expect(mockToastShow).toHaveBeenCalled()
+    // No filename prompt and no create API call — the parent opens the editor.
+    expect(mockDialogPrompt).not.toHaveBeenCalled()
+    expect(wrapper.emitted('newFile')).toBeTruthy()
   })
 
   it('doNewFolder via toolbar button creates a folder and emits refresh', async () => {
@@ -3295,29 +3352,32 @@ describe('FileManagerContent — create file/folder', () => {
     expect(mockToastShow).toHaveBeenCalled()
   })
 
-  it('doNewFile does nothing when prompt is cancelled (empty name)', async () => {
-    mockDialogPrompt.mockResolvedValue('')
-    const wrapper = mountContent()
+  it('doNewFile emits the target dir and never calls the create API', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+    const wrapper = mountContent({ currentDir: 'docs' })
     await wrapper.vm.doNewFile()
     await nextTick()
 
+    expect(wrapper.emitted('newFile')![0]).toEqual(['docs'])
+    expect(fetchSpy).not.toHaveBeenCalled()
     expect(wrapper.emitted('refresh')).toBeFalsy()
   })
 
-  it('doNewFile shows failure toast when the create API fails', async () => {
+  it('doNewFolder shows failure toast when the create API fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: 'boom' }), text: async () => '' })))
     const wrapper = mountContent()
-    await wrapper.vm.doNewFile()
+    await wrapper.vm.doNewFolder()
     await nextTick()
 
     expect(mockToastShow).toHaveBeenCalled()
     expect(wrapper.emitted('refresh')).toBeFalsy()
   })
 
-  it('doNewFile shows failure toast when the create API throws', async () => {
+  it('doNewFolder shows failure toast when the create API throws', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network') }))
     const wrapper = mountContent()
-    await wrapper.vm.doNewFile()
+    await wrapper.vm.doNewFolder()
     await nextTick()
 
     expect(mockToastShow).toHaveBeenCalled()
@@ -3326,28 +3386,6 @@ describe('FileManagerContent — create file/folder', () => {
   // The results layer renders search hits, not the directory listing, so the
   // new entry can never appear in it. Collapsing the query first is what makes
   // the post-create select + scroll actually land on a rendered row.
-  it('doNewFile clears an active search before creating', async () => {
-    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
-    vi.stubGlobal('fetch', fetchSpy)
-    searchState.query = 'main'
-    searchState.results = [{ name: 'main.ts', path: 'main.ts', type: 'file', matchedIndices: [] }]
-
-    const wrapper = mountContent({
-      currentDir: 'docs',
-      entries: [...sampleEntries, { name: 'newfile.txt', type: 'file', modified: '2025-01-01T00:00:00Z', size: 0 }],
-    })
-    expect(wrapper.vm.searchActive).toBe(true)
-
-    await wrapper.vm.doNewFile()
-    await nextTick()
-
-    expect(mockSearchReset).toHaveBeenCalled()
-    expect(wrapper.vm.searchActive).toBe(false)
-    // The selection is re-applied after the reset, so the created row stays
-    // selected (exitSearch() blanks selectedPath as part of collapsing).
-    expect(wrapper.vm._getSelectedPath()).toBe('docs/newfile.txt')
-  })
-
   it('doNewFolder clears an active search before creating', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', fetchSpy)
@@ -3363,21 +3401,6 @@ describe('FileManagerContent — create file/folder', () => {
 
     expect(mockSearchReset).toHaveBeenCalled()
     expect(wrapper.vm.searchActive).toBe(false)
-    expect(wrapper.vm._getSelectedPath()).toBe('docs/newfile.txt')
-  })
-
-  it('doNewFile keeps the entry selected when no search was active', async () => {
-    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
-    vi.stubGlobal('fetch', fetchSpy)
-    searchState.query = ''
-
-    const wrapper = mountContent({
-      currentDir: 'docs',
-      entries: [...sampleEntries, { name: 'newfile.txt', type: 'file', modified: '2025-01-01T00:00:00Z', size: 0 }],
-    })
-    await wrapper.vm.doNewFile()
-    await nextTick()
-
     expect(wrapper.vm._getSelectedPath()).toBe('docs/newfile.txt')
   })
 })

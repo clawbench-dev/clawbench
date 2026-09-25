@@ -103,6 +103,13 @@ interface CurrentFile {
     name: string
     path: string
     content?: string | null
+    /**
+     * A not-yet-saved "Untitled" buffer opened from New File. `path` is empty
+     * until the first save picks a filename; `targetDir` is the directory the
+     * file will be written into once named.
+     */
+    untitled?: boolean
+    targetDir?: string
     isImage?: boolean
     isPdf?: boolean
     isAudio?: boolean
@@ -631,6 +638,48 @@ function markSaved(path: string, content: string): void {
     saveOpenFile()
 }
 
+/**
+ * Open a new, not-yet-saved "Untitled" buffer that will be written into `dir`.
+ *
+ * No file is created on disk: the user types first and is asked for a filename
+ * only when they save. The persisted open-file record is deliberately left
+ * untouched — an unsaved buffer cannot be restored after a reload, so the
+ * previous file's record is a more useful thing to come back to than a dangling
+ * untitled.
+ */
+function openUntitledFile(dir: string): void {
+    state.currentFile = {
+        name: '',
+        path: '',
+        content: '',
+        untitled: true,
+        targetDir: dir,
+    }
+}
+
+/**
+ * Turn the current untitled buffer into a real file after its first save.
+ *
+ * Mutates the existing object IN PLACE: replacing it would trip FileViewer's
+ * `props.file` watcher, which resets edit mode — the user would be bounced out
+ * of the editor the moment they saved. Returns false when the open file is not
+ * an untitled buffer.
+ */
+function adoptUntitledPath(path: string, content: string): boolean {
+    const file = state.currentFile
+    if (!file?.untitled) return false
+    file.path = path
+    file.name = baseName(path)
+    file.content = content
+    file.untitled = false
+    delete file.targetDir
+    // The visit keeps its identity — only its path changes — so swap the nav
+    // history entry in place instead of pushing a new one.
+    useFileNavStack().replaceCurrentPath(path)
+    saveOpenFile()
+    return true
+}
+
 async function deleteFiles(paths: string[]): Promise<void> {
     if (!paths.length) return
     const results = await Promise.allSettled(paths.map(p => apiPost('/api/file/delete', { path: p })))
@@ -705,6 +754,8 @@ export const store = {
     loadFiles,
     selectFile,
     markSaved,
+    openUntitledFile,
+    adoptUntitledPath,
     closeCurrentFile,
     deleteFile,
     deleteFiles,

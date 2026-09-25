@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 
-const { openFilePath, closePreview, handleDblClick } = vi.hoisted(() => ({
+const { openFilePath, closePreview, handleDblClick, pipelineHtml } = vi.hoisted(() => ({
   openFilePath: vi.fn(),
   closePreview: vi.fn(),
   handleDblClick: vi.fn(),
+  pipelineHtml: { value: '' },
 }))
 
 vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
@@ -54,7 +55,7 @@ vi.mock('@/stores/app.ts', () => ({
 
 vi.mock('@/composables/useMarkdownRenderPipeline.ts', () => ({
   buildMarkdownPreviewDom: () => ({
-    html: '<p><span class="chat-file-path" data-file-path="docs/guides" data-path-type="dir">docs/guides</span><span class="chat-file-path file-target" data-file-path="docs/guide.md" data-path-type="file">docs/guide.md</span></p>',
+    html: pipelineHtml.value || '<p><span class="chat-file-path" data-file-path="docs/guides" data-path-type="dir">docs/guides</span><span class="chat-file-path file-target" data-file-path="docs/guide.md" data-path-type="file">docs/guide.md</span></p>',
     detectedPaths: [],
   }),
 }))
@@ -92,13 +93,22 @@ vi.mock('@/composables/useCodeLinkPreview.ts', () => ({
   handleVerifiedFilePathClick: vi.fn().mockReturnValue(false),
 }))
 
+// Keep the real share-link behavior but make the interceptor observable, so a
+// regression that drops the call from MarkdownPreview.handleClick is caught.
+vi.mock('@/share/shareLinks', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/share/shareLinks')>()
+  return { ...actual, handleShareLinkClick: vi.fn(actual.handleShareLinkClick) }
+})
+
 import MarkdownPreview from '../MarkdownPreview.vue'
+import { SHARE_OPEN_FILE_EVENT, SHARE_PATH_ATTR } from '@/share/shareLinks'
 
 describe('MarkdownPreview path clicks', () => {
   beforeEach(() => {
     openFilePath.mockReset()
     closePreview.mockReset()
     handleDblClick.mockReset()
+    pipelineHtml.value = ''
   })
 
   it('opens a verified directory when its path text is clicked', async () => {
@@ -190,5 +200,36 @@ describe('MarkdownPreview path clicks', () => {
       wrapper.unmount()
       host.remove()
     }
+  })
+
+  it('intercepts a share link click before the auth-bound openFilePath fallback', async () => {
+    // Share mode annotates relative links with data-share-path. A plain click
+    // must dispatch the share-open-file event instead of falling through to
+    // openFilePath (which resolves against an empty project root and calls
+    // auth-protected endpoints an anonymous reader cannot use).
+    pipelineHtml.value =
+      `<p><a ${SHARE_PATH_ATTR}="/repo/docs/guide.md" href="/share/tok1?path=x">Guide</a></p>`
+
+    const wrapper = mount(MarkdownPreview, {
+      props: {
+        file: { path: '/repo/README.md', content: '[Guide](./docs/guide.md)' },
+        viewMode: 'rendered',
+      },
+      global: {
+        stubs: { TableRowModal: true, MarkdownSearchBar: true, CodeLinkPreview: true },
+      },
+    })
+
+    const opened: string[] = []
+    const onOpen = (e: Event) => opened.push((e as CustomEvent).detail.path)
+    window.addEventListener(SHARE_OPEN_FILE_EVENT, onOpen)
+    try {
+      await wrapper.find(`a[${SHARE_PATH_ATTR}]`).trigger('click')
+    } finally {
+      window.removeEventListener(SHARE_OPEN_FILE_EVENT, onOpen)
+    }
+
+    expect(opened).toEqual(['/repo/docs/guide.md'])
+    expect(openFilePath).not.toHaveBeenCalled()
   })
 })

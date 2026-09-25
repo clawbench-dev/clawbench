@@ -20,10 +20,11 @@ import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { dirName, joinPath, splitPath, isAbsolutePath, normalizeSlashes } from '@/utils/path.ts'
 import { escapeHtml } from '@/utils/html.ts'
-import { isThumbExtension, buildThumbUrl, getThumbWidth } from '@/utils/chatRenderUtils.ts'
+import { isThumbExtension, buildThumbUrl, getThumbWidth, markInlineSvgs } from '@/utils/chatRenderUtils.ts'
 import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { isShareMode, shareApiUrl } from '@/share/shareMode'
+import { annotateShareLinks } from '@/share/shareLinks.ts'
 
 /**
  * Build the served URL for a project-relative (already normalized, unencoded)
@@ -167,6 +168,15 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
                 : `src="${fullSrc}"${attachAttr}`
             return match.replace(`src="${src}"`, replacement)
         })
+        // Mark bare inline <svg> so the media-block factory lifts it into the
+        // unified figure, exactly as the chat pipeline does. This step is
+        // skipped by the chat pipeline's `skipEnhancements`, but the file
+        // preview needs it: an AI-written or hand-authored `<svg>` block in a
+        // markdown file should render as a proper figure (and get the
+        // proportional fill-width sizing), not as a stray inline element.
+        // Runs AFTER the image-path rewrite above and BEFORE the media-block
+        // lift below (the lift is what actually wraps the marked svg).
+        result = markInlineSvgs(result)
         // Lift every <img> (and bare inline svg) into a block-level figure with a
         // header bar. Images are inline-flow in the marked output (inside <p>);
         // blockifying them requires DOM surgery (paragraph promotion / split), so
@@ -217,11 +227,14 @@ export function buildMarkdownPreviewDom(
         }),
     })
 
-    // Share mode: render the document read-only. File-path annotation is
-    // skipped entirely — the shared view has no file navigation, and annotated
-    // links would attempt auth-protected opens.
+    // Share mode: render the document read-only. The in-app file-path
+    // annotation is skipped entirely — it resolves paths against the project
+    // root and opens them through the auth-protected viewer, neither of which
+    // exists for an anonymous share. Local relative LINKS are instead rewritten
+    // to deep links into the same share (shareLinks.ts), which ShareView turns
+    // into an in-place document switch.
     if (isShareMode()) {
-        return { html, detectedPaths: [] }
+        return { html: annotateShareLinks(html, currentDir), detectedPaths: [] }
     }
 
     const { html: annotatedHtml, detectedPaths } = annotateFilePaths(html, {

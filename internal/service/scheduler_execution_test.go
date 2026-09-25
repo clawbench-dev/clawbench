@@ -71,13 +71,13 @@ func TestScheduler_GetRunningCounts(t *testing.T) {
 	s := NewScheduler()
 
 	s.runningExecutions.Store("exec-1", &RunningExecution{
-		ID: "exec-1", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto",
+		ID: "exec-1", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto", Phase: RunningPhaseAI,
 	})
 	s.runningExecutions.Store("exec-2", &RunningExecution{
-		ID: "exec-2", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "manual",
+		ID: "exec-2", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "manual", Phase: RunningPhaseAI,
 	})
 	s.runningExecutions.Store("exec-3", &RunningExecution{
-		ID: "exec-3", TaskID: 2, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto",
+		ID: "exec-3", TaskID: 2, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto", Phase: RunningPhaseAI,
 	})
 
 	counts := s.GetRunningCounts()
@@ -177,7 +177,7 @@ func TestScheduler_CompletionTransition(t *testing.T) {
 
 	// Task 1 starts running
 	s.runningExecutions.Store("exec-1", &RunningExecution{
-		ID: "exec-1", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto",
+		ID: "exec-1", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto", Phase: RunningPhaseAI,
 	})
 
 	// Before completion: runningCount > 0
@@ -200,10 +200,10 @@ func TestScheduler_MultipleTasksPartialCompletion(t *testing.T) {
 
 	// Two tasks running
 	s.runningExecutions.Store("exec-1", &RunningExecution{
-		ID: "exec-1", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto",
+		ID: "exec-1", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto", Phase: RunningPhaseAI,
 	})
 	s.runningExecutions.Store("exec-2", &RunningExecution{
-		ID: "exec-2", TaskID: 2, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto",
+		ID: "exec-2", TaskID: 2, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto", Phase: RunningPhaseAI,
 	})
 
 	counts := s.GetRunningCounts()
@@ -224,10 +224,10 @@ func TestScheduler_SameTaskMultipleExecutions(t *testing.T) {
 
 	// Task 1 has two concurrent executions
 	s.runningExecutions.Store("exec-1a", &RunningExecution{
-		ID: "exec-1a", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto",
+		ID: "exec-1a", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "auto", Phase: RunningPhaseAI,
 	})
 	s.runningExecutions.Store("exec-1b", &RunningExecution{
-		ID: "exec-1b", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "manual",
+		ID: "exec-1b", TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(), TriggerType: "manual", Phase: RunningPhaseAI,
 	})
 
 	counts := s.GetRunningCounts()

@@ -207,6 +207,46 @@ func TestForgeDispatcher_PayloadEventKeysAreSnakeCase(t *testing.T) {
 	assert.NotContains(t, ev, "EventType", "PascalCase key means the struct was marshaled directly")
 }
 
+// TestForgeDispatcher_PayloadCarriesPipelineRunID pins the field that lets a
+// pipeline notification deep-link to the run that changed.
+//
+// A pipeline event stores Number 0 for EVERY run (a CI run is not an item and
+// has no number), so (item_type, number) cannot name one. Without run_id the
+// frontend could only open the Pipelines tab and leave the user to find the row,
+// and it could not mark the run read either — that key is "pipeline/run:<id>".
+func TestForgeDispatcher_PayloadCarriesPipelineRunID(t *testing.T) {
+	var payload map[string]any
+	d := service.NewForgeEventDispatcher(fullNotifyConfig, func(msg any) {
+		payload = msg.(map[string]any)
+	}, nil)
+
+	item := forge.Item{Platform: forge.PlatformGitHub, Type: forge.ItemTypePipeline, Number: 0, Title: "CI"}
+	d.HandleChange(context.Background(), service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b"},
+		item, forge.Change{Type: forge.EventPipeline, PipelineRunID: 555})
+
+	require.NotNil(t, payload)
+	ev := payload["event"].(map[string]any)
+	assert.Equal(t, int64(555), ev["run_id"], "the run id is the only value that names a pipeline")
+	assert.Equal(t, 0, ev["number"], "a pipeline's number is always 0 — that is why run_id is needed")
+}
+
+// TestForgeDispatcher_PayloadRunIDIsZeroForItems is the counterpart: an
+// issue/PR change carries no run, and a non-zero value would let the frontend
+// build a bogus "pipeline/run:<n>" key for it.
+func TestForgeDispatcher_PayloadRunIDIsZeroForItems(t *testing.T) {
+	var payload map[string]any
+	d := service.NewForgeEventDispatcher(fullNotifyConfig, func(msg any) {
+		payload = msg.(map[string]any)
+	}, nil)
+
+	d.HandleChange(context.Background(), service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b"},
+		testItem(), forge.Change{Type: forge.EventClosed, Number: 1})
+
+	require.NotNil(t, payload)
+	ev := payload["event"].(map[string]any)
+	assert.Equal(t, int64(0), ev["run_id"], "an issue/PR change has no run id")
+}
+
 // TestForgeDispatcher_PayloadCarriesProjectPath pins the field the frontend
 // needs to navigate to the right project. The unread badge and the forge panel
 // are project-scoped, so without it a notification clicked while another

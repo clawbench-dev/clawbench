@@ -129,6 +129,7 @@
               :host="p.host || ''"
               :name="p.name"
               :protocol="p.protocol"
+              :direction="p.direction || 'forward'"
               :active="p.active"
               :enabled="p.enabled"
               :tunnel-disconnected="tunnelStatus === 'disconnected'"
@@ -138,6 +139,7 @@
               :toggling="togglingPorts.has(p.localPort)"
               @open="openPortWithCheck"
               @open-external="openInExternalBrowser"
+              @copy-address="handleCopyAddress"
               @reconnect="handleReconnect"
               @edit="handleEdit"
               @remove="handleRemove"
@@ -212,6 +214,18 @@
         <div class="port-add-content">
           <div v-if="formError" class="port-add-error">{{ formError }}</div>
           <div class="port-add-row">
+            <label class="port-add-label">{{ t('proxy.directionLabel') }}</label>
+            <!-- Direction is fixed once registered: it determines which side
+                 owns the listening port, so flipping it is a different mapping. -->
+            <select v-model="formDirection" class="port-add-select" :disabled="isEditMode">
+              <option value="forward">{{ t('proxy.directionForward') }}</option>
+              <option value="reverse">{{ t('proxy.directionReverse') }}</option>
+            </select>
+          </div>
+          <div class="port-add-hint">
+            {{ formDirection === 'reverse' ? t('proxy.directionReverseHint') : t('proxy.directionForwardHint') }}
+          </div>
+          <div class="port-add-row">
             <label class="port-add-label">{{ t('proxy.protocolLabel') }}</label>
             <select v-model="formProtocol" class="port-add-select">
               <option value="http">HTTP</option>
@@ -219,13 +233,13 @@
             </select>
           </div>
           <div class="port-add-row">
-            <label class="port-add-label">{{ t('proxy.portPlaceholder') }} *</label>
+            <label class="port-add-label">{{ formPortLabel }} *</label>
             <input
               ref="portInputRef"
               v-model="formPort"
               type="number"
               class="port-add-input"
-              :placeholder="t('proxy.portPlaceholder')"
+              :placeholder="formPortLabel"
               min="1"
               max="65535"
               :readonly="isEditMode"
@@ -233,12 +247,12 @@
             />
           </div>
           <div class="port-add-row">
-            <label class="port-add-label">{{ t('proxy.hostPlaceholder') }}</label>
+            <label class="port-add-label">{{ formHostLabel }}</label>
             <input
               v-model="formHost"
               type="text"
               class="port-add-input"
-              :placeholder="t('proxy.hostPlaceholder')"
+              :placeholder="formHostLabel"
               @keydown.enter="handleSave"
             />
           </div>
@@ -287,9 +301,17 @@ const formPort = ref('')
 const formName = ref('')
 const formHost = ref('')
 const formProtocol = ref('http')
+const formDirection = ref('forward')
 const portInputRef = ref(null)
 const formError = ref('')
 const saving = ref(false)
+
+// Direction-dependent field labels: `port` and `host` mean different things on
+// each side of the tunnel, so the form must say which end it is asking about.
+const formPortLabel = computed(() =>
+  formDirection.value === 'reverse' ? t('proxy.portLabelReverse') : t('proxy.portLabelForward'))
+const formHostLabel = computed(() =>
+  formDirection.value === 'reverse' ? t('proxy.hostLabelReverse') : t('proxy.hostLabelForward'))
 
 const tunnelGuideExpanded = ref(false)
 const togglingPorts = ref(new Set())
@@ -303,13 +325,14 @@ watch(showForm, (val) => {
     formName.value = ''
     formHost.value = ''
     formProtocol.value = 'http'
+    formDirection.value = 'forward'
     formError.value = ''
     saving.value = false
     nextTick(() => portInputRef.value?.focus())
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, copyServerAddress, reconnectPort } = usePortForward()
 const toast = useToast()
 
 // Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.
@@ -366,7 +389,10 @@ const isValidPort = computed(() => {
 })
 
 const detectedPortsNotRegistered = computed(() => {
-  const registered = new Set(ports.value.map(p => p.port))
+  // Only forward mappings expose a server-side port, so only they can "already
+  // cover" a scanned listening port. Counting reverse entries here would hide
+  // scan results whose client-side port happens to collide.
+  const registered = new Set(ports.value.filter(p => p.direction !== 'reverse').map(p => p.port))
   return detectedPorts.value
     .filter(p => !registered.has(p.port))
     .sort((a, b) => a.port - b.port)
@@ -385,6 +411,7 @@ function handleEdit(localPort) {
   formName.value = port.name || ''
   formHost.value = port.host || ''
   formProtocol.value = port.protocol || 'http'
+  formDirection.value = port.direction || 'forward'
   formError.value = ''
   saving.value = false
   showForm.value = true
@@ -396,9 +423,9 @@ async function handleSave() {
   formError.value = ''
   try {
     if (isEditMode.value) {
-      await updatePort(editingLocalPort.value, parseInt(formPort.value), formHost.value || '', formName.value || '', formProtocol.value)
+      await updatePort(editingLocalPort.value, parseInt(formPort.value), formHost.value || '', formName.value || '', formProtocol.value, formDirection.value)
     } else {
-      await registerPort(parseInt(formPort.value), formName.value || undefined, formProtocol.value, formHost.value || undefined)
+      await registerPort(parseInt(formPort.value), formName.value || undefined, formProtocol.value, formHost.value || undefined, formDirection.value)
     }
     showForm.value = false
     editingLocalPort.value = null
@@ -407,6 +434,11 @@ async function handleSave() {
   } finally {
     saving.value = false
   }
+}
+
+/** Copy a reverse mapping's server-side address (there is no browser to open). */
+async function handleCopyAddress(serverPort, protocol) {
+  await copyServerAddress(serverPort, protocol)
 }
 
 async function handleQuickAdd(port, protocol, processName) {
@@ -1087,6 +1119,14 @@ async function handleRetryTunnel() {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #666);
+}
+
+/* Direction hint sits under the selector, explaining which end owns the port. */
+.port-add-hint {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted, #999);
+  line-height: 1.4;
+  margin-top: calc(-1 * var(--space-2));
 }
 
 .port-add-input {

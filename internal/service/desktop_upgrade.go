@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"clawbench/internal/platform"
 	"clawbench/internal/version"
@@ -12,15 +13,43 @@ import (
 // assets produced by release.yml's build-desktop-* jobs.
 const desktopReleaseRepo = "clawbench-dev/clawbench"
 
+// Platform keys (GOOS/GOARCH) shared by the maps below. Named constants because
+// each appears in both the full-package and payload maps, which pushes the
+// repeated literals past the goconst threshold.
+const (
+	platformLinuxAMD64   = "linux/amd64"
+	platformLinuxARM64   = "linux/arm64"
+	platformDarwinAMD64  = "darwin/amd64"
+	platformDarwinARM64  = "darwin/arm64"
+	platformWindowsAMD64 = "windows/amd64"
+)
+
 // desktopAssetBase maps GOOS/GOARCH to the release asset basename, without the
 // version. The tag is appended by desktopAssetName. Keep in sync with the
 // `zip -r` / `Compress-Archive` steps in release.yml.
 var desktopAssetBase = map[string]string{
-	"linux/amd64":   "clawbench-desktop-linux-x64",
-	"linux/arm64":   "clawbench-desktop-linux-arm64",
-	"darwin/amd64":  "clawbench-desktop-darwin-x64",
-	"darwin/arm64":  "clawbench-desktop-darwin-arm64",
-	"windows/amd64": "clawbench-desktop-windows-x64",
+	platformLinuxAMD64:   "clawbench-desktop-linux-x64",
+	platformLinuxARM64:   "clawbench-desktop-linux-arm64",
+	platformDarwinAMD64:  "clawbench-desktop-darwin-x64",
+	platformDarwinARM64:  "clawbench-desktop-darwin-arm64",
+	platformWindowsAMD64: "clawbench-desktop-windows-x64",
+}
+
+// desktopPayloadAssetBase maps GOOS/GOARCH to the basename of the payload-only
+// archive: the same app minus the Electron runtime (just `resources/`, ~3MB
+// against ~150MB). The client installs it over a clone of the shell it is
+// already running, so the runtime is never re-downloaded.
+//
+// macOS is deliberately ABSENT. Replacing resources/app.asar inside a signed
+// .app breaks the code-signature seal, and Apple Silicon refuses to run with an
+// invalid signature; the client therefore stays on the full package there. The
+// key being absent (rather than an empty list) is what tells it so.
+//
+// Keep in sync with the payload `zip`/`Compress-Archive` steps in release.yml.
+var desktopPayloadAssetBase = map[string]string{
+	platformLinuxAMD64:   "clawbench-desktop-linux-x64-payload",
+	platformLinuxARM64:   "clawbench-desktop-linux-arm64-payload",
+	platformWindowsAMD64: "clawbench-desktop-windows-x64-payload",
 }
 
 // desktopAssetName builds the published asset filename for a platform, e.g.
@@ -36,17 +65,107 @@ func desktopAssetName(osArch, tag string) string {
 	if !ok {
 		return ""
 	}
+	return desktopAssetNameFromBase(base, tag)
+}
+
+// desktopAssetNameFromBase appends the tag to an asset basename. Both the full
+// package and the payload are named through here so the two cannot drift into
+// different conventions.
+func desktopAssetNameFromBase(base, tag string) string {
 	return base + "-" + tag + ".zip"
+}
+
+// desktopPayloadAssetName is desktopAssetName for the payload archive, or ""
+// when the platform has no payload (macOS).
+func desktopPayloadAssetName(osArch, tag string) string {
+	base, ok := desktopPayloadAssetBase[osArch]
+	if !ok {
+		return ""
+	}
+	return desktopAssetNameFromBase(base, tag)
+}
+
+// desktopNpmScope is the npm scope the published packages live under. Keep in
+// sync with the package names in npm/platforms/ and npm/desktop-payloads/.
+const desktopNpmScope = "@xulongzhe/"
+
+// desktopPayloadNpmPkg returns the npm package name carrying the payload
+// archive for a platform, or "" when the platform has no payload (macOS).
+//
+// Derived from the asset base rather than kept as a second map, so the two
+// cannot drift: the npm package for linux-x64 is exactly the release asset
+// basename plus the scope.
+func desktopPayloadNpmPkg(osArch string) string {
+	base, ok := desktopPayloadAssetBase[osArch]
+	if !ok {
+		return ""
+	}
+	return desktopNpmScope + base
+}
+
+// desktopPayloadNpmURLs returns candidate npm tarball URLs for the payload.
+//
+// The URL is constructed from the tag rather than discovered from the registry:
+// the server already knows the exact version it is publishing, so a metadata
+// query would add a network round trip (and a failure mode) to a public
+// endpoint that is otherwise self-contained.
+//
+// Two npm naming rules are easy to get wrong and are pinned by tests:
+//
+//   - the tarball FILENAME drops the scope: the package @xulongzhe/x lives at
+//     <base>/@xulongzhe/x/-/x-<version>.tgz;
+//   - the VERSION has no "v" prefix, because npm versions are semver and a
+//     release tag is not.
+//
+// Only the region-aware base is used — deliberately NOT registryCandidates(),
+// which also carries the server's own ~/.npmrc / NPM_CONFIG_REGISTRY mirror.
+// These URLs are handed to the desktop CLIENT, a different machine, where a
+// server-side private registry is usually unreachable; including it would put
+// a dead candidate in every response.
+func desktopPayloadNpmURLs(osArch, tag string) []string {
+	pkg := desktopPayloadNpmPkg(osArch)
+	version := strings.TrimPrefix(tag, "v")
+	if pkg == "" || version == "" {
+		return nil
+	}
+	// Scope stripped for the filename: "@xulongzhe/foo" -> "foo".
+	name := pkg[strings.LastIndex(pkg, "/")+1:]
+
+	return []string{
+		fmt.Sprintf("%s/%s/-/%s-%s.tgz",
+			strings.TrimRight(getRegistryBase(), "/"), pkg, name, version),
+	}
+}
+
+// desktopPayloadURLs returns every candidate URL for a platform's payload,
+// npm registry first for mainland China (where github.com is unreliable) and
+// the GitHub release assets first elsewhere.
+//
+// npm is never the ONLY source: the mirror lags behind a fresh release and may
+// not have the version yet, in which case the candidate 404s and the client
+// walks on to the GitHub URL. That costs one round trip, not a failed upgrade.
+func desktopPayloadURLs(osArch, tag string) []string {
+	npm := desktopPayloadNpmURLs(osArch, tag)
+	asset := desktopPayloadAssetName(osArch, tag)
+	if asset == "" {
+		return nil
+	}
+	github := releaseAssetURLs(tag, asset)
+
+	if platform.IsChinaMainland() {
+		return append(npm, github...)
+	}
+	return append(github, npm...)
 }
 
 // desktopDownloadKey is the response key for each platform. It matches the
 // keys the web client derives from the user agent (detectPlatformKey).
 var desktopDownloadKey = map[string]string{
-	"linux/amd64":   "linux-x64",
-	"linux/arm64":   "linux-arm64",
-	"darwin/amd64":  "darwin-x64",
-	"darwin/arm64":  "darwin-arm64",
-	"windows/amd64": "win32-x64",
+	platformLinuxAMD64:   "linux-x64",
+	platformLinuxARM64:   "linux-arm64",
+	platformDarwinAMD64:  "darwin-x64",
+	platformDarwinARM64:  "darwin-arm64",
+	platformWindowsAMD64: "win32-x64",
 }
 
 // githubReleaseMirrors are prefix proxies that forward to github.com. They are
@@ -71,6 +190,11 @@ type DesktopLatestResult struct {
 	// client tries them in order, so one dead mirror degrades the download
 	// rather than breaking it.
 	Downloads map[string][]string `json:"downloads"`
+	// Payloads maps a platform key to candidate URLs for the payload-only
+	// archive (the app without the Electron runtime). A key is ABSENT when the
+	// platform has no payload — macOS, for code-signing reasons — which the
+	// client reads as "download the full package". Never an empty list.
+	Payloads map[string][]string `json:"payloads"`
 }
 
 // releaseAssetURLs returns the candidate download URLs for one release asset,
@@ -101,7 +225,12 @@ func releaseAssetURLs(tag, asset string) []string {
 func FetchDesktopLatest() (*DesktopLatestResult, error) {
 	v := version.Get()
 	tag := version.ReleaseTag(v)
-	res := &DesktopLatestResult{Version: v, Tag: tag, Downloads: map[string][]string{}}
+	res := &DesktopLatestResult{
+		Version:   v,
+		Tag:       tag,
+		Downloads: map[string][]string{},
+		Payloads:  map[string][]string{},
+	}
 	if tag == "" {
 		// Dev or untagged build: no release exists, so offer nothing rather
 		// than links that would 404.
@@ -110,6 +239,15 @@ func FetchDesktopLatest() (*DesktopLatestResult, error) {
 	for osArch := range desktopAssetBase {
 		asset := desktopAssetName(osArch, tag)
 		res.Downloads[desktopDownloadKey[osArch]] = releaseAssetURLs(tag, asset)
+	}
+	// Payloads cover fewer platforms than the full package (see
+	// desktopPayloadAssetBase), so iterate that map rather than Downloads'.
+	//
+	// Payloads get the npm registry as an extra source; Downloads (the ~150MB
+	// full package) deliberately does not — the mirror is unreliable at that
+	// size, and the payload is the path most users take anyway.
+	for osArch := range desktopPayloadAssetBase {
+		res.Payloads[desktopDownloadKey[osArch]] = desktopPayloadURLs(osArch, tag)
 	}
 	return res, nil
 }

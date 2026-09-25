@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
-import { deflateRawSync } from 'node:zlib'
+import { deflateRawSync, gzipSync, gunzipSync } from 'node:zlib'
 import { createHash } from 'node:crypto'
 
 // The installer touches `app` only in restartInto(); mock electron so the pure
@@ -29,8 +29,66 @@ vi.mock('node:child_process', () => ({
   default: { spawn: spawnMock },
 }))
 
+// The payload path downloads through install.ts's own httpGetBuffer, which
+// calls `lib.get(url, cb)` and then reads `res.statusCode` and the `data`/`end`
+// events. Stand in for node:https (and node:http, which httpGetBuffer picks for
+// http: URLs) with a minimal server that honours that contract, so a real
+// archive body can be served without touching the network.
+//
+// `download` is the control: return a Buffer to serve it as a 200 body, or
+// throw to simulate an unreachable host (which downloadFirstAvailable must
+// report for every candidate).
+const { download, downloadSpy } = vi.hoisted(() => ({
+  downloadSpy: vi.fn(),
+  download: { impl: (() => Buffer.alloc(0)) as (url: string) => Buffer },
+}))
+
+function makeGetMock() {
+  const get = (url: string, cb: (res: unknown) => void) => {
+    downloadSpy(url)
+    const handlers: Record<string, Array<(arg?: unknown) => void>> = {}
+    const req = {
+      on(ev: string, fn: (arg?: unknown) => void) {
+        ;(handlers[ev] ||= []).push(fn)
+        return req
+      },
+    }
+    let body: Buffer
+    try {
+      body = download.impl(url)
+    } catch (err) {
+      queueMicrotask(() => {
+        for (const fn of handlers.error ?? []) fn(err)
+      })
+      return req
+    }
+    const res = {
+      statusCode: 200,
+      headers: {},
+      resume: () => {},
+      on(ev: string, fn: (arg?: unknown) => void) {
+        ;(handlers[ev] ||= []).push(fn)
+        return res
+      },
+    }
+    cb(res)
+    queueMicrotask(() => {
+      for (const fn of handlers.data ?? []) fn(body)
+      for (const fn of handlers.end ?? []) fn()
+    })
+    return req
+  }
+  return { get, default: { get } }
+}
+
+vi.mock('node:https', makeGetMock)
+vi.mock('node:http', makeGetMock)
+
 import {
   extractZip,
+  extractTarGz,
+  extractArchive,
+  looksLikeArchive,
   writePointer,
   readCurrentVersion,
   pointerPath,
@@ -38,7 +96,21 @@ import {
   downloadFirstAvailable,
   selectStartupVersion,
   handOffToPointedVersion,
+  installPayload,
+  cloneTree,
+  appRoot,
+  electronMajor,
+  readShellFingerprint,
+  PayloadIncompatibleError,
+  PAYLOAD_MANIFEST,
+  SHELL_FINGERPRINT_FILE,
 } from './install'
+
+/**
+ * Fingerprint the test shells advertise. Its VALUE is irrelevant to these
+ * tests — only whether the two sides agree — so a literal keeps them readable.
+ */
+const SHELL_FP = 'sha256-test-shell-identity'
 
 /**
  * Build a zip archive from entries.
@@ -120,6 +192,104 @@ function crc32(buf: Buffer): number {
   let c = 0xffffffff
   for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8)
   return (c ^ 0xffffffff) >>> 0
+}
+
+/**
+ * Build a gzipped tar archive, the way an npm tarball is shaped.
+ *
+ * Entries are `{ name, content, type?, prefix?, mode? }`. `prefix` exercises the
+ * ustar long-path mechanism npm uses (it splits a long path across the `name`
+ * and `prefix` fields rather than emitting a PAX header).
+ *
+ * This writer exists only to build well-formed fixtures. The malformed-input
+ * tests below build their bytes by hand instead — feeding a corrupt archive to
+ * the same code that wrote it would prove nothing.
+ */
+function makeTarGz(
+  entries: Array<{
+    name: string
+    content?: string | Buffer
+    type?: string
+    prefix?: string
+    mode?: number
+  }>,
+): Buffer {
+  const blocks: Buffer[] = []
+
+  for (const e of entries) {
+    const data = Buffer.isBuffer(e.content) ? e.content : Buffer.from(e.content ?? '')
+    const type = e.type ?? '0'
+    const isDir = type === '5'
+
+    const header = Buffer.alloc(512)
+    header.write(e.name, 0, 100, 'utf8')
+    header.write((e.mode ?? (isDir ? 0o755 : 0o644)).toString(8).padStart(7, '0') + '\0', 100, 8, 'utf8')
+    header.write('0000000\0', 108, 8, 'utf8') // uid
+    header.write('0000000\0', 116, 8, 'utf8') // gid
+    header.write(data.length.toString(8).padStart(11, '0') + '\0', 124, 12, 'utf8')
+    header.write('00000000000\0', 136, 12, 'utf8') // mtime
+    header.write('        ', 148, 8, 'utf8') // checksum placeholder
+    header.write(type, 156, 1, 'utf8')
+    header.write('ustar\0', 257, 6, 'utf8')
+    header.write('00', 263, 2, 'utf8')
+    if (e.prefix) header.write(e.prefix, 345, 155, 'utf8')
+
+    // Checksum: sum of all header bytes with the checksum field treated as spaces.
+    let sum = 0
+    for (const b of header) sum += b
+    header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 8, 'utf8')
+
+    blocks.push(header)
+    if (!isDir && data.length > 0) {
+      blocks.push(data)
+      const pad = (512 - (data.length % 512)) % 512
+      if (pad) blocks.push(Buffer.alloc(pad))
+    }
+  }
+
+  blocks.push(Buffer.alloc(1024)) // two zero blocks terminate the archive
+  return gzipSync(Buffer.concat(blocks))
+}
+
+/** A PAX extended header block carrying the given records, for the next entry. */
+function makePaxBlock(records: Record<string, string>): Buffer {
+  const body = Object.entries(records)
+    .map(([k, v]) => {
+      // Length-prefixed: LEN includes its own digits and the trailing newline.
+      const base = `${k}=${v}\n`
+      let len = base.length + 1
+      while (String(len).length + base.length !== len) len = String(len).length + base.length
+      return `${len} ${base}`
+    })
+    .join('')
+  const header = Buffer.alloc(512)
+  header.write('PaxHeader', 0, 100, 'utf8')
+  header.write('0000644\0', 100, 8, 'utf8')
+  header.write('0000000\0', 108, 8, 'utf8')
+  header.write('0000000\0', 116, 8, 'utf8')
+  header.write(Buffer.byteLength(body).toString(8).padStart(11, '0') + '\0', 124, 12, 'utf8')
+  header.write('00000000000\0', 136, 12, 'utf8')
+  header.write('        ', 148, 8, 'utf8')
+  header.write('x', 156, 1, 'utf8')
+  header.write('ustar\0', 257, 6, 'utf8')
+  header.write('00', 263, 2, 'utf8')
+  let sum = 0
+  for (const b of header) sum += b
+  header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 8, 'utf8')
+
+  const bodyBuf = Buffer.from(body, 'utf8')
+  const pad = (512 - (bodyBuf.length % 512)) % 512
+  return Buffer.concat([header, bodyBuf, Buffer.alloc(pad)])
+}
+
+/** Recursively read a directory into a path → content map, for tree comparison. */
+function readTree(root: string, base = root, out: Record<string, Buffer> = {}): Record<string, Buffer> {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const abs = path.join(root, entry.name)
+    if (entry.isDirectory()) readTree(abs, base, out)
+    else if (entry.isFile()) out[path.relative(base, abs)] = fs.readFileSync(abs)
+  }
+  return out
 }
 
 let tmpRoot: string
@@ -260,9 +430,21 @@ describe('macOS archive keeps its wrapper directory', () => {
 
 describe('downloadFirstAvailable', () => {
   it('reports every failed candidate so a broken mirror is diagnosable', async () => {
-    await expect(
-      downloadFirstAvailable(['http://127.0.0.1:1/a.zip', 'http://127.0.0.1:1/b.zip']),
-    ).rejects.toThrow(/all download sources failed/)
+    // Every candidate unreachable: downloadFirstAvailable must surface all of
+    // them, not just the first, so a dead mirror is diagnosable from the error.
+    download.impl = () => {
+      throw new Error('ECONNREFUSED')
+    }
+    try {
+      await expect(
+        downloadFirstAvailable(['https://mirror-a/a.zip', 'https://github.com/b.zip']),
+      ).rejects.toThrow(/all download sources failed/)
+      await expect(
+        downloadFirstAvailable(['https://mirror-a/a.zip', 'https://github.com/b.zip']),
+      ).rejects.toThrow(/mirror-a[\s\S]*github\.com/)
+    } finally {
+      download.impl = () => Buffer.alloc(0)
+    }
   })
 })
 
@@ -309,6 +491,22 @@ describe('selectStartupVersion', () => {
 
   it('does nothing when there is no pointer', () => {
     expect(selectStartupVersion('', '1.0.0')).toBe('')
+  })
+
+  it('treats a v-prefixed pointer and a bare running version as the same', () => {
+    // Regression guard. The pointer holds the server's `v1.2.3` (git describe)
+    // while app.getVersion() reports `1.2.3` (CI strips the prefix). A raw
+    // comparison called these different, which routed the handoff into the
+    // self-reference guard — and that guard DELETES the pointer, silently
+    // reverting the upgrade on the next cold start.
+    expect(selectStartupVersion('v1.2.3', '1.2.3')).toBe('')
+    expect(selectStartupVersion('1.2.3', 'v1.2.3')).toBe('')
+  })
+
+  it('still returns the RAW pointed string when it does differ', () => {
+    // The returned value feeds versionDir(), which must resolve the directory
+    // the pointer actually names — normalizing the return would break it.
+    expect(selectStartupVersion('v1.2.3', '1.0.0')).toBe('v1.2.3')
   })
 })
 
@@ -412,5 +610,556 @@ describe('versionDir', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+describe('electronMajor', () => {
+  it('reduces a version to its major component', () => {
+    // The ABI only changes on a major bump, so this is what decides whether a
+    // shell can be reused.
+    expect(electronMajor('44.4.3')).toBe('44')
+    expect(electronMajor('45.0.0')).toBe('45')
+  })
+
+  it('treats same-major patch bumps as compatible', () => {
+    expect(electronMajor('44.4.3')).toBe(electronMajor('44.9.1'))
+  })
+
+  it('returns empty for an unparseable version so callers fail closed', () => {
+    expect(electronMajor('')).toBe('')
+    expect(electronMajor('v44')).toBe('')
+  })
+})
+
+/**
+ * Payload installs are the small-archive upgrade path: the archive carries only
+ * `resources/`, and the Electron runtime is reused from the installed shell.
+ *
+ * The single most dangerous property here is that the OLD version's files must
+ * not be mutated. The shell is cloned with hardlinks, so writing through one
+ * would reach back into the live install — which is exactly what happens if the
+ * clone runs before the payload is extracted. That ordering is asserted
+ * directly below by reading the SOURCE tree, not the destination.
+ */
+describe('installPayload', () => {
+  let homedirSpy: ReturnType<typeof vi.spyOn>
+  let savedElectron: string | undefined
+
+  // process.versions is typed readonly; these tests run under plain Node where
+  // `electron` is absent, so it has to be injected to exercise installPayload's
+  // DEFAULT parameter (passing it explicitly would skip the path under test).
+  const versions = process.versions as { electron?: string }
+
+  beforeEach(() => {
+    homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmpRoot)
+    savedElectron = versions.electron
+    versions.electron = '44.4.3'
+    // Serve the archive from disk instead of the network. installPayload only
+    // reaches the network through downloadFirstAvailable -> httpGetBuffer, so
+    // stubbing the fetch keeps the whole install path real.
+    downloadSpy.mockReset()
+    download.impl = () => Buffer.alloc(0)
+  })
+
+  afterEach(() => {
+    homedirSpy.mockRestore()
+    downloadSpy.mockReset()
+    if (savedElectron === undefined) delete versions.electron
+    else versions.electron = savedElectron
+  })
+
+  /**
+   * Build the shell the payload will be installed over (no resources/).
+   *
+   * Carries the fingerprint sidecar, as a real full install does — without it
+   * the identity gate refuses the payload (which is itself covered below).
+   * Pass `null` to model an install that predates the sidecar.
+   */
+  function makeShell(name: string, fingerprint: string | null = SHELL_FP): string {
+    const root = path.join(tmpRoot, name)
+    fs.mkdirSync(path.join(root, 'locales'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'clawbench-desktop'), 'RUNTIME')
+    fs.writeFileSync(path.join(root, 'icudtl.dat'), 'ICU')
+    fs.writeFileSync(path.join(root, 'locales/en-US.pak'), 'LOCALE')
+    if (fingerprint !== null) {
+      fs.writeFileSync(path.join(root, SHELL_FINGERPRINT_FILE), fingerprint + '\n')
+    }
+    return root
+  }
+
+  /**
+   * A payload archive carrying `resources/` plus its manifest.
+   *
+   * `shell` of `null` models a payload from a CI that predates the field;
+   * `undefined` keeps the default (matching) fingerprint.
+   */
+  function payloadZip(
+    electron = '44.4.3',
+    resources: Array<{ name: string; content: string }> = [
+      { name: 'resources/app.asar', content: 'NEW-ASAR' },
+      { name: 'resources/login.html', content: 'NEW-LOGIN' },
+    ],
+    shell: string | null = SHELL_FP,
+  ): Buffer {
+    const manifest: Record<string, string> = { electron }
+    if (shell !== null) manifest.shell = shell
+    return makeZip([
+      { name: PAYLOAD_MANIFEST, content: JSON.stringify(manifest) },
+      ...resources,
+    ])
+  }
+
+  it('reuses the shell and takes resources/ from the payload', async () => {
+    const shell = makeShell('shell-1')
+    download.impl = () => payloadZip()
+
+    const dest = await installPayload(['https://mirror/p.zip'], '2.0.0', shell)
+
+    // Runtime files came from the shell...
+    expect(fs.readFileSync(path.join(dest, 'clawbench-desktop'), 'utf8')).toBe('RUNTIME')
+    expect(fs.readFileSync(path.join(dest, 'locales/en-US.pak'), 'utf8')).toBe('LOCALE')
+    // ...and the app files came from the payload.
+    expect(fs.readFileSync(path.join(dest, 'resources/app.asar'), 'utf8')).toBe('NEW-ASAR')
+    expect(fs.readFileSync(path.join(dest, 'resources/login.html'), 'utf8')).toBe('NEW-LOGIN')
+    // The manifest is metadata, not part of the install.
+    expect(fs.existsSync(path.join(dest, PAYLOAD_MANIFEST))).toBe(false)
+  })
+
+  it('carries the shell fingerprint forward so the next payload can verify', async () => {
+    // The sidecar is part of the SHELL, not the payload: it must survive a
+    // payload install (cloneTree brings it from shellRoot) or the install would
+    // lose its identity and every later payload would be refused.
+    const shell = makeShell('shell-fp-carry')
+    download.impl = () => payloadZip()
+
+    const dest = await installPayload(['https://m/p.zip'], '2.0.0', shell)
+
+    expect(fs.readFileSync(path.join(dest, SHELL_FINGERPRINT_FILE), 'utf8').trim()).toBe(SHELL_FP)
+  })
+
+  it('refuses a payload built against a different shell identity', async () => {
+    // The gap this closes: same Electron major, but the icon / appId /
+    // productName changed. Nothing at runtime can see the stale icon, so
+    // without this gate the payload would install silently and leave it stale.
+    const shell = makeShell('shell-fp-mismatch')
+    download.impl = () => payloadZip('44.4.3', undefined, 'sha256-different-shell')
+
+    await expect(
+      installPayload(['https://m/p.zip'], '2.0.0', shell),
+    ).rejects.toBeInstanceOf(PayloadIncompatibleError)
+
+    expect(fs.existsSync(versionDir('2.0.0'))).toBe(false)
+    expect(readCurrentVersion()).toBe('')
+  })
+
+  it('refuses a payload whose manifest omits the shell fingerprint', async () => {
+    // A payload from a CI predating the field. Refuse rather than assume
+    // compatible: an unverifiable shell is exactly the case this guards.
+    const shell = makeShell('shell-fp-absent')
+    download.impl = () => payloadZip('44.4.3', undefined, null)
+
+    await expect(
+      installPayload(['https://m/p.zip'], '2.0.0', shell),
+    ).rejects.toBeInstanceOf(PayloadIncompatibleError)
+  })
+
+  it('refuses when the installed shell records no fingerprint', async () => {
+    // An install predating the sidecar (every user upgrading from an older
+    // release). It cannot be verified, so the caller falls back to the full
+    // download — which then writes the sidecar and enables payloads afterwards.
+    const shell = makeShell('shell-fp-old', null)
+    download.impl = () => payloadZip()
+
+    await expect(
+      installPayload(['https://m/p.zip'], '2.0.0', shell),
+    ).rejects.toBeInstanceOf(PayloadIncompatibleError)
+  })
+
+  it('does NOT mutate the shell it cloned from', async () => {
+    // The regression this whole design hinges on. If the shell were cloned
+    // before the payload was extracted, resources/app.asar would be a hardlink
+    // to the OLD file and extracting would overwrite it in place — corrupting
+    // the version the user is currently running.
+    const shell = makeShell('shell-immutable')
+    fs.mkdirSync(path.join(shell, 'resources'), { recursive: true })
+    fs.writeFileSync(path.join(shell, 'resources/app.asar'), 'OLD-ASAR')
+    download.impl = () => payloadZip()
+
+    const dest = await installPayload(['https://mirror/p.zip'], '2.0.0', shell)
+
+    // Asserting the SOURCE, not the destination: a broken ordering would leave
+    // the destination looking correct while having corrupted the source.
+    expect(fs.readFileSync(path.join(shell, 'resources/app.asar'), 'utf8')).toBe('OLD-ASAR')
+    expect(fs.readFileSync(path.join(dest, 'resources/app.asar'), 'utf8')).toBe('NEW-ASAR')
+    // A distinct inode proves the payload file is genuinely new rather than a
+    // hardlink that would later be written through.
+    expect(fs.statSync(path.join(dest, 'resources/app.asar')).ino)
+      .not.toBe(fs.statSync(path.join(shell, 'resources/app.asar')).ino)
+  })
+
+  it('refuses a payload built for a different Electron major', async () => {
+    const shell = makeShell('shell-abi')
+    download.impl = () => payloadZip('45.0.0')
+
+    await expect(
+      installPayload(['https://mirror/p.zip'], '2.0.0', shell, '44.4.3'),
+    ).rejects.toBeInstanceOf(PayloadIncompatibleError)
+
+    // Nothing was installed and no pointer was written, so the caller can
+    // safely fall back to the full download.
+    expect(fs.existsSync(versionDir('2.0.0'))).toBe(false)
+    expect(readCurrentVersion()).toBe('')
+  })
+
+  it('accepts a same-major payload (patch bumps do not change the ABI)', async () => {
+    const shell = makeShell('shell-abi-ok')
+    download.impl = () => payloadZip('44.9.1')
+    await expect(
+      installPayload(['https://mirror/p.zip'], '2.0.0', shell, '44.4.3'),
+    ).resolves.toBe(versionDir('2.0.0'))
+  })
+
+  it('rejects a payload with no manifest rather than installing a partial shell', async () => {
+    const shell = makeShell('shell-nomanifest')
+    download.impl = () => makeZip([{ name: 'resources/app.asar', content: 'X' }])
+
+    await expect(installPayload(['https://m/p.zip'], '2.0.0', shell)).rejects.toThrow(
+      new RegExp(`no ${PAYLOAD_MANIFEST}`),
+    )
+    expect(fs.existsSync(versionDir('2.0.0'))).toBe(false)
+  })
+
+  it('rejects a malformed manifest', async () => {
+    const shell = makeShell('shell-badmanifest')
+    download.impl = () =>
+      makeZip([{ name: PAYLOAD_MANIFEST, content: '{not json' }, { name: 'resources/app.asar', content: 'X' }])
+    await expect(installPayload(['https://m/p.zip'], '2.0.0', shell)).rejects.toThrow(/not valid JSON/)
+  })
+
+  it('leaves no staging directory behind when the manifest is rejected', async () => {
+    const shell = makeShell('shell-cleanup')
+    download.impl = () => payloadZip('99.0.0')
+    await expect(installPayload(['https://m/p.zip'], '2.0.0', shell, '44.4.3')).rejects.toThrow()
+    const leftovers = fs.readdirSync(path.join(tmpRoot, '.clawbench-desktop')).filter((f) => f.includes('.staging-'))
+    expect(leftovers).toEqual([])
+  })
+
+  it('refuses to install over the running install', async () => {
+    // versionDir(version) === shellRoot would make the `rm -rf` below delete
+    // the live binary. The guard must fire before anything is downloaded.
+    const shell = makeShell('shell-running')
+    download.impl = () => payloadZip()
+
+    await expect(
+      installPayload(['https://m/p.zip'], '2.0.0', versionDir('2.0.0')),
+    ).rejects.toBeInstanceOf(PayloadIncompatibleError)
+    expect(downloadSpy).not.toHaveBeenCalled()
+  })
+
+  it('falls back to copying when hardlinks are unavailable', async () => {
+    // EXDEV is the realistic case: the version store and the source (a
+    // Downloads folder on another volume or drive letter) need not share a
+    // filesystem. Simulated deterministically rather than by mounting volumes.
+    const shell = makeShell('shell-exdev')
+    download.impl = () => payloadZip()
+    const linkSpy = vi.spyOn(fs, 'linkSync').mockImplementation(() => {
+      throw Object.assign(new Error('cross-device link'), { code: 'EXDEV' })
+    })
+
+    try {
+      const dest = await installPayload(['https://m/p.zip'], '2.0.0', shell)
+      expect(fs.readFileSync(path.join(dest, 'clawbench-desktop'), 'utf8')).toBe('RUNTIME')
+      expect(fs.readFileSync(path.join(dest, 'resources/app.asar'), 'utf8')).toBe('NEW-ASAR')
+    } finally {
+      linkSpy.mockRestore()
+    }
+  })
+
+  it('preserves the executable bit through the clone', async () => {
+    // Load-bearing on Linux: without it the upgraded app cannot start.
+    const shell = path.join(tmpRoot, 'shell-mode')
+    fs.mkdirSync(shell, { recursive: true })
+    fs.writeFileSync(path.join(shell, 'clawbench-desktop'), 'RUNTIME')
+    fs.chmodSync(path.join(shell, 'clawbench-desktop'), 0o755)
+    fs.writeFileSync(path.join(shell, SHELL_FINGERPRINT_FILE), SHELL_FP + '\n')
+    download.impl = () => payloadZip()
+
+    const dest = await installPayload(['https://m/p.zip'], '2.0.0', shell)
+
+    expect(fs.statSync(path.join(dest, 'clawbench-desktop')).mode & 0o111).toBeTruthy()
+  })
+
+  it('replaces a previous payload install of the same version', async () => {
+    // The `rm -rf dest` + rename must work when dest is itself a payload
+    // install (i.e. mostly hardlinks into an older shell).
+    const shell = makeShell('shell-replace')
+    download.impl = () => payloadZip()
+    const dest = await installPayload(['https://m/p.zip'], '2.0.0', shell)
+
+    download.impl = () => payloadZip('44.4.3', [{ name: 'resources/app.asar', content: 'SECOND-ASAR' }])
+    await installPayload(['https://m/p.zip'], '2.0.0', shell)
+
+    expect(fs.readFileSync(path.join(dest, 'resources/app.asar'), 'utf8')).toBe('SECOND-ASAR')
+  })
+
+  it('writes the pointer only after the install is complete', async () => {
+    const shell = makeShell('shell-pointer')
+    download.impl = () => payloadZip()
+    await installPayload(['https://m/p.zip'], '2.0.0', shell)
+    expect(readCurrentVersion()).toBe('2.0.0')
+  })
+})
+
+describe('cloneTree', () => {
+  it('skips existing paths entirely, including whole directories', () => {
+    // The skip is what keeps payload files from being overwritten by the
+    // shell's older copies.
+    const src = path.join(tmpRoot, 'src')
+    const dst = path.join(tmpRoot, 'dst')
+    fs.mkdirSync(path.join(src, 'resources'), { recursive: true })
+    fs.mkdirSync(path.join(dst, 'resources'), { recursive: true })
+    fs.writeFileSync(path.join(src, 'resources/app.asar'), 'OLD')
+    fs.writeFileSync(path.join(dst, 'resources/app.asar'), 'NEW')
+    fs.writeFileSync(path.join(src, 'runtime.bin'), 'RT')
+
+    cloneTree(src, dst)
+
+    expect(fs.readFileSync(path.join(dst, 'resources/app.asar'), 'utf8')).toBe('NEW')
+    expect(fs.readFileSync(path.join(dst, 'runtime.bin'), 'utf8')).toBe('RT')
+  })
+
+  it('recreates nested directories from the source', () => {
+    const src = path.join(tmpRoot, 'src2')
+    const dst = path.join(tmpRoot, 'dst2')
+    fs.mkdirSync(path.join(src, 'a/b/c'), { recursive: true })
+    fs.writeFileSync(path.join(src, 'a/b/c/f.txt'), 'DEEP')
+    fs.mkdirSync(dst, { recursive: true })
+
+    cloneTree(src, dst)
+
+    expect(fs.readFileSync(path.join(dst, 'a/b/c/f.txt'), 'utf8')).toBe('DEEP')
+  })
+
+  it('refuses to silently drop a non-regular entry', () => {
+    // A symlink or device node in the shell means the release layout changed;
+    // skipping it would ship a quietly broken install.
+    const src = path.join(tmpRoot, 'src3')
+    const dst = path.join(tmpRoot, 'dst3')
+    fs.mkdirSync(src, { recursive: true })
+    fs.mkdirSync(dst, { recursive: true })
+    fs.symlinkSync('/etc/hostname', path.join(src, 'link'))
+
+    expect(() => cloneTree(src, dst)).toThrow(/unsupported entry/)
+  })
+})
+
+describe('appRoot', () => {
+  it('is the directory containing resources/', () => {
+    // process.resourcesPath is injected by Electron's bootstrap and is absent
+    // under plain Node, so define it rather than spy on a missing getter.
+    const had = Object.prototype.hasOwnProperty.call(process, 'resourcesPath')
+    Object.defineProperty(process, 'resourcesPath', {
+      value: path.join('/opt', 'app', 'resources'),
+      configurable: true,
+    })
+    try {
+      expect(appRoot()).toBe(path.join('/opt', 'app'))
+    } finally {
+      if (!had) delete (process as { resourcesPath?: string }).resourcesPath
+    }
+  })
+})
+
+/**
+ * The tar.gz path exists because the payload is also published to an npm
+ * registry mirror, and npm tarballs are gzipped tars. Two properties matter:
+ * the reader must reject malformed input rather than install a partial tree,
+ * and it must produce the SAME install as the zip of the same tree — otherwise
+ * which mirror won the race would change what the user ends up running.
+ */
+describe('extractTarGz', () => {
+  it('extracts files and strips the npm package/ wrapper', () => {
+    const tar = makeTarGz([
+      { name: 'package/', type: '5' },
+      { name: 'package/resources/app.asar', content: 'ASAR' },
+      { name: 'package/payload.json', content: '{"electron":"44.4.3"}' },
+    ])
+
+    extractTarGz(tar, tmpRoot)
+
+    expect(fs.readFileSync(path.join(tmpRoot, 'resources/app.asar'), 'utf8')).toBe('ASAR')
+    expect(fs.readFileSync(path.join(tmpRoot, 'payload.json'), 'utf8')).toBe('{"electron":"44.4.3"}')
+    expect(fs.existsSync(path.join(tmpRoot, 'package'))).toBe(false)
+  })
+
+  it('joins the ustar prefix and name fields', () => {
+    // npm splits a long path across the 100-byte `name` and 155-byte `prefix`
+    // fields instead of emitting a PAX header, so prefix handling is the common
+    // case, not an edge case. Verified against a real npm pack of the payload.
+    const tar = makeTarGz([
+      {
+        name: 'cpu_features/patches/0001.patch',
+        prefix: 'package/resources/app.asar.unpacked/node_modules/cpu-features/deps',
+        content: 'PATCH',
+      },
+    ])
+
+    extractTarGz(tar, tmpRoot)
+
+    expect(
+      fs.readFileSync(
+        path.join(tmpRoot, 'resources/app.asar.unpacked/node_modules/cpu-features/deps/cpu_features/patches/0001.patch'),
+        'utf8',
+      ),
+    ).toBe('PATCH')
+  })
+
+  it('uses the name as-is when the prefix field is empty', () => {
+    const tar = makeTarGz([{ name: 'package/a.txt', content: 'A' }])
+    extractTarGz(tar, tmpRoot)
+    expect(fs.readFileSync(path.join(tmpRoot, 'a.txt'), 'utf8')).toBe('A')
+  })
+
+  it('applies a PAX path override to the following entry', () => {
+    // npm falls back to PAX when a path cannot be split into name+prefix.
+    const pax = makePaxBlock({ path: 'package/resources/deep.txt' })
+    const tar = gzipSync(
+      Buffer.concat([
+        pax,
+        (() => {
+          const inner = makeTarGz([{ name: 'placeholder', content: 'PAXED' }])
+          return gunzipSync(inner)
+        })(),
+      ]),
+    )
+
+    extractTarGz(tar, tmpRoot)
+
+    expect(fs.readFileSync(path.join(tmpRoot, 'resources/deep.txt'), 'utf8')).toBe('PAXED')
+    expect(fs.existsSync(path.join(tmpRoot, 'placeholder'))).toBe(false)
+  })
+
+  it('restores the executable bit', () => {
+    // Load-bearing on Linux, and the tar header stores the mode directly
+    // (unlike zip, which buries it in the external attributes).
+    const tar = makeTarGz([{ name: 'package/bin/tool', content: 'BIN', mode: 0o755 }])
+    extractTarGz(tar, tmpRoot)
+    expect(fs.statSync(path.join(tmpRoot, 'bin/tool')).mode & 0o111).toBeTruthy()
+  })
+
+  it('rejects an entry that escapes the destination', () => {
+    const tar = makeTarGz([{ name: 'package/../../evil.txt', content: 'pwned' }])
+    expect(() => extractTarGz(tar, tmpRoot)).toThrow(/escapes destination/)
+    expect(fs.existsSync(path.join(tmpRoot, '..', '..', 'evil.txt'))).toBe(false)
+  })
+
+  it('rejects an unsupported entry type instead of silently skipping it', () => {
+    // A symlink or device in the payload means the layout changed; skipping it
+    // would install a quietly incomplete tree.
+    const tar = makeTarGz([{ name: 'package/link', type: '2', content: '' }])
+    expect(() => extractTarGz(tar, tmpRoot)).toThrow(/unsupported entry type/)
+  })
+
+  it('rejects a truncated archive rather than installing what it can', () => {
+    // The dangerous shape: payload.json intact but resources/ cut off. Without
+    // a bounds check the manifest check downstream would pass and the install
+    // would be silently incomplete.
+    const full = makeTarGz([
+      { name: 'package/payload.json', content: '{"electron":"44.4.3"}' },
+      { name: 'package/resources/app.asar', content: 'X'.repeat(4096) },
+    ])
+    const raw = gunzipSync(full)
+    const truncated = gzipSync(raw.subarray(0, raw.length - 2048))
+
+    expect(() => extractTarGz(truncated, tmpRoot)).toThrow(/truncated archive/)
+  })
+
+  it('rejects a malformed size field', () => {
+    const tar = makeTarGz([{ name: 'package/a.txt', content: 'A' }])
+    const raw = gunzipSync(tar)
+    // Corrupt the octal size field of the first header.
+    raw.write('XXXXXXXXXXX\0', 124, 12, 'utf8')
+    expect(() => extractTarGz(gzipSync(raw), tmpRoot)).toThrow(/malformed size field/)
+  })
+
+  it('rejects a body that is neither gzip nor zip', () => {
+    expect(() => extractArchive(Buffer.from('<html>rate limited</html>'), tmpRoot)).toThrow(
+      /unrecognized archive format/,
+    )
+  })
+})
+
+describe('looksLikeArchive', () => {
+  it('recognizes gzip and zip magic bytes', () => {
+    expect(looksLikeArchive(makeTarGz([{ name: 'a', content: 'x' }]))).toBe(true)
+    expect(looksLikeArchive(makeZip([{ name: 'a', content: 'x' }]))).toBe(true)
+  })
+
+  it('rejects an HTML error page served with HTTP 200', () => {
+    // The case this guard exists for: a mirror answering a miss or a rate limit
+    // with a 200 HTML body. Accepting it would fail extraction later and, for a
+    // payload, fall back to the ~150MB full download instead of trying the next
+    // candidate.
+    expect(looksLikeArchive(Buffer.from('<!DOCTYPE html><html>...'))).toBe(false)
+    expect(looksLikeArchive(Buffer.alloc(0))).toBe(false)
+    expect(looksLikeArchive(Buffer.from([0x1f]))).toBe(false)
+  })
+})
+
+describe('zip and tar.gz produce identical installs', () => {
+  it('yields the same tree from the same content, including dotfiles', () => {
+    // Which candidate URL won (a registry mirror or the GitHub release) must not
+    // change what gets installed. The two archives differ in wrapper directory
+    // and in an npm-only root package.json; both are normalized away.
+    const files = [
+      { name: 'resources/app.asar', content: 'ASAR' },
+      { name: 'resources/login.html', content: 'LOGIN' },
+      // A dotfile: the case a glob-based copy silently drops.
+      { name: 'resources/app.asar.unpacked/node_modules/cpu-features/.eslintrc.js', content: 'ESLINT' },
+      { name: 'payload.json', content: '{"electron":"44.4.3"}' },
+    ]
+
+    const zipDir = path.join(tmpRoot, 'from-zip')
+    const tarDir = path.join(tmpRoot, 'from-tar')
+    fs.mkdirSync(zipDir)
+    fs.mkdirSync(tarDir)
+
+    extractArchive(makeZip(files), zipDir)
+    extractArchive(
+      makeTarGz([
+        // npm wraps everything in package/ and adds its own root package.json.
+        { name: 'package/package.json', content: '{"name":"x","version":"1.0.0"}' },
+        ...files.map((f) => ({ name: 'package/' + f.name, content: f.content })),
+      ]),
+      tarDir,
+    )
+
+    // Remove the npm-only wrapper manifest, exactly as installPayload does, and
+    // then the two trees must be byte-identical.
+    fs.rmSync(path.join(tarDir, 'package.json'), { force: true })
+
+    expect(readTree(tarDir)).toEqual(readTree(zipDir))
+  })
+})
+
+describe('downloadFirstAvailable skips non-archive responses', () => {
+  it('falls through to the next candidate when one serves HTML', async () => {
+    const good = makeZip([{ name: 'a.txt', content: 'OK' }])
+    download.impl = (url) => (url.includes('mirror') ? Buffer.from('<html>nope</html>') : good)
+
+    const buf = await downloadFirstAvailable(['https://mirror/x.zip', 'https://github.com/x.zip'])
+
+    expect(buf.equals(good)).toBe(true)
+    expect(downloadSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports every failed candidate when none is an archive', async () => {
+    download.impl = () => Buffer.from('<html>nope</html>')
+    await expect(
+      downloadFirstAvailable(['https://mirror/a.zip', 'https://mirror/b.zip']),
+    ).rejects.toThrow(/all download sources failed/)
+    await expect(
+      downloadFirstAvailable(['https://mirror/a.zip', 'https://mirror/b.zip']),
+    ).rejects.toThrow(/not a zip or tar\.gz archive/)
   })
 })
