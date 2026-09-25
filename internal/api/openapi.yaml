@@ -1678,7 +1678,13 @@ paths:
     get:
       tags: [Events]
       summary: 拉取离线期间漏发事件
-      description: 按游标补偿，供 Android PendingEventsWorker 等离线回退使用。
+      description: |
+        按游标补偿，供 Android PendingEventsWorker 等离线回退使用。
+
+        `suppress_notification`：该事件的会话/任务已读时为 true。事件仍会返回
+        （客户端须照常推进游标，否则下次拉取会永远重复返回它），但客户端不应弹通知。
+        `permission_pending` 不参与已读判定（它是待处理的审批请求，不是已读回复）。
+        `after` 为空时服务端返回整个 TTL 窗口内的积压，客户端应只推进游标、不补弹历史。
       operationId: eventsPending
       parameters:
         - name: after
@@ -1688,6 +1694,29 @@ paths:
       responses:
         "200":
           description: 漏发事件
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        event_id:
+                          type: string
+                        event_type:
+                          type: string
+                        payload:
+                          type: string
+                        expires_at:
+                          type: string
+                        created_at:
+                          type: string
+                        suppress_notification:
+                          type: boolean
+                          description: 会话/任务已读时为 true；事件仍须推进游标但不弹通知
 
   # ── Git ───────────────────────────────────────────────────────────────────
   /api/git/branch:
