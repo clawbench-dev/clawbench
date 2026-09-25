@@ -294,6 +294,125 @@ func TestDrainLoop_QueueEmpty_EmitsDone(t *testing.T) {
 	assert.Equal(t, "done", finalEvent.Type)
 }
 
+// TestDrainLoop_OnTurnAnswered_PerIntermediateTurn is the regression for
+// "several queued messages produced a single notification": the loop's terminal
+// `done` fires only once, when the WHOLE queue is drained, so an intermediate
+// answer must report itself as it completes.
+//
+// The run is 1 initial message + 3 queued = 4 answers, and each must notify:
+// 3 intermediate callbacks here (including the FIRST, non-queued one) plus the
+// terminal push for the last. The final one deliberately goes through the
+// terminal path only, because that path owns the once-per-run push guard — so
+// the total is N notifications with no duplicate.
+func TestDrainLoop_OnTurnAnswered_PerIntermediateTurn(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-test-on-turn-answered"
+	setupDrainSession(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	for _, q := range []string{"q1", "q2", "q3"} {
+		_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "msg "+q, nil, q, "")
+	}
+
+	var answered int32
+	var finalEvent ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
+			return DrainResult{}
+		},
+		OnTurnAnswered: func() {
+			atomic.AddInt32(&answered, 1)
+		},
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
+			finalEvent = event
+		},
+	}
+
+	RunDrainLoop(cfg, DrainResult{})
+
+	assert.Equal(t, int32(3), atomic.LoadInt32(&answered),
+		"1 initial + 3 queued answers → 3 intermediate notifications (the 4th is the terminal push)")
+	assert.Equal(t, eventTypeDone, finalEvent.Type)
+}
+
+// TestDrainLoop_OnTurnAnswered_NotCalledForSingleMessage pins the other half:
+// with nothing queued behind it, the only answer must NOT also fire the
+// intermediate hook — otherwise it would double-notify (once here, once from
+// the terminal push).
+func TestDrainLoop_OnTurnAnswered_NotCalledForSingleMessage(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-test-on-turn-answered-single"
+	setupDrainSession(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	var answered int32
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
+			return DrainResult{}
+		},
+		OnTurnAnswered:       func() { atomic.AddInt32(&answered, 1) },
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) {},
+	}
+
+	RunDrainLoop(cfg, DrainResult{})
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(&answered),
+		"an empty queue has no intermediate turn to report")
+}
+
+// TestDrainLoop_OnTurnAnswered_SkipsUncleanTurns verifies an interrupted or
+// failed turn is not announced as an answer. The user cut it short (or it was
+// abandoned), so a "completed" notification would be a lie.
+func TestDrainLoop_OnTurnAnswered_SkipsUncleanTurns(t *testing.T) {
+	cases := []struct {
+		name   string
+		result DrainResult
+	}{
+		{"user cancel", DrainResult{CancelReason: cancelReasonUser}},
+		{"interrupt", DrainResult{CancelReason: cancelReasonInterrupt}},
+		{"error", DrainResult{Err: "boom"}},
+		{"empty", DrainResult{Empty: true}},
+		{"abnormal", DrainResult{AbnormalReason: "stalled"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupDrainTest(t)
+			sessionID := "drain-test-on-turn-unclean-" + tc.name
+			setupDrainSession(t, sessionID)
+			defer ClearQueuedMessages(sessionID)
+
+			// A message is queued so the loop would have an intermediate turn to
+			// report, were the previous turn clean.
+			_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "next", nil, "q1", "")
+
+			var answered int32
+			cfg := DrainConfig{
+				SessionID:   sessionID,
+				ProjectPath: "/test",
+				BackendName: "codebuddy",
+				ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
+					return DrainResult{}
+				},
+				OnTurnAnswered:       func() { atomic.AddInt32(&answered, 1) },
+				MarkDoneAndSendFinal: func(event ai.StreamEvent) {},
+			}
+
+			// The FIRST turn's outcome is tc.result; the queued message only runs
+			// if the loop decides to continue (interrupt does; the rest terminate).
+			RunDrainLoop(cfg, tc.result)
+
+			assert.Equal(t, int32(0), atomic.LoadInt32(&answered),
+				"an unclean turn must not be announced as a completed answer")
+		})
+	}
+}
+
 func TestDrainLoop_QueueHasNextMessage_ExecutesAndLoops(t *testing.T) {
 	setupDrainTest(t)
 	sessionID := "drain-test-next-msg"

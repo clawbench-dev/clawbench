@@ -169,6 +169,37 @@ func EmitSessionPushNotification(sessionID, status string) bool {
 	if !markTerminalPushDone(sessionID) {
 		return false
 	}
+	pushSessionTerminal(sessionID, status)
+	return true
+}
+
+// EmitTurnAnsweredNotification pushes a completion notification for ONE turn of
+// a multi-message drain, without claiming the once-per-run terminal guard.
+//
+// Why it exists: the drain loop emits its terminal `done` only when the WHOLE
+// queue is finished, so a user with several queued messages was notified once —
+// after the last one — instead of once per answer. Each intermediate answer is
+// its own completed turn and deserves its own push.
+//
+// Deliberately NOT the guarded path: the terminal guard permits exactly one push
+// per run, so calling it here would let the FIRST turn consume the slot and
+// silence the real terminal push, losing the last answer's notification. The
+// last turn therefore keeps going through EmitSessionPushNotification, and N
+// messages produce exactly N notifications.
+//
+// Only the push/pending-event side effects happen here. No terminal
+// session_update is broadcast: clients treat "completed" as the end of the run
+// and tear the live stream down (useChatSession), which would abort the very
+// turns still queued behind this one.
+func EmitTurnAnsweredNotification(sessionID string) {
+	pushSessionTerminal(sessionID, statusCompleted)
+}
+
+// pushSessionTerminal performs the shared body of a completion notification:
+// build the payload, write-ahead the pending event for offline clients, and
+// push to DingTalk/Feishu (deleting the pending event when the push lands, so
+// the Android replay does not notify the same answer twice).
+func pushSessionTerminal(sessionID, status string) {
 	title, err := GetSessionTitle(sessionID)
 	if err != nil {
 		title = ""
@@ -207,7 +238,6 @@ func EmitSessionPushNotification(sessionID, status string) bool {
 			_ = DeletePendingEvent(msg.ID)
 		}
 	}
-	return true
 }
 
 // markTerminalPushDone atomically claims the single terminal push slot for a session.

@@ -39,6 +39,21 @@ type DrainConfig struct {
 	// MarkDoneAndSendFinal sends the terminal event (done/cancelled/error).
 	MarkDoneAndSendFinal func(event ai.StreamEvent)
 
+	// OnTurnAnswered is called when a turn finished NORMALLY and more queued
+	// work remains — i.e. the drain loop is about to start the next message.
+	// Callers use it to notify the user that this answer landed, instead of
+	// waiting for the whole queue to finish.
+	//
+	// It is deliberately NOT called for the last turn: that one exits through
+	// MarkDoneAndSendFinal, whose push claims the once-per-run terminal guard.
+	// Firing here for it too would either double-notify or — because that guard
+	// permits a single push per run — silence the terminal push and lose the
+	// last turn's notification entirely. So N messages produce exactly N
+	// notifications: N-1 here plus the terminal one.
+	//
+	// Nil means no callback.
+	OnTurnAnswered func()
+
 	// AutoContinue, when non-nil, is called to resume a turn that ended
 	// abnormally instead of letting the loop terminate. It returns the result
 	// of the resumed turn, or ok=false to refuse the retry — in which case the
@@ -313,6 +328,22 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 		dequeueFailures = 0
 		// A real user turn is starting: give it its own auto-continue budget.
 		autoContinueAttempts = 0
+
+		// The PREVIOUS turn just finished normally and more work is waiting, so
+		// this is where an intermediate answer is reported. The loop's terminal
+		// `done` only fires once the whole queue is drained, which is why a user
+		// with several queued messages used to be notified a single time — after
+		// the last one. Reporting here gives every intermediate answer its own
+		// notification (the final one is covered by the terminal push, so N
+		// messages still produce exactly N).
+		//
+		// Gated on a CLEAN completion: an interrupted or abnormally-terminated
+		// turn is not an answer worth announcing (the user cut it short, or it
+		// was abandoned), and `result` still holds that turn at this point.
+		if cfg.OnTurnAnswered != nil &&
+			result.CancelReason == "" && result.Err == "" && !result.Empty && result.AbnormalReason == "" {
+			cfg.OnTurnAnswered()
+		}
 
 		slog.Info("drain: draining queued message",
 			slog.String("session", cfg.SessionID),

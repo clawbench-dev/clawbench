@@ -2839,6 +2839,38 @@ func TestEmitSessionPushNotification_Completed(t *testing.T) {
 	assert.Equal(t, 1, pendingEventCount(t, db))
 }
 
+// TestEmitTurnAnsweredNotification_DoesNotConsumeTerminalGuard pins the invariant
+// that makes the per-turn notification safe: an intermediate answer must notify
+// WITHOUT claiming the once-per-run terminal push slot.
+//
+// If it claimed it, the FIRST queued answer would consume the slot and the real
+// terminal push would be suppressed — losing the LAST answer's notification, the
+// exact opposite of the fix. This is why OnTurnAnswered routes to
+// EmitTurnAnsweredNotification rather than EmitSessionPushNotification.
+func TestEmitTurnAnsweredNotification_DoesNotConsumeTerminalGuard(t *testing.T) {
+	db := setupPushNotificationTest(t, "session-push-turn-answered")
+
+	content := model.ContentBlock{Type: "text", Text: "answer one"}
+	blocks := map[string]any{"blocks": []model.ContentBlock{content}}
+	contentJSON, _ := json.Marshal(blocks)
+	insertTestMessage(t, db, "session-push-turn-answered", "user", "q1")
+	insertTestMessage(t, db, "session-push-turn-answered", "assistant", string(contentJSON))
+
+	// Two intermediate answers, then the real terminal push.
+	EmitTurnAnsweredNotification("session-push-turn-answered")
+	EmitTurnAnsweredNotification("session-push-turn-answered")
+	assert.Equal(t, 2, pendingEventCount(t, db), "each intermediate answer notifies once")
+
+	// The terminal push must still land — the guard was never consumed above.
+	require.True(t, EmitSessionPushNotification("session-push-turn-answered", "completed"),
+		"the terminal push must still win the guard after intermediate notifications")
+	assert.Equal(t, 3, pendingEventCount(t, db))
+
+	// And it is still once-per-run for the terminal state.
+	EmitSessionPushNotification("session-push-turn-answered", "completed")
+	assert.Equal(t, 3, pendingEventCount(t, db), "terminal push stays once-per-run")
+}
+
 func TestEmitSessionPushNotification_GuardResetsOnNewRun(t *testing.T) {
 	db := setupPushNotificationTest(t, "session-push-2")
 

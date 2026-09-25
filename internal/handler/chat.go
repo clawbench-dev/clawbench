@@ -680,6 +680,12 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					}
 				},
 			}),
+			// An intermediate answer in a multi-message drain is its own
+			// completed turn: notify now rather than waiting for the whole
+			// queue (see DrainConfig.OnTurnAnswered).
+			OnTurnAnswered: func() {
+				service.EmitTurnAnsweredNotification(sessionID)
+			},
 			MarkDoneAndSendFinal: markDoneAndSendFinal,
 		}, service.DrainResult{
 			CancelReason:   result.cancelReason,

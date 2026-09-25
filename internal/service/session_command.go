@@ -328,6 +328,12 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 					}
 				},
 			}),
+			// An intermediate answer in a multi-message drain is its own
+			// completed turn: notify now rather than waiting for the whole
+			// queue (see DrainConfig.OnTurnAnswered).
+			OnTurnAnswered: func() {
+				EmitTurnAnsweredNotification(sessionID)
+			},
 			MarkDoneAndSendFinal: markDoneAndSendFinal,
 		}, DrainResult{
 			CancelReason:   result.cancelReason,
