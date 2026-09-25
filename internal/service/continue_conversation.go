@@ -177,9 +177,13 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create continued session: %w", err)
 	}
-	// The "⏰ [time] task" title is deliberately chosen — lock it so the first
-	// user message cannot replace it (matters when no messages were copied).
-	markSessionTitleRenamed(newSessionID)
+	// The "⏰ [time] task" title is a PLACEHOLDER, not a deliberate choice: it
+	// identifies which run this session came from, but says nothing about what
+	// the user wants to do with it. Like a fork, this session copies the source
+	// history (so its own first message is never message #1), and it should be
+	// named by the first message after that point — see maybeAutoTitleSessionTx.
+	// A manual rename still locks it by writing 'custom'.
+	markSessionTitlePlaceholder(newSessionID)
 	// Apply the agent's auto-approve default like CreateSession does, so the
 	// continued interactive session matches a freshly created one.
 	applyAgentAutoApproveDefault(newSessionID, agentID)
