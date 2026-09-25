@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
+import { parse as parseYaml } from 'yaml'
 
 const ANDROID_UTILS = 'android/app/src/main/assets/url-utils.js'
 const DESKTOP_UTILS = 'desktop/assets/url-utils.js'
@@ -117,6 +118,42 @@ describe('login.html wiring', () => {
       expect(html).toMatch(/getElementById\('addHost'\)\.addEventListener\('paste'/)
       expect(html).toContain('parseServerInput')
     })
+
+    /**
+     * The functional test above builds its own DOM_FIXTURE, so renaming an id in
+     * the real page (while leaving the JS untouched) would keep every test green
+     * and still break the page at runtime: getElementById returns null and the
+     * listener throws. Parse the real markup and assert the ids/values the
+     * listener actually dereferences.
+     */
+    it(`${label} declares the element ids and radio values the listener needs`, () => {
+      const doc = new DOMParser().parseFromString(readRepoFile(rel), 'text/html')
+
+      const host = doc.getElementById('addHost')
+      expect(host, '#addHost must exist (the paste listener is bound to it)').not.toBeNull()
+
+      const port = doc.getElementById('addPort')
+      expect(port, '#addPort must exist (the listener writes parsed.port here)').not.toBeNull()
+      // The design's "default 20000" behaviour depends on this exact value: a
+      // scheme-less paste leaves the field alone, so the default is what ships.
+      expect(port!.getAttribute('value')).toBe('20000')
+
+      // The listener flips these by value selector; a renamed value would make
+      // the protocol silently fail to update.
+      expect(
+        doc.querySelector('input[name="addProtocol"][value="https"]'),
+        'an addProtocol radio with value="https" must exist',
+      ).not.toBeNull()
+      expect(
+        doc.querySelector('input[name="addProtocol"][value="http"]'),
+        'an addProtocol radio with value="http" must exist',
+      ).not.toBeNull()
+
+      expect(
+        doc.getElementById('addErrorMsg'),
+        '#addErrorMsg must exist (the listener calls hideError(\'addErrorMsg\'))',
+      ).not.toBeNull()
+    })
   }
 })
 
@@ -132,6 +169,40 @@ describe('url-utils.js copies', () => {
     const android = readFileSync(resolveRepo(ANDROID_UTILS))
     const desktop = readFileSync(resolveRepo(DESKTOP_UTILS))
     expect(android.equals(desktop)).toBe(true)
+  })
+})
+
+const ELECTRON_BUILDER_YML = 'desktop/electron-builder.yml'
+
+/**
+ * Packaging guard. desktop/assets/url-utils.js only reaches the packaged app if
+ * electron-builder copies it via extraResources. If that entry is deleted (or
+ * its `to:` is moved into a subdirectory), the page's <script src="url-utils.js">
+ * 404s with no CSP violation and no console error surfaced anywhere — the
+ * feature just silently does nothing, and every behavioural test above still
+ * passes because they read the repo file directly. The yml is not shipped inside
+ * app.asar, so the app cannot detect the drift at runtime; only a static test
+ * can. Mirrors desktop/src/main/identity.test.ts, which guards appId the same
+ * way. Parsed with `yaml` (a vite dependency) rather than regexed, so a
+ * re-indent or an inline-map rewrite cannot fool it.
+ */
+describe('desktop packaging', () => {
+  it('electron-builder ships url-utils.js as a sibling of login.html', () => {
+    const yml = parseYaml(readRepoFile(ELECTRON_BUILDER_YML)) as {
+      extraResources?: Array<{ from?: string; to?: string }>
+    }
+    const resources = yml.extraResources
+    expect(Array.isArray(resources), 'electron-builder.yml must declare extraResources').toBe(true)
+
+    const entry = resources!.find((r) => r && r.from === 'assets/url-utils.js')
+    expect(
+      entry,
+      'extraResources must contain an entry with from: assets/url-utils.js',
+    ).toBeDefined()
+    // `to` must be the flat filename: login.html loads it as src="url-utils.js"
+    // from the resources root, so a nested target like 'assets/url-utils.js'
+    // would 404 at runtime while this entry still looks present.
+    expect(entry!.to).toBe('url-utils.js')
   })
 })
 
@@ -178,6 +249,21 @@ function extractPasteListener(rel: string): string {
   }
   return src
 }
+
+/**
+ * The two login.html files legitimately differ (i18n slogans, the async bridge
+ * handling, comments), so a whole-file equality check would be wrong. The paste
+ * listener, however, is deliberately platform-agnostic — it touches no native
+ * bridge, only the shared parseServerInput and plain DOM — so the two copies
+ * must stay identical. Divergence means someone edited one page's listener and
+ * forgot the other, which no behavioural test would catch (each page is tested
+ * only against its own copy).
+ */
+describe('login.html paste listener copies', () => {
+  it('are byte-identical', () => {
+    expect(extractPasteListener(ANDROID_LOGIN)).toBe(extractPasteListener(DESKTOP_LOGIN))
+  })
+})
 
 /**
  * Minimal DOM the paste listener touches. Values mirror the real login page:
