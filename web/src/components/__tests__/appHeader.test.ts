@@ -4,6 +4,9 @@ import { createI18n } from 'vue-i18n'
 import { reactive } from 'vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 import { pendingSettingsCategory } from '@/composables/useSettingsNavigation'
+import { copyText } from '@/utils/clipboard'
+
+const mockedCopyText = vi.mocked(copyText)
 
 // ── Mock setup ──
 const {
@@ -66,6 +69,9 @@ vi.mock('@/composables/useAppMode', () => {
 vi.mock('@/composables/useCommitNavigation.ts', () => ({
   setPendingManageNavigation: setPendingManageNavigationFn,
 }))
+vi.mock('@/utils/clipboard', () => ({
+  copyText: vi.fn((_text: string, onSuccess?: () => void) => { onSuccess?.() }),
+}))
 vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: dialogConfirmFn }),
 }))
@@ -110,7 +116,7 @@ const i18n = createI18n({
     switchProjectNetworkError: 'Switch project failed: network error',
     recentFiles: 'Recent files', noFileOpen: 'Recent files', noRecentFiles: 'No recently opened files',
     openFileManager: 'Open file manager',
-    branches: 'Branches', moreBranches: 'Manage branches',
+    branches: 'Branches', moreBranches: 'Manage branches', copyBranchName: 'Copy branch name',
     switchBranchConfirm: 'Switch to branch "{branch}"?',
     switchBranchFailed: 'Failed: {error}', switchBranchNetworkError: 'network',
     removeProject: 'Remove project',
@@ -183,6 +189,8 @@ describe('AppHeader', () => {
     setPendingManageNavigationFn.mockReset()
     dialogConfirmFn.mockReset()
     dialogConfirmFn.mockResolvedValue(true)
+    mockedCopyText.mockReset()
+    mockedCopyText.mockImplementation((_text: string, onSuccess?: () => void) => { onSuccess?.() })
   })
 
   // ── projectName computed (5) ──
@@ -1026,6 +1034,91 @@ describe('AppHeader', () => {
     const items = document.body.querySelectorAll('.app-menu-item')
     expect(items[0]?.classList.contains('active')).toBe(true)
     expect(items[1]?.classList.contains('active')).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('renders a copy button on every branch row', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    // Two branch rows → two copy buttons (the "manage branches" footer has none).
+    expect(document.body.querySelectorAll('.item-copy-btn').length).toBe(2)
+
+    // The icon must actually render inside each button. Asserting only on the
+    // button class is not enough: if <Copy>/<Check> are not imported the button
+    // still mounts as an empty 18x18 box, which is invisible to the user.
+    const btns = [...document.body.querySelectorAll('.item-copy-btn')]
+    for (const b of btns) expect(b.querySelector('svg')).not.toBeNull()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('copies the branch name without switching branches', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    // Click the copy button on the *non-current* row; it must not trigger the
+    // row's selectBranch handler (which would open the switch confirmation).
+    const copyBtns = document.body.querySelectorAll('.item-copy-btn')
+    ;(copyBtns[1] as HTMLElement).click()
+    await wrapper.vm.$nextTick()
+
+    expect(mockedCopyText).toHaveBeenCalledWith('dev', expect.any(Function))
+    expect(dialogConfirmFn).not.toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('flashes the copied state on the clicked row only', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const copyBtns = document.body.querySelectorAll('.item-copy-btn')
+    ;(copyBtns[1] as HTMLElement).click()
+    await wrapper.vm.$nextTick()
+
+    const after = document.body.querySelectorAll('.item-copy-btn')
+    expect(after[1].classList.contains('is-copied')).toBe(true)
+    expect(after[0].classList.contains('is-copied')).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not mark a row as copied when the clipboard write fails', async () => {
+    mockedCopyText.mockImplementation(() => {})
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const copyBtns = document.body.querySelectorAll('.item-copy-btn')
+    ;(copyBtns[1] as HTMLElement).click()
+    await wrapper.vm.$nextTick()
+
+    expect(document.body.querySelectorAll('.item-copy-btn.is-copied').length).toBe(0)
 
     vi.unstubAllGlobals()
   })

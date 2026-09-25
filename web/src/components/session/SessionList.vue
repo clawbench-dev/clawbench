@@ -186,7 +186,7 @@
         </div>
         <div class="context-menu-item" @click.stop="renameSessionFromMenu(contextMenu.sessionId)">
           <PencilLine :size="14" />
-          {{ t('common.renameSession') }}
+          {{ t('common.rename') }}
         </div>
         <div class="context-menu-item" @click.stop="openTagDialogFromMenu(contextMenu.sessionId)">
           <Tags :size="14" />
@@ -200,7 +200,7 @@
           :class="{ active: isSessionShared(contextMenu.sessionId) }"
           @click.stop="openShareDialogFromMenu(contextMenu.sessionId)"
         >
-          <Share2 :size="14" />
+          <MessageSquareShare :size="14" />
           {{ isSessionShared(contextMenu.sessionId) ? t('sessionShare.buttonActive') : t('sessionShare.button') }}
         </div>
         <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
@@ -235,7 +235,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, Share2, Tags, Trash2, MoreVertical, GitFork } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, GitFork } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'

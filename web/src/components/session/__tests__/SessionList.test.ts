@@ -1482,7 +1482,7 @@ describe('SessionList', () => {
       // action itself is a no-op; the close must not depend on it succeeding.
       mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
       await openFor()
-      clickLastMenu('common.renameSession')
+      clickLastMenu('common.rename')
       await flushPromises()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
 
