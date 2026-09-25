@@ -6,7 +6,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, isSubagentToolName, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
@@ -217,10 +217,8 @@ export function useChatStream(options: UseChatStreamOptions) {
   // inner events aren't forwarded over ACP, so the outer call legitimately exceeds
   // TOOL_USE_TIMEOUT_MS. Don't kill their spinner with the 30s fallback, otherwise a
   // long-running subagent looks like it already finished.
-  const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent'])
-  function isSubagentToolName(name?: string): boolean {
-    return !!name && SUBAGENT_TOOL_NAMES.has(name.toLowerCase())
-  }
+  // (isSubagentToolName is shared with the session-manager cleanup sweep so both
+  // places agree on which tool names are exempt.)
 
   const { onEvent, sendWsMessage, connected, isReplayingEvents } = useGlobalEvents()
 

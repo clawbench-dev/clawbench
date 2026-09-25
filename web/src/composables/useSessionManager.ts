@@ -5,6 +5,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { buildSendChannels, type FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
+import { isSubagentToolName } from '@/utils/chatStreamUtils.ts'
 import { clearAskStatesByPrefix, askSessionPrefix } from '@/utils/askQuestionState.ts'
 import { clearQueue, removeQueued } from '@/composables/useMessageQueue.ts'
 
@@ -231,9 +232,31 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   // ── Cleanup ──
 
-  /** Clean up streaming state when user wants to interact with session management
-   *  while AI is still generating. */
-  function cleanupActiveStream() {
+  /**
+   * Clean up streaming state when the operation is about to disturb the
+   * session the panel is currently showing (switch/create/fork/rewind, or
+   * archiving/destroying the CURRENT session).
+   *
+   * `targetSessionId` is the session the caller is operating on. When it names
+   * a DIFFERENT session than the one on screen, this is a no-op.
+   *
+   * Why the guard is load-bearing: the cleanup tears down the live stream
+   * (a real `unsubscribe`, unfinished tools stamped done, `loading` cleared).
+   * Archiving or destroying some OTHER session used to run that cleanup against
+   * the session on screen, which killed a turn the user was actively watching:
+   * the spinner vanished, unfinished tools showed their completed check, the
+   * input flipped back to "send" — a convincing "already finished" state — while
+   * the backend kept running. Its content/done events then had no subscriber and
+   * were dropped, so the reply never arrived until the user switched away and
+   * back (which re-subscribes and reloads from the DB).
+   *
+   * Callers whose target IS the panel's session omit the argument (or pass the
+   * current id): switchSession/createSession/forkSession/rewindSession/
+   * continueFromExecution intentionally rebuild the current view, so clearing
+   * the old stream first is correct.
+   */
+  function cleanupActiveStream(targetSessionId?: string) {
+    if (targetSessionId && targetSessionId !== identity.currentSessionId.value) return
     if (!loading.value) return
     disconnectStream(true)
     const sm = messages.value.find(m => m.role === 'assistant' && m.streaming)
@@ -241,7 +264,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       delete sm.streaming
       if (sm.blocks) {
         for (const block of sm.blocks as Array<Record<string, unknown>>) {
-          if (block.type === 'tool_use' && !block.done) block.done = true
+          // Sub-agent calls (task/Agent) legitimately run for minutes inside a
+          // child session whose inner events never reach this wire, so they are
+          // exempt from the generic "stamp everything done" sweep — the same
+          // exemption the streaming tool watchdog applies (useChatStream). Without
+          // it a still-working sub-agent shows its finished check.
+          if (block.type === 'tool_use' && !block.done && !isSubagentToolName(block.name as string | undefined)) {
+            block.done = true
+          }
         }
       }
     }
@@ -270,7 +300,10 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   }
 
   async function archiveSession(sessionId: string, backend?: string) {
-    cleanupActiveStream()
+    // Only disturb the panel's stream when the session being archived IS the one
+    // on screen; archiving another session must not kill the running turn the
+    // user is watching (see cleanupActiveStream).
+    cleanupActiveStream(sessionId)
     // Cancel running session before archiving to kill the CLI process
     if (runningSessions.value.has(sessionId)) {
       try { await cancelChat(sessionId) } catch {}
@@ -308,7 +341,9 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   /** Hard-delete (physically destroy) a specific session — irreversible. */
   async function destroySession(sessionId: string) {
-    cleanupActiveStream()
+    // Same reasoning as archiveSession: destroying another session must not tear
+    // down the stream of the one the user is watching.
+    cleanupActiveStream(sessionId)
     if (runningSessions.value.has(sessionId)) {
       try { await cancelChat(sessionId) } catch {}
     }

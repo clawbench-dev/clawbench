@@ -204,6 +204,19 @@ function isGarbageOutput(output: string | undefined): boolean {
 export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
 
 /**
+ * Tool names that spawn a sub-agent. Their calls run for minutes inside a child
+ * session and legitimately outlive the generic 30s tool watchdog, so any
+ * "mark unfinished tools as done" cleanup must exempt them — otherwise the
+ * sub-agent pill shows its finished check while it is still working.
+ */
+export const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent'])
+
+/** Whether a tool name denotes a sub-agent call (case-insensitive). */
+export function isSubagentToolName(name?: string): boolean {
+  return !!name && SUBAGENT_TOOL_NAMES.has(name.toLowerCase())
+}
+
+/**
  * A single created/modified file along with the Write/Edit tool call IDs that
  * produced it. toolIds let the drill-down view fetch the diff content on
  * demand from the tool-call API (blocks in loaded/summary view are slim and

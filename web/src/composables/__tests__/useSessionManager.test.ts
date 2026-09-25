@@ -130,6 +130,31 @@ describe('useSessionManager', () => {
             expect(streamingMsg.blocks[2].done).toBe(true) // was already true
         })
 
+        it('does NOT stamp a still-running sub-agent call as done', () => {
+            // A sub-agent (task/Agent) call runs for minutes inside a child session
+            // whose inner events never reach this wire, so the sweep must exempt it —
+            // otherwise the sub-agent pill shows its finished check while it works.
+            // This mirrors the exemption the streaming tool watchdog already applies.
+            const opts = createMockOptions()
+            opts.loading.value = true
+            const streamingMsg = {
+                role: 'assistant', streaming: true,
+                blocks: [
+                    { type: 'tool_use', name: 'Agent', done: false },
+                    { type: 'tool_use', name: 'task', done: false },
+                    { type: 'tool_use', name: 'Read', done: false },
+                ],
+            }
+            opts.messages.value = [streamingMsg]
+            const mgr = useSessionManager(opts)
+
+            mgr.cleanupActiveStream()
+
+            expect(streamingMsg.blocks[0].done).toBe(false) // Agent stays running
+            expect(streamingMsg.blocks[1].done).toBe(false) // task stays running
+            expect(streamingMsg.blocks[2].done).toBe(true)  // ordinary tool is swept
+        })
+
         it('calls updateRenderedContents with forceFull=true', () => {
             const opts = createMockOptions()
             opts.loading.value = true
@@ -254,19 +279,47 @@ describe('useSessionManager', () => {
     // ── archiveSession ──
 
     describe('archiveSession', () => {
-        it('calls cleanup then clears queue then deletes', async () => {
+        it('calls cleanup then clears queue then deletes when archiving the CURRENT session', async () => {
             const opts = createMockOptions()
             opts.loading.value = true
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.archiveSession('session-2', 'claude')
+            await mgr.archiveSession('session-1', 'claude')
 
             expect(opts.disconnectStream).toHaveBeenCalled()
             expect(fetchSpy).toHaveBeenCalledWith(
-                expect.stringContaining('/api/ai/queue?session_id=session-2'),
+                expect.stringContaining('/api/ai/queue?session_id=session-1'),
                 { method: 'DELETE' },
             )
+            expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-1', 'claude')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('does NOT tear down the current stream when archiving a DIFFERENT session', async () => {
+            // Regression: archiving another session used to run cleanupActiveStream
+            // unconditionally, which unsubscribed the session on screen, stamped its
+            // unfinished tools done and cleared `loading` — a convincing "finished"
+            // state while the backend kept running. Its content/done events then had
+            // no subscriber and were dropped, so the reply only appeared after a
+            // switch away and back.
+            const opts = createMockOptions()
+            opts.loading.value = true
+            const streamingMsg = {
+                role: 'assistant', streaming: true,
+                blocks: [{ type: 'tool_use', id: 'tu-1', done: false }],
+            }
+            opts.messages.value = [streamingMsg]
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.archiveSession('session-2', 'claude')
+
+            expect(opts.disconnectStream).not.toHaveBeenCalled()
+            expect(opts.loading.value).toBe(true)          // spinner keeps running
+            expect(streamingMsg.streaming).toBe(true)      // bubble stays streaming
+            expect(streamingMsg.blocks[0].done).toBe(false) // tool not falsely finished
             expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-2', 'claude')
 
             fetchSpy.mockRestore()
@@ -691,21 +744,45 @@ describe('useSessionManager', () => {
     // ── destroySession ──
 
     describe('destroySession', () => {
-        it('calls cleanup, cancels running session, clears queue, then destroys', async () => {
+        it('calls cleanup, cancels running session, clears queue, then destroys the CURRENT session', async () => {
             const opts = createMockOptions()
             opts.loading.value = true
-            mockRunningSessions.value = new Set(['session-2'])
+            mockRunningSessions.value = new Set(['session-1'])
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.destroySession('session-1')
+
+            expect(opts.disconnectStream).toHaveBeenCalled()
+            expect(mockCancelChat).toHaveBeenCalledWith('session-1')
+            expect(fetchSpy).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/queue?session_id=session-1'),
+                { method: 'DELETE' },
+            )
+            expect(opts.destroySessionCore).toHaveBeenCalledWith('session-1')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('does NOT tear down the current stream when destroying a DIFFERENT session', async () => {
+            // Same regression as archiveSession: a hard-delete of another session
+            // must not unsubscribe the session on screen or clear its loading state.
+            const opts = createMockOptions()
+            opts.loading.value = true
+            const streamingMsg = {
+                role: 'assistant', streaming: true,
+                blocks: [{ type: 'tool_use', id: 'tu-1', done: false }],
+            }
+            opts.messages.value = [streamingMsg]
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
             const mgr = useSessionManager(opts)
 
             await mgr.destroySession('session-2')
 
-            expect(opts.disconnectStream).toHaveBeenCalled()
-            expect(mockCancelChat).toHaveBeenCalledWith('session-2')
-            expect(fetchSpy).toHaveBeenCalledWith(
-                expect.stringContaining('/api/ai/queue?session_id=session-2'),
-                { method: 'DELETE' },
-            )
+            expect(opts.disconnectStream).not.toHaveBeenCalled()
+            expect(opts.loading.value).toBe(true)
+            expect(streamingMsg.streaming).toBe(true)
+            expect(streamingMsg.blocks[0].done).toBe(false)
             expect(opts.destroySessionCore).toHaveBeenCalledWith('session-2')
 
             fetchSpy.mockRestore()
