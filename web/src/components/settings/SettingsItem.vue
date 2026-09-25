@@ -626,7 +626,7 @@ function confirmEdit() {
 }
 
 .settings-item__label {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -989,7 +989,7 @@ function confirmEdit() {
 }
 
 .settings-item__option-label {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
   min-width: 0;
 }
