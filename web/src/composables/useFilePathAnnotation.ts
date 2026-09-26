@@ -520,6 +520,55 @@ export function annotateFilePaths(
 export const INERT_PATH_CLASS = 'chat-file-path-inert'
 
 /**
+ * Line-target attributes stashed on a verified-missing path before the live
+ * `data-line-*` ones are stripped.
+ *
+ * The live names cannot be kept: `data-line-start` et al. are the contract for
+ * "this annotation points at a line in a real file", and the click interceptors
+ * (`readLineTargetFromEl`, `extractTargetFromElement`) read them unconditionally
+ * for verified paths. Leaving them on an inert element would make it look like a
+ * resolvable line target. They are preserved under a separate namespace so that
+ * clicking the chip can still search for the file and, if a candidate is chosen,
+ * land on the originally-intended line.
+ */
+const INERT_LINE_ATTRS = [
+    ['data-line-start', 'data-inert-line-start'],
+    ['data-line-end', 'data-inert-line-end'],
+    ['data-line-ranges', 'data-inert-line-ranges'],
+] as const
+
+/** Move the live line-target attributes to their inert-namespaced equivalents. */
+export function stashLineTargetAttrs(el: Element): void {
+    for (const [live, stashed] of INERT_LINE_ATTRS) {
+        const value = el.getAttribute(live)
+        if (value !== null) el.setAttribute(stashed, value)
+        el.removeAttribute(live)
+    }
+}
+
+/**
+ * Read the stashed line target from an inert path element.
+ *
+ * Mirrors `readLineTargetFromEl`'s precedence: the full range list is
+ * authoritative, `start`/`end` are the fallback for single ranges.
+ */
+export function readInertLineTarget(el: Element): { lineStart?: number; lineEnd?: number; lineRanges?: string } {
+    const rangesAttr = el.getAttribute('data-inert-line-ranges')
+    if (rangesAttr) {
+        const ranges = parseLineRanges(rangesAttr)
+        if (ranges.length > 0) {
+            return { lineRanges: serializeLineRanges(ranges), ...firstLineTarget(ranges) }
+        }
+    }
+    const startAttr = el.getAttribute('data-inert-line-start')
+    const endAttr = el.getAttribute('data-inert-line-end')
+    const lineStart = startAttr ? parseInt(startAttr, 10) : undefined
+    const lineEnd = endAttr ? parseInt(endAttr, 10) : undefined
+    if (lineStart === undefined) return {}
+    return { lineStart, ...(lineEnd !== undefined ? { lineEnd } : {}) }
+}
+
+/**
  * Make a local `<a>` link visibly non-navigable while keeping its text.
  *
  * Used for two cases that share the same defect: a glob pattern (never a real
@@ -894,28 +943,38 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
         // re-mark it after a list remount rebuilds the DOM from cached HTML —
         // `data-path-type="none"` is what tells the click interceptors (which
         // only act on `file`/`dir`) to leave it alone.
+        //
+        // `data-file-path` also separates the two inert shapes for the click
+        // layer: a glob pattern never got one (markInertLink fires before the
+        // annotation class is added), so only a verified-missing path is
+        // clickable — it can be searched for by name. The line target is moved
+        // to the `data-inert-line-*` namespace rather than deleted so that
+        // picking a candidate can still land on the intended line.
         containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"]`).forEach(btn => {
             btn.remove()
         })
         containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"], .code-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(el => {
             el.classList.add(INERT_PATH_CLASS)
             el.setAttribute('data-path-type', 'none')
-            el.setAttribute('title', gt('file.toast.fileRemoved'))
+            el.setAttribute('title', gt('file.toast.fileRemovedSearchable'))
             el.removeAttribute('data-fallback-path')
             el.removeAttribute('data-external')
-            el.removeAttribute('data-line-start')
-            el.removeAttribute('data-line-end')
-            el.removeAttribute('data-line-ranges')
+            stashLineTargetAttrs(el)
             // An <a> must not stay navigable: it would 404 against the site
             // root (relative href) or fail in the web context (file:). Keep the
             // element and its text so the path remains readable.
+            //
+            // `aria-disabled` is deliberately NOT set: the chip is now an
+            // interactive affordance (clicking searches for the file by name),
+            // and marking an operable control disabled would hide it from
+            // assistive tech. The glob case in markInertLink still sets it —
+            // that one really is non-interactive.
             if (el.tagName === 'A') {
                 const href = el.getAttribute('href')
                 if (href) {
                     el.setAttribute('data-inert-href', href)
                     el.removeAttribute('href')
                 }
-                el.setAttribute('aria-disabled', 'true')
             }
         })
     }

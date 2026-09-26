@@ -1407,6 +1407,10 @@ export default {
       globPattern: 'This is a glob pattern, not a file path',
       fileNotFoundReturned: 'File no longer exists; returned to the origin page',
       fileRemoved: 'File does not exist; it may have been removed',
+      // Tooltip on a verified-missing path chip. Unlike `fileRemoved` (which is
+      // also used as a toast), this one advertises the click affordance: the
+      // chip searches the project for the filename (issue #501 follow-up).
+      fileRemovedSearchable: 'File not found here — click to search by filename',
       externalFile: 'This file is outside the project directory',
       archiving: 'Packing {n} items...',
       archiveDone: 'Download ready',
@@ -1551,6 +1555,13 @@ export default {
       wordGlobal: 'project',
       wordVerb: 'search in',
       scopeGlobal: 'Global search',
+      // Verified-missing path chip: the path failed existence checks against
+      // both resolution candidates, but the file may exist elsewhere in the
+      // project. Clicking searches for it by filename (issue #501 follow-up).
+      inertHeading: 'Find “{name}”',
+      inertHint: 'This path could not be resolved. Pick the matching file:',
+      inertNoResults: 'No file named “{name}” in the project',
+      inertNoResultsHint: 'It may have been renamed or moved. Try searching from the file manager.',
     },
     contentSearch: {
       title: 'File content search',

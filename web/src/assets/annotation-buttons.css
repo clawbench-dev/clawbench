@@ -73,6 +73,19 @@ a.chat-file-path-inert,
   background: none !important;
 }
 
+/* Verified-missing paths are CLICKABLE: they search the project for the
+   filename (the path failed both resolution candidates, but the file usually
+   exists under a different prefix). A glob pattern also carries the inert class
+   but never gets `data-file-path` (markInertLink fires before the annotation
+   class is added), so the attribute cleanly separates the two — and only the
+   actionable one gets the pointer affordance.
+
+   (0,2,0) beats the bare `.chat-file-path-inert` (0,1,0) above, so this wins
+   without another `!important` on cursor. */
+.chat-file-path-inert[data-file-path] {
+  cursor: pointer !important;
+}
+
 a.chat-file-path-inert:hover,
 .chat-file-path-inert:hover {
   color: var(--text-muted, #999) !important;

@@ -1593,8 +1593,74 @@ describe('verifyFilePaths', () => {
     expect(a.hasAttribute('href'), 'a dead link must not stay navigable').toBe(false)
     expect(a.getAttribute('data-inert-href')).toBe('docs/gone.md')
     expect(a.getAttribute('data-path-type')).toBe('none')
-    expect(a.getAttribute('aria-disabled')).toBe('true')
     expect(a.textContent).toContain('the guide')
+    // NOT aria-disabled: the chip is clickable (it searches for the filename),
+    // so marking it disabled would hide an operable control from AT. Only the
+    // glob case — which really cannot act — stays aria-disabled.
+    expect(a.hasAttribute('aria-disabled')).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('stashes the line target instead of deleting it, so a search hit can land on the line', async () => {
+    // The chip becomes an entry point to a filename search. When the user picks
+    // a candidate, the originally-intended line should still be reachable — so
+    // the live `data-line-*` contract (read unconditionally for verified paths)
+    // is moved to a separate namespace rather than dropped.
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/gone.go': 'none' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="src/gone.go" data-line-start="42" data-line-end="48">src/gone.go</span>'
+
+    await verifyFilePaths(['src/gone.go'], container)
+
+    const span = container.querySelector('.chat-file-path')!
+    // Live attrs are gone — they mean "resolvable line target in a real file".
+    expect(span.hasAttribute('data-line-start')).toBe(false)
+    expect(span.hasAttribute('data-line-end')).toBe(false)
+    // …but the values survive under the inert namespace.
+    expect(span.getAttribute('data-inert-line-start')).toBe('42')
+    expect(span.getAttribute('data-inert-line-end')).toBe('48')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('stashes a multi-range line target as the canonical serialized list', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/gone.go': 'none' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="src/gone.go" data-line-start="90" data-line-end="91" data-line-ranges="90-91,309">src/gone.go</span>'
+
+    await verifyFilePaths(['src/gone.go'], container)
+
+    const span = container.querySelector('.chat-file-path')!
+    expect(span.hasAttribute('data-line-ranges')).toBe(false)
+    expect(span.getAttribute('data-inert-line-ranges')).toBe('90-91,309')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not set aria-disabled on a verified-missing chip (it is clickable)', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'gone.go': 'none' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="gone.go">gone.go</span>'
+
+    await verifyFilePaths(['gone.go'], container)
+
+    expect(container.querySelector('.chat-file-path')!.hasAttribute('aria-disabled')).toBe(false)
 
     vi.unstubAllGlobals()
   })

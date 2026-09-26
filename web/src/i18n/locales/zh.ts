@@ -1408,6 +1408,9 @@ export default {
       globPattern: '这是通配符模式，不是文件路径',
       fileNotFoundReturned: '文件已不存在，已返回来源页面',
       fileRemoved: '文件不存在，可能已被移除',
+      // 验证失效路径 chip 的 tooltip。与 `fileRemoved`（同时用作 toast）不同，
+      // 这条要说明可点击：点击按文件名在项目内搜索（issue #501 后续）。
+      fileRemovedSearchable: '此路径下未找到文件——点击可按文件名搜索',
       externalFile: '此文件位于项目目录之外',
       archiving: '正在打包 {n} 个文件...',
       archiveDone: '打包下载完成',
@@ -1552,6 +1555,12 @@ export default {
       wordGlobal: '在当前项目下',
       wordVerb: '搜索',
       scopeGlobal: '全局搜索',
+      // 验证失效的路径 chip：两个候选位置都不存在，但文件可能改名/移动到了
+      // 项目别处。点击按文件名搜索（issue #501 后续）。
+      inertHeading: '查找“{name}”',
+      inertHint: '该路径无法解析。请选择匹配的文件：',
+      inertNoResults: '项目中没有名为“{name}”的文件',
+      inertNoResultsHint: '它可能已被改名或移动。可到文件管理器中搜索。',
     },
     contentSearch: {
       title: '文件内容搜索',

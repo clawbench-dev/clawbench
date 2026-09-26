@@ -473,6 +473,7 @@
     <ToastNotification :toast="toast" />
     <CompletionPopover />
     <DialogOverlay />
+    <InertPathPicker />
   </div>
 </template>
 
@@ -493,6 +494,7 @@ import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHori
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
+import InertPathPicker from './components/file/InertPathPicker.vue'
 import Lightbox from './components/media/Lightbox.vue'
 import ChatPanelContent from './components/chat/ChatPanelContent.vue'
 import FileManagerContent from './components/file/FileManagerContent.vue'
@@ -556,6 +558,8 @@ import { useTocDockPreference } from './composables/useTocDockPreference'
 import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { installDragClickGuard } from './utils/dragClickGuard'
+import { installInertPathClick } from './utils/inertPathClick'
+import { closeInertPathPicker } from './composables/useInertPathPicker'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
@@ -952,6 +956,12 @@ function switchTab(tab: string, force = false) {
   activeTab.value = tab
   // Auto-close all drawers not belonging to the new tab
   onTabSwitch(tab)
+  // The inert-path picker is deliberately NOT tab-scoped (an inert chip can be
+  // clicked in any tab, so gating it on one tab id would hide the panel
+  // elsewhere). Closing it on every tab switch is the replacement for that
+  // scoping: a picker left open would otherwise float over the new panel, since
+  // BottomSheet teleports to <body>.
+  closeInertPathPicker()
   if (tab === 'browse') {
     store.loadFiles(store.state.currentDir, false, 0, true)
   }
@@ -3385,6 +3395,13 @@ function handleCtrlShiftF(e: KeyboardEvent) {
      // document-level guard replaces a per-row check that only ever reached four
      // of the ~50 clickable rows containing selectable text.
      stopDragClickGuard = installDragClickGuard()
+     // Turns a verified-missing path chip into a filename-search entry point.
+     // MUST come after installDragClickGuard: this layer reads
+     // `e.defaultPrevented` to tell a drag-select from a real click, and the
+     // drag guard is what sets it (it uses stopPropagation, not
+     // stopImmediatePropagation, so a same-node listener still runs). Ordering
+     // is asserted by inertPathClickWiring.test.ts.
+     stopInertPathClick = installInertPathClick()
      stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
          const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
            || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
@@ -3400,12 +3417,15 @@ function handleCtrlShiftF(e: KeyboardEvent) {
 
 let stopLocalLinkGuard: (() => void) | null = null
 let stopDragClickGuard: (() => void) | null = null
+let stopInertPathClick: (() => void) | null = null
 
 onUnmounted(() => {
     stopLocalLinkGuard?.()
     stopLocalLinkGuard = null
     stopDragClickGuard?.()
     stopDragClickGuard = null
+    stopInertPathClick?.()
+    stopInertPathClick = null
     activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()

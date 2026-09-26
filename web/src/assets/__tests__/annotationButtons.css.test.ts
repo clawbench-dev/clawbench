@@ -310,6 +310,17 @@ function chainWithHover(chain: El[]): El[] {
   return out
 }
 
+/**
+ * Whether the chip is the actionable kind.
+ *
+ * Mirrors the production selector `.chat-file-path-inert[data-file-path]`: a
+ * verified-missing path keeps `data-file-path` and is clickable (it searches
+ * for the filename), while a glob pattern never gets one and stays inert.
+ */
+function isSearchable(chain: El[]): boolean {
+  return (chain[chain.length - 1].attrs ?? []).includes('data-file-path')
+}
+
 describe('inert path wins the background cascade on every surface', () => {
   it('finds the competing chip rules it is meant to guard', () => {
     // Sanity: the ancestor-scoped fill rules must actually be present, else the
@@ -364,17 +375,32 @@ describe('inert path wins the background cascade on every surface', () => {
 })
 
 describe('inert path wins the cursor cascade', () => {
-  it('resolves cursor to help, not the live pointer affordance', () => {
-    // Inert elements keep `data-file-path`, so `.chat-file-path[data-file-path]
-    // { cursor: pointer }` matches them; the state must deny that affordance.
+  it('resolves cursor to pointer on a searchable chip, help on a glob chip', () => {
+    // The two inert shapes now differ by affordance: a verified-missing path
+    // opens a filename search, so it must look clickable; a glob pattern still
+    // cannot act, so it keeps `help`. The attribute that separates them is
+    // `data-file-path` (kept for re-verification; never set on glob chips).
     const offenders: string[] = []
     for (const { name, chain } of SURFACES) {
+      const expected = isSearchable(chain) ? 'pointer' : 'help'
       const won = resolve(rules, chain, 'cursor')
-      if (!won || won.value !== 'help') {
-        offenders.push(`${name}: cursor => ${won ? won.value : '(none declared)'}`)
+      if (!won || won.value !== expected) {
+        offenders.push(`${name}: cursor => ${won ? won.value : '(none declared)'} (expected ${expected})`)
       }
     }
-    expect(offenders, `inert path kept the pointer cursor:\n${offenders.join('\n')}`).toEqual([])
+    expect(offenders, `inert path has the wrong cursor affordance:\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('still beats the live-chip pointer rule on a non-searchable chip', () => {
+    // `.chat-file-path[data-file-path] { cursor: pointer }` is (0,2,0). A glob
+    // chip has no data-file-path so it never matches — but a chip that DOES have
+    // one must resolve to pointer anyway (asserted above). This guards the
+    // reverse: the base inert rule must not be silently overridden to pointer.
+    const globSurface = SURFACES.filter((s) => !isSearchable(s.chain))
+    expect(globSurface.length, 'the glob shape must stay covered').toBeGreaterThan(0)
+    for (const { name, chain } of globSurface) {
+      expect(resolve(rules, chain, 'cursor')?.value, `${name} must stay help`).toBe('help')
+    }
   })
 
   it('the winning cursor declaration is !important', () => {
