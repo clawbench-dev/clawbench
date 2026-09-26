@@ -7,6 +7,7 @@
     :indeterminate="indeterminate"
     :value-title="sizeLabel"
     :cancel-title="t('common.cancel')"
+    centered
     @cancel="emit('cancel')"
   />
 </template>

@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="transfer-progress">
+  <div v-if="visible" class="transfer-progress" :class="{ 'transfer-progress--centered': centered }">
     <div class="transfer-progress-head">
       <span class="transfer-progress-label" :title="label">{{ label }}</span>
       <span v-if="detail" class="transfer-progress-detail">{{ detail }}</span>
@@ -33,6 +33,8 @@ import { X } from 'lucide-vue-next'
  * It is INLINE (a normal flow child of its host panel), not floating: uploads
  * render inside the file-manager/terminal panel and downloads above the bottom
  * dock, so each host decides placement and no overlay stacking is involved.
+ * `centered` caps the width and centers the bar — a download spans the whole
+ * window, so at desktop widths an uncapped bar would stretch edge to edge.
  *
  * `indeterminate` is for transfers with no known size (the streamed archive
  * endpoint sends no Content-Length): the bar animates instead of sitting at a
@@ -53,10 +55,13 @@ withDefaults(defineProps<{
   /** Tooltip for the value, e.g. "1.2 MB / 4.8 MB". */
   valueTitle?: string
   cancelTitle: string
+  /** Cap the width and center it (for bars spanning a whole window). */
+  centered?: boolean
 }>(), {
   detail: '',
   indeterminate: false,
   valueTitle: '',
+  centered: false,
 })
 
 const emit = defineEmits<{
@@ -75,6 +80,15 @@ const emit = defineEmits<{
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 10%, var(--bg-secondary, #fff));
   box-shadow: var(--shadow-md);
   flex-shrink: 0;
+}
+
+/* A bar spanning the whole window (the download bar, mounted at app level)
+   would stretch edge to edge on desktop; cap it and center it instead. Below
+   the cap (narrow viewports) width:100% still fills the available space. */
+.transfer-progress--centered {
+  width: 100%;
+  max-width: 520px;
+  margin-inline: auto;
 }
 
 .transfer-progress-head {

@@ -36,6 +36,18 @@ describe('TransferProgressBar', () => {
     expect(mountBar().find('.transfer-progress-detail').exists()).toBe(false)
   })
 
+  it('is not width-capped by default (upload bars fill their panel)', () => {
+    expect(mountBar().find('.transfer-progress').classes())
+      .not.toContain('transfer-progress--centered')
+  })
+
+  it('caps and centers the width when centered is set', () => {
+    // A download bar spans the whole window, so at desktop widths it needs a
+    // cap or it stretches edge to edge.
+    const wrapper = mountBar({ centered: true })
+    expect(wrapper.find('.transfer-progress').classes()).toContain('transfer-progress--centered')
+  })
+
   it('renders the detail slot when provided', () => {
     const wrapper = mountBar({ detail: '2/4' })
     expect(wrapper.find('.transfer-progress-detail').text()).toBe('2/4')
