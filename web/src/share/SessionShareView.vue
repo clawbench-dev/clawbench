@@ -109,7 +109,7 @@
       <!-- TOC rail (wide screens). Entries are every message in the thread,
            rendered with the same row component the in-app conversation index
            uses. Narrow screens get the slide-in drawer below. -->
-      <aside v-if="tocItems.length > 0 && tocOpen && !isNarrow" class="share-toc share-toc--wide">
+      <aside v-if="tocItems.length > 0 && tocOpen && !isNarrow" class="share-toc share-toc--wide" ref="tocRailRef">
         <div class="share-toc-head">
           <div class="share-toc-title">{{ t('share.toc') }}</div>
         </div>
@@ -131,7 +131,7 @@
     <Teleport to="body">
       <div v-if="isNarrow && tocItems.length > 0 && tocOpen" class="share-toc-drawer">
         <div class="share-toc-backdrop" @click="tocOpen = false" />
-        <aside class="share-toc share-toc--wide share-toc-panel">
+        <aside class="share-toc share-toc--wide share-toc-panel" ref="tocPanelRef">
           <div class="share-toc-head">
             <div class="share-toc-title">{{ t('share.toc') }}</div>
             <button class="share-toc-close" type="button" :aria-label="t('common.close')" @click="tocOpen = false">
@@ -189,7 +189,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Download, FileX2, List, X } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -343,6 +343,32 @@ function teardownTocObserver() {
   }
   visibleIds.clear()
 }
+
+// ── Keep the active TOC entry visible ──
+// The rail (and the narrow drawer) is its own scroll container; a highlighted
+// entry scrolled out of it is as useless as no highlight at all. Scroll only
+// the rail that owns the row — a bare scrollIntoView would also move the page.
+// At most one of the two refs is non-null (wide rail vs. teleported drawer).
+const tocRailRef = ref<HTMLElement | null>(null)
+const tocPanelRef = ref<HTMLElement | null>(null)
+watch(activeTocId, async (id) => {
+  if (id == null) return
+  await nextTick()
+  const rail = tocRailRef.value ?? tocPanelRef.value
+  if (!rail) return
+  const row = Array.from(rail.querySelectorAll<HTMLElement>('.msg-item'))
+    .find((el) => el.classList.contains('active'))
+  if (!row) return
+  const r = row.getBoundingClientRect()
+  const railRect = rail.getBoundingClientRect()
+  const headH = rail.querySelector('.share-toc-head')?.getBoundingClientRect().height ?? 0
+  const top = railRect.top + headH
+  if (r.top >= top && r.bottom <= railRect.bottom) return // already visible
+  // Centre it within the visible band below the header.
+  const band = railRect.bottom - top
+  const delta = r.top - top - (band - r.height) / 2
+  rail.scrollTo({ top: rail.scrollTop + delta, behavior: 'smooth' })
+})
 
 /**
  * Total assistant wall-clock time, summed across the thread.
@@ -574,9 +600,6 @@ async function loadSnapshot() {
     // to in-app navigation (mirrors ShareView's file-share handling).
     store.state.projectRoot = store.state.projectRoot || ''
     store.state.homeDir = store.state.homeDir || ''
-    // The message DOM exists only after this tick; the observer needs the rows.
-    await nextTick()
-    setupTocObserver()
     // Desktop opens with the TOC rail visible; narrow screens default closed
     // (opened on demand via the topbar button → slide-in drawer).
     tocOpen.value = !isNarrow.value
@@ -585,6 +608,14 @@ async function loadSnapshot() {
     error.value = t('share.notFound')
   } finally {
     loading.value = false
+  }
+  // The observer must be wired AFTER the message rows are in the DOM. While
+  // `loading` is true the template renders the spinner branch, so the rows do
+  // not exist yet — setting up inside the try would observe zero elements and
+  // the TOC would never highlight anything.
+  if (!error.value) {
+    await nextTick()
+    setupTocObserver()
   }
 }
 

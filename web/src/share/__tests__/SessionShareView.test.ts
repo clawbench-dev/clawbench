@@ -513,6 +513,85 @@ describe('SessionShareView', () => {
       expect(wrapper.findAll('.share-toc .msg-item')[1].classes()).toContain('active')
     })
 
+    // Regression: the scroll-spy observer was wired up while `loading` was
+    // still true — the template renders the spinner branch then, so the message
+    // rows did not exist yet and the observer ended up observing ZERO elements.
+    // The highlight then never appeared at any scroll position. Assert the
+    // observer is actually attached to every message row once the snapshot has
+    // rendered.
+    it('observes every message row for the scroll-spy', async () => {
+      const observed: Element[] = []
+      const original = globalThis.IntersectionObserver
+      class SpyIO {
+        constructor(public cb: IntersectionObserverCallback) {}
+        observe(el: Element) { observed.push(el) }
+        unobserve() {}
+        disconnect() {}
+        takeRecords() { return [] }
+        root = null
+        rootMargin = ''
+        thresholds = []
+      }
+      // @ts-expect-error test double
+      globalThis.IntersectionObserver = SpyIO
+      try {
+        const wrapper = await mountView()
+        expect(wrapper.findAll('.chat-message-stub')).toHaveLength(2)
+        // Both messages must be observed, and the id must be stamped on the row
+        // (the callback reads dataset.msgId, so an unstamped row is invisible
+        // to the spy even if observed).
+        expect(observed).toHaveLength(2)
+        expect(observed.map((el) => (el as HTMLElement).dataset.msgId)).toEqual(['11', '12'])
+      } finally {
+        globalThis.IntersectionObserver = original
+      }
+    })
+
+    // The rail is its own scroll container: a highlight that is scrolled out of
+    // the rail is useless, so the active row must be brought into view (only
+    // when it is actually outside, and only within the rail).
+    it('scrolls the rail to reveal an active entry that is out of view', async () => {
+      const wrapper = await mountView()
+      // jsdom has no Element.scrollTo; stub the content container so the jump
+      // itself does not throw before the active id is set.
+      ;(wrapper.find('.share-content').element as HTMLElement).scrollTo = vi.fn()
+      const rail = wrapper.find('.share-toc').element as HTMLElement
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      const target = rows[1].element as HTMLElement
+      // Rail viewport 100..500; the row sits below it.
+      rail.getBoundingClientRect = () => ({ top: 100, bottom: 500, height: 400, left: 0, right: 300, width: 300, x: 0, y: 100, toJSON: () => ({}) }) as DOMRect
+      target.getBoundingClientRect = () => ({ top: 900, bottom: 940, height: 40, left: 0, right: 300, width: 300, x: 0, y: 900, toJSON: () => ({}) }) as DOMRect
+      const scrollTo = vi.fn()
+      rail.scrollTo = scrollTo
+
+      await rows[1].trigger('click')
+      await flushPromises()
+      await nextTick()
+
+      expect(scrollTo).toHaveBeenCalledTimes(1)
+      // Scrolled DOWN (row is below the rail viewport).
+      expect(scrollTo.mock.calls[0][0].top).toBeGreaterThan(0)
+      expect(scrollTo.mock.calls[0][0].behavior).toBe('smooth')
+    })
+
+    it('does not scroll the rail when the active entry is already visible', async () => {
+      const wrapper = await mountView()
+      ;(wrapper.find('.share-content').element as HTMLElement).scrollTo = vi.fn()
+      const rail = wrapper.find('.share-toc').element as HTMLElement
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      const target = rows[1].element as HTMLElement
+      rail.getBoundingClientRect = () => ({ top: 100, bottom: 500, height: 400, left: 0, right: 300, width: 300, x: 0, y: 100, toJSON: () => ({}) }) as DOMRect
+      target.getBoundingClientRect = () => ({ top: 200, bottom: 240, height: 40, left: 0, right: 300, width: 300, x: 0, y: 200, toJSON: () => ({}) }) as DOMRect
+      const scrollTo = vi.fn()
+      rail.scrollTo = scrollTo
+
+      await rows[1].trigger('click')
+      await flushPromises()
+      await nextTick()
+
+      expect(scrollTo).not.toHaveBeenCalled()
+    })
+
     it('toggles the rail from the topbar button', async () => {
       const wrapper = await mountView()
       expect(wrapper.find('.share-toc').exists()).toBe(true)
