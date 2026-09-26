@@ -20,6 +20,10 @@ ENV E2E_APPIUM_HOST=emulator \
     E2E_APPIUM_PORT=4723 \
     E2E_MOCK_HOST=10.0.2.2 \
     E2E_MOCK_PORT=20000 \
-    E2E_APK_PATH=/apk/clawbench-android-debug.apk
+    E2E_SERVER_HOST=10.0.2.2 \
+    E2E_SERVER_PORT=20000 \
+    E2E_TARGET_CONTROL=http://emulator:18081 \
+    E2E_APK_PATH=/apk/clawbench-android-debug.apk \
+    E2E_TIER=1
 
 CMD ["npx", "wdio", "run", "wdio.conf.mjs"]

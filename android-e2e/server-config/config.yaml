@@ -1,0 +1,22 @@
+# Config for the REAL clawbench server used by Tier 2.
+#
+# The h2 stream tunnel only needs the main HTTP port (20000). SSH is turned OFF
+# on purpose: `enabled: false` disables only the SSH listener, and `transport:
+# h2` is exactly the combination that must still create the server-side
+# ProxyRegistry (cmd/server/proxy_registry_gate.go shouldCreateProxyRegistry) —
+# without it every /api/tunnel/* request would 503.
+#
+# If this combination regressed, /api/tunnel/stream would answer 503
+# ("PortForwardUnavailable") instead of 401 (unauthenticated), which is the
+# first assertion in tests/tunnel.probe.mjs.
+port: 20000
+
+# A known password. Without one the server generates a random value into
+# {data-dir}/auto-password on first start, which the test could not read from
+# its own container. Must match E2E_PASSWORD in tests/ (and the repo convention
+# in e2e/helpers/auth.ts).
+password: e2e-test-password
+
+port_forward:
+  enabled: false   # SSH listener off — h2 rides the main HTTP server
+  transport: h2    # h2-only; still creates the ProxyRegistry

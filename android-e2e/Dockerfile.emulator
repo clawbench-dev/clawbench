@@ -30,8 +30,18 @@ RUN chmod 0755 /home/androidusr/chromedriver/chromedriver-244 \
 # to docs.google.com is unreachable here and blocks AVD creation), and the emulator
 # told to run without a window. The extra args also skip the boot animation, which
 # otherwise delays `sys.boot_completed`.
+#
+# APPIUM_ADDITIONAL_ARGS enables the UiAutomator2 `adb_shell` insecure feature.
+# budtmo starts Appium as `/usr/local/bin/appium $APPIUM_ADDITIONAL_ARGS`, so this
+# is the only place the server-side flag can be injected. Tier 2 needs it because
+# `mobile: shell` is how it runs device-side `toybox nc` to prove real bytes
+# traverse the tunnel from inside the emulator. The wildcard destination is
+# required: Appium 3.x rejects a bare feature name
+# ("The full feature name must include both the destination automation name or
+# the '*' wildcard ... and the feature name split by a colon").
 ENV EMULATOR_HEADLESS=true \
     USER_BEHAVIOR_ANALYTICS=false \
-    EMULATOR_ADDITIONAL_ARGS="-no-window -no-audio -no-boot-anim"
+    EMULATOR_ADDITIONAL_ARGS="-no-window -no-audio -no-boot-anim" \
+    APPIUM_ADDITIONAL_ARGS="--allow-insecure *:adb_shell"
 
 USER 1300:1301

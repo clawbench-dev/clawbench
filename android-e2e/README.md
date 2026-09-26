@@ -12,24 +12,244 @@ vitest suite or `scripts/pre-push-checks.sh`.
 
 | Tier | What it proves | Status |
 |------|----------------|--------|
-| **1** | Native shell + WebView login flow (launch → login page → form → home) | implemented (`tests/smoke.login.mjs`) |
-| **2** | h2 tunnel feature (`feat/ssh-ws-forward`) end-to-end on a real runtime | planned — slots in as additional `tests/*.mjs` |
+| **1** | Native shell + WebView login flow (launch → login page → form → home) | implemented, green (`tests/smoke.login.mjs`) |
+| **2** | h2 stream tunnel (`feat/ssh-ws-forward`) on a real runtime, against a REAL server — `-L` and `-R` byte transfer, wire selection, negative path, teardown | implemented, green (`tests/tunnel.{server,forward,reverse}.mjs`) |
 
-Tier 2 reuses everything here: the same emulator, the same mock server (extended
-with tunnel endpoints), the same runner. Add specs under `tests/`; the wdio config
-globs `tests/**/*.mjs`.
+Tier 2 reuses everything here — the same emulator, the same runner — but swaps
+the mock for a **real `clawbench` server built from this worktree**, because the
+tunnel is full-duplex and the mock cannot be (see "Why Tier 2 needs a real
+server").
 
 ## Quick start
 
 ```bash
 cd android-e2e
-./scripts/run.sh                 # full pipeline: image -> APK -> build -> up -> test -> down
-./scripts/run.sh --skip-build    # reuse the existing debug APK
-./scripts/run.sh --keep-up       # leave containers running for debugging
+./scripts/run.sh --tier1          # native shell + login smoke (default)
+./scripts/run.sh --tier2          # h2 tunnel -L / -R (real server)
+./scripts/run.sh --all            # both, Tier 1 first
+./scripts/run.sh --tier2 --skip-build    # reuse the existing debug APK
+./scripts/run.sh --tier2 --keep-up       # leave containers running for debugging
 ```
 
 `run.sh` is idempotent and tears down on success, failure, and Ctrl-C, so no
 multi-GB emulator container is left behind.
+
+## A real app defect, worked around by the harness (not hidden)
+
+**The tunnel implementation is correct and Tier 2 proves it carries real bytes
+in both directions.** But the app has a genuine defect that blocks its own
+authenticated tunnel streams on this image, and the suite is built to surface it
+rather than to pass around it.
+
+### The defect
+
+`AndroidTunnelPlatform.sessionCookie()` builds the tunnel's `Cookie` header from
+`CookieManager.getCookie(serverUrl)`. On this API-28 WebView (Chrome
+69.0.3497.100) that call does **not** return the session cookie the app itself
+installed from the `/login` response — even though:
+
+1. the cookie **is** persisted (`run-as <pkg> sqlite3 .../app_webview/Cookies`
+   shows `10.0.2.2 | clawbench_session | 64 bytes | path=/`), and
+2. the WebView's own network stack **does** send it (an auth-protected
+   `GET /api/config` from the page returns `200`).
+
+So every authenticated `POST /api/tunnel/stream` is `401`
+(`auth: rejecting request ... has_cookie=false`), and no payload traverses.
+
+The discriminator is **who wrote the cookie**, not the HttpOnly flag: a cookie
+the **renderer** writes (`document.cookie`) *is* returned by `getCookie()`,
+while one the app installs with `CookieManager.setCookie()` is not. Verified by
+rebuilding the server with `go build -overlay` and `HttpOnly: false` — still
+unreadable. (HttpOnly does matter for the workaround: the app's own HttpOnly
+cookie cannot be overwritten by page JS, so the fixture has to start from an app
+with no session cookie.)
+
+The same `getCookie()` call also powers the shipped native WebSocket push path
+(`BackgroundService.connectNativeWs`) and the `AppLog` relay, so this is not
+tunnel-specific.
+
+### The harness fixture (and why it is still a real test)
+
+`tests/helpers/tunnel.mjs installReadableSessionCookie()` reaches a state where
+the app *can* build an authenticated request:
+
+1. `pm clear` the app (removes the persisted URL **and** any HttpOnly cookie),
+2. `connectToServer(url, '')` — lands the WebView on the server origin without
+   installing a session cookie,
+3. authenticate from the runner (`POST /login`) to learn the real token,
+4. write it from the page (`document.cookie='clawbench_session=<token>; path=/'`).
+
+`getCookie()` now returns it, and everything downstream is the production path:
+`AndroidTunnelPlatform.sessionCookie` → OkHttp h2 duplex stream → the server's
+relay → the target. The fixture substitutes only *where the cookie is
+installed*, because the app's own read is broken.
+
+`tests/tunnel.server.mjs` asserts the defect explicitly and **fails if it is
+ever fixed**, so the fixture cannot outlive it:
+
+- it checks the WebView sends the cookie (page `fetch('/api/config')` → 200),
+- it checks the app's own read returns nothing,
+- and it `assert.fail`s if the read starts working ("remove the fixture").
+
+### Recommendation (production change, not applied here)
+
+Capture the cookie value at login. `handleAuthResponse` already receives the
+`Set-Cookie` headers (`MainActivity.java:1672`) and injects them into the
+WebView; persist the session cookie value there and have
+`AndroidTunnelPlatform.sessionCookie` read that, instead of round-tripping
+through `CookieManager`. That removes the dependency on the WebView API and also
+fixes the native-WS and log-relay paths.
+
+## Why Tier 2 needs a real server
+
+The tunnel is full-duplex by construction: on one HTTP/2 stream the **request
+body carries client→server bytes** while the **response body carries
+server→client bytes**. Any half-duplex mock — including Tier 1's
+`mock-server/server.mjs` and MockWebServer — consumes the whole request body
+before it may write a response, so it deadlocks a duplex stream. The
+implementation plan calls this out explicitly
+(`docs/plans/2026-09-25-h2-tunnel-implementation.md`, T14: "MockWebServer 是半双工的").
+
+Tier 2 therefore builds and runs the real server:
+
+```
+scripts/prepare-assets.sh --with-server
+  └─ CGO_ENABLED=0 go build -ldflags "-X clawbench/internal/version.Version=<APK versionName>" \
+       -o assets/clawbench-server ./cmd/server
+```
+
+`Dockerfile.server` packages that binary with `server-config/config.yaml`, and
+compose runs it in the **emulator's network namespace** (`network_mode:
+service:emulator`) so the app reaches it at `10.0.2.2:20000` — the same address
+the Tier 1 mock used.
+
+### The config that must not regress
+
+```yaml
+port_forward:
+  enabled: false   # disables ONLY the SSH listener
+  transport: h2    # h2-only
+```
+
+This is the load-bearing combination: `shouldCreateProxyRegistry`
+(`cmd/server/proxy_registry_gate.go`) is `Enabled || Transport != "ssh"`, so
+`enabled: false` + `transport: h2` **must still create the ProxyRegistry**. If it
+did not, every `/api/tunnel/*` request would be `503 PortForwardUnavailable`. The
+only combination that legitimately disables the h2 endpoints is
+`enabled: false` + `transport: ssh`.
+
+`tests/tunnel.server.mjs` asserts this by status class: an **unauthenticated**
+`POST /api/tunnel/stream` must be `401` (the handler ran, `middleware.Auth`
+rejected it) and **not** `503` (no registry).
+
+### Version agreement (why login does not hang)
+
+On login, native does `POST /login`, then `GET /api/health` and compares the
+reported `version` against the APK's `versionName`
+(`MainActivity.gateVersionMismatchAndProceed` → `VersionCompare.shouldShowMismatch`).
+When `appVersion < serverVersion` the app shows a **blocking** dialog and the
+test hangs.
+
+`prepare-assets.sh` makes them agree structurally: it compiles the server binary
+with `-X clawbench/internal/version.Version=<the APK's versionName>`, read from
+the same `output-metadata.json` `run.sh` uses for the Tier 1 mock. The comparison
+itself is a numeric dotted-core compare that ignores the `-<distance>-g<hash>`
+suffix, so only the `vX.Y.Z` base matters — but pinning the exact string means
+the two are provably identical rather than merely compatible.
+
+## Tier 2 topology
+
+Everything the tunnel needs lives in the emulator's network namespace:
+
+```
+[emulator container netns]                       [device]
+  10.0.2.2:20000  real clawbench server
+  127.0.0.1:18080 tunnel target (node:net)  <──h2──  127.0.0.1:15080  (-L listener)
+  127.0.0.1:17080 reverse listener (server binds) <──h2──  127.0.0.1:18090  (-R device target)
+  0.0.0.0:18081   target/control HTTP server
+```
+
+| Service | Role |
+|---------|------|
+| `server` | The real `clawbench` binary (`Dockerfile.server`), h2-only config |
+| `target` | `target-server/server.mjs` — the `-L` dial target + a control API for the runner |
+
+`target` must share the server's namespace because the h2 `-L` handler dials the
+target **from the server's namespace**, so `127.0.0.1:18080` is only a valid
+target there. Its control port `18081` is additionally reachable by the runner at
+`http://emulator:18081` (compose service name).
+
+## Driving the app and asserting
+
+The transport is selected in the **WebView (Vue) UI** — there is no native
+transport picker — so the specs switch into the `WEBVIEW_*` context and call the
+JS bridge directly (`window.ClawBenchNative`, injected at `MainActivity.java:693`,
+class `WebAppInterface`):
+
+| Bridge method | Used for |
+|---|---|
+| `setTunnelTransport("h2")` | select the transport (the point of the test) |
+| `getTunnelTransport()` | the preference in effect |
+| `getActiveTunnelTransport()` | **which wire actually won** — `"tls"` / `"h2c"` / `""` |
+| `addForwardedPort(local, target, host)` | `-L` |
+| `addReverseForwardedPort(server, target, host)` | `-R` |
+| `removeForwardedPort` / `removeReverseForwardedPort` | teardown |
+| `getForwardedPorts()` | JSON list, `direction` is `"forward"` / `"reverse"` |
+| `testPortReachable(port)` | TCP-accept check only |
+| `getTunnelError()` / `getTunnelErrorType()` | error surface |
+
+`getActiveTunnelTransport()` is the headline result: against this plain-HTTP
+server the TLS probe fails at the handshake (fast, not a timeout) and **h2c**
+wins. Both `tls` and `h2c` are accepted by the assertions; the observed value is
+printed as `[tier2] getActiveTunnelTransport() = "..."`.
+
+### Authentication for the tunnel specs
+
+The tunnel's data and control streams are authenticated. Because the app cannot
+read its own session cookie on this WebView (see above), the `-L`/`-R` specs
+install a readable cookie with the real server token first
+(`installReadableSessionCookie`). `tests/tunnel.server.mjs` runs first and
+asserts the defect; `tests/tunnel.forward.mjs` and `tests/tunnel.reverse.mjs`
+then exercise the full production path with that credential.
+
+### Proving real bytes, from inside the emulator
+
+`testPortReachable()` only proves a TCP accept, so Tier 2 also transfers real
+payload with **device-side `toybox nc`** run through Appium's `mobile: shell`:
+
+- **`-L`**: the device sends an HTTP request carrying a random nonce to
+  `127.0.0.1:15080`; the target echoes what it received. A matching response
+  proves server→client, and the target's own recorded request log proves
+  client→server. Both witnesses must agree.
+- **`-R`**: the server-side client (`target`'s `/__reverse/probe`, inside the
+  server's namespace) connects to `127.0.0.1:17080` and sends a nonce; the
+  device target replies with its marker and records the request. Again both
+  directions are witnessed independently.
+
+**API 28 device tools (probed, not assumed):** `toybox` (multi-call, includes
+`nc`, `netstat`, `setsid`, `pkill`), `/system/xbin/nc` (BSD flavour), `sh`.
+There is **no** `curl`, `wget`, or `busybox`. Two measured constraints shaped the
+probes:
+
+- `mkfifo` is **denied** (`Permission denied`, SELinux), so the device `-R`
+  responder feeds `nc` from a **regular file** on stdin and appends received
+  bytes to another.
+- A raw `printf '...' | nc -l` listener replies then EOFs immediately, exiting
+  before it reads the request — hence the file-fed shape above.
+
+### Appium `mobile: shell` needs a server flag
+
+Appium 3.x refuses `mobile: shell` unless the server was started with
+`--allow-insecure *:adb_shell` (the `*:` destination prefix is required; a bare
+`adb_shell` is rejected). budtmo starts Appium as
+`/usr/local/bin/appium $APPIUM_ADDITIONAL_ARGS`, so `Dockerfile.emulator` sets:
+
+```
+APPIUM_ADDITIONAL_ARGS="--allow-insecure *:adb_shell"
+```
+
+The `appium:allowInsecure` **capability** alone is not enough — it is the server
+flag that gates the command.
 
 ## Prerequisites
 
@@ -73,6 +293,8 @@ multi-GB emulator container is left behind.
   ```
 - JDK 17 at `/usr/lib/jvm/java-17-openjdk-amd64` (AGP 8.2; the default JDK 21 fails).
 - Android SDK at `/opt/android-sdk` (for the Gradle build only).
+- **Go toolchain at `/usr/local/go/bin/go`** (Tier 2 only — it builds the real
+  server binary). Override with `GO_BIN` if it lives elsewhere.
 - `python3`, `curl`, `unzip` on the host running `run.sh`.
 
 ## How it works
@@ -234,4 +456,8 @@ capture time-capped as described above.
 - **API 28 only.** The chromedriver/shim workaround is specific to Chrome 69. A
   newer system image would need a matching chromedriver and might not need the shim.
 - **Single device, serial execution** (`maxInstances: 1`).
-- Tier 2 (h2 tunnel) is not implemented yet.
+- Tier 2 authenticates through a **harness fixture** (a renderer-installed cookie)
+  because the app cannot read its own session cookie on this WebView. The tunnel
+  itself is exercised end to end; see "A real app defect, worked around by the
+  harness" above. If the app-side read is fixed, `tunnel.server.mjs` fails and
+  the fixture must be removed.
