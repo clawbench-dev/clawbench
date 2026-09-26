@@ -6,12 +6,23 @@
  * space, making everything look small. So the UI is scaled up on screens
  * taller than the reference.
  *
- * `screenHeight` is deliberately read from `window.screen.height`, which
- * reports CSS pixels (DIP) — NOT the physical panel resolution. Verified in
- * Chromium: a 4K panel driven at 200% OS scaling reports height 1080 and
- * devicePixelRatio 2. This is exactly the "subtract the system scaling"
- * behaviour we want: a 4K screen already scaled by the OS gets factor 1.0
- * (no double scaling), while a 4K screen running at 100% gets factor 2.0.
+ * `screenHeight` is read from `window.screen.height`, which is supposed to be
+ * in CSS pixels (DIP) — NOT the physical panel resolution. On Windows, macOS
+ * and X11/XWayland that holds: a 4K panel driven at 200% OS scaling reports
+ * height 1080 and devicePixelRatio 2, so `height / 1080` already subtracts the
+ * system scaling (4K at 200% → factor 1.0, 4K at 100% → factor 2.0).
+ *
+ * Native Wayland (Ubuntu's default GNOME session) is the exception: Chromium
+ * reports `screen.width/height` in DEVICE pixels there — the same 4K panel at
+ * 200% reports height 2160 with devicePixelRatio 2. Feeding that straight in
+ * yields factor 2.0 on top of the OS's 2×, i.e. a 4× UI. Measured with Chrome
+ * 154 on a live GNOME 46 Wayland session (4K VX2880-4K-HDU at scale 2.0):
+ * native Wayland → `screen.height === 2160`, XWayland on the same monitor →
+ * `screen.height === 1080`.
+ *
+ * There is no browser API that reports which convention is in use (UA, screen
+ * and media queries are identical), so `screenHeightToCssPixels` infers it from
+ * an invariant: a window can never be taller than the screen it sits on.
  */
 
 /** Height in CSS pixels the layout was designed against (1080p). */
@@ -106,12 +117,75 @@ export function resolveUIScale(
 }
 
 /**
+ * Convert a reported screen height into CSS pixels.
+ *
+ * `rawHeight` is `window.screen.height`. On Windows, macOS and X11/XWayland it
+ * is already CSS pixels and is returned unchanged. On native Wayland Chromium
+ * reports device pixels, so it is divided by `dpr`.
+ *
+ * No browser API says which convention is in effect, so the convention is
+ * inferred from an invariant: a window can never be taller than the screen it
+ * sits on. `windowDeviceHeight` is the window's own height converted to device
+ * pixels (`outerHeight * dpr`). If that already exceeds `rawHeight`, then
+ * `rawHeight` cannot be device pixels — it is the CSS-pixel convention, and
+ * dividing would under-scale. Only when the window fits inside the reported
+ * height is `rawHeight` treated as device pixels.
+ *
+ * Scoped to Linux desktop because `dpr` means different things elsewhere:
+ * on macOS/Windows it is the panel density (a Retina 5K reports 1440 CSS
+ * pixels at dpr 2 and must keep factor 1.35), not a user-chosen scale factor.
+ *
+ * The inference is genuinely ambiguous for a SMALL window (a 400px-tall window
+ * fits inside both a 1080-device and a 1080-CSS screen), so it can only be
+ * wrong in the harmless direction: treating an X11 CSS height as device pixels
+ * halves it, which at worst under-scales a screen taller than 2160 logical
+ * pixels. The opposite mistake is the 4× UI this function exists to prevent,
+ * so an unmeasurable window (0/NaN) also divides rather than keeps.
+ */
+export function screenHeightToCssPixels(
+  rawHeight: number,
+  dpr: number,
+  windowDeviceHeight: number,
+  linuxDesktop: boolean,
+): number {
+  if (!linuxDesktop) return rawHeight
+  if (!Number.isFinite(dpr) || dpr <= 1) return rawHeight
+  if (!Number.isFinite(rawHeight) || rawHeight <= 0) return rawHeight
+  // Unmeasurable window: prefer the device-pixel reading. On Linux a dpr > 1
+  // means the OS already scaled, so dividing is the safer of the two errors.
+  if (!Number.isFinite(windowDeviceHeight) || windowDeviceHeight <= 0) return rawHeight / dpr
+  // The window fits inside the reported height only if that height is device
+  // pixels; a CSS-pixel screen of the same size would be exceeded by the
+  // window's own device height.
+  if (windowDeviceHeight > rawHeight) return rawHeight
+  return rawHeight / dpr
+}
+
+/** True on a Linux desktop browser. Excludes Android, whose UA also says Linux. */
+function isLinuxDesktopBrowser(): boolean {
+  try {
+    const ua = navigator.userAgent || ''
+    return /Linux/i.test(ua) && !/Android/i.test(ua)
+  } catch {
+    return false
+  }
+}
+
+/**
  * Current screen height in CSS pixels, or 0 when unavailable (SSR/tests).
  * Wrapped so callers do not each need the try/undefined dance.
+ *
+ * The value is normalized by `screenHeightToCssPixels` so native Wayland's
+ * device-pixel reading does not double up with the OS scale factor.
  */
 export function currentScreenHeight(): number {
   try {
-    return Number(window.screen?.height) || 0
+    const raw = Number(window.screen?.height) || 0
+    const dpr = Number(window.devicePixelRatio) || 1
+    const outer = Number(window.outerHeight) || 0
+    const inner = Number(window.innerHeight) || 0
+    const windowDeviceHeight = Math.max(outer, inner) * dpr
+    return screenHeightToCssPixels(raw, dpr, windowDeviceHeight, isLinuxDesktopBrowser())
   } catch {
     return 0
   }
