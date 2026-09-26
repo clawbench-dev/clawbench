@@ -2,11 +2,15 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -257,4 +261,113 @@ func TestScheduleAutoRename_DisabledIsNoop(t *testing.T) {
 
 	ScheduleAutoRename("sess-sched-off", "问题")
 	assert.Equal(t, "本地标题", sessionTitleOf(t, "sess-sched-off"))
+}
+
+// ── additional branch coverage ──
+
+// A read failure must not panic and must yield no messages, so the caller
+// degrades to "nothing to summarize" instead of crashing. A closed DB produces
+// a real query error (a nil *sql.DB would panic inside database/sql).
+func TestCollectSessionUserMessages_DBErrorReturnsNil(t *testing.T) {
+	closed, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	cleanup := SetDBForTest(closed, closed)
+	defer cleanup()
+
+	got := CollectSessionUserMessages("sess-no-db", "extra")
+	assert.Nil(t, got)
+}
+
+// Non-user rows and empty-text user rows are skipped; only real user text is
+// collected. This pins the role filter and the empty-text guard.
+func TestCollectSessionUserMessages_SkipsNonUserAndEmptyText(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-filter", "t", TitleSourcePlaceholder)
+	// assistant row — must be skipped by the role filter
+	_, err := WriteExec(
+		"INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (?, '/test', 'assistant', ?, ?, 0)",
+		int64(201), "assistant text", "sess-filter",
+	)
+	require.NoError(t, err)
+	// user row whose content is whitespace-only — must be skipped by the
+	// empty-text guard after trimming.
+	insertAutoRenameUserMessage(t, 202, "sess-filter", "   ")
+	insertAutoRenameUserMessage(t, 203, "sess-filter", "真正的问题")
+
+	got := CollectSessionUserMessages("sess-filter", "")
+	assert.Equal(t, []string{"真正的问题"}, got)
+}
+
+// IsNoUserMessagesError distinguishes the expected "nothing to summarize"
+// outcome from a real model failure via errors.Is.
+func TestIsNoUserMessagesError(t *testing.T) {
+	assert.True(t, IsNoUserMessagesError(ErrNoUserMessages))
+	assert.False(t, IsNoUserMessagesError(ErrSummaryModelNotConfigured))
+	assert.False(t, IsNoUserMessagesError(nil))
+}
+
+// A model that returns a whitespace-only title must be treated as "no title":
+// the local title is kept rather than being overwritten with blanks.
+func TestAutoRenameSession_BlankModelTitleKeepsLocalTitle(t *testing.T) {
+	srv, cleanup := setupAutoRenameTest(t, titleServer(`{"choices":[{"message":{"content":"   "}}]}`))
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-blank", "本地标题", TitleSourceAuto)
+	insertAutoRenameUserMessage(t, 211, "sess-blank", "问题")
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.AISummary.API.BaseURL = srv.URL
+	model.ConfigInstance.AISummary.Format = "openai"
+	model.ChatAutoRenameEnabled = true
+	t.Cleanup(func() { model.ChatAutoRenameEnabled = false })
+
+	autoRenameSession(context.Background(), "sess-blank", "问题")
+	assert.Equal(t, "本地标题", sessionTitleOf(t, "sess-blank"))
+}
+
+// SetSessionTitleAutoIfNotCustom must surface a DB error rather than silently
+// reporting success, so the caller's warning path is reachable.
+func TestSetSessionTitleAutoIfNotCustom_DBError(t *testing.T) {
+	closed, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	cleanup := SetDBForTest(closed, closed)
+	defer cleanup()
+
+	applied, err := SetSessionTitleAutoIfNotCustom("sess-no-db", "标题")
+	assert.Error(t, err)
+	assert.False(t, applied)
+}
+
+// BroadcastSessionTitleUpdate is a no-op without a WS manager (e.g. during
+// tests or before the server wires one up) — it must not panic.
+func TestBroadcastSessionTitleUpdate_NoManagerIsNoop(t *testing.T) {
+	ws.SetManagerForTest(nil)
+	assert.NotPanics(t, func() {
+		BroadcastSessionTitleUpdate("sess-x", "标题")
+	})
+}
+
+// With a manager installed, a title broadcast must reach a subscribed client.
+func TestBroadcastSessionTitleUpdate_EmitsEvent(t *testing.T) {
+	sub, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-broadcast", "旧标题", TitleSourceAuto)
+	BroadcastSessionTitleUpdate("sess-broadcast", "新标题")
+
+	evts := sub.GetBufferedEvents()
+	require.NotEmpty(t, evts, "expected a session_title_update event")
+	found := false
+	for _, raw := range evts {
+		b, err := json.Marshal(raw)
+		require.NoError(t, err)
+		if strings.Contains(string(b), "session_title_update") && strings.Contains(string(b), "新标题") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected session_title_update carrying the new title, got %v", evts)
 }

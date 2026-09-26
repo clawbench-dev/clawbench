@@ -357,6 +357,51 @@ func TestSlimThinkingInContent_DoneAbsentBecomesTrue(t *testing.T) {
 	}
 }
 
+// TestSlimThinkingInContent_ClearsInProgress pins the invariant that the
+// in_progress flag is a streaming-row-only signal: on a terminal path the block
+// is over, so the flag must be removed. Leaving it set would make a finalized
+// reply look like it is still streaming (the frontend would render a spinner
+// instead of a finished chip) after a session switch adopts the DB row.
+func TestSlimThinkingInContent_ClearsInProgress(t *testing.T) {
+	in := `{"blocks":[
+		{"type":"thinking","think_id":"th_live","in_progress":true},
+		{"type":"text","text":"reply"}
+	]}`
+	slim, _, err := slimThinkingInContent(in)
+	if err != nil {
+		t.Fatalf("slimThinkingInContent: %v", err)
+	}
+	var parsed struct {
+		Blocks []map[string]any `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(slim), &parsed); err != nil {
+		t.Fatalf("unmarshal slim: %v", err)
+	}
+	if _, has := parsed.Blocks[0]["in_progress"]; has {
+		t.Errorf("in_progress must be cleared on the terminal path: %v", parsed.Blocks[0])
+	}
+	// The block still keeps its think_id and is marked done.
+	if parsed.Blocks[0]["think_id"] != "th_live" {
+		t.Errorf("think_id must survive: %v", parsed.Blocks[0])
+	}
+	if parsed.Blocks[0]["done"] != true {
+		t.Errorf("block must be marked done: %v", parsed.Blocks[0])
+	}
+}
+
+// An in_progress flag already absent must not be invented; the block is left
+// without one (the delete branch is skipped).
+func TestSlimThinkingInContent_NoInProgressLeavesItAbsent(t *testing.T) {
+	in := `{"blocks":[{"type":"thinking","think_id":"th_done","done":true}]}`
+	slim, _, err := slimThinkingInContent(in)
+	if err != nil {
+		t.Fatalf("slimThinkingInContent: %v", err)
+	}
+	if slim != in {
+		t.Fatalf("already-terminal slim block must be returned unchanged, got %q", slim)
+	}
+}
+
 func TestPersistThinkingToDB_ParseErrorFallback(t *testing.T) {
 	dbDir := t.TempDir()
 	if err := initTestDB(dbDir); err != nil {

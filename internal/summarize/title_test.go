@@ -216,6 +216,50 @@ func TestJoinUserMessages_AllEmpty(t *testing.T) {
 	}
 }
 
+// When the head budget cannot fit even the first head message (it alone exceeds
+// what remains after reserving the last message), no head parts fit and the
+// result must be the last message alone — never an empty string or a dangling
+// separator.
+func TestJoinUserMessages_HeadDoesNotFitFallsBackToLast(t *testing.T) {
+	// A first head part that by itself exceeds the remaining budget, plus a
+	// last message close to the cap. The head loop must break before adding it,
+	// leaving len(head)==0.
+	head := strings.Repeat("旧", maxTitlePayloadRunes-5)
+	last := strings.Repeat("新", 10)
+	got := joinUserMessages([]string{head, last})
+	if n := len([]rune(got)); n > maxTitlePayloadRunes {
+		t.Fatalf("result must not exceed %d runes, got %d", maxTitlePayloadRunes, n)
+	}
+	// With the head dropped, the payload is exactly the last message.
+	if got != last {
+		t.Fatalf("expected only the last message when the head cannot fit, got %q", got)
+	}
+}
+
+// A head part that fits is retained, and the next candidate is measured WITH
+// the separator it would need — so the total stays within the cap while the
+// leading context is kept. This is the branch where head parts are actually
+// accumulated (as opposed to the single-overlong-message truncation path).
+func TestJoinUserMessages_HeadPartsAccumulateWithinBudget(t *testing.T) {
+	// last reserves 10 runes + 1 separator, leaving 7989 for the head.
+	// The first head part (4000) fits; the second (4000 + separator) does not.
+	first := strings.Repeat("a", 4000)
+	second := strings.Repeat("b", 4000)
+	last := strings.Repeat("新", 10)
+	got := joinUserMessages([]string{first, second, last})
+	if n := len([]rune(got)); n > maxTitlePayloadRunes {
+		t.Fatalf("result must not exceed %d runes, got %d", maxTitlePayloadRunes, n)
+	}
+	if !strings.HasSuffix(got, last) {
+		t.Fatalf("last message must be preserved, got %q", got)
+	}
+	// The first head part fits and must be joined with a newline separator; the
+	// second would overflow the budget and is dropped.
+	if got != first+"\n"+last {
+		t.Fatalf("expected the first head part plus the last message, got %q", got)
+	}
+}
+
 // The excerpt is delivered as a user message, which a model can mistake for a
 // request addressed to it and answer instead of labeling. These assertions pin
 // the guardrails that prevent that: an explicit "not a participant / do not
