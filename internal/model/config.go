@@ -185,15 +185,37 @@ type ForgeNotifyConfig struct {
 	Pipeline  bool `yaml:"pipeline"`
 }
 
-// AppearanceConfig holds the custom-wallpaper settings. Two wallpaper sources
-// are supported and are independent of each other — a locally uploaded gallery
-// and the Bing daily image — but only one is displayed at a time, selected by
-// WallpaperMode. WallpaperEnabled is a global switch: turning it off hides the
-// wallpaper while retaining the gallery and its selection.
+// Wallpaper source modes. WallpaperModeWave is an animated background drawn on
+// the client (no image file), which is why it has no entry in the local/Bing
+// config sections and why wallpaper.ResolveActive reports no active file for it.
+const (
+	WallpaperModeLocal = "local"
+	WallpaperModeBing  = "bing"
+	WallpaperModeWave  = "wave"
+)
+
+// IsValidWallpaperMode reports whether mode is a supported wallpaper source.
+// The two write paths (POST /api/theme/wallpaper and PATCH /api/config) both
+// validate against this, so a mode added here cannot be accepted by one and
+// rejected by the other.
+func IsValidWallpaperMode(mode string) bool {
+	switch mode {
+	case WallpaperModeLocal, WallpaperModeBing, WallpaperModeWave:
+		return true
+	}
+	return false
+}
+
+// AppearanceConfig holds the custom-wallpaper settings. Three wallpaper sources
+// are supported and are independent of each other — a locally uploaded gallery,
+// the Bing daily image, and an animated client-drawn wave — but only one is
+// displayed at a time, selected by WallpaperMode. WallpaperEnabled is a global
+// switch: turning it off hides the wallpaper while retaining the gallery and
+// its selection.
 type AppearanceConfig struct {
 	PanelOpacity float64 `yaml:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85). Only meaningful when a wallpaper is set.
 
-	// WallpaperMode selects the active source: "local" or "bing".
+	// WallpaperMode selects the active source: "local", "bing" or "wave".
 	WallpaperMode string `yaml:"wallpaper_mode"`
 	// WallpaperEnabled is the global on/off switch for the wallpaper layer.
 	WallpaperEnabled bool `yaml:"wallpaper_enabled"`

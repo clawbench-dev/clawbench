@@ -310,6 +310,33 @@ func TestResolveActive_BingThenLocalPrecedence(t *testing.T) {
 	assert.Equal(t, "local-1-a.png", name)
 }
 
+func TestResolveActive_WaveReportsNoFile(t *testing.T) {
+	// The animated wave is drawn entirely on the client, so it must resolve to
+	// no file even when the gallery and Bing cache are both populated. Inventing
+	// a placeholder name would push a non-existent entry through FilePath /
+	// thumbnail serving / ReconcileLocalGallery, all of which treat a name as a
+	// real file. Callers detect the wave via WallpaperMode, not ActiveFile.
+	cfg := &model.Config{}
+	cfg.Appearance.WallpaperMode = "wave"
+	cfg.Appearance.WallpaperEnabled = true
+	cfg.Appearance.Local.Selected = "local-1-a.png"
+	cfg.Appearance.Bing.File = "bing-20260910.jpg"
+
+	name, ok := ResolveActive(cfg)
+	assert.False(t, ok, "wave must report no active file")
+	assert.Empty(t, name, "wave must not invent a placeholder file name")
+}
+
+func TestResolveActive_WaveDisabledStillNoFile(t *testing.T) {
+	cfg := &model.Config{}
+	cfg.Appearance.WallpaperMode = "wave"
+	cfg.Appearance.WallpaperEnabled = false
+
+	name, ok := ResolveActive(cfg)
+	assert.False(t, ok)
+	assert.Empty(t, name)
+}
+
 func TestResolveActive_EmptySourceReturnsNotOk(t *testing.T) {
 	// Mode set but nothing cached yet (e.g. first Bing fetch still pending).
 	cfg := &model.Config{}

@@ -174,3 +174,22 @@ func TestScopedCookieName_NonDefaultPort(t *testing.T) {
 	assert.Equal(t, "cb20300_chat_session_id", ScopedCookieName("chat_session_id"))
 	assert.Equal(t, "cb20300_clawbench-locale", ScopedCookieName("clawbench-locale"))
 }
+
+func TestIsValidWallpaperMode(t *testing.T) {
+	// Both write paths (POST /api/theme/wallpaper and PATCH /api/config) share
+	// this validator, so the accepted set is defined exactly once.
+	for _, mode := range []string{WallpaperModeLocal, WallpaperModeBing, WallpaperModeWave} {
+		assert.True(t, IsValidWallpaperMode(mode), "mode %q must be accepted", mode)
+	}
+	for _, mode := range []string{"", "nonsense", "Local", "WAVE", "wave ", "local,bing"} {
+		assert.False(t, IsValidWallpaperMode(mode), "mode %q must be rejected", mode)
+	}
+}
+
+func TestWallpaperModeConstants(t *testing.T) {
+	// The wire/config values are persisted in config.yaml and sent by clients;
+	// changing a literal would silently break existing installs.
+	assert.Equal(t, "local", WallpaperModeLocal)
+	assert.Equal(t, "bing", WallpaperModeBing)
+	assert.Equal(t, "wave", WallpaperModeWave)
+}

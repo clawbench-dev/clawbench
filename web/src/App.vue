@@ -13,8 +13,11 @@
            re-decodes in Android WebView — CSS-var-driven background-image swaps
            sometimes need an app restart to repaint. -->
       <div v-show="wallpaperActive" class="wallpaper-layer" aria-hidden="true">
+        <!-- Bound to wallpaperUrl, not wallpaperActive: in wave mode the layer
+             is active but there is no image, and an <img src=""> makes some
+             browsers request the current page URL. -->
         <img
-          v-if="wallpaperActive"
+          v-if="wallpaperUrl"
           :src="wallpaperUrl"
           class="wallpaper-image"
           :class="{
@@ -24,6 +27,7 @@
           alt=""
           draggable="false"
         />
+        <WaveBackground v-else-if="waveActive" :speed="wallpaperWaveSpeed" />
         <div class="wallpaper-scrim"></div>
       </div>
       <WelcomeOverlay ref="welcomeOverlay" />
@@ -494,7 +498,7 @@ import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { attemptSavedPasswordLogin } from '@/utils/savedPasswordLogin'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
-import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath } from '@/utils/themeBackground'
+import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath, isWaveActive } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
@@ -514,6 +518,7 @@ import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
+import WaveBackground from './components/WaveBackground.vue'
 const TerminalPanelContent = defineAsyncComponent({
   loader: () => import('./components/terminal/TerminalPanelContent.vue'),
   loadingComponent: AsyncComponentLoader,
@@ -1226,10 +1231,14 @@ const sortDir = ref(localConfig.sortDir || 'asc')
 // image URL bound to the <img> (rebuilt only when the file changes — see
 // resolveWallpaperUrl); wallpaperBlurPx / wallpaperEdgeFade are local display
 // preferences that take effect immediately (no server round-trip needed).
+// waveActive covers the animated wave, which is a background with no image
+// file — so "layer visible" is no longer the same as "an image is set".
 const wallpaperActive = ref(false)
 const wallpaperUrl = ref('')
 const wallpaperBlurPx = ref(0)
 const wallpaperEdgeFade = ref(false)
+const waveActive = ref(false)
+const wallpaperWaveSpeed = ref(50)
 
 /** Inline style for the wallpaper <img>: Gaussian blur + overscan scale. */
 const wallpaperImageStyle = computed(() =>
@@ -1243,17 +1252,21 @@ function refreshWallpaper() {
   const appearance = (serverConfig.value?.appearance ?? {}) as Record<string, unknown>
   const state = resolveWallpaperState(appearance)
   // The server resolves which image is active (mode + enabled + selection);
-  // an empty value means no wallpaper, including the globally-disabled case.
+  // an empty value means no image, including the globally-disabled case. The
+  // wave is the one background that has no file, so it is detected separately.
   const file = resolveActiveFile(appearance)
+  const wave = isWaveActive(appearance)
   const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
 
-  wallpaperActive.value = state === 'set'
+  waveActive.value = wave
+  wallpaperActive.value = state === 'set' || wave
   wallpaperBlurPx.value = Number(localConfig.wallpaperBlur || 0)
   wallpaperEdgeFade.value = !!localConfig.wallpaperEdgeFade
+  wallpaperWaveSpeed.value = Number(localConfig.wallpaperWaveSpeed ?? 50)
   // URL first (keeps resolveWallpaperUrl's cache in sync), then the scrim /
   // panel-alpha CSS variables + wallpaper-active class.
   wallpaperUrl.value = resolveWallpaperUrl(file, false)
-  applyWallpaper(file ?? '', resolvePanelOpacity(appearance), dark, false)
+  applyWallpaper(file ?? '', resolvePanelOpacity(appearance), dark, false, wave)
 
   scheduleBingFirstImagePoll()
 }
@@ -1285,8 +1298,10 @@ onUnmounted(() => {
 // Apply whenever the server config (re)loads — covers cold start (after
 // loadConfig resolves), PATCH round-trips and project switches.
 watch(() => serverConfig.value, refreshWallpaper, { deep: true })
-// Local display prefs (blur / edge fade) change instantly without a round-trip.
-watch(() => [localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade], refreshWallpaper)
+// Local display prefs (blur / edge fade / wave speed) change instantly without
+// a server round-trip. Wave speed only feeds a prop; the component adjusts its
+// own timeScale without rebuilding the canvas or resetting the phase.
+watch(() => [localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade, localConfig.wallpaperWaveSpeed], refreshWallpaper)
 
 useFileWatch({
   fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),

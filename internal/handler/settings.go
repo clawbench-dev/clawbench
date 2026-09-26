@@ -1304,8 +1304,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			if !ok {
 				return fmt.Errorf("appearance.wallpaper_mode must be a string")
 			}
-			if v != "local" && v != "bing" {
-				return fmt.Errorf("appearance.wallpaper_mode must be \"local\" or \"bing\"")
+			if !model.IsValidWallpaperMode(v) {
+				return fmt.Errorf("appearance.wallpaper_mode must be \"local\", \"bing\" or \"wave\"")
 			}
 		}
 		if raw, present := appearance["wallpaper_enabled"]; present {

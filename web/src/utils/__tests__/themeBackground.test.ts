@@ -12,6 +12,7 @@ import {
   invalidateGalleryImageUrls,
   resolveWallpaperMode,
   resolveWallpaperEnabled,
+  isWaveActive,
   resolveActiveFile,
   resolveGalleryItems,
   resolveGallerySelected,
@@ -67,12 +68,45 @@ describe('themeBackground', () => {
     it('maps the server mode', () => {
       expect(resolveWallpaperMode({ wallpaper_mode: 'local' })).toBe('local')
       expect(resolveWallpaperMode({ wallpaper_mode: 'bing' })).toBe('bing')
+      expect(resolveWallpaperMode({ wallpaper_mode: 'wave' })).toBe('wave')
     })
 
     it('is none when unset or unknown', () => {
       expect(resolveWallpaperMode(undefined)).toBe('none')
       expect(resolveWallpaperMode({})).toBe('none')
       expect(resolveWallpaperMode({ wallpaper_mode: 'nonsense' })).toBe('none')
+    })
+  })
+
+  describe('isWaveActive', () => {
+    it('is true when the mode is wave and the wallpaper is enabled', () => {
+      expect(isWaveActive({ wallpaper_mode: 'wave', wallpaper_enabled: true })).toBe(true)
+    })
+
+    it('is true when wallpaper_enabled is absent (defaults to enabled)', () => {
+      expect(isWaveActive({ wallpaper_mode: 'wave' })).toBe(true)
+    })
+
+    it('is false when the global switch is off', () => {
+      expect(isWaveActive({ wallpaper_mode: 'wave', wallpaper_enabled: false })).toBe(false)
+    })
+
+    it('is false for the image modes', () => {
+      expect(isWaveActive({ wallpaper_mode: 'local', wallpaper_enabled: true })).toBe(false)
+      expect(isWaveActive({ wallpaper_mode: 'bing', wallpaper_enabled: true })).toBe(false)
+    })
+
+    it('is false before the config loads', () => {
+      expect(isWaveActive(undefined)).toBe(false)
+      expect(isWaveActive({})).toBe(false)
+    })
+
+    it('does not depend on active_file, which is empty for the wave', () => {
+      // The wave has no file, so resolveWallpaperState reports 'unset' for it.
+      // Detecting the wave therefore cannot go through active_file.
+      const appearance = { wallpaper_mode: 'wave', wallpaper_enabled: true, active_file: '' }
+      expect(resolveWallpaperState(appearance)).toBe('unset')
+      expect(isWaveActive(appearance)).toBe(true)
     })
   })
 
@@ -236,6 +270,45 @@ describe('themeBackground', () => {
       expect(html.classList.contains('wallpaper-active')).toBe(false)
       expect(html.style.getPropertyValue('--wallpaper-url')).toBe('none')
       expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('transparent')
+    })
+
+    it('activates the translucent panels for the wave, which has no file', () => {
+      // The wave is a background with no image: active_file is empty, so the
+      // 5th argument is the only signal that the surfaces must go translucent.
+      applyWallpaper('', 0.85, false, false, true)
+      const html = document.documentElement
+      expect(html.classList.contains('wallpaper-active')).toBe(true)
+      expect(html.style.getPropertyValue('--wallpaper-url')).toBe('none')
+      expect(html.style.getPropertyValue('--panel-alpha')).toBe('85%')
+    })
+
+    it('does not write a scrim for the wave', () => {
+      // The scrim darkens an image for contrast; over the wave it would just
+      // dim the background for no reason.
+      applyWallpaper('', 0.85, true, false, true)
+      expect(document.documentElement.style.getPropertyValue('--wallpaper-scrim')).toBe('transparent')
+    })
+
+    it('clears the wave effect when waveActive goes false', () => {
+      applyWallpaper('', 0.85, false, false, true)
+      expect(document.documentElement.classList.contains('wallpaper-active')).toBe(true)
+      applyWallpaper('', 0.85, false, false, false)
+      expect(document.documentElement.classList.contains('wallpaper-active')).toBe(false)
+    })
+
+    it('keeps 4-argument calls behaving exactly as before', () => {
+      // The wave flag is optional precisely so existing callers and tests are
+      // unaffected; an image still activates and still gets its scrim.
+      applyWallpaper('background.png', 0.85, true)
+      const html = document.documentElement
+      expect(html.classList.contains('wallpaper-active')).toBe(true)
+      expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('rgba(0, 0, 0, 0.35)')
+    })
+
+    it('still writes a scrim when both a file and the wave flag are given', () => {
+      // Defensive: a file is authoritative, so the scrim follows the image.
+      applyWallpaper('background.png', 0.85, false, false, true)
+      expect(document.documentElement.style.getPropertyValue('--wallpaper-scrim')).toBe('rgba(0, 0, 0, 0.12)')
     })
 
     it('does not regenerate the image URL on alpha-only updates (slider drag)', () => {

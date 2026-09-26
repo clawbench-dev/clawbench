@@ -441,6 +441,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // migrated a legacy value) get the soft blended border out of the box.
   // Previously persisted `false` values are left untouched (no forced override).
   wallpaperEdgeFade: true,
+  // Animated-wave speed: 10–100 where 50 is 1x (see WaveBackground). Local
+  // preference, like blur/edgeFade — it is a per-device display tweak, not a
+  // shared visual decision, so it stays out of the server config.
+  wallpaperWaveSpeed: 50,
 }
 
 // Build reactive local config from legacy localStorage + defaults

@@ -2968,6 +2968,28 @@ func TestServeConfig_Patch_WallpaperModeAccepted(t *testing.T) {
 	assert.Equal(t, "bing", model.ConfigInstance.Appearance.WallpaperMode)
 }
 
+func TestServeConfig_Patch_WallpaperModeWaveAccepted(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	model.ConfigInstance = model.Config{}
+
+	// PATCH is a second write path to the same field as POST
+	// /api/theme/wallpaper; both must accept the animated wave.
+	body := `{"appearance":{"wallpaper_mode":"wave"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "wave", model.ConfigInstance.Appearance.WallpaperMode)
+}
+
 func TestServeConfig_Patch_WallpaperModeEnumValidated(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
