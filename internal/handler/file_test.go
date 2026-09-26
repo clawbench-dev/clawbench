@@ -1268,6 +1268,94 @@ func TestGetFile_LargeFile_Returns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// A line-window request streams the file line by line, so the whole-file size
+// ceiling must not reject it. This is what lets the quick-preview pane open a
+// file larger than maxGetFileBytes at all.
+func TestGetFile_LineWindowIgnoresWholeFileSizeLimit(t *testing.T) {
+	t.Run("WindowSucceedsPastSizeLimit", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// 11 MiB of real lines, so the window read has content to return (a
+		// sparse file would be all NULs and read back as one giant line).
+		largeFile := filepath.Join(env.ProjectDir, "large.log")
+		f, err := os.Create(largeFile)
+		require.NoError(t, err)
+		line := strings.Repeat("x", 1023) + "\n" // 1 KiB per line
+		for i := 0; i < 11*1024; i++ {
+			_, err := f.WriteString(line)
+			require.NoError(t, err)
+		}
+		require.NoError(t, f.Close())
+
+		req := newRequest(t, http.MethodGet, "/api/fs/file/large.log?lineStart=2&lineEnd=3", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, strings.Repeat("x", 1023)+"\n"+strings.Repeat("x", 1023), fc.Content)
+		// The file ends on a separator, so the trailing empty line counts too.
+		assert.Equal(t, 11*1024+1, fc.TotalLines)
+		assert.Equal(t, 2, fc.WindowStart)
+		assert.Equal(t, 3, fc.WindowEnd)
+	})
+
+	t.Run("WholeFileRequestStillRejected", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		largeFile := filepath.Join(env.ProjectDir, "large.log")
+		f, err := os.Create(largeFile)
+		require.NoError(t, err)
+		require.NoError(t, f.Truncate(11*1024*1024))
+		require.NoError(t, f.Close())
+
+		req := newRequest(t, http.MethodGet, "/api/fs/file/large.log", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertStatus(t, w, http.StatusBadRequest)
+		assert.Contains(t, w.Body.String(), "FileTooLarge")
+	})
+
+	t.Run("WindowOnMissingFileStill404", func(t *testing.T) {
+		// Skipping the size ceiling must not skip path validation.
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodGet, "/api/fs/file/nope.txt?lineStart=1&lineEnd=2", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertStatus(t, w, http.StatusNotFound)
+	})
+}
+
+// A non-text extension that sniffs as text (LICENSE, an extensionless script)
+// is line-windowable: the window path does not need the whole-file sanitize.
+func TestGetFile_LineWindowOnNonTextExtensionThatIsText(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "LICENSE", "one\ntwo\nthree\nfour")
+
+	req := newRequest(t, http.MethodGet, "/api/fs/file/LICENSE?lineStart=2&lineEnd=3", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assertOK(t, w)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.Equal(t, "two\nthree", fc.Content)
+	assert.Equal(t, 4, fc.TotalLines)
+	assert.Equal(t, 2, fc.WindowStart)
+	assert.Equal(t, 3, fc.WindowEnd)
+}
+
 func TestGetFile_PathTraversalViaURL_Returns400(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

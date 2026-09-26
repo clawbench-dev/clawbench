@@ -94,38 +94,40 @@
 
       <!-- Too large -->
       <div v-else-if="file.tooLarge" class="raw-content-viewer">
-        <div class="unsupported-file">
-          <FileIcon :path="file.name" :size="48" />
-          <div class="unsupported-title">{{ file.name }}</div>
-          <div class="unsupported-desc">{{ t('file.viewer.fileTooLarge') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
+        <UnsupportedFileBody
+          :name="file.name"
+          :path="file.path"
+          :size="file.size"
+          :description="t('file.viewer.fileTooLarge')"
+        >
           <button class="download-btn" @click="handleDownload(file.path)">
             <Download :size="14" color="#fff" />
             {{ t('common.download') }}
           </button>
-        </div>
+        </UnsupportedFileBody>
       </div>
 
       <!-- Binary file -->
       <div v-else-if="file.isBinary" class="raw-content-viewer">
-        <div class="unsupported-file">
-          <FileIcon :path="file.name" :size="48" />
-          <div class="unsupported-title">{{ file.name }}</div>
-          <div class="unsupported-desc">{{ t('file.viewer.binaryFile') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
-          <div class="unsupported-actions">
-            <button class="download-btn" @click="handleDownload(file.path)">
-              <Download :size="14" color="#fff" />
-              {{ t('common.download') }}
-            </button>
-            <button class="open-as-text-btn" @click="handleOpenAsText">
-              <Code2 :size="14" />
-              {{ t('file.header.openAsText') }}
-            </button>
-            <button v-if="isAppMode" class="open-as-text-btn" @click="handleShareExternal">
-              <Share2 :size="14" />
-              {{ t('file.header.shareExternal') }}
-            </button>
-          </div>
-        </div>
+        <UnsupportedFileBody
+          :name="file.name"
+          :path="file.path"
+          :size="file.size"
+          :description="t('file.viewer.binaryFile')"
+        >
+          <button class="download-btn" @click="handleDownload(file.path)">
+            <Download :size="14" color="#fff" />
+            {{ t('common.download') }}
+          </button>
+          <button class="open-as-text-btn" @click="handleOpenAsText">
+            <Code2 :size="14" />
+            {{ t('file.header.openAsText') }}
+          </button>
+          <button v-if="isAppMode" class="open-as-text-btn" @click="handleShareExternal">
+            <Share2 :size="14" />
+            {{ t('file.header.shareExternal') }}
+          </button>
+        </UnsupportedFileBody>
       </div>
 
       <!-- Markdown file -->
@@ -297,7 +299,7 @@ import { ref, computed, watch, onBeforeUnmount, onMounted, defineAsyncComponent 
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { Download, Code2, AlertTriangle, Share2, ArrowLeft, ArrowRight } from 'lucide-vue-next'
-import FileIcon from '@/components/common/FileIcon.vue'
+import UnsupportedFileBody from './UnsupportedFileBody.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
@@ -315,7 +317,7 @@ import { diffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { useFileScrollRestore } from '@/composables/useFileScrollRestore'
 import FileHeader from './FileHeader.vue'
 import TocDock from './TocDock.vue'
-import { getFileType, formatFileSize } from '@/utils/fileType.ts'
+import { getFileType } from '@/utils/fileType.ts'
 import { store } from '@/stores/app.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack.ts'
@@ -765,10 +767,6 @@ watch(() => props.markdownViewMode, (newMode, oldMode) => {
     if (saved) scrollRestore.restoreAfterContainerSwitch(saved)
 })
 
-function formatSize(bytes) {
-    return formatFileSize(bytes)
-}
-
 function handleOpenAsText() {
     if (!props.file?.path) return
     store.selectFile(props.file.path, false, false, false, true)
@@ -923,44 +921,9 @@ defineExpose({
     cursor: default;
 }
 
-.unsupported-file {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 48px 24px;
-    text-align: center;
-    height: 100%;
-}
-
-.unsupported-file > svg {
-    width: 48px;
-    height: 48px;
-    color: var(--text-muted);
-    margin-bottom: var(--space-6);
-}
-
-.unsupported-title {
-    font-size: var(--font-size-2xl);
-    font-weight: var(--font-weight-medium);
-    color: var(--text-primary);
-    margin-bottom: var(--space-4);
-    word-break: break-all;
-}
-
-.unsupported-desc {
-    font-size: var(--font-size-lg);
-    color: var(--text-muted);
-    margin-bottom: var(--space-8);
-}
-
-.unsupported-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-5);
-}
-
+/* The placeholder layout (icon / title / desc / actions) lives in
+   UnsupportedFileBody.vue, shared with the quick-preview pane. Only the action
+   buttons below are viewer-specific. */
 .open-as-text-btn {
     display: inline-flex;
     align-items: center;

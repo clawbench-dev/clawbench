@@ -287,27 +287,36 @@ func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string)
 // for the quick-preview pane: only those lines are returned, along with the
 // file's total line count. Without the params the whole file is returned, so
 // existing callers are unaffected.
+//
+// The whole-file response is capped at maxGetFileBytes; a line-window request is
+// not, because it streams lines and never holds the file in memory. That is what
+// lets the preview pane open a file far larger than the whole-file ceiling.
 func GetFile(w http.ResponseWriter, r *http.Request) {
-	m, ok := resolveGetFileTarget(w, r)
-	if !ok {
-		return
-	}
-
-	// Line-window requests (quick-preview pane) are only meaningful for real
-	// text files: forceText/binary sanitization rewrites the byte stream, so the
-	// window is ignored there and the full sanitized content is returned.
+	// The optional line window (?lineStart/?lineEnd, quick-preview pane).
 	//
-	// Parsed (and rejected) BEFORE the binary early-return below so an invalid
-	// range is a 400 for every file, as the OpenAPI spec promises. Parsing it
-	// after meant a binary file answered 200 isBinary:true for `?lineStart=0`,
-	// which silently contradicts the documented contract.
-	isText := model.IsTextFile(m.info.Name())
-	forceText := r.URL.Query().Get("forceText") == "1"
+	// Parsed (and rejected) BEFORE the size/binary early-returns below so an
+	// invalid range is a 400 for every file, as the OpenAPI spec promises.
+	// Parsing it after meant a binary file answered 200 isBinary:true for
+	// `?lineStart=0`, which silently contradicts the documented contract.
 	winStart, winEnd, hasWindow, winErr := parseLineWindow(r)
 	if hasWindow && winErr != nil {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidLineRange")
 		return
 	}
+
+	// A line window is streamed line by line and never holds the file in
+	// memory, so the whole-file size ceiling must not apply to it — that was
+	// what made the preview pane refuse large files it could perfectly well
+	// read a window from. The window has its own byte/line ceilings
+	// (maxWindowBytes / maxWindowLines). The target is still resolved and
+	// validated (existence, not-a-directory, path scope) either way.
+	m, ok := resolveGetFileTarget(w, r, !hasWindow)
+	if !ok {
+		return
+	}
+
+	isText := model.IsTextFile(m.info.Name())
+	forceText := r.URL.Query().Get("forceText") == "1"
 
 	// For non-text files, check if the content is actually binary (via null-byte
 	// sniffing). If binary, return isBinary=true without the content — the
@@ -329,7 +338,14 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 	// Subtype detection (OpenAPI → ReDoc) needs the whole document, and so does
 	// sanitization. Both are skipped on the window path, which only ever serves
 	// the plain-text preview pane.
-	if hasWindow && isText {
+	//
+	// A non-text extension that sniffed as text (LICENSE, an extensionless
+	// script) is line-windowable too: the window path splits on line boundaries
+	// and does not need the whole-file sanitize to answer it, while reading the
+	// whole file just to ignore the window would defeat the pane's reason for
+	// existing on a large file. forceText still ignores the window (its whole
+	// point is the sanitized whole-document response).
+	if hasWindow && !forceText {
 		writeLineWindowResponse(w, m, winStart, winEnd)
 		return
 	}
@@ -340,7 +356,11 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 // resolveGetFileTarget resolves and validates the file a GetFile request refers
 // to. On failure it has already written the error response, so the caller only
 // checks ok.
-func resolveGetFileTarget(w http.ResponseWriter, r *http.Request) (fileResponseMeta, bool) {
+//
+// enforceSizeLimit is false for line-window requests: those are streamed line by
+// line, so the whole-file ceiling (maxGetFileBytes) does not bound what they
+// cost. Existence, not-a-directory and path-scope checks always run.
+func resolveGetFileTarget(w http.ResponseWriter, r *http.Request, enforceSizeLimit bool) (fileResponseMeta, bool) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return fileResponseMeta{}, false
@@ -360,7 +380,7 @@ func resolveGetFileTarget(w http.ResponseWriter, r *http.Request) (fileResponseM
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAFile")
 		return fileResponseMeta{}, false
 	}
-	if info.Size() > maxGetFileBytes {
+	if enforceSizeLimit && info.Size() > maxGetFileBytes {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLarge")
 		return fileResponseMeta{}, false
 	}

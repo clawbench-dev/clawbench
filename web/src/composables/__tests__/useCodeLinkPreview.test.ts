@@ -716,6 +716,10 @@ describe('useCodeLinkPreview', () => {
 
     expect(preview.status.value).toBe('error')
     expect(preview.errorCode.value).toBe('binary')
+    // The response is retained even on the binary early-return: the
+    // unsupported-file placeholder shows the file's size, and this is the only
+    // place it can come from (there is no content to slice).
+    expect(preview.fileContent.value?.size).toBe(500)
   })
 
   it('classifies HTTP errors by status instead of localized message text', async () => {
