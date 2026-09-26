@@ -826,10 +826,11 @@ const usageDrawer = useTabDrawer('chat', { autoRestore: false })
 const usageElRef = ref(null)
 
 // PopupMenu closes itself (outside click / Escape / inner click) by emitting
-// update:show=false; effectiveOpen is read-only so route the intent to the drawer.
+// update:show=false; effectiveOpen is read-only so route the intent to the
+// drawer. Only the closing direction is ever emitted (same contract as the
+// completion menus' onXxxMenuShowChange), so there is no reopen branch.
 function onUsagePopupUpdate(v) {
-  if (v) usageDrawer.open()
-  else usageDrawer.close()
+  if (!v) usageDrawer.close()
 }
 // ── Unified completion menus (slash commands + @ file references) ──
 // Both menus share useCompletionMenu (state/keyboard/select) and
@@ -1789,6 +1790,16 @@ watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close();
 watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); fileMenu.close() } })
 watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); commandMenu.close() } })
 watch(() => usageDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus() } })
+
+// Leaving the chat tab dismisses the quick-send menu. It is a PopupMenu
+// (teleported to <body>, fixed z-index) opened by the send button, and the dock
+// buttons use @click.stop, so the document-level outside-click handler never
+// fires on a tab switch — the menu would stay open over the newly shown tab.
+// `active` is false only when the chat pane is actually hidden (narrow layout
+// on another tab), so on a wide screen the menu correctly stays put.
+watch(() => props.active, (active) => {
+  if (!active) showQuickMenu.value = false
+})
 
 onMounted(() => {
   fetchItems()

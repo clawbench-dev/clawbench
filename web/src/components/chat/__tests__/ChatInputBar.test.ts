@@ -204,12 +204,19 @@ const mockDrawerToggle = vi.fn()
 // Records every useTabDrawer(tabId, opts) call so tests can assert a popup was
 // registered as tab-scoped (and with which options).
 const mockUseTabDrawerCalls: any[][] = []
+// Distinct refs so a test can prove which one a popup's `:show` is bound to.
+// `effectiveOpen` is the tab-gated value (false while the owning tab is
+// inactive); `isOpen` is the raw drawer state, which stays true across a tab
+// switch. Binding to the wrong one silently reintroduces the "popup stays open
+// over the new tab" bug, so the distinction must be observable here.
+const mockEffectiveOpen = ref(false)
+const mockIsOpen = ref(false)
 vi.mock('@/composables/useTabDrawer', () => ({
   useTabDrawer: (...args: any[]) => {
     mockUseTabDrawerCalls.push(args)
     return {
-      effectiveOpen: { value: false },
-      isOpen: { value: false },
+      effectiveOpen: mockEffectiveOpen,
+      isOpen: mockIsOpen,
       open: mockDrawerOpen,
       close: mockDrawerClose,
       toggle: mockDrawerToggle,
@@ -436,13 +443,22 @@ afterEach(() => {
   for (const id of pendingIntervals) { clearInterval(id) }
   pendingIntervals.length = 0
   mockPendingFilesValue.value = []
+  // Module-level: without clearing, `find()`-style assertions below match a
+  // registration left by an earlier mount and pass regardless of this test.
+  mockUseTabDrawerCalls.length = 0
+  // Same reason: these drive the `:show` binding, so a value left true by one
+  // case would make the next case's popup render open.
+  mockEffectiveOpen.value = false
+  mockIsOpen.value = false
   // The text draft store is module-level (survives component remounts on
   // purpose), so drafts must be cleared between tests or they leak across cases.
   _resetChatDraftsForTesting()
 })
 
 const stubs = {
-  PopupMenu: { name: 'PopupMenu', template: '<div><slot /></div>' },
+  // `show` is declared so tests can assert which ref a popup's visibility is
+  // bound to (an undeclared prop would fall through to $attrs instead).
+  PopupMenu: { name: 'PopupMenu', props: ['show'], template: '<div><slot /></div>' },
   SessionDrawer: true,
   AttachDrawer: true,
   QuickSendDrawer: true,
@@ -1191,6 +1207,39 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('send')).toBeFalsy()
   })
 
+  // The quick-send menu is a PopupMenu (teleported to <body>, fixed z-index) and
+  // the dock buttons use @click.stop, so its document-level outside-click handler
+  // never fires on a tab switch — it would hover over the newly shown tab.
+  it('closes the quick-send menu when the chat pane becomes inactive', async () => {
+    const wrapper = mountBar({ active: true })
+    wrapper.vm.inputText = ''
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showQuickMenu).toBe(true)
+
+    await wrapper.setProps({ active: false })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showQuickMenu).toBe(false)
+  })
+
+  it('leaves the quick-send menu open on a wide screen (chat pane stays visible)', async () => {
+    // `active` is false only when the chat pane is actually hidden; on a wide
+    // screen the pane remains visible while a left-column tab is active, so the
+    // menu must not be dismissed by unrelated activity.
+    const wrapper = mountBar({ active: true })
+    wrapper.vm.inputText = ''
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showQuickMenu).toBe(true)
+
+    // A re-render that does not change `active` must not close it.
+    await wrapper.setProps({ chatRunning: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showQuickMenu).toBe(true)
+  })
+
   it('handleAttachFile emits add-attached', async () => {
     const wrapper = mountBar()
     wrapper.vm.handleAttachFile('/path/to/file.ts')
@@ -1383,6 +1432,32 @@ describe('ChatInputBar', () => {
     )
     expect(usageCall).toBeTruthy()
     expect(usageCall![0]).toBe('chat')
+  })
+
+  // The tab-gating lives in `effectiveOpen`, not in `isOpen`. Binding the popup
+  // to `isOpen` compiles and renders, but the raw drawer state survives a tab
+  // switch — so the popup would once again hover over the newly shown tab.
+  // Assert the wiring, since a same-valued stub cannot catch it by behaviour.
+  it('binds the usage popup visibility to effectiveOpen (tab-gated), not isOpen', async () => {
+    mockContextSize.value = 100000
+    mockContextUsed.value = 50000
+    const wrapper = mountBar({ currentModelName: 'gpt-4' })
+    await nextTick()
+    const popup = wrapper
+      .findAllComponents({ name: 'PopupMenu' })
+      .find((c) => c.html().includes('usage-popup'))
+    expect(popup).toBeTruthy()
+
+    // Raw state true while the tab-gated value is false: only a popup bound to
+    // effectiveOpen reports hidden.
+    mockIsOpen.value = true
+    mockEffectiveOpen.value = false
+    await nextTick()
+    expect(popup!.props('show')).toBe(false)
+
+    mockEffectiveOpen.value = true
+    await nextTick()
+    expect(popup!.props('show')).toBe(true)
   })
 
   it('clicking the usage chip toggles the usage drawer, not a local ref', async () => {

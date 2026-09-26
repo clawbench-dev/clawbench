@@ -587,7 +587,14 @@ watch(() => props.projectPath, () => {
   void refresh()
 })
 watch(() => props.active, (isActive) => {
-  if (!isActive) return
+  if (!isActive) {
+    // Leaving the tab must dismiss the repository menu: it teleports to <body>
+    // with a fixed z-index, and the dock buttons use @click.stop, so the
+    // document-level outside-click handler never fires on a tab switch and the
+    // menu would stay open over the newly shown panel.
+    repoMenuOpen.value = false
+    return
+  }
   // A deep-link that arrived while the panel was mounted but inactive: the tab
   // is becoming active now, so this is the first moment it is meaningful.
   applyPendingForgeTarget()

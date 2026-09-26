@@ -916,14 +916,22 @@ watch(resourcesMenuOpen, (open) => {
     }
 })
 
-// Navigation dismisses the header popups. Both are PopupMenu (teleported to
-// <body>, position:fixed, z-index 9999) and the dock buttons use @click.stop,
-// so the document-level outside-click handlers never fire on a tab switch —
-// the menu would otherwise stay open over the newly shown tab. Watching the
-// tab refs covers narrow (activeTab) and wide (leftTab) layouts.
+// Navigation dismisses every header popup. All of them teleport to <body>
+// (PopupMenu / AppMenuPanel) with position:fixed, and the dock buttons use
+// @click.stop, so the document-level outside-click handlers never fire on a tab
+// switch — a menu would otherwise stay open over the newly shown tab. Watching
+// the tab refs covers narrow (activeTab) and wide (leftTab) layouts.
+//
+// Covers the project / recent-files / branch dropdowns (AppMenuPanel) as well
+// as the theme picker and the system-resources panel: they all share the same
+// "teleported + @click.stop" root cause, so fixing only a subset leaves the
+// same visible bug reachable from the other entries.
 watch(
     [activeTab, leftTab],
     () => {
+        dropdownOpen.value = false
+        fileDropdownOpen.value = false
+        branchDropdownOpen.value = false
         themeMenuOpen.value = false
         resourcesMenuOpen.value = false
     },
