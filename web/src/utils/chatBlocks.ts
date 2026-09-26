@@ -57,6 +57,16 @@ export function parseAssistantContent(content: string, opts?: ParseAssistantCont
           // ACP agents) embedded into the text field, so the message never
           // renders as a literal JSON string.
           b.text = extractPlainText(b.text)
+        } else if (b.type === 'thinking' && !liveStreaming && b.in_progress) {
+          // `in_progress` is a streaming-row-only signal: it tells the render
+          // layer "more deltas are coming, lazy-load the prefix". On a row that
+          // is NOT live the turn is over (or the snapshot was taken after it
+          // ended), so the flag is stale and must not survive parsing — it would
+          // keep the block in its "still writing" state forever.
+          //
+          // The backend clears it on finalize, but a snapshot read mid-finalize
+          // can still carry it, and historical rows may predate the clearing.
+          delete b.in_progress
         }
         return b
       })
