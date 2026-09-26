@@ -1282,7 +1282,7 @@ func TestGetFile_LineWindowIgnoresWholeFileSizeLimit(t *testing.T) {
 		f, err := os.Create(largeFile)
 		require.NoError(t, err)
 		line := strings.Repeat("x", 1023) + "\n" // 1 KiB per line
-		for i := 0; i < 11*1024; i++ {
+		for range 11 * 1024 {
 			_, err := f.WriteString(line)
 			require.NoError(t, err)
 		}

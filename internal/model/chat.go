@@ -334,9 +334,9 @@ type ImageAttachment struct {
 // ContentBlock represents a typed block within an assistant message's content.
 // Stored as JSON in the chat_history.content column.
 type ContentBlock struct {
-	Type        string         `json:"type"`                   // "thinking", "tool_use", "text", "warning", "error"
-	Text        string         `json:"text,omitempty"`         // thinking, text, or warning/error content
-	ThinkID     string         `json:"think_id,omitempty"`     // thinking: stable ID for chat_thinking upsert (full text lives there; content keeps this slim marker)
+	Type    string `json:"type"`               // "thinking", "tool_use", "text", "warning", "error"
+	Text    string `json:"text,omitempty"`     // thinking, text, or warning/error content
+	ThinkID string `json:"think_id,omitempty"` // thinking: stable ID for chat_thinking upsert (full text lives there; content keeps this slim marker)
 	// InProgress marks a thinking slim marker whose block is STILL STREAMING.
 	// Its text so far is in chat_thinking, but the block is not done — so the
 	// frontend must not render it as a finished chip (there is more to come)
