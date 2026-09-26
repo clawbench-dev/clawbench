@@ -44,6 +44,28 @@ function readComponent(): string {
 
 const src = readComponent()
 
+/**
+ * Body of a top-level `function name(...) { ... }` declaration, found by
+ * matching braces. A fixed-length slice is brittle: any comment growth inside
+ * the function (e.g. documenting a new early return) pushes the pinned call out
+ * of the window and fails the guard for a non-regression.
+ */
+function functionBody(name: string): string {
+  const start = src.indexOf(`function ${name}(`)
+  expect(start, `function ${name} must still exist`).toBeGreaterThan(-1)
+  const open = src.indexOf('{', start)
+  expect(open, `function ${name} must have a body`).toBeGreaterThan(-1)
+  let depth = 0
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++
+    else if (src[i] === '}') {
+      depth--
+      if (depth === 0) return src.slice(open, i + 1)
+    }
+  }
+  throw new Error(`unbalanced braces in ${name}`)
+}
+
 describe('thinking render paths share one source (source guard)', () => {
   it('flushBlockHtml renders the shared thinking source, not block.text', () => {
     // Anchor on the flush loop's thinking branch: it must compute its source via
@@ -79,9 +101,7 @@ describe('thinking render paths share one source (source guard)', () => {
   })
 
   it('getThinkingHtml renders the shared thinking source', () => {
-    const start = src.indexOf('function getThinkingHtml(')
-    expect(start, 'getThinkingHtml must still exist').toBeGreaterThan(-1)
-    const fn = src.slice(start, start + 900)
+    const fn = functionBody('getThinkingHtml')
     const assign = fn.match(/const\s+(\w+)\s*=\s*thinkingSource\(block\)/)
     expect(assign, 'getThinkingHtml must go through thinkingSource(block)').not.toBeNull()
     expect(
@@ -91,9 +111,7 @@ describe('thinking render paths share one source (source guard)', () => {
   })
 
   it('thinkingSource stitches the cached prefix onto the live deltas', () => {
-    const start = src.indexOf('function thinkingSource(')
-    expect(start, 'thinkingSource must still exist').toBeGreaterThan(-1)
-    const fn = src.slice(start, start + 500)
+    const fn = functionBody('thinkingSource')
     expect(fn, 'must delegate to the shared helper so both paths agree').toContain('thinkingRenderSource(')
     expect(fn, 'must pass the lazy-loaded prefix from the thinking cache').toContain('cachedText(')
   })

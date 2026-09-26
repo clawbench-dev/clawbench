@@ -510,6 +510,57 @@ describe('ContentBlocks', () => {
       })
       expect(wrapper.find('.thinking-spinner').exists()).toBe(false)
     })
+
+    // ── Read-only (public share page) lazy thinking render ──
+    //
+    // A settled snapshot starts with every thinking block collapsed, and the
+    // collapsed content is hidden by CSS — yet `v-html` would still run the
+    // full markdown + DOMPurify pipeline for text nobody can see. A shared
+    // thread can carry megabytes of reasoning across hundreds of blocks
+    // (measured: 4.4 MB / 134k DOM nodes on a 49-message thread ≈ 7s of
+    // blocked main thread), so a collapsed block must render nothing until it
+    // is expanded.
+    describe('read-only lazy render', () => {
+      it('does not render a collapsed block\'s markdown in read-only mode', () => {
+        mockRenderMarkdownHtml.mockClear()
+        const wrapper = mountBlocks({
+          readOnly: true,
+          streaming: false,
+          blocks: [{ type: 'thinking', text: 'Long hidden reasoning', done: true }],
+        })
+        // Collapsed, and the markdown renderer was never asked for its HTML.
+        expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-collapsed')
+        expect(mockRenderMarkdownHtml).not.toHaveBeenCalled()
+        expect(wrapper.find('.thinking-inline-content').text()).toBe('')
+      })
+
+      it('renders the markdown once the read-only block is expanded', async () => {
+        mockRenderMarkdownHtml.mockClear()
+        const wrapper = mountBlocks({
+          readOnly: true,
+          streaming: false,
+          blocks: [{ type: 'thinking', text: 'Long hidden reasoning', done: true }],
+        })
+        expect(mockRenderMarkdownHtml).not.toHaveBeenCalled()
+
+        await wrapper.find('.thinking-header').trigger('click')
+        await nextTick()
+
+        expect(mockRenderMarkdownHtml).toHaveBeenCalled()
+        expect(wrapper.find('.thinking-inline-content').text()).toContain('Long hidden reasoning')
+      })
+
+      it('still renders immediately in the interactive app (not read-only)', () => {
+        mockRenderMarkdownHtml.mockClear()
+        mountBlocks({
+          readOnly: false,
+          streaming: false,
+          blocks: [{ type: 'thinking', text: 'App reasoning', done: true }],
+        })
+        // The interactive app keeps its current eager behavior.
+        expect(mockRenderMarkdownHtml).toHaveBeenCalled()
+      })
+    })
   })
 
   // ── Thinking inline-content scroll follow ──

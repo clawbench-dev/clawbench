@@ -248,6 +248,7 @@
                 :get-agent-name="props.getAgentName"
                 :static-block-cache="props.staticBlockCache"
                 :active="props.active"
+                :read-only="props.readOnly"
                 @toggle-tool="$emit('toggle-tool', $event)"
                 @show-tool-detail="forwardSubagentToolDetail"
                 @task-card-click="$emit('task-card-click', $event)"
@@ -1581,6 +1582,19 @@ function getBlockHtml(bi: number, block: any) {
  *
  *  Slim blocks with no live text render purely from the lazy-load cache. */
 function getThinkingHtml(bi: number, block: any) {
+  // Read-only hosts (the public share page) render a settled snapshot: every
+  // thinking block starts collapsed and is hidden by CSS, yet `v-html` would
+  // still run full markdown + DOMPurify rendering for text nobody can see. A
+  // shared conversation routinely carries megabytes of reasoning across
+  // hundreds of blocks (measured: 4.4 MB / 134k DOM nodes on a 49-message
+  // thread = ~7s of blocked main thread), so here a collapsed block renders
+  // nothing and materializes only when the user expands it.
+  //
+  // Scoped to readOnly on purpose: the interactive app's streaming path calls
+  // this every frame and its collapse animation repaints the content for the
+  // 350ms grid transition, so that path is left exactly as it was.
+  if (props.readOnly && isThinkingCollapsed(block, bi)) return ''
+
   const src = thinkingSource(block)
   if (src) {
     return getThinkingTextHtml(src, bi, block)
