@@ -109,7 +109,22 @@ fi
 
 # ----------------------------------------------------------------- 4. build ---
 log "step 4/8: compose build (tier=$TIER)"
-compose build
+# Build ONLY the services the selected tier uses. A bare `compose build` builds
+# every service, including `server` — and Dockerfile.server hard-COPYs
+# assets/clawbench-server, which Tier 1's staging (prepare-assets.sh *without*
+# --with-server) deliberately does not produce. On a clean checkout (assets/ is
+# gitignored) that COPY fails and the run dies here, before the emulator starts;
+# a stale binary left by an earlier Tier 2 run masks it in a dev tree.
+# Scoping the build keeps Tier 1 independent of the server binary, keeps Tier 2
+# building the real server, and has --all build everything both tiers need.
+# (The service lists mirror the `run_phase` calls at the bottom of this script.)
+case "$TIER" in
+  1)   BUILD_SERVICES="emulator mock runner" ;;
+  2)   BUILD_SERVICES="emulator server target runner" ;;
+  all) BUILD_SERVICES="emulator mock server target runner" ;;
+esac
+# shellcheck disable=SC2086 # word-split is intended: BUILD_SERVICES is a list
+compose build $BUILD_SERVICES
 # Containers are started per phase (see run_phase below): both server variants
 # bind :20000 in the emulator's netns, so exactly one may be up at a time.
 compose up -d emulator
