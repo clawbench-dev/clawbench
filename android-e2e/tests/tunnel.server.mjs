@@ -17,27 +17,23 @@
  * therefore proves liveness by the status code — 401 means the handler ran and
  * middleware.Auth rejected it; 503 means the handler never got a registry.
  *
- * The last test documents a real app-side defect found while building this
- * suite (see `tunnel.cookie-read` and the README): on this API-28 WebView,
- * `CookieManager.getCookie()` does not return the session cookie the app
- * installed from the login response, so every authenticated tunnel stream is
- * 401 `has_cookie=false`. The tunnel itself is proven correct in
- * `tunnel.forward.mjs` / `tunnel.reverse.mjs` using a renderer-installed
- * cookie; this spec asserts the defect explicitly so it cannot be mistaken for
- * a tunnel failure, and so the suite flags it if it is ever fixed.
+ * The session-cookie read on this image is a separate, image-specific WebView
+ * defect (Chrome 69's `CookieManager.getCookie()` omits SameSite cookies — see
+ * the README and `helpers/tunnel.mjs`). It is NOT asserted here: a test that
+ * goes red when the product improves is a fix-inhibitor, not a guard. The
+ * fixture the tunnel specs use is validated positively inside
+ * `installReadableSessionCookie()` instead.
  */
 import assert from 'node:assert/strict';
 import {
   SERVER_FROM_RUNNER,
   SERVER_URL,
-  PASSWORD,
   nativeLogin,
   bridge,
   enterWebView,
   getActiveTunnelTransport,
   resetAppToLoginPage,
   installReadableSessionCookie,
-  appCanReadSessionCookie,
 } from './helpers/tunnel.mjs';
 
 describe('Tier 2 — real server + h2 endpoint liveness', () => {
@@ -149,75 +145,13 @@ describe('Tier 2 — real server + h2 endpoint liveness', () => {
     assert.equal(activeBefore, '', `expected no active transport before connecting, got "${activeBefore}"`);
   });
 
-  it('DOCUMENTS a defect: the app cannot read its own session cookie (so the tunnel 401s)', async () => {
-    // The app has just logged in through the native flow, so its own session
-    // cookie is in the WebView jar. The WebView sends it (an authenticated page
-    // fetch succeeds) but the Java API cannot read it, so every authenticated
-    // tunnel stream is 401 `has_cookie=false`.
-    //
-    // This is asserted rather than tolerated: it is the reason the tunnel specs
-    // install a readable cookie, and this test is what makes that substitution
-    // honest. If the read is ever fixed, this test fails and tells us to drop
-    // the fixture.
-    await enterWebView();
-
-    // (a) the WebView's own network stack sends the cookie
-    await browser.execute(() => {
-      window.__cfg = 'pending';
-      fetch('/api/config', { credentials: 'include' })
-        .then((r) => { window.__cfg = `status=${r.status}`; })
-        .catch((e) => { window.__cfg = `error=${String(e)}`; });
-      return 'started';
-    });
-    const cfg = await waitForValue('__cfg', 15000);
-    console.log(`[tier2] page fetch('/api/config') = ${cfg}`);
-
-    // (b) the Java API cannot read it
-    const read = await appCanReadSessionCookie();
-    console.log(
-      `[tier2] app getCookie() read: readable=${read.readable} ` +
-        `(expected false on this WebView)`,
-    );
-
-    // (c) therefore the tunnel's stream is rejected
-    await bridge('setTunnelTransport', 'h2');
-    await bridge('addForwardedPort', 15080, 18080, '127.0.0.1');
-    await browser.pause(5000);
-
-    if (read.readable) {
-      // The defect is gone — the fixture must be removed, so fail loudly.
-      assert.fail(
-        'the app CAN now read its own session cookie, so the renderer-installed ' +
-          'cookie fixture is no longer needed — remove installReadableSessionCookie() ' +
-          'from tunnel.forward.mjs / tunnel.reverse.mjs and use the native login',
-      );
-    }
-
-    // Prove the WebView really does send the cookie (so the defect is the READ,
-    // not a missing credential): the page fetch above must have been authorized.
-    assert.equal(cfg, 'status=200', `the WebView did not send its session cookie: ${cfg}`);
-    assert.equal(read.readable, false, 'expected the app cookie read to fail on this WebView');
-    console.log(
-      '[tier2] CONFIRMED DEFECT: cookie stored + sent by the WebView, unreadable by ' +
-        'CookieManager.getCookie() -> tunnel streams 401. See README.',
-    );
-  });
-
   it('installs a readable cookie fixture so the tunnel specs can authenticate', async () => {
     // The fixture every byte-transfer assertion depends on. It must leave the
-    // app able to read a session cookie, or the later specs would be vacuous.
+    // app able to read a session cookie, or the later specs would be vacuous —
+    // and `installReadableSessionCookie` now proves that POSITIVELY (a non-401
+    // server status for an authenticated request), so this cannot pass on an
+    // empty logcat or a `shareFile` early-return.
     const info = await installReadableSessionCookie();
     console.log(`[tier2] cookie fixture installed (token length ${info.tokenLength})`);
   });
 });
-
-/** Poll a `window.<name>` string stashed by an async page fetch. */
-async function waitForValue(name, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const v = await browser.execute((n) => window[n] || '', name);
-    if (v && v !== 'pending') return v;
-    await browser.pause(500);
-  }
-  throw new Error(`window.${name} never settled`);
-}

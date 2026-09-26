@@ -13,7 +13,14 @@ vitest suite or `scripts/pre-push-checks.sh`.
 | Tier | What it proves | Status |
 |------|----------------|--------|
 | **1** | Native shell + WebView login flow (launch → login page → form → home) | implemented, green (`tests/smoke.login.mjs`) |
-| **2** | h2 stream tunnel (`feat/ssh-ws-forward`) on a real runtime, against a REAL server — `-L` and `-R` byte transfer, wire selection, negative path, teardown | implemented, green (`tests/tunnel.{server,forward,reverse}.mjs`) |
+| **2** | h2 stream tunnel (`feat/ssh-ws-forward`) on a real runtime, against a REAL server — `-L` and `-R` byte transfer, wire selection, negative path, teardown | implemented, green (`tests/tunnel.{server,forward,reverse}.mjs`) [^same-site] |
+
+[^same-site]: **Caveat:** the byte transfer is real, but on this API-28 image it
+    runs with a harness-installed cookie, because the app cannot read its own
+    session cookie here — see "A real image defect, worked around by the
+    harness" below. The tunnel *code* is proven correct; the shipped
+    login → tunnel path on this image 401s. A reader who skims the table must
+    not conclude the shipped path works end to end.
 
 Tier 2 reuses everything here — the same emulator, the same runner — but swaps
 the mock for a **real `clawbench` server built from this worktree**, because the
@@ -34,39 +41,54 @@ cd android-e2e
 `run.sh` is idempotent and tears down on success, failure, and Ctrl-C, so no
 multi-GB emulator container is left behind.
 
-## A real app defect, worked around by the harness (not hidden)
+## A real image defect, worked around by the harness (not hidden)
 
-**The tunnel implementation is correct and Tier 2 proves it carries real bytes
-in both directions.** But the app has a genuine defect that blocks its own
-authenticated tunnel streams on this image, and the suite is built to surface it
-rather than to pass around it.
+**The tunnel implementation is correct**, and that is proven by a decisive
+control rather than by the fixture: a server built with production cookie
+attributes **minus `SameSite`** (via `go build -overlay`, production source
+untouched) made the REAL native login produce a readable cookie, and the tunnel
+then carried real bytes end to end **with no fixture at all**. But on this
+API-28 image the shipped login → tunnel path cannot authenticate: the app cannot
+read its own session cookie, so every authenticated stream is 401. The suite is
+built to surface that rather than to pass around it — and, importantly, it does
+**not** assert that the defect exists (see "What the suite does not assert").
 
 ### The defect
 
 `AndroidTunnelPlatform.sessionCookie()` builds the tunnel's `Cookie` header from
 `CookieManager.getCookie(serverUrl)`. On this API-28 WebView (Chrome
-69.0.3497.100) that call does **not** return the session cookie the app itself
-installed from the `/login` response — even though:
+69.0.3497.100) that call **omits any cookie carrying `SameSite=Lax` or
+`SameSite=Strict`** — regardless of who wrote it. The server always sets
+`SameSite=Lax` (`internal/handler/auth.go:241`), so the app cannot read its own
+session cookie, even though:
 
 1. the cookie **is** persisted (`run-as <pkg> sqlite3 .../app_webview/Cookies`
    shows `10.0.2.2 | clawbench_session | 64 bytes | path=/`), and
 2. the WebView's own network stack **does** send it (an auth-protected
    `GET /api/config` from the page returns `200`).
 
+Only the Java `getCookie()` read omits it. The discriminator is **`SameSite`,
+not who wrote the cookie** — measured 2×2:
+
+| writer | `SameSite` | `getCookie()` |
+|--------|------------|---------------|
+| app `CookieManager.setCookie()` | `Lax` | **NOT readable** |
+| app `CookieManager.setCookie()` | *(none)* | readable |
+| renderer `document.cookie` | *(none)* | readable |
+| renderer `document.cookie` | `Lax` | **NOT readable** |
+
+(An earlier version of this section claimed the discriminator was
+app-vs-renderer provenance. That was wrong; this 2×2 is the measured result.)
+
 So every authenticated `POST /api/tunnel/stream` is `401`
-(`auth: rejecting request ... has_cookie=false`), and no payload traverses.
+(`auth: rejecting request ... has_cookie=false`), and no payload traverses the
+shipped path.
 
-The discriminator is **who wrote the cookie**, not the HttpOnly flag: a cookie
-the **renderer** writes (`document.cookie`) *is* returned by `getCookie()`,
-while one the app installs with `CookieManager.setCookie()` is not. Verified by
-rebuilding the server with `go build -overlay` and `HttpOnly: false` — still
-unreadable. (HttpOnly does matter for the workaround: the app's own HttpOnly
-cookie cannot be overwritten by page JS, so the fixture has to start from an app
-with no session cookie.)
-
-The same `getCookie()` call also powers the shipped native WebSocket push path
-(`BackgroundService.connectNativeWs`) and the `AppLog` relay, so this is not
-tunnel-specific.
+**All 14 `getCookie()` call sites are affected**, not just the tunnel: the
+shipped native WebSocket push path (`BackgroundService.connectNativeWs`), the
+`AppLog` relay, `shareFile`/`shareFiles`, the download paths, `ShareIn`, the
+sandbox handoff, and `PendingEventsWorker` all read the same API and are
+likewise unauthenticated on this image.
 
 ### The harness fixture (and why it is still a real test)
 
@@ -77,19 +99,28 @@ the app *can* build an authenticated request:
 2. `connectToServer(url, '')` — lands the WebView on the server origin without
    installing a session cookie,
 3. authenticate from the runner (`POST /login`) to learn the real token,
-4. write it from the page (`document.cookie='clawbench_session=<token>; path=/'`).
+4. write it from the page **without a `SameSite` attribute**:
+   `document.cookie='clawbench_session=<token>; path=/'`.
 
 `getCookie()` now returns it, and everything downstream is the production path:
 `AndroidTunnelPlatform.sessionCookie` → OkHttp h2 duplex stream → the server's
-relay → the target. The fixture substitutes only *where the cookie is
-installed*, because the app's own read is broken.
+relay → the target. The fixture substitutes only *where the cookie is installed*
+(and omits `SameSite`, the one shape this WebView reads back), because the app's
+own read is broken by the image.
 
-`tests/tunnel.server.mjs` asserts the defect explicitly and **fails if it is
-ever fixed**, so the fixture cannot outlive it:
+The fixture's own validity is asserted **positively**: after installing the
+cookie, `installReadableSessionCookie()` calls `appCanReadSessionCookie()`, which
+drives an authenticated request and requires a real server status that is not
+`401`. A missing cookie (or a `shareFile` early-return, or empty logcat) cannot
+satisfy it, so the byte-transfer assertions that follow cannot be vacuous.
 
-- it checks the WebView sends the cookie (page `fetch('/api/config')` → 200),
-- it checks the app's own read returns nothing,
-- and it `assert.fail`s if the read starts working ("remove the fixture").
+### What the suite does *not* assert
+
+An earlier revision of `tests/tunnel.server.mjs` **asserted the defect** and
+`assert.fail`ed if the app's read ever started working. That was removed: a test
+that goes red when the product improves is a fix-inhibitor, not a guard. The
+suite now asserts only the *positive* prerequisites (the fixture works, the
+tunnel carries bytes); nothing depends on the defect persisting.
 
 ### Recommendation (production change, not applied here)
 
@@ -97,8 +128,10 @@ Capture the cookie value at login. `handleAuthResponse` already receives the
 `Set-Cookie` headers (`MainActivity.java:1672`) and injects them into the
 WebView; persist the session cookie value there and have
 `AndroidTunnelPlatform.sessionCookie` read that, instead of round-tripping
-through `CookieManager`. That removes the dependency on the WebView API and also
-fixes the native-WS and log-relay paths.
+through `CookieManager`. That removes the dependency on the WebView API and
+**fixes all 14 `getCookie()` call sites at once** — the tunnel, the native-WS
+push path, the `AppLog` relay, file share/download, `ShareIn`, the sandbox
+handoff and `PendingEventsWorker` — not just the tunnel.
 
 ## Why Tier 2 needs a real server
 
@@ -206,11 +239,12 @@ printed as `[tier2] getActiveTunnelTransport() = "..."`.
 ### Authentication for the tunnel specs
 
 The tunnel's data and control streams are authenticated. Because the app cannot
-read its own session cookie on this WebView (see above), the `-L`/`-R` specs
-install a readable cookie with the real server token first
-(`installReadableSessionCookie`). `tests/tunnel.server.mjs` runs first and
-asserts the defect; `tests/tunnel.forward.mjs` and `tests/tunnel.reverse.mjs`
-then exercise the full production path with that credential.
+read its own `SameSite=Lax` session cookie on this WebView (see above), the
+`-L`/`-R` specs install a readable (SameSite-less) cookie with the real server
+token first (`installReadableSessionCookie`), which asserts the install worked
+*positively*. `tests/tunnel.forward.mjs` and `tests/tunnel.reverse.mjs` then
+exercise the full production path with that credential. The suite does **not**
+assert that the app's own read fails — see "What the suite does not assert".
 
 ### Proving real bytes, from inside the emulator
 
@@ -456,8 +490,9 @@ capture time-capped as described above.
 - **API 28 only.** The chromedriver/shim workaround is specific to Chrome 69. A
   newer system image would need a matching chromedriver and might not need the shim.
 - **Single device, serial execution** (`maxInstances: 1`).
-- Tier 2 authenticates through a **harness fixture** (a renderer-installed cookie)
-  because the app cannot read its own session cookie on this WebView. The tunnel
-  itself is exercised end to end; see "A real app defect, worked around by the
-  harness" above. If the app-side read is fixed, `tunnel.server.mjs` fails and
-  the fixture must be removed.
+- Tier 2 authenticates through a **harness fixture** (a page-written, SameSite-less
+  cookie) because on this image `getCookie()` omits the app's own `SameSite=Lax`
+  session cookie. The tunnel code itself is exercised end to end and proven
+  correct (see "A real image defect, worked around by the harness" above); the
+  shipped login → tunnel path on this image 401s. The suite does not assert the
+  defect, so it stays green if the app-side read is fixed.

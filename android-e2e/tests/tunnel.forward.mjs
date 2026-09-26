@@ -16,9 +16,9 @@
  *
  * The data streams are authenticated, and the app builds their `Cookie` header
  * from `CookieManager.getCookie(serverUrl)`. On this API-28 WebView that call
- * does not return the cookie the app installed itself (see
- * `tunnel.server.mjs`, which asserts the defect), so `before()` installs a
- * readable cookie with the same real server token. Everything from
+ * omits any `SameSite=Lax` cookie — including the one the app installed itself
+ * (see the README and `helpers/tunnel.mjs`) — so `before()` installs a readable
+ * cookie with the same real server token. Everything from
  * `AndroidTunnelPlatform.sessionCookie` onwards is the production path.
  */
 import assert from 'node:assert/strict';
@@ -33,6 +33,8 @@ import {
   getTunnelError,
   getTunnelErrorType,
   probeLocalPort,
+  clearDeviceLog,
+  readDeviceLog,
   targetStatus,
   startTarget,
   stopTarget,
@@ -83,7 +85,13 @@ describe('Tier 2 — h2 tunnel -L', () => {
     assert.ok(['tls', 'h2c'].includes(wire), `unexpected active transport "${wire}"`);
 
     const error = await getTunnelError();
-    console.log(`[tier2] getTunnelError() = "${error}"`);
+    const errorType = await getTunnelErrorType();
+    console.log(`[tier2] getTunnelError() = "${error}" getTunnelErrorType() = "${errorType}"`);
+    // A live, healthy h2 session must report no session-level error. Asserting
+    // it here (rather than only logging) turns a regression that leaves a stale
+    // error on a successful connect into a failure.
+    assert.equal(error, '', `a live h2 session reported a session error: "${error}"`);
+    assert.equal(errorType, '', `a live h2 session reported an error type: "${errorType}"`);
   });
 
   it('makes the local port reachable from inside the emulator', async () => {
@@ -92,11 +100,21 @@ describe('Tier 2 — h2 tunnel -L', () => {
     console.log(`[tier2] testPortReachable(${L_LOCAL_PORT}) = ${reachable}`);
     assert.equal(reachable, true, `bridge reports 127.0.0.1:${L_LOCAL_PORT} is not accepting connections`);
 
-    // A device-side TCP connect, independent of the bridge's own check.
+    // A device-side TCP connect, independent of the bridge's own check. A bare
+    // TCP accept would pass even if the tunnel carried nothing, so this asserts
+    // the probe actually round-tripped a request to the target and got the
+    // target's echo back: `TARGET-ECHO:` is emitted only by the server-side
+    // target (target-server/server.mjs), never by the app or the listener.
     const probe = await probeLocalPort(L_LOCAL_PORT, 'reachability-only');
     console.log(
       `[tier2] device-side connect: stdout=${JSON.stringify(probe.stdout.slice(0, 120))} ` +
         `stderr=${JSON.stringify(probe.stderr.slice(0, 120))}`,
+    );
+    assert.ok(
+      probe.stdout.includes('TARGET-ECHO:'),
+      `the device-side probe did not get the target's echo (the listener accepted a ` +
+        `connection but no bytes traversed the tunnel): ` +
+        `stdout=${JSON.stringify(probe.stdout)} stderr=${JSON.stringify(probe.stderr)}`,
     );
   });
 
@@ -140,6 +158,7 @@ describe('Tier 2 — h2 tunnel -L', () => {
       assert.equal(status.listening, false, 'target is still listening after stopTarget()');
 
       const nonce = `down-${crypto.randomUUID()}`;
+      await clearDeviceLog();
       const { stdout, stderr } = await probeLocalPort(L_LOCAL_PORT, nonce);
 
       // No echo can come back: the server had nothing to dial.
@@ -170,17 +189,49 @@ describe('Tier 2 — h2 tunnel -L', () => {
         'the local listener was torn down by a single failed connection',
       );
 
-      // The bridge's error surface is the session-level one
-      // (BackgroundService.getLastError/getErrorType, set on connect failures).
-      // A per-connection dial failure is deliberately NOT written there: the
+      // The PER-CONNECTION failure must be classified. This is the error field
+      // that is meaningful for a dead target: the app's `serve()` catches the
+      // failed dial and logs the classified kind (`TARGET_UNREACHABLE`, mapped
+      // from the server's 502) plus the raw message. Without this assertion the
+      // negative test would only prove "no payload came back", which a silently
+      // dropped connection would also satisfy.
+      const failureLine = await waitFor(async () => {
+        const log = await readDeviceLog();
+        return /H2: openStream \S+ failed: [A-Z_]+ .+/.exec(log)?.[0] ?? null;
+      }, 15000, 'the per-connection dial failure to be classified in logcat');
+      console.log(`[tier2] per-connection failure log = ${JSON.stringify(failureLine)}`);
+      assert.ok(
+        failureLine.includes('TARGET_UNREACHABLE'),
+        `the failed dial to the down target was not classified as TARGET_UNREACHABLE: ` +
+          `${JSON.stringify(failureLine)}`,
+      );
+      assert.ok(
+        failureLine.includes('502'),
+        `the classification did not carry the server's 502 status: ${JSON.stringify(failureLine)}`,
+      );
+
+      // The SESSION-level error surface must stay empty. A per-connection dial
+      // failure is deliberately NOT written to BackgroundService.lastError: the
       // session is healthy, and overwriting the session error with a transient
-      // target failure would misreport tunnel health. Record what the bridge
-      // reports so a regression in either direction is visible.
+      // target failure would misreport tunnel health (and would trip the live-
+      // session assertion in the first `-L` test). Asserting emptiness here is
+      // the meaningful check — asserting a non-empty type would be asserting a
+      // bug.
       const errorType = await getTunnelErrorType();
       const error = await getTunnelError();
       console.log(
         `[tier2] after down-target probe: getTunnelErrorType()="${errorType}" ` +
-          `getTunnelError()="${error}" (empty is expected — see the note above)`,
+          `getTunnelError()="${error}" (must stay empty — session is healthy)`,
+      );
+      assert.equal(
+        errorType,
+        '',
+        `a per-connection target failure leaked into the session error type: "${errorType}"`,
+      );
+      assert.equal(
+        error,
+        '',
+        `a per-connection target failure leaked into the session error message: "${error}"`,
       );
     } finally {
       await startTarget();

@@ -23,27 +23,41 @@
  *
  * The tunnel's data streams are authenticated, and the app builds their
  * `Cookie` header from `CookieManager.getCookie(serverUrl)`
- * (`AndroidTunnelPlatform.sessionCookie`). On this API-28 image that call does
- * NOT return a cookie the app itself installed with `CookieManager.setCookie()`
- * (the login response), even though:
+ * (`AndroidTunnelPlatform.sessionCookie`). On this API-28 image (Chrome
+ * 69.0.3497.100) that call **omits any cookie carrying `SameSite=Lax` or
+ * `SameSite=Strict`**, regardless of who wrote it — `setCookie()` or the
+ * renderer's `document.cookie`. The server always sets `SameSite=Lax`
+ * (`internal/handler/auth.go`), so the app cannot read its own session cookie,
+ * even though:
  *
  *   - the cookie IS persisted (`sqlite app_webview/Cookies`), and
  *   - the WebView's network stack DOES send it (an auth-protected page fetch
  *     returns 200).
  *
- * A cookie written by the **renderer** (`document.cookie`) IS returned. So the
- * discriminator is who set the cookie, not the HttpOnly flag (verified against a
- * server built with `HttpOnly: false` — still unreadable). HttpOnly does matter
- * for the workaround: the app's own HttpOnly cookie cannot be overwritten by the
- * page, so the fixture must start from an app with no session cookie at all.
+ * The measured 2x2 (writer x SameSite):
+ *
+ *   | writer              | SameSite     | getCookie() |
+ *   |---------------------|--------------|-------------|
+ *   | app `setCookie`     | `Lax`        | NOT readable |
+ *   | app `setCookie`     | (none)       | readable     |
+ *   | renderer `document` | (none)       | readable     |
+ *   | renderer `document` | `Lax`        | NOT readable |
+ *
+ * This is an image-specific WebView *read* bug, not a tunnel bug: a server built
+ * with production attributes minus `SameSite` (via `go build -overlay`) let the
+ * REAL native login produce a readable cookie and carried real bytes end to end
+ * with no fixture at all. The tunnel code is correct; on this image the shipped
+ * path 401s. All 14 `getCookie()` call sites are affected, not just the tunnel.
  *
  * `installReadableSessionCookie()` therefore wipes the app, lands it on the
- * server origin WITHOUT a password (so no cookie is installed), authenticates
- * from the runner to learn the token, and has the page write it. That is a
- * **harness fixture for a broken app-side read**, not a substitute for the
- * tunnel: every hop from `AndroidTunnelPlatform.sessionCookie` through OkHttp to
- * the server relay is still exercised. The defect itself is asserted separately
- * in `tunnel.server.mjs` and reported as a production recommendation.
+ * server origin WITHOUT a password (so no session cookie is installed),
+ * authenticates from the runner to learn the token, and has the page write it
+ * with **no SameSite attribute** — the one shape this WebView will read back.
+ * That is a **harness fixture for an image-specific read bug**, not a substitute
+ * for the tunnel: every hop from `AndroidTunnelPlatform.sessionCookie` through
+ * OkHttp to the server relay is still exercised. See `tunnel.server.mjs` and the
+ * README; do NOT assert that the read fails, because that would make the suite
+ * red the moment the app is fixed.
  *
  * Appium 3.x refuses `mobile: shell` unless the server was started with
  * `--allow-insecure *:adb_shell` (Dockerfile.emulator sets APPIUM_ADDITIONAL_ARGS
@@ -281,6 +295,16 @@ export async function readDeviceFile(path) {
   return stdout;
 }
 
+/** Clear logcat so a subsequent readDeviceLog() sees only new lines. */
+export async function clearDeviceLog() {
+  await deviceShell('logcat', ['-c']);
+}
+
+/** Read the app's own logcat lines (every AppLog call uses the ClawBench tag). */
+export async function readDeviceLog() {
+  return (await deviceShell('logcat', ['-d', '-s', 'ClawBench:*'])).stdout || '';
+}
+
 // ------------------------------------------------- app state / login ---------
 
 /** The login form's connect button (proves the app is on the login asset). */
@@ -290,10 +314,11 @@ const LOGIN_BUTTON = '#addConnectBtn';
  * Wipe the app and relaunch it onto the first-launch login page.
  *
  * Required by the cookie fixture: the app's own session cookie is HttpOnly, so
- * the page cannot overwrite it, and `getCookie()` does not return it either.
- * Wiping the app is the only way to reach a state where the renderer can install
- * a readable cookie. `pm clear` also removes the persisted server URL, so the
- * app cold-starts on the login page rather than auto-connecting.
+ * page JS cannot overwrite it, and it is `SameSite=Lax`, so `getCookie()` does
+ * not return it either (see the file header). Wiping the app is the only way to
+ * reach a state where the renderer can install a readable (SameSite-less)
+ * cookie. `pm clear` also removes the persisted server URL, so the app
+ * cold-starts on the login page rather than auto-connecting.
  */
 export async function resetAppToLoginPage() {
   await deviceShell('pm', ['clear', APP_PACKAGE]);
@@ -319,9 +344,11 @@ export async function resetAppToLoginPage() {
  * Drive the native login form (the flow `MainActivity.authenticateAndNavigate`
  * implements: POST /login -> GET /api/health -> webView.loadUrl).
  *
- * After this the app holds its OWN (HttpOnly) session cookie and is on the
- * server origin — but `getCookie()` cannot read that cookie, so this is used
- * only by the spec that asserts that defect, never by the tunnel fixtures.
+ * After this the app holds its OWN (HttpOnly, `SameSite=Lax`) session cookie and
+ * is on the server origin. On this image `getCookie()` will not read that cookie
+ * back (SameSite omission — see the file header), so the tunnel fixtures use
+ * `installReadableSessionCookie` instead; this is used by the specs that verify
+ * the native login flow itself.
  */
 export async function nativeLogin() {
   await enterWebView();
@@ -399,15 +426,58 @@ export async function fetchSessionToken() {
   return session.split(';')[0].slice('clawbench_session='.length);
 }
 
-/** Does the app's OWN cookie read (`shareFile` -> getCookie) yield a cookie? */
+/**
+ * Does the app's OWN cookie read (`shareFile` -> `CookieManager.getCookie()`)
+ * yield a cookie the server accepts?
+ *
+ * This is a **positive** detector, not an absence one. An earlier version
+ * reported `readable: true` whenever neither "no auth cookie" nor "no server
+ * URL" appeared in logcat — which is also true when logcat is empty, or when
+ * `shareFile` bails out before ever reaching the `getCookie()` call (e.g. an
+ * invalid path logs only `shareFile: invalid path: ...`). That made the fixture
+ * assertion below vacuous.
+ *
+ * The evidence now required is a server RESPONSE STATUS for the download:
+ *
+ *   - `shareFile` only issues its OkHttp request after `getCookie()` returned a
+ *     non-empty cookie; an empty read logs `shareFile: no auth cookie` and
+ *     returns. So a status line implies the cookie WAS read.
+ *   - The endpoint is auth-wrapped (`middleware.Auth`), so `401` means the
+ *     server rejected that cookie. Any other status (403 from `requireProject`
+ *     when no project cookie is set, 404 for a missing file, 200 for a hit)
+ *     means the request passed authentication — the read worked AND the
+ *     credential was accepted.
+ *
+ * The probe path is deliberately one that cannot be served, so a successful
+ * download (which logs no status) cannot make this a false negative: with no
+ * project cookie the server answers 403 before it ever stats the file.
+ */
 export async function appCanReadSessionCookie() {
   await deviceShell('logcat', ['-c']);
-  await bridge('shareFile', '/etc/hosts', 'text/plain');
-  await browser.pause(4000);
-  const log = (await deviceShell('logcat', ['-d', '-s', 'ClawBench:*'])).stdout || '';
+  // A path that cannot resolve to a served file: forces a non-2xx status line.
+  await bridge('shareFile', '/e2e-cookie-read-probe-does-not-exist', 'text/plain');
+
+  // Poll rather than a fixed sleep: the request runs on a background thread and
+  // the status line is what we are waiting for.
+  let log = '';
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    await browser.pause(1000);
+    log = (await deviceShell('logcat', ['-d', '-s', 'ClawBench:*'])).stdout || '';
+    if (/shareFile: download failed, code=\d+/.test(log)) break;
+    // A pre-request bail-out cannot produce a status line; stop early.
+    if (log.includes('shareFile: no auth cookie') || log.includes('shareFile: no server URL')) break;
+  }
+
+  const downloadCode = /shareFile: download failed, code=(\d+)/.exec(log)?.[1] ?? null;
+  const noCookie = log.includes('shareFile: no auth cookie');
+  const noServer = log.includes('shareFile: no server URL');
   return {
-    readable: !log.includes('no auth cookie') && !log.includes('no server URL'),
-    downloadCode: /download failed, code=(\d+)/.exec(log)?.[1] ?? null,
+    // Positive evidence only: a real status that is not an auth rejection.
+    readable: downloadCode !== null && downloadCode !== '401',
+    downloadCode,
+    noCookie,
+    noServer,
     raw: log,
   };
 }
@@ -432,11 +502,15 @@ export async function installReadableSessionCookie() {
     `the page could not install a readable session cookie (document.cookie=${JSON.stringify(doc)})`,
   );
   // The app's own read path must now see it; otherwise the fixture failed and
-  // every later byte-transfer assertion would be vacuous.
+  // every later byte-transfer assertion would be vacuous. `appCanReadSessionCookie`
+  // returns positive evidence (a non-401 server status), so this cannot pass on
+  // an empty logcat or a `shareFile` early-return.
   const read = await appCanReadSessionCookie();
   assert.ok(
     read.readable,
-    `the fixture installed a cookie but the app still cannot read it: ${JSON.stringify(read)}`,
+    `the fixture installed a cookie but the app still cannot read it: ` +
+      `downloadCode=${read.downloadCode} noCookie=${read.noCookie} ` +
+      `noServer=${read.noServer} raw=${JSON.stringify(read.raw.slice(0, 400))}`,
   );
   return { tokenLength: token.length, documentCookie: doc };
 }

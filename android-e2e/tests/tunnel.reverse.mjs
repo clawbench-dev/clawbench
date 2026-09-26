@@ -92,7 +92,12 @@ describe('Tier 2 — h2 tunnel -R end-to-end', () => {
     console.log(`[tier2][-R] getForwardedPorts() entry = ${JSON.stringify(listed)}`);
 
     const error = await getTunnelError();
-    if (error) console.log(`[tier2][-R] getTunnelError() = "${error}"`);
+    console.log(`[tier2][-R] getTunnelError() = "${error}"`);
+    // The reverse bind rides the authenticated control stream and succeeded
+    // (the mapping is listed above), so the session must report no error. This
+    // runs before the reserved-port test below, which is the only step in this
+    // spec that legitimately sets a session error.
+    assert.equal(error, '', `a live h2 session with a bound reverse listener reported an error: "${error}"`);
   });
 
   it('carries a connection accepted on the SERVER to the DEVICE target', async () => {
