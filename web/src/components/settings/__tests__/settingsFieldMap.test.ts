@@ -692,3 +692,100 @@ describe('auto-continue settings', () => {
   })
 })
 
+describe('section grouping invariant', () => {
+  /**
+   * SettingsCategory renders one card per *contiguous run* of items sharing a
+   * sectionHeader. Two non-adjacent runs with the same header therefore render
+   * as two separate cards with the same title — e.g. the AI-summary jump
+   * (navigateAiSummary) ended up in its own one-row 推荐回复 card after later
+   * commits inserted other sections between it and the recommend rows.
+   *
+   * A header may repeat only when the runs are genuinely separated by a panel
+   * entry (which flushes the current card). Items without a header all merge
+   * into the single "其他" card, so they are exempt.
+   */
+  it('never emits two separate cards with the same section header', () => {
+    for (const [category, entries] of Object.entries(categoryItems)) {
+      const seenHeaders = new Set<string>()
+      let currentHeader: string | null = null
+      let flushedByPanel = false
+
+      for (const entry of entries) {
+        if (entry.type === 'panel') {
+          currentHeader = null
+          flushedByPanel = true
+          continue
+        }
+        const header = entry.spec.sectionHeader ?? null
+        if (header === null) continue
+        if (header !== currentHeader) {
+          // Starting a new run: it must not repeat an earlier run's header,
+          // unless a panel entry legitimately split the category in two.
+          if (seenHeaders.has(header) && !flushedByPanel) {
+            throw new Error(
+              `${category}: section header "${header}" starts a second card. ` +
+              `Keep rows sharing a header contiguous, or move the stray row to its own section.`,
+            )
+          }
+          seenHeaders.add(header)
+          currentHeader = header
+          flushedByPanel = false
+        }
+      }
+    }
+  })
+
+  it('keeps the AI-summary jump inside the 推荐回复 card', () => {
+    const items = categoryItems.chat.filter(e => e.type === 'item').map(e => e.spec)
+    const recommendKeys = items
+      .filter(i => i.sectionHeader === 'settings.items.recommendSectionHeader')
+      .map(i => i.key)
+    expect(recommendKeys).toContain('navigateAiSummary')
+    // The recommend block must be one contiguous run, so its rows are adjacent
+    // members of the same card rather than scattered across two.
+    const indices = items
+      .map((item, idx) => (item.sectionHeader === 'settings.items.recommendSectionHeader' ? idx : -1))
+      .filter(idx => idx >= 0)
+    expect(indices[indices.length - 1] - indices[0] + 1).toBe(indices.length)
+  })
+})
+
+describe('AI summary model jump rows', () => {
+  /**
+   * All three rows are the SAME destination (`navigateTo: 'aiSummary'`) reached
+   * from three different features. They used to carry two different label/desc
+   * key pairs, so the naming drifted: two said "模型详情" and one said
+   * "配置 AI 摘要模型". Sharing one key pair is the fix, and this pins it.
+   */
+  const JUMP_ROWS: Array<[category: string, key: string]> = [
+    ['chat', 'navigateAiSummary'], // 推荐回复
+    ['chat', 'navigateAiSummaryForRename'], // 自动命名
+    ['tts', 'navigateAiSummary'], // 语音摘要
+  ]
+
+  function findSpec(category: string, key: string) {
+    const entry = categoryItems[category].find(e => e.type === 'item' && e.spec.key === key)
+    expect(entry, `${category}.${key} must exist`).toBeDefined()
+    return (entry as { type: 'item'; spec: ItemSpec }).spec
+  }
+
+  it('all three jump to the aiSummary panel', () => {
+    for (const [category, key] of JUMP_ROWS) {
+      expect(findSpec(category, key).navigateTo).toBe('aiSummary')
+    }
+  })
+
+  it('share one label/description key pair so the naming cannot drift', () => {
+    for (const [category, key] of JUMP_ROWS) {
+      const spec = findSpec(category, key)
+      expect(spec.labelKey).toBe('settings.items.aiSummaryRef')
+      expect(spec.descriptionKey).toBe('settings.items.aiSummaryRefDesc')
+    }
+  })
+
+  it('all opt into the shared-model config status pill', () => {
+    for (const [category, key] of JUMP_ROWS) {
+      expect(findSpec(category, key).showSummaryModelStatus).toBe(true)
+    }
+  })
+})

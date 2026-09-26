@@ -359,6 +359,8 @@ const i18n = createI18n({
           // aiSummary nav
           aiSummaryRef: 'AI摘要',
           aiSummaryRefDesc: 'AI摘要',
+          summaryModelConfigured: '已配置',
+          summaryModelNotConfigured: '未配置',
         },
         dialog: {
           changePasswordTitle: '修改密码',
@@ -504,6 +506,51 @@ describe('SettingsCategory', () => {
       expect(item).toBeTruthy()
       // session.max_count is hot-reloadable via applyHotReloadGlobals, no restart needed
       expect(item!.props().needsRestart).toBe(false)
+    })
+  })
+
+  // ─── Shared AI-summary-model status ─────────────────────
+  describe('AI summary model status', () => {
+    /** The three rows that jump to the aiSummary panel all share one label. */
+    function jumpRows(wrapper: ReturnType<typeof mountCategory>) {
+      return wrapper
+        .findAllComponents({ name: 'SettingsItem' })
+        .filter(i => i.props().label === 'AI摘要')
+    }
+
+    afterEach(() => {
+      delete (serverConfig.value as Record<string, unknown>).ai_summary
+    })
+
+    it('marks the jump rows unconfigured when the base URL is unset', () => {
+      delete (serverConfig.value as Record<string, unknown>).ai_summary
+      const rows = jumpRows(mountCategory('chat'))
+      expect(rows.length).toBeGreaterThan(0)
+      for (const row of rows) {
+        expect(row.props().summaryModelStatus).toBe('unconfigured')
+      }
+    })
+
+    it('marks the jump rows configured once the base URL is set', () => {
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = {
+        api: { base_url: 'https://summary.example.com' },
+      }
+      const rows = jumpRows(mountCategory('chat'))
+      expect(rows.length).toBeGreaterThan(0)
+      for (const row of rows) {
+        expect(row.props().summaryModelStatus).toBe('configured')
+      }
+    })
+
+    it('leaves rows without the opt-in flag without a status', () => {
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = {
+        api: { base_url: 'https://summary.example.com' },
+      }
+      const wrapper = mountCategory('chat')
+      const plain = wrapper
+        .findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '最大会话数')
+      expect(plain!.props().summaryModelStatus).toBeUndefined()
     })
   })
 

@@ -2,6 +2,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { generateSessionTitle } from '@/composables/useSessionIdentity'
+import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
 
 /**
  * Build the "auto-generate" options for the session-rename prompt dialog.
@@ -20,8 +21,7 @@ import { generateSessionTitle } from '@/composables/useSessionIdentity'
  */
 export function buildRenameGenerateOptions(sessionId: string) {
   const { serverConfig } = useSettingsConfig()
-  const summary = serverConfig.value?.ai_summary as { api?: { base_url?: string } } | undefined
-  if (!summary?.api?.base_url) return {}
+  if (!isSummaryModelConfigured(serverConfig.value)) return {}
 
   const toast = useToast()
   return {

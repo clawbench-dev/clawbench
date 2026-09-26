@@ -56,6 +56,7 @@
           :max="getItemMax(item)"
           :step="item.step"
           :needs-restart="item.needsRestart"
+          :summary-model-status="resolveSummaryModelStatus(item)"
           :force-close="activeKey !== null && activeKey !== item.key"
           :no-divider="false"
           :default-value="item.defaultValue"
@@ -115,6 +116,7 @@ import { downloadByUrl } from '@/utils/download'
 import { openExternalUrl } from '@/utils/externalLink'
 import { PROJECT_FEEDBACK_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
+import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
 import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
 import { filterAvailableFonts, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, buildFontStack, getCustomFontChoices, type FontChoice } from '@/utils/fontConfig'
@@ -189,6 +191,21 @@ watch(() => (serverConfig.value?.fonts as Record<string, unknown> | undefined)?.
 function resolveConfigValue(key: string): unknown {
   if (key in localConfig) return localConfig[key]
   return getServerValueWithDefault(key)
+}
+
+// ── Shared AI-summary-model status ──
+
+/**
+ * Whether the shared AI summary model is configured, read from the live server
+ * config so the row's status pill updates as soon as the base URL is saved
+ * (patchConfig reloads the config, which flows back through this ref).
+ */
+const summaryModelConfigured = computed(() => isSummaryModelConfigured(serverConfig.value))
+
+/** Status pill for a row, or undefined when the row does not opt in. */
+function resolveSummaryModelStatus(item: ItemSpec): 'configured' | 'unconfigured' | undefined {
+  if (!item.showSummaryModelStatus) return undefined
+  return summaryModelConfigured.value ? 'configured' : 'unconfigured'
 }
 
 // ── Sub-page panel (data-driven) ──
