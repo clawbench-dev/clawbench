@@ -98,11 +98,7 @@
           <FileIcon :path="file.name" :size="48" />
           <div class="unsupported-title">{{ file.name }}</div>
           <div class="unsupported-desc">{{ t('file.viewer.fileTooLarge') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
-          <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="download-btn" :download="file.name">
-            <Download :size="14" color="#fff" />
-            {{ t('common.download') }}
-          </a>
-          <button v-else class="download-btn" @click="handleDownload(file.path)">
+          <button class="download-btn" @click="handleDownload(file.path)">
             <Download :size="14" color="#fff" />
             {{ t('common.download') }}
           </button>
@@ -116,11 +112,7 @@
           <div class="unsupported-title">{{ file.name }}</div>
           <div class="unsupported-desc">{{ t('file.viewer.binaryFile') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
           <div class="unsupported-actions">
-            <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="download-btn" :download="file.name">
-              <Download :size="14" color="#fff" />
-              {{ t('common.download') }}
-            </a>
-            <button v-else class="download-btn" @click="handleDownload(file.path)">
+            <button class="download-btn" @click="handleDownload(file.path)">
               <Download :size="14" color="#fff" />
               {{ t('common.download') }}
             </button>

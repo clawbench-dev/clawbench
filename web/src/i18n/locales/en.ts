@@ -1925,6 +1925,8 @@ export default {
     partial: 'Uploaded {ok} item(s), {failed} failed: {error}',
     cancelled: 'Upload cancelled',
     downloaded: 'Downloaded {count} item(s)',
+    downloadFailed: 'Download failed',
+    downloadCancelled: 'Download cancelled',
     dirDownloadUnsupported: 'Tree download is not supported in this browser. Use Chrome/Edge with HTTPS.',
     dirDownloadFailed: 'Failed to fetch file list',
   },

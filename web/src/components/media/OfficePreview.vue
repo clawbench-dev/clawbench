@@ -28,11 +28,7 @@
           <RefreshCw :size="14" />
           {{ t('common.retry') }}
         </button>
-        <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="office-download-btn" :download="file.name">
-          <Download :size="14" />
-          {{ t('common.download') }}
-        </a>
-        <button v-else class="office-download-btn" @click="handleDownload">
+        <button class="office-download-btn" @click="handleDownload">
           <Download :size="14" />
           {{ t('common.download') }}
         </button>
@@ -46,7 +42,6 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileX, Download, RefreshCw } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { useAppMode } from '@/composables/useAppMode.ts'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { appLog } from '@/utils/appLog.ts'
 
@@ -70,7 +65,6 @@ const props = defineProps({
 })
 
 const { t } = useI18n()
-const { isAppMode } = useAppMode()
 
 const loading = ref(true)
 const error = ref('')

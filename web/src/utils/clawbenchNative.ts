@@ -96,7 +96,27 @@ export interface ClawBenchNative {
   removeReverseForwardedPort?(serverPort: number): Promise<void>
   reconnectTunnel(): Promise<boolean>
   reconnectTunnelAsync(): Promise<void>
+  /** Download a project file (legacy, no progress). */
   downloadFile(path: string): Promise<void>
+  /**
+   * Download a project file with in-product progress. Hosts stream the response
+   * and dispatch `clawbench-download-progress` CustomEvents (detail: {id,
+   * received, total, done, error, cancelled}) so the progress bar can track
+   * them. `downloadId` is echoed back unchanged; the renderer allocates it and
+   * ignores stale ids.
+   *
+   * Optional: an older host lacks it, and the caller then falls back to
+   * downloadFile() — the file still downloads, just without a progress bar.
+   * It is a distinct method name rather than an overload of downloadFile()
+   * because Android's WebView JavaScript bridge resolves @JavascriptInterface
+   * methods by name and overloads collide there.
+   */
+  downloadFileWithProgress?(path: string, fileName: string, downloadId: number): Promise<void>
+  /**
+   * Cancel an in-flight download started by downloadFileWithProgress().
+   * Optional: older hosts lack it, and the UI then only hides the bar.
+   */
+  cancelDownload?(id: number): Promise<void> | void
   downloadUrl(url: string, fileName: string): Promise<void>
   downloadBlob(base64: string, fileName: string): Promise<void>
   openInBrowser(port: number, protocol: string, host: string, path: string): Promise<void>

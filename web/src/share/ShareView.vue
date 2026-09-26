@@ -33,15 +33,15 @@
           <List :size="16" />
         </button>
       </div>
-      <a
+      <button
         v-if="file && !error"
-        class="share-btn"
-        :href="downloadUrl"
-        :download="file.name"
+        class="share-btn share-btn--download"
+        type="button"
         :title="t('share.download')"
+        @click="handleDownload"
       >
         <Download :size="16" />
-      </a>
+      </button>
     </div>
 
     <!-- Body: content + optional TOC -->
@@ -160,10 +160,10 @@
           <div v-else class="share-center-hint share-unsupported">
             <FileIcon :path="file.name" :size="48" />
             <div class="share-error-desc">{{ file.tooLarge ? t('share.tooLarge') : t('share.noPreview') }}</div>
-            <a class="share-download-btn" :href="downloadUrl" :download="file.name">
+            <button class="share-download-btn" type="button" @click="handleDownload">
               <Download :size="14" />
               {{ t('common.download') }}
-            </a>
+            </button>
           </div>
         </template>
       </div>
@@ -225,6 +225,7 @@ const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loade
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/OpenApiPreview.vue') }))
 import { getFileType } from '@/utils/fileType.ts'
+import { downloadUrlWithProgress } from '@/utils/download.ts'
 import { flashElement } from '@/utils/domFlash'
 import { extractToc, type TocItem } from '@/utils/toc.ts'
 import { setShareToken, setSharedFile, shareApiUrl } from '@/share/shareMode'
@@ -309,6 +310,12 @@ const downloadUrl = computed(() => {
 
 /** True while the original shared file is on screen (not a followed link). */
 const isSharedFile = computed(() => !currentPath.value || currentPath.value === sharedPath.value)
+
+/** Download the file on screen, showing the in-product progress bar. */
+function handleDownload() {
+  if (!downloadUrl.value || !file.value) return
+  downloadUrlWithProgress(downloadUrl.value, file.value.name || 'download')
+}
 
 /** Whether Back should be offered: this view pushed at least one entry. */
 const canGoBack = computed(() => pushedDepth.value > 0)

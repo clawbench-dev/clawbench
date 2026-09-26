@@ -470,6 +470,14 @@
       </Transition>
     </Teleport>
 
+    <DownloadProgressBar
+      :visible="downloadVisible"
+      :file-name="downloadFileName"
+      :received="downloadReceived"
+      :total="downloadTotal"
+      :style="downloadBarStyle"
+      @cancel="cancelDownload"
+    />
     <ToastNotification :toast="toast" />
     <CompletionPopover />
     <DialogOverlay />
@@ -516,6 +524,8 @@ import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import ShareLinkDialog from './components/file/ShareLinkDialog.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
+import DownloadProgressBar from './components/common/DownloadProgressBar.vue'
+import { useDownloadProgress } from '@/composables/useDownloadProgress'
 import CompletionPopover from './components/common/CompletionPopover.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
@@ -1187,6 +1197,16 @@ const markdownViewMode = ref('rendered')
 
 const toast = useToast()
 provide('toast', toast)
+
+const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
+
+// Lift the download bar above the bottom dock in narrow mode so it does not
+// cover the tab bar; in wide mode the dock is a left rail, so a plain margin
+// applies. The bar is fixed-position (see DownloadProgressBar), hence a CSS var
+// rather than a layout sibling.
+const downloadBarStyle = computed<CSSProperties>(() =>
+  isWideScreen.value ? {} : { '--download-progress-bottom': 'calc(var(--dock-height) + 8px)' } as CSSProperties
+)
 
 const sessionIdentity = useSessionIdentity()
 const { getAgentBackend, getAgentName } = useAgents()

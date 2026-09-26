@@ -49,14 +49,8 @@ const i18n = createI18n({
   },
 })
 
-const { mockIsAppMode, mockDownloadFileByPath } = vi.hoisted(() => ({
-  mockIsAppMode: { value: false },
+const { mockDownloadFileByPath } = vi.hoisted(() => ({
   mockDownloadFileByPath: vi.fn(),
-}))
-
-// Mock useAppMode
-vi.mock('@/composables/useAppMode.ts', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
 // Mock download utils
@@ -101,7 +95,6 @@ const stubs = {
 
 describe('OfficePreview', () => {
   beforeEach(() => {
-    mockIsAppMode.value = false
     mockDownloadFileByPath.mockClear()
     roCallbacks = []
     pendingRafs = []
@@ -295,18 +288,13 @@ describe('OfficePreview', () => {
   })
 
   describe('download', () => {
-    it('calls downloadFileByPath when in app mode', async () => {
-      mockIsAppMode.value = true
+    it('routes every host through downloadFileByPath so progress is shown', async () => {
+      // There is no longer an app/web split at the call site: the download
+      // helper dispatches to the native bridge or the streamed XHR itself, and
+      // both report progress. A plain <a download> would bypass the bar.
       const wrapper = mountOffice()
       ;(wrapper.vm as any).handleDownload()
-      expect(mockDownloadFileByPath).toHaveBeenCalled()
-    })
-
-    it('builds a local file download URL when not in app mode', async () => {
-      mockIsAppMode.value = false
-      const wrapper = mountOffice()
-      // BuildLocalFileUrl is used for the file src and download anchor
-      expect(wrapper.vm).toBeDefined()
+      expect(mockDownloadFileByPath).toHaveBeenCalledWith('test/office/report.docx', 'report.docx')
     })
   })
 

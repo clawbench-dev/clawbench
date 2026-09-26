@@ -1924,6 +1924,8 @@ export default {
     partial: '已上传 {ok} 项，{failed} 项失败: {error}',
     cancelled: '已取消上传',
     downloaded: '已下载 {count} 项',
+    downloadFailed: '下载失败',
+    downloadCancelled: '已取消下载',
     dirDownloadUnsupported: '当前浏览器不支持按文件树下载，请使用 Chrome/Edge 并开启 HTTPS 访问',
     dirDownloadFailed: '获取文件列表失败',
   },

@@ -22,6 +22,14 @@ for (const channel of NAV_CHANNELS) {
   })
 }
 
+// Download progress is streamed from the main process (which owns the HTTP
+// transfer) and forwarded as a CustomEvent, matching what the Android shell
+// dispatches via `evaluateJavascript`. The renderer therefore has one progress
+// event shape to handle regardless of host.
+ipcRenderer.on('clawbench-download-progress', (_e, detail: unknown) => {
+  window.dispatchEvent(new CustomEvent('clawbench-download-progress', { detail }))
+})
+
 contextBridge.exposeInMainWorld('ClawBenchNative', {
   // sync
   isNativeApp: () => true,
@@ -86,6 +94,9 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   reconnectTunnel: () => invoke('native:reconnect-tunnel'),
   reconnectTunnelAsync: () => invoke('native:reconnect-tunnel'),
   downloadFile: (path: string) => invoke('native:download-file', path),
+  downloadFileWithProgress: (path: string, fileName: string, downloadId: number) =>
+    invoke('native:download-file-with-progress', path, fileName, downloadId),
+  cancelDownload: (id: number) => invoke('native:cancel-download', id),
   downloadUrl: (url: string, fileName: string) => invoke('native:download-url', url, fileName),
   downloadBlob: (b64: string, fileName: string) => invoke('native:download-blob', b64, fileName),
   openInBrowser: (port: number, protocol: string, host: string, path: string) => invoke('native:open-in-browser', port, protocol, host, path),

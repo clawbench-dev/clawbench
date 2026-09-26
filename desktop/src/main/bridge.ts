@@ -11,7 +11,7 @@ import {
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
 import { getMainWindow, createMainWindow, openSandboxWindow, showLoginPage } from './window'
-import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
+import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob, cancelDownload } from './download'
 import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
 import { markRendererReady } from './navReady'
@@ -93,7 +93,11 @@ export function registerBridge(): void {
   ipcMain.handle('native:reconnect-tunnel', () => reconnectTunnel())
   ipcMain.handle('native:get-pending-navigation', () => getPendingNavigationJson())
 
+  // Legacy: plain download, no progress events.
   ipcMain.handle('native:download-file', (_e, filePath: string) => downloadFileByPath(filePath))
+  ipcMain.handle('native:download-file-with-progress', (_e, filePath: string, fileName: string, downloadId: number) =>
+    downloadFileByPath(filePath, fileName, downloadId))
+  ipcMain.handle('native:cancel-download', (_e, downloadId: number) => { cancelDownload(downloadId) })
   ipcMain.handle('native:download-url', (_e, url: string, fileName: string) => downloadByUrl(url, fileName))
   ipcMain.handle('native:download-blob', (_e, b64: string, fileName: string) => downloadBlob(b64, fileName))
   ipcMain.handle('native:open-in-browser', (_e, port: number, protocol: string, host: string, p: string) => {
