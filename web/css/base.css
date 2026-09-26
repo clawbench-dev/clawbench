@@ -93,9 +93,12 @@ html, body {
 }
 
 /* Main content sits above the wallpaper layer. When no wallpaper is active
-   this is harmless (layer is inert/absent). */
+   this is harmless (layer is inert/absent). The download progress bar is a
+   direct child of .app-container too, so without this the positioned wallpaper
+   layer (z-index 0) would paint over it. */
 .app-container > .main-content,
-.app-container > .bottom-dock-wrapper {
+.app-container > .bottom-dock-wrapper,
+.app-container > .transfer-progress {
     position: relative;
     z-index: 1;
 }

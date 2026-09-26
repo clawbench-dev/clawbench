@@ -44,6 +44,17 @@
       </button>
     </div>
 
+    <!-- Download progress, inline under the top bar. The share SPA builds its
+         own token-scoped download URLs, so it mounts the bar itself rather
+         than relying on App.vue, which this entry does not use. -->
+    <DownloadProgressBar
+      :visible="downloadVisible"
+      :file-name="downloadFileName"
+      :received="downloadReceived"
+      :total="downloadTotal"
+      @cancel="cancelDownload"
+    />
+
     <!-- Body: content + optional TOC -->
     <div class="share-body">
       <div
@@ -224,8 +235,10 @@ import MarkdownPreview from '@/components/file/MarkdownPreview.vue'
 const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/CodeMirrorViewer.vue') }))
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/OpenApiPreview.vue') }))
+import DownloadProgressBar from '@/components/common/DownloadProgressBar.vue'
 import { getFileType } from '@/utils/fileType.ts'
 import { downloadUrlWithProgress } from '@/utils/download.ts'
+import { useDownloadProgress } from '@/composables/useDownloadProgress'
 import { flashElement } from '@/utils/domFlash'
 import { extractToc, type TocItem } from '@/utils/toc.ts'
 import { setShareToken, setSharedFile, shareApiUrl } from '@/share/shareMode'
@@ -257,6 +270,8 @@ interface ShareFile {
 }
 
 const { t } = useI18n()
+
+const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
 
 // ─── State ───
 const loading = ref(true)

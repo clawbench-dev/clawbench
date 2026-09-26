@@ -21,17 +21,6 @@
 
     <SessionShareView v-else-if="kind === 'session'" />
     <ShareView v-else-if="kind === 'file'" />
-
-    <!-- In-product download progress. The share SPA builds its own download
-         URLs (token-scoped), so it mounts the bar itself rather than relying
-         on App.vue, which this entry does not use. -->
-    <DownloadProgressBar
-      :visible="downloadVisible"
-      :file-name="downloadFileName"
-      :received="downloadReceived"
-      :total="downloadTotal"
-      @cancel="cancelDownload"
-    />
   </div>
 </template>
 
@@ -40,15 +29,11 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileX2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import DownloadProgressBar from '@/components/common/DownloadProgressBar.vue'
 import ShareView from './ShareView.vue'
 import SessionShareView from './SessionShareView.vue'
 import { setShareToken, shareApiUrl } from './shareMode'
-import { useDownloadProgress } from '@/composables/useDownloadProgress'
 
 const { t } = useI18n()
-
-const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
 
 const loading = ref(true)
 const error = ref('')

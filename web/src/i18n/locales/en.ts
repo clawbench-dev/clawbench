@@ -1273,6 +1273,8 @@ export default {
     },
   },
   file: {
+    /** Label for the aggregate upload progress bar. */
+    uploading: 'Uploading...',
     codePreview: {
       title: 'Code Preview',
       dragToMove: 'Drag to move',

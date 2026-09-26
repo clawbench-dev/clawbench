@@ -76,7 +76,8 @@
     </div>
 
     <!-- Upload progress for files dropped onto the terminal (shared state with
-         the file manager, which is never visible at the same time). -->
+         the file manager, which is never visible at the same time). Renders
+         through the same TransferProgressBar the download bar uses. -->
     <UploadProgressBar
       :visible="dirUploading"
       :progress="dirUploadProgress"

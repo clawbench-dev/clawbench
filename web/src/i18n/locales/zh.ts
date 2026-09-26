@@ -1275,6 +1275,8 @@ export default {
     },
   },
   file: {
+    /** Label for the aggregate upload progress bar. */
+    uploading: '上传中...',
     codePreview: {
       title: '代码预览',
       dragToMove: '拖动窗口',

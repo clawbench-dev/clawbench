@@ -3577,7 +3577,8 @@ function scrollSelectedIntoView(path) {
 }
 
 /* Upload progress bar and drop overlay styles live in their shared components
-   (components/common/UploadProgressBar.vue and DropOverlay.vue). */
+   (components/common/TransferProgressBar.vue via UploadProgressBar.vue, and
+   DropOverlay.vue). */
 
 /* ── Paste overlay ── */
 .paste-overlay {

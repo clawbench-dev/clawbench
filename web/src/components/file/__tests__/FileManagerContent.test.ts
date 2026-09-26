@@ -4095,8 +4095,8 @@ describe('FileManagerContent — upload', () => {
     const wrapper = mountContent()
     await nextTick()
 
-    expect(wrapper.find('.dir-upload-progress').exists()).toBe(true)
-    expect(wrapper.find('.dir-upload-progress-count').text()).toContain('2/4')
+    expect(wrapper.find('.transfer-progress').exists()).toBe(true)
+    expect(wrapper.find('.transfer-progress-detail').text()).toContain('2/4')
   })
 
   it('renders a cancel button and calls cancelDirUpload on click', async () => {
@@ -4107,7 +4107,7 @@ describe('FileManagerContent — upload', () => {
     const wrapper = mountContent()
     await nextTick()
 
-    const cancelBtn = wrapper.find('.dir-upload-cancel')
+    const cancelBtn = wrapper.find('.transfer-progress-cancel')
     expect(cancelBtn.exists()).toBe(true)
     await cancelBtn.trigger('click')
     expect(mockCancelDirUpload).toHaveBeenCalledTimes(1)

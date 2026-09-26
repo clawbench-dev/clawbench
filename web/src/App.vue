@@ -383,6 +383,16 @@
         @select="handleAcpSessionSelect"
       />
 
+      <!-- Download progress, inline above the bottom dock so the two stack
+           rather than overlap (the bar is a normal flow child). -->
+      <DownloadProgressBar
+        :visible="downloadVisible"
+        :file-name="downloadFileName"
+        :received="downloadReceived"
+        :total="downloadTotal"
+        @cancel="cancelDownload"
+      />
+
       <!-- Bottom dock (tab bar) -->
       <div v-if="isAuthenticated" v-show="!isWideScreen" class="bottom-dock-wrapper">
         <div ref="dockRef" class="bottom-dock">
@@ -470,14 +480,6 @@
       </Transition>
     </Teleport>
 
-    <DownloadProgressBar
-      :visible="downloadVisible"
-      :file-name="downloadFileName"
-      :received="downloadReceived"
-      :total="downloadTotal"
-      :style="downloadBarStyle"
-      @cancel="cancelDownload"
-    />
     <ToastNotification :toast="toast" />
     <CompletionPopover />
     <DialogOverlay />
@@ -1199,14 +1201,6 @@ const toast = useToast()
 provide('toast', toast)
 
 const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
-
-// Lift the download bar above the bottom dock in narrow mode so it does not
-// cover the tab bar; in wide mode the dock is a left rail, so a plain margin
-// applies. The bar is fixed-position (see DownloadProgressBar), hence a CSS var
-// rather than a layout sibling.
-const downloadBarStyle = computed<CSSProperties>(() =>
-  isWideScreen.value ? {} : { '--download-progress-bottom': 'calc(var(--dock-height) + 8px)' } as CSSProperties
-)
 
 const sessionIdentity = useSessionIdentity()
 const { getAgentBackend, getAgentName } = useAgents()
