@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>ClawBench · PS3 XMB 波浪壁纸 Demo</title>
+<style>
+:root {
+  --bg-primary: #0a1e6e;
+  --bg-secondary: #0d2478;
+  --bg-tertiary: #12308a;
+  --text-primary: #e6ecff;
+  --text-secondary: #a8b8ea;
+  --text-muted: #6b7bb0;
+  --border-color: #24388a;
+  --accent-color: #4678f5;
+  --panel-alpha: 82%;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.stage { position: absolute; inset: 0; overflow: hidden; background-color: var(--bg-primary); }
+
+canvas.wave {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  display: block; z-index: 0; pointer-events: none;
+}
+
+/* 与真实 App 一致：主面板只靠 color-mix 半透明，不加 backdrop-filter。
+   实测 backdrop-filter 叠在动画 canvas 上会吃掉约 40% 帧率。 */
+.app {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; flex-direction: column; gap: 10px; padding: 10px;
+}
+.panel {
+  background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.header { flex: 0 0 auto; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+.header .logo { font-weight: 700; letter-spacing: 0.02em; color: var(--accent-color); }
+.header .crumb { color: var(--text-muted); font-size: 13px; }
+.header .spacer { flex: 1; }
+.header .pill { font-size: 12px; color: var(--text-secondary); border: 1px solid var(--border-color); border-radius: 999px; padding: 4px 10px; }
+
+.body { flex: 1; display: flex; gap: 10px; min-height: 0; }
+
+.sidebar { flex: 0 0 210px; padding: 10px; overflow: hidden; }
+.sidebar .row { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-secondary); }
+.sidebar .row.active { background: color-mix(in srgb, var(--accent-color) 18%, transparent); color: var(--text-primary); }
+.sidebar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }
+.sidebar .row.active .dot { background: var(--accent-color); }
+.sidebar .sec { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 14px 10px 6px; }
+
+.main { flex: 1; min-width: 0; padding: 16px; overflow: hidden; }
+.main h2 { margin: 0 0 4px; font-size: 16px; }
+.main .sub { color: var(--text-muted); font-size: 12px; margin-bottom: 16px; }
+
+.msg { display: flex; gap: 10px; margin-bottom: 14px; }
+.avatar { flex: 0 0 28px; height: 28px; border-radius: 50%; background: var(--bg-tertiary); display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-secondary); }
+.bubble {
+  background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+  border: 1px solid var(--border-color); border-radius: var(--radius-md);
+  padding: 10px 12px; font-size: 13px; line-height: 1.6; color: var(--text-primary); max-width: 620px;
+}
+.msg.user .bubble {
+  background: color-mix(in srgb, var(--accent-color) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
+}
+.code {
+  margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: color-mix(in srgb, #000 40%, transparent);
+  border: 1px solid var(--border-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.55; color: var(--text-secondary); white-space: pre; overflow: hidden;
+}
+.code .k { color: var(--accent-color); }
+
+.rightbar { flex: 0 0 190px; padding: 12px; font-size: 12px; color: var(--text-muted); }
+.rightbar .card { border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 10px; margin-bottom: 10px; background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent); }
+.rightbar .card b { color: var(--text-secondary); display: block; margin-bottom: 6px; font-weight: 600; }
+
+.dock { flex: 0 0 auto; height: 54px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; }
+.dock button { background: transparent; border: none; color: var(--text-muted); font-size: 12px; padding: 8px 14px; border-radius: var(--radius-sm); cursor: default; font-family: inherit; }
+.dock button.on { color: var(--accent-color); background: color-mix(in srgb, var(--accent-color) 14%, transparent); }
+
+.controls {
+  position: fixed; top: 12px; right: 12px; z-index: 50; width: 296px; padding: 14px;
+  background: rgba(6,12,44,0.94); border: 1px solid rgba(140,175,255,0.18);
+  border-radius: var(--radius-md); backdrop-filter: blur(12px);
+  font-size: 12px; color: #dbe4ff;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  max-height: calc(100vh - 24px); overflow-y: auto;
+}
+.controls h3 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: #7d8fc0; font-weight: 600; }
+.controls .grp { margin-bottom: 13px; }
+.controls label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: #b3c0e6; }
+.controls label .val { color: var(--accent-color); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.controls input[type=range] { width: 100%; accent-color: var(--accent-color); cursor: pointer; }
+.controls .swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+.controls .sw { width: 30px; height: 30px; border-radius: var(--radius-sm); border: 2px solid transparent; cursor: pointer; }
+.controls .sw.on { border-color: #fff; }
+.controls .chk { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; color: #b3c0e6; cursor: pointer; }
+.controls .chk input { accent-color: var(--accent-color); cursor: pointer; }
+.stats { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: #7d8fc0; line-height: 1.7; border-top: 1px solid rgba(140,175,255,0.16); padding-top: 10px; }
+.stats b { color: var(--accent-color); font-weight: 600; }
+.preset { display: flex; gap: 6px; margin-bottom: 12px; }
+.preset button { flex: 1; padding: 7px 0; border: 1px solid rgba(140,175,255,0.22); background: rgba(140,175,255,0.08); color: #b3c0e6; font-size: 11px; cursor: pointer; border-radius: var(--radius-sm); font-family: inherit; }
+.preset button:hover { background: rgba(140,175,255,0.18); color: #fff; }
+.hint { color: #7484ad; font-size: 11px; line-height: 1.5; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <canvas class="wave" id="wave"></canvas>
+
+  <div class="app">
+    <div class="panel header">
+      <span class="logo">ClawBench</span>
+      <span class="crumb">~/projects/clawbench</span>
+      <span class="spacer"></span>
+      <span class="pill">CodeBuddy · Deepseek-V4</span>
+    </div>
+
+    <div class="body">
+      <div class="panel sidebar">
+        <div class="sec">会话</div>
+        <div class="row active"><span class="dot"></span>PS3 XMB 波浪</div>
+        <div class="row"><span class="dot"></span>XMB 波浪壁纸</div>
+        <div class="row"><span class="dot"></span>排队消息重构</div>
+        <div class="row"><span class="dot"></span>文件下载进度条</div>
+        <div class="sec">文件</div>
+        <div class="row"><span class="dot"></span>WaveBackground.vue</div>
+        <div class="row"><span class="dot"></span>waveMath.ts</div>
+        <div class="row"><span class="dot"></span>base.css</div>
+      </div>
+
+      <div class="panel main">
+        <h2>PS3 XMB 波浪壁纸</h2>
+        <div class="sub">柔光丝雾 · 细丝纹理 · 白星点 · 深宝蓝渐变</div>
+
+        <div class="msg user">
+          <div class="avatar">你</div>
+          <div class="bubble">类似 PS4 的带粒子效果的波浪，先做个 demo 看看。</div>
+        </div>
+
+        <div class="msg">
+          <div class="avatar">AI</div>
+          <div class="bubble">
+            这次按真机截图重建：<b>不是白亮芯</b>，而是一团<b>柔光丝雾</b> ——
+            由几十条极淡的细丝叠成，峰值只比背景亮 ~70 亮度。
+            <div class="code"><span class="k">背景</span> 竖直渐变 #07164f → #1a3794
+<span class="k">主带</span> 左端 y≈0.62 上升到 y≈0.36 后平走
+<span class="k">分叉</span> 中段分裂出一条支带（截图 3 可见）
+<span class="k">丝雾</span> 38 条细丝沿法线分布，中心密、边缘疏
+      每条亮度按噪声抖动 → 绸缎/烟雾纹理
+<span class="k">星点</span> 白色小点散布，靠近光带处更密
+      左端有明亮聚簇（光带"源头"）</div>
+          </div>
+        </div>
+
+        <div class="msg">
+          <div class="avatar">AI</div>
+          <div class="bubble">右上角可调参数、切配色。「参考图」就是实测的那套宝蓝。</div>
+        </div>
+      </div>
+
+      <div class="panel rightbar">
+        <div class="card"><b>光带</b>主带 + 分叉支带<br>柔光丝雾，无硬芯</div>
+        <div class="card"><b>丝纹</b>38 条叠加<br>噪声抖动出烟雾感</div>
+        <div class="card"><b>生命周期</b>页面隐藏即暂停<br>reduced-motion 只画一帧</div>
+      </div>
+    </div>
+
+    <div class="panel dock">
+      <button class="on">对话</button>
+      <button>文件</button>
+      <button>终端</button>
+      <button>Git</button>
+      <button>任务</button>
+      <button>设置</button>
+    </div>
+  </div>
+</div>
+
+<div class="controls">
+  <h3>XMB 波浪参数</h3>
+
+  <div class="preset">
+    <button data-p="ref">参考图</button>
+    <button data-p="thick">更厚</button>
+    <button data-p="wisp">更飘</button>
+  </div>
+
+  <div class="grp">
+    <label>光带厚度 <span class="val" id="vThick">1.00×</span></label>
+    <input type="range" id="thick" min="30" max="260" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>波动幅度 <span class="val" id="vAmp">1.00×</span></label>
+    <input type="range" id="amp" min="0" max="220" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>水平伸缩 <span class="val" id="vLam">1.00×</span></label>
+    <input type="range" id="lam" min="40" max="260" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>丝雾强度 <span class="val" id="vHaze">1.00×</span></label>
+    <input type="range" id="haze" min="0" max="220" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>丝纹对比 <span class="val" id="vFil">1.00×</span></label>
+    <input type="range" id="fil" min="0" max="220" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>丝雾宽度 <span class="val" id="vSpread">1.00×</span></label>
+    <input type="range" id="spread" min="40" max="200" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>速度 <span class="val" id="vSpeed">1.00×</span></label>
+    <input type="range" id="speed" min="10" max="100" step="1" value="50" />
+  </div>
+
+  <div class="grp">
+    <label>整体亮度 <span class="val" id="vGain">1.00×</span></label>
+    <input type="range" id="gain" min="20" max="200" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>面板不透明度 <span class="val" id="vAlpha">82%</span></label>
+    <input type="range" id="alpha" min="50" max="100" step="1" value="82" />
+  </div>
+
+  <div class="grp">
+    <h3 style="margin-bottom:8px">星点</h3>
+    <label>星点数量 <span class="val" id="vDensity">1.00×</span></label>
+    <input type="range" id="density" min="0" max="250" step="5" value="100" />
+    <label>星点尺寸 <span class="val" id="vPsize">1.00×</span></label>
+    <input type="range" id="psize" min="30" max="250" step="5" value="100" />
+    <label>星点辉光 <span class="val" id="vPglow">1.00×</span></label>
+    <input type="range" id="pglow" min="0" max="250" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <h3 style="margin-bottom:8px">配色</h3>
+    <div class="swatches" id="swatches"></div>
+  </div>
+
+  <div class="grp">
+    <label class="chk"><input type="checkbox" id="hiDpi" checked /> 高清渲染（1.5× 超采样）</label>
+    <label class="chk"><input type="checkbox" id="throttle" checked /> 30fps 上限</label>
+    <label class="chk"><input type="checkbox" id="reduced" /> 模拟 prefers-reduced-motion</label>
+  </div>
+
+  <div class="stats">
+    <div>帧率 <b id="sFps">–</b> fps</div>
+    <div>帧耗时 <b id="sMs">–</b> ms</div>
+    <div>丝纹数 <b id="sParticles">–</b></div>
+    <div>backing store <b id="sRes">–</b></div>
+  </div>
+
+  <div class="hint">
+    柔光丝雾 = 同一条中心线重复描 38 条极淡细丝，法向偏移按钟形分布（中心密、边缘疏），
+    每条亮度用噪声抖动。叠加后既柔又有绸缎般细纹 —— 这是 XMB 波浪的核心质感。
+  </div>
+</div>
+
+<script>
+'use strict'
+
+/* ══════════════════════════════════════════════════════════════════════════
+   参考图实测（image_23/24/25.png，均为 3356×1739 的真机视频截图）
+     背景渐变   顶 rgb(2,15,80) → 底 rgb(32,53,146)   （上暗下亮）
+     光带形态   一条柔光丝雾，从左侧 y≈0.62 升到 y≈0.36 后平走
+     光带厚度   半宽 2.6~6.2% 高
+     光带峰值   只比背景亮 ~70 亮度（rgb 119,142,226 vs 背景 42,65,148）
+                —— 是"柔雾"，绝不是白亮芯
+     分叉       中段分裂出一条支带（截图 3 明显）
+     星点       白色小点，中位亮度 ~33 的背景上散布白点
+                左端有明亮聚簇（光带"源头"）
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const TAU = Math.PI * 2
+const SPEED_MIN = 0.25
+const SPEED_MAX = 2.5
+const STEP_BACKING = 1.5
+const MAX_DT = 0.25
+
+/** 丝雾由多少条细丝叠成。越多越细腻，也越耗。 */
+const FILAMENTS = 38
+
+/**
+ * 光带定义。
+ *
+ * 中心线是一条"左低右高、右段平走"的曲线：  y = base + amp·e^(−decay·u)，
+ * 再叠低频正弦让它缓慢起伏（动效的来源）。
+ * fork 带在主带基础上减去一个高斯"鼓包"，于是中段分裂出一条支带 ——
+ * 对应截图 3 里光带一分为二的形态。
+ */
+const BANDS = [
+  {
+    // decay 从 3.0 降到 1.5：原来的 e^(−3u) 在 1/3 屏内就衰减殆尽，剩下的是
+    // 一段单调爬升，正弦项只占 7% 完全看不出来。降到 1.5 后指数项退居次要，
+    // 正弦主导可见形状（同时保留左低右高的整体走向，与参考图一致）。
+    base: 0.355, amp: 0.20, decay: 1.5,
+    // wob 从 0.020 提到 0.048：这才是可见的起伏幅度（原值只占主导项的 7%）。
+    // 基波 + 二次谐波（频率 1.25/2.3、相速 0.55/0.9 都不同）→ 拍频使波形流动。
+    wob: 0.048, wobF: 1.25, wobSpeed: 0.55,
+    wob2: 0.030, wobF2: 2.30, wobSpeed2: 0.90,
+    half: 0.030, envDecay: 1.05,
+    forkAmp: 0, forkC: 0, forkW: 1,
+    filaments: FILAMENTS, speed: 0.55,
+  },
+  {
+    // 分叉支带：在主带中段上方鼓出一块
+    base: 0.355, amp: 0.20, decay: 1.5,
+    wob: 0.038, wobF: 1.60, wobSpeed: 0.42,
+    wob2: 0.024, wobF2: 2.75, wobSpeed2: 0.72,
+    half: 0.022, envDecay: 1.55,
+    forkAmp: 0.105, forkC: 0.56, forkW: 0.24,
+    filaments: Math.round(FILAMENTS * 0.7), speed: 0.42,
+  },
+]
+
+/**
+ * 单条细丝的基准透明度。
+ *
+ * 目标：中心处累计 ≈ 0.30（实测光带比背景亮约 +70/230 ≈ 0.30 的丝雾色）。
+ * 38 条、钟形均值 ~0.5、亮度抖动均值 ~0.72 →
+ *   合计 ≈ 38 · FIL_A · 0.5 · 0.72 = 13.7·FIL_A  ⇒  FIL_A ≈ 0.022
+ */
+const FIL_A = 0.022
+
+const canvas = document.getElementById('wave')
+const ctx = canvas.getContext('2d')
+
+const ui = {
+  thick: 100, amp: 100, lam: 100, haze: 100, fil: 100, spread: 100,
+  speed: 50, gain: 100, alpha: 82,
+  density: 100, psize: 100, pglow: 100,
+  hiDpi: true, throttle: true, reduced: false,
+}
+
+let cssW = 0
+let cssH = 0
+let scale = 1.5
+let rafId = 0
+let lastTs = 0
+let acc = 0
+let time = 0
+let frames = 0
+let fpsFrames = 0
+let msAcc = 0
+let msCount = 0
+let running = false
+let warnedNaN = false
+
+/* ── 噪声 ─────────────────────────────────────────────────────────────── */
+
+const PERM = new Uint8Array(512)
+{
+  const p = new Uint8Array(256)
+  for (let i = 0; i < 256; i++) p[i] = i
+  let s = 20260926
+  for (let i = 255; i > 0; i--) {
+    s = (s * 1664525 + 1013904223) >>> 0
+    const j = s % (i + 1)
+    const t = p[i]; p[i] = p[j]; p[j] = t
+  }
+  for (let i = 0; i < 512; i++) PERM[i] = p[i & 255]
+}
+const INV255 = 1 / 255
+const hash2 = (ix, iy) => PERM[(PERM[ix & 255] + (iy & 255)) & 255] * INV255
+const smoother = (t) => t * t * t * (t * (t * 6 - 15) + 10)
+function noise2(x, y) {
+  const x0 = Math.floor(x), y0 = Math.floor(y)
+  const fx = smoother(x - x0), fy = smoother(y - y0)
+  const n00 = hash2(x0, y0), n10 = hash2(x0 + 1, y0)
+  const n01 = hash2(x0, y0 + 1), n11 = hash2(x0 + 1, y0 + 1)
+  const a = n00 + (n10 - n00) * fx
+  const b = n01 + (n11 - n01) * fx
+  return a + (b - a) * fy
+}
+
+/** 确定性 PRNG —— 保证每次加载丝纹/星点分布一致（也便于复现截图）。 */
+let seed = 987654321
+function rnd() {
+  seed = (seed * 1664525 + 1013904223) >>> 0
+  return seed / 4294967296
+}
+
+/* ── 颜色 ─────────────────────────────────────────────────────────────── */
+
+function parseHex(hex) {
+  const h = String(hex || '').trim().replace('#', '')
+  if (!/^[0-9a-fA-F]+$/.test(h)) return null
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  if (full.length !== 6) return null
+  const n = parseInt(full, 16)
+  if (!Number.isFinite(n)) return null
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }
+}
+const WHITE = { r: 255, g: 255, b: 255 }
+const BLACK = { r: 0, g: 0, b: 0 }
+const mix = (a, b, k) => ({
+  r: Math.round(a.r + (b.r - a.r) * k),
+  g: Math.round(a.g + (b.g - a.g) * k),
+  b: Math.round(a.b + (b.b - a.b) * k),
+})
+const rgba = (c, a) => `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`
+
+/**
+ * 主题取色。
+ *
+ * 直读 CSS 变量、不缓存：实测两次 getPropertyValue 合计 0.0007ms/帧，
+ * 而缓存需要监听主题事件——该事件在冷启动时**刻意不派发**（监听器尚未注册），
+ * 会留下一个初始取色的死区。直读既便宜又天然正确。
+ *
+ * 空值/畸形值一律回退（绝不产生 NaN）：canvas 对 NaN 颜色是**静默忽略**，
+ * 表现为「背景永远不更新」且控制台干净。
+ *
+ * 推导链（对参考图验证过）：bg=#0a1e6e, accent=#4678f5 →
+ *   bgTop    = mix(bg, BLACK, .28) = #07164f   (实测 rgb 2,15,80)
+ *   bgBottom = mix(bg, accent, .28) = #1a3794  (实测 rgb 32,53,146)
+ *   丝雾色   = mix(accent, WHITE, .85) = #e8effc（近白，加在背景上呈淡蓝雾）
+ */
+function readPalette() {
+  const cs = getComputedStyle(document.documentElement)
+  const accent = parseHex(cs.getPropertyValue('--accent-color')) || { r: 70, g: 120, b: 245 }
+  const bg = parseHex(cs.getPropertyValue('--bg-primary')) || { r: 10, g: 30, b: 110 }
+
+  const bgTop = mix(bg, BLACK, 0.28)
+  const bgBottom = mix(bg, accent, 0.28)
+  return {
+    bgTop,
+    bgBottom,
+    // 丝雾：近白，叠在蓝底上就是淡蓝雾（实测加成为中性偏白）
+    haze: mix(accent, WHITE, 0.85),
+    // 个别更亮的丝 → 细纹高光
+    wisp: mix(accent, WHITE, 0.93),
+    // 星点
+    star: mix(accent, WHITE, 0.90),
+  }
+}
+
+/* ── 尺寸 ─────────────────────────────────────────────────────────────── */
+
+function resize() {
+  const rect = canvas.getBoundingClientRect()
+  cssW = Math.max(1, rect.width)
+  cssH = Math.max(1, rect.height)
+  // 固定 1.5× 超采样，而非 min(1.5, dpr)：超采样靠浏览器双线性缩小做抗锯齿，
+  // DPR1 屏同样受益；写成 min 会在 DPR1 上得到 1，等于没有改善。
+  scale = ui.hiDpi ? 1.5 : 1
+  canvas.width = Math.max(1, Math.round(cssW * scale))
+  canvas.height = Math.max(1, Math.round(cssH * scale))
+  document.getElementById('sRes').textContent = `${canvas.width}×${canvas.height}`
+}
+
+/* ── 光带中心线 ───────────────────────────────────────────────────────── */
+
+/**
+ * 第 bi 条光带在 u 处的高度（占画布高度比例）。
+ *
+ * 主体 y = base + amp·e^(−decay·u)：左端低、向右抬升后趋平。
+ * 叠低频正弦让波峰缓慢流动（各带速度不同 → 分叉点游走）。
+ * 再叠噪声扰动去掉正弦的机械感。
+ *
+ * 返回 [高度, 该带当前的纵向缩放]（分叉带在鼓包处稍淡，见 envAt）。
+ */
+function bandY(band, bi, u, t) {
+  const ampScale = ui.amp / 100
+  const lamScale = ui.lam / 100
+  const uu = Math.min(1, Math.max(0, u / lamScale))
+  // 相位速率 0.03 → 0.11：原值下图案横移约 0.03 页宽/秒，走完一屏要 64 秒，
+  // 肉眼几乎静止（用户反馈"不是固定的"正是指这个）。
+  const phase = TAU * t * 0.11 * band.speed
+  let y = band.base + band.amp * Math.exp(-band.decay * uu)
+  // 两个不同频率、不同相速的正弦叠加：
+  //   ① 基波   —— 给出主要起伏（"像正弦一样"）
+  //   ② 二次谐波 —— 频率与相速都不同 → 两波拍频，波峰在屏内移动、疏密变化，
+  //      读起来是"波形在流动/变形"而不是整条图案在平移。
+  // 单加一个相位偏移（哪怕随时间变）只能得到平移；必须频率不同才有形变。
+  y += band.wob * Math.sin(TAU * band.wobF * uu + phase)
+  y += band.wob2 * Math.sin(TAU * band.wobF2 * uu + phase * band.wobSpeed2)
+  y += (noise2(u * 1.5 + bi * 9.1, t * 0.02 + bi * 3.3) * 2 - 1) * 0.014
+
+  if (band.forkAmp > 0) {
+    const g = Math.exp(-(((u - band.forkC) / band.forkW) ** 2))
+    y -= band.forkAmp * ampScale * g
+  }
+  y = band.base + (y - band.base) * ampScale
+  return y
+}
+
+/** 中心线斜率（用于算法线方向，让厚度垂直于光带而非竖直）。 */
+function bandSlope(band, bi, u, t) {
+  const d = 0.004
+  const y0 = bandY(band, bi, Math.max(0, u - d), t)
+  const y1 = bandY(band, bi, Math.min(1, u + d), t)
+  return (y1 - y0) / (Math.min(1, u + d) - Math.max(0, u - d))
+}
+
+/** 沿程包络：左端略亮（参考图左侧光雾更实），向右渐淡。 */
+function envAt(band, u) {
+  return 0.58 + 0.42 * Math.exp(-band.envDecay * u)
+}
+
+/* ── 星点 ─────────────────────────────────────────────────────────────── */
+
+/**
+ * 星点。分三组：
+ *   follow   贴着主带（off 以光带半宽为单位，多数 ±3 内）
+ *   scatter  全屏散布（离带较远，营造星空感）
+ *   cluster  主带左端"源头"的明亮聚簇
+ *
+ * 位置每帧由 u / 相对坐标重新求值 → 光带摆动时贴带的星点跟着走。
+ */
+const stars = []
+function buildStars() {
+  stars.length = 0
+  seed = 987654321
+  const push = (o) => stars.push(o)
+  for (let i = 0; i < 170; i++) {
+    push({
+      kind: 'follow', u: rnd(),
+      off: (rnd() * 2 - 1) * (rnd() * 2 - 1) * 3.0,
+      size: 0.5 + rnd() * rnd() * 2.0, alpha: 0.30 + rnd() * 0.70,
+      drift: (rnd() * 2 - 1) * 0.010, tw: rnd() * TAU, twS: 0.5 + rnd() * 1.8,
+    })
+  }
+  for (let i = 0; i < 110; i++) {
+    push({
+      kind: 'scatter', u: rnd(),
+      y: 0.06 + rnd() * 0.86,
+      size: 0.4 + rnd() * rnd() * 1.8, alpha: 0.20 + rnd() * 0.65,
+      drift: (rnd() * 2 - 1) * 0.006, tw: rnd() * TAU, twS: 0.4 + rnd() * 1.6,
+    })
+  }
+  for (let i = 0; i < 46; i++) {
+    push({
+      kind: 'cluster', u: 0.012 + rnd() * rnd() * 0.10,
+      off: (rnd() * 2 - 1) * (rnd() * 2 - 1) * 2.2,
+      size: 0.5 + rnd() * rnd() * 2.4, alpha: 0.45 + rnd() * 0.55,
+      drift: (rnd() * 2 - 1) * 0.004, tw: rnd() * TAU, twS: 0.6 + rnd() * 2.2,
+    })
+  }
+}
+buildStars()
+
+/* ── 绘制 ─────────────────────────────────────────────────────────────── */
+
+/**
+ * 计算一条光带在整幅宽度上的采样点与法线。
+ * 丝雾条的偏移在绘制时按 filament 索引即时叠加。
+ */
+function buildPath(band, bi, t) {
+  const stepCss = STEP_BACKING / scale
+  const pts = []
+  const norm = []
+  let lastX = -1
+  for (let x = 0; x <= cssW; x += stepCss) {
+    const u = x / cssW
+    const s = bandSlope(band, bi, u, t)
+    const len = Math.hypot(1, s)
+    pts.push([x, bandY(band, bi, u, t) * cssH])
+    norm.push([-s / len, 1 / len])
+    lastX = x
+  }
+  if (lastX < cssW) {
+    const s = bandSlope(band, bi, 1, t)
+    const len = Math.hypot(1, s)
+    pts.push([cssW, bandY(band, bi, 1, t) * cssH])
+    norm.push([-s / len, 1 / len])
+  }
+  return { pts, norm }
+}
+
+/** 沿中心线偏移 off，描一条路径。extraFn(i) 给每个采样点额外法向偏移。 */
+function strokePath(pts, norm, off, extraFn) {
+  ctx.beginPath()
+  for (let i = 0; i < pts.length; i++) {
+    const [nx, ny] = norm[i]
+    const e = extraFn ? extraFn(i) : 0
+    const x = pts[i][0] + nx * (off + e)
+    const y = pts[i][1] + ny * (off + e)
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  }
+  ctx.stroke()
+}
+
+function draw() {
+  if (!ctx) return
+  // 尺寸未就绪必须直接跳过：cssW=0 会让 u=x/cssW 变 NaN，
+  // createLinearGradient 会因非有限 stop 抛错并中断整帧。
+  if (cssW <= 0 || cssH <= 0) return
+
+  ctx.setTransform(scale, 0, 0, scale, 0, 0)
+
+  const pal = readPalette()
+  const gain = ui.gain / 100
+  const tt = time * Math.min(SPEED_MAX, Math.max(SPEED_MIN, ui.speed / 50))
+  const thickScale = ui.thick / 100
+  const hazeAmt = ui.haze / 100
+  const filAmt = ui.fil / 100
+  const spreadAmt = ui.spread / 100
+
+  // ① 背景：竖直渐变（上暗宝蓝 → 下亮宝蓝）
+  const bg = ctx.createLinearGradient(0, 0, 0, cssH)
+  bg.addColorStop(0, rgba(pal.bgTop, 1))
+  bg.addColorStop(0.55, rgba(mix(pal.bgTop, pal.bgBottom, 0.35), 1))
+  bg.addColorStop(1, rgba(pal.bgBottom, 1))
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, cssW, cssH)
+
+  ctx.save()
+  ctx.globalCompositeOperation = 'lighter'
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+
+  let filCount = 0
+
+  for (let bi = 0; bi < BANDS.length; bi++) {
+    const band = BANDS[bi]
+    const { pts, norm } = buildPath(band, bi, tt)
+
+    // 守卫：canvas 对 NaN 坐标**静默丢弃整条路径**（不报错、不警告），
+    // 缺字段时表现为「光带凭空消失」而控制台干净，极难排查。
+    if (pts.some((p) => !Number.isFinite(p[1]))) {
+      if (!warnedNaN) {
+        warnedNaN = true
+        console.warn('[wave] bandY 返回 NaN，光带被跳过。检查 BANDS 定义与 ui 取值')
+      }
+      continue
+    }
+
+    const half = band.half * cssH * thickScale * spreadAmt
+
+    // ② 大范围柔光底：几条远宽于丝雾的极淡描边，先铺一层"云"
+    for (const [wf, a0] of [[9.0, 0.016], [4.6, 0.028], [2.4, 0.042]]) {
+      ctx.strokeStyle = rgba(pal.haze, a0 * hazeAmt * gain)
+      ctx.lineWidth = half * wf
+      strokePath(pts, norm, 0)
+    }
+
+    // ③ 丝雾主体：38 条极淡细丝沿法线铺开，中心密、边缘疏。
+    //    每条丝的亮度与线宽用噪声抖动 → 绸缎/烟雾纹理。
+    //    偏移用 |k|^1.5 分布（比线性更向中心聚），边缘自动淡出。
+    const nF = band.filaments
+    for (let f = 0; f < nF; f++) {
+      const k = (f / (nF - 1)) * 2 - 1 // -1..1
+      const offK = Math.sign(k) * Math.abs(k) ** 1.5
+      const bell = Math.cos((k * Math.PI) / 2) ** 2
+
+      // 每条丝的稳定噪声 → 有的亮有的暗，形成细纹
+      const nA = noise2(f * 3.7 + bi * 17.1, 0.5)
+      const nW = noise2(f * 5.9 + bi * 23.3, 1.7)
+      // 「丝纹对比」拉开明暗差；默认只轻微抖动，否则会散成一根根独立线、失去雾感
+      const bright = 0.55 + 0.45 * nA * (0.55 + 0.9 * filAmt)
+      const wCss = 0.6 + 1.2 * nW
+
+      // 沿 x 的缓慢波动 → 丝与丝不平行，像真实流丝
+      const ph = f * 0.9 + bi * 2.0
+      const wobA = half * 0.11
+      const wobF = 1.0 + 0.8 * nW
+
+      const a = FIL_A * hazeAmt * gain * bell * Math.min(1.6, bright)
+      if (a < 0.002) continue
+
+      // 每条丝的沿程包络（左亮右淡），用第一采样点近似整条
+      const env = envAt(band, 0.5)
+
+      ctx.strokeStyle = rgba(bright > 1.05 ? pal.wisp : pal.haze, Math.min(1, a * env))
+      ctx.lineWidth = wCss
+      strokePath(pts, norm, offK * half, (i) => {
+        const u = pts[i][0] / cssW
+        return Math.sin(TAU * (u * wobF + ph) + tt * 0.35) * wobA
+      })
+      filCount++
+    }
+  }
+
+  // ④ 星点
+  const dens = ui.density / 100
+  if (dens > 0.01) {
+    const sizeScale = ui.psize / 100
+    const glowScale = ui.pglow / 100
+    const main = BANDS[0]
+    const { pts, norm } = buildPath(main, 0, tt)
+    const half = main.half * cssH * thickScale * spreadAmt
+    const stepCss = STEP_BACKING / scale
+
+    for (let i = 0; i < stars.length; i++) {
+      const s = stars[i]
+      const u = (s.u + tt * s.drift + 1) % 1
+      let cx, cy
+      if (s.kind === 'scatter') {
+        cx = u * cssW
+        cy = s.y * cssH
+      } else {
+        const idx = Math.min(pts.length - 1, Math.max(0, Math.round((u * cssW) / stepCss)))
+        const [nx, ny] = norm[idx]
+        cx = pts[idx][0] + nx * s.off * half
+        cy = pts[idx][1] + ny * s.off * half
+      }
+
+      const tw = 0.65 + 0.35 * Math.sin(tt * s.twS + s.tw)
+      const a = Math.min(1, s.alpha * tw * gain * dens)
+      const r = Math.max(0.35, s.size * sizeScale)
+
+      if (glowScale > 0.01 && r > 1.1) {
+        const gr = r * (2.6 + 1.6 * glowScale)
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, gr)
+        g.addColorStop(0, rgba(pal.star, 0.36 * a * glowScale))
+        g.addColorStop(1, rgba(pal.star, 0))
+        ctx.fillStyle = g
+        ctx.beginPath()
+        ctx.arc(cx, cy, gr, 0, TAU)
+        ctx.fill()
+      }
+      ctx.fillStyle = rgba(pal.star, Math.min(1, a))
+      ctx.beginPath()
+      ctx.arc(cx, cy, r, 0, TAU)
+      ctx.fill()
+    }
+  }
+  ctx.restore()
+
+  frames++
+  fpsFrames++
+  document.getElementById('sParticles').textContent = String(filCount)
+}
+
+/* ── 循环 ─────────────────────────────────────────────────────────────── */
+
+function tick(ts) {
+  rafId = requestAnimationFrame(tick)
+  if (!lastTs) lastTs = ts
+  let dt = (ts - lastTs) / 1000
+  lastTs = ts
+  if (dt > MAX_DT) dt = MAX_DT
+
+  acc += dt * 1000
+  if (acc < (ui.throttle ? 1000 / 30 : 0)) return
+  acc = 0
+  time += dt
+
+  const t0 = performance.now()
+  draw()
+  const cost = performance.now() - t0
+
+  msAcc += cost; msCount++
+  if (msCount >= 15) {
+    document.getElementById('sMs').textContent = (msAcc / msCount).toFixed(2)
+    msAcc = 0; msCount = 0
+  }
+}
+
+function drawStatic() { resize(); draw() }
+function start() {
+  if (running || !ctx) return
+  running = true; lastTs = 0; acc = 0
+  rafId = requestAnimationFrame(tick)
+}
+function stop() {
+  if (!running) return
+  running = false; cancelAnimationFrame(rafId); rafId = 0
+}
+function onVisibility() {
+  if (document.hidden) stop()
+  else if (!ui.reduced) start()
+}
+
+/* ── 控件 ─────────────────────────────────────────────────────────────── */
+
+const sliders = {}
+function bindRange(id, key, fmt, after) {
+  const el = document.getElementById(id)
+  const out = document.getElementById('v' + id[0].toUpperCase() + id.slice(1))
+  sliders[key] = el
+  const apply = () => {
+    ui[key] = Number(el.value)
+    if (out) out.textContent = fmt(ui[key])
+    if (after) after()
+  }
+  el.addEventListener('input', apply)
+  apply()
+}
+
+bindRange('thick', 'thick', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('amp', 'amp', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('lam', 'lam', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('haze', 'haze', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('fil', 'fil', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('spread', 'spread', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('density', 'density', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('psize', 'psize', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('pglow', 'pglow', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('speed', 'speed', (v) => (v / 50).toFixed(2) + '×')
+bindRange('gain', 'gain', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('alpha', 'alpha', (v) => v + '%', () => {
+  document.documentElement.style.setProperty('--panel-alpha', ui.alpha + '%')
+  if (!running) draw()
+})
+
+document.getElementById('hiDpi').addEventListener('change', (e) => {
+  ui.hiDpi = e.target.checked; resize(); if (!running) draw()
+})
+document.getElementById('throttle').addEventListener('change', (e) => {
+  ui.throttle = e.target.checked; acc = 0
+})
+document.getElementById('reduced').addEventListener('change', (e) => {
+  ui.reduced = e.target.checked
+  if (ui.reduced) { stop(); drawStatic() } else start()
+})
+
+function setSlider(key, val) {
+  const el = sliders[key]
+  el.value = String(val)
+  el.dispatchEvent(new Event('input'))
+}
+const PRESETS = {
+  ref:   { thick: 100, amp: 100, lam: 100, haze: 100, fil: 100, spread: 100, speed: 50, gain: 100 },
+  thick: { thick: 190, amp: 90,  lam: 120, haze: 120, fil: 85,  spread: 130, speed: 45, gain: 105 },
+  wisp:  { thick: 80,  amp: 130, lam: 80,  haze: 90,  fil: 150, spread: 110, speed: 60, gain: 100 },
+}
+document.querySelectorAll('.preset button').forEach((b) => {
+  b.addEventListener('click', () => {
+    const p = PRESETS[b.dataset.p]
+    for (const k of Object.keys(p)) setSlider(k, p[k])
+  })
+})
+
+/**
+ * 配色预设。参考图那套是实测值；其余为通用主题，让波浪能跟随 App 主题。
+ * accent/bg 驱动整条推导链（背景渐变、丝雾、星点）。
+ */
+const THEMES = [
+  { name: '参考图（宝蓝）', accent: '#4678f5', bg: '#0a1e6e', bg2: '#0d2478', bg3: '#12308a', fg: '#e6ecff' },
+  { name: '深海青', accent: '#3fd0e0', bg: '#081a3a', bg2: '#0c2450', bg3: '#123066', fg: '#d8f4f8' },
+  { name: '靛蓝', accent: '#6a5bf5', bg: '#0d0f52', bg2: '#131768', bg3: '#1a1f80', fg: '#e2e2ff' },
+  { name: '紫罗兰', accent: '#a98bd8', bg: '#150f3a', bg2: '#1e1750', bg3: '#2a2068', fg: '#eae0f8' },
+  { name: '青绿', accent: '#5fbfa8', bg: '#07281f', bg2: '#0b362a', bg3: '#104638', fg: '#dcf2ea' },
+  { name: '暖棕', accent: '#d7a86a', bg: '#241606', bg2: '#321f0a', bg3: '#422b12', fg: '#f0e0cc' },
+  { name: '玫红', accent: '#d9748f', bg: '#2a0a1a', bg2: '#3a1124', bg3: '#4c1830', fg: '#f8e0e8' },
+  { name: 'Gruvbox', accent: '#fe8019', bg: '#282828', bg2: '#3c3836', bg3: '#504945', fg: '#ebdbb2' },
+]
+
+const swatchWrap = document.getElementById('swatches')
+THEMES.forEach((thm, i) => {
+  const b = document.createElement('button')
+  b.className = 'sw' + (i === 0 ? ' on' : '')
+  b.title = thm.name
+  b.style.background = `linear-gradient(135deg, ${thm.accent} 0 50%, ${thm.bg} 50% 100%)`
+  b.addEventListener('click', () => {
+    const r = document.documentElement.style
+    r.setProperty('--accent-color', thm.accent)
+    r.setProperty('--bg-primary', thm.bg)
+    r.setProperty('--bg-secondary', thm.bg2)
+    r.setProperty('--bg-tertiary', thm.bg3)
+    r.setProperty('--text-primary', thm.fg)
+    for (const el of swatchWrap.children) el.classList.remove('on')
+    b.classList.add('on')
+    if (!running) draw()
+  })
+  swatchWrap.appendChild(b)
+})
+// 默认用参考图那套宝蓝
+swatchWrap.children[0].click()
+
+/* 帧率统计 */
+let fpsLast = performance.now()
+setInterval(() => {
+  const now = performance.now()
+  const dt = (now - fpsLast) / 1000
+  fpsLast = now
+  document.getElementById('sFps').textContent = dt > 0 ? (fpsFrames / dt).toFixed(0) : '–'
+  fpsFrames = 0
+}, 1000)
+
+/* ── 启动 ─────────────────────────────────────────────────────────────── */
+
+window.addEventListener('resize', () => { resize(); if (!running) draw() })
+document.addEventListener('visibilitychange', onVisibility)
+
+if (!ctx) {
+  document.getElementById('sRes').textContent = 'canvas 不可用'
+} else {
+  resize()
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    ui.reduced = true
+    document.getElementById('reduced').checked = true
+    drawStatic()
+  } else {
+    start()
+  }
+}
+</script>
+</body>
+</html>
