@@ -262,7 +262,13 @@ public class H2TunnelStreamTest {
         try {
             Thread connector = new Thread(() -> racy.connect(SERVER_URL, TransportKind.H2C));
             connector.start();
-            Thread.sleep(200);
+            // Wait for the probe to actually park in the gate, not a fixed
+            // interval: under load the sleep could expire before the connector
+            // thread was scheduled, so close() would run first, the connect()
+            // would then reset `closed`, and the assertion would fail against a
+            // session that never raced anything.
+            assertTrue("the probe must reach the gate before close()",
+                    fake.awaitHangs(1, 10_000));
 
             racy.close();
             fake.releaseHang();
@@ -683,8 +689,12 @@ public class H2TunnelStreamTest {
             Thread second = new Thread(() -> openQuietly(limited, 2));
             first.start();
             second.start();
-            // Give both a moment to occupy the two slots.
-            Thread.sleep(300);
+            // Wait until both workers actually occupy a slot, not a fixed
+            // interval: under load the sleep could expire before the threads
+            // were scheduled, so the next openStream would find a free slot
+            // (and block to TIMEOUT) instead of being rejected with LIMIT.
+            assertTrue("both workers must occupy their slots before saturating",
+                    fake.awaitHangs(2, 10_000));
 
             try {
                 limited.openStream("127.0.0.1", 3);

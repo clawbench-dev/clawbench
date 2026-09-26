@@ -85,13 +85,57 @@ final class FakeTunnelServer implements CallFactory {
     /** Gate for {@link Mode#HANG}: released by {@link #releaseHang()}. */
     private volatile java.util.concurrent.CountDownLatch hangGate = new java.util.concurrent.CountDownLatch(0);
 
+    /** Requests that have reached the hang gate, oldest first — a real signal
+     *  for "these workers occupy their slots", so a test does not have to sleep
+     *  a fixed interval and hope the threads were scheduled in time. */
+    private final AtomicInteger hangEntries = new AtomicInteger();
+    private final Object hangMonitor = new Object();
+
     /** Make the next {@code execute()} block until {@link #releaseHang()}. */
     void armHang() {
         hangGate = new java.util.concurrent.CountDownLatch(1);
+        synchronized (hangMonitor) {
+            hangEntries.set(0);
+        }
     }
 
     void releaseHang() {
         hangGate.countDown();
+    }
+
+    /**
+     * Wait until {@code count} requests have parked in the hang gate.
+     *
+     * <p>Replaces a {@code Thread.sleep} + "the workers must be in place"
+     * assertion: under load the sleep could expire before the pool threads
+     * were even scheduled, so the assertion that followed ran against an idle
+     * pool. Awaiting the hang entries proves the workers actually reached the
+     * gate first.
+     */
+    boolean awaitHangs(int count, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        synchronized (hangMonitor) {
+            while (hangEntries.get() < count) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) return false;
+                hangMonitor.wait(remaining);
+            }
+            return true;
+        }
+    }
+
+    /** Park in the hang gate, recording that this request occupies its slot. */
+    private void enterHang(String message) throws IOException {
+        synchronized (hangMonitor) {
+            hangEntries.incrementAndGet();
+            hangMonitor.notifyAll();
+        }
+        try {
+            hangGate.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException(message, e);
+        }
     }
 
     int executionCount() {
@@ -160,24 +204,14 @@ final class FakeTunnelServer implements CallFactory {
 
             if (request.url().encodedPath().endsWith("/api/ssh/info")) {
                 if (hangProbe) {
-                    try {
-                        hangGate.await();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException("interrupted while hanging the probe", e);
-                    }
+                    enterHang("interrupted while hanging the probe");
                 }
                 if ((mode == Mode.FAIL || failProbeOnly) && failure != null) throw failure;
                 return responseFor(probeStatus, probeProtocol);
             }
 
             if (mode == Mode.HANG) {
-                try {
-                    hangGate.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("interrupted while hanging", e);
-                }
+                enterHang("interrupted while hanging");
                 return duplexResponse();
             }
 

@@ -294,6 +294,22 @@ public final class FakeTunnelStream implements TunnelStream {
         private final AtomicBoolean closed = new AtomicBoolean(false);
         private volatile IOException responseFailure = null;
         private volatile IOException writeFailure = null;
+        /**
+         * Monitor a parked {@link InputStream#read()} waits on. A real socket
+         * read wakes the instant the connection fails or closes; a single long
+         * {@code poll(WAIT_MS)} does not — the failure flag is only read on
+         * entry, so arming it while the pump is parked leaves the read waiting
+         * out the whole timeout and closing the socket exactly on the tests'
+         * {@link #WAIT_MS} deadline (a dead tie under load). Every producer that
+         * changes what a read is waiting for signals this monitor.
+         */
+        private final Object responseMonitor = new Object();
+
+        private void signalResponse() {
+            synchronized (responseMonitor) {
+                responseMonitor.notifyAll();
+            }
+        }
 
         @Override
         public InputStream getInputStream() {
@@ -305,20 +321,29 @@ public final class FakeTunnelStream implements TunnelStream {
 
                 @Override
                 public int read() throws IOException {
-                    IOException failure = responseFailure;
-                    if (failure != null) throw failure;
-                    if (eof) return -1;
-                    try {
-                        Integer next = responseBytes.poll(WAIT_MS, TimeUnit.MILLISECONDS);
-                        if (next == null) throw new IOException("no response bytes");
-                        if (next == -1) {
-                            eof = true;
-                            return -1;
+                    long deadline = System.currentTimeMillis() + WAIT_MS;
+                    synchronized (responseMonitor) {
+                        while (true) {
+                            IOException failure = responseFailure;
+                            if (failure != null) throw failure;
+                            if (eof) return -1;
+                            Integer next = responseBytes.poll();
+                            if (next != null) {
+                                if (next == -1) {
+                                    eof = true;
+                                    return -1;
+                                }
+                                return next;
+                            }
+                            long remaining = deadline - System.currentTimeMillis();
+                            if (remaining <= 0) throw new IOException("no response bytes");
+                            try {
+                                responseMonitor.wait(remaining);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                throw new IOException("interrupted", e);
+                            }
                         }
-                        return next;
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException("interrupted", e);
                     }
                 }
 
@@ -371,6 +396,10 @@ public final class FakeTunnelStream implements TunnelStream {
         /** Make the response direction fail with {@code e} on the next read. */
         public void failResponse(IOException e) {
             responseFailure = e;
+            // Wake a read already parked in responseMonitor.wait(): without this
+            // the flag is invisible until the next read() entry, so the pump
+            // would block out the full WAIT_MS and race the test's deadline.
+            signalResponse();
         }
 
         /** Make the request direction fail with a reset on every write. */
@@ -387,6 +416,8 @@ public final class FakeTunnelStream implements TunnelStream {
         public void close() {
             if (closed.compareAndSet(false, true)) {
                 responseBytes.add(-1);
+                // Wake a parked read so it observes the EOF now, not at WAIT_MS.
+                signalResponse();
             }
         }
 
@@ -400,11 +431,13 @@ public final class FakeTunnelStream implements TunnelStream {
             for (byte b : data.getBytes(StandardCharsets.UTF_8)) {
                 responseBytes.add((int) b);
             }
+            signalResponse();
         }
 
         /** End the response direction. */
         public void endResponse() {
             responseBytes.add(-1);
+            signalResponse();
         }
 
         public boolean awaitCloseWrite() throws InterruptedException {
