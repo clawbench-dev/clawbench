@@ -20,7 +20,7 @@ vi.mock('@/components/session/SessionList.vue', () => ({
 vi.mock('@/components/session/SessionListHeader.vue', () => ({
   default: {
     name: 'SessionListHeader',
-    template: '<div class="header-stub"><slot name="actions" /><button class="refresh-stub" @click="$emit(\'refresh\')" /></div>',
+    template: '<div class="header-stub"><slot name="actions" /><button class="refresh-stub" @click="$emit(\'refresh\')" /><slot name="actions-end" /></div>',
     emits: ['refresh'],
   },
 }))
