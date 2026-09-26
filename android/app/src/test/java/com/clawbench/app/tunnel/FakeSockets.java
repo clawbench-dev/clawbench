@@ -55,6 +55,12 @@ public final class FakeSockets {
         public final List<Integer> dialedPorts = Collections.synchronizedList(new ArrayList<>());
         public volatile boolean failNextDial = false;
         public volatile FakeSocket nextSocket = null;
+        /**
+         * Runs after a dial is recorded but before the socket is returned, so a
+         * test can deterministically change tunnel state "while the dial is in
+         * flight" without racing the claim task.
+         */
+        public volatile Runnable afterDial = null;
 
         @Override
         public Socket dial(String host, int port) throws IOException {
@@ -64,6 +70,8 @@ public final class FakeSockets {
                 failNextDial = false;
                 throw new IOException("connection refused");
             }
+            Runnable hook = afterDial;
+            if (hook != null) hook.run();
             FakeSocket queued = nextSocket;
             nextSocket = null;
             return queued != null ? queued : new FakeSocket("");
@@ -71,6 +79,23 @@ public final class FakeSockets {
 
         public int dialCount() {
             return dialedHosts.size();
+        }
+
+        /**
+         * Wait until {@code count} dials have been attempted, with a deadline.
+         *
+         * <p>Lets a test replace a {@code Thread.sleep} + "nothing happened"
+         * assertion with a real wait: the sleep could expire before the claim
+         * task ran, so the negative assertion passed vacuously. Awaiting the
+         * dial proves the task actually reached the dialer before asserting
+         * what it did (or did not) do next.
+         */
+        public boolean awaitDials(int count) throws InterruptedException {
+            long deadline = System.currentTimeMillis() + FakeTunnelStream.WAIT_MS;
+            while (dialedHosts.size() < count && System.currentTimeMillis() < deadline) {
+                Thread.sleep(5);
+            }
+            return dialedHosts.size() >= count;
         }
     }
 

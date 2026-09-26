@@ -35,6 +35,23 @@ public final class FakeTunnelStream implements TunnelStream {
     public volatile boolean failNextOpen = false;
     public volatile boolean failConnect = false;
     public volatile boolean closed = false;
+    /**
+     * The {@code preferred} argument of every {@link #connect} call, oldest
+     * first — lets a test prove the remembered transport is handed back.
+     */
+    public final List<TransportKind> connectPreferred = Collections.synchronizedList(new ArrayList<>());
+    /**
+     * The kind {@link #connect} reports when it succeeds. Null echoes the
+     * preference (or {@link TransportKind#H2C} when there is none), which is the
+     * pre-existing behaviour.
+     */
+    public volatile TransportKind connectResult = null;
+    /**
+     * When set, {@link #openStream} throws this instead of handing out a
+     * connection. Unlike {@link #failNextOpen} it is sticky, so a test can make
+     * every stream on a port fail (the accept-loop-survival case).
+     */
+    public volatile TunnelException streamFailure = null;
 
     // --- -R control plane -------------------------------------------------
 
@@ -94,11 +111,13 @@ public final class FakeTunnelStream implements TunnelStream {
 
     @Override
     public TransportKind connect(String serverUrl, TransportKind preferred) {
+        connectPreferred.add(preferred);
         if (failConnect) {
             connected = false;
             return null;
         }
         connected = true;
+        if (connectResult != null) return connectResult;
         return preferred != null ? preferred : TransportKind.H2C;
     }
 
@@ -109,13 +128,17 @@ public final class FakeTunnelStream implements TunnelStream {
 
     @Override
     public TransportKind getKind() {
-        return isConnected() ? TransportKind.H2C : null;
+        if (!isConnected()) return null;
+        return connectResult != null ? connectResult : TransportKind.H2C;
     }
 
     @Override
     public TunnelConnection openStream(String host, int port) throws TunnelException {
         openedHosts.add(host);
         openedPorts.add(port);
+        if (streamFailure != null) {
+            throw streamFailure;
+        }
         if (failNextOpen) {
             failNextOpen = false;
             throw new TunnelException(TunnelErrorKind.TARGET_UNREACHABLE, "dial failed");
@@ -269,6 +292,8 @@ public final class FakeTunnelStream implements TunnelStream {
         private final BlockingQueue<Integer> responseBytes = new ArrayBlockingQueue<>(64);
         private final CountDownLatch closeWriteCalled = new CountDownLatch(1);
         private final AtomicBoolean closed = new AtomicBoolean(false);
+        private volatile IOException responseFailure = null;
+        private volatile IOException writeFailure = null;
 
         @Override
         public InputStream getInputStream() {
@@ -280,6 +305,8 @@ public final class FakeTunnelStream implements TunnelStream {
 
                 @Override
                 public int read() throws IOException {
+                    IOException failure = responseFailure;
+                    if (failure != null) throw failure;
                     if (eof) return -1;
                     try {
                         Integer next = responseBytes.poll(WAIT_MS, TimeUnit.MILLISECONDS);
@@ -301,14 +328,28 @@ public final class FakeTunnelStream implements TunnelStream {
         public OutputStream getOutputStream() {
             return new OutputStream() {
                 @Override
-                public void write(int b) {
+                public void write(int b) throws IOException {
+                    IOException failure = writeFailure;
+                    if (failure != null) throw failure;
                     requestBytes.add((byte) b);
                 }
 
                 @Override
-                public void flush() {
+                public void flush() throws IOException {
+                    IOException failure = writeFailure;
+                    if (failure != null) throw failure;
                 }
             };
+        }
+
+        /** Make the response direction fail with {@code e} on the next read. */
+        public void failResponse(IOException e) {
+            responseFailure = e;
+        }
+
+        /** Make the request direction fail with a reset on every write. */
+        public void failWrites() {
+            writeFailure = new IOException("stream reset");
         }
 
         @Override

@@ -146,6 +146,44 @@ public class H2PortForwardTransportTest {
     }
 
     // ==================================================================
+    // Port validation (see the report on the validation asymmetry)
+    // ==================================================================
+
+    @Test
+    public void addLocal_clearlyInvalidPort_propagatesAnUncheckedFailure() {
+        // H2PortForwardTransport does not validate localPort; the range check
+        // happens in InetSocketAddress, so an out-of-range port surfaces as an
+        // unchecked IllegalArgumentException. The service's catch (Exception)
+        // still drops the mapping, but the transport itself never reports a
+        // TunnelException for it.
+        for (int bad : new int[]{-1, 65536}) {
+            try {
+                transport.addLocal(bad, 80, "127.0.0.1");
+                org.junit.Assert.fail("expected port " + bad + " to be rejected");
+            } catch (IllegalArgumentException expected) {
+                // From new InetSocketAddress(LOOPBACK, bad).
+            } catch (Exception other) {
+                org.junit.Assert.fail("expected an unchecked failure, got " + other);
+            }
+        }
+        assertEquals("a rejected port must not register a listener",
+                0, transport.listenerCount());
+    }
+
+    @Test
+    public void addLocal_portZero_isAcceptedAsAnEphemeralRequest() throws Exception {
+        // Pins current behaviour: the transport treats 0 like InetSocketAddress
+        // does (an OS-assigned port). It is NOT rejected, which is a latent
+        // problem for -L: the frontend reaches the forward at
+        // localhost:{localPort}, and the server's registry never assigns 0
+        // (allocateLocalPort remaps <1024 to 1024+), so a 0 here yields a
+        // listener nothing can address. See the report.
+        transport.addLocal(0, 80, "127.0.0.1");
+        assertEquals(1, transport.listenerCount());
+        assertTrue(transport.isLocalReachable(0));
+    }
+
+    // ==================================================================
     // accept -> openStream
     // ==================================================================
 
@@ -450,9 +488,11 @@ public class H2PortForwardTransportTest {
 
         tunnel.control.incoming(9000, "tok-1");
 
-        // Give the claim task a chance to (incorrectly) run before asserting.
-        Thread.sleep(200);
-        assertEquals("the local dial must have been attempted", 1, sockets.dialer.dialCount());
+        // Wait for the claim task to actually reach the dialer before asserting
+        // what it did next. A fixed sleep could expire before the task ran, so
+        // the "no claim" assertion would pass without the task ever executing.
+        assertTrue("the claim task must attempt the local dial",
+                sockets.dialer.awaitDials(1));
         assertEquals("an unreachable target must not spend the single-use token",
                 0, tunnel.claimedTokens.size());
         assertEquals("no relay may be tracked for a failed dial", 0, transport.activeRelayCount());
@@ -462,21 +502,216 @@ public class H2PortForwardTransportTest {
     public void incoming_unknownPort_isIgnoredWithoutClaiming() throws Exception {
         transport.addReverse(9000, 3000, "127.0.0.1");
 
-        tunnel.control.incoming(9999, "tok-1");
-        Thread.sleep(200);
+        // Positive control first: prove the claim pipeline actually runs for a
+        // mapped port (the handler is wired, the executor works). Without this
+        // the "unknown port did nothing" assertion could pass because nothing
+        // async ever ran, not because the unknown port was correctly ignored.
+        tunnel.control.incoming(9000, "tok-known");
+        assertTrue("the known port must reach the dialer", sockets.dialer.awaitDials(1));
+        assertTrue(tunnel.awaitClaims(1));
 
-        assertEquals("no dial for an unmapped port", 0, sockets.dialer.dialCount());
-        assertEquals("no claim for an unmapped port", 0, tunnel.claimedTokens.size());
+        // Now the unknown port: it is rejected synchronously inside the control
+        // handler, so no additional dial or claim may appear.
+        tunnel.control.incoming(9999, "tok-unknown");
+
+        assertEquals("no dial for an unmapped port", 1, sockets.dialer.dialCount());
+        assertEquals("no claim for an unmapped port", 1, tunnel.claimedTokens.size());
     }
 
     @Test
     public void incoming_withoutAToken_isIgnored() throws Exception {
         transport.addReverse(9000, 3000, "127.0.0.1");
 
-        tunnel.control.deliver(ControlMessage.parse("{\"type\":\"incoming\",\"port\":9000}"));
-        Thread.sleep(200);
+        // Positive control: a well-formed incoming does dial and claim.
+        tunnel.control.incoming(9000, "tok-known");
+        assertTrue("the known incoming must reach the dialer", sockets.dialer.awaitDials(1));
+        assertTrue(tunnel.awaitClaims(1));
 
-        assertEquals(0, tunnel.claimedTokens.size());
+        // A token-less incoming is rejected synchronously (the token guard runs
+        // before the port lookup), so it must add no dial and no claim.
+        tunnel.control.deliver(ControlMessage.parse("{\"type\":\"incoming\",\"port\":9000}"));
+
+        assertEquals("a token-less incoming must not dial", 1, sockets.dialer.dialCount());
+        assertEquals(1, tunnel.claimedTokens.size());
+    }
+
+    @Test
+    public void addReverse_isIdempotentForTheSameServerPort() throws Exception {
+        // H2PortForwardTransport:221-224 returns "already bound, success"
+        // without re-binding. A reconnect replay re-adds every reverse port, so
+        // this double-add is exactly the case it guards: re-binding would be
+        // answered with bind_err (the server's listener already holds the port)
+        // and the working forward would be reported as broken.
+        transport.addReverse(9000, 3000, "127.0.0.1");
+        transport.addReverse(9000, 3000, "127.0.0.1");
+
+        assertEquals("the second add must be a no-op", 1, tunnel.boundPorts.size());
+        assertEquals("exactly one mapping may be tracked", 1, transport.reverseForwardCount());
+    }
+
+    @Test
+    public void removeReverse_afterBindZero_dropsBothKeys() throws Exception {
+        // A bind(0) is answered with the OS-assigned port; H2PortForwardTransport
+        // :242-243 indexes the mapping under BOTH the request key (0) and the
+        // bound key. removeReverse(0) is what the service recorded, so it must
+        // drop the twin via values().remove(forward) (:253) — otherwise the
+        // bound key would linger and a later incoming would still claim.
+        tunnel.nextBoundPort = 45123;
+        transport.addReverse(0, 3000, "127.0.0.1");
+        assertEquals("both keys share one instance", 2, transport.reverseForwardCount());
+
+        transport.removeReverse(0);
+
+        assertEquals("removing the request key must drop the bound twin too",
+                0, transport.reverseForwardCount());
+
+        // And a later announcement for the bound port must be ignored.
+        tunnel.control.incoming(45123, "tok-late");
+        assertEquals("a dropped mapping must not claim", 0, tunnel.claimedTokens.size());
+        assertEquals("a dropped mapping must not dial", 0, sockets.dialer.dialCount());
+    }
+
+    @Test
+    public void controlStreamDeath_clearsReverseMappings() throws Exception {
+        // H2PortForwardTransport:283-288: the reverse mappings are server-side
+        // state that dies with the control stream. Keeping them would advertise
+        // reverse ports nothing can serve after the server dropped the bind —
+        // the reconnect-safety invariant.
+        transport.addReverse(9000, 3000, "127.0.0.1");
+        assertEquals(1, transport.reverseForwardCount());
+
+        tunnel.control.close();
+
+        assertEquals("a dead control stream must forget every reverse mapping",
+                0, transport.reverseForwardCount());
+        tunnel.control.incoming(9000, "tok-after-death");
+        assertEquals("a stale mapping must not claim after the stream died",
+                0, tunnel.claimedTokens.size());
+    }
+
+    @Test
+    public void incoming_tunnelDownAfterDial_doesNotClaimAndClosesTarget() throws Exception {
+        // H2PortForwardTransport:333-337: the target is dialed first, then the
+        // tunnel is re-checked. If it went down in between, the dialed target
+        // must be closed rather than leaked, and the token left unspent. The
+        // dialer's afterDial hook flips the flag exactly in that window, so the
+        // test is deterministic rather than racy.
+        transport.addReverse(9000, 3000, "127.0.0.1");
+        FakeSocket target = new FakeSocket("");
+        sockets.dialer.nextSocket = target;
+        sockets.dialer.afterDial = () -> tunnel.connected = false;
+
+        tunnel.control.incoming(9000, "tok-1");
+
+        assertTrue("the dialed target must be closed once the tunnel is down",
+                target.awaitClosed());
+        assertEquals("a dead tunnel must not spend the token", 0, tunnel.claimedTokens.size());
+        assertEquals("no relay may be tracked", 0, transport.activeRelayCount());
+    }
+
+    @Test
+    public void failedServe_doesNotStopTheAcceptLoop() throws Exception {
+        // H2PortForwardTransport:444-448 breaks the accept loop only when
+        // accept() itself fails; per-connection failures are handled inside
+        // serve(). A failed serve (openStream throws) must therefore leave the
+        // loop alive for the next connection, or one bad dial would kill the
+        // whole port.
+        transport.addLocal(3080, 80, "127.0.0.1");
+        FakeServerSocket server = sockets.created.get(0);
+        // Sticky: every stream on this port fails, so the second accept proves
+        // the loop survived rather than the failure being a one-off.
+        tunnel.streamFailure = new TunnelException(
+                TunnelErrorKind.TARGET_UNREACHABLE, "dial failed");
+
+        FakeSocket first = new FakeSocket("a");
+        server.accept(first);
+        assertTrue("the first connection's socket must be dropped", first.awaitClosed());
+
+        // The loop must still be accepting: a second connection is also served
+        // (and also fails), which only happens if the loop is still running.
+        FakeSocket second = new FakeSocket("b");
+        server.accept(second);
+        assertTrue("the accept loop must survive a failed serve", second.awaitClosed());
+        assertEquals("both accepted connections must have reached openStream",
+                2, tunnel.openedHosts.size());
+    }
+
+    @Test
+    public void concurrentConnectionsToTheSamePort_openOneStreamEach() throws Exception {
+        // H2PortForwardTransport:450-453: one thread per accepted connection.
+        // Every existing test accepts exactly one, so the per-connection
+        // fan-out is unverified.
+        FakeConnection first = tunnel.queueConnection();
+        FakeConnection second = tunnel.queueConnection();
+        transport.addLocal(3080, 80, "127.0.0.1");
+        FakeServerSocket server = sockets.created.get(0);
+
+        server.accept(new FakeSocket("one"));
+        server.accept(new FakeSocket("two"));
+
+        tunnel.awaitOpenedStreams(2);
+        assertEquals("each accepted connection must open its own stream",
+                2, tunnel.openedHosts.size());
+        assertEquals("both relays must be tracked", 2, transport.activeRelayCount());
+        assertTrue(first.awaitRequestBytes());
+        assertTrue(second.awaitRequestBytes());
+    }
+
+    @Test
+    public void pumpTunnelReadError_closesTheLocalSocket() throws Exception {
+        // H2PortForwardTransport:551-557: a read error on the response
+        // direction is not a clean EOF but still tears the pair down in the
+        // finally block. Only clean EOF is currently tested.
+        FakeConnection connection = tunnel.queueConnection();
+        transport.addLocal(3080, 80, "127.0.0.1");
+        FakeServerSocket server = sockets.created.get(0);
+
+        FakeSocket socket = new FakeSocket("hello");
+        server.accept(socket);
+        assertTrue(connection.awaitRequestBytes());
+
+        connection.failResponse(new IOException("stream reset"));
+
+        assertTrue("a response-direction read error must close the local socket",
+                socket.awaitClosed());
+        assertTrue("the stream must be released", connection.isClosed());
+    }
+
+    @Test
+    public void pumpLocalWriteError_closesBothEnds() throws Exception {
+        // H2PortForwardTransport:526-532: a local->tunnel write error (the
+        // stream died mid-write) closes both ends. Only the clean-EOF
+        // half-close path is tested today. The write failure is armed before
+        // the connection is accepted, so the pump's very first write throws and
+        // the assertion is deterministic.
+        FakeConnection connection = tunnel.queueConnection();
+        transport.addLocal(3080, 80, "127.0.0.1");
+        FakeServerSocket server = sockets.created.get(0);
+        connection.failWrites();
+
+        FakeSocket socket = new FakeSocket("hello");
+        server.accept(socket);
+
+        assertTrue("a local->tunnel write error must close the local socket",
+                socket.awaitClosed());
+        assertTrue("the stream must be released", connection.isClosed());
+    }
+
+    @Test
+    public void serve_whenTunnelIsDown_closesTheAcceptedSocket() throws Exception {
+        // H2PortForwardTransport:471-475: a connection accepted after the
+        // tunnel died must be dropped, not left waiting on a stream that will
+        // never carry bytes.
+        transport.addLocal(3080, 80, "127.0.0.1");
+        FakeServerSocket server = sockets.created.get(0);
+        tunnel.connected = false;
+
+        FakeSocket socket = new FakeSocket("hello");
+        server.accept(socket);
+
+        assertTrue("a down tunnel must close the accepted socket", socket.awaitClosed());
+        assertEquals("no stream may be opened on a dead tunnel", 0, tunnel.openedHosts.size());
+        assertEquals("no relay may stay tracked", 0, transport.activeRelayCount());
     }
 
     @Test

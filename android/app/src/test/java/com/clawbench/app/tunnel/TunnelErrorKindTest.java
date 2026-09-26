@@ -5,6 +5,7 @@ import org.junit.Test;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.lang.reflect.Method;
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
 import java.net.SocketTimeoutException;
@@ -108,13 +109,45 @@ public class TunnelErrorKindTest {
     }
 
     @Test
-    public void h2ClassMatching_survivesRenamedClass() {
+    public void h2ClassMatching_matchesTheExactClassName() {
         // The mapping matches internal OkHttp classes by name (R8 may rename
         // them), so a throwable whose simple class is unknown but whose name
-        // matches must still classify. Here the real class is used, which is
-        // the same path a renamed subclass would take via its superclass.
+        // matches must still classify.
         StreamResetException reset = new StreamResetException(ErrorCode.INTERNAL_ERROR);
         assertEquals(TunnelErrorKind.PROTOCOL, TunnelErrorKind.of(reset));
+    }
+
+    @Test
+    public void h2ClassMatching_walksTheSuperclassChain() throws Exception {
+        // The real h2 exceptions are final, so the previous test only proves a
+        // direct name match — it would still pass if hasName() checked
+        // t.getClass() alone and dropped the superclass walk. R8 can rename the
+        // concrete class while an ancestor keeps the matched name, so the walk
+        // is what the "survives a renamed class" claim actually rests on.
+        // Exercise it directly with a local subclass whose own name does not
+        // match but whose superclass does.
+        class RenamedReset extends IOException {
+        }
+        class DeeperRenamedReset extends RenamedReset {
+        }
+
+        Method hasName = TunnelErrorKind.class.getDeclaredMethod(
+                "hasName", Throwable.class, String.class);
+        hasName.setAccessible(true);
+
+        // Sanity: a direct name match is found on the first iteration.
+        assertTrue((Boolean) hasName.invoke(null, new DeeperRenamedReset(),
+                DeeperRenamedReset.class.getName()));
+        // The walk: the concrete class is not the target, the superclass is.
+        assertTrue("the superclass walk must reach RenamedReset",
+                (Boolean) hasName.invoke(null, new DeeperRenamedReset(),
+                        RenamedReset.class.getName()));
+        // Two levels up.
+        assertTrue((Boolean) hasName.invoke(null, new DeeperRenamedReset(),
+                IOException.class.getName()));
+        // And a name no ancestor carries must not match.
+        assertFalse((Boolean) hasName.invoke(null, new DeeperRenamedReset(),
+                "okhttp3.internal.http2.StreamResetException"));
     }
 
     // ── UI vocabulary ─────────────────────────────────────────────────

@@ -23,6 +23,7 @@ import okhttp3.Protocol;
 import okhttp3.Request;
 import okhttp3.Response;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -285,6 +286,73 @@ public class H2TunnelStreamTest {
         assertEquals(probesAfterFirst, server.requestsFor("/api/ssh/info").size());
     }
 
+    @Test
+    public void connect_sameServerDifferentPreference_keepsTheLiveSession() {
+        // H2TunnelStream:236-239 deliberately reuses a live same-host session
+        // regardless of a changed `preferred`: reconnecting just to switch
+        // transports would drop every forwarded connection. The service relies
+        // on this — setTransportPreference only writes the static field while a
+        // session is live (MainActivity:2714-2716, "takes effect on reconnect").
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        assertEquals(TransportKind.H2C, tunnel.connect(SERVER_URL, TransportKind.H2C));
+        int probesAfterFirst = server.requestsFor("/api/ssh/info").size();
+
+        // A different preferred transport for the SAME host:port must not
+        // re-probe and must keep reporting the original kind.
+        assertEquals("the live session's kind must not change",
+                TransportKind.H2C, tunnel.connect(SERVER_URL, TransportKind.TLS));
+        assertEquals("no re-probe may happen for a live same-server session",
+                probesAfterFirst, server.requestsFor("/api/ssh/info").size());
+        assertEquals(TransportKind.H2C, tunnel.getKind());
+    }
+
+    @Test
+    public void connect_differentServer_tearsDownTheOldSession() {
+        // H2TunnelStream:240: a different host:port is a different session, so
+        // the old one must be closed rather than reused.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        assertEquals(TransportKind.H2C, tunnel.connect(SERVER_URL, TransportKind.H2C));
+        int probesAfterFirst = server.requestsFor("/api/ssh/info").size();
+
+        // A different port is a different server endpoint.
+        assertEquals(TransportKind.H2C,
+                tunnel.connect("http://127.0.0.1:20300", TransportKind.H2C));
+
+        assertEquals("a different server must trigger a fresh probe",
+                probesAfterFirst + 1, server.requestsFor("/api/ssh/info").size());
+        assertEquals("the live target must be the new server",
+                20300, server.requestsFor("/api/ssh/info").get(probesAfterFirst).url().port());
+    }
+
+    @Test
+    public void closeThenConnect_rebuildsAUsableSession() {
+        // The production reconnect cycle: H2PortForwardTransport.close() ->
+        // H2TunnelStream.close() (H2TunnelStream:337) -> the service's
+        // ensureH2Connection() calls connect() again (H2TunnelStream:241 resets
+        // closed=false). Without that reset the rebuilt session would report
+        // not-connected and every stream would fail CLOSED.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        assertEquals(TransportKind.H2C, tunnel.connect(SERVER_URL, TransportKind.H2C));
+        try (TunnelConnection first = tunnel.openStream("127.0.0.1", 1)) {
+            assertNotNull(first);
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+
+        tunnel.close();
+        assertFalse("close() must mark the session dead", tunnel.isConnected());
+
+        assertEquals(TransportKind.H2C, tunnel.connect(SERVER_URL, TransportKind.H2C));
+        assertTrue("connect() after close() must revive the session", tunnel.isConnected());
+
+        // The real proof: a stream can be opened on the rebuilt session.
+        try (TunnelConnection second = tunnel.openStream("127.0.0.1", 8080)) {
+            assertNotNull(second);
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     // ==================================================================
     // Constraint 2: execute(), never enqueue()
     // ==================================================================
@@ -475,6 +543,23 @@ public class H2TunnelStreamTest {
         assertNull(server.lastRequest().header("Cookie"));
     }
 
+    @Test
+    public void requests_omitTheCookieHeaderForAnEmptyCookie() {
+        // H2TunnelStream:1192 guards on `cookie != null && !cookie.isEmpty()`:
+        // a platform that returns "" (a jar read that yielded no token) must
+        // omit the header rather than send a bare "Cookie: " line, which the
+        // server would treat as a malformed credential.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        platform.cookie = "";
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        try (TunnelConnection c = tunnel.openStream("127.0.0.1", 8080)) {
+            assertNotNull(c);
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+        assertNull(server.lastRequest().header("Cookie"));
+    }
+
     // ==================================================================
     // HTTP status -> error kind
     // ==================================================================
@@ -506,6 +591,26 @@ public class H2TunnelStreamTest {
         } catch (TunnelException e) {
             assertEquals(TunnelErrorKind.AUTH, e.kind());
         }
+    }
+
+    @Test
+    public void openStream_maps401ToAuth() {
+        // 401 is the unauthenticated case (missing/expired session cookie). The
+        // probe deliberately tolerates 401, so a 401 on the DATA plane is the
+        // only place it can surface — and it must classify as AUTH, not as a
+        // protocol/network failure that would tear the session down.
+        server.mode = FakeTunnelServer.Mode.STATUS;
+        server.status = 401;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        try {
+            tunnel.openStream("127.0.0.1", 8080);
+            throw new AssertionError("expected 401 to fail");
+        } catch (TunnelException e) {
+            assertEquals(TunnelErrorKind.AUTH, e.kind());
+            assertEquals(401, e.status());
+        }
+        assertTrue("a 401 is the server answering, so the session stays usable",
+                tunnel.isConnected());
     }
 
     @Test
@@ -707,6 +812,35 @@ public class H2TunnelStreamTest {
 
         assertTrue(connection.isClosed());
         assertEquals(0, tunnel.activeStreamCount());
+    }
+
+    @Test
+    public void connection_writeLargerThanTheChunkSize_isFullyDelivered() throws Exception {
+        // H2TunnelStream:670-676: a write larger than WRITE_CHUNK is split into
+        // chunked sink writes. The loop is the only place the chunk boundary is
+        // exercised; a one-byte "ping" never reaches it. Assert every byte
+        // survives the split, in order.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelConnection connection = tunnel.openStream("127.0.0.1", 8080);
+        FakeTunnelServer.FakeStream stream = server.lastStream();
+
+        int size = 200 * 1024; // > WRITE_CHUNK (64 KiB): at least 4 chunks
+        byte[] payload = new byte[size];
+        for (int i = 0; i < size; i++) {
+            payload[i] = (byte) ('a' + (i % 26));
+        }
+
+        OutputStream out = connection.getOutputStream();
+        out.write(payload);
+        out.flush();
+
+        byte[] received = stream.readToServerBytes(size);
+        assertEquals("every byte must be delivered across the chunk boundary",
+                size, received.length);
+        assertArrayEquals(payload, received);
+
+        connection.close();
     }
 
     @Test
@@ -1041,6 +1175,135 @@ public class H2TunnelStreamTest {
         } catch (TunnelException e) {
             assertEquals(TunnelErrorKind.CLOSED, e.kind());
         }
+    }
+
+    @Test
+    public void openControlStream_whenServerReturns500_throwsHttpError() {
+        // H2TunnelStream:841-846: a non-200 control response is closed, the
+        // call cancelled, and surfaced as the status-mapped kind. Without this
+        // the constructor would return a stream that can never bind.
+        server.mode = FakeTunnelServer.Mode.STATUS;
+        server.status = 500;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        try {
+            tunnel.openControlStream();
+            throw new AssertionError("expected 500 to fail the control stream");
+        } catch (TunnelException e) {
+            assertEquals(TunnelErrorKind.HTTP_ERROR, e.kind());
+            assertEquals(500, e.status());
+        }
+    }
+
+    @Test
+    public void openControlStream_whenConcurrentlyCalled_returnsOneStream() throws Exception {
+        // H2TunnelStream:450-454: two concurrent callers would otherwise each
+        // keep their own control stream, and two live control streams mean two
+        // competing sets of bind bookkeeping. Both callers must therefore
+        // observe the SAME stream — the loser closes the one it just built and
+        // returns the winner.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+
+        final AtomicReference<TunnelControlStream> first = new AtomicReference<>();
+        final AtomicReference<TunnelControlStream> second = new AtomicReference<>();
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        Runnable open = () -> {
+            try {
+                TunnelControlStream stream = tunnel.openControlStream();
+                if (first.compareAndSet(null, stream)) return;
+                second.set(stream);
+            } catch (Throwable t) {
+                error.compareAndSet(null, t);
+            }
+        };
+        Thread a = new Thread(open);
+        Thread b = new Thread(open);
+        a.start();
+        b.start();
+        a.join(10_000);
+        b.join(10_000);
+
+        assertNull("no caller may fail: " + error.get(), error.get());
+        assertNotNull(first.get());
+        assertNotNull(second.get());
+        assertSame("both callers must see the same live control stream",
+                first.get(), second.get());
+        // Both threads may have built a stream before either published one, so
+        // the server can legitimately see one or two requests; what must hold is
+        // that exactly one is retained. A third call returns that same instance
+        // and adds no request.
+        int requests = server.requestsFor("/api/tunnel/control").size();
+        assertTrue("at most one control request per racing caller", requests <= 2);
+        assertSame("exactly one control stream may remain stored",
+                first.get(), tunnel.openControlStream());
+        assertEquals("the retained stream must be reused, not reopened",
+                requests, server.requestsFor("/api/tunnel/control").size());
+        first.get().close();
+    }
+
+    @Test
+    public void controlStream_handlerThatThrows_doesNotKillTheStream() throws Exception {
+        // H2TunnelStream:903-906: a handler is third-party code invoked on the
+        // reader thread; one throwing handler must not end the control stream
+        // (which would drop every reverse port).
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelControlStream control = tunnel.openControlStream();
+        FakeTunnelServer.FakeStream stream = server.lastStream();
+
+        final CountDownLatch second = new CountDownLatch(1);
+        control.onMessage(msg -> {
+            throw new RuntimeException("handler exploded");
+        });
+        control.onMessage(msg -> second.countDown());
+
+        stream.writeFromServer("{\"type\":\"incoming\",\"port\":1,\"token\":\"a\"}\n");
+        stream.writeFromServer("{\"type\":\"incoming\",\"port\":2,\"token\":\"b\"}\n");
+
+        assertTrue("the stream must keep delivering after a handler throws",
+                second.await(5, TimeUnit.SECONDS));
+        assertFalse("a throwing handler must not close the stream", control.isClosed());
+        control.close();
+    }
+
+    @Test
+    public void controlStream_sendNull_returnsFalse() throws Exception {
+        // H2TunnelStream:945: a null message is rejected before touching the
+        // sink, so a caller that lost a race cannot NPE the reader thread.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelControlStream control = tunnel.openControlStream();
+        assertFalse(control.send(null));
+        control.close();
+    }
+
+    @Test
+    public void controlStream_overlongLine_endsTheStreamAsCleanEof() throws Exception {
+        // PINS A SURPRISING BEHAVIOUR (H2TunnelStream:882-886): an overlong
+        // line makes readUtf8LineStrict(MAX_CONTROL_LINE) throw EOFException,
+        // and the code treats that as a clean EOF — ending the whole control
+        // stream and (via the transport's onClose) dropping every reverse port.
+        // That contradicts the comment one line below, which says one bad line
+        // must not drop every reverse port. This test records what the code
+        // does today; see the report for the contradiction.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelControlStream control = tunnel.openControlStream();
+        FakeTunnelServer.FakeStream stream = server.lastStream();
+
+        StringBuilder overlong = new StringBuilder();
+        for (int i = 0; i < H2TunnelStream.MAX_CONTROL_LINE + 16; i++) {
+            overlong.append('x');
+        }
+        stream.writeFromServer(overlong.toString() + "\n");
+
+        final CountDownLatch closed = new CountDownLatch(1);
+        control.onClose(closed::countDown);
+        assertTrue("an overlong line currently ends the stream, not just the line",
+                closed.await(5, TimeUnit.SECONDS));
+        assertTrue(control.isClosed());
+        assertNull("the overflow is reported as a clean EOF, not an error",
+                control.lastErrorKind());
     }
 
     @Test

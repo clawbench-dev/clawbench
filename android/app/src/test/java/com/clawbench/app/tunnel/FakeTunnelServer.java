@@ -304,6 +304,21 @@ final class FakeTunnelServer implements CallFactory {
             return buffer.readUtf8();
         }
 
+        /**
+         * Read exactly {@code expected} request-direction bytes (or until EOF),
+         * for a bulk payload test that must compare bytes rather than UTF-8.
+         */
+        byte[] readToServerBytes(int expected) throws IOException {
+            Buffer buffer = new Buffer();
+            long total = 0;
+            while (total < expected) {
+                long read = toServer.source().read(buffer, expected - total);
+                if (read == -1) break;
+                total += read;
+            }
+            return buffer.readByteArray();
+        }
+
         /** Push bytes from the server into the response direction. */
         void writeFromServer(String data) throws IOException {
             BufferedSink sink = Okio.buffer(fromServer.sink());

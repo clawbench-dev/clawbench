@@ -27,6 +27,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -259,9 +260,11 @@ public class BackgroundServiceTransportTest {
         // addLocal is called twice on a fresh add: once by ensureConnection's
         // replay (the port was recorded before connecting) and once by the
         // explicit add. The h2 adapter is idempotent, exactly as JSch's
-        // "already registered" handling is.
-        assertTrue("the h2 adapter must have been asked to add the port",
-                h2.addLocalCalls.get() >= 1);
+        // "already registered" handling is. Assert the exact count, not >= 1:
+        // the latter would pass if the explicit add were deleted, which is the
+        // call that actually binds the listener.
+        assertEquals("the replay add plus the explicit add, exactly",
+                2, h2.addLocalCalls.get());
         assertEquals(3080, h2.lastLocalPort);
         assertEquals(80, h2.lastTargetPort);
         assertEquals("127.0.0.1", h2.lastTargetHost);
@@ -339,6 +342,60 @@ public class BackgroundServiceTransportTest {
         assertEquals("bind refused", BackgroundService.getLastError());
     }
 
+    @Test
+    public void addPortForward_invalidPort_reachesTheTransportUnvalidated() throws Exception {
+        // Pins the validation asymmetry: addReversePortForward rejects
+        // serverPort<=0 or >65535 (BackgroundService:2111) BEFORE touching the
+        // transport, but addPortForward (:1866) does not — the bad port reaches
+        // the transport, which for h2 means ServerSocket.bind. This test records
+        // that the transport is asked with the raw value; the report flags the
+        // asymmetry and whether port 0 is legitimate.
+        setField("transportPreference", PortForwardTransportKind.H2);
+        setField("activeTransport", null);
+
+        invoke("addPortForward", -1, 80, "127.0.0.1");
+
+        assertTrue("the forward path must NOT pre-validate (unlike the reverse path)",
+                h2.addLocalCalls.get() >= 1);
+        assertEquals("the raw invalid port must reach the transport", -1, h2.lastLocalPort);
+    }
+
+    @Test
+    public void addReversePortForward_invalidPort_isRejectedBeforeTheTransport() throws Exception {
+        // The contrast to the test above: the reverse path validates up front,
+        // so the transport is never asked with an impossible port.
+        setField("transportPreference", PortForwardTransportKind.H2);
+        setField("activeTransport", null);
+
+        invoke("addReversePortForward", 0, 3000, "");
+        invoke("addReversePortForward", 9000, 70000, "");
+
+        assertEquals("an invalid reverse port must never reach the transport",
+                0, h2.addReverseCalls.get());
+        assertTrue(reversePorts().isEmpty());
+    }
+
+    // ==================================================================
+    // Error-kind mapping is discarded at the service boundary (report item)
+    // ==================================================================
+
+    @Test
+    public void getErrorType_stringMatchesAndCannotRecoverTheH2Kind() throws Exception {
+        // PINS THE DEAD MAPPING: TunnelErrorKind.uiType() maps AUTH -> "auth",
+        // but the service never consults it. ensureH2Connection() stores only
+        // tunnel.getLastError() (a message), and getErrorType() re-derives the
+        // category by substring-matching that message. An h2 AUTH message
+        // ("... rejected with HTTP 403") shares none of the auth keywords, so
+        // the precise classification is lost and the frontend sees "unknown".
+        // Do not "fix" this here — the report asks for it to be reported, not
+        // wired up.
+        assertEquals("auth", com.clawbench.app.tunnel.TunnelErrorKind.AUTH.uiType());
+
+        setField("lastError", "open stream 127.0.0.1:8080 rejected with HTTP 403");
+        assertEquals("the string-matching path loses the h2 AUTH classification",
+                "unknown", BackgroundService.getErrorType());
+    }
+
     // ==================================================================
     // -R
     // ==================================================================
@@ -352,9 +409,11 @@ public class BackgroundServiceTransportTest {
 
         // Like addLocal, addReverse runs once from the ensureConnection replay
         // (the mapping is recorded before connecting) and once from the
-        // explicit call; the adapter is idempotent.
-        assertTrue("the h2 adapter must have been asked to bind the port",
-                h2.addReverseCalls.get() >= 1);
+        // explicit call; the adapter is idempotent. Assert the exact count:
+        // >= 1 would pass if the explicit bind were dropped, leaving the port
+        // bound only by the replay.
+        assertEquals("the replay bind plus the explicit bind, exactly",
+                2, h2.addReverseCalls.get());
         assertEquals(9000, h2.lastReverseServerPort);
         assertEquals(3000, h2.lastReverseTargetPort);
         // A reverse target is on THIS device; it must not be rerouted.
@@ -457,6 +516,88 @@ public class BackgroundServiceTransportTest {
 
         assertEquals("the SSH fallback must be the branch that failed",
                 "Server URL not configured", thrown);
+    }
+
+    @Test
+    public void ensureH2Connection_passesTheRememberedKindOnReconnect() throws Exception {
+        // BackgroundService:1642 passes lastH2Kind to connect(), and :1648
+        // stores the result. This is the whole "remember the last successful
+        // transport" wiring: without it a plaintext deployment pays a wasted
+        // TLS rejection on every reconnect. It was previously unverified.
+        setField("transportPreference", PortForwardTransportKind.H2);
+        setField("activeTransport", null);
+        tunnel.connected = false;
+        tunnel.connectResult = com.clawbench.app.tunnel.TransportKind.TLS;
+
+        service.ensureConnection();
+        assertEquals("the first connect has nothing remembered yet",
+                1, tunnel.connectPreferred.size());
+        assertNull("the first connect must pass a null preference",
+                tunnel.connectPreferred.get(0));
+        assertEquals("the successful kind must be remembered",
+                com.clawbench.app.tunnel.TransportKind.TLS, getField("lastH2Kind"));
+
+        // Force a reconnect and assert the remembered kind is handed back.
+        tunnel.connected = false;
+        service.ensureConnection();
+
+        assertEquals(2, tunnel.connectPreferred.size());
+        assertEquals("the reconnect must pass the remembered transport",
+                com.clawbench.app.tunnel.TransportKind.TLS,
+                tunnel.connectPreferred.get(1));
+    }
+
+    @Test
+    public void setTransportPreference_whileConnected_doesNotTearDownTheLiveTransport() throws Exception {
+        // BackgroundService:1804 only writes the static field; an
+        // already-connected tunnel keeps running until the next reconnect
+        // (documented at MainActivity:2714-2716, "takes effect on reconnect").
+        // transportForPortOps() (BackgroundService:1788-1790) keeps routing
+        // through the stale activeTransport, and connect() reuses a same-host
+        // session. The change must therefore be deferred, not applied eagerly.
+        setField("transportPreference", PortForwardTransportKind.H2);
+        setField("activeTransport", h2);
+        h2.connected = true;
+
+        BackgroundService.setTransportPreference("ssh");
+
+        assertSame("the live transport must survive a preference change",
+                h2, getField("activeTransport"));
+        assertEquals("the live transport must not be closed", 0, h2.closeCalls.get());
+
+        // Deferred, not dropped: a port op still routes through the live h2
+        // transport even though the preference now says SSH.
+        forwardedPorts().put(3080, new BackgroundService.PortInfo(80, ""));
+        invoke("removePortForward", 3080);
+        assertEquals("port ops must keep using the live transport",
+                1, h2.removeLocalCalls.get());
+    }
+
+    @Test
+    public void reconnect_replaysForwardAndReversePortsExactlyOnceOnH2() throws Exception {
+        // replayForwardedPortsOnActiveTransport():1698 and
+        // replayReversePortsOnActiveTransport():1671. Pre-populate both maps,
+        // drop the transport (a disconnect), then reconnect: each desired
+        // mapping must be re-added exactly once. This is the exact-count test
+        // that supersedes the >= 1 assertions on the add paths.
+        setField("transportPreference", PortForwardTransportKind.H2);
+        forwardedPorts().put(3080, new BackgroundService.PortInfo(80, ""));
+        forwardedPorts().put(3081, new BackgroundService.PortInfo(81, ""));
+        reversePorts().put(9000, new BackgroundService.PortInfo(3000, "", true));
+        reversePorts().put(9001, new BackgroundService.PortInfo(3001, "", true));
+
+        // Disconnect: the transport reference is dropped, the desired maps stay.
+        setField("activeTransport", h2);
+        invoke("disconnectInternal");
+        assertNull("disconnect must drop the transport", getField("activeTransport"));
+
+        service.ensureConnection();
+
+        assertSame("the h2 adapter must become active again", h2, getField("activeTransport"));
+        assertEquals("each forward must be replayed exactly once",
+                2, h2.addLocalCalls.get());
+        assertEquals("each reverse must be replayed exactly once",
+                2, h2.addReverseCalls.get());
     }
 
     // ==================================================================
