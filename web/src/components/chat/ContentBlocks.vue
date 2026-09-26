@@ -1393,6 +1393,27 @@ let _throttlePending = false
 const THROTTLE_MS = 300
 const _blockFlushScheduler = new StreamFrameScheduler()
 
+/**
+ * Options for rendering a thinking block WHILE streaming.
+ *
+ * Deliberately identical to the text-block streaming path (`renderTextBlock`
+ * with streaming=true): both enhancements are skipped. The two paths used to
+ * diverge — text skipped path annotation, thinking kept it — and that
+ * asymmetry was not a decision, just two independently-evolved call sites.
+ *
+ * What the divergence cost: a turn routinely names a file BEFORE writing it.
+ * The thinking block annotated that path mid-stream, verified it against a
+ * not-yet-created file and cached 'none'; when the turn's final text then
+ * reported the same path, verification hit the cached 'none' and STRIPPED the
+ * annotation — the file existed, the path stayed dead until a hard refresh.
+ * The turn-end `invalidateNegativePathCache()` below only papered over it.
+ *
+ * Nothing is lost: once streaming ends the block takes the non-streaming
+ * branch and is annotated in full, and `reverifyAnnotations` covers the
+ * paths `renderMarkdownHtml` discards.
+ */
+const THINKING_STREAMING_OPTS = { skipEnhancements: true, skipKatex: true } as const
+
 /** Drop every cached block's HTML and its source, forcing a full re-render.
  *  Use this instead of assigning `blockHtmlCache.value = new Map()` directly —
  *  clearing only the HTML would leave the source map matching, and the next
@@ -1447,8 +1468,9 @@ function flushBlockHtml() {
         if (_blockHtmlSource.get(key) === src && cached !== undefined) {
           newCache.set(key, cached)
         } else {
-          // Thinking blocks use renderMarkdownHtml during streaming
-          newCache.set(key, renderMarkdownHtml(block.text, { skipKatex: true }))
+          // Thinking blocks use renderMarkdownHtml during streaming. Same
+          // options as a streaming text block — see THINKING_STREAMING_OPTS.
+          newCache.set(key, renderMarkdownHtml(block.text, THINKING_STREAMING_OPTS))
         }
         newSources.set(key, src)
       }
@@ -1547,8 +1569,9 @@ function getThinkingTextHtml(text: string, bi: number, block: any) {
   if (!props.streaming || !props.active) {
     return renderMarkdownHtml(text)
   }
-  // Streaming: skip KaTeX (formulas may be incomplete)
-  const streamingOpts = { skipKatex: true } as const
+  // Streaming: skip KaTeX and path annotation (formulas incomplete, and the
+  // file a turn names may not be written yet — see THINKING_STREAMING_OPTS).
+  const streamingOpts = THINKING_STREAMING_OPTS
   const cacheKey = `t-${stableBlockKey(bi, block)}`
   // Streaming: deferred rendering with throttling (same pattern as text blocks)
   const cache = blockHtmlCache.value
@@ -1583,11 +1606,14 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
     _blockFlushScheduler.cancelAll()
-    // A turn that creates files usually names them BEFORE writing them. The
-    // thinking block rendered mid-stream verifies those paths while they do
-    // not exist yet, caching 'none' — and because a cached 'none' is never
-    // re-checked, the final text's annotation is stripped even though the
-    // file now exists (only a hard refresh recovered it).
+    // A turn routinely names a file BEFORE writing it. Whichever pass verifies
+    // such a path while it does not exist yet caches 'none', and a cached
+    // 'none' is never re-checked — so a later turn that creates the file and
+    // reports it would hit the stale negative and have its annotation
+    // stripped (only a hard refresh recovered it). Thinking blocks used to be
+    // the mid-stream trigger; now that streaming skips enhancements, the
+    // remaining ones are the post-streaming pass of an earlier turn and any
+    // tool-detail markdown the user expanded before the file existed.
     //
     // Drop the negative entries before the post-streaming re-render below
     // re-verifies every span, so this turn's newly created files resolve.

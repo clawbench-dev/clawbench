@@ -47,13 +47,14 @@ vi.mock('@/utils/icons', () => ({
 
 // `renderMarkdownHtml` is used by the thinking renderer, which discards
 // `detectedPaths` (unlike renderTextBlock, which schedules verification). Tests
-// that need annotated thinking markup override this.
+// that need annotated thinking markup override this. Options are forwarded so
+// tests can pin WHICH pipeline mode the thinking renderer asked for.
 const { mockRenderMarkdownHtml } = vi.hoisted(() => ({
-  mockRenderMarkdownHtml: vi.fn((text: string) => `<p>${text}</p>`),
+  mockRenderMarkdownHtml: vi.fn((text: string, _opts?: unknown) => `<p>${text}</p>`),
 }))
 vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdown: (text: string) => `<p>${text}</p>`,
-  renderMarkdownHtml: (text: string) => mockRenderMarkdownHtml(text),
+  renderMarkdownHtml: (text: string, opts?: unknown) => mockRenderMarkdownHtml(text, opts),
 }))
 
 vi.mock('@/utils/appLog', () => ({
@@ -2584,12 +2585,11 @@ describe('path verification after a cache hit', () => {
   })
 
   it('drops cached negative results when a turn ends', async () => {
-    // A turn that creates files usually names them BEFORE writing them. The
-    // thinking block renders mid-stream (thinking does NOT skip enhancements,
-    // unlike text blocks) and verifies the path while the file does not exist
-    // yet, caching 'none'. Because a cached 'none' is never re-checked, the
-    // final text's annotation was then stripped even though the file existed —
-    // only a hard refresh (which resets the module-level cache) recovered it.
+    // A turn that creates files usually names them BEFORE writing them. Whichever
+    // pass verifies such a path while the file does not exist yet caches 'none',
+    // and a cached 'none' is never re-checked — so a later pass reporting that
+    // path has its annotation stripped even though the file exists, and only a
+    // hard refresh (which resets the module-level cache) recovered it.
     //
     // The turn boundary must therefore drop the negative entries so the
     // post-streaming re-render re-verifies and resolves the new file.
@@ -2652,5 +2652,44 @@ describe('path verification after a cache hit', () => {
 
     expect(mockVerifyFilePaths).toHaveBeenCalledWith(['src/real.go'], expect.anything())
     mockRenderMarkdownHtml.mockImplementation((text: string) => `<p>${text}</p>`)
+  })
+
+  it('skips path annotation while a thinking block is streaming', async () => {
+    // Symmetry with the text-block streaming path. The thinking renderer used
+    // to pass only { skipKatex: true }, so it annotated paths mid-stream — and
+    // a turn that names a file BEFORE writing it cached a negative result that
+    // later stripped the final text's annotation (only a hard refresh fixed
+    // it). Streaming must not annotate; the post-streaming re-render does.
+    mockRenderMarkdownHtml.mockClear()
+
+    mountBlocks({
+      blocks: [{ type: 'thinking', text: 'reasoning about src/real.go', done: false }],
+      streaming: true,
+      renderTextBlock: () => '',
+    })
+    await nextTick()
+
+    const opts = mockRenderMarkdownHtml.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined
+    expect(opts?.skipEnhancements).toBe(true)
+    expect(opts?.skipKatex).toBe(true)
+  })
+
+  it('annotates thinking paths once streaming ends (full pipeline)', async () => {
+    // The counterpart: the annotation the streaming pass skips must come back
+    // when the turn ends, or the asymmetry would simply invert into "never".
+    mockRenderMarkdownHtml.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'thinking', text: 'reasoning about src/real.go', done: true }],
+      streaming: false,
+      renderTextBlock: () => '',
+    })
+    await nextTick()
+
+    const opts = mockRenderMarkdownHtml.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined
+    // The non-streaming path calls renderMarkdownHtml(text) with no options,
+    // i.e. the full pipeline (path annotation included).
+    expect(opts?.skipEnhancements).toBeFalsy()
+    expect(wrapper.html()).toContain('reasoning about src/real.go')
   })
 })

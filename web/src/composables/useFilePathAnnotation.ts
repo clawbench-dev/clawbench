@@ -927,12 +927,12 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
  * A 'none' result is a point-in-time observation that a path did not exist —
  * and the frontend has no way to learn it later became real. That is fine for
  * a path that never exists, but an AI turn routinely creates files it already
- * mentioned earlier in the same turn: a thinking block rendered mid-stream
- * (thinking does NOT skip enhancements, unlike text blocks) annotates the path
- * and verifies it BEFORE the file is written, caching 'none'. When the turn's
- * final text then reports that path, verification hits the cached 'none' and
- * STRIPS the annotation — the file exists, yet the path stays dead until a
- * hard refresh resets the module-level cache.
+ * mentioned earlier in the same turn: some pass (an earlier turn's
+ * post-streaming render, or a tool-detail markdown the user expanded) annotates
+ * and verifies the path BEFORE the file is written, caching 'none'. When a
+ * later pass reports that path, verification hits the cached 'none' and STRIPS
+ * the annotation — the file exists, yet the path stays dead until a hard
+ * refresh resets the module-level cache.
  *
  * Called when a turn ends (streaming true → false). The post-streaming render
  * re-runs the full pipeline and re-verifies every span, so the just-created
