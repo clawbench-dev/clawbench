@@ -321,6 +321,32 @@ public final class FakeTunnelStream implements TunnelStream {
                         throw new IOException("interrupted", e);
                     }
                 }
+
+                @Override
+                public int read(byte[] b, int off, int len) throws IOException {
+                    // Return as soon as data is available, like a real socket.
+                    // The inherited InputStream.read(byte[]) calls read() once
+                    // more after the last queued byte, blocks for the full
+                    // WAIT_MS and then *swallows* the timeout IOException — so
+                    // the pump's write landed exactly on the tests' WAIT_MS
+                    // deadline and raced it under load. Block for the first byte
+                    // (that timeout is the fake's stand-in for an unreadable
+                    // stream), then drain only what is already queued.
+                    if (len == 0) return 0;
+                    int first = read();
+                    if (first == -1) return -1;
+                    b[off] = (byte) first;
+                    int count = 1;
+                    Integer next;
+                    while (count < len && (next = responseBytes.poll()) != null) {
+                        if (next == -1) {
+                            eof = true;
+                            break;
+                        }
+                        b[off + count++] = next.byteValue();
+                    }
+                    return count;
+                }
             };
         }
 

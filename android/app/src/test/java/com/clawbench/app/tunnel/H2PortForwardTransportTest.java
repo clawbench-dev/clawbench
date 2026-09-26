@@ -243,7 +243,7 @@ public class H2PortForwardTransportTest {
         assertTrue(connection.awaitCloseWrite());
 
         connection.pushResponse("pong");
-        assertTrue(socket.awaitLocalBytes());
+        assertTrue(socket.awaitLocalBytes("pong".length()));
         assertEquals("pong", socket.localBytes());
     }
 
@@ -273,7 +273,7 @@ public class H2PortForwardTransportTest {
 
         // The remote is allowed to keep replying after our END_STREAM.
         connection.pushResponse("late reply");
-        assertTrue(socket.awaitLocalBytes());
+        assertTrue(socket.awaitLocalBytes("late reply".length()));
         assertEquals("late reply", socket.localBytes());
     }
 
@@ -729,7 +729,7 @@ public class H2PortForwardTransportTest {
 
         // stream -> target (the response direction)
         connection.pushResponse("from-server");
-        assertTrue(target.awaitLocalBytes());
+        assertTrue(target.awaitLocalBytes("from-server".length()));
         assertEquals("from-server", target.localBytes());
     }
 

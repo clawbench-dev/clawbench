@@ -203,6 +203,32 @@ public final class FakeSockets {
                         throw new IOException("interrupted", e);
                     }
                 }
+
+                @Override
+                public int read(byte[] b, int off, int len) throws IOException {
+                    // Return as soon as data is available, like a real socket.
+                    // The inherited InputStream.read(byte[]) calls read() once
+                    // more after the last queued byte, blocks for the full
+                    // WAIT_MS and then *swallows* the timeout IOException — so
+                    // the pump's write landed exactly on the tests' WAIT_MS
+                    // deadline and raced it under load. Block for the first byte
+                    // (that timeout is the fake's stand-in for an unreadable
+                    // socket), then drain only what is already queued.
+                    if (len == 0) return 0;
+                    int first = read();
+                    if (first == -1) return -1;
+                    b[off] = (byte) first;
+                    int count = 1;
+                    Integer next;
+                    while (count < len && (next = localBytes.poll()) != null) {
+                        if (next == -1) {
+                            eof = true;
+                            break;
+                        }
+                        b[off + count++] = next.byteValue();
+                    }
+                    return count;
+                }
             };
         }
 
@@ -233,12 +259,21 @@ public final class FakeSockets {
             return closed.get();
         }
 
-        public boolean awaitLocalBytes() throws InterruptedException {
+        /**
+         * Wait until {@code expected} bytes have been written by the pump.
+         *
+         * <p>Waits for the exact payload rather than merely "something
+         * arrived": a socket read may hand the pump a partial chunk, so a
+         * non-empty wait followed by an exact-string assert could observe a
+         * prefix. Waiting for the byte count is the pump's real completion
+         * signal and is immune to chunking.
+         */
+        public boolean awaitLocalBytes(int expected) throws InterruptedException {
             long deadline = System.currentTimeMillis() + FakeTunnelStream.WAIT_MS;
-            while (written.isEmpty() && System.currentTimeMillis() < deadline) {
-                Thread.sleep(10);
+            while (written.size() < expected && System.currentTimeMillis() < deadline) {
+                Thread.sleep(5);
             }
-            return !written.isEmpty();
+            return written.size() >= expected;
         }
 
         public String localBytes() {
