@@ -1,0 +1,18 @@
+{
+  "name": "clawbench-android-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Emulator-based Android smoke tests for the ClawBench WebView shell (Tier 1 native/WebView login flow; Tier 2 h2 tunnel E2E slots in here).",
+  "scripts": {
+    "test": "wdio run wdio.conf.mjs",
+    "test:tier1": "wdio run wdio.conf.mjs --spec tests/smoke.login.mjs"
+  },
+  "devDependencies": {
+    "@wdio/cli": "^8.40.5",
+    "@wdio/local-runner": "^8.40.5",
+    "@wdio/mocha-framework": "^8.40.5",
+    "@wdio/spec-reporter": "^8.40.5",
+    "webdriverio": "^8.40.5"
+  }
+}

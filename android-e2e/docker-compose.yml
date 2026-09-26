@@ -1,0 +1,76 @@
+# Android E2E harness — Tier 1 (native shell + WebView login smoke test).
+#
+# NOTE ON BIND MOUNTS: in this environment the docker CLI talks to a *host*
+# daemon, so `-v ./local:/container` resolves the path on the host filesystem and
+# mounts an empty directory. Every artifact is therefore delivered via
+# `docker build` (the context is streamed from the client) or `docker cp`, never
+# via a compose `volumes:` bind. That is why `mock` and `runner` are built from
+# small Dockerfiles instead of mounting ./mock-server and ./tests.
+#
+# Network design
+# --------------
+# The Android emulator reaches its host through the alias 10.0.2.2. The `mock`
+# service uses `network_mode: "service:emulator"` so it shares the emulator's
+# network namespace and binds :20000 on that namespace's loopback; 10.0.2.2 is
+# SLIRP's alias for the host loopback of exactly that namespace, so the app can
+# reach it without compose DNS or host port publishing. (Verified end-to-end.)
+#
+# The `runner` service sits on the compose bridge and reaches Appium by service
+# name (http://emulator:4723), so no host port is needed either.
+#
+# The published ports on `emulator` are for manual debugging only; the automated
+# path never uses them.
+
+services:
+  emulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.emulator
+    image: clawbench-android-e2e-emulator:local
+    devices:
+      - /dev/kvm
+    ports:
+      - "14723:4723"   # Appium (manual debugging)
+      - "16080:6080"   # noVNC (unused headless)
+    environment:
+      APPIUM: "true"
+      EMULATOR_HEADLESS: "true"
+      USER_BEHAVIOR_ANALYTICS: "false"
+      EMULATOR_ADDITIONAL_ARGS: "-no-window -no-audio -no-boot-anim"
+    # No compose healthcheck: the budtmo image ships neither curl nor nc, and
+    # Appium answers /status before the device has finished booting anyway.
+    # run.sh waits explicitly on sys.boot_completed + the Appium /status probe.
+
+  mock:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock
+    image: clawbench-android-e2e-mock:local
+    # Share the emulator's netns so the app's 10.0.2.2 alias reaches :20000.
+    network_mode: "service:emulator"
+    depends_on:
+      - emulator
+    environment:
+      MOCK_PORT: "20000"
+      MOCK_HOST: "0.0.0.0"
+      CLAWBENCH_VERSION: "${CLAWBENCH_VERSION:?set by scripts/run.sh from the built APK}"
+    restart: "no"
+
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    image: clawbench-android-e2e-runner:local
+    depends_on:
+      - emulator
+      - mock
+    environment:
+      E2E_APPIUM_HOST: emulator
+      E2E_APPIUM_PORT: "4723"
+      E2E_MOCK_HOST: "10.0.2.2"
+      E2E_MOCK_PORT: "20000"
+      E2E_APK_PATH: /apk/clawbench-android-debug.apk
+      E2E_APP_PACKAGE: com.clawbench.app.debug
+      E2E_APP_ACTIVITY: com.clawbench.app.MainActivity
+      E2E_ARTIFACTS_DIR: /e2e/artifacts
+    command: ["npx", "wdio", "run", "wdio.conf.mjs"]

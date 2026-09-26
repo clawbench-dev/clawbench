@@ -1,0 +1,25 @@
+# Test runner: Node + WebdriverIO driving Appium over the compose network.
+#
+# This is a *separate* container from the emulator so tests are reproducible and
+# the emulator image stays untouched. It talks to Appium at http://emulator:4723
+# by compose service name — no host-published port is involved, which keeps the
+# harness working regardless of host port reachability.
+FROM node:20-alpine
+
+WORKDIR /e2e
+
+# Install deps first so the layer caches across test edits.
+COPY package.json ./
+RUN npm install --omit=optional --no-audit --no-fund
+
+COPY wdio.conf.mjs ./
+COPY tests ./tests
+COPY scripts ./scripts
+
+ENV E2E_APPIUM_HOST=emulator \
+    E2E_APPIUM_PORT=4723 \
+    E2E_MOCK_HOST=10.0.2.2 \
+    E2E_MOCK_PORT=20000 \
+    E2E_APK_PATH=/apk/clawbench-android-debug.apk
+
+CMD ["npx", "wdio", "run", "wdio.conf.mjs"]

@@ -1,0 +1,11 @@
+# Mock ClawBench server (dependency-free node:http). Built rather than mounted
+# because bind mounts do not resolve against the host daemon here.
+FROM node:20-alpine
+
+WORKDIR /mock-server
+COPY mock-server/server.mjs ./
+
+ENV MOCK_PORT=20000 \
+    MOCK_HOST=0.0.0.0
+
+CMD ["node", "/mock-server/server.mjs"]

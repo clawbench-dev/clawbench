@@ -1,0 +1,37 @@
+# Derived emulator image: budtmo's Android 9 (API 28) emulator + Appium, plus the
+# one thing it cannot provide — a chromedriver that can drive its Chrome 69 WebView.
+#
+# The base image must already be loaded locally (`scripts/pull-image.sh`), because
+# the docker daemon's proxy cannot reach Docker Hub from this environment.
+#
+# The WebView inside API 28 is Chrome 69. Only chromedriver 2.42-2.44 support it,
+# and Appium 3.x ships none of them (auto-download is disabled and the old
+# storage.googleapis.com index has no LATEST_RELEASE_69). We COPY in chromedriver
+# 2.44 (the newest Chrome-69 driver that also understands JSONWP sessions) and a
+# small proxy shim that reconciles it with Appium 3.x's W3C-only expectations —
+# see scripts/chromedriver-shim.py for the full rationale.
+#
+# Assets are staged into android-e2e/assets/ by scripts/prepare-assets.sh, and the
+# APK is baked in here because Appium resolves `appium:app` on its own filesystem
+# (the emulator container), not the runner's. The build context is streamed from
+# the client, so no host bind mount is involved.
+FROM budtmo/docker-android:emulator_9.0
+
+USER root
+COPY assets/chromedriver-244 /home/androidusr/chromedriver/chromedriver-244
+COPY scripts/chromedriver-shim.py /home/androidusr/chromedriver/chromedriver-shim.py
+COPY assets/clawbench-android-debug.apk /apk/clawbench-android-debug.apk
+RUN chmod 0755 /home/androidusr/chromedriver/chromedriver-244 \
+                /home/androidusr/chromedriver/chromedriver-shim.py \
+ && chmod 0644 /apk/clawbench-android-debug.apk \
+ && chown -R 1300:1301 /home/androidusr/chromedriver
+
+# Headless by default (no X server in the container), analytics disabled (its POST
+# to docs.google.com is unreachable here and blocks AVD creation), and the emulator
+# told to run without a window. The extra args also skip the boot animation, which
+# otherwise delays `sys.boot_completed`.
+ENV EMULATOR_HEADLESS=true \
+    USER_BEHAVIOR_ANALYTICS=false \
+    EMULATOR_ADDITIONAL_ARGS="-no-window -no-audio -no-boot-anim"
+
+USER 1300:1301
