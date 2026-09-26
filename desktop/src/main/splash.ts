@@ -172,8 +172,9 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
     visible = false
     currentStage = null
     // Let the page play its own fade, then take the view out of the draw path.
-    // The timer is not tracked in `cancelTimers` on purpose: a second dismiss()
-    // returns early above, and destroy() clears it directly.
+    // `cancelTimers()` above already dropped any previous fade timer, so this
+    // one is the only pending hide; show() cancels it if a new connect starts
+    // mid-fade, and destroy() cancels it on window close.
     try {
       void view.webContents.executeJavaScript('window.__splashFadeOut && window.__splashFadeOut()').catch(() => {})
     } catch { /* view already gone */ }
@@ -206,7 +207,14 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
   win.webContents.on('dom-ready', () => onStageEvent('dom-ready'))
   win.webContents.on('did-finish-load', () => {
     onStageEvent('did-finish-load')
-    if (visible) armFailSafe()
+    if (!visible) return
+    // The page loaded, so the CONNECTION succeeded: the connection deadline has
+    // done its job and must not fire during a slow app boot. Android does the
+    // same (cancelConnectionTimeout() then startSplashFailSafe()), and without
+    // this a boot longer than 90s would throw the user back to the login page
+    // even though the server answered.
+    connectionTimer = clearTimer(connectionTimer)
+    armFailSafe()
   })
 
   const onResize = () => syncBounds()

@@ -112,6 +112,30 @@ describe('window wires the overlay into the main window', () => {
   })
 })
 
+describe('splash timers follow Android semantics', () => {
+  it('cancels the connection deadline once the page has loaded', () => {
+    // A page that loaded means the connection succeeded, so the deadline must
+    // not fire during a slow app boot. Android pairs cancelConnectionTimeout()
+    // with startSplashFailSafe() here; without the cancel, a boot past 90s
+    // bounces the user back to login despite the server having answered.
+    const src = readRepoFile('desktop/src/main/splash.ts')
+    // Anchor on `win.` — the overlay's own webContents has a did-finish-load
+    // handler too, and an unanchored pattern would pin the wrong one.
+    const handler = src.match(/win\.webContents\.on\('did-finish-load'[\s\S]*?\n  \}\)/)
+    expect(handler, 'did-finish-load handler not found').not.toBeNull()
+    const body = handler![0]
+    expect(body, 'must cancel the connection deadline on load').toContain('connectionTimer = clearTimer(connectionTimer)')
+    expect(body, 'must still arm the boot fail-safe').toContain('armFailSafe()')
+    expect(body.indexOf('clearTimer(connectionTimer)')).toBeLessThan(body.indexOf('armFailSafe()'))
+  })
+
+  it('uses the Android timeout values', () => {
+    const src = readRepoFile('desktop/src/main/splashPolicy.ts')
+    expect(src).toMatch(/SPLASH_FAILSAFE_MS = 15_000/)
+    expect(src).toMatch(/CONNECTION_TIMEOUT_MS = 90_000/)
+  })
+})
+
 describe('login page supports splash mode', () => {
   it('detects the ?splash=1 query flag', () => {
     const src = readRepoFile(LOGIN)
