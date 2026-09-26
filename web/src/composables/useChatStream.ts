@@ -12,6 +12,7 @@ import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 import { markCancelRequested, reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
 import { addQueued, removeQueued, removeQueuedMany, getQueue } from '@/composables/useMessageQueue.ts'
+import { clearThinkingCache } from '@/composables/useThinkingContent.ts'
 
 const TAG = 'ChatStream'
 
@@ -581,6 +582,11 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'content_reset': {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { noteDroppedEvent('content_reset', 'no streaming placeholder'); return }
+        // The backend deletes this message's chat_thinking rows on content_reset
+        // (the failed Prompt's reasoning must not survive the retry), so the
+        // cached text for those think_ids is now a lie. Drop it: a lazy-load
+        // would otherwise serve reasoning from the attempt that was thrown away.
+        clearThinkingCache()
         dispatch({ type: 'ws_content_reset' })
         onRenderNeeded()
         break

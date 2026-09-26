@@ -656,18 +656,29 @@ function joinTextBlocks(blocks: ContentBlock[]): string {
  * suffix-of-prefix that equals a prefix-of-live; the shorter source wins, and a
  * true prefix/superset relationship short-circuits.
  */
+/**
+ * Length of the longest suffix of `a` that is also a prefix of `b` — the seam
+ * where two incrementally-built strings overlap and must not be repeated.
+ *
+ * Shared by the thinking-prefix stitch and the streaming-row text merge; both
+ * exist because a stream can be rebuilt from two sources that each emitted the
+ * boundary. Returns 0 when there is no overlap.
+ */
+export function overlapLength(a: string, b: string): number {
+  const max = Math.min(a.length, b.length)
+  for (let k = max; k > 0; k--) {
+    if (a.slice(a.length - k) === b.slice(0, k)) return k
+  }
+  return 0
+}
+
 export function mergeThinkingPrefix(prefix: string | undefined, live: string): string {
   if (!prefix) return live
   if (!live) return prefix
   if (live.startsWith(prefix)) return live // live already covers the prefix
   if (prefix.startsWith(live)) return prefix // live is a stale subset
-  const max = Math.min(prefix.length, live.length)
-  for (let k = max; k > 0; k--) {
-    if (prefix.slice(prefix.length - k) === live.slice(0, k)) {
-      return prefix + live.slice(k)
-    }
-  }
-  return prefix + live
+  const k = overlapLength(prefix, live)
+  return prefix + live.slice(k)
 }
 
 /**
@@ -734,22 +745,6 @@ function dbAnchorOfLiveBlock(lb: ContentBlock, dbBlocks: ContentBlock[]): number
 }
 
 /**
- * Order-preserving merge of the DB flushed blocks into the live blocks.
- *
- * The result is built in LIVE order — a live block is never relocated — with
- * the DB's text substituted for the live text when `takeDbText` is set (case 0:
- * the DB flush is ahead, so the live text is a stale prefix). Every DB block
- * the live placeholder lacks is then spliced in at the position of the first
- * base element that follows it in DB order; blocks with no such anchor (the
- * newest ones) are appended.
- *
- * This is what keeps text and tool_use interleaved. An earlier implementation
- * prepended every DB-only non-text block and moved all DB text blocks to the
- * first live-text slot, which rendered a turn as "all tools stacked on top, all
- * text stacked below" whenever a snapshot arrived while the placeholder held
- * little or no content.
- */
-/**
  * Give a live thinking block the think_id of the DB in_progress marker it
  * corresponds to, so the block keeps ONE identity across a session switch.
  *
@@ -804,6 +799,22 @@ function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock
   }
 }
 
+/**
+ * Order-preserving merge of the DB flushed blocks into the live blocks.
+ *
+ * The result is built in LIVE order — a live block is never relocated — with
+ * the DB's text substituted for the live text when `takeDbText` is set (case 0:
+ * the DB flush is ahead, so the live text is a stale prefix). Every DB block
+ * the live placeholder lacks is then spliced in at the position of the first
+ * base element that follows it in DB order; blocks with no such anchor (the
+ * newest ones) are appended.
+ *
+ * This is what keeps text and tool_use interleaved. An earlier implementation
+ * prepended every DB-only non-text block and moved all DB text blocks to the
+ * first live-text slot, which rendered a turn as "all tools stacked on top, all
+ * text stacked below" whenever a snapshot arrived while the placeholder held
+ * little or no content.
+ */
 function mergeOrderedBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[], takeDbText: boolean): ContentBlock[] {
   const liveToolIds = new Set(liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
   const liveHasThinking = liveBlocks.some((b) => b.type === 'thinking')
@@ -952,13 +963,7 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   )
   let overlap = 0
   if (dbText && liveText) {
-    const maxO = Math.min(dbText.length, liveText.length)
-    for (let k = maxO; k > 0; k--) {
-      if (dbText.slice(dbText.length - k) === liveText.slice(0, k)) {
-        overlap = k
-        break
-      }
-    }
+    overlap = overlapLength(dbText, liveText)
   }
   if (!dbLiveMissingTool && overlap === 0) return liveBlocks
 
@@ -967,14 +972,13 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   // repeats the live text head (a boundary re-emitted by both paths), cut it
   // from the DB tail.
   //
-  // Thinking markers are adopted onto the matching live blocks rather than
-  // prepended: a live thinking block and its DB marker are the SAME block seen
-  // from two sides, so prepending would render it twice. Adoption also hands
-  // the live block its think_id, which is what lets the render layer lazy-load
-  // the prefix the live stream never had (see mergeThinkingPrefix). Only
-  // markers with NO live counterpart are prepended (the block that finished
+  // Thinking markers are NOT prepended: a live thinking block and its DB
+  // marker are the SAME block seen from two sides, so prepending would render
+  // it twice. The live block already got the marker's think_id from the
+  // adoption at the top of this function, which is what lets the render layer
+  // lazy-load the prefix the live stream never had (see mergeThinkingPrefix).
+  // Only markers with NO live counterpart are prepended (a block that finished
   // before the placeholder was recreated).
-  adoptThinkingMarkers(dbBlocks, liveBlocks)
   const liveThinkIDs = new Set(
     liveBlocks.filter((b) => b.type === 'thinking' && b.think_id).map((b) => b.think_id as string),
   )

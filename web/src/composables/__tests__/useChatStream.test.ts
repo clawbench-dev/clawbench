@@ -3,6 +3,7 @@ import { ref, nextTick } from 'vue'
 import { useChatStream } from '@/composables/useChatStream'
 import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS, chatMessageReducer } from '@/utils/chatStreamUtils'
 import { addQueued, getQueue, resetQueuesForTest } from '@/composables/useMessageQueue'
+import { useThinkingContent } from '@/composables/useThinkingContent'
 
 // ── Timer leak prevention ──
 
@@ -3489,6 +3490,36 @@ describe('useChatStream', () => {
       const streaming = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
       const text = (streaming.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
       expect(text).toContain('kept')
+    })
+
+    it('drops the cached thinking text on content_reset', async () => {
+      // The backend deletes this message's chat_thinking rows on content_reset
+      // (the failed Prompt's reasoning must not survive the retry). The
+      // frontend cache holds that text by think_id, so it must be dropped too —
+      // otherwise a lazy-load serves reasoning from the discarded attempt.
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ think_id: 'th_stale', text: 'from failed attempt' }),
+      }))
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = [{
+        role: 'assistant', id: 92, content: '',
+        blocks: [{ type: 'thinking', think_id: 'th_stale', in_progress: true, text: 'from failed attempt' }],
+        streaming: true, seq: 1,
+      } as any]
+      options.loading.value = true
+
+      // Seed the cache the way a lazy-load would, then reset.
+      const { loadThinking, cachedText } = useThinkingContent()
+      await loadThinking('th_stale', 92, 'test-session-1')
+      expect(cachedText('th_stale')).toBeDefined()
+
+      simulateWsEvent('content_reset', {})
+      expect(cachedText('th_stale')).toBeUndefined()
     })
 
     it('does not re-buffer an event that still cannot be applied during replay', () => {
