@@ -28,7 +28,7 @@ vi.mock('@/components/chat/ChatMessageItem.vue', () => ({
     ],
     inject: ['chatRender', 'autoSpeech', 'chatSession'],
     template: `
-      <div class="chat-message-stub" :data-msg-id="msg.id" :data-role="msg.role" :data-read-only="readOnly">
+      <div class="chat-message-stub" :data-msg-id="msg.id" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-role="msg.role" :data-read-only="readOnly">
         <span class="block-count">{{ (msg.blocks || []).length }}</span>
         <span class="thinking-text">{{ (msg.blocks || []).filter(b => b.type === 'thinking').map(b => b.text).join('|') }}</span>
         <span class="tool-output">{{ (msg.blocks || []).filter(b => b.type === 'tool_use').map(b => b.output).join('|') }}</span>
@@ -194,8 +194,11 @@ afterEach(() => {
   for (const w of mounted.splice(0)) w.unmount()
 })
 
-async function mountView() {
-  const wrapper = mount(SessionShareView, { global: { plugins: [i18n] } })
+async function mountView(opts: { attach?: boolean } = {}) {
+  const wrapper = mount(SessionShareView, {
+    global: { plugins: [i18n] },
+    attachTo: opts.attach ? document.body : undefined,
+  })
   mounted.push(wrapper)
   await flushPromises()
   await nextTick()
@@ -247,18 +250,18 @@ describe('SessionShareView', () => {
   })
 
   // Layout contract: the title must live INSIDE the same centred column as the
-  // messages, so it reads as a heading for the thread. It must not be a
-  // left-title/right-actions toolbar (.share-topbar).
-  // The chat area frames its conversation column with full-height vertical
-  // rules that start at the title and run to the bottom. The header and the
-  // body must both live inside that frame, or the rules would stop short.
-  it('frames the column so the vertical rules span title to bottom', async () => {
+  // The share page uses the same chrome skeleton as the file share (full-width
+  // .share-topbar over .share-body), with a two-row stacked topbar. The
+  // conversation column below keeps its framed 900px measure; the frame must
+  // reach the bottom of the scroll container so the rules run unbroken.
+  it('frames the message column inside the shared share-body skeleton', async () => {
     const wrapper = await mountView()
     const column = wrapper.find('.session-share-column')
     expect(column.exists()).toBe(true)
-    // Both children live inside the frame.
-    expect(column.find('.session-share-header').exists()).toBe(true)
-    expect(column.find('.session-share-body').exists()).toBe(true)
+    // The column lives inside the scrolling content area, not beside it.
+    expect(wrapper.find('.share-body').exists()).toBe(true)
+    expect(wrapper.find('.share-content .session-share-column').exists()).toBe(true)
+    expect(column.find('.session-share-messages').exists()).toBe(true)
   })
 
   // Layout parity with the chat area. The share page reuses ChatMessageItem, so
@@ -285,7 +288,7 @@ describe('SessionShareView', () => {
     expect(body).toContain('gap: var(--space-8)')
   })
 
-  it('declares the vertical rules on the column, not the header', async () => {
+  it('declares the vertical rules on the column, not the topbar', async () => {
     // Scoped CSS is not evaluated by jsdom, so read the component source.
     const src = readFileSync(
       join(__dirname, '..', 'SessionShareView.vue'),
@@ -296,21 +299,22 @@ describe('SessionShareView', () => {
     expect(col![1]).toContain("border-left: 1px solid")
     expect(col![1]).toContain("border-right: 1px solid")
     expect(col![1]).toContain("max-width: 900px")
-    // The column must stretch, so the rules reach the bottom of the page.
-    expect(col![1]).toContain("flex: 1")
+    // The column must fill the scroll container's height, so the rules reach
+    // the bottom of the page even for a short thread.
+    expect(col![1]).toContain("min-height: 100%")
   })
-  it('puts the title in the header block, not a share-topbar', async () => {
+  it('puts the title in the full-width stacked topbar', async () => {
     const wrapper = await mountView()
-    expect(wrapper.find('.session-share-header').exists()).toBe(true)
-    expect(wrapper.find('.session-share-title').exists()).toBe(true)
-    expect(wrapper.find('.share-topbar').exists()).toBe(false)
-    // The title and the message column are siblings in the same flex column.
-    expect(wrapper.find('.session-share-header-inner').exists()).toBe(true)
+    expect(wrapper.find('.share-topbar').exists()).toBe(true)
+    expect(wrapper.find('.share-topbar--stacked').exists()).toBe(true)
+    expect(wrapper.find('.share-topbar-title').exists()).toBe(true)
+    // The byline shares the topbar, below the title row.
+    expect(wrapper.find('.share-topbar .session-share-byline').exists()).toBe(true)
   })
 
   it('uses an h1 for the title so it is the page heading', async () => {
     const wrapper = await mountView()
-    expect(wrapper.find('h1.session-share-title').exists()).toBe(true)
+    expect(wrapper.find('h1.share-topbar-title').exists()).toBe(true)
   })
 
   it('renders the agent icon in the byline', async () => {
@@ -450,6 +454,74 @@ describe('SessionShareView', () => {
     } as unknown as Response)) as unknown as typeof fetch
     const wrapper = await mountView()
     expect(wrapper.find('.session-share-duration').text()).toContain('2.0s')
+  })
+
+  // ── Conversation TOC ──
+  //
+  // The share page offers a conversation index so a long thread can be
+  // navigated by jumping to a message. Entries cover EVERY message (both
+  // roles), rendered with the same row component the in-app conversation
+  // index uses.
+  describe('conversation TOC', () => {
+    it('lists every message, both roles, in order', async () => {
+      const wrapper = await mountView()
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      expect(rows).toHaveLength(2)
+      expect(rows[0].find('.msg-role-tag').classes()).toContain('role-user')
+      expect(rows[1].find('.msg-role-tag').classes()).toContain('role-assistant')
+      // The node badge carries the 1-based conversation ordinal.
+      expect(rows[0].find('.msg-index').text()).toBe('1')
+      expect(rows[1].find('.msg-index').text()).toBe('2')
+    })
+
+    it('shows a preview derived from each message', async () => {
+      const wrapper = await mountView()
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      expect(rows[0].find('.msg-text').text()).toContain('please fix it')
+      // The assistant row uses its stored summary when one exists.
+      expect(rows[1].find('.msg-text').text()).toContain('A short summary.')
+    })
+
+    it('scrolls the content container to the clicked message and flashes it', async () => {
+      // attachTo is required: flashElement early-returns for a detached element
+      // (it cannot animate), so the class assertion would silently pass on [].
+      const wrapper = await mountView({ attach: true })
+      const content = wrapper.find('.share-content').element as HTMLElement
+      const scrollTo = vi.fn()
+      content.scrollTo = scrollTo
+      const flashTargets: string[] = []
+      // jsdom has no CSS engine; spy on classList.add to observe the flash.
+      const rows = wrapper.findAll('.chat-message-stub')
+      const target = rows[1].element as HTMLElement
+      target.classList.add = vi.fn((c: string) => { flashTargets.push(c) })
+
+      await wrapper.findAll('.share-toc .msg-item')[1].trigger('click')
+
+      expect(scrollTo).toHaveBeenCalledTimes(1)
+      expect(scrollTo.mock.calls[0][0]).toMatchObject({ behavior: 'smooth' })
+      expect(flashTargets).toContain('chat-message-highlight')
+    })
+
+    it('marks the clicked entry active immediately', async () => {
+      const wrapper = await mountView()
+      const content = wrapper.find('.share-content').element as HTMLElement
+      content.scrollTo = vi.fn()
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      expect(rows[0].classes()).not.toContain('active')
+
+      await rows[1].trigger('click')
+
+      expect(wrapper.findAll('.share-toc .msg-item')[1].classes()).toContain('active')
+    })
+
+    it('toggles the rail from the topbar button', async () => {
+      const wrapper = await mountView()
+      expect(wrapper.find('.share-toc').exists()).toBe(true)
+      await wrapper.find('.share-toc-toggle').trigger('click')
+      expect(wrapper.find('.share-toc').exists()).toBe(false)
+      await wrapper.find('.share-toc-toggle').trigger('click')
+      expect(wrapper.find('.share-toc').exists()).toBe(true)
+    })
   })
 
   // ── Snapshot JSON export ──

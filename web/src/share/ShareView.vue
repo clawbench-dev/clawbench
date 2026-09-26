@@ -759,39 +759,9 @@ onBeforeUnmount(() => {
   object-fit: contain;
 }
 
-/* Narrow-screen TOC drawer — Teleported to <body>, so its styles must be
-   global (scoped selectors would not reach the teleported nodes). The panel
-   reuses .share-toc from share-chrome.css for sizing/item styles. */
-:global(.share-toc-backdrop) {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  z-index: 300;
-  animation: share-toc-fade 0.18s ease-out;
-}
-
-:global(.share-toc-panel) {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  height: 100%;
-  z-index: 301;
-  box-sizing: border-box;
-  border-left: 1px solid var(--border-color, rgba(128, 128, 128, .25));
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
-  animation: share-toc-slide 0.2s ease-out;
-}
-
-@keyframes share-toc-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes share-toc-slide {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
+/* Narrow-screen TOC drawer (backdrop + slide-in panel) is defined in
+   css/share-chrome.css so both share views use one copy. The panel reuses
+   .share-toc from the same file for sizing/item styles. */
 
 /* On very wide screens the content column would stretch content (PDFs, code)
    unreasonably wide. Cap it and center it, leaving generous side margins. */
