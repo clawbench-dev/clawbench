@@ -1269,36 +1269,49 @@ func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
 	for _, b := range e.blocks {
 		if b.Type == blockTypeThinking {
 			// The full thinking text NEVER goes into the rate-limited content row
-			// (it lives in chat_thinking via flushPendingThinking; embedding even a
-			// slim think_id marker for an IN-PROGRESS block would leak an "empty
-			// thinking block" into the frontend's live placeholder — the
-			// mergeStreamBlocks path (db_load after stream_start) adopts the DB's
-			// non-text blocks into the live stream, and a done=false slim block
-			// there renders as a perpetual loading spinner until the message
-			// finalizes).
+			// (it lives in chat_thinking via flushPendingThinking). What goes in
+			// is a slim {think_id} marker, in one of two shapes:
 			//
-			// EXCEPTION: a DONE thinking block (thinking_done received, text fully
-			// persisted to chat_thinking) gets a slim {think_id, done:true} marker at
-			// its natural position. A done marker renders as a collapsed chip (never
-			// a spinner), and it is what lets a page refresh mid-stream recover the
-			// already-completed reasoning via the /thinking lazy-load — the streaming
-			// row would otherwise carry no trace of the block and the thinking would
-			// be lost on reload. Finalize's persistThinkingToDB overwrites these
-			// markers with the final slim content (idempotent, same think_ids), so no
-			// orphan/duplicate rows are left behind.
+			//   done:true            — the block finished. Renders as a collapsed
+			//                          chip; the /thinking lazy-load recovers the text.
+			//   in_progress:true     — the block is STILL streaming. Renders as a
+			//                          chip that lazy-loads the prefix so far and
+			//                          keeps appending live deltas into the SAME
+			//                          block.
+			//
+			// The in_progress marker is what makes a session switch lossless. An
+			// in-progress block used to be omitted entirely, which cost two
+			// user-visible symptoms from one cause: (1) the streaming row carried
+			// no trace of the block, so rebuildFromDb on switch-back dropped the
+			// already-streamed prefix; (2) the next delta, finding no block to
+			// merge into, opened a second one — and a frontend-created block has
+			// no `done`, so it rendered as a spinner forever. The earlier fix
+			// (done-gating the marker) only addressed the opposite hazard — a
+			// done:false marker rendering as an empty spinner — and left this
+			// one, because the block was absent rather than mislabeled.
+			//
+			// Both shapes require a chat_thinking row to lazy-load; a marker with
+			// nothing behind it would 404 on expand.
 			if e.forceIncludeThinking {
 				serializedBlocks = append(serializedBlocks, b)
-			} else if b.Done && b.ThinkID != "" && e.thinkingPersisted(b.ThinkID) {
-				// Only blocks that actually reached chat_thinking get markers — an
-				// empty done block has no row to lazy-load and would 404.
-				// ParentToolCallID must ride along so a reload keeps a sub-agent's
-				// thinking grouped under its parent Agent card.
-				serializedBlocks = append(serializedBlocks, model.ContentBlock{
-					Type:             blockTypeThinking,
-					ThinkID:          b.ThinkID,
-					Done:             true,
-					ParentToolCallID: b.ParentToolCallID,
-				})
+			} else if b.ThinkID != "" && e.thinkingPersisted(b.ThinkID) {
+				if b.Done {
+					// ParentToolCallID must ride along so a reload keeps a
+					// sub-agent's thinking grouped under its parent Agent card.
+					serializedBlocks = append(serializedBlocks, model.ContentBlock{
+						Type:             blockTypeThinking,
+						ThinkID:          b.ThinkID,
+						Done:             true,
+						ParentToolCallID: b.ParentToolCallID,
+					})
+				} else {
+					serializedBlocks = append(serializedBlocks, model.ContentBlock{
+						Type:             blockTypeThinking,
+						ThinkID:          b.ThinkID,
+						InProgress:       true,
+						ParentToolCallID: b.ParentToolCallID,
+					})
+				}
 			}
 			continue
 		}

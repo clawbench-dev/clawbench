@@ -357,6 +357,16 @@ func slimThinkingInContent(content string) (string, []ThinkingRecord, error) {
 			block["done"] = true
 			changed = true
 		}
+		// The in_progress flag is a STREAMING-ROW-only signal (see
+		// ContentBlock.InProgress): it tells the frontend "this block still has
+		// deltas coming, lazy-load the prefix instead of showing a finished
+		// chip". On a terminal path the block is over by definition, so the flag
+		// must be cleared — leaving it set would make a finalized reply look
+		// like it is still streaming.
+		if inProgress, _ := block["in_progress"].(bool); inProgress {
+			delete(block, "in_progress")
+			changed = true
+		}
 	}
 	if !changed {
 		return content, nil, nil

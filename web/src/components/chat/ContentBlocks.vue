@@ -375,6 +375,7 @@ import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
+import { mergeThinkingPrefix } from '@/utils/chatStreamUtils.ts'
 import { isThinkingUserAwayFromBottom } from '@/utils/thinkingScroll'
 import { verifyFilePaths, invalidateNegativePathCache } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
@@ -1547,19 +1548,31 @@ function getBlockHtml(bi: number, block: any) {
   return html
 }
 
-/** Get HTML for thinking block content. Live blocks render text inline;
- *  slim blocks (think_id) render from the lazy-load cache/loading/error state. */
+/** Get HTML for thinking block content.
+ *
+ *  A block can hold BOTH a lazy-loaded prefix (think_id → chat_thinking) and
+ *  live deltas (text). That happens when a block's think_id is adopted from the
+ *  DB marker on a session switch: the prefix is everything flushed before the
+ *  switch, `text` is what arrived after. Rendering only `text` dropped the
+ *  prefix — the reported "same block, front half gone, continues from the
+ *  middle". mergeThinkingPrefix stitches them (trimming any overlap).
+ *
+ *  Slim blocks with no live text render purely from the lazy-load cache. */
 function getThinkingHtml(bi: number, block: any) {
-  if (block.text) {
-    return getThinkingTextHtml(block.text, bi, block)
-  }
   if (block.think_id) {
-    const text = thinkingContent.cachedText(block.think_id)
-    if (text) return renderMarkdownHtml(text)
+    const prefix = thinkingContent.cachedText(block.think_id)
+    if (block.text) {
+      const merged = mergeThinkingPrefix(prefix, block.text)
+      return getThinkingTextHtml(merged, bi, block)
+    }
+    if (prefix) return renderMarkdownHtml(prefix)
     if (thinkingContent.errors.value[block.think_id]) {
       return `<div class="thinking-load-error"><span>${t('chat.contentBlocks.thinkingLoadFailed')}</span><button class="thinking-retry-btn" onclick="this.closest('.chat-thinking').querySelector('.thinking-header').click()">${t('chat.contentBlocks.retry')}</button></div>`
     }
     return '<div class="placeholder-dots"><span></span><span></span><span></span></div>'
+  }
+  if (block.text) {
+    return getThinkingTextHtml(block.text, bi, block)
   }
   return ''
 }
@@ -1636,8 +1649,7 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
 // Watch for thinking blocks that become "done" mid-stream (via thinking_done SSE event).
 // Only the block currently being streamed stays expanded — when its output
 // completes it collapses immediately. Blocks the user manually expanded are kept open.
-let _prevDoneKeys = new Set<string>()
-// The watched value is a joined STRING, not a fresh array: a watcher returning an
+let _prevDoneKeys = new Set<string>()// The watched value is a joined STRING, not a fresh array: a watcher returning an
 // array is never `Object.is`-equal to its previous value, so it fired on every
 // blocks mutation — invalidating the whole HTML cache on each streaming tick and
 // defeating the incremental cache. A string compares by value, so this only runs
@@ -1674,6 +1686,40 @@ watch(() => props.active, (active) => {
     _throttlePending = false
   }
 })
+
+// Auto-load the prefix of thinking blocks that are STILL STREAMING.
+//
+// A block's think_id is set in two ways: the backend's done marker (whose text
+// the user opens on demand), and — new — adoption of an in_progress marker on a
+// session switch. In the second case the block is the one currently streaming:
+// its already-emitted prefix lives in chat_thinking and MUST be fetched
+// immediately, or the user sees the block "continue from the middle" with the
+// front half missing. Waiting for a click is not an option — nobody clicks a
+// block that is still writing itself.
+//
+// Gated on in_progress on purpose: a DONE marker keeps its existing
+// lazy-load-on-expand behavior (handleThinkingClick), so a long conversation
+// does not fire one request per completed thinking block on every render. At
+// most one in-progress block per parent is live at a time.
+//
+// loadThinking is idempotent (cached value / shared in-flight request), so
+// re-firing on every blocks change is cheap.
+watch(
+  () => props.blocks
+    .filter((b: any) => b?.type === 'thinking' && b.think_id && b.in_progress)
+    .map((b: any) => b.think_id as string)
+    .join('|'),
+  (joined: string) => {
+    if (!joined) return
+    for (const thinkId of joined.split('|')) {
+      if (thinkingContent.cachedText(thinkId) !== undefined) continue
+      if (thinkingContent.errors.value[thinkId]) continue
+      thinkingContent.loadThinking(thinkId, props.msgId, props.sessionId)
+        .catch(() => { /* error surfaced via errors ref */ })
+    }
+  },
+  { immediate: true },
+)
 
 // Follow the live stream inside each thinking box. The thinking HTML is served
 // through v-html from blockHtmlCache; whenever the cache is rewritten during

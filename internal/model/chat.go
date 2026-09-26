@@ -337,6 +337,15 @@ type ContentBlock struct {
 	Type        string         `json:"type"`                   // "thinking", "tool_use", "text", "warning", "error"
 	Text        string         `json:"text,omitempty"`         // thinking, text, or warning/error content
 	ThinkID     string         `json:"think_id,omitempty"`     // thinking: stable ID for chat_thinking upsert (full text lives there; content keeps this slim marker)
+	// InProgress marks a thinking slim marker whose block is STILL STREAMING.
+	// Its text so far is in chat_thinking, but the block is not done — so the
+	// frontend must not render it as a finished chip (there is more to come)
+	// nor as a spinner with no source (it can lazy-load the prefix and keep
+	// appending live deltas). Without this marker an in-progress block had NO
+	// trace in the streaming row, so a session switch lost its already-emitted
+	// prefix and the next delta opened a second, done-less block that spun
+	// forever. Only ever set on the streaming row; Finalize clears it.
+	InProgress  bool           `json:"in_progress,omitempty"`  // thinking: slim marker for a still-streaming block
 	Reason      string         `json:"reason,omitempty"`       // structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	ErrorCode   int            `json:"error_code,omitempty"`   // structured error code (e.g. ACP JSON-RPC code -32603)
 	HTTPStatus  int            `json:"http_status,omitempty"`  // upstream HTTP status when available (e.g. 500)

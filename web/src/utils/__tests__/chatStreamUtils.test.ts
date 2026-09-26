@@ -14,6 +14,7 @@ import {
   nextClientSeq,
   rebuildFromDb,
   messageText,
+  mergeThinkingPrefix,
   chatMessageReducer,
   trackInFlightSend,
   untrackInFlightSend,
@@ -2888,6 +2889,142 @@ describe('sub-agent thinking_done', () => {
     const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
     expect(thinks.length).toBe(1)
     expect(thinks[0].text).toBe('real')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// In-progress thinking markers (A-plan): a still-streaming thinking block is
+// represented in the streaming row as {think_id, in_progress:true}. Without it
+// a session switch lost the already-emitted prefix and the next delta opened a
+// second, done-less block that spun forever.
+// ---------------------------------------------------------------------------
+describe('in-progress thinking marker (switch-back losslessness)', () => {
+  const streamingMsg = (blocks: any[]): any => ({
+    role: 'assistant', id: 42, content: '', blocks, streaming: true, parentQueueId: '1',
+  })
+
+  it('adopts the in_progress marker think_id onto the live streaming block', () => {
+    // The live block was built from deltas and has no think_id; the DB row has
+    // an in_progress marker for the same block. Adoption links the two so the
+    // render layer can lazy-load the prefix.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'deltas after switch' }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [{ type: 'thinking', think_id: 'th_live', in_progress: true }],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks).toHaveLength(1, 'marker must be adopted, not duplicated')
+    expect(thinks[0].think_id).toBe('th_live')
+    expect(thinks[0].in_progress).toBe(true)
+    expect(thinks[0].text).toBe('deltas after switch', 'live deltas must survive')
+  })
+
+  it('does not adopt a done marker onto a live block (keeps existing dedup behavior)', () => {
+    // Only in_progress markers are positional-safe to adopt. A done marker is
+    // handled by the existing liveHasThinking dedup, which drops the DB block
+    // rather than identifying the live one.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'reasoned' }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [{ type: 'thinking', think_id: 'th_done', done: true }],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks).toHaveLength(1)
+    expect(thinks[0].think_id).toBeUndefined()
+    expect(thinks[0].text).toBe('reasoned')
+  })
+
+  it('skips adoption when a parent has two in_progress markers (ambiguous)', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'live' }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [
+          { type: 'thinking', think_id: 'th_a', in_progress: true },
+          { type: 'thinking', think_id: 'th_b', in_progress: true },
+        ],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks.some((b: any) => b.think_id), 'ambiguous parent must not be guessed').toBe(false)
+  })
+
+  it('ws_thinking appends to a marker block without writing the literal "undefined"', () => {
+    // A marker adopted from the DB has no text; a delta arriving afterwards must
+    // seed an empty string rather than concatenating onto undefined.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', think_id: 'th_live', in_progress: true }]),
+    ]
+    const next = chatMessageReducer(messages, { type: 'ws_thinking', text: 'delta' })
+    const think = (next.find((m: any) => m.id === 42)!.blocks || []).find((b: any) => b.type === 'thinking')!
+    expect(think.text).toBe('delta')
+    expect(think.text).not.toContain('undefined')
+  })
+
+  it('ws_thinking_done clears in_progress and marks the block done', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', think_id: 'th_live', in_progress: true, text: 'partial' }]),
+    ]
+    const next = chatMessageReducer(messages, { type: 'ws_thinking_done' })
+    const think = (next.find((m: any) => m.id === 42)!.blocks || []).find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBe(true)
+    expect(think.in_progress).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// mergeThinkingPrefix: stitching a lazy-loaded prefix with live deltas.
+// ---------------------------------------------------------------------------
+describe('mergeThinkingPrefix', () => {
+  it('concatenates when the two halves are disjoint', () => {
+    expect(mergeThinkingPrefix('prefix ', 'live')).toBe('prefix live')
+  })
+
+  it('returns live when it already covers the prefix', () => {
+    expect(mergeThinkingPrefix('prefix', 'prefix and more')).toBe('prefix and more')
+  })
+
+  it('returns the prefix when live is a stale subset', () => {
+    expect(mergeThinkingPrefix('prefix and more', 'prefix')).toBe('prefix and more')
+  })
+
+  it('trims the overlap at the seam', () => {
+    // DB prefix ends with "world"; live restarts at "world" (a boundary both
+    // paths emitted).
+    expect(mergeThinkingPrefix('hello world', 'world and beyond')).toBe('hello world and beyond')
+  })
+
+  it('returns live when there is no prefix', () => {
+    expect(mergeThinkingPrefix(undefined, 'live')).toBe('live')
+    expect(mergeThinkingPrefix('', 'live')).toBe('live')
+  })
+
+  it('returns the prefix when live is empty', () => {
+    expect(mergeThinkingPrefix('prefix', '')).toBe('prefix')
   })
 })
 

@@ -555,12 +555,13 @@ func TestExecutor_ForceFlush_ThenGrowth_FullRewrite(t *testing.T) {
 	assert.Equal(t, []int{0}, seqs, "force mode must keep a single seq=0 full rewrite, no incremental chunks")
 }
 
-// --- DONE thinking slim markers in the streaming content row ---
+// --- Thinking slim markers in the streaming content row ---
 //
-// A completed thinking block (thinking_done received) must leave a slim
-// {think_id, done:true} marker in the streaming content row so a page refresh
-// mid-stream can lazy-load the already-finished reasoning. In-progress blocks
-// stay excluded (a done=false slim marker is the empty-spinner regression).
+// A thinking block leaves a slim {think_id} marker in the streaming content row
+// in two shapes: {done:true} once thinking_done arrives, and {in_progress:true}
+// while it is still streaming. The in-progress marker is what makes a session
+// switch lossless — see ContentBlock.InProgress. A block with no text (nothing
+// persisted to chat_thinking) gets no marker at all: it would lazy-load to a 404.
 
 // TestExecutor_DoneThinking_WritesSlimMarkerInContent verifies that a thinking
 // block marked done mid-stream gets a slim marker in the streaming content row
@@ -592,13 +593,19 @@ func TestExecutor_DoneThinking_WritesSlimMarkerInContent(t *testing.T) {
 	firstID := executor.blocks[0].ThinkID
 	require.NotEmpty(t, firstID)
 
-	// In-progress: content row must NOT carry any thinking marker yet.
+	// In-progress: the content row carries an in_progress marker (not a done one),
+	// so a session switch keeps the block's identity and can lazy-load the prefix.
 	content := readStreamingContent(t, msgID)
 	blocksRaw, ok := content["blocks"].([]any)
 	require.True(t, ok)
-	require.Empty(t, blocksRaw, "in-progress thinking must stay excluded from content")
+	require.Len(t, blocksRaw, 1, "an in-progress block must be represented in the streaming row")
+	inProg, ok := blocksRaw[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, firstID, inProg["think_id"])
+	assert.Equal(t, true, inProg["in_progress"], "still-streaming block must be marked in_progress")
+	assert.NotEqual(t, true, inProg["done"], "an in-progress block must not claim to be done")
 
-	// thinking_done arrives → next flush writes the slim marker.
+	// thinking_done arrives → next flush rewrites the marker as done.
 	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "thinking_done"})
 	executor.flushStreamingMessage()
 
@@ -611,6 +618,7 @@ func TestExecutor_DoneThinking_WritesSlimMarkerInContent(t *testing.T) {
 	assert.Equal(t, "thinking", thinkingBlock["type"])
 	assert.Equal(t, firstID, thinkingBlock["think_id"], "done marker must carry the stable think_id")
 	assert.Equal(t, true, thinkingBlock["done"], "done marker must carry done=true")
+	assert.NotContains(t, thinkingBlock, "in_progress", "a done block must not still be flagged in_progress")
 	assert.NotContains(t, thinkingBlock, "text", "content must not carry the thinking text")
 
 	// Refresh-simulation: the marker resolves to the full text via GetThinking.
@@ -620,11 +628,12 @@ func TestExecutor_DoneThinking_WritesSlimMarkerInContent(t *testing.T) {
 	assert.Equal(t, "reasoned", rec.Text)
 }
 
-// TestExecutor_InProgressThinking_StillExcludedFromContent is the regression
-// guard for 6c6a4a48: a slim marker for an IN-PROGRESS thinking block must
-// never appear in the streaming content (it would leak an empty spinner into
-// the live placeholder via mergeStreamBlocks).
-func TestExecutor_InProgressThinking_StillExcludedFromContent(t *testing.T) {
+// TestExecutor_InProgressThinking_WritesInProgressMarker pins the A-plan
+// contract: a still-streaming block IS represented in the streaming row, as an
+// in_progress marker. Omitting it entirely (the old behavior) cost the
+// already-streamed prefix on a session switch and made the next delta open a
+// second, done-less block that spun forever.
+func TestExecutor_InProgressThinking_WritesInProgressMarker(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
 		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
@@ -648,15 +657,23 @@ func TestExecutor_InProgressThinking_StillExcludedFromContent(t *testing.T) {
 	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "thinking", Content: "part2"})
 	executor.flushStreamingMessage()
 
-	// Never marked done — no marker in content across multiple flushes.
 	content := readStreamingContent(t, msgID)
 	blocksRaw, ok := content["blocks"].([]any)
 	require.True(t, ok)
-	require.Empty(t, blocksRaw, "in-progress thinking must never leak into streaming content")
-	for _, b := range blocksRaw {
-		blk, _ := b.(map[string]any)
-		assert.NotEqual(t, "thinking", blk["type"], "no thinking block may appear in streaming content")
-	}
+	require.Len(t, blocksRaw, 1, "in-progress thinking must be represented in the streaming row")
+	blk, ok := blocksRaw[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "thinking", blk["type"])
+	assert.Equal(t, true, blk["in_progress"], "must be flagged in_progress, not done")
+	assert.NotEqual(t, true, blk["done"], "an unfinished block must not be marked done")
+	// The marker must not carry the text — that lives in chat_thinking.
+	assert.NotContains(t, blk, "text")
+
+	// The prefix so far is retrievable, which is what the frontend lazy-loads.
+	rec, err := GetThinking(blk["think_id"].(string), msgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	assert.Equal(t, "part1part2", rec.Text)
 }
 
 // TestExecutor_EmptyDoneThinking_NoMarker verifies that a thinking block with
@@ -799,9 +816,14 @@ func TestExecutor_DoneAndInProgressThinking_SameFlush(t *testing.T) {
 	content := readStreamingContent(t, msgID)
 	blocksRaw, ok := content["blocks"].([]any)
 	require.True(t, ok)
-	require.Len(t, blocksRaw, 1, "only the done block leaves a marker")
-	thinkingBlock, ok := blocksRaw[0].(map[string]any)
+	require.Len(t, blocksRaw, 2, "both the done and the in-progress block leave a marker")
+	doneBlock, ok := blocksRaw[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, doneID, thinkingBlock["think_id"], "done block's marker must be in content")
+	assert.Equal(t, doneID, doneBlock["think_id"], "done block's marker must be in content")
+	assert.Equal(t, true, doneBlock["done"], "the finished block must be marked done")
+	inProgBlock, ok := blocksRaw[1].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, inProgBlock["in_progress"], "the unfinished block must be marked in_progress")
+	assert.NotEqual(t, true, inProgBlock["done"])
 	assert.NotContains(t, content, "second ongoing", "in-progress block's text must not be in content")
 }

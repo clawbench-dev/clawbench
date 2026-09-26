@@ -20,6 +20,21 @@ export interface ContentBlock {
   name?: string
   id?: string
   done?: boolean
+  /**
+   * Stable backend id for a thinking block. Its full text lives in the
+   * `chat_thinking` table; the block in the content row is a slim marker that
+   * lazy-loads the text. Also the v-for key, so a marker keeps its DOM across
+   * the done transition.
+   */
+  think_id?: string
+  /**
+   * Set on a thinking slim marker whose block is STILL STREAMING: the text so
+   * far is in `chat_thinking`, more deltas are coming. The frontend lazy-loads
+   * that prefix and keeps appending live deltas into the same block, instead of
+   * treating the marker as a finished (empty) chip. Only ever set on a
+   * streaming row; the backend clears it on finalize.
+   */
+  in_progress?: boolean
   status?: string
   input?: Record<string, unknown>
   output?: string
@@ -626,6 +641,36 @@ function joinTextBlocks(blocks: ContentBlock[]): string {
 }
 
 /**
+ * Combine a thinking block's lazy-loaded prefix with the live deltas held in
+ * its `text`.
+ *
+ * A thinking block can carry both: `think_id` points at the `chat_thinking` row
+ * holding everything persisted up to the last 500ms flush, while `text` holds
+ * the deltas that arrived afterwards (e.g. the deltas that raced a session
+ * switch, appended onto a block whose think_id was just adopted from the DB
+ * marker). Rendering only `text` would drop the prefix — the reported
+ * "same block, front half gone, continues from the middle".
+ *
+ * The two can also overlap: a replayed or re-sent stream may put the whole
+ * thought (prefix included) into `text`. So the seam is trimmed by the longest
+ * suffix-of-prefix that equals a prefix-of-live; the shorter source wins, and a
+ * true prefix/superset relationship short-circuits.
+ */
+export function mergeThinkingPrefix(prefix: string | undefined, live: string): string {
+  if (!prefix) return live
+  if (!live) return prefix
+  if (live.startsWith(prefix)) return live // live already covers the prefix
+  if (prefix.startsWith(live)) return prefix // live is a stale subset
+  const max = Math.min(prefix.length, live.length)
+  for (let k = max; k > 0; k--) {
+    if (prefix.slice(prefix.length - k) === live.slice(0, k)) {
+      return prefix + live.slice(k)
+    }
+  }
+  return prefix + live
+}
+
+/**
  * Cumulative text spans of the DB text blocks: `index` is the block's index in
  * `dbBlocks`, `start`/`end` its character range in the concatenated DB text.
  * Used to anchor a live text block (or a DB-only block) at a text position.
@@ -682,6 +727,61 @@ function dbAnchorOfLiveBlock(lb: ContentBlock, dbBlocks: ContentBlock[]): number
  * text stacked below" whenever a snapshot arrived while the placeholder held
  * little or no content.
  */
+/**
+ * Give a live thinking block the think_id of the DB in_progress marker it
+ * corresponds to, so the block keeps ONE identity across a session switch.
+ *
+ * Why this is needed: a live thinking block built from WS deltas has no
+ * think_id (only the backend assigns it, on the flush that first persists the
+ * text). When the DB snapshot arrives mid-stream, its in_progress marker for
+ * that same block carries the think_id. Without adopting it, the live block
+ * keeps no link to its `chat_thinking` row, so the lazy-loaded prefix can never
+ * be merged back in (see mergeThinkingPrefix) — the reported "same block, front
+ * half gone, continues from the middle".
+ *
+ * Deliberately narrow, because a wrong match would attach one block's prefix to
+ * another:
+ *   - Only in_progress markers qualify. At most ONE block per parent can be
+ *     streaming at a time, so at most one in_progress marker exists per parent
+ *     — the match is unambiguous. Done markers are left to the existing
+ *     liveHasThinking dedup, which is proven not to duplicate.
+ *   - The target is the LAST think_id-less live block of the same parent: a
+ *     parent's earlier blocks are finished (and, if adopted, already carry an
+ *     id), so the streaming one is the newest.
+ *   - If a parent somehow has two in_progress markers, nothing is adopted for
+ *     it (skip rather than guess).
+ *
+ * Duplication is prevented by the callers: mergeOrderedBlocks already skips all
+ * DB thinking blocks once live has any (`liveHasThinking`), and case 2 filters
+ * out markers whose think_id a live block now carries.
+ */
+function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): void {
+  const inProgressByParent = new Map<string, ContentBlock[]>()
+  for (const db of dbBlocks) {
+    if (db.type !== 'thinking' || !db.think_id || !db.in_progress) continue
+    const key = db.parent_tool_call_id || ''
+    const list = inProgressByParent.get(key)
+    if (list) list.push(db)
+    else inProgressByParent.set(key, [db])
+  }
+
+  for (const [parent, markers] of inProgressByParent) {
+    if (markers.length !== 1) continue // ambiguous — do not guess
+    const marker = markers[0]
+    let target: ContentBlock | undefined
+    for (const lb of liveBlocks) {
+      if (lb.type !== 'thinking' || lb.think_id) continue
+      if ((lb.parent_tool_call_id || '') !== parent) continue
+      target = lb // keep scanning: the streaming block is the last one
+    }
+    if (!target) continue
+    target.think_id = marker.think_id
+    // Still streaming: more deltas are coming, so it must not render as a
+    // finished chip. (The prefix is lazy-loaded and merged at render time.)
+    target.in_progress = true
+  }
+}
+
 function mergeOrderedBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[], takeDbText: boolean): ContentBlock[] {
   const liveToolIds = new Set(liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
   const liveHasThinking = liveBlocks.some((b) => b.type === 'thinking')
@@ -784,6 +884,14 @@ function mergeOrderedBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]
  * The reply's text/tool interleaving is therefore preserved.
  */
 function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): ContentBlock[] {
+  // Adoption runs FIRST, before any case can return early. A live thinking
+  // block gets its think_id from the DB's in_progress marker; that identity is
+  // what lets the render layer lazy-load the prefix. It must happen even when
+  // the cases below decide there is nothing else to merge — with no text blocks
+  // on either side (a thinking-only stretch) every case falls through to "leave
+  // live alone", which is exactly when a switch-back loses the prefix.
+  adoptThinkingMarkers(dbBlocks, liveBlocks)
+
   const dbText = joinTextBlocks(dbBlocks)
   const liveText = joinTextBlocks(liveBlocks)
 
@@ -836,7 +944,21 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   // cover. Prepend the DB blocks, trimming the text seam: if the DB text tail
   // repeats the live text head (a boundary re-emitted by both paths), cut it
   // from the DB tail.
-  const copy = dbBlocks.map((b) => ({ ...b }))
+  //
+  // Thinking markers are adopted onto the matching live blocks rather than
+  // prepended: a live thinking block and its DB marker are the SAME block seen
+  // from two sides, so prepending would render it twice. Adoption also hands
+  // the live block its think_id, which is what lets the render layer lazy-load
+  // the prefix the live stream never had (see mergeThinkingPrefix). Only
+  // markers with NO live counterpart are prepended (the block that finished
+  // before the placeholder was recreated).
+  adoptThinkingMarkers(dbBlocks, liveBlocks)
+  const liveThinkIDs = new Set(
+    liveBlocks.filter((b) => b.type === 'thinking' && b.think_id).map((b) => b.think_id as string),
+  )
+  const copy = dbBlocks
+    .filter((b) => !(b.type === 'thinking' && b.think_id && liveThinkIDs.has(b.think_id as string)))
+    .map((b) => ({ ...b }))
   if (overlap > 0) {
     let remaining = overlap
     for (let i = copy.length - 1; i >= 0 && remaining > 0; i--) {
@@ -1399,8 +1521,19 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // frame but the accumulator sees raw events, so both layers guard.
       if (!action.text) return state
       const existing = findBlockByTypeBackward(blocks, 'thinking', parent)
-      if (existing) existing.text += action.text
-      else blocks.push({ type: 'thinking', text: action.text, ...(action.key ? { _key: action.key } : {}), ...(parent ? { parent_tool_call_id: parent } : {}) })
+      if (existing) {
+        // A slim marker (adopted from the DB on a session switch) carries no
+        // text: its prefix lives in chat_thinking and is lazy-loaded at render
+        // time. Appending with `+=` on an absent text would produce the literal
+        // "undefined…", so seed an empty string instead. The prefix is merged
+        // back in by mergeThinkingPrefix when rendering.
+        existing.text = (typeof existing.text === 'string' ? existing.text : '') + action.text
+        // Deltas arrived for this block, so it is still streaming. Clear a stale
+        // done flag only when the block was reopened — never downgrade a block
+        // the backend already finished.
+      } else {
+        blocks.push({ type: 'thinking', text: action.text, ...(action.key ? { _key: action.key } : {}), ...(parent ? { parent_tool_call_id: parent } : {}) })
+      }
       return state
     }
     case 'ws_error': {
@@ -1453,6 +1586,10 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         if ((b.parent_tool_call_id || '') !== parent) continue
         if (b.type === 'thinking') {
           b.done = true
+          // The block is finished, so it is no longer streaming: drop the
+          // in_progress flag that a switch-adopted marker may carry. Leaving it
+          // set would keep the block in its "still coming" render state.
+          delete b.in_progress
           break
         }
         if (b.type === 'tool_use') break
