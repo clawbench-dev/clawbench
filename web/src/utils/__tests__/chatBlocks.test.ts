@@ -112,6 +112,48 @@ describe('parseAssistantContent', () => {
     expect(parseAssistantContent(content).blocks[0].done).toBe(true)
   })
 
+  // ── liveStreaming: a row of a turn that is STILL RUNNING ──
+  //
+  // Regression: a running sub-agent's Agent pill showed its green check while
+  // the sub-agent was still producing output. The DB row of a streaming turn
+  // carries the real, current tool status (the backend flips `done` only when
+  // the tool actually completes), so it must NOT be defaulted to "finished".
+  describe('liveStreaming', () => {
+    it('preserves done=false on a live row (running sub-agent keeps its spinner)', () => {
+      const content = JSON.stringify({
+        blocks: [
+          { type: 'tool_use', name: 'Agent', id: 'call_agent', input: {}, done: false, status: '' },
+          { type: 'tool_use', name: 'Read', id: 'call_child', input: {}, done: false, parent_tool_call_id: 'call_agent' },
+        ],
+      })
+      const result = parseAssistantContent(content, { liveStreaming: true })
+      expect(result.blocks[0].done).toBe(false)
+      expect(result.blocks[1].done).toBe(false)
+    })
+
+    it('still preserves done=true on a live row (finished tool stays finished)', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Read', id: '1', input: {}, done: true, status: 'success' }],
+      })
+      expect(parseAssistantContent(content, { liveStreaming: true }).blocks[0].done).toBe(true)
+    })
+
+    it('does NOT default a live row missing done to true', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Agent', id: 'call_agent', input: {} }],
+      })
+      expect(parseAssistantContent(content, { liveStreaming: true }).blocks[0].done).toBe(undefined)
+    })
+
+    it('is opt-in: the default (historical) path still forces done=true', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Agent', id: 'call_agent', input: {}, done: false }],
+      })
+      expect(parseAssistantContent(content).blocks[0].done).toBe(true)
+      expect(parseAssistantContent(content, { liveStreaming: false }).blocks[0].done).toBe(true)
+    })
+  })
+
   it('migrates input.output to output field (Codex backward compat)', () => {
     const content = JSON.stringify({
       blocks: [{ type: 'tool_use', name: 'Bash', id: '1', input: { command: 'ls', output: 'file.go' }, done: true }],

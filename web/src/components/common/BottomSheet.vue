@@ -13,7 +13,7 @@
       <div
         class="bs-panel"
         :class="[
-          { 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-wide-auto': isWideScreen },
+          { 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-wide-auto': isWideScreen, 'bs-maximized': maximized },
           panelClass
         ]"
       >
@@ -55,6 +55,13 @@ const props = defineProps({
   handleOnly: Boolean, // 仅显示拖拽手柄，无标题栏
   transparentOverlay: Boolean, // 透明遮罩（可点击关闭但可见底层内容）
   fullscreen: Boolean, // 全屏模式，覆盖 app header，用于无 header 的页面（如终端）
+  /**
+   * 最大化：面板铺满可用高度，而非按内容自适应。
+   * 与 ModalDialog 的 fullHeight 对应（同一语义，两种容器）。
+   * 用于内容需要长期占满空间的抽屉（如搜索结果列表），
+   * 避免每次结果变化时面板高度跳动。
+   */
+  maximized: Boolean,
   closeGuard: Boolean, // 阻止一切关闭操作（overlay点击/header点击/返回手势），用于内部有原生选择器等场景
   backEvent: String, // 自定义"返回"手势发出的事件名（默认 close）。用于下钻抽屉：边缘内滑返回时发出指定事件而非关闭。
   panelClass: {
@@ -223,6 +230,14 @@ defineExpose({
   max-height: 100%;
 }
 
+/* Maximized: fill the available height instead of hugging the content. Pairs
+   with `auto` (the overlay is still bottom-anchored on narrow screens). Used by
+   panels whose content is a long, changing list — auto height would make the
+   sheet grow and shrink on every result update. */
+.bs-panel.bs-auto.bs-maximized {
+  height: 100%;
+}
+
 .bs-panel.bs-leaving {
   animation: bs-slideDown 0.25s ease forwards;
 }
@@ -389,6 +404,14 @@ defineExpose({
 /* Hide drag handle in centered card mode */
 .bs-overlay.bs-overlay-wide-auto .bs-handle {
   display: none;
+}
+
+/* Wide-screen + maximized: the centered card fills the available height. The
+   overlay already reserves vertical padding (modal-card.css), so 100% means
+   "as tall as the viewport allows" without overflowing. Mirrors
+   ModalDialog's .modal-full-height. */
+.bs-panel.bs-wide-auto.bs-maximized {
+  height: 100%;
 }
 
 /* Body: scrollable in centered card mode */

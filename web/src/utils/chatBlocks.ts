@@ -7,12 +7,27 @@ import { gt } from '@/composables/useLocale'
 import { extractPlainText } from '@/utils/userMsgIndexUtils'
 import i18n from '@/i18n'
 
+/** Options for parseAssistantContent. */
+export interface ParseAssistantContentOptions {
+  /**
+   * The row being parsed belongs to a turn that is STILL RUNNING (the server
+   * reports `streaming: true` and the session is live). In that case `done` is
+   * authoritative — the backend writes it from the ACP tool status and flips it
+   * only when the tool actually completes — so it must be preserved verbatim.
+   *
+   * Default false (finalized/historical rows), where `done` may be missing
+   * entirely because old data never persisted it.
+   */
+  liveStreaming?: boolean
+}
+
 /**
  * Parse assistant content string into structured blocks.
  * Handles JSON blocks, tool_use deduplication, and fallback to text.
  */
-export function parseAssistantContent(content: string) {
+export function parseAssistantContent(content: string, opts?: ParseAssistantContentOptions) {
   if (!content) return { blocks: [], metadata: null }
+  const liveStreaming = opts?.liveStreaming === true
   try {
     const parsed = JSON.parse(content)
     if ('blocks' in parsed && !Array.isArray(parsed.blocks)) {
@@ -24,7 +39,15 @@ export function parseAssistantContent(content: string) {
       const mapped = parsed.blocks.map((b: any) => {
         if (b.type === 'tool_use') {
           if (!b.name) b.name = ''
-          if (b.done === undefined || b.done === false) b.done = true
+          // Historical rows may not carry `done` at all (it was not persisted
+          // before Done-field support), so an absent/false value there means
+          // "we cannot know it finished" and the row is rendered as settled.
+          //
+          // A LIVE row is the opposite: `done: false` is a real, current fact —
+          // the tool is still running. Forcing it to true made a running
+          // sub-agent's Agent pill show its green check while the sub-agent was
+          // still producing output (and the same for any long tool).
+          if (!liveStreaming && (b.done === undefined || b.done === false)) b.done = true
           if (!b.output && b.input && b.input.output) {
             b.output = b.input.output
             delete b.input.output

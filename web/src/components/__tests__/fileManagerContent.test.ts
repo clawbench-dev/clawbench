@@ -90,7 +90,7 @@ vi.mock('@/utils/fileType', () => ({
 }))
 
 vi.mock('@/utils/fileManager', () => ({
-  buildThumbUrl: (dir: string, name: string) => `/api/file/thumb?path=${dir}/${name}`,
+  buildThumbUrl: (dir: string, name: string) => `/api/fs/thumb?target=${dir}/${name}`,
   isImage: () => false,
   isAudio: () => false,
   isVideo: () => false,

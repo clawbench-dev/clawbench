@@ -20,7 +20,7 @@ vi.mock('@/utils/fileManager', async (importOriginal) => {
   return {
     ...actual,
     buildThumbUrl: (dir: string, name: string, w = 200) =>
-      `/api/file/thumb?path=${dir}/${name}&w=${w}`,
+      `/api/fs/thumb?target=${dir}/${name}&w=${w}`,
   }
 })
 
@@ -225,7 +225,7 @@ describe('DirPreviewBody', () => {
     const thumb = wrapper.find('.dir-preview-thumb')
     expect(thumb.exists()).toBe(true)
     // Same endpoint the file manager list uses, built from the directory path.
-    expect(thumb.attributes('src')).toContain('/api/file/thumb?path=assets/logo.png')
+    expect(thumb.attributes('src')).toContain('/api/fs/thumb?target=assets/logo.png')
     expect(thumb.attributes('loading')).toBe('lazy')
     // Non-image entries keep their type icon.
     expect(wrapper.findAll('.dir-preview-icon')).toHaveLength(1)

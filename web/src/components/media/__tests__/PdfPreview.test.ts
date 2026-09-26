@@ -9,7 +9,7 @@ vi.mock('@/composables/useAppMode.ts', () => ({
 
 // Mock download utils
 vi.mock('@/utils/download.ts', () => ({
-  buildLocalFileUrl: (path: string, opts?: any) => `/api/local-file/${path}?download=1`,
+  buildLocalFileUrl: (path: string, opts?: any) => `/api/fs/raw/${path}?download=1`,
   downloadFileByPath: vi.fn(),
 }))
 

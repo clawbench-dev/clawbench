@@ -2001,6 +2001,13 @@ public class MainActivity extends AppCompatActivity {
         isForeground = true;
         resumeWebView();
         notifyFrontendAppForeground(true);
+        // Unconditional resume signal. notifyFrontendAppForeground(true) above
+        // is a STATE report and is a no-op in the frontend when it still
+        // believes it is in the foreground — which is the normal case on
+        // Android, because onPause's JS call is dropped while the WebView is
+        // frozen. The frontend's resume listeners (current-session re-sync) must
+        // run on every resume, so they hang off this hook instead.
+        notifyFrontendAppResume();
         // App returning to foreground — always stop native WS (WebView WS handles events)
         BackgroundService.stopNativeEventWs(this);
         // Handle notification tap intent + re-dispatch pending navigation
@@ -2047,6 +2054,31 @@ public class MainActivity extends AppCompatActivity {
                     null);
         } catch (Exception e) {
             AppLog.w(TAG, "MainActivity: notifyFrontendAppForeground failed", e);
+        }
+    }
+
+    /**
+     * Tell the frontend the app just resumed, unconditionally.
+     *
+     * Distinct from notifyFrontendAppForeground(true), which only reports a
+     * foreground STATE and is therefore swallowed by the frontend when the
+     * matching background notification never landed (the WebView was frozen
+     * while paused, so onPause's JS call was dropped and the state is still
+     * `true`). The frontend's resume listeners re-sync the current session, and
+     * they must run on every real resume regardless of the state it observes.
+     *
+     * Best-effort: no-op when the WebView isn't ready or JS is unavailable.
+     */
+    void notifyFrontendAppResume() {
+        if (webView == null || !webViewConnected) {
+            return;
+        }
+        try {
+            webView.evaluateJavascript(
+                    "if (typeof window.__clawbenchAppResume === 'function') window.__clawbenchAppResume()",
+                    null);
+        } catch (Exception e) {
+            AppLog.w(TAG, "MainActivity: notifyFrontendAppResume failed", e);
         }
     }
 
@@ -3121,10 +3153,10 @@ public class MainActivity extends AppCompatActivity {
                 String url;
                 if (path.startsWith("/")) {
                     // External file: use ?path= query param
-                    url = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                    url = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
                 } else {
                     // Project-relative: use URL path
-                    url = serverUrl + "/api/local-file/" + Uri.encode(path, "/") + "?download=1";
+                    url = serverUrl + "/api/fs/raw/" + Uri.encode(path, "/") + "?download=1";
                 }
                 // Trigger the DownloadListener by asking WebView to load the URL
                 // The ?download=1 param makes the server return Content-Disposition: attachment
@@ -3135,7 +3167,7 @@ public class MainActivity extends AppCompatActivity {
 
         /**
          * Download a file by its full URL (e.g. /api/apk) using DownloadManager.
-         * Unlike downloadFile(), this does not hardcode the /api/local-file/ prefix
+         * Unlike downloadFile(), this does not hardcode the /api/fs/raw/ prefix
          * and uses DownloadManager directly for reliable progress notifications.
          * For APK files, automatically triggers the system installer when download completes.
          * @param url Full URL or server-relative path (e.g. "/api/apk")
@@ -3397,11 +3429,11 @@ public class MainActivity extends AppCompatActivity {
                     String downloadUrl;
                     if (path.startsWith("/")) {
                         // External file: use ?path= query param
-                        downloadUrl = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                        downloadUrl = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
                     } else {
                         // Project-relative: use URL path
                         String encodedPath = Uri.encode(path, "/");
-                        downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+                        downloadUrl = serverUrl + "/api/fs/raw/" + encodedPath + "?download=1";
                     }
 
                     OkHttpClient client = activity.buildTrustingOkHttpClient();
@@ -3533,10 +3565,10 @@ public class MainActivity extends AppCompatActivity {
                         // Build download URL
                         String downloadUrl;
                         if (path.startsWith("/")) {
-                            downloadUrl = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                            downloadUrl = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
                         } else {
                             String encodedPath = Uri.encode(path, "/");
-                            downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+                            downloadUrl = serverUrl + "/api/fs/raw/" + encodedPath + "?download=1";
                         }
 
                         Request request = new Request.Builder()

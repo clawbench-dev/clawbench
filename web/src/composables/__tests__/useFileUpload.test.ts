@@ -922,7 +922,7 @@ describe('useFileUpload', () => {
             json: async () => ({ files: [{ rel: 'a.txt', size: 4 }, { rel: 'sub/b.txt', size: 4 }] }),
           })
         }
-        if (url.includes('/api/local-file/')) {
+        if (url.includes('/api/fs/raw/')) {
           return Promise.resolve({ ok: true, body: fakeBody([1, 2, 3, 4]) })
         }
         return Promise.resolve({ ok: false })

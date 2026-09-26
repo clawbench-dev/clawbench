@@ -97,7 +97,7 @@ interface BatchBase64Response {
 }
 
 /**
- * Extract image paths from /api/local-file/ URLs in the container DOM, call
+ * Extract image paths from /api/fs/raw/ URLs in the container DOM, call
  * batch-base64 API, and replace src with data URIs. Prefers data-full-src
  * (full-size original) over an inline thumbnail src.
  */
@@ -111,7 +111,7 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
 
     for (const img of imgs) {
         // Prefer the original full-size URL when present (inline src may be a
-        // low-res /api/file/thumb thumbnail); fall back to the visible src.
+        // low-res /api/fs/thumb thumbnail); fall back to the visible src.
         const src = img.getAttribute('data-full-src') || img.getAttribute('src') || ''
 
         // Skip data URIs (already self-contained)
@@ -124,8 +124,8 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
             continue
         }
 
-        // Extract path from /api/local-file/...?t=...
-        const match = src.match(/^\/api\/local-file\/(.+?)(?:\?.*)?$/)
+        // Extract path from /api/fs/raw/...?t=...
+        const match = src.match(/^\/api\/fs\/raw\/(.+?)(?:\?.*)?$/)
         if (!match) continue
 
         let imgPath: string
@@ -145,7 +145,7 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
     // Batch fetch base64. Chunked because the endpoint rejects more than
     // MAX_BATCH_BASE64_PATHS with 400 TooManyPaths — and a document can easily
     // reference more images than that. Un-chunked, a single oversized request
-    // failed the WHOLE batch, so every local image kept its `/api/local-file/...`
+    // failed the WHOLE batch, so every local image kept its `/api/fs/raw/...`
     // src and showed up broken in the standalone export.
     const paths = Array.from(pathToImg.keys())
     let skipped = 0

@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-attachment-tags">
+  <div class="chat-attachment-tags" @wheel="onHorizontalWheel">
     <!-- Uploading pending file cards (instant local Blob thumbnail & upload progress) -->
     <template v-for="(pf, idx) in pendingFiles" :key="'pending-' + idx">
       <span v-if="pf.uploading"
@@ -63,6 +63,7 @@ import { isThumbableExt } from '@/utils/fileManager'
 import { isImageFile, isUrlEntry, isQuoteEntry, isSafeExternalUrl, type FileEntry } from '@/utils/fileAttachmentUtils'
 import { Link as LinkIcon } from 'lucide-vue-next'
 import { baseName } from '@/utils/path'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import type { PendingFile } from '@/composables/useFileUpload'
 
 const props = withDefaults(defineProps<{

@@ -10,9 +10,17 @@ export interface QuoteData {
   /** External address when the quote came from a forge object. */
   url?: string
   /** Where the quote came from; drives the drawer's jump affordance. */
-  sourceKind?: 'file' | 'url' | 'message'
+  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal'
   /** DB message id when the quote was taken from a chat message. */
   messageId?: number
+  /** Commit SHA when the quote came from a git-history or CI-pipeline view. */
+  commitSha?: string
+  /** Scheduled task id when the quote came from a task view. */
+  taskId?: number
+  /** Chat session id when the quote came from a chat message. */
+  sessionId?: string
+  /** Task execution id when the quote came from one run's detail view. */
+  executionId?: string
 }
 
 export interface StagedQuote extends QuoteData {
@@ -137,14 +145,24 @@ function setQuoteData(data: QuoteData | null) {
 }
 
 function sameQuote(a: QuoteData, b: QuoteData): boolean {
-  // messageId is part of the identity: quoting the same sentence out of two
-  // different chat messages produces two genuinely different quotes, and
-  // collapsing them would silently keep only the first.
+  // The LOCATORS are part of the identity, not just the label. A label is a
+  // human-facing name and is not unique: two scheduled tasks may share a name
+  // (the schema has no unique constraint), and two CI runs may share a workflow
+  // name and number across repositories. Comparing only the label would collapse
+  // them into a single card and silently drop one.
+  //
+  // messageId was the first field to need this (quoting the same sentence out of
+  // two different chat messages produces two genuinely different quotes), so the
+  // rule is simply "same label AND same locators".
   return a.filePath === b.filePath
     && a.startLine === b.startLine
     && a.endLine === b.endLine
     && a.text === b.text
     && (a.messageId ?? 0) === (b.messageId ?? 0)
+    && (a.taskId ?? 0) === (b.taskId ?? 0)
+    && (a.commitSha ?? '') === (b.commitSha ?? '')
+    && (a.executionId ?? '') === (b.executionId ?? '')
+    && (a.url ?? '') === (b.url ?? '')
 }
 
 function addStagedQuote(data: QuoteData, note = ''): StagedQuote {

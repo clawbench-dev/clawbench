@@ -4,7 +4,7 @@
 
 > 移动原因：规格需通过 `go:embed` 编入二进制，用于渲染内置斜杠命令注入给 AI 的接口说明；而 `go:embed` 不能跨模块目录向上引用。**编辑规格请改 `internal/api/openapi.yaml`。**
 
-它是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部 150 个路径 / 189 个操作。
+它是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部 155 个路径 / 194 个操作。
 
 ## 使用方式
 
@@ -24,7 +24,7 @@
 | 类型 | 端点 |
 |------|------|
 | WebSocket | `/api/ai/events/ws`、`/api/tts/audio/ws`、`/api/stt/transcribe/ws`、`/api/terminal/ws`、`/api/file/watch/ws` |
-| SSE | `/api/dir/search`、`/api/tts/stream/{jobId}` |
+| SSE | `/api/dir/search`、`/api/file/content-search`、`/api/tts/stream/{jobId}` |
 
 聊天流式内容统一经 `/api/ai/events/ws` 推送，不在本文件建模。
 
@@ -60,7 +60,7 @@ Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、G
 
 - 路由注册的唯一来源是 `internal/handler/handler.go` 的 `RegisterRoutes`。
 - 字段名与参数名**必须从 handler 代码里抄**：对照 `decodeJSON` 结构体的 JSON tag、`r.URL.Query().Get(...)`、`requireMethod(...)` / `switch r.Method`。**禁止凭路由名望文生义**——这是过去 40+ 处不一致的根因。
-- 留意通配路由的子路径分发：`/api/tasks/`（`{id}` 与 `executions` 子路径）、`/api/agents/`、`/api/file/`、`/api/share/`、`/api/chat/quick-send/` 等。
+- 留意通配路由的子路径分发：`/api/tasks/`（`{id}` 与 `executions` 子路径）、`/api/agents/`、`/api/fs/file/`、`/api/fs/raw/`、`/api/share/`、`/api/chat/quick-send/` 等。
 - 鉴权变化须同步 `security` 标注（默认 `cookieAuth` 或本机 AI 的 `aiToken`，免鉴权端点显式写 `security: []`）。
 - 已移除的端点（如 `/api/files`、`/api/git/status`、`/api/terminal/config`）在相关操作的 `description` 中标注了取代者。
 - 改完自检：路由无遗漏无多余、YAML 合法、无重复 `operationId`、`$ref` 可解析。

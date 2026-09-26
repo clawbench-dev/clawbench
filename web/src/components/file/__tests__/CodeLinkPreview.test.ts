@@ -25,7 +25,7 @@ vi.mock('@/composables/useToast', () => ({
 // the download.ts unit tests). vi.mock is hoisted, so it must live at module
 // top level.
 vi.mock('@/utils/download', () => ({
-  buildLocalFileUrl: (p: string) => `/api/local-file/${p}`,
+  buildLocalFileUrl: (p: string) => `/api/fs/raw/${p}`,
 }))
 
 // Mock fileType. Label is path-derived so the media meta-row test can assert
@@ -2252,7 +2252,7 @@ describe('CodeLinkPreview.vue — media body (image / SVG / video / audio / PDF)
 
     const img = document.querySelector('.code-preview-media-img') as HTMLImageElement | null
     expect(img).not.toBeNull()
-    expect(img!.getAttribute('src')).toContain('/api/local-file/')
+    expect(img!.getAttribute('src')).toContain('/api/fs/raw/')
     expect(img!.getAttribute('src')).toContain('assets/logo.png')
 
     // Text-viewer tools must not show for media.
@@ -2499,7 +2499,7 @@ describe('CodeLinkPreview.vue — lightbox action for image targets', () => {
     // The third arg is the file path: the Lightbox resolves the filename,
     // sibling navigation and Download target from it (a preview click never
     // opens the file, so store.state.currentFile is unrelated).
-    expect(openLightbox).toHaveBeenCalledWith('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+    expect(openLightbox).toHaveBeenCalledWith('/api/fs/raw/assets/logo.png', '', 'assets/logo.png')
   })
 
   it('keeps the preview open so the Lightbox returns to it', async () => {
@@ -2545,7 +2545,7 @@ describe('CodeLinkPreview.vue — lightbox action for image targets', () => {
     btn!.click()
     await flushPromises()
 
-    expect(openLightbox).toHaveBeenCalledWith('/api/local-file/photo.png', '', 'photo.png')
+    expect(openLightbox).toHaveBeenCalledWith('/api/fs/raw/photo.png', '', 'photo.png')
   })
 
   it('offers the action in the docked pane', async () => {
@@ -2561,7 +2561,7 @@ describe('CodeLinkPreview.vue — lightbox action for image targets', () => {
     btn!.click()
     await flushPromises()
 
-    expect(openLightbox).toHaveBeenCalledWith('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+    expect(openLightbox).toHaveBeenCalledWith('/api/fs/raw/assets/logo.png', '', 'assets/logo.png')
   })
 
   it('hides the action for non-image media (video / audio / PDF)', async () => {

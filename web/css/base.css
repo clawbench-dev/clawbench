@@ -173,7 +173,8 @@ html.wallpaper-active .pdf-error,
 html.wallpaper-active .office-preview-container,
 html.wallpaper-active .forge-panel,
 html.wallpaper-active .forge-detail,
-html.wallpaper-active .forge-comment-body {
+html.wallpaper-active .forge-comment-body,
+html.wallpaper-active .git-history-content {
     background: transparent;
 }
 
@@ -223,9 +224,12 @@ html.wallpaper-active .forge-detail-header,
 html.wallpaper-active .forge-detail-footer {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
 }
+/* The drill-down header is NOT listed here: it is transparent by design (it is
+   the top of the page root, not a contrasting bar). Giving it a translucent
+   bg-secondary tint under wallpaper-active would put the bar back, and the row
+   hover tint below would then be invisible against it. */
 html.wallpaper-active .terminal-tab-bar,
 html.wallpaper-active .stats-tab-bar,
-html.wallpaper-active .drilldown-header,
 html.wallpaper-active .manage-tabs,
 html.wallpaper-active .toc-dock,
 html.wallpaper-active .forge-tabs {

@@ -367,7 +367,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
+	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
 	Content        string                 // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	ErrorCode      int                    // Structured error code (e.g. ACP JSON-RPC code -32603)
@@ -387,6 +387,7 @@ type StreamEvent struct {
 	Usage          *UsageState            // Usage state (Type=usage_update)
 	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
 	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
+	QueueAdded     *QueueAddedData        // A message was enqueued (Type=queue_added)
 	StreamStart    *StreamStartData       // Stream start (Type=stream_start) — carries streaming message DB id
 	// SteerBoundary is set on a "steer_boundary" event: the exact point where a
 	// mid-turn injected user message entered the running turn. It lets the
@@ -412,12 +413,6 @@ type StreamEvent struct {
 // anchored to the authoritative DB row id.
 type StreamStartData struct {
 	MessageID int64 `json:"message_id"`
-	// QueueID is the answered queue id stored on the streaming assistant row —
-	// the queueId of the user message this run answers (empty for runs without
-	// a question, e.g. tasks). It lets a client whose question bubble
-	// is still in flight (recovery / cross-device) re-anchor the streaming
-	// placeholder to the true question instead of the newest stale user message.
-	QueueID string `json:"queue_id,omitempty"`
 }
 
 // SteerBoundaryData identifies the point where a mid-turn injected message
@@ -427,8 +422,10 @@ type StreamStartData struct {
 //
 // The service layer splits the assistant reply here: everything accumulated so
 // far is finalized as the "before" message, and subsequent content becomes a
-// new "after" message. ClientUserMessageID is the injected question's queueId,
-// so the "after" message can be anchored to it for correct ordering.
+// new "after" message. ClientUserMessageID is the injected question's queueId —
+// it is the correlation token that lets the host recognize its OWN injection
+// echo, not a sort anchor (the injected row is materialized into chat_history
+// before the "after" row, so id order is already correct).
 type SteerBoundaryData struct {
 	ClientUserMessageID string `json:"client_user_message_id"`
 }
@@ -441,9 +438,6 @@ type SteerBoundaryData struct {
 type StreamSplitData struct {
 	// MessageID is the DB id of the new "after" streaming assistant row.
 	MessageID int64 `json:"message_id"`
-	// QueueID is the injected question's queue id — the "after" message is
-	// anchored to it so it sorts directly below that question.
-	QueueID string `json:"queue_id,omitempty"`
 }
 
 // ToolCall represents a tool invocation by the AI.
@@ -491,26 +485,34 @@ func truncateToolOutput(output string) string {
 //     state but do NOT open a new placeholder (the reply in flight continues).
 //   - queue_cancel: emitted when the user cancels while messages are queued.
 type QueueEventData struct {
-	SessionID string                `json:"sessionId,omitempty"` // Session this event belongs to (for frontend routing)
-	QueueID   string                `json:"queueId,omitempty"`   // Frontend-generated ID for matching pending messages (queue_drain, queue_inject)
-	QueueIDs  []string              `json:"queueIds"`            // IDs of cancelled queued messages (queue_cancel) — may be empty
-	Text      string                `json:"text,omitempty"`
-	MessageID int64                 `json:"messageId,omitempty"` // DB ID of the drained/inserted user message (queue_drain, queue_inject)
-	FilePaths []string              `json:"filePaths,omitempty"`
-	Files     []model.FileEntry     `json:"files,omitempty"`
-	Queue     []model.QueuedMessage `json:"queue,omitempty"`
+	SessionID string   `json:"sessionId,omitempty"` // Session this event belongs to (for frontend routing)
+	QueueID   string   `json:"queueId,omitempty"`   // Client-generated ID for matching the queue entry (queue_drain, queue_inject)
+	QueueIDs  []string `json:"queueIds"`            // IDs of cancelled queued messages (queue_cancel) — may be empty
+	MessageID int64    `json:"messageId,omitempty"` // DB ID of the materialized user message (queue_drain, queue_inject)
 }
 
 // UserMessageData carries a user message for cross-device synchronization.
 // Emitted via StreamHub.EmitToSession after AddChatMessage succeeds,
 // so other devices subscribed to the same session see the message in real-time.
 type UserMessageData struct {
-	MessageID      int64             `json:"messageId"`                // DB row ID (0 if not yet persisted, e.g. enqueued messages)
+	MessageID      int64             `json:"messageId"`                // chat_history row ID (the message is always persisted before this event)
 	Content        string            `json:"content"`                  // Raw user message text
 	Files          []model.FileEntry `json:"files,omitempty"`          // File attachments
 	SenderClientID string            `json:"senderClientId,omitempty"` // WS client ID of the sender (to skip self-echo)
-	QueueID        string            `json:"queueId,omitempty"`        // Frontend queue ID (for enqueued messages, enables precise drain matching)
-	Queued         bool              `json:"queued,omitempty"`         // true = message is enqueued (waiting for drain), not yet started
+	QueueID        string            `json:"queueId,omitempty"`        // Client queue ID the sender used, so it can adopt this row's id
+}
+
+// QueueAddedData announces a message that was just ENQUEUED (waiting for the
+// drain loop) so every subscribed device can render it in the queue panel.
+//
+// Distinct from UserMessageData: a queued message has no chat_history row yet
+// (it is materialized only at dequeue), so there is no MessageID. This event
+// replaces the old misuse of user_message{queued:true} for that purpose.
+type QueueAddedData struct {
+	QueueID        string            `json:"queueId"`
+	Text           string            `json:"text"`
+	Files          []model.FileEntry `json:"files,omitempty"`
+	SenderClientID string            `json:"senderClientId,omitempty"`
 }
 
 // AIBackend defines the interface for AI backend implementations

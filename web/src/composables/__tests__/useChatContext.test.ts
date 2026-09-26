@@ -230,6 +230,46 @@ describe('useChatContext', () => {
       expect(ctx.stagedQuotes.value[0].note).toBe('new')
     })
 
+    // The same rule as messageId, for the locators a dragged row carries. A
+    // label is NOT unique: the task schema has no unique constraint on `name`,
+    // and a workflow name+number can repeat across repositories. Comparing only
+    // the label collapsed such quotes into one and silently dropped the other.
+    it('treats two tasks that share a name as two quotes', () => {
+      const dragged = { ...first, text: '', filePath: 'Nightly build', language: 'task' }
+      const a = ctx.addStagedQuote({ ...dragged, taskId: 11 }, 'first')
+      const b = ctx.addStagedQuote({ ...dragged, taskId: 22 }, 'second')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(2)
+      expect(a.id).not.toBe(b.id)
+    })
+
+    it('still deduplicates the same task dragged twice', () => {
+      const dragged = { ...first, text: '', filePath: 'Nightly build', language: 'task', taskId: 11 }
+      const original = ctx.addStagedQuote(dragged)
+      const duplicate = ctx.addStagedQuote({ ...dragged })
+
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(duplicate.id).toBe(original.id)
+    })
+
+    it('treats two commits with the same subject as two quotes', () => {
+      const dragged = { ...first, text: '', filePath: 'a1b2c3d fix login', language: 'diff' }
+      const a = ctx.addStagedQuote({ ...dragged, commitSha: 'a1b2c3d4' })
+      const b = ctx.addStagedQuote({ ...dragged, commitSha: 'e5f6a7b8' })
+
+      expect(ctx.stagedQuotes.value).toHaveLength(2)
+      expect(a.id).not.toBe(b.id)
+    })
+
+    it('treats the same object quoted from two repositories as two quotes', () => {
+      // Two repos can each have a PR #7, so the url must be part of the identity.
+      const dragged = { ...first, text: '', filePath: 'o/r#7', language: 'pr' }
+      const a = ctx.addStagedQuote({ ...dragged, url: 'https://a/7' })
+      const b = ctx.addStagedQuote({ ...dragged, url: 'https://b/7' })
+
+      expect(ctx.stagedQuotes.value).toHaveLength(2)
+    })
+
     it('updateStagedQuoteNote rewrites the addressed quote only', () => {
       const target = ctx.addStagedQuote(first, 'before')
       ctx.addStagedQuote({ ...first, text: 'const b = 2', startLine: 2, endLine: 2 }, 'untouched')

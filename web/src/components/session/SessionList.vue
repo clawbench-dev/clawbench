@@ -12,7 +12,7 @@
       @toggle="toggleTagFilter"
     />
 
-    <!-- ── Project pane: one flat, infinite-scrolling list ── -->
+    <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
     <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen spinner on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
@@ -20,55 +20,116 @@
       <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
-        <!-- Single flat list. Pinned sessions stay first (the backend returns
-             them in that order, so this array order is authoritative) but are no
-             longer split into their own section — a pinned row is marked with a
-             corner wedge plus a small pin glyph at the end of its title. -->
-        <TransitionGroup name="session-list" tag="div" class="session-rows">
-          <div
-            v-for="(session, idx) in sessionsWithStatus"
-            :key="session.id"
-            :data-session-id="session.id"
-            class="session-row"
-            :class="{ pinned: session.pinned, active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
-            @contextmenu.prevent="showContextMenu($event, session)"
-            v-long-press="onSessionLongPress"
-          >
-            <span v-if="session.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
+        <!-- Order is the backend's: pinned DESC first (a fixed block at the top),
+             then the user's manual drag order (sort_order ASC).
+             VueDraggable (SortableJS) owns the list root and reorders
+             `sessions` in place via v-model. It replaces the former
+             TransitionGroup: both drive the same DOM nodes, and running them
+             together fights over the move animation. `animation` keeps the
+             smooth slide.
+
+             `sessions` holds only the TOP-LEVEL rows — a session that heads a
+             fork group is one entry, and its group is rendered right after it.
+             Dragging therefore moves the whole group as a unit, and a group can
+             never be split by a drag. Two consequences that keep Sortable's
+             index arithmetic honest: hidden rows are omitted from the DOM
+             entirely (v-if, never v-show), and `draggable` admits only the
+             top-level rows so a group member is never a drag source.
+
+             Gesture: the drag starts ONLY from the row's ⋮ button (`handle`),
+             identically on desktop and touch. Dragging the row body stays free
+             for its normal jobs — selecting text on desktop, scrolling the list
+             on touch — so no press delay is needed and the two can never fight.
+             The button still opens the menu on a plain click; Sortable only
+             takes over once the pointer actually moves.
+
+             Menu entry point: the row's ⋮ button, on every device. There is
+             deliberately no right-click and no long-press handler: a touch
+             long-press synthesizes a `contextmenu` event on mobile (it is how
+             the platform raises its selection menu), so a right-click binding
+             would silently re-create a long-press menu there. The button is the
+             single, identical gesture everywhere.
+
+             Pinned rows are protected on the frontend, not just by the backend:
+             `filter` keeps them from being dragged (with preventOnFilter off, so
+             their ⋮ menu still opens), and the end-of-drag re-partition in
+             pinPinnedRowsToTop is the hard guarantee that a plain row can never
+             be left above them. onDragMove only smooths the interaction. -->
+        <VueDraggable
+          v-model="sessions"
+          tag="div"
+          class="session-rows"
+          handle=".session-more-btn"
+          filter=".session-row.pinned"
+          draggable=".session-row.is-top"
+          :prevent-on-filter="false"
+          :animation="150"
+          @move="onDragMove"
+          @end="onDragEnd"
+        >
+          <template v-for="row in visibleRows" :key="row.session.id">
             <div
-              class="session-item"
-              :class="{ active: session.id === currentSessionId }"
-              @click="selectSession(session.id, session.backend)"
+              :data-session-id="row.session.id"
+              class="session-row"
+              :class="rowClasses(row)"
             >
-              <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-              <div class="session-item-info">
-                <div class="session-item-header">
-                  <span class="session-item-title">{{ session.title }}</span>
-                </div>
-                <div class="session-item-meta">
-                  <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                  <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                  <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
-                </div>
-                <div v-if="session.tags && session.tags.length" class="session-item-tags">
-                  <span
-                    v-for="tag in session.tags"
-                    :key="tag.name"
-                    class="session-tag"
-                    :style="tagAccentStyle(tag.name)"
-                  >{{ tag.name }}</span>
+              <span v-if="row.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
+              <div
+                class="session-item"
+                :class="{ active: row.session.id === currentSessionId }"
+                @click="selectSession(row.session.id, row.session.backend)"
+              >
+                <span v-if="row.session.unreadCount > 0 || row.session.pendingApproval" class="session-item-badge"></span>
+                <div class="session-item-info">
+                  <div class="session-item-header">
+                    <span class="session-item-title">{{ row.session.title }}</span>
+                    <span v-if="row.depth > 0" class="session-fork-gen" :title="t('session.forkGenerationTitle', { n: row.depth })">{{ t('session.forkGeneration', { n: row.depth }) }}</span>
+                  </div>
+                  <div class="session-item-meta">
+                    <span class="session-item-time">{{ formatRelativeTime(row.session.updatedAt) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :size="12" /> {{ getAgentName(row.session.agentId) }}</span>
+                    <span v-if="row.session.model" class="session-item-model">{{ row.session.model }}</span>
+                  </div>
+                  <!-- Fork-group toggle, inlined on the anchor row itself.
+                       A separate header row made the group read as "a session,
+                       then an unrelated section"; putting the control inside the
+                       row means the anchor IS the group, so there is only one
+                       thing on screen in both states.
+
+                       It is a real <button> so it can be tabbed to, and
+                       @click.stop keeps it from also selecting the session
+                       underneath (the row's own click handler). It deliberately
+                       carries no `.session-item`, because keyboard navigation
+                       maps its index onto querySelectorAll('.session-item') —
+                       an extra match here would shift every row after it. -->
+                  <button
+                    v-if="row.isAnchor"
+                    class="session-fork-toggle"
+                    :class="{ collapsed: isForkCollapsed(row.session.id) }"
+                    :aria-expanded="!isForkCollapsed(row.session.id)"
+                    :title="t('session.forkGroupTitle')"
+                    @click.stop="toggleForkCollapsed(row.session.id)"
+                  >
+                    <ChevronDown :size="11" class="fork-toggle-chevron" />
+                    <GitFork :size="11" />
+                    <span>{{ t('session.forkCount', { n: row.childCount }) }}</span>
+                  </button>
+                  <div v-if="row.session.tags && row.session.tags.length" class="session-item-tags">
+                    <span
+                      v-for="tag in row.session.tags"
+                      :key="tag.name"
+                      class="session-tag"
+                      :style="tagAccentStyle(tag.name)"
+                    >{{ tag.name }}</span>
+                  </div>
                 </div>
               </div>
+              <button class="session-more-btn" :title="t('common.moreActions')" @click.stop="showMenuFromButton($event, row.session)">
+                <MoreVertical :size="15" />
+              </button>
             </div>
-            <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-              <Archive :size="15" />
-            </button>
-          </div>
-        </TransitionGroup>
-
-        <div ref="sentinelRef" class="session-list-sentinel"></div>
-        <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
-        <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
+          </template>
+        </VueDraggable>
       </template>
     </div>
 
@@ -113,7 +174,8 @@
       </template>
     </div>
 
-    <!-- Context menu for pin/unpin & rename — reuses the shared file-manager
+    <!-- Session menu (pin/rename/tags/archive/remove), opened from the row's ⋮
+         button or a right-click on the row. Reuses the shared file-manager
          context menu (.context-menu / .context-menu-item in css/components.css)
          so positioning, styling and viewport clamping stay in one place. -->
     <Teleport to="body">
@@ -124,11 +186,22 @@
         </div>
         <div class="context-menu-item" @click.stop="renameSessionFromMenu(contextMenu.sessionId)">
           <PencilLine :size="14" />
-          {{ t('common.renameSession') }}
+          {{ t('common.rename') }}
         </div>
         <div class="context-menu-item" @click.stop="openTagDialogFromMenu(contextMenu.sessionId)">
           <Tags :size="14" />
           {{ t('common.setTags') }}
+        </div>
+        <!-- Doubles as the share-state indicator (mirrors the file header's
+             "Share link" item): highlighted and relabelled when this
+             conversation already has a live public link. -->
+        <div
+          class="context-menu-item"
+          :class="{ active: isSessionShared(contextMenu.sessionId) }"
+          @click.stop="openShareDialogFromMenu(contextMenu.sessionId)"
+        >
+          <MessageSquareShare :size="14" />
+          {{ isSessionShared(contextMenu.sessionId) ? t('sessionShare.buttonActive') : t('sessionShare.button') }}
         </div>
         <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
           <Archive :size="14" />
@@ -140,10 +213,8 @@
           {{ t('common.remove') }}
         </div>
       </div>
-      <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu.
-           Re-dispatching contextmenu through it keeps right-click-on-another-row
-           working while the menu is open (mirrors FileManagerContent). -->
-      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" @contextmenu.prevent="handleOverlayContextMenu" />
+      <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu. -->
+      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" />
     </Teleport>
 
     <SessionTagDialog
@@ -152,32 +223,43 @@
       :initial-tags="tagDialog.initialTags"
       @close="tagDialog.open = false"
     />
+    <SessionShareDialog
+      :open="shareDialog.open"
+      :session-id="shareDialog.sessionId"
+      @close="shareDialog.open = false"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Pin, PinOff, PencilLine, Tags, Trash2 } from 'lucide-vue-next'
+import { VueDraggable } from 'vue-draggable-plus'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, GitFork } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
+import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { tagAccentStyle } from '@/utils/tagColor.ts'
 import { useAgents } from '@/composables/useAgents'
+import { useSessionShare } from '@/composables/useSessionShare'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useDialog } from '@/composables/useDialog.ts'
+import { useToast } from '@/composables/useToast'
 import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
-import { apiPatch } from '@/utils/api.ts'
+import { apiPatch, apiPut } from '@/utils/api.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
+import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
+import { buildRenameGenerateOptions } from '@/utils/sessionRename'
 
 const props = defineProps({
   currentSessionId: String,
@@ -187,44 +269,127 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select', 'archive', 'destroy', 'update:activeTab'])
-
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()
+const { isSessionShared, setSharedSessionIds } = useSessionShare()
 const dialog = useDialog()
+const toast = useToast()
 const { runningSessionsVersion } = useSessionIdentity()
 const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useCrossProjectSessions()
 
+// The drag-bound array. It holds only TOP-LEVEL rows: a session that heads a
+// fork group is one entry here, and its group members live in
+// `membersByAnchor` and are rendered right after it. Dragging therefore moves
+// the whole group, and a group can never be split by a drag.
 const sessions = ref([])
+// anchorId → its group members (shallowest generation first), and every session
+// by id (members included). Both are rebuilt from the server response; the
+// `byId` map is what the row menu resolves against, since a group member is not
+// in `sessions`.
+const membersByAnchor = ref(new Map())
+const sessionsById = ref(new Map())
 const loading = ref(false)
-const loadingMore = ref(false)
 const refreshing = ref(false) // a reload (loadSessions) is in flight
-const hasMore = ref(false)
-// Tag filter. Single-select: '' means no filter. The value is sent to the
-// server (see buildListQuery) rather than applied to the loaded page, so
-// pagination and hasMore stay consistent — client-side filtering would show
-// "no matches" until the user happened to scroll far enough.
+// Tag filter. Single-select: '' means no filter. Sent to the server so the
+// returned set matches what the chips promise.
 const activeTag = ref('')
 // Tags in use in the current project (with session counts), for the filter bar.
 const filterTags = ref([])
 const listRef = ref(null)
-const sentinelRef = ref(null)
-let observer = null
-const pageSize = computed(() => store.state.chatSessionPageSize || 10)
 let reloadDebounce = null
 let removeEventHandler = null
 
-const sessionsWithStatus = computed(() => {
+// Fork-group collapse state, keyed by anchor session id. In-memory only, same
+// as the cross-project pane's: the pane is v-show'd (never unmounted) while the
+// app runs, so it survives tab switches and list reloads, and resets on page
+// reload. Default is EXPANDED — a freshly forked session is the one the user
+// just created, so its group should be visible.
+const collapsedAnchors = reactive(new Set())
+function isForkCollapsed(anchorId) {
+  return collapsedAnchors.has(anchorId)
+}
+function toggleForkCollapsed(anchorId) {
+  if (collapsedAnchors.has(anchorId)) collapsedAnchors.delete(anchorId)
+  else collapsedAnchors.add(anchorId)
+}
+
+/**
+ * Expand the group holding `sessionId`, if any.
+ *
+ * A collapsed anchor must never hide the row the user is actually on: a
+ * notification deep link or a cross-project jump can land on a group member
+ * whose anchor was collapsed earlier. Auto-expanding (rather than overriding
+ * the collapsed flag at render time) keeps the header's chevron truthful and
+ * leaves the user free to collapse it again afterwards.
+ */
+function expandGroupOf(sessionId) {
+  if (!sessionId) return
+  for (const [anchorId, members] of membersByAnchor.value) {
+    if (members.some(m => m.session.id === sessionId)) {
+      collapsedAnchors.delete(anchorId)
+      return
+    }
+  }
+}
+
+/**
+ * The rows actually rendered, in order: each top-level row followed by its
+ * group members when expanded. A collapsed group's members are omitted from
+ * the DOM entirely (the template v-if's on `isForkCollapsed`), never merely
+ * hidden — that keeps the draggable index arithmetic and the keyboard nav
+ * index working on exactly the set of visible rows.
+ */
+const visibleRows = computed(() => {
   void runningSessionsVersion.value
-  return sessions.value.map(s => ({
-    ...s,
-    running: props.runningSessionIds.has(s.id),
-  }))
+  const out = []
+  for (const top of sessions.value) {
+    const members = membersByAnchor.value.get(top.id)
+    const isAnchor = !!members && members.length > 0
+    out.push({
+      session: top,
+      depth: 0,
+      childCount: isAnchor ? members.length : 0,
+      isAnchor,
+      running: props.runningSessionIds.has(top.id),
+    })
+    if (!isAnchor || isForkCollapsed(top.id)) continue
+    members.forEach((member, i) => {
+      out.push({
+        ...member,
+        // The last member closes the tree rail (└─) instead of continuing it.
+        // Explicit rather than CSS `:last-of-type`: the group's rows are
+        // siblings of the rows around them, so the last member is not the last
+        // child of its type.
+        isLastInGroup: i === members.length - 1,
+        running: props.runningSessionIds.has(member.session.id),
+      })
+    })
+  }
+  return out
 })
 
-// Display order is pinned-first, then the rest — matching the backend's
-// `ORDER BY pinned DESC, created_at DESC`. Rendered as one flat list, so the
-// rendered DOM order equals sessionsWithStatus order, which is what useListNav
-// indexes into.
+/** Row modifiers, derived from the row plus the live running set. */
+function rowClasses(row) {
+  return {
+    pinned: row.session.pinned,
+    active: row.session.id === props.currentSessionId,
+    running: row.running,
+    'is-top': row.depth === 0,
+    'is-fork-member': row.depth > 0,
+    // Closes the tree rail on the last member of a fork group.
+    'is-last-in-group': row.depth > 0 && row.isLastInGroup,
+    // Heads a fork group. Shares its tint with the group header below it so the
+    // two read as one block instead of "a session, then an unrelated section".
+    'is-group-anchor': row.isAnchor,
+    'session-row-active': visibleRows.value[listNav.activeIndex.value]?.session.id === row.session.id,
+    'menu-open': contextMenu.visible && contextMenu.sessionId === row.session.id,
+  }
+}
+
+/** Resolve a session by id across the whole list, group members included. */
+function findSession(sessionId) {
+  return sessionsById.value.get(sessionId)
+}
 
 // Cross-project group collapse state, keyed by absolute project path. In-memory
 // only: the pane is v-show'd (never unmounted) while the app runs, so the state
@@ -243,103 +408,41 @@ async function loadSessions() {
   // the loading spinner when there is nothing to render yet. This prevents the
   // "clear then refill" flash when a WS-triggered reload fires.
   //
-  // Depth preservation: a reload must NOT collapse the list back to the first
-  // page when the user has already scrolled through more (loadMoreSessions
-  // appended pages). If it did, the shorter list would re-expose the load-more
-  // sentinel, the IntersectionObserver would immediately append again, and —
-  // while a running session keeps emitting session_update events — the list
-  // (and the auto-sized drawer around it) would oscillate in height forever.
-  // Instead, re-fetch pages until the fresh list covers the rows the user has
-  // already loaded, then swap in place.
-  const keepDepth = sessions.value.length
-  loading.value = keepDepth === 0
-  hasMore.value = false
+  // The whole list is fetched in one request (no pagination): a project has
+  // few enough sessions that paging only added cursor bookkeeping, and it made
+  // drag-reorder ambiguous (the client could not know about rows it had not
+  // loaded). Omitting `limit` selects the backend's full-list path.
+  loading.value = sessions.value.length === 0
   refreshing.value = true
   try {
-    const fresh = await fetchSessionsUpTo(keepDepth)
-    sessions.value = fresh
-    reconcileRunningSessions(sessions.value)
+    // Coalesced: this component is mounted twice (pinned sidebar + mobile
+    // drawer), and both reload on the same signals, so without this the list is
+    // fetched twice for identical data.
+    const data = await coalescedJson(`/api/ai/sessions${buildTagQuery()}`)
+    const fetched = data.sessions || []
+    reconcileRunningSessions(fetched)
+    // Group the server order into top-level rows + their groups. `sessions`
+    // holds the top-level rows in server order; the members hang off the map.
+    const grouping = buildSessionForkTree(fetched)
+    sessions.value = grouping.topSessions
+    membersByAnchor.value = grouping.membersByAnchor
+    sessionsById.value = grouping.byId
+    // A reload rebuilds the groups, so a member that is now the current session
+    // (opened while the previous snapshot was on screen) needs its group open.
+    expandGroupOf(props.currentSessionId)
+    if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
   } catch (err) {
     appLog.e('SessionList', 'Failed to load sessions:', err)
     sessions.value = []
+    membersByAnchor.value = new Map()
+    sessionsById.value = new Map()
   } finally {
     loading.value = false
     refreshing.value = false
-    await nextTick()
-    setupObserver()
   }
 }
 
-/**
- * Fetch session pages until at least `minCount` rows are covered (or the
- * server reports no more), returning the accumulated list. A plain first load
- * passes minCount=0 and behaves like before: one page of pageSize rows.
- * Each page is fetched after the previous one's last row (cursor semantics
- * identical to loadMoreSessions below).
- *
- * The cursor is the last row's full sort key — createdAt + id + pinned — NOT
- * updatedAt: the backend orders and filters paged sessions by
- * (pinned DESC, created_at DESC, id DESC), so sending updatedAt (which is
- * >= createdAt and bumped on every message) makes the cursor filter match rows
- * already shown, and omitting pinned re-returns every pinned row on each page.
- */
-async function fetchSessionsUpTo(minCount) {
-  const limit = pageSize.value
-  const accumulated = []
-  let cursor = null
-  // Always fetch at least one page; afterwards keep going only when a reload
-  // must preserve a deeper list (minCount > pageSize). On a plain first load
-  // (minCount = 0) one page is exactly right — the remaining pages are loaded
-  // on demand by loadMoreSessions when the user scrolls.
-  // Cap the loop so a pathological cursor never spins forever; pageSize is
-  // small (default 10) and the depth to preserve is bounded by what the user
-  // actually scrolled through.
-  let serverHasMore
-  let pages = 0
-  for (;;) {
-    let url = `/api/ai/sessions?limit=${limit}${buildTagQuery()}`
-    if (cursor) url += buildCursorQuery(cursor)
-    // Coalesced: this component is mounted twice (pinned sidebar + mobile
-    // drawer), and both reload on the same signals, so without this each page
-    // is fetched twice for identical data.
-    const data = await coalescedJson(url)
-    const list = data.sessions || []
-    accumulated.push(...list)
-    serverHasMore = !!data.hasMore
-    if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
-    const last = list[list.length - 1]
-    pages++
-    if (!last || !serverHasMore || accumulated.length >= minCount || pages >= 20) break
-    // A missing createdAt means we cannot form a safe cursor. encodeURIComponent
-    // would stringify it to "undefined", and the server filter
-    // `created_at < 'undefined'` is lexically true for every date — re-returning
-    // page 1 (the duplicate bug). Stop instead of looping.
-    if (!last.createdAt) {
-      appLog.w('SessionList', 'session missing createdAt; stopping pagination')
-      serverHasMore = false
-      break
-    }
-    cursor = last
-  }
-  hasMore.value = serverHasMore
-  return accumulated
-}
-
-/**
- * Build the cursor query string for the row the next page starts after.
- * `pinned` is part of the sort key, so it must travel with the cursor —
- * without it the backend cannot exclude already-seen pinned rows.
- */
-function buildCursorQuery(row) {
-  return `&cursor=${encodeURIComponent(row.createdAt)}`
-    + `&cursor_id=${encodeURIComponent(row.id)}`
-    + `&cursor_pinned=${row.pinned ? 1 : 0}`
-}
-
-/**
- * The tag filter must be part of EVERY list request (including each paginated
- * page), otherwise page 2 would silently fall back to the unfiltered set.
- */
+/** The tag filter query string, or '' when no filter is applied. */
 function buildTagQuery() {
   return activeTag.value ? `&tag=${encodeURIComponent(activeTag.value)}` : ''
 }
@@ -380,42 +483,6 @@ function toggleTagFilter(name) {
   loadSessions()
 }
 
-async function loadMoreSessions() {
-  if (loadingMore.value || !hasMore.value || refreshing.value) return
-  loadingMore.value = true
-  try {
-    const last = sessions.value[sessions.value.length - 1]
-    if (!last) return
-    // A missing createdAt cannot form a valid cursor (see fetchSessionsUpTo) —
-    // bail out rather than sending cursor=undefined and re-fetching page 1.
-    if (!last.createdAt) {
-      appLog.w('SessionList', 'last session missing createdAt; stopping pagination')
-      hasMore.value = false
-      return
-    }
-    // Cursor = the last row's full sort key (pinned, createdAt, id).
-    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}${buildCursorQuery(last)}${buildTagQuery()}`)
-    const data = await resp.json()
-    const more = data.sessions || []
-    if (more.length > 0) sessions.value = [...sessions.value, ...more]
-    hasMore.value = !!data.hasMore
-    if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
-  } catch (err) {
-    appLog.e('SessionList', 'Failed to load more sessions:', err)
-  } finally {
-    loadingMore.value = false
-  }
-}
-
-function setupObserver() {
-  if (observer) { observer.disconnect(); observer = null }
-  if (!sentinelRef.value || !listRef.value) return
-  observer = new IntersectionObserver((entries) => {
-    if (entries[0].isIntersecting && hasMore.value && !loadingMore.value && !refreshing.value) loadMoreSessions()
-  }, { threshold: 0.1, rootMargin: '100px', root: listRef.value })
-  observer.observe(sentinelRef.value)
-}
-
 function selectSession(sessionId, backend) {
   emit('select', sessionId, backend)
 }
@@ -442,7 +509,7 @@ async function archiveSession(sessionId) {
     onExtraAction: () => emit('destroy', sessionId),
   })
   if (confirmed) {
-    const session = sessions.value.find(s => s.id === sessionId)
+    const session = findSession(sessionId)
     emit('archive', sessionId, session?.backend)
   }
 }
@@ -462,53 +529,116 @@ function openContextMenu(x, y, sessionId, pinned) {
   nextTick(() => clampContextMenu())
 }
 
-function showContextMenu(event, session) {
-  openContextMenu(event.clientX, event.clientY, session.id, session.pinned)
+/**
+ * Open the session menu from the row's ⋮ button, anchored under its bottom-right
+ * corner. This is the only menu entry point — see the template comment for why
+ * there is no right-click / long-press binding.
+ */
+function showMenuFromButton(event, session) {
+  const btn = event.currentTarget
+  const rect = btn?.getBoundingClientRect?.()
+  // Right-align the menu with the button and drop it just below.
+  const x = rect ? rect.right : (event.clientX ?? 0)
+  const y = rect ? rect.bottom : (event.clientY ?? 0)
+  openContextMenu(x, y, session.id, session.pinned)
 }
 
-function onSessionLongPress(e, capturedSessionId) {
-  // Prefer the session id captured at touchstart time by the directive — it is
-  // the id of the row that was actually pressed. Important: inside the
-  // directive's setTimeout callback `e.currentTarget` is null (the touch event
-  // has already finished dispatching), so reading the DOM attribute from the
-  // event target at fire-time can return a different row when TransitionGroup
-  // has moved/reused DOM nodes (e.g. after pinning reorders the list).
-  let sessionId = capturedSessionId
-  if (!sessionId) {
-    const el = e.currentTarget || e.target
-    sessionId = el?.dataset?.sessionId || el?.closest('[data-session-id]')?.dataset?.sessionId
+// ── Manual drag reordering (issue #492) ──
+// SortableJS reorders `sessions` (the top-level rows) in place via v-model, so
+// by the time `end` fires the array already holds the new order. We only
+// persist it. A drag that ends where it started never reaches here as a
+// meaningful change — oldIndex equals newIndex, and the server write is skipped.
+//
+// A group member is not a drag source: `draggable=".session-row.is-top"` admits
+// only top-level rows, so dragging always moves a whole group (members are
+// rendered from `membersByAnchor`, which follows the anchor's position).
+
+/**
+ * Force the pinned block back to the front of `sessions`.
+ *
+ * This is the frontend guarantee that a pinned row can never be pushed down —
+ * it does NOT rely on Sortable's onMove, which is only advisory and is bypassed
+ * whenever the drop lands on the list container rather than a row (the gap
+ * above the first row resolves to the container, whose element carries no
+ * `pinned` marker, so the live guard waves it through). Whatever order Sortable
+ * left the array in, pinned rows are lifted back to the top in their existing
+ * relative order, so the DOM can never show a plain row above a pinned one.
+ *
+ * Returns the same array instance when nothing needed moving, so the caller can
+ * skip a redundant reactive write.
+ */
+function pinPinnedRowsToTop(list) {
+  const pinnedCount = list.filter(s => s.pinned).length
+  if (pinnedCount === 0 || pinnedCount === list.length) return list
+  // Already partitioned? Then the drag stayed out of the pinned block.
+  if (list.slice(0, pinnedCount).every(s => s.pinned)) return list
+  const pinned = list.filter(s => s.pinned)
+  const rest = list.filter(s => !s.pinned)
+  return [...pinned, ...rest]
+}
+
+/**
+ * Live guard: refuse a drop that would place the dragged row at an index inside
+ * the pinned block, i.e. above a pinned row.
+ *
+ * Best-effort only — see pinPinnedRowsToTop for why the end-of-drag
+ * re-partition is the actual guarantee. This one just keeps the row from
+ * visibly jumping above the block and snapping back on release. It computes the
+ * prospective index from the row Sortable would insert next to plus
+ * `willInsertAfter`, rather than inspecting that row's class: the target can
+ * also be the list container (the gap above the first row), which carries no
+ * `pinned` marker and would otherwise be waved through.
+ */
+function onDragMove(evt) {
+  const pinnedCount = sessions.value.filter(s => s.pinned).length
+  if (pinnedCount === 0) return true
+  const relatedId = evt.related?.dataset?.sessionId
+  if (!relatedId) {
+    // Container target: appending at the end is fine, inserting at the top is not.
+    return evt.willInsertAfter === true
   }
-  if (!sessionId) return
-  const session = sessionsWithStatus.value.find(s => s.id === sessionId)
-  if (!session) return
-  const touch = e.touches[0]
-  openContextMenu(touch.clientX, touch.clientY + 10, sessionId, session.pinned)
+  const idx = sessions.value.findIndex(s => s.id === relatedId)
+  if (idx < 0) return true
+  return idx + (evt.willInsertAfter ? 1 : 0) >= pinnedCount
+}
+
+async function onDragEnd(evt) {
+  if (evt.oldIndex === evt.newIndex) return
+  // Lift pinned rows back to the top before anything else: Sortable may have
+  // inserted the dragged row above them (it only consults onMove when the drop
+  // target is a row, so the container gap is unprotected).
+  const ordered = pinPinnedRowsToTop(sessions.value)
+  if (ordered !== sessions.value) sessions.value = ordered
+
+  // Persist the order of every visible session, groups flattened in place.
+  //
+  // The server numbers `sort_order` per session, and a group's members must
+  // keep travelling with their anchor. Posting only the top-level rows would
+  // leave the members' sort_order untouched while their anchor moved, so the
+  // next load would rebuild the group in a different spot — the drag would
+  // appear to undo itself. Flattening the visible order (anchor, its members,
+  // next anchor, ...) is exactly the sequence the DOM shows, so the group
+  // reassembles around its anchor afterwards.
+  //
+  // A collapsed group's members are not rendered, so they are not in this
+  // list; the server leaves them after the posted prefix in their previous
+  // relative order (see service.ReorderSessions), which keeps them adjacent to
+  // their anchor because they were already numbered there.
+  const visibleUnpinned = visibleRows.value.filter(r => !r.session.pinned)
+  visibleUnpinned.forEach((r, i) => { r.session.sortOrder = i })
+  const ids = visibleUnpinned.map(r => r.session.id)
+  try {
+    await apiPut('/api/ai/sessions/reorder', { ids })
+  } catch (err) {
+    appLog.e('SessionList', 'Failed to persist session order:', err)
+    toast.show(t('session.reorderFailed'), { icon: '❌', type: 'error' })
+    // Roll back to the server's order rather than leaving the DOM diverged.
+    loadSessions()
+  }
 }
 
 function closeContextMenu() {
   contextMenu.visible = false
-}
-
-/**
- * Right-click while the menu is open lands on the full-viewport overlay, not on
- * a row. Hide the overlay for one hit-test so elementFromPoint reveals the row
- * underneath, then re-open the menu for that row — otherwise a second
- * right-click anywhere would just close the menu (mirrors FileManagerContent).
- */
-function handleOverlayContextMenu(e) {
-  const overlay = e.currentTarget
-  const prev = overlay.style.pointerEvents
-  overlay.style.pointerEvents = 'none'
-  let row = null
-  try {
-    row = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-session-id]') || null
-  } finally {
-    overlay.style.pointerEvents = prev
-  }
-  if (!row) { closeContextMenu(); return }
-  const session = sessionsWithStatus.value.find(s => s.id === row.dataset.sessionId)
-  if (!session) { closeContextMenu(); return }
-  openContextMenu(e.clientX, e.clientY, session.id, session.pinned)
 }
 
 // Clamp menu position to stay within the viewport on all sides. Mirrors
@@ -531,7 +661,7 @@ async function togglePin(sessionId, currentPinned) {
   closeContextMenu()
   const newPinned = !currentPinned
   // Optimistic update
-  const session = sessions.value.find(s => s.id === sessionId)
+  const session = findSession(sessionId)
   if (session) session.pinned = newPinned
   try {
     await apiPatch(`/api/ai/session/update?session_id=${encodeURIComponent(sessionId)}`, { pinned: newPinned })
@@ -546,7 +676,7 @@ async function togglePin(sessionId, currentPinned) {
 
 async function renameSessionFromMenu(sessionId) {
   closeContextMenu()
-  const session = sessions.value.find(s => s.id === sessionId)
+  const session = findSession(sessionId)
   if (!session) return
   const current = session.title || ''
   const newTitle = await dialog.prompt(
@@ -557,6 +687,7 @@ async function renameSessionFromMenu(sessionId) {
       placeholder: t('chat.sessionRename.placeholder'),
       confirmText: t('common.confirm'),
       cancelText: t('common.cancel'),
+      ...buildRenameGenerateOptions(sessionId),
     }
   )
   if (newTitle === null || newTitle.trim() === '' || newTitle.trim() === current) return
@@ -569,15 +700,19 @@ async function renameSessionFromMenu(sessionId) {
   }
 }
 
+// Archive goes through archiveSession so the confirmation dialog is preserved.
+// The standalone archive button used to be the only confirmed entry point;
+// removing it in favour of this menu would otherwise drop the confirmation
+// entirely (the menu's sibling "remove" item still confirms, so this keeps the
+// two destructive actions consistent).
 function archiveFromMenu(sessionId) {
-  const session = sessions.value.find(s => s.id === sessionId)
   closeContextMenu()
-  emit('archive', sessionId, session?.backend)
+  return archiveSession(sessionId)
 }
 
 async function destroyFromMenu(sessionId) {
   closeContextMenu()
-  const session = sessions.value.find(s => s.id === sessionId)
+  const session = findSession(sessionId)
   if (!session) return
   const title = session.title || t('session.unnamed')
   const isRunning = props.runningSessionIds.has(sessionId)
@@ -594,13 +729,22 @@ const tagDialog = reactive({ open: false, sessionId: '', initialTags: [] })
 
 function openTagDialogFromMenu(sessionId) {
   closeContextMenu()
-  const session = sessions.value.find(s => s.id === sessionId)
+  const session = findSession(sessionId)
   if (!session) return
   tagDialog.sessionId = sessionId
   tagDialog.initialTags = (session.tags || []).map(tag => tag.name)
   tagDialog.open = true
 }
 
+// Conversation share dialog. Only the session id is needed: the dialog loads
+// the message list and the existing share state itself.
+const shareDialog = reactive({ open: false, sessionId: '' })
+
+function openShareDialogFromMenu(sessionId) {
+  closeContextMenu()
+  shareDialog.sessionId = sessionId
+  shareDialog.open = true
+}
 function addSessionLocally(session) {
   if (!session) return
   if (sessions.value.some(s => s.id === session.id)) return
@@ -622,14 +766,15 @@ function reload() {
   loadSessions()
 }
 
-// Keyboard navigation indexes sessionsWithStatus, whose order (pinned first,
-// then newest-first) is exactly the rendered DOM order. The list is flat, so
-// the nav index maps straight onto the rows — no section offset to apply.
+// Keyboard navigation indexes visibleRows, whose order is exactly the rendered
+// DOM order: each top-level row, then its group members when the group is
+// expanded. A collapsed group contributes only its anchor row, and the group
+// headers carry no `.session-item`, so neither is reachable by arrow keys.
 const listNav = useListNav({
-  getCount: () => sessionsWithStatus.value.length,
+  getCount: () => visibleRows.value.length,
   onConfirm: (idx) => {
-    const s = sessionsWithStatus.value[idx]
-    if (s) selectSession(s.id, s.backend)
+    const row = visibleRows.value[idx]
+    if (row) selectSession(row.session.id, row.session.backend)
   },
   onActiveChange: scrollActiveIntoView,
 })
@@ -644,21 +789,7 @@ function scrollActiveIntoView(index) {
   if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
 }
 
-watch(sessionsWithStatus, () => listNav.reset())
-
-// The project pane is v-show'd (not unmounted) so its scroll position and
-// pagination depth survive tab switches. But when hidden its scroll root has
-// zero size, which makes the load-more sentinel intersect immediately and
-// triggers bogus pagination. Pause the observer while the cross tab is shown
-// and re-arm it on return.
-watch(() => props.activeTab, async (tab) => {
-  if (tab === 'project') {
-    await nextTick()
-    setupObserver()
-  } else {
-    if (observer) { observer.disconnect(); observer = null }
-  }
-})
+watch(visibleRows, () => listNav.reset())
 
 // Reset to the project tab whenever the current project changes: the session we
 // just opened belongs to the (new) current project and must be visible in the
@@ -669,12 +800,17 @@ watch(() => store.state.projectRoot, () => {
   // the new project's sessions behind a tag it may not even have.
   activeTag.value = ''
   loadFilterTags()
+  // Shares are project-scoped: the previous project's badges must go.
+  void refreshSessionShares()
 })
 
 // Bring the active session into view after a cross-project jump. The row may
 // not be loaded yet (pagination), so retry once after a reload settles.
 watch(() => props.currentSessionId, async (id) => {
   if (!id) return
+  // A group member can be hidden behind a collapsed anchor; expand first so the
+  // scroll below has a row to find.
+  expandGroupOf(id)
   await nextTick()
   if (scrollActiveRowIntoView()) return
   await nextTick()
@@ -709,11 +845,33 @@ watch(() => store.state.sessionListVersion, async () => {
   reload()
 })
 
+/**
+ * Seed the shared-session set so row badges are correct without the user
+ * having to open the shared-conversations drawer first. One list request;
+ * failures are silent because a missing badge must never block the list.
+ */
+async function refreshSessionShares() {
+  try {
+    const resp = await fetch('/api/share/session/list')
+    if (!resp.ok) return
+    const data = await resp.json()
+    setSharedSessionIds((data.shares || []).map((s) => s.sessionId))
+  } catch (err) {
+    appLog.w('SessionList', 'refresh session shares failed:', err)
+  }
+}
+
 defineExpose({ loadSessions, addSessionLocally, reload })
 
 onMounted(() => {
   loadSessions()
   loadFilterTags()
+  // Seed the share badges for this project in one request.
+  void refreshSessionShares()
+  // The session opened before this list mounted (cold start, or a notification
+  // deep link) may be a group member whose anchor was never expanded — there is
+  // no currentSessionId *change* to observe, so expand once here too.
+  expandGroupOf(props.currentSessionId)
   // Real-time: keep the list in sync with session lifecycle events (running,
   // completed, cancelled, permission, title updates). Debounced so a stream
   // of events (e.g. running→completed) triggers one refresh.
@@ -726,7 +884,6 @@ onUnmounted(() => {
   removeEventHandler?.()
   removeEventHandler = null
   if (reloadDebounce) { clearTimeout(reloadDebounce); reloadDebounce = null }
-  if (observer) { observer.disconnect(); observer = null }
   contextMenu.visible = false
 })
 </script>
@@ -752,25 +909,173 @@ onUnmounted(() => {
 .session-rows {
   display: flex;
   flex-direction: column;
+  /* Width of the accent bar a selected row paints (`.session-row.active`).
+     Declared once because two places must agree on it: the border itself, and
+     the tree rail's compensation (an absolutely-positioned box is offset from
+     the padding box, i.e. inside the border, so the rail would shift by exactly
+     this much on the selected row). */
+  --row-active-border: 4px;
 }
 
-.session-list-enter-active,
-.session-list-leave-active {
-  transition: opacity var(--duration-slow) ease, transform var(--duration-slow) ease;
+/* Drag feedback (SortableJS classes). `.sortable-ghost` is the placeholder left
+   in the list at the drop position; `.sortable-chosen` is the row being held;
+   `.sortable-drag` is the floating element under the pointer. The drag starts
+   from the row's ⋮ button, so the grabbed cursor lives on the button. */
+.session-row.sortable-ghost {
+  opacity: 0.4;
+  background-color: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
 }
 
-.session-list-enter-from {
-  opacity: 0;
-  transform: translateY(-6px);
+.session-row.sortable-chosen .session-more-btn {
+  cursor: grabbing;
 }
 
-.session-list-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
+.session-row.sortable-drag {
+  opacity: 0.9;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  border-radius: var(--radius-sm, 6px);
 }
 
-.session-list-move {
+/* ── Fork groups (issue #477) ──
+   A derived-session group is its ANCHOR ROW plus the indented members under it.
+   There is no separate group header: the anchor row carries the collapse control
+   inline (see .session-fork-toggle), so the group is one row in both states —
+   expanded it is a row followed by its members, collapsed it is just the row.
+   An earlier version rendered a standalone header under the anchor, which made
+   the pair read as "a session, then an unrelated section".
+
+   Members are indented and joined to the anchor by a tree rail: a vertical line
+   with a horizontal arm to each member, the last one closing it (`├─` / `└─`).
+   See .session-row.is-fork-member for why it is drawn with backgrounds rather
+   than borders. The indent zone is also tinted one step deeper.
+
+   The indent lives on the row rather than .session-item so the running band and
+   the selection tint — both painted on the row — are indented with it instead
+   of bleeding back to the pane edge. */
+.session-row.is-group-anchor {
+  background-color: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+/* The collapse control, inlined on the anchor row's third line.
+   Reset from the browser's default button look so it sits in the row's text
+   flow, but keep it a real button: it is focusable and reachable by keyboard.
+   Accent-coloured so it reads as an affordance rather than more metadata. */
+.session-fork-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  margin-top: 1px;
+  padding: 0;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--accent-color, #0066cc);
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.session-fork-toggle:hover {
+  text-decoration: underline;
+}
+.session-fork-toggle:focus-visible {
+  outline: 2px solid var(--accent-color, #0066cc);
+  outline-offset: 2px;
+}
+/* Rotates to point right when collapsed, matching the chevron convention the
+   cross-project headers use. */
+.session-fork-toggle .fork-toggle-chevron {
   transition: transform var(--duration-slow) ease;
+  flex-shrink: 0;
+}
+.session-fork-toggle.collapsed .fork-toggle-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Members span the FULL row width: the indent is `padding-left`, NOT
+   `margin-left`. A margin sits outside the background box, so the indent zone
+   was left unpainted and showed the pane's own background as a bright stripe
+   down the left of every member row — and it made the members narrower than
+   their anchor row.
+
+   ── Tree rail (M1) ──
+   Members are joined to their anchor by a tree: a vertical rail down the left,
+   with a horizontal arm reaching each member (`├─`), and the last one closing
+   the rail (`└─`). That arm on EVERY member is what makes it a tree rather than
+   an elbow — an earlier version drew only the final corner, so the middle
+   members were indented rows beside a stray vertical with nothing pointing at
+   them.
+
+   Drawn with ::before + background layers, NOT with a border. Two reasons:
+     - A border always spans the full row height, so the last member's rail could
+       not stop at its centre to turn; the corner then had to draw a second
+       vertical alongside, producing two parallel lines.
+     - ::after is taken by the pinned wedge (.session-row.pinned::after).
+   Two background layers paint the rail (1px at x=0 of the box) and the arm (1px
+   across the middle), so they meet exactly at the rail with no offset.
+
+   The arm spans the full indent so it reaches the content; `padding-left` then
+   starts the content just past the arm's tip. */
+.session-row.is-fork-member {
+  --tree-line: color-mix(in srgb, var(--text-primary) 22%, transparent);
+  padding-left: calc(var(--space-6) + var(--space-4));
+  /* `background-image` (not the shorthand) so background-color — set by the
+     `active` / `session-row-active` / `menu-open` rules at the same specificity
+     — is left alone. */
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--text-primary) 5%, transparent) 0 var(--space-6),
+    color-mix(in srgb, var(--text-primary) 2%, transparent) var(--space-6) 100%
+  );
+}
+
+/* The rail + arm. `left` is the arm's reach: it starts at the rail and stops
+   where the content begins, so the corner lines up with the text. */
+.session-row.is-fork-member::before {
+  content: '';
+  position: absolute;
+  left: var(--space-6);
+  top: 0;
+  bottom: 0;
+  width: var(--space-4);
+  pointer-events: none;
+  /* Layer 1: the arm, 1px tall at the row's vertical centre.
+     Layer 2: the rail, 1px wide along the box's left edge, full height. */
+  background-image:
+    linear-gradient(var(--tree-line), var(--tree-line)),
+    linear-gradient(var(--tree-line), var(--tree-line));
+  background-size: 100% 1px, 1px 100%;
+  background-position: 0 50%, 0 0;
+  background-repeat: no-repeat;
+}
+
+/* Last member: the rail stops at the row's centre so the arm reads as └─
+   rather than continuing past it. */
+.session-row.is-fork-member.is-last-in-group::before {
+  background-size: 100% 1px, 1px 50%;
+}
+
+/* Selected member: `.session-row.active` adds a `border-left`, and an
+   absolutely-positioned box is offset from the PADDING box — i.e. inside the
+   border — so the rail would jump right by the border's width on the selected
+   row and no longer line up with the rows above and below it. (The row's text
+   does not move: it is compensated by `.session-item.active { padding-left:
+   8px }`. The rail needs the same compensation, which is what this is.)
+   Both widths come from --row-active-border so they cannot drift apart. */
+.session-row.is-fork-member.active::before {
+  left: calc(var(--space-6) - var(--row-active-border));
+}
+
+/* Generation chip on a group member's title line ("Gen 2" / "第 2 代"). */
+.session-fork-gen {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  line-height: 16px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--text-muted, #999);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  white-space: nowrap;
 }
 
 .session-empty {
@@ -793,9 +1098,12 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-/* Accent border lives on the row so it encloses the archive button too. */
+/* Accent border lives on the row so it encloses the archive button too.
+   The padding is pulled in by exactly the border's width so the row's TEXT does
+   not shift when the selection appears. The tree rail needs its own copy of this
+   compensation — see `.session-row.is-fork-member.active::before`. */
 .session-item.active {
-  padding-left: var(--space-4);
+  padding-left: calc(var(--space-6) - var(--row-active-border));
 }
 
 .session-row.session-row-active {
@@ -804,9 +1112,9 @@ onUnmounted(() => {
 }
 
 /* Selected-row tint. Declared on the row (not on .session-item) so it fills the
-   34px archive-button cell as well — when it lived on .session-item the archive
-   cell kept showing the row's own background (green for a running session) and
-   the selection looked cut short. Painted as a background-image rather than a
+   trailing button cell as well — when it lived on .session-item the cell kept
+   showing the row's own background (green for a running session) and the
+   selection looked cut short. Painted as a background-image rather than a
    background-color so a running row's green fill still shows through beneath
    the translucent tint instead of being replaced. */
 .session-row.active {
@@ -814,7 +1122,7 @@ onUnmounted(() => {
     color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent),
     color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent)
   );
-  border-left: 4px solid var(--accent-color, #0066cc);
+  border-left: var(--row-active-border) solid var(--accent-color, #0066cc);
   border-right: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
@@ -918,6 +1226,21 @@ onUnmounted(() => {
   }
 }
 
+/* The row whose context menu is open keeps the hover tint it just lost.
+   Opening the menu paints a full-viewport .ctx-overlay, which swallows :hover
+   (measured: the row stops matching :hover while the menu is up), so without
+   this the row goes plain at exactly the moment the user needs to see which row
+   the menu targets — it read as worse than not right-clicking at all.
+   Same 6% as :hover so the tint does not jump brighter on right-click; a
+   stronger value would also blur the distinction from .active, which means
+   "this is the open conversation", not "this is the row under the menu".
+   Deliberately OUTSIDE the (hover: hover) block: touch has no hover to lose,
+   and the ⋮ button opens this same menu there, so for touch this is the only
+   cue. */
+.session-row.menu-open {
+  background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
 .session-item-info {
   display: flex;
   flex-direction: column;
@@ -942,6 +1265,7 @@ onUnmounted(() => {
   flex-wrap: nowrap;
   overflow: hidden;
 }
+
 
 .session-item-title {
   font-size: var(--font-size-md);
@@ -1037,15 +1361,24 @@ onUnmounted(() => {
   display: flex;
   align-items: stretch;
   position: relative;
-  /* Row separator lives here (not on .session-item / .session-archive-btn) so it
+  cursor: pointer;
+  /* Row separator lives here (not on .session-item / .session-more-btn) so it
      spans the full row width. Drawn on the two cells it stopped short of the
-     archive button, leaving a gap. */
+     trailing button cell, leaving a gap. */
   border-top: 1px solid var(--border-color, #dee2e6);
 }
 
-.session-archive-btn {
+/* Trailing action cell: opens the session menu (pin/rename/tags/archive/
+   remove). It replaced the standalone archive button, which was the only
+   confirmed entry point for archiving.
+   Kept visually flush with the row's right edge (as it was originally) with
+   just a small 6px inset — enough that the tap target no longer merges into the
+   panel border on mobile, without the icon drifting away from the edge it has
+   always sat on. */
+.session-more-btn {
   flex-shrink: 0;
   width: 34px;
+  margin-right: var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-muted, #999);
@@ -1057,12 +1390,12 @@ onUnmounted(() => {
 }
 
 @media (hover: hover) {
-  .session-archive-btn:hover {
+  .session-more-btn:hover {
     color: var(--accent-color, #0066cc);
   }
 }
 
-.session-archive-btn:active {
+.session-more-btn:active {
   color: var(--accent-color, #0066cc);
 }
 
@@ -1104,14 +1437,6 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.session-list-sentinel {
-  height: 1px;
-}
-
-.session-list-end {
-  height: 0;
-}
-
 /* ── Pinned marker ──
    Pinned sessions are no longer split into their own section; the only marker
    is a wedge in the row's top-right corner.
@@ -1148,14 +1473,8 @@ onUnmounted(() => {
 }
 
 /* The unread badge lives at the top-right of `.session-item`, which ends where
-   the 34px archive cell begins — so it already sits clear of the wedge in the
-   row's own top-right corner and needs no offset. */
-
-/* ── Long-press feedback ── */
-
-.session-row.long-pressing .session-item {
-  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-}
+   the trailing button cell begins — so it already sits clear of the wedge in
+   the row's own top-right corner and needs no offset. */
 
 /* The context menu itself uses the shared .context-menu / .context-menu-item
    styles from css/components.css (same as the file manager). */

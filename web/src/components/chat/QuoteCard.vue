@@ -16,7 +16,7 @@
       would make the template a fragment, and the root classes/title would no
       longer be reachable via the component wrapper.
     -->
-    <MessageSquareQuote :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
+    <component :is="typeIcon" :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
     <span class="attachment-filename">{{ label }}{{ lineRange }}</span>
     <!-- Annotation indicator: tells the user at a glance that this card carries
          a note, without printing the whole note on the chip. -->
@@ -33,8 +33,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquareQuote, MessageSquareText } from 'lucide-vue-next'
-import { quoteLabel, quoteLineRange, type QuoteItem } from '@/utils/quoteItem'
+import { MessageSquareText } from 'lucide-vue-next'
+import { quoteLabel, quoteLineRange, resolveQuoteType, type QuoteItem } from '@/utils/quoteItem'
+import { QUOTE_TYPE_ICON } from '@/utils/quoteSourceMeta'
 
 const props = withDefaults(defineProps<{
   quote: QuoteItem
@@ -53,6 +54,15 @@ const { t } = useI18n()
 
 const label = computed(() => quoteLabel(props.quote))
 const lineRange = computed(() => quoteLineRange(props.quote))
+
+/**
+ * Icon for the quote's source type (file / git diff / CI run / task / terminal
+ * / chat / …), so the card says what KIND of thing it references at a glance.
+ *
+ * The same mapping the detail drawer uses, from one shared module — the two
+ * surfaces must never disagree about what a quote is.
+ */
+const typeIcon = computed(() => QUOTE_TYPE_ICON[resolveQuoteType(props.quote)])
 
 /**
  * Tooltip: the annotation when there is one (it is the more specific context),

@@ -16,8 +16,6 @@
       :switching="session.switching.value"
       :totalMessages="session.totalMessages.value"
       :active="props.active"
-      :midTurnSupported="midTurnSupported"
-      :pendingActionBusy="pendingActionBusy"
       @touchstart.passive="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
@@ -28,8 +26,6 @@
       @load-more="handleLoadMore"
       @task-card-click="(taskId) => $emit('task-card-click', taskId)"
       @send-message="handleToolSendMessage"
-      @remove-pending="handleRemovePending"
-      @pending-action="handlePendingAction"
       @render-flush="handleRenderFlush"
       @toggle-summary="handleToggleSummary"
       @ensure-content="(msg) => ensureMessageContent(msg)"
@@ -66,6 +62,16 @@
       :collapsed="planCollapsed"
       :has-update="planHasUpdate"
       @toggle-collapse="togglePlanCollapse"
+    />
+
+    <!-- Queued messages — kept OUT of the conversation list; shown and managed
+         here, directly above the input. -->
+    <QueuedMessageBar
+      :messages="queuedMessages"
+      :midTurnSupported="midTurnSupported"
+      :busy="pendingActionBusy"
+      @remove="handleRemovePending"
+      @action="handlePendingAction"
     />
 
     <!-- Unified input container — hidden when no agents configured -->
@@ -107,6 +113,7 @@
       @show-agent-selector="handleShowAgentSelector"
       @archive-session="() => manager.archiveCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @destroy-session="() => manager.destroyCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
+      @share-session="handleOpenSessionShare"
       @open-user-msg-index="handleOpenUserMsgIndex"
       @refresh-session="handleRefreshSession"
       @switch-model="handleSwitchModel"
@@ -125,6 +132,7 @@
   <QuoteDetailDrawer
     :open="quoteDetail.open.value"
     :quote="quoteDetail.quote.value"
+    :mode="quoteDetail.mode.value"
     :saving="quoteNoteSaving"
     @close="quoteDetail.close()"
     @save="saveQuoteNote"
@@ -175,6 +183,13 @@
     @update:open="v => { if (v) forkAgentSelectorDrawer.open(); else { forkAgentSelectorDrawer.close(); forkPending.value = null } }"
     @select="handleForkAgentSelect"
   />
+
+  <!-- Conversation share (opened from the input action bar) -->
+  <SessionShareDialog
+    :open="sessionShareOpen"
+    :session-id="sessionShareId"
+    @close="sessionShareOpen = false"
+  />
 </template>
 
 <script setup>
@@ -190,6 +205,7 @@ import ToolDetailDrawer from './ToolDetailDrawer.vue'
 import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
+import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
 import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
@@ -200,6 +216,7 @@ import { useSessionIdentity, getSessionId } from '@/composables/useSessionIdenti
 import { useSessionManager } from '@/composables/useSessionManager.ts'
 import { createChatMessageStore } from '@/composables/useChatMessageStore.ts'
 import { useAcpSession } from '@/composables/useAcpSession'
+import { queuedMessages, setActiveQueueSession, addQueued, clearQueue } from '@/composables/useMessageQueue.ts'
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
@@ -212,8 +229,9 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
-import { fromStagedQuote, fromFileEntry, materializeQuotes } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote } from '@/utils/quoteItem.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
+import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
 import { buildSendPayload } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
@@ -230,6 +248,7 @@ import { store } from '@/stores/app.ts'
 import { useDialog } from '@/composables/useDialog'
 
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
+import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
 
@@ -292,6 +311,10 @@ const metadataModal = ref({
 const metadataDrawer = useTabDrawer('chat')
 const forkAgentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 const forkPending = ref(null) // { sessionId, beforeMessageId }
+/** Conversation-share dialog state. The id is captured on open so the dialog
+ *  keeps targeting that session even if the user switches away. */
+const sessionShareOpen = ref(false)
+const sessionShareId = ref('')
 const toast = useToast()
 const acpSyncing = ref(false)
 const acpSession = useAcpSession({ currentAgentId: identity.currentAgentId })
@@ -362,6 +385,11 @@ async function handleFileTagClick(fileEntry) {
  * content. Staging it here — rather than building a message — puts it on the
  * exact same path as a selection quote: a card in the input, clickable into the
  * detail drawer.
+ *
+ * The payload comes from buildMessageQuote, the same builder the selection path
+ * uses, so both entries produce an identical kind of quote (session label, id
+ * and message id included). They were built separately before and had drifted:
+ * this one carried no session id at all, which made the quote unopenable.
  */
 function handleQuoteMessage(msg) {
     if (!msg) return
@@ -372,17 +400,13 @@ function handleQuoteMessage(msg) {
     if (!text) return
 
     const id = msg.id !== undefined && msg.id !== null ? Number(msg.id) : NaN
-    addStagedQuote({
+    addStagedQuote(buildMessageQuote(
         text,
-        filePath: '',
-        language: '',
-        startLine: 0,
-        endLine: 0,
-        sourceKind: 'message',
+        { id: identity.currentSessionId.value, title: identity.currentSessionTitle.value },
         // Optimistic/local messages have no DB id; the quote is still valid, it
         // just cannot be addressed later (and the drawer hides the jump action).
-        ...(Number.isFinite(id) && id > 0 ? { messageId: id } : {}),
-    }, '')
+        Number.isFinite(id) && id > 0 ? id : undefined,
+    ), '')
 }
 
 /** Remove an attached reference entry (from AttachmentTags cards or AttachDrawer
@@ -431,8 +455,13 @@ const quoteNoteSaving = ref(false)
  * Persist an edited annotation.
  *
  * Staged quotes are edited locally — they have not been sent, so there is
- * nothing in the DB yet. Sent quotes go through the PATCH endpoint, addressed
- * by the message id and the quote's stable id.
+ * nothing in the DB yet.
+ *
+ * The sent branch below is currently DORMANT: the drawer only offers editing
+ * for a staged quote (a sent quote's annotation is part of the conversation
+ * record and is shown read-only), so `save` is never emitted with mode 'sent'.
+ * It is kept, together with the PATCH endpoint it calls, so that re-enabling
+ * post-send editing later does not require rebuilding either side.
  */
 async function saveQuoteNote(note) {
     const q = quoteDetail.quote.value
@@ -471,16 +500,56 @@ async function saveQuoteNote(note) {
 }
 
 /**
- * Jump from the drawer to the quote's source: a file opens at its line range, a
- * forge quote opens its address. A chat-message quote has neither, and the
- * drawer hides the button for it.
+ * Jump from the drawer to the quote's source.
+ *
+ * Order matters: the most specific locator wins, because a quote can carry more
+ * than one. A git-diff quote, for instance, has both a file path and a commit —
+ * and the user who selected a hunk in a commit view means "that commit", not
+ * "that file at its current state". Each branch therefore jumps to the
+ * narrowest thing the quote can identify, and only falls through when that
+ * locator is absent.
+ *
+ * All four cross-panel jumps reuse the EXISTING navigation channels rather than
+ * inventing new ones: `navigate-to-commit` and `clawbench-open-task` are already
+ * handled by App.vue, and the session jump goes through the same session-open
+ * event the notification taps use.
  */
 async function jumpToQuoteSource(q) {
     if (!q) return
-    if (q.sourceKind === 'url' && q.url) {
+
+    // 1. Commit: open the git history at that commit (not the file, which is
+    //    what the path alone would open).
+    if (q.commitSha) {
+        window.dispatchEvent(new CustomEvent('navigate-to-commit', { detail: { sha: q.commitSha } }))
+        return
+    }
+
+    // 2. Task: open the scheduled task's detail view.
+    if (q.taskId) {
+        window.dispatchEvent(new CustomEvent('clawbench-open-task', {
+            detail: { taskId: q.taskId, executionId: q.executionId },
+        }))
+        return
+    }
+
+    // 3. Session + message: switch to the session and scroll to the message.
+    //    The request is parked in module state because the session may still
+    //    have to load (and may be a different project) — see useMessageNavigation.
+    if (q.sessionId) {
+        if (q.messageId) setPendingMessageNavigation(q.sessionId, q.messageId)
+        window.dispatchEvent(new CustomEvent('clawbench-open-session', {
+            detail: { sessionId: q.sessionId },
+        }))
+        return
+    }
+
+    // 4. External address (a forge issue/PR, a CI run, a comment anchor).
+    if (q.url) {
         openExternalUrl(q.url)
         return
     }
+
+    // 5. A file: open it at its line range.
     if (!q.filePath) return
     const relPath = relativizeProjectPath(q.filePath, store.state.projectRoot)
     await openFilePath(relPath, q.startLine, q.endLine, 'chat')
@@ -539,7 +608,7 @@ const session = useChatSession({
   blockTasks: render.blockTasks,
   blockAskQuestions: render.blockAskQuestions,
   expandedTools: render.expandedTools,
-  onParseAssistantContent: (content) => render.parseAssistantContent(content),
+  onParseAssistantContent: (content, opts) => render.parseAssistantContent(content, opts),
   onExtractScheduledTasks: (msgs) => render.extractScheduledTasks(msgs),
   onRenderUpdate: (forceFull) => render.updateRenderedContents(forceFull),
   onScrollBottom: (force) => scrollBottom(force),
@@ -549,6 +618,25 @@ const session = useChatSession({
   onEnsureStreamingPlaceholder: () => stream.ensureStreamingPlaceholder({ reuseExistingStreaming: true }),
   onResubscribeStream: (sid) => stream.resubscribe(sid),
 })
+
+// onQueueDrainBoundary: a queued message started its own turn, which means the
+// PREVIOUS turn's reply just finalized and stamped its completed_at. The unread
+// query compares COALESCE(completed_at, created_at) > last_read_at, so that
+// reply now counts as unread for the whole duration of the next turn — the
+// session row dot lights up mid-stream even though the user is watching it.
+//
+// The backend cannot fix this itself: a queued message may come from another
+// device or an IM push, so "a turn boundary happened" is not evidence that
+// anyone is looking. Only the client knows, so the gate lives here — same
+// condition as the completion path (foreground, current session).
+function handleQueueDrainBoundary(sessionId) {
+  if (!sessionId) return
+  if (sessionId !== identity.currentSessionId.value) return
+  if (!appInForeground.value) return
+  // Idempotent: UpdateLastRead anchors to MAX(now, newest completed_at), so
+  // this can never pull the watermark backwards.
+  session.markSessionRead(sessionId).catch(() => {})
+}
 
 // onStreamEnd: fires when current session stream completes with a reason
 // - 'done': normal completion → play sound, auto-speech; queue sync handled by
@@ -590,7 +678,7 @@ async function onStreamEnd(reason) {
     store.loadGitBranch().catch(() => {})
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
-    messageStore.dispatch({ type: 'clear_pending' })
+    clearQueue(identity.currentSessionId.value)
     // Restore screen lock — output was cancelled, no TTS will play
     autoSpeech.onOutputEndNoSpeech()
     // User was viewing this session while cancelling — clear its unread badge.
@@ -622,6 +710,15 @@ watch(loading, (newVal, oldVal) => {
   }
 })
 
+// The queue panel reads from a module-level store keyed by session; point it at
+// the session this panel is showing. Immediate so a remount (project switch,
+// drawer reopen) restores the right queue without waiting for a change.
+watch(
+  () => identity.currentSessionId.value,
+  (sid) => setActiveQueueSession(sid || ''),
+  { immediate: true },
+)
+
 const stream = useChatStream({
   messages,
   dispatch: messageStore.dispatch,
@@ -634,10 +731,11 @@ const stream = useChatStream({
   onMessage: () => emit('message'),
   onOpen: () => emit('open'),
   isOpen: toRef(props, 'active'),
-  onParseAssistantContent: (content) => render.parseAssistantContent(content),
+  onParseAssistantContent: (content, opts) => render.parseAssistantContent(content, opts),
   onToast: (msg, opts) => toast.show(msg, opts),
   onNotification: (title, opts) => notification.show(title, opts),
   onStreamEnd,
+  onQueueDrainBoundary: handleQueueDrainBoundary,
   onReplayDone: () => { inputDisabled.value = false },
   onFileModified: (filePath) => {
     // Chat-driven file refresh: when AI's Write/Edit tool completes,
@@ -883,6 +981,18 @@ function handleOpenUserMsgIndex() {
   messageListRef.value?.toggleUserMsgIndex()
 }
 
+/**
+ * Open the conversation-share dialog for the current session. The id is
+ * snapshotted into a ref so the dialog keeps its target if the user switches
+ * sessions while it is open (the dialog loads its data on open, not per render).
+ */
+function handleOpenSessionShare() {
+  const sid = identity.currentSessionId.value
+  if (!sid) return
+  sessionShareId.value = sid
+  sessionShareOpen.value = true
+}
+
 async function handleForkFromMessage(msg) {
   const sid = identity.currentSessionId.value
   if (!sid) return
@@ -967,8 +1077,8 @@ async function sendMessage(text) {
        resetQuotePin()
        inputBarRef.value?.clearInput()
        clearPendingFiles()
-       // Push a pending user message and enqueue it. The backend handles the
-       // "session not running" race internally (B2 self-heal), so no
+       // Push an optimistic queue entry and enqueue it. The backend handles the
+       // "session not running" race internally (self-heal), so no
        // needs_start/resubmit round-trip is needed here. Shared with the
        // AskUserQuestion-card path for identical enqueue behavior.
        try {
@@ -977,7 +1087,6 @@ async function sendMessage(text) {
            text: inputText || '',
            attachedFiles: capturedAttached,
            pendingFiles: capturedPending,
-           pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
            onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
            enqueue: (sid, text, attached, pending, qid) => manager.enqueueMessage(sid, text, attached, pending, qid),
          })
@@ -1095,21 +1204,25 @@ async function sendMessageNow(text, filePaths, files) {
         }
         // Direct-send path: adopt the DB id immediately so this bubble sorts
         // with DB-backed messages instead of staying transient (huge sort
-        // value) until the next loadHistory — otherwise it renders AFTER later
-        // queued messages that already adopted their DB ids (misorder).
+        // value) until the next loadHistory.
         if (data.msgId && !data.running) {
             messageStore.dispatch({ type: 'optimistic_adopt_id', id: pendingId, dbId: data.msgId })
         }
         // Session already running — another request is in progress
         if (data.running) {
             // The message was queued for the next turn (sending never joins the
-            // running turn), so mark it pending: it waits for its own drain.
-            const localIdx = messages.value.findLastIndex(
-                (m) => m.role === 'user' && m.id === pendingId
-            )
-            if (localIdx !== -1) {
-                messages.value[localIdx].pending = true
-            }
+            // running turn). It is NOT part of the conversation yet, so move the
+            // optimistic bubble out of the message list and into the queue
+            // panel. The in-flight guard keeps it across a stale loadHistory
+            // snapshot taken before the backend committed the queue row.
+            messageStore.dispatch({ type: 'optimistic_remove', id: pendingId })
+            addQueued(identity.currentSessionId.value, {
+                queueId: pendingId,
+                text: text || '',
+                files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+                createdAt: new Date().toISOString(),
+            })
+            render.updateRenderedContents()
             stream.connectStream(identity.currentSessionId.value, { reuseExistingStreaming: true })
             // Proactively sync ACP state for the running session
             if (effectiveAgentId && agentsComposable.supportsACP(effectiveAgentId)) {
@@ -1163,17 +1276,15 @@ async function handleToolSendMessage(text, cardKey) {
     if (!text) return
     let delivered = true
     if (loading.value) {
-      // Shared with the normal input path: push a pending user message and
-      // enqueue it. The backend's B2 self-heal handles the session-ended race.
-      // On failure, enqueueMessage already shows the toast and rolls back the
-      // pending message.
+      // Shared with the normal input path: push an optimistic queue entry and
+      // enqueue it. The backend's self-heal handles the session-ended race.
+      // On failure, enqueueMessage already shows the toast and rolls back.
       try {
         await enqueueAndMaybeStart({
           sessionId: identity.currentSessionId.value,
           text,
           attachedFiles: [],
           pendingFiles: [],
-          pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
           onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
           enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
         })
@@ -1192,6 +1303,36 @@ async function handleToolSendMessage(text, cardKey) {
 function scrollBottom(force = false) {
     messageListRef.value?.scrollToBottom(force)
 }
+
+/**
+ * Consume a pending "open this message" request once its session is loaded.
+ *
+ * A quote's jump may target a session that is not on screen yet (and may be in
+ * another project), so the request is parked in module state by
+ * jumpToQuoteSource and picked up here. It waits for the CURRENT session to be
+ * the requested one before scrolling: acting earlier would search the wrong
+ * session's message list and silently do nothing.
+ *
+ * `immediate` + watching the message count covers both arrival paths — the
+ * session may already be open (messages present) or still loading (the watcher
+ * fires when they land).
+ */
+watch(
+    [() => identity.currentSessionId.value, () => messages.value.length],
+    ([sid]) => {
+        const req = pendingMessageNavigation.value
+        if (!req || req.sessionId !== sid) return
+        // Consume only once the target message actually exists in this session.
+        // An optimistic or not-yet-paged message leaves the request pending, so
+        // a later arrival can still satisfy it.
+        const present = messages.value.some(m => m.id === req.messageId)
+        if (!present) return
+        consumePendingMessageNavigation()
+        // The list renders on the next tick; scroll after it exists.
+        nextTick(() => messageListRef.value?.scrollToMessage(req.messageId))
+    },
+    { immediate: true },
+)
 
 // Async render flush (throttled 300ms + rAF) grows the content height AFTER
 // the initial scroll-to-bottom already ran. If the user has not scrolled away
@@ -1250,23 +1391,21 @@ async function handleLoadMore() {
     el.scrollTop = newScrollHeight - oldScrollHeight
 }
 
-/** Handle remove-pending event from ChatMessageItem.
- *  The event passes the pending message's queueId (msg.id).
- *  Passes it directly to the manager for backend DELETE. */
+/** Remove a queued message from the queue panel (backend DELETE + local drop). */
 function handleRemovePending(queueId) {
     manager.handleRemovePending(queueId)
 }
 
-/** Single adaptive action on a queued bubble. The backend capability decides
+/** Single adaptive action on a queued entry. The backend capability decides
  *  what it does; the button label already told the user which, so here we only
  *  route to the matching endpoint. */
-async function handlePendingAction(queueId) {
+async function handlePendingAction(queueId, mode) {
     if (!queueId || pendingActionBusy.value) return
     pendingActionBusy.value = String(queueId)
     try {
         await manager.handlePendingAction(
             String(queueId),
-            midTurnSupported.value ? 'insert' : 'interrupt',
+            mode || (midTurnSupported.value ? 'insert' : 'interrupt'),
         )
     } finally {
         pendingActionBusy.value = ''
@@ -1411,7 +1550,7 @@ async function handleResetSession() {
         await apiPost('/api/ai/session/reset', { sessionId: sid })
         // Re-send the last persisted user message so the conversation continues
         // in the freshly-reset agent session.
-        const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user' && !m.pending)
+        const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user')
         if (lastUserMsg?.content) await sendMessage(lastUserMsg.content)
     } catch {
         toast.show(t('chat.contentBlocks.resetSessionFailed'), { icon: '⚠️', type: 'error' })

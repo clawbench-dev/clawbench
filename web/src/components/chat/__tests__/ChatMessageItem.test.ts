@@ -87,7 +87,13 @@ vi.mock('@/composables/useTabDrawer', () => ({
 
 // Mock child components that have complex props/dependencies
 vi.mock('@/components/chat/ContentBlocks.vue', () => ({
-  default: { name: 'ContentBlocks', template: '<div class="content-blocks-stub" />' },
+  // Declare showingSummary so tests can assert the summary/original decision the
+  // host made (the real component renders from it).
+  default: {
+    name: 'ContentBlocks',
+    props: ['showingSummary', 'summary', 'msgId', 'readOnly'],
+    template: '<div class="content-blocks-stub" />',
+  },
 }))
 vi.mock('@/components/chat/FileAttachmentList.vue', () => ({
   default: { name: 'FileAttachmentList', template: '<div class="file-attachment-list-stub" />' },
@@ -183,23 +189,22 @@ describe('ChatMessageItem', () => {
     expect(wrapper.find('.chat-message').classes()).toContain('assistant')
   })
 
-  it('shows pending hint for pending messages', () => {
+  // The old 'shows pending hint for pending messages' / 'applies pending class'
+  // tests asserted a `pending` marker that no longer exists on a chat message:
+  // a queued message is NOT a chat message any more, it lives in the queue store
+  // and is rendered by QueuedMessageBar.vue (which owns the spinner, the
+  // insert/interrupt action and the × control — see QueuedMessageBar.test.ts).
+  // Pin the replacement invariant instead: the queue chrome must never leak into
+  // the message list, even when a stale `pending` field is present on the row.
+  it('never renders queue-panel chrome, even for a row carrying a stale pending flag', () => {
     const wrapper = createWrapper({
       msg: { id: '3', role: 'user', content: 'hello', blocks: [], pending: true },
     })
-    expect(wrapper.find('.pending-hint').exists()).toBe(true)
-  })
-
-  it('does not show pending hint for non-pending messages', () => {
-    const wrapper = createWrapper()
     expect(wrapper.find('.pending-hint').exists()).toBe(false)
-  })
-
-  it('applies pending class when message is pending', () => {
-    const wrapper = createWrapper({
-      msg: { id: '4', role: 'user', content: 'hello', blocks: [], pending: true },
-    })
-    expect(wrapper.find('.chat-message').classes()).toContain('pending')
+    expect(wrapper.find('.pending-remove').exists()).toBe(false)
+    expect(wrapper.find('.pending-action').exists()).toBe(false)
+    expect(wrapper.find('.queued-bar').exists()).toBe(false)
+    expect(wrapper.find('.chat-message').classes()).not.toContain('pending')
   })
 
   it('renders meta bar for non-streaming assistant message with content', () => {
@@ -344,14 +349,11 @@ describe('ChatMessageItem', () => {
     expect(wrapper.find('.chat-meta-time').exists()).toBe(false)
   })
 
-  it('emits remove-pending when pending remove button is clicked', async () => {
-    const wrapper = createWrapper({
-      msg: { id: '8', role: 'user', content: 'hello', blocks: [], pending: true },
-    })
-    const btn = wrapper.find('.pending-remove')
-    await btn.trigger('click')
-    expect(wrapper.emitted('remove-pending')).toBeTruthy()
-  })
+  // DELETED (queue-store refactor): 'emits remove-pending when pending remove
+  // button is clicked'. ChatMessageItem no longer renders a `.pending-remove`
+  // button nor declares a `remove-pending` emit — removing a queued entry is the
+  // × button in QueuedMessageBar.vue, which emits `remove` (covered by
+  // QueuedMessageBar.test.ts and wired to handleRemovePending in ChatPanelContent).
 
   it('renders data-msg-key attribute with msg id', () => {
     const wrapper = createWrapper({
@@ -975,11 +977,16 @@ describe('ChatMessageItem', () => {
       expect(wrapper.find('button[title="chat.actions.rewindSession"]').exists()).toBe(false)
     })
 
-    it('omits the user meta bar while the message is still queued', () => {
+    // The old 'omits the user meta bar while the message is still queued' test
+    // gated the meta bar on `!msg.pending`. That gate is gone: a queued message
+    // is not in this list at all (it lives in the queue store / QueuedMessageBar),
+    // so a user row's meta bar now depends only on having a timestamp or
+    // copyable text. Pin that the old pending gate cannot suppress it.
+    it('renders the user meta bar for a content row regardless of a stale pending flag', () => {
       const wrapper = createWrapper({
         msg: { id: 'um2', role: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }], pending: true },
       })
-      expect(wrapper.find('.chat-meta-bar').exists()).toBe(false)
+      expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
     })
 
     it('renders the user meta bar outside the bubble card', () => {
@@ -1095,6 +1102,60 @@ describe('ChatMessageItem', () => {
 //
 // Found by end-to-end testing: the app fetched history with a real session id
 // while the rendered card's data-ask-key said 'no-session|...'.
+describe('ChatMessageItem — readOnly (public share page)', () => {
+  const assistantMsg = {
+    id: 'r1',
+    role: 'assistant',
+    content: 'answer',
+    blocks: [{ type: 'text', text: 'answer' }],
+    summary: 'a summary',
+  }
+
+  it("hides the copy and view-details buttons", () => {
+    const wrapper = createWrapper({ msg: assistantMsg, readOnly: true })
+    const actions = wrapper.find('.chat-meta-actions')
+    // No action button of any kind: speak / copy / fork / rewind / details are
+    // all suppressed in readOnly.
+    expect(actions.find('.chat-action-btn').exists()).toBe(false)
+  })
+
+  // The summary/original switch is an app-side reading preference. On a
+  // read-only transcript the reader cannot evaluate which view is "right",
+  // and the snapshot always carries the full blocks — so the share page renders
+  // original content and shows no toggle.
+  it("hides the summary toggle and renders original content", () => {
+    const wrapper = createWrapper({ msg: assistantMsg, readOnly: true })
+    expect(wrapper.find('.chat-summary-anchor').exists()).toBe(false)
+  })
+
+  // ContentBlocks is stubbed in this file, so assert the prop contract:
+  // readOnly with real blocks renders ORIGINAL (showingSummary=false).
+  it("passes showingSummary=false to ContentBlocks in readOnly", () => {
+    const wrapper = createWrapper({ msg: assistantMsg, readOnly: true })
+    const cb = wrapper.findComponent({ name: 'ContentBlocks' })
+    expect(cb.props('showingSummary')).toBe(false)
+  })
+
+  // …but never blank: a message with a summary and NO blocks falls back to
+  // the summary, since original content would render nothing.
+  it("passes showingSummary=true in readOnly when there are no blocks", () => {
+    const wrapper = createWrapper({
+      msg: { id: 'r3', role: 'assistant', content: '', blocks: [], summary: 'only a summary' },
+      readOnly: true,
+    })
+    const cb = wrapper.findComponent({ name: 'ContentBlocks' })
+    expect(cb.props('showingSummary')).toBe(true)
+  })
+  it("still shows the toggle in normal chat", () => {
+    const wrapper = createWrapper({ msg: assistantMsg })
+    expect(wrapper.find('.chat-summary-anchor').exists()).toBe(true)
+  })
+
+  it("shows the same buttons when readOnly is off (normal chat is unaffected)", () => {
+    const wrapper = createWrapper({ msg: assistantMsg })
+    expect(wrapper.find('.chat-meta-actions .chat-action-btn').exists()).toBe(true)
+  })
+})
 describe('ChatMessageItem — sessionId reaches ContentBlocks', () => {
   async function source(): Promise<string> {
     const mod = await import('@/components/chat/ChatMessageItem.vue?raw')
@@ -1195,15 +1256,11 @@ describe('ChatMessageItem — quote message button', () => {
     expect(btn).toBeUndefined()
   })
 
-  it('hides the quote button on a queued (pending) bubble', () => {
-    const wrapper = createWrapper({
-      msg: { ...userMsg, pending: true, queueId: 'q-1' },
-      index: 0,
-      active: true,
-    })
-    const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')
-    expect(btn).toBeUndefined()
-  })
+  // DELETED (queue-store refactor): 'hides the quote button on a queued
+  // (pending) bubble'. There is no queued bubble in the message list any more —
+  // a queued message lives in the queue store and renders in QueuedMessageBar
+  // (which has no quote action), so the `!msg.pending` gate this pinned is gone.
+  // The remaining gate (`!msg.streaming`) is already covered by the test above.
 
   it('hides the quote button when there is no text to quote', () => {
     const wrapper = createWrapper({
@@ -1213,5 +1270,39 @@ describe('ChatMessageItem — quote message button', () => {
     })
     const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')
     expect(btn).toBeUndefined()
+  })
+})
+
+// The summary/original toggle is the reading-mode control for the message, so
+// it leads the action row; the quote button and the rest of the actions follow.
+describe('ChatMessageItem — summary toggle leads the meta action row', () => {
+  const assistantMsg = {
+    id: 42, role: 'assistant', streaming: false,
+    blocks: [{ type: 'text', text: 'the assistant reply' }],
+    summary: 'a summary',
+  }
+
+  it('renders the summary anchor as the first child of .chat-meta-actions', () => {
+    const wrapper = createWrapper({ msg: assistantMsg, index: 0, active: true })
+    const actions = wrapper.find('.chat-meta-actions')
+    expect(actions.element.firstElementChild?.classList.contains('chat-summary-anchor')).toBe(true)
+  })
+
+  it('places the summary toggle before the quote button in DOM order', () => {
+    const wrapper = createWrapper({ msg: assistantMsg, index: 0, active: true })
+    const anchor = wrapper.find('.chat-summary-anchor').element
+    const quote = wrapper.findAll('button')
+      .find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')!.element
+    // anchor precedes quote
+    expect(anchor.compareDocumentPosition(quote) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('does not put the summary anchor on a user message', () => {
+    const wrapper = createWrapper({
+      msg: { id: 7, role: 'user', streaming: false, blocks: [{ type: 'text', text: 'q' }] },
+      index: 0,
+      active: true,
+    })
+    expect(wrapper.find('.chat-meta-actions .chat-summary-anchor').exists()).toBe(false)
   })
 })

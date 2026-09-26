@@ -13,6 +13,13 @@
           @create="handleCreateClick"
         >
           <template #actions>
+            <!-- Only when this project actually has a shared conversation:
+                 with nothing to manage the button is pure header clutter.
+                 hasAnySharedSession stays false until the list loads, so it
+                 does not flash in for the common "nothing shared" case. -->
+            <button v-if="hasAnySharedSession" class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
+              <MessageSquareShare :size="16" />
+            </button>
             <button class="header-action-btn sidebar-pin-btn is-active" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
               <PanelRight :size="16" />
             </button>
@@ -31,18 +38,29 @@
       />
       <SessionListTabs v-model:active-tab="activeTab" />
     </div>
+    <!-- MUST stay inside the root element. SharedSessionsDrawer renders through
+         BottomSheet, which Teleports to <body>, so its DOM position here is
+         irrelevant — but a sibling at template top level would make this
+         component a FRAGMENT, and a fragment root cannot receive fallthrough
+         attributes. The host (App.vue) drives visibility with v-show, which
+         compiles to a `style` fallthrough: Vue would warn "Extraneous non-props
+         attributes (style)" and silently drop it, so the sidebar showed in
+         portrait and could not be closed. -->
+    <SharedSessionsDrawer ref="sharedSessionsRef" @select-session="$emit('select', $event)" />
   </div>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PanelRight } from 'lucide-vue-next'
+import { PanelRight, MessageSquareShare } from 'lucide-vue-next'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
+import SharedSessionsDrawer from '@/components/session/SharedSessionsDrawer.vue'
 import SessionListTabs from '@/components/session/SessionListTabs.vue'
 import { useAgents } from '@/composables/useAgents'
+import { useSessionShare } from '@/composables/useSessionShare'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'
 
@@ -57,7 +75,9 @@ const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'op
 const { t } = useI18n()
 const { agents, loadAgents } = useAgents()
 
+const { hasAnySharedSession } = useSessionShare()
 const listRef = ref(null)
+const sharedSessionsRef = ref(null)
 const rootRef = ref(null)
 // Which pane the list shows. Owned here (not in SessionList) because the tab bar
 // is rendered outside the scroll area, and intentionally not persisted: the list

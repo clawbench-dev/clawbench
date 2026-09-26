@@ -53,7 +53,7 @@ type AttachmentPromptParts struct {
 // QuotePrompt is one quote entry reduced to what the prompt renderer needs.
 type QuotePrompt struct {
 	// Label identifies the source: "path", "path:10-20" for a file quote, or
-	// the forge/chat label the client supplied. Empty for an unlabelled quote.
+	// the forge/chat label the client supplied. Empty for an unlabeled quote.
 	Label string
 	// Language is the fence info string's language prefix (may be empty).
 	Language string
@@ -71,6 +71,14 @@ type QuotePrompt struct {
 	// StartLine/EndLine are 1-based file lines, 0 when not applicable.
 	StartLine int
 	EndLine   int
+	// Source locators. These are the machine keys that let the AI (and the
+	// client's jump handler) find the origin. They are emitted in the header's
+	// parenthetical group; the human-readable name stays in Label.
+	CommitSHA   string
+	TaskID      int64
+	SessionID   string
+	MessageID   int64
+	ExecutionID string
 }
 
 // ClassifyAttachments splits entries into prompt buckets. excludePaths holds
@@ -86,13 +94,18 @@ func ClassifyAttachments(entries []FileEntry, excludePaths map[string]struct{}) 
 		// there would silently drop the quoted text from the prompt.
 		if f.IsQuote() {
 			parts.Quotes = append(parts.Quotes, QuotePrompt{
-				Label:     f.Path,
-				Language:  f.Language,
-				Note:      f.Note,
-				Text:      f.Text,
-				URL:       f.URL,
-				StartLine: f.StartLine,
-				EndLine:   f.EndLine,
+				Label:       f.Path,
+				Language:    f.Language,
+				Note:        f.Note,
+				Text:        f.Text,
+				URL:         f.URL,
+				StartLine:   f.StartLine,
+				EndLine:     f.EndLine,
+				CommitSHA:   f.CommitSHA,
+				TaskID:      f.TaskID,
+				SessionID:   f.SessionID,
+				MessageID:   f.MessageID,
+				ExecutionID: f.ExecutionID,
 			})
 			continue
 		}
@@ -120,41 +133,98 @@ const ReferencedLinkPrefix = "[Referenced external link: "
 
 // QuotePromptPrefix is the machine header for a quoted-snippet attachment.
 //
+// It opens a numbered envelope, e.g. "[Quote 1/3] /src/a.go:3". The number and
+// total are what make consecutive quotes visually separable: blank lines alone
+// were used at every structural boundary (between quotes, between a header and
+// its note, between a note and the content), so the AI could not tell from the
+// layout where one quote ended and the next began.
+//
 // Exported so the session-title stripper (internal/handler) can reference the
 // exact string instead of duplicating a literal that could drift — a header
 // with no strip rule would become the session title.
-const QuotePromptPrefix = "[Quoted from "
+const QuotePromptPrefix = "[Quote "
+
+// QuoteNotePrefix labels a quote's annotation.
+//
+// The annotation used to be emitted as a bare line, which read as a stray
+// sentence — or as part of the quoted content. The label states that it belongs
+// to the quote above it.
+const QuoteNotePrefix = "[Note] "
+
+// quoteSourceKeys renders the machine-readable source locators for a quote, in
+// a stable order, as "key: value" pairs. Empty when the quote has none.
+//
+// These are what let the AI reach the origin rather than merely knowing a
+// human-readable name: "每日构建" is not addressable, "task: 12" is. They are
+// the same keys the client uses to jump, so the AI and the UI agree on what
+// identifies a source.
+func quoteSourceKeys(q QuotePrompt) []string {
+	var keys []string
+	if q.CommitSHA != "" {
+		keys = append(keys, "commit: "+q.CommitSHA)
+	}
+	if q.TaskID != 0 {
+		keys = append(keys, fmt.Sprintf("task: %d", q.TaskID))
+	}
+	if q.SessionID != "" {
+		keys = append(keys, "session: "+q.SessionID)
+	}
+	if q.MessageID != 0 {
+		keys = append(keys, fmt.Sprintf("message: %d", q.MessageID))
+	}
+	if q.ExecutionID != "" {
+		keys = append(keys, "execution: "+q.ExecutionID)
+	}
+	return keys
+}
 
 // quoteHeader renders a quote's header line, e.g.
 //
-//	[Quoted from /src/a.go:10-20]
-//	[Quoted from acme/widgets#7 (https://github.com/acme/widgets/issues/7)]
+//	[Quote 1/3] /src/a.go:10-20
+//	[Quote 2/3] acme/widgets#7 (https://github.com/acme/widgets/issues/7)
+//	[Quote 1/2] 每日构建 (#12) (task: 12)
+//	[Quote 2/2] 修复登录 (session: sess-abc, message: 42)
+//
+// index/total number the envelope. They are what separates consecutive quotes
+// now that the same blank-line separator is used at every structural boundary
+// (between quotes, between a header and its note, between a note and the
+// content) — without them the AI had no cue for where one quote ended.
 //
 // The address is included for forge quotes: without it the AI knows an
-// issue/PR was referenced but has no way to reach it. Everything stays on ONE
-// line so the session-title stripper's stripToNewline rule consumes the whole
-// header (a second line would leak into the derived title).
-func quoteHeader(q QuotePrompt) string {
+// issue/PR was referenced but has no way to reach it. Source locators (commit,
+// task, session, message, execution) join it in the same parenthetical group,
+// comma-separated, so the AI can address the origin too.
+//
+// Everything stays on ONE line so the session-title stripper's stripToNewline
+// rule consumes the whole header (a second line would leak into the derived
+// title).
+//
+// The parenthetical group is emitted ONLY when it has content, so a plain file
+// quote stays as short as it can be.
+func quoteHeader(q QuotePrompt, index, total int) string {
 	label := q.Label
 	if q.StartLine > 0 && q.EndLine > 0 && q.StartLine != q.EndLine {
 		label = fmt.Sprintf("%s:%d-%d", q.Label, q.StartLine, q.EndLine)
 	} else if q.StartLine > 0 {
 		label = fmt.Sprintf("%s:%d", q.Label, q.StartLine)
 	}
+	var detail []string
 	if q.URL != "" {
-		label = fmt.Sprintf("%s (%s)", label, q.URL)
+		detail = append(detail, q.URL)
 	}
-	return QuotePromptPrefix + label + "]"
+	detail = append(detail, quoteSourceKeys(q)...)
+	if len(detail) > 0 {
+		label = fmt.Sprintf("%s (%s)", label, strings.Join(detail, ", "))
+	}
+	return fmt.Sprintf("%s%d/%d] %s", QuotePromptPrefix, index, total, label)
 }
 
-// RenderQuoteBlock renders one quote as a fenced block whose header carries
-// the language, source label and optional line range.
+// RenderQuoteBlock renders one quote's content as a fenced block whose fence
+// info string carries the language, source label and optional line range.
 //
-// The format is byte-identical to the frontend's buildQuoteBlock
-// (web/src/utils/quoteQuestionUtils.ts), which is what the prompt contained
-// before quotes became structured attachments. Keeping it identical is the
-// whole point: the AI must see exactly what it saw when the fence lived in the
-// message text.
+// This is the only place the quoted CONTENT is rendered, and the fence is
+// deliberately left alone by the envelope change: it is the channel the AI
+// reads the content through, and its shape is depended on elsewhere.
 func RenderQuoteBlock(q QuotePrompt) string {
 	langPrefix := ":"
 	if q.Language != "" {
@@ -200,19 +270,28 @@ func ApplyAttachmentPrefixes(prompt string, filePaths, dirPaths []string, parts 
 		prompt = fmt.Sprintf("%s%s]\n%s", ReferencedLinkPrefix, strings.Join(parts.URLs, ", "), prompt)
 	}
 	// Appended after everything, including the user's own words.
+	//
+	// Each quote is wrapped in a NUMBERED envelope ("[Quote i/n] …") and its
+	// annotation is labeled ("[Note] …"). Both exist because the same blank
+	// line separates every structural boundary here — between quotes, between a
+	// header and its note, and between a note and the content — so the layout
+	// alone gave no cue for where one quote ended and the next began, and a bare
+	// annotation line read as either a stray sentence or part of the content.
 	if len(parts.Quotes) > 0 {
 		var b strings.Builder
 		b.WriteString(prompt)
-		for _, q := range parts.Quotes {
+		total := len(parts.Quotes)
+		for i, q := range parts.Quotes {
 			// Separate only when something precedes it — a quote-only message
 			// must not open with blank lines, or the title stripper's trim
 			// would be doing load-bearing work it was not written for.
 			if b.Len() > 0 {
 				b.WriteString("\n\n")
 			}
-			b.WriteString(quoteHeader(q))
+			b.WriteString(quoteHeader(q, i+1, total))
 			if note := strings.TrimSpace(q.Note); note != "" {
 				b.WriteString("\n")
+				b.WriteString(QuoteNotePrefix)
 				b.WriteString(note)
 			}
 			// A fence only when there IS quoted content. A whole-file or

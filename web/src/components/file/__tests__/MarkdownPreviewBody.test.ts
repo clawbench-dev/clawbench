@@ -182,7 +182,7 @@ describe('MarkdownPreviewBody.vue', () => {
 
   it('writes the attach payload when dragging a local markdown image out', async () => {
     const { wrapper } = mountBody({
-      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span></p>',
+      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/fs/raw/docs/a.png?t=1" data-attach-src="docs/a.png"></span></p>',
     })
 
     // A custom MIME payload is set on dragstart.
@@ -219,7 +219,7 @@ describe('MarkdownPreviewBody.vue', () => {
 
   it('attaches a local image when its header attach button is tapped', async () => {
     const { wrapper } = mountBody({
-      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
+      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/fs/raw/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
     })
     await wrapper.find('.image-block-attach-btn').trigger('click')
     expect(attachedFiles.value).toEqual([{ path: 'docs/a.png', isDir: false }])
@@ -228,7 +228,7 @@ describe('MarkdownPreviewBody.vue', () => {
   it('removes a local image from attachments when its header attach button is tapped again', async () => {
     addTestAttachment('docs/a.png')
     const { wrapper } = mountBody({
-      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
+      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/fs/raw/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
     })
     await wrapper.find('.image-block-attach-btn').trigger('click')
     expect(attachedFiles.value).toEqual([])
@@ -236,7 +236,7 @@ describe('MarkdownPreviewBody.vue', () => {
 
   it('does not attach when tapping the image body (not the button)', async () => {
     const { wrapper } = mountBody({
-      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
+      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/fs/raw/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
     })
     await wrapper.find('img.lightbox-img').trigger('click')
     expect(attachedFiles.value).toEqual([])
@@ -244,7 +244,7 @@ describe('MarkdownPreviewBody.vue', () => {
 
   it('open-file button click does not attach (it routes to file navigation)', async () => {
     const { wrapper } = mountBody({
-      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-open-btn" type="button"></button></div>',
+      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/fs/raw/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-open-btn" type="button"></button></div>',
     })
     await wrapper.find('.image-block-open-btn').trigger('click')
     // The open-file handler consumes the click; it must NOT toggle an attachment.
@@ -325,7 +325,7 @@ describe('MarkdownPreviewBody.vue', () => {
   describe('svg file sizing on media load', () => {
     const SVG_FIGURE =
       '<div class="image-block-wrapper"><span class="lightbox-img-wrap">'
-      + '<img class="lightbox-img" src="/api/local-file/docs/chart.svg?t=1"></span></div>'
+      + '<img class="lightbox-img" src="/api/fs/raw/docs/chart.svg?t=1"></span></div>'
 
     /** jsdom never loads images, so the decoded intrinsic size must be injected. */
     function injectNaturalSize(img: Element, w: number, h: number): void {
@@ -368,7 +368,7 @@ describe('MarkdownPreviewBody.vue', () => {
     it('leaves a raster image figure unsized on load', async () => {
       const { wrapper } = mountBody({
         renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap">'
-          + '<img class="lightbox-img" src="/api/local-file/docs/photo.png?t=1"></span></div>',
+          + '<img class="lightbox-img" src="/api/fs/raw/docs/photo.png?t=1"></span></div>',
       })
       const img = wrapper.find('img.lightbox-img')
       injectNaturalSize(img.element, 400, 100)

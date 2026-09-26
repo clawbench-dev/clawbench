@@ -168,7 +168,7 @@ vi.mock('@/utils/exportMarkdownHtml.ts', () => ({
 }))
 
 vi.mock('@/utils/download.ts', () => ({
-  buildLocalFileUrl: (path: string, opts?: any) => `/api/local-file/${path}?download=1`,
+  buildLocalFileUrl: (path: string, opts?: any) => `/api/fs/raw/${path}?download=1`,
   downloadFileByPath: vi.fn(),
   downloadBlob: vi.fn(),
 }))

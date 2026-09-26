@@ -1208,6 +1208,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		hub.EmitACPStateEvents(clientID, sessionID)
 		// Re-emit the live run's question + stream_start so a client that
 		// subscribed mid-flight can render the reply under its own question.
+		// The frontend drains its buffered content events only on stream_start,
+		// so skipping this leaves a mid-flight subscriber with an empty reply.
 		// See EmitLiveRunStateToClient for why the order matters.
 		if service.IsSessionRunning(sessionID) {
 			hub.EmitLiveRunStateToClient(clientID, sessionID)
@@ -1227,10 +1229,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		return ctxState.Usage
 	})
 
-	// Inject the lookups behind the subscribe-time live-run recovery emit
+	// Inject the lookup behind the subscribe-time live-run recovery emit
 	// (breaks import cycle between ws and service).
-	ws.GetManager().StreamHub().SetStreamStateLookupFunc(service.GetStreamingMessageInfo)
-	ws.GetManager().StreamHub().SetQuestionLookupFunc(service.GetQuestionByQueueID)
+	ws.GetManager().StreamHub().SetStreamStateLookupFunc(service.GetLiveRunState)
 
 	// Inject pending_events write-ahead for user_message events (breaks import
 	// cycle between ws and service). StreamHub.Emit stores user_message before

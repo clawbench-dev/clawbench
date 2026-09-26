@@ -595,7 +595,7 @@ describe('selectFile Windows absolute path detection', () => {
     await store.selectFile('D:/external/a.go')
     const fetchCalls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls
     const url = fetchCalls[0][0] as string
-    expect(url).toContain('/api/file?path=')
+    expect(url).toContain('/api/fs/file?target=')
     expect(url).toContain('D%3A%2Fexternal%2Fa.go')
   })
 
@@ -603,7 +603,7 @@ describe('selectFile Windows absolute path detection', () => {
     await store.selectFile('D:\\external\\a.go')
     const fetchCalls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls
     const url = fetchCalls[0][0] as string
-    expect(url).toContain('/api/file?path=')
+    expect(url).toContain('/api/fs/file?target=')
   })
 })
 

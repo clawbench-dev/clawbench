@@ -774,7 +774,7 @@ watch(localValues, () => {
 }
 
 .group-panel__enable-label {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
 }
 
@@ -861,7 +861,7 @@ watch(localValues, () => {
 }
 
 .group-panel__entry-label {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
   flex-shrink: 1;
   min-width: 0;
@@ -1029,7 +1029,7 @@ watch(localValues, () => {
 }
 
 .group-panel__option-label {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
 }
 

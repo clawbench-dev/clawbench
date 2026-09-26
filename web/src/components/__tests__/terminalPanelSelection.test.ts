@@ -103,28 +103,65 @@ describe('TerminalPanel xterm selection defaults', () => {
     }
   })
 
-  it('does not show the floating copy bar on PC (native selection/copy)', () => {
+  it('no longer renders its own floating copy bar', () => {
     const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
 
-    // The selection copy bar is mobile-only: PC users get native Ctrl+C / right-click copy.
-    // Gating on !isPC (same platform flag already used for the virtual key toolbar).
-    // `autoCopyFailed` restores the bar when the deferred clipboard write was
-    // rejected — without it, a WebView that denies the write would leave mobile
-    // users with no copy affordance whatsoever.
-    expect(source).toContain('v-if="selectionActive && !isPC && (!copyOnSelect || autoCopyFailed)"')
+    // The bespoke copy bar was removed: the global quote bar now handles a
+    // terminal selection, so the old bar (and its dead styles/state) must be
+    // gone rather than left as an unreachable second entry point.
+    expect(source).not.toContain('selection-copy-bar')
+    expect(source).not.toContain('handleCopySelection')
+    expect(source).not.toContain('handleDismissSelection')
+    expect(source).not.toContain('autoCopyFailed')
   })
 
-  it('tracks auto-copy failure so the mobile copy bar can fall back to it', () => {
+  it('feeds the terminal selection to the global quote bar', () => {
     const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
 
-    expect(source).toContain('const autoCopyFailed = ref(false)')
-    // Both clipboard outcomes must be wired, otherwise a failed write would be
-    // indistinguishable from a successful one.
-    expect(source).toMatch(/autoCopyFailed\.value = false/)
-    expect(source).toMatch(/autoCopyFailed\.value = true/)
-    // A new selection is a fresh attempt: a stale failure must not pin the bar
-    // open for the rest of the session.
-    expect(source).toContain('if (text) autoCopyFailed.value = false')
+    // xterm sets `user-select: none`, so the browser reports a COLLAPSED
+    // selection inside the terminal and the global selectionchange handler
+    // never sees a terminal selection. The terminal therefore has to push its
+    // own selection into the bar.
+    expect(source).toContain("import { useQuoteQuestion } from '@/composables/useQuoteQuestion'")
+    expect(source).toContain('const quoteQuestion = useQuoteQuestion()')
+
+    const updateFn = source.slice(
+      source.indexOf('function updateSelectionFromTerm'),
+      source.indexOf('/** Read the real CSS cell height'),
+    )
+    expect(updateFn).toContain('quoteQuestion.showBar(')
+    expect(updateFn).toContain("sourceKind: 'terminal'")
+    // An empty selection closes the bar rather than leaving a stale snippet.
+    expect(updateFn).toContain('quoteQuestion.hideBar()')
+    // PIN IS REQUIRED, not cosmetic: showBar does not pin, and the global
+    // handler re-evaluates on pointerup (and on a 700ms safety timer) where it
+    // sees the collapsed DOM selection and would hide the bar right after it
+    // appeared. Asserted here because a behavioural test of the composable
+    // cannot catch a missing pin at THIS call site.
+    expect(updateFn).toContain('quoteQuestion.pinBar()')
+    // The bar is shown immediately (delay 0): the settle debounce already
+    // coalesces a touch drag, and a 400ms delay would make it feel broken.
+    expect(updateFn).toContain('{ delay: 0 }')
+  })
+
+  it('closes the quote bar when the terminal selection goes away', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // Two paths drop the xterm selection without going through
+    // updateSelectionFromTerm: leaving selection gesture mode, and switching
+    // tabs. Each must close the bar too, or it lingers over the new tab / mode
+    // showing text that is no longer selected anywhere.
+    const modeWatcher = source.slice(
+      source.indexOf('watch(() => gestures.mode.value'),
+      source.indexOf('// Re-bind gesture listeners'),
+    )
+    expect(modeWatcher).toContain('quoteQuestion.hideBar()')
+
+    const tabWatcher = source.slice(
+      source.indexOf('watch(activeTabId'),
+      source.indexOf('const { isPC } = usePlatformDetect()'),
+    )
+    expect(tabWatcher).toContain('quoteQuestion.hideBar()')
   })
 
   it('copies the selection automatically when copy-on-select is on', () => {

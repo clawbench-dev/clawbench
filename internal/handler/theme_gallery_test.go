@@ -788,13 +788,13 @@ func TestBuildConfigAppearance_EmptyItemsIsEmptySlice(t *testing.T) {
 // ── Absolute paths for thumbnail generation ──────────────────────────────────
 
 // TestBuildConfigAppearance_ExposesAbsPathsForThumbnails covers the field the
-// settings panel hands to GET /api/file/thumb, which takes a path rather than a
+// settings panel hands to GET /api/fs/thumb, which takes a path rather than a
 // bare name and returns a small JPEG instead of the full-size image.
 
 // ── Absolute paths for thumbnail generation ──────────────────────────────────
 
 // TestBuildConfigAppearance_ExposesAbsPathsForThumbnails covers the field the
-// settings panel hands to GET /api/file/thumb, which takes a path rather than a
+// settings panel hands to GET /api/fs/thumb, which takes a path rather than a
 // bare name and returns a small JPEG instead of the full-size image.
 func TestBuildConfigAppearance_ExposesAbsPathsForThumbnails(t *testing.T) {
 	_, teardown := setupThemeTestEnv(t)

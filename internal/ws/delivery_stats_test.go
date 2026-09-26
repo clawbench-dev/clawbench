@@ -1,6 +1,9 @@
 package ws
 
 import (
+	"bytes"
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -186,6 +189,136 @@ func TestEmitToSession_CriticalDropIsObservable(t *testing.T) {
 	stats := GetDeliveryStats()
 	require.Equal(t, int64(1), stats.NoSubscribers,
 		"a dropped terminal event must be observable — this is what makes the stuck-UI case diagnosable")
+}
+
+// TestRecordDeliveryDropWithDiagnostics_ExtraIsLazy pins the property that makes
+// the diagnostic payload safe to attach to the hot drop path: it must NOT be
+// evaluated when the drop is suppressed by the rate limiter. The payload walks
+// the subscription table, so evaluating it on every suppressed repeat (measured
+// ~9000 drops in 20s) would be exactly the cost the rate limit exists to avoid.
+func TestRecordDeliveryDropWithDiagnostics_ExtraIsLazy(t *testing.T) {
+	ResetDeliveryStatsForTest()
+	t.Cleanup(ResetDeliveryStatsForTest)
+
+	calls := 0
+	extra := func() []any { calls++; return nil }
+
+	// First call is logged → extra is evaluated exactly once.
+	recordDeliveryDropWithDiagnostics(DropReasonNoSubscribers, "s", "done", extra)
+	require.Equal(t, 1, calls, "the payload must be built when the drop is logged")
+
+	// Subsequent calls inside the window are suppressed → extra must NOT run.
+	for range 50 {
+		recordDeliveryDropWithDiagnostics(DropReasonNoSubscribers, "s", "done", extra)
+	}
+	assert.Equal(t, 1, calls, "the payload must not be built on the suppressed path")
+
+	// All 51 are still counted.
+	assert.Equal(t, int64(51), GetDeliveryStats().NoSubscribers)
+}
+
+// TestEmitToSession_NoSubscriberDropCarriesSubscriptionDiagnostics guards the
+// WIRING of the commit's headline feature: the no-subscriber drop path must
+// actually attach the subscription breakdown. Testing SubscriptionDiagnostics in
+// isolation does not cover this — deleting the closure at the EmitToSession call
+// site would leave every other test green while the diagnostic never reaches a
+// real drop log.
+func TestEmitToSession_NoSubscriberDropCarriesSubscriptionDiagnostics(t *testing.T) {
+	ResetDeliveryStatsForTest()
+	t.Cleanup(ResetDeliveryStatsForTest)
+
+	mgr := NewManagerForTest()
+	SetManagerForTest(mgr)
+	t.Cleanup(func() { SetManagerForTest(nil) })
+
+	// A live client that is NOT subscribed to the session of interest — the
+	// exact "connected but subscription lost" shape.
+	conn := acceptRealConn(t)
+	var writeMu sync.Mutex
+	require.NotNil(t, mgr.Subscribe(conn, &writeMu, "client-c", "en"))
+
+	// Capture the drop log by swapping the slog default handler for the duration
+	// of this test.
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	EmitToSession("session-without-subscriber", ai.StreamEvent{Type: "done"})
+
+	out := buf.String()
+	require.Contains(t, out, "dropped critical stream event", "the drop must be logged")
+	// The diagnostic fields are the whole point: they tell an operator whether
+	// the client was absent or merely unsubscribed.
+	assert.Contains(t, out, "connected_clients=1")
+	assert.Contains(t, out, "subscribed_to_session=0")
+	assert.Contains(t, out, "hub_subscribers=0")
+}
+
+// diagInt extracts an integer field from a SubscriptionDiagnostics payload.
+// The payload is []any of slog.Attr (the standard dynamic-attrs shape), so a
+// test must unwrap it rather than compare Attr structs — that would silently
+// couple the assertion to slog's internals.
+func diagInt(t *testing.T, diag []any, key string) int64 {
+	t.Helper()
+	for _, a := range diag {
+		attr, ok := a.(slog.Attr)
+		if !ok || attr.Key != key {
+			continue
+		}
+		return attr.Value.Int64()
+	}
+	t.Fatalf("diagnostic payload has no %q field (got %v)", key, diag)
+	return 0
+}
+
+// TestSubscriptionDiagnostics_DistinguishesConnectedButUnsubscribed pins the
+// exact distinction that made the "stuck mid-stream" case undiagnosable: the
+// client is CONNECTED (so it is not offline) yet holds no subscription for the
+// session the event belongs to. The bare counters cannot tell this apart from
+// "no client at all"; the diagnostic payload must.
+func TestSubscriptionDiagnostics_DistinguishesConnectedButUnsubscribed(t *testing.T) {
+	mgr := NewManagerForTest()
+	SetManagerForTest(mgr)
+	t.Cleanup(func() { SetManagerForTest(nil) })
+
+	// A live connection that never subscribed to the session of interest.
+	conn := acceptRealConn(t)
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(conn, &writeMu, "client-a", "en")
+	require.NotNil(t, sub)
+
+	const sid = "session-nobody-watches"
+	diag := mgr.SubscriptionDiagnostics(sid)
+	assert.Equal(t, int64(1), diagInt(t, diag, "connected_clients"))
+	assert.Equal(t, int64(0), diagInt(t, diag, "subscribed_to_session"))
+	assert.Equal(t, int64(0), diagInt(t, diag, "hub_subscribers"))
+
+	// Now subscribe it: the same diagnostic must report the subscription, so a
+	// drop log can distinguish "lost subscription" from "never subscribed".
+	mgr.StreamHub().Subscribe("client-a", sid)
+	diag = mgr.SubscriptionDiagnostics(sid)
+	assert.Equal(t, int64(1), diagInt(t, diag, "subscribed_to_session"))
+	assert.Equal(t, int64(1), diagInt(t, diag, "hub_subscribers"))
+}
+
+// TestSubscriptionDiagnostics_CountsDisconnected verifies a detached
+// subscription (conn nil, entry preserved for replay) is reported as
+// disconnected rather than connected — otherwise a drop caused by a client
+// being genuinely away would look like a lost subscription.
+func TestSubscriptionDiagnostics_CountsDisconnected(t *testing.T) {
+	mgr := NewManagerForTest()
+	SetManagerForTest(mgr)
+	t.Cleanup(func() { SetManagerForTest(nil) })
+
+	conn := acceptRealConn(t)
+	var writeMu sync.Mutex
+	require.NotNil(t, mgr.Subscribe(conn, &writeMu, "client-b", "en"))
+	require.True(t, mgr.DisconnectClientIfCurrent("client-b", conn))
+
+	diag := mgr.SubscriptionDiagnostics("any-session")
+	assert.Equal(t, int64(0), diagInt(t, diag, "connected_clients"))
+	assert.Equal(t, int64(1), diagInt(t, diag, "disconnected_clients"))
 }
 
 // TestEmitToSession_UserMessageReachesWriteAheadWithoutSubscribers is the

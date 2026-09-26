@@ -2,8 +2,10 @@
  * Pure functions and constants extracted from useChatStream composable.
  * These have no Vue reactivity dependencies and can be tested in isolation.
  *
- * Pending messages are stored in the messages array with pending: true flag.
- * No separate pendingStore — one source of truth.
+ * Queued messages are NOT part of this array: they live in the separate queue
+ * store (useMessageQueue) until the backend materializes them into
+ * chat_history. This array holds conversation messages only, which is why
+ * ordering is a plain DB-id sort and no reply anchor is needed.
  */
 
 // ── Core chat types ──
@@ -54,38 +56,28 @@ export interface ChatMessage {
   metadata?: Record<string, unknown>
   cancelled?: boolean
   streaming?: boolean
-  pending?: boolean
   backend?: string
   createdAt?: string
   files?: FileEntry[]
   /**
    * Client-side monotonic sequence for messages not yet backed by a DB row
-   * (pending user messages, streaming placeholders, cross-device remotes).
-   * Used by sortMessages() to keep them ordered among themselves and after
-   * every DB-backed message. Never used for DB-backed messages (their numeric
-   * `id` is the authoritative ordering key).
+   * (optimistic sends, streaming placeholders, cross-device remotes). Used by
+   * sortMessages() to keep them ordered among themselves and after every
+   * DB-backed message. Never used for DB-backed messages (their numeric `id`
+   * is the authoritative ordering key).
    */
   seq?: number
   /**
-   * Pointer anchor for a streaming/finalized reply: the queueId (or fallback
-   * parent id) of the user message this reply answers. sortMessages resolves
-   * the parent's CURRENT sort value dynamically, so when the parent adopts a
-   * DB id the reply follows automatically — no loadHistory needed to fix the
-   * order. Distinct from `queueId` (which marks a queued USER message) so
-   * hasMore's `!m.pending && !m.queued` filter on user messages stays correct.
-   */
-  parentQueueId?: string
-  /**
-   * Frontend-generated queue id, persisted by the backend on EVERY user row
-   * (queued and direct-sent alike) and on streaming assistant rows (the
-   * answered queue). Used to match optimistic bubbles to DB rows, let
-   * queue_cancel remove pending bubbles whose id became numeric, and anchor a
-   * reply to its own question after a refresh.
+   * Correlation key for the in-flight direct-send guard ONLY (see
+   * trackInFlightSend). A directly-sent message's optimistic bubble is pushed
+   * with its string pending id as `id`, then adopts the numeric DB id from the
+   * POST response — this field preserves that string id so the guard can still
+   * recognise the bubble afterwards.
+   *
+   * It is deliberately NOT an ordering anchor: ordering is by DB id, because a
+   * queued message is materialized into chat_history only at dequeue time.
    */
   queueId?: string
-  /** True while this message is still waiting for the drain loop (queued=1 in
-   *  chat_history). The frontend treats it as a pending bubble until queue_drain. */
-  queued?: boolean
   [key: string]: unknown
 }
 
@@ -173,13 +165,10 @@ export interface PollResponseData {
   sessionId?: string
 }
 
-/** Queue event data */
+/** Queue event data (queue_drain / queue_inject). */
 export interface QueueEventData {
   queueId?: string
-  text?: string
   sessionId?: string
-  filePaths?: string[]
-  files?: FileEntry[]
   messageId?: number
 }
 
@@ -213,6 +202,19 @@ function isGarbageOutput(output: string | undefined): boolean {
  * Used to trigger file preview refresh after tool completion.
  */
 export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
+
+/**
+ * Tool names that spawn a sub-agent. Their calls run for minutes inside a child
+ * session and legitimately outlive the generic 30s tool watchdog, so any
+ * "mark unfinished tools as done" cleanup must exempt them — otherwise the
+ * sub-agent pill shows its finished check while it is still working.
+ */
+export const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent'])
+
+/** Whether a tool name denotes a sub-agent call (case-insensitive). */
+export function isSubagentToolName(name?: string): boolean {
+  return !!name && SUBAGENT_TOOL_NAMES.has(name.toLowerCase())
+}
 
 /**
  * A single created/modified file along with the Write/Edit tool call IDs that
@@ -329,12 +331,6 @@ export function forceCleanupStreamingState(
   if (streamingMsg) {
     const hasContent = streamingMsg.content || (streamingMsg.blocks && streamingMsg.blocks.length > 0)
     delete streamingMsg.streaming
-    // The finalized reply keeps its parentQueueId anchor: its question may
-    // still be transient (string id), in which case sorting by the reply's
-    // (possibly numeric) id would place it above its own question.
-    // sortMessages resolves parentQueueId dynamically, so the reply follows
-    // its question whether transient or DB-backed. loadHistory replaces the
-    // whole array on 'done'/reload with authoritative DB order.
     // Mark all unfinished tool_use blocks as done so spinner stops.
     // Exception: PermissionApproval blocks require user interaction —
     // marking them done without a real result makes the card appear
@@ -452,30 +448,24 @@ export function resetInFlightSendsForTest(): void {
 const TRANSIENT_BASE = Number.MAX_SAFE_INTEGER / 4
 
 /**
- * Numeric sort value for a USER message (assistant replies are resolved by
- * sortMessages against their parent, never through this function).
+ * Numeric sort value for a message.
  *
- * - Pure DB-backed user (numeric id, no live markers): the id itself.
- * - Live message (pending / streaming / string id / carries a queueId AND a
- *   client seq — i.e. still part of the in-flight send pipeline): TRANSIENT_BASE
- *   + seq, ordering purely by send order. A queued message adopts its DB id
- *   when the drain loop starts, but that id is a persist-time artifact (larger
- *   than history ids, yet smaller than a later message's id) — using it would
- *   reorder messages by persist time. DB-loaded history that merely retains a
- *   queueId (no seq) is NOT live and sorts by id.
+ * - DB-backed (numeric id): the id itself — INCLUDING a still-streaming
+ *   placeholder once it has adopted its DB row id. The row's id is its real
+ *   conversational position (the question row was materialized before the
+ *   reply), so a streaming reply must sort at its id, not float to the end.
+ *   Floating it would push a reply below questions materialized AFTER it
+ *   (e.g. a drained message's row) — the "reply appears below the next
+ *   question" ordering bug.
+ * - Transient (string id: optimistic send, or a streaming placeholder that has
+ *   not yet learned its DB id): TRANSIENT_BASE + seq, ordering purely by send
+ *   order and after every DB-backed message.
  *
- *   A cross-device remote message that already carries a numeric DB id
- *   (user_message MessageID) sorts by id — its `_remoteQueueId` must NOT pull
- *   it into seq space, otherwise it interleaves with local seq by receive order
- *   instead of by DB id. Remote messages with a string id (MessageID absent)
- *   are covered by the `typeof m.id !== 'number'` branch.
+ * A queued message is not in this array at all (it lives in the queue store
+ * until dequeued), so no queueId handling is needed.
  */
 export function messageSortValue(m: ChatMessage): number {
-  const isLive =
-    m.pending === true ||
-    m.streaming === true ||
-    typeof m.id !== 'number' ||
-    (m.queueId != null && m.seq != null)
+  const isLive = typeof m.id !== 'number'
   if (!isLive) return m.id as number
   return TRANSIENT_BASE + (m.seq ?? 0)
 }
@@ -483,277 +473,49 @@ export function messageSortValue(m: ChatMessage): number {
 /**
  * Always-stable message ordering — sorts `messages` in place.
  *
- * The DB (auto-increment `id` ASC) is the single source of truth for order.
- * Transient messages sort after all DB-backed messages; a streaming assistant
- * sorts immediately after its own question (parent + 0.5), so a reply can
- * never be displaced above an earlier reply. Array.prototype.sort is stable
- * (ES2019+), so equal-key messages keep their existing relative order.
+ * The DB (auto-increment `id` ASC) is the single source of truth for order,
+ * and it is now genuinely conversational order: a queued message is
+ * materialized into chat_history only when it is dequeued, so its id always
+ * precedes the reply it produces. Transient messages sort after all DB-backed
+ * messages. Array.prototype.sort is stable (ES2019+), so equal-key messages
+ * keep their existing relative order.
  *
  * Callers must ONLY ever PUSH new messages (never splice by heuristic index),
- * then call this to restore order. Because physical position never encodes
- * ordering, a newer reply can never end up displayed above an older one no
- * matter how many mutations race during a stream transition.
+ * then call this to restore order.
  */
 export function sortMessages(messages: ChatMessage[]): void {
-  // First pass: index user messages by every stable key we can anchor to —
-  // id (string or number, both normalized to string), queueId, _remoteQueueId.
-  const byKey = new Map<string, ChatMessage>()
-  for (const m of messages) {
-    if (m.role !== 'user') continue
-    if (m.id != null) byKey.set(String(m.id), m)
-    if (m.queueId) byKey.set(m.queueId, m)
-    const rq = (m as Record<string, unknown>)['_remoteQueueId']
-    if (typeof rq === 'string' && rq) byKey.set(rq, m)
-  }
-
-  // Resolve a message's sort value, following parentQueueId chains dynamically.
-  // A reply anchored to a transient parent resolves to TRANSIENT_BASE+seq (huge,
-  // after every DB message); once the parent adopts a DB id the SAME reply
-  // resolves to the small id + 0.5 — it follows automatically, no loadHistory
-  // round-trip required.
-  const resolve = (m: ChatMessage, depth: number): number => {
-    if (depth > 4) return messageSortValue(m)
-    const parentKey = (m as ChatMessage).parentQueueId
-    if (parentKey) {
-      const parent = byKey.get(parentKey)
-      if (parent && parent !== m) return resolve(parent, depth + 1) + 0.5
-    }
-    return messageSortValue(m)
-  }
-
-  messages.sort((a, b) => resolve(a, 0) - resolve(b, 0))
+  messages.sort((a, b) => messageSortValue(a) - messageSortValue(b))
 }
 
 /**
- * After loadHistory rebuilds the array from DB rows, anchor every queued
- * reply (an assistant message whose queueId matches a queued user message) to
- * its own question. This is required because queued user messages are
- * persisted (and receive their DB id) when they are enqueued — BEFORE later
- * queued messages and BEFORE the replies they eventually produce. So the raw
- * DB id order is msg2, msg3, reply2, reply3, which is not the conversational
- * order. By setting parentQueueId on each reply to its question's queueId,
- * sortMessages resolves the reply directly after its question.
+ * Finalize the current streaming assistant message in place — WITHOUT deleting
+ * it, even if it appears empty. This prevents v-for key shifts from
+ * index-based keys when the next turn's placeholder is pushed.
  *
- * Only messages whose queueId matches an existing user message are anchored;
- * every other message keeps its natural id ordering. Idempotent — safe to run
- * on every loadHistory.
+ * Called when a queued message starts its own turn (queue_drain): the reply
+ * that was streaming is now a finished message, and the new turn's placeholder
+ * is created by the following stream_start.
  */
-export function anchorRepliesToQuestions(messages: ChatMessage[]): ChatMessage[] {
-  // Build question lookup: queueId → the queued user message carrying it.
-  const questionByQueueId = new Map<string, ChatMessage>()
-  // Build id lookup: String(id) → user message. Used to resolve a reply's
-  // parentQueueId that still points at a transient STRING id (e.g. the
-  // optimistic bubble id) once that bubble has adopted a DB row — the DB row
-  // then carries the real queueId, so the anchor is rewritten to it below.
-  const userById = new Map<string, ChatMessage>()
-  for (const m of messages) {
-    if (m.role !== 'user') continue
-    if (m.queueId) questionByQueueId.set(m.queueId, m)
-    if (m.id != null) userById.set(String(m.id), m)
-  }
-  for (const m of messages) {
-    if (m.role !== 'assistant') continue
-    // Primary path: the reply's own queueId matches a queued user question.
-    if (m.queueId) {
-      const q = questionByQueueId.get(m.queueId)
-      if (q) {
-        m.parentQueueId = m.queueId
-        continue
-      }
-    }
-    // Fallback: the reply already carries a parentQueueId that points at a
-    // transient string id (an optimistic bubble) which the DB rebuild dropped.
-    // If that string id now maps to a DB user row (by id or by queueId),
-    // rewrite the anchor to the row's queueId so the reply still resolves
-    // directly after its question. Without this, a streaming reply whose anchor
-    // string id was dropped sorts in the TRANSIENT_BASE domain — after every DB
-    // message — so a queued message persisted LATER (larger DB id) renders above
-    // the in-flight reply.
-    if (m.parentQueueId) {
-      const anchor = String(m.parentQueueId)
-      const parent = userById.get(anchor) || questionByQueueId.get(anchor)
-      if (parent && parent !== m && parent.queueId) {
-        m.parentQueueId = parent.queueId
-      }
-    }
-  }
-  return messages
-}
-
-/**
- * Atomically process a queue_drain event on the messages array.
- *
- * 1. Finalizes the current streaming assistant message (removes streaming flag,
- *    marks unfinished tool_use blocks as done) — WITHOUT deleting it, even if
- *    it appears empty. This prevents v-for key shifts from index-based keys.
- * 2. Finds the drained user message (by its stable queueId) and adopts its
- *    numeric DB id (dbMessageId). The row is already persisted in chat_history
- *    with queued=0 (the drain loop flipped it), so adopting the id is safe —
- *    the message is now a normal conversation record ordered by id.
- * 3. Pushes a new streaming assistant placeholder for the next message.
- *
- * Returns the new streaming assistant message.
- */
-export function drainQueueMessage(
+export function finalizeStreamingForDrain(
   messages: ChatMessage[],
-  queueId: string,
-  userContent: string,
-  userFiles: FileEntry[],
-  currentBackend: string,
   callbacks: {
-    onRenderNeeded: (forceFull?: boolean) => void
     onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
-  },
-  drainId?: string,
-  dbMessageId?: number,
-): ChatMessage {
-  // 1. Finalize any streaming assistant message — never delete to avoid key shifts
+  } = {},
+): void {
   const streamingMsg = messages.find((m) => m.role === 'assistant' && m.streaming)
-  if (streamingMsg) {
-    delete streamingMsg.streaming
-    // Mark unfinished tool_use blocks as done (except PermissionApproval)
-    if (streamingMsg.blocks) {
-      for (const block of streamingMsg.blocks) {
-        if (block.type === 'tool_use' && !block.done && block.name !== 'PermissionApproval') {
-          block.done = true
-          if (isGarbageOutput(block.output)) {
-            block.output = ''
-          }
+  if (!streamingMsg) return
+  delete streamingMsg.streaming
+  if (streamingMsg.blocks) {
+    for (const block of streamingMsg.blocks) {
+      if (block.type === 'tool_use' && !block.done && block.name !== 'PermissionApproval') {
+        block.done = true
+        if (isGarbageOutput(block.output)) {
+          block.output = ''
         }
       }
     }
-    callbacks.onExtractScheduledTasks?.(messages)
   }
-
-  // 2. Find the queued user message by its STABLE key — the queueId that the
-  //    frontend generated and sent to the backend, and which the backend echoes
-  //    back in queue_drain. No content guessing: identity is the key.
-  //
-  //    Three-channel OR match, robust against loadHistory having replaced the
-  //    bubble with its DB row (id becomes numeric, but queueId field survives):
-  //      m.id === queueId          → optimistic bubble (string id = queueId)
-  //      m.queueId === queueId     → bubble already adopted a numeric DB id
-  //      m['_remoteQueueId']       → cross-device remote user message
-  //
-  //    The match deliberately does NOT require (m.pending || m._remote). A
-  //    loadHistory snapshot that arrived between the backend persisting the
-  //    drained row (queued=0) and this queue_drain WS event may have already
-  //    replaced the bubble with its DB row (rebuildFromDb drops the transient
-  //    bubble when queued=0), so gating on pending would miss it and fall back
-  //    to pushing a SECOND user message — the reported "AAA" duplicate.
-  //    queueId is the stable identity; pending/_remote are UI state, not
-  //    identity.
-  let pendingIdx = -1
-  if (queueId) {
-    pendingIdx = messages.findIndex(
-      (m) => m.role === 'user' &&
-        (m.id === queueId || m.queueId === queueId || (m as Record<string, unknown>)['_remoteQueueId'] === queueId)
-    )
-  }
-
-  if (pendingIdx !== -1) {
-    // Found by stable key — clear transient flags.
-    //
-    // Adopt the numeric DB id. Sorting stays in seq space while streaming (the
-    // message keeps its client seq), so an adopted message still orders by
-    // send order relative to not-yet-adopted bubbles. loadHistory (idle) later
-    // clears seq and orders by DB id.
-    delete messages[pendingIdx].pending
-    delete messages[pendingIdx]._remote
-    delete messages[pendingIdx]['_remoteQueueId']
-    if (typeof dbMessageId === 'number' && dbMessageId > 0 && typeof messages[pendingIdx].id !== 'number') {
-      // Adopt the DB id. A message that already carries a numeric id (e.g. a
-      // cross-device _remote that arrived persisted) keeps it — replacing would
-      // churn the v-for key. Drop seq so the message moves to the id domain
-      // (sorts by DB id) like every other adopted message — keeps the sort
-      // space uniform so direct-sent, queued and remote messages never
-      // interleave by client receive order. Replies anchored via parentQueueId
-      // resolve dynamically and stay with their parent. loadHistory (idle)
-      // later reconciles the authoritative DB order.
-      messages[pendingIdx].queueId = String(messages[pendingIdx].id)
-      messages[pendingIdx].id = dbMessageId
-      delete messages[pendingIdx].seq
-    } else if (messages[pendingIdx].id == null) {
-      messages[pendingIdx].id = drainId || generateDrainId()
-      if (typeof messages[pendingIdx].seq !== 'number') {
-        messages[pendingIdx].seq = nextClientSeq()
-      }
-    }
-  } else if (userContent) {
-    // Defensive: the queued message wasn't found by its key (its optimistic
-    // push was dropped before this drain). Create it from the drain payload.
-    const effectiveId = (typeof dbMessageId === 'number' && dbMessageId > 0) ? dbMessageId : (drainId || generateDrainId())
-    if (!messages.some((m) => m.id === effectiveId)) {
-      messages.push({
-        role: 'user',
-        id: effectiveId,
-        queueId: queueId || undefined,
-        content: userContent,
-        blocks: userContent ? [{ type: 'text', text: userContent }] : [],
-        files: userFiles.map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-        createdAt: new Date().toISOString(),
-        seq: nextClientSeq(),
-      })
-      pendingIdx = messages.length - 1
-    }
-  }
-
-  // 3. Push a new streaming assistant placeholder, anchored right after the
-  //    drained user message. Order is restored by sortMessages() — never
-  //    encode ordering in physical array position. This is race-proof: a newer
-  //    reply can never be spliced above an older one because we never
-  //    splice-insert by heuristic index.
-  const parent = pendingIdx !== -1 ? messages[pendingIdx] : messages[messages.length - 1]
-  const newStreamingMsg = {
-    role: 'assistant' as const,
-    id: generateDrainId(),
-    content: '',
-    blocks: [] as ContentBlock[],
-    streaming: true,
-    createdAt: new Date().toISOString(),
-    backend: currentBackend,
-    seq: nextClientSeq(),
-    // Anchor to the drained message via parentQueueId (dynamic resolution in
-    // sortMessages).
-    // When the parent later adopts a DB id, the reply follows automatically.
-    parentQueueId: queueId || String(parent?.id ?? ''),
-  }
-  messages.push(newStreamingMsg)
-  sortMessages(messages)
-
-  return newStreamingMsg
-}
-
-/**
- * Remove pending messages from the messages array whose IDs match
- * the given queueIds. Used by the queue_cancel event handler.
- * Matches by id (optimistic pending bubble, string id = queueId), by the
- * queueId field (a queued message already adopted a numeric DB id via
- * drainQueueMessage or loadHistory), or by _remoteQueueId (a cross-device
- * _remote bubble). Returns the number of removed messages.
- */
-export function cancelPendingMessages(
-  messages: ChatMessage[],
-  queueIds: string[]
-): number {
-  let removed = 0
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.pending && (queueIds.includes(String(m.id)) || queueIds.includes(m.queueId || ''))) {
-      messages.splice(i, 1)
-      removed++
-    } else if (m._remote && queueIds.includes((m as Record<string, unknown>)['_remoteQueueId'] as string)) {
-      // Cross-device bubble: cancel removes it too — the backend row is gone,
-      // so any later loadHistory would drop it anyway; remove it now so the
-      // current UI doesn't show a stale pending message.
-      messages.splice(i, 1)
-      removed++
-    }
-  }
-  // Same as remove_pending: the backend DELETEs these rows, so the "row seen"
-  // cleanup in rebuildFromDb never fires — release the guards here.
-  for (const id of queueIds) untrackInFlightSend(id)
-  return removed
+  callbacks.onExtractScheduledTasks?.(messages)
 }
 
 /**
@@ -812,19 +574,17 @@ export type ChatMessageAction =
   | { type: 'optimistic_push'; msg: ChatMessage }
   | { type: 'optimistic_remove'; id: string | number }
   | { type: 'optimistic_remove_content'; content: string }
-  | { type: 'optimistic_adopt_id'; id: string | number; dbId: number; clearPending?: boolean }
+  | { type: 'optimistic_adopt_id'; id: string | number; dbId: number }
   | { type: 'stream_placeholder'; msg: ChatMessage }
-  | { type: 'clear_pending' }
-  | { type: 'remove_pending'; queueId: string }
-  | { type: 'clear_queued_pending'; queueId: string }
   | { type: 'clear' }
   | { type: 'prepend_older'; olderMsgs: ChatMessage[] }
   // ── WS structural events ──
-  | { type: 'ws_stream_start'; messageId: number; answeredQueueId?: string }
-  | { type: 'ws_stream_split'; messageId: number; queueId?: string }
-  | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; queued?: boolean; backend?: string } }
-  | { type: 'ws_queue_drain'; queueId: string; text: string; files: FileEntry[]; dbMessageId?: number; backend?: string }
-  | { type: 'ws_queue_cancel'; queueIds: string[] }
+  | { type: 'ws_stream_start'; messageId: number }
+  | { type: 'ws_stream_split'; messageId: number }
+  // A queued message started its own turn: the reply that was streaming is now
+  // complete (the backend only emits `done` when the whole drain loop exits).
+  | { type: 'ws_queue_drain' }
+  | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; backend?: string } }
   | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
   | { type: 'stream_finalize' }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
@@ -845,13 +605,146 @@ export type ChatMessageAction =
 function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: string): ContentBlock | undefined {
   const wantParent = parent || ''
   for (let i = blocks.length - 1; i >= 0; i--) {
-    // Sub-agent boundary: a block belonging to a different parent (or top-level)
-    // must not absorb this event's deltas.
-    if ((blocks[i].parent_tool_call_id || '') !== wantParent) return undefined
+    // Blocks of another parent (a different sub-agent, or top-level) are
+    // stepped over, not treated as a boundary: concurrent sub-agents interleave
+    // their deltas, so agent A's next delta is normally separated from A's own
+    // previous block by several of agent B's blocks. Returning early here
+    // fragmented one continuous thought into one block per interleaved run.
+    if ((blocks[i].parent_tool_call_id || '') !== wantParent) continue
     if (blocks[i].type === type) return blocks[i]
     if (blocks[i].type === 'tool_use') return undefined
   }
   return undefined
+}
+
+/** Concatenated text of the text blocks in an array, in order. */
+function joinTextBlocks(blocks: ContentBlock[]): string {
+  return blocks
+    .filter((b) => b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+    .join('')
+}
+
+/**
+ * Cumulative text spans of the DB text blocks: `index` is the block's index in
+ * `dbBlocks`, `start`/`end` its character range in the concatenated DB text.
+ * Used to anchor a live text block (or a DB-only block) at a text position.
+ */
+function dbTextSpans(dbBlocks: ContentBlock[]): Array<{ index: number; start: number; end: number }> {
+  const spans: Array<{ index: number; start: number; end: number }> = []
+  let offset = 0
+  for (let i = 0; i < dbBlocks.length; i++) {
+    const b = dbBlocks[i]
+    if (b.type !== 'text' || typeof b.text !== 'string') continue
+    spans.push({ index: i, start: offset, end: offset + b.text.length })
+    offset += b.text.length
+  }
+  return spans
+}
+
+/** DB text-block index whose span contains `offset` (the last span when the
+ *  offset is at or beyond the end of the DB text). */
+function dbTextIndexAtOffset(
+  spans: Array<{ index: number; start: number; end: number }>,
+  offset: number,
+): number {
+  for (const s of spans) {
+    if (offset < s.end) return s.index
+  }
+  return spans.length > 0 ? spans[spans.length - 1].index : -1
+}
+
+/** Index in `dbBlocks` of the block a live block corresponds to, or -1 when the
+ *  DB flush has no counterpart (a live-only tool, an in-progress thinking the
+ *  flush deliberately omits, a warning/error block). Used to anchor DB-only
+ *  blocks: a block is spliced before the first base element whose DB index is
+ *  greater than its own. */
+function dbAnchorOfLiveBlock(lb: ContentBlock, dbBlocks: ContentBlock[]): number {
+  if (lb.type === 'tool_use' && lb.id) {
+    return dbBlocks.findIndex((b) => b.type === 'tool_use' && b.id === lb.id)
+  }
+  return -1
+}
+
+/**
+ * Order-preserving merge of the DB flushed blocks into the live blocks.
+ *
+ * The result is built in LIVE order — a live block is never relocated — with
+ * the DB's text substituted for the live text when `takeDbText` is set (case 0:
+ * the DB flush is ahead, so the live text is a stale prefix). Every DB block
+ * the live placeholder lacks is then spliced in at the position of the first
+ * base element that follows it in DB order; blocks with no such anchor (the
+ * newest ones) are appended.
+ *
+ * This is what keeps text and tool_use interleaved. An earlier implementation
+ * prepended every DB-only non-text block and moved all DB text blocks to the
+ * first live-text slot, which rendered a turn as "all tools stacked on top, all
+ * text stacked below" whenever a snapshot arrived while the placeholder held
+ * little or no content.
+ */
+function mergeOrderedBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[], takeDbText: boolean): ContentBlock[] {
+  const liveToolIds = new Set(liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
+  const liveHasThinking = liveBlocks.some((b) => b.type === 'thinking')
+  const spans = dbTextSpans(dbBlocks)
+  const emittedText = new Set<number>()
+
+  const out: ContentBlock[] = []
+  const anchors: number[] = []
+  const push = (block: ContentBlock, anchor: number) => {
+    out.push(block)
+    anchors.push(anchor)
+  }
+
+  // Walk the live blocks in order, emitting the DB text in step with the live
+  // text it replaces (case 0) so a tool that sits between two text blocks in
+  // the DB is not jumped over.
+  let liveTextOffset = 0
+  let dbTextPtr = 0
+  let dbTextEmitted = 0
+  for (const lb of liveBlocks) {
+    if (lb.type === 'text') {
+      const len = typeof lb.text === 'string' ? lb.text.length : 0
+      if (takeDbText) {
+        liveTextOffset += len
+        while (dbTextPtr < spans.length && dbTextEmitted < liveTextOffset) {
+          const s = spans[dbTextPtr++]
+          push(dbBlocks[s.index], s.index)
+          emittedText.add(s.index)
+          dbTextEmitted = s.end
+        }
+      } else {
+        push(lb, dbTextIndexAtOffset(spans, liveTextOffset))
+        liveTextOffset += len
+      }
+      continue
+    }
+    push(lb, dbAnchorOfLiveBlock(lb, dbBlocks))
+  }
+
+  // Every DB block the live placeholder lacks. In case 0 the DB text blocks the
+  // live text did not reach are included here too — they are the continuation
+  // of the reply and must land after the live-covered region, not at the end of
+  // the array.
+  const extras: Array<{ block: ContentBlock; dbIndex: number }> = []
+  dbBlocks.forEach((b, i) => {
+    if (b.type === 'text') {
+      if (takeDbText && !emittedText.has(i)) extras.push({ block: b, dbIndex: i })
+      return
+    }
+    if (b.type === 'tool_use' && b.id && liveToolIds.has(b.id)) return
+    if (b.type === 'thinking' && liveHasThinking) return
+    extras.push({ block: b, dbIndex: i })
+  })
+  extras.sort((a, b) => a.dbIndex - b.dbIndex)
+
+  for (const { block, dbIndex } of extras) {
+    let p = anchors.findIndex((a) => a > dbIndex)
+    if (p === -1) p = out.length
+    out.splice(p, 0, block)
+    anchors.splice(p, 0, dbIndex)
+  }
+
+  return out
 }
 
 /**
@@ -861,10 +754,11 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: 
  * loadHistory DB snapshot arrived — so the DB row's rate-limited flushed
  * history (tool_use + earlier text) may be a prefix the placeholder lacks.
  *
- * Three cases:
+ * Cases:
  *   1. Continuous streaming (liveText starts with dbText): the live text
  *      already covers the DB flush (a stale subset). Only DB non-text blocks
- *      (tool_use) that live is missing are adopted.
+ *      (tool_use) that live is missing are adopted, spliced in at their DB
+ *      position.
  *   2. Re-subscribed mid-stream (switch-back): the DB text is a true prefix
  *      the live increment does not cover. Evidence: the DB text/live text
  *      overlap at a seam, OR the DB carries a tool_use block live lacks
@@ -874,35 +768,51 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: 
  *   3. No evidence (unrelated text, no tool_use anchor): leave live alone —
  *      the DB flush is stale (e.g. a content_reset boundary), and merging
  *      would duplicate unrelated content.
+ *
+ *   0. (checked first) The DB text is a SUPERSET of the live text — the DB
+ *      flush got further than the live stream did. That is the shape a turn
+ *      takes when this client missed increments (WS dropped / App backgrounded)
+ *      while the backend kept flushing. Nothing in the cases above covers it:
+ *      case 1 asks for the opposite containment, and case 2 only prepends a DB
+ *      prefix that is strictly *shorter* than live. Left unhandled it fell
+ *      through to case 3 and the live prefix silently won — which is how a
+ *      finished reply got truncated to whatever had arrived before the
+ *      disconnect.
+ *
+ * Every case builds the result in LIVE order (a live block is never relocated)
+ * and splices DB-only blocks in at their DB position — see mergeOrderedBlocks.
+ * The reply's text/tool interleaving is therefore preserved.
  */
 function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): ContentBlock[] {
-  const dbText = dbBlocks
-    .filter((b) => b.type === 'text' && typeof b.text === 'string')
-    .map((b) => b.text as string)
-    .join('')
-  const liveText = liveBlocks
-    .filter((b) => b.type === 'text' && typeof b.text === 'string')
-    .map((b) => b.text as string)
-    .join('')
+  const dbText = joinTextBlocks(dbBlocks)
+  const liveText = joinTextBlocks(liveBlocks)
+
+  // Case 0 — the DB flush is a strict superset of the live text: the live
+  // stream is behind, so the DB's text is authoritative. (Equal text is left to
+  // case 1, which preserves the existing "adopt DB non-text extras onto live"
+  // behavior.)
+  //
+  // No `liveText` truthiness requirement: an empty live text is the *strongest*
+  // form of this shape — the placeholder holds only a tool block and has not
+  // received its text yet, while the DB already has it.
+  //
+  // Only the TEXT is taken from the DB. The live non-text blocks stay in place,
+  // in their original order, because the DB's rate-limited flush deliberately
+  // omits in-progress thinking (session_executor.go only writes a slim marker
+  // for DONE thinking) — returning the DB array wholesale would silently drop
+  // the reasoning the user is currently watching, along with any live
+  // warning/error block. DB-only non-text blocks (tools that finished before the
+  // placeholder was recreated) are spliced in at their DB position.
+  if (dbText && dbText !== liveText && dbText.startsWith(liveText)) {
+    return mergeOrderedBlocks(dbBlocks, liveBlocks, true)
+  }
 
   // Case 1 — live already covers the DB text. Adopt only the DB non-text
   // blocks (tool_use finished before the placeholder was recreated) that live
-  // is missing.
+  // is missing, spliced in at their DB position so the text/tool interleaving
+  // is preserved.
   if (dbText && liveText.startsWith(dbText)) {
-    const liveToolIds = new Set(liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
-    // DB slim thinking markers ({think_id, done}) reference reasoning the live
-    // stream already rendered when live holds a thinking block — adopting them
-    // would duplicate the chip. When live has NO thinking block (the placeholder
-    // was recreated after that thinking finished and replay emitted text only),
-    // the DB marker is genuinely missing and is adopted below.
-    const liveHasThinking = liveBlocks.some((b) => b.type === 'thinking')
-    const extra = dbBlocks.filter(
-      (b) =>
-        b.type !== 'text' &&
-        !(b.type === 'tool_use' && b.id && liveToolIds.has(b.id)) &&
-        !(b.type === 'thinking' && liveHasThinking),
-    )
-    return extra.length > 0 ? [...extra, ...liveBlocks] : liveBlocks
+    return mergeOrderedBlocks(dbBlocks, liveBlocks, false)
   }
 
   // Case 3 — no overlap and the DB has no non-text history live lacks: the DB
@@ -974,19 +884,38 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
   // must be preserved so the streamed content already rendered keeps its DOM.
   const live = state.find((m) => m.role === 'assistant' && m.streaming)
 
-  // Index DB rows by id and by queueId (queued rows + streaming rows carrying
-  // the answered queue).
+  // Index DB rows by id.
   const dbById = new Map<string, ChatMessage>()
-  const dbByQueueId = new Map<string, ChatMessage>()
   for (const db of dbMessages) {
     if (db.id != null) dbById.set(String(db.id), db)
-    if (db.role === 'user' && db.queueId) dbByQueueId.set(db.queueId, db)
+  }
+
+  // A snapshot that CONTAINS an in-flight direct send's row means the send has
+  // been fully acknowledged and persisted — any older pre-commit GET is settled
+  // by now, so the in-flight protection is no longer needed. Releasing here is
+  // what keeps the registry from leaking across turns: the stale-snapshot guard
+  // below keys off this set, so an entry left behind would keep resurrecting a
+  // user bubble that a later authoritative snapshot no longer contains (e.g.
+  // after a rewind). Every finished turn ends in a loadHistory that includes
+  // the just-committed row, so this always fires.
+  //
+  // The release is keyed off the STATE bubble's queueId matched to the DB row
+  // carrying the same id — NOT off `db.queueId`. A chat_history row has no
+  // queue_id (the column was dropped when the queue moved to its own table, and
+  // ChatMessage has no such field), so keying off the snapshot left every direct
+  // send tracked forever: the bubble then matched the in-flight branch below
+  // even though the snapshot already carried its row, and the DB row was
+  // appended as well → the SAME message rendered twice until a full reload.
+  // The bubble's adopted numeric id is the identity both sides actually share.
+  for (const m of state) {
+    if (m.role !== 'user' || !m.queueId || typeof m.id !== 'number') continue
+    const row = dbById.get(String(m.id))
+    if (row && row.role === 'user') untrackInFlightSend(m.queueId)
   }
 
   // Find the DB streaming row that corresponds to the live placeholder.
-  // Preferred channels: the DB id ws_stream_start already assigned to the
-  // placeholder, or the answered queue (queue_id) matching the placeholder's
-  // anchor. Fallback: any streaming row while the live placeholder is empty.
+  // Preferred channel: the DB id ws_stream_start already assigned to the
+  // placeholder. Fallback: the snapshot's ONLY streaming row (see below).
   let liveDb: ChatMessage | undefined
   if (live) {
     // Channel 1 — exact id match. ws_stream_start assigns the DB row's id to
@@ -999,36 +928,38 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       const row = dbById.get(String(live.id))!
       if (row.role === 'assistant') liveDb = row
     }
-    if (!liveDb) {
-      liveDb = dbMessages.find(
-        (r) =>
-          r.role === 'assistant' &&
-          r.streaming === true &&
-          (r.queueId === live.parentQueueId || r.queueId === String(live.id)),
-      )
-    }
-    if (!liveDb) {
-      liveDb = dbMessages.find(
-        (r) =>
-          r.role === 'assistant' &&
-          r.streaming === true &&
-          messageText(live) === '' &&
-          (live.blocks ?? []).length === 0,
-      )
+    // Channel 2 — the snapshot's ONLY streaming assistant row is this turn.
+    //
+    // Channel 1 requires the placeholder to have adopted the DB id, and that
+    // adoption is event-driven (ws_stream_start). When that event is dropped —
+    // a routine occurrence, not an edge case — the placeholder keeps its local
+    // `drain-*` id for the whole turn, so an id match never happens and the
+    // live object was DISCARDED in favour of the DB row. Two user-visible
+    // consequences: the reply lost whatever the live stream held beyond the
+    // last 500ms rate-limited flush, and the parsed DB row's block flags
+    // replaced the live ones — which is how a still-running sub-agent's Agent
+    // pill came to show its green check (see parseAssistantContent).
+    //
+    // Identity here is structural rather than a token: the backend runs at most
+    // ONE turn per session (TryClaimSessionRun) and the frontend holds at most
+    // one live placeholder, so a lone streaming row can only be this turn.
+    // Requiring it to be the ONLY streaming row is what keeps the anti-duplicate
+    // invariant intact: with two streaming rows we cannot tell which is ours, so
+    // we decline and fall through to the previous behaviour (drop the
+    // placeholder rather than render it beside an unrelated row).
+    //
+    // Gated on sessionRunning for the same reason the preserve guard below is: a
+    // streaming row in a snapshot of a session that is NOT running describes a
+    // finished turn (its flag is stale — parseMessages normally strips it), and
+    // adopting it would keep `streaming` on the placeholder forever.
+    if (!liveDb && sessionRunning) {
+      const streamingRows = dbMessages.filter((r) => r.role === 'assistant' && r.streaming === true)
+      if (streamingRows.length === 1) liveDb = streamingRows[0]
     }
   }
 
   const used = new Set<ChatMessage>()
   const merged: ChatMessage[] = []
-
-  // A db_load snapshot that CONTAINS an in-flight send's row means the send has
-  // been fully acknowledged and persisted — any older pre-commit GET is settled
-  // by now, so the in-flight protection is no longer needed. Clearing here keeps
-  // the registry from leaking across turns: every finished turn ends in a
-  // loadHistory that includes the just-committed row.
-  for (const db of dbMessages) {
-    if (db.role === 'user' && db.queueId) untrackInFlightSend(db.queueId)
-  }
 
   for (const db of dbMessages) {
     // 1. Live streaming placeholder → keep its object, merge DB identity.
@@ -1061,21 +992,41 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       if (db.summaryCards) live.summaryCards = db.summaryCards
       if (db.metadata && !live.metadata) live.metadata = db.metadata
       if (db.files) live.files = db.files
-      // Merge the DB row's queueId onto the live object when it doesn't carry
-      // one. The live placeholder is usually anchored to a string id or created
-      // by a stream_start event without a queueId; the DB streaming row stores
-      // the answered queue_id. Without this, anchorRepliesToQuestions cannot
-      // associate the reply with its question after a refresh and the reply
-      // falls back to the raw DB-id sort domain — landing BEFORE a still-queued
-      // or drained-but-later message instead of right after its own question.
-      if (db.queueId && !live.queueId) live.queueId = db.queueId
-      // Backfill partial content: if the live placeholder is empty (e.g. freshly
-      // created by a stream_start event after a re-subscribe) but the DB row has
-      // already-flushed content, copy it in so previously-streamed text isn't lost.
-      // Never overwrite a live placeholder that already has content — its live
-      // stream is fresher than the DB's 500ms rate-limited flush.
+      // A FINALIZED, summary-stripped row is the whole record of a turn that is
+      // already over, and it carries NO blocks on purpose: the backend replaces
+      // the content of a summarized non-streaming assistant row with
+      // {"blocks":[]} (summarizeContentForView) and keeps the summary in a
+      // separate table. Summarization runs synchronously inside Finalize, so by
+      // the time a backgrounded client resumes, the reply it missed has already
+      // been summarized and stripped.
+      //
+      // The live placeholder must therefore be EMPTIED rather than merged. Both
+      // merge branches below require db.blocks to be non-empty, so a stripped
+      // row skipped them entirely and the stale pre-disconnect prefix survived.
+      // That produced the reported symptom twice over: the reply rendered
+      // truncated (in 'mixed'/'original' mode the last reply renders as
+      // original, i.e. exactly those stale blocks), AND because blocks were
+      // non-empty, `shouldShowSummary` and `needsLazyOriginal` both concluded
+      // "content is present" — so neither the summary was shown nor the full
+      // content lazily fetched. Switching sessions rebuilds the array from the
+      // DB row, which is why that appeared to fix it.
+      //
+      // Clearing blocks + content restores the intended contract: empty content
+      // + a summary is exactly the state that renders the summary and triggers
+      // the lazy original fetch. This must be an exclusive branch — falling
+      // through to the backfill below would copy db.content (which IS the
+      // stripped `{"blocks":[]}` JSON) straight back in.
+      const dbBlocksEmpty = !Array.isArray(db.blocks) || db.blocks.length === 0
       const liveIsEmpty = (live.blocks ?? []).length === 0 && messageText(live) === ''
-      if (liveIsEmpty) {
+      if (db.streaming !== true && dbBlocksEmpty && db.summary) {
+        live.blocks = []
+        live.content = ''
+      } else if (liveIsEmpty) {
+        // Backfill partial content: if the live placeholder is empty (e.g. freshly
+        // created by a stream_start event after a re-subscribe) but the DB row has
+        // already-flushed content, copy it in so previously-streamed text isn't lost.
+        // Never overwrite a live placeholder that already has content — its live
+        // stream is fresher than the DB's 500ms rate-limited flush.
         if (Array.isArray(db.blocks) && db.blocks.length > 0) {
           live.blocks = db.blocks
         } else if (db.content) {
@@ -1087,34 +1038,25 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
         // placeholder was recreated by a stream_start after a session switch
         // while the REST loadHistory was in flight, so the first WS increments
         // appended onto an EMPTY base before db_load arrived. Merge the DB
-        // blocks as a prefix (see mergeStreamBlocks for the seam handling).
+        // blocks (see mergeStreamBlocks for the containment rules).
+        //
+        // Deliberately NOT special-cased on "the row is finalized": the
+        // streaming flag cannot distinguish "the turn is over" from "this
+        // snapshot was read before the turn ended". The handler reads the
+        // history rows and only afterwards samples IsSessionRunning, and
+        // parseMessages deletes `streaming` whenever that sample says the
+        // session is idle — so a snapshot taken mid-finalize arrives looking
+        // finalized while holding only the last rate-limited flush. Adopting
+        // such a snapshot wholesale would discard the newer live tail.
+        // mergeStreamBlocks' containment checks are order-agnostic and handle
+        // both directions correctly without needing that flag.
         live.blocks = mergeStreamBlocks(db.blocks, live.blocks)
       }
       merged.push(live)
       continue
     }
 
-    // 2. Pending user bubble → keep the bubble object, sync queued state.
-    const queuedRow = db.role === 'user' && db.queued === true && db.queueId
-    if (queuedRow) {
-      const bubble = state.find(
-        (m) =>
-          m.role === 'user' &&
-          m.pending === true &&
-          (m.queueId === db.queueId || String(m.id) === db.queueId),
-      )
-      if (bubble) {
-        used.add(bubble)
-        if (db.summary) bubble.summary = db.summary
-        if (db.files) bubble.files = db.files
-        bubble.pending = true
-        bubble.queued = true
-        merged.push(bubble)
-        continue
-      }
-    }
-
-    // 3. _remote cross-device bubble adopted by this DB row.
+    // 2. _remote cross-device bubble adopted by this DB row.
     if (db.id != null) {
       const remote = state.find(
         (m) => m.role === 'user' && m._remote === true && String(m.id) === String(db.id),
@@ -1123,36 +1065,30 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
         used.add(remote)
         delete (remote as Record<string, unknown>)['_remote']
         delete (remote as Record<string, unknown>)['_remoteQueueId']
-        if (db.queueId && !remote.queueId) remote.queueId = db.queueId
         merged.push(remote)
         continue
       }
     }
 
-    // 4. Everything else → append the authoritative DB row.
-    const row = { ...db }
-    if (row.role === 'user' && row.queued === true) row.pending = true
-    merged.push(row)
+    // 3. Everything else → append the authoritative DB row.
+    merged.push({ ...db })
   }
 
   // Drop all remaining state not covered by a DB row. This is the crux of the
   // rebuild: duplicate leftovers, orphaned placeholders and string-id bubbles
   // without a DB row are NOT in the authoritative DB, so they are dropped —
   // every loadHistory converges to exactly what an app restart would show.
-  // While dropping, record any dropped user bubble that HAS a DB row so replies
-  // anchored to the bubble's string id can be rewritten to the DB id.
   //
   // The live placeholder is preserved in exactly one case (see below): the
   // snapshot contains NO streaming assistant row at all while the session is
   // still running. Requiring "no streaming row in the snapshot" — rather than
   // merely "no row matched the placeholder" — is what makes the preserve safe
   // from duplicates: if the snapshot DOES carry a streaming row, the normal
-  // matching above already claimed it (channel 3 matches any streaming row
-  // while the placeholder is empty), so an unmatched placeholder then means a
-  // genuine mismatch and must be dropped rather than rendered alongside the
-  // snapshot's row.
+  // matching above already claimed it (the empty-placeholder fallback matches
+  // any streaming row), so an unmatched placeholder then means a genuine
+  // mismatch and must be dropped rather than rendered alongside the snapshot's
+  // row.
   const dbHasStreamingRow = dbMessages.some((r) => r.role === 'assistant' && r.streaming === true)
-  const parentAdoption = new Map<string, string>()
   for (const m of state) {
     if (used.has(m)) continue
 
@@ -1193,52 +1129,42 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
     // run before the transient gate below: after optimistic_adopt_id the bubble
     // carries a NUMERIC id (non-transient) but is still awaiting the row in a
     // db_load, so it must be protected on the same basis.
-    if (m.role === 'user' && isInFlightSend(m.queueId || (typeof m.id === 'string' ? String(m.id) : undefined))) {
+    const inFlightKey = (typeof m.queueId === 'string' ? m.queueId : '') || (typeof m.id === 'string' ? m.id : undefined)
+    if (m.role === 'user' && isInFlightSend(inFlightKey)) {
       merged.push(m)
       continue
     }
 
-    const isTransient = m.pending === true || m.streaming === true || typeof m.id === 'string'
-    if (!isTransient) continue
-
-    // A dropped optimistic/transient user bubble that corresponds to a DB row:
-    // its replies anchor to the string id — rewrite them to the DB id below.
-    if (m.role === 'user' && typeof m.id === 'string') {
-      let row = dbById.get(String(m.id)) || (m.queueId ? dbByQueueId.get(m.queueId) : undefined)
-      if (!row) {
-        // No id/queueId identity on the DB row (a directly-sent message whose
-        // row was persisted without queue_id): match by content, gated by a
-        // createdAt window so two genuinely distinct identical-text messages
-        // (e.g. "build" sent twice minutes apart) never rewrite each other's
-        // reply anchors. This is used ONLY to rewrite reply anchors — the
-        // bubble itself is still dropped, so it cannot resurrect a duplicate.
-        const mText = messageText(m)
-        const mTime = m.createdAt ? new Date(m.createdAt).getTime() : 0
-        if (mText !== '') {
-          row = dbMessages.find((r) => {
-            if (r.role !== 'user' || messageText(r) !== mText) return false
-            const rTime = r.createdAt ? new Date(r.createdAt).getTime() : 0
-            if (rTime === 0 || mTime === 0) return false
-            return Math.abs(rTime - mTime) < 5000
-          })
-        }
-      }
-      if (row && row.id != null && String(row.id) !== String(m.id)) {
-        parentAdoption.set(String(m.id), String(row.id))
-      }
+    // User bubble announced by a user_message event (a queued message that was
+    // just materialized, or a cross-device send). The backend emits
+    // user_message ONLY after the row is committed (drain's claim deletes the
+    // queue row and inserts the history row in ONE transaction; the direct-send
+    // path persists before emitting). So this bubble's numeric id IS a real DB
+    // id, and a snapshot that lacks it is provably STALE — the same
+    // read-before-write race the in-flight guard above covers, and the same
+    // reasoning as the live placeholder.
+    //
+    // Nothing else protects this case, which is why it must be handled here: a
+    // queued message's optimistic entry lived in the queue store, and
+    // removeQueued RELEASES its in-flight guard the moment this bubble is
+    // rendered — so between that release and the next authoritative snapshot
+    // the bubble is unprotected, and a stale db_load (a GET issued before the
+    // row committed) silently dropped it. The user then saw the assistant reply
+    // with no question above it until a later reload happened to include the
+    // row — the "queued message shows only the assistant reply" symptom.
+    //
+    // Numeric id only: a string-id bubble (msgId was 0) is transient and has no
+    // row to be stale about. Gated on sessionRunning so a finished session still
+    // converges strictly to the DB — a rewind must drop the bubble, and it
+    // cancels the run first, so this gate is false by the time it reloads.
+    if (m.role === 'user' && m._remote === true && typeof m.id === 'number' && sessionRunning) {
+      merged.push(m)
+      continue
     }
+
     // Deliberately NOT pushed to `merged`.
   }
-  if (parentAdoption.size > 0) {
-    for (const m of merged) {
-      if (m.parentQueueId) {
-        const newId = parentAdoption.get(m.parentQueueId)
-        if (newId !== undefined) m.parentQueueId = newId
-      }
-    }
-  }
 
-  anchorRepliesToQuestions(merged)
   sortMessages(merged)
   return merged
 }
@@ -1257,44 +1183,27 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'optimistic_remove_content': {
-      // Remove the LAST pending user message matching the content (the one just
-      // optimistically pushed for an enqueue that failed). Content-match is the
-      // only stable key when no queueId was generated.
+      // Remove the LAST optimistic user message matching the content (the one
+      // just pushed for a direct send that failed). Content-match is the only
+      // stable key when no id was generated.
       const idx = state.findLastIndex(
-        (m) => m.role === 'user' && m.pending && m.content === action.content
+        (m) => m.role === 'user' && typeof m.id === 'string' && m.content === action.content
       )
       if (idx !== -1) state.splice(idx, 1)
       return state
     }
     case 'optimistic_adopt_id': {
-      // A directly-sent message (sendMessageNow) learned its DB id from the
-      // user_message self-echo (MessageID). Adopt it immediately so the bubble
-      // no longer sorts as a transient after later queued messages. Preserve
-      // the old id as queueId so replies anchored via parentQueueId keep
-      // resolving to it, and DROP seq: a directly-sent message's DB id IS its
-      // real conversational position (send order = persist order), so it must
-      // sort by id alongside history — NOT in seq space (where it would
-      // interleave with queued/remote messages by client receive order).
-      // loadHistory (idle) later reconciles the authoritative DB order.
-      // A PENDING bubble is normally a queued message still waiting for the
-      // drain loop — it must NOT be adopted here (the drain carries the
-      // authoritative id and clears pending). Adopting early would flip it to a
-      // normal message.
-      //
-      // clearPending is the exception: the backend may report that the message
-      // joined the RUNNING turn instead of being queued (mid-turn injection).
-      // In that case no drain will ever arrive, so this bubble must shed its
-      // pending state now or it would spin forever. The backend says so
-      // explicitly, so the caller opts in.
+      // A directly-sent message (sendMessageNow) learned its DB id from the POST
+      // response or the user_message self-echo (MessageID). Adopt it immediately
+      // and DROP seq: a directly-sent message's DB id IS its real conversational
+      // position (send order = persist order), so it must sort by id alongside
+      // history — NOT in seq space. loadHistory (idle) later reconciles the
+      // authoritative DB order.
       const idx = state.findIndex((m) => String(m.id) === String(action.id))
       if (idx === -1) return state
       const target = state[idx]
-      if (target.pending && !action.clearPending) return state
-      const oldId = String(target.id)
       target.id = action.dbId
-      target.queueId = oldId
       delete target.seq
-      delete target.pending
       sortMessages(state)
       return state
     }
@@ -1333,51 +1242,6 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       sortMessages(state)
       return state
     }
-    case 'clear_pending': {
-      for (let i = state.length - 1; i >= 0; i--) {
-        if (state[i].pending) state.splice(i, 1)
-      }
-      return state
-    }
-    case 'remove_pending': {
-      for (let i = state.length - 1; i >= 0; i--) {
-        const m = state[i]
-        if (m.pending && (String(m.id) === action.queueId || m.queueId === action.queueId)) {
-          state.splice(i, 1)
-        } else if (m._remote && (m as Record<string, unknown>)['_remoteQueueId'] === action.queueId) {
-          // Cross-device bubble: cancel removes it too (backend row deleted).
-          state.splice(i, 1)
-        }
-      }
-      // The backend DELETEs the cancelled row, so no future db_load snapshot will
-      // ever contain this queueId — the "row seen" cleanup in rebuildFromDb can
-      // never fire for it. Release the in-flight guard here or the registry entry
-      // would leak for the process lifetime.
-      untrackInFlightSend(action.queueId)
-      return state
-    }
-    case 'clear_queued_pending': {
-      // The message did not end up queued after all — it joined the running
-      // turn (mid-turn injection). Drop the pending/queued markers so the bubble
-      // renders as a normal delivered message instead of waiting for a drain
-      // event that will never arrive. The DB row already exists, so the next
-      // loadHistory reconciles its authoritative position.
-      for (const m of state) {
-        if (m.role !== 'user') continue
-        // Three identity channels, same as remove_pending: an optimistic bubble
-        // (id === queueId), one that already adopted its DB id (queueId field),
-        // and a cross-device bubble (only _remoteQueueId — it has a numeric id
-        // and no queueId, so without this channel it would spin forever).
-        const matches =
-          String(m.id) === action.queueId ||
-          m.queueId === action.queueId ||
-          (m as Record<string, unknown>)['_remoteQueueId'] === action.queueId
-        if (!matches) continue
-        delete m.pending
-        delete m.queued
-      }
-      return state
-    }
     case 'clear':
       return []
     case 'prepend_older': {
@@ -1407,41 +1271,19 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         if (typeof sm.id !== 'number') {
           sm.id = action.messageId
         }
-        // Re-anchor the streaming reply to its TRUE question. The backend
-        // streams the answered queue id (the queueId of the user message this
-        // run answers) on every stream_start. A recovery placeholder created
-        // before the question bubble arrived (missed queue_drain/stream_start
-        // while unsubscribed, then rebuilt on the "running" session_update)
-        // may be anchored to the newest STALE user message — anchoring there
-        // sorts the reply ABOVE its real question until the DB rebuild.
-        //
-        // The answered queue id IS a resolvable anchor key: sortMessages'
-        // byKey indexes every user message by queueId / id / _remoteQueueId,
-        // and the drain/user_message handlers re-sort when the question
-        // arrives, so the reply dynamically lands right after its own question
-        // no matter the event order. rebuildFromDb's Channel 2 additionally
-        // matches the live placeholder to the DB streaming row by
-        // (r.queueId === live.parentQueueId), so a queueId anchor survives
-        // db_load. A stale numeric-id anchor (findAnchorUserIdx fallback)
-        // provides none of that — it keeps the reply stranded above its real
-        // question.
-        if (action.answeredQueueId && String(sm.parentQueueId ?? '') !== action.answeredQueueId) {
-          sm.parentQueueId = action.answeredQueueId
-          sortMessages(state)
-        }
       }
       return state
     }
     case 'ws_stream_split': {
       // The assistant reply was split in two at a mid-turn injection point. The
-      // backend finalized the "before" half and opened a new streaming row
-      // anchored to the injected question, so:
+      // backend finalized the "before" half and opened a new streaming row, so:
       //   1. the current streaming bubble becomes the "before" half — drop its
       //      streaming flag (it is complete) but keep its blocks and id;
       //   2. push a fresh empty streaming bubble for the "after" half, carrying
-      //      the new row's DB id and anchored to the injected question's queueId.
-      // The injected question sorts between them by DB id, which is exactly the
-      // conversational order — no special-case ordering needed.
+      //      the new row's DB id.
+      // The injected question was materialized into chat_history before the
+      // "after" row, so it sorts between the two halves by DB id — exactly the
+      // conversational order, no anchor needed.
       const before = state.find((m) => m.role === 'assistant' && m.streaming)
       if (before) {
         delete before.streaming
@@ -1472,7 +1314,6 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
           streaming: true,
           createdAt: new Date().toISOString(),
           seq: nextClientSeq(),
-          parentQueueId: action.queueId || undefined,
           _dbMessageId: action.messageId,
         } as ChatMessage)
       }
@@ -1487,15 +1328,29 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       const userFiles: FileEntry[] = (data.files || []).map((f) => typeof f === 'string' ? { path: f, isDir: false } : f)
       const msgId = data.messageId || 0
       const remoteQueueId = data.queueId || ''
+      // Identity is the DB id, or the queueId tying this announcement to the
+      // optimistic bubble that asked for it. Text is NEVER identity: different
+      // messages legitimately share text (the same prompt sent three times), and
+      // matching on it silently swallowed the 2nd and 3rd — the reported "queued
+      // messages only appear once the whole queue finishes". They surfaced later
+      // only because a final loadHistory rebuilt from the DB, which had them all
+      // along.
+      //
+      // So an announcement that carries identity is decided by identity alone.
+      // The content fallback survives ONLY for an announcement with neither id
+      // (a legacy/IM path), where it remains the last-resort guard against
+      // duplicating this device's own optimistic bubble.
+      const hasIdentity = msgId > 0 || remoteQueueId !== ''
       const alreadyExists = state.some((m) => {
         if (m.role !== 'user') return false
         if (msgId > 0 && m.id === msgId) return true
         if (remoteQueueId && (m.id === remoteQueueId || m.queueId === remoteQueueId)) return true
+        if (hasIdentity) return false
         // Content is only a dedup key when it actually identifies the message.
         // An attachment-only message (a file/image sent from IM) has content "",
         // so matching on it would collapse every such message into the first
         // one and silently drop files sent from another device.
-        if (userContent !== '' && m.content === userContent && !m.pending && !m._remote) return true
+        if (userContent !== '' && m.content === userContent && !m._remote) return true
         return false
       })
       if (alreadyExists) return state
@@ -1509,22 +1364,13 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         _remote: true,
         ...(data.backend ? { backend: data.backend } : {}),
         ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
-        ...((data as { queued?: boolean }).queued ? { pending: true, queued: true } : {}),
         seq: nextClientSeq(),
       } as ChatMessage)
       sortMessages(state)
       return state
     }
     case 'ws_queue_drain': {
-      drainQueueMessage(
-        state, action.queueId, action.text, action.files, action.backend || '',
-        { onRenderNeeded: () => {}, onExtractScheduledTasks: () => {} },
-        undefined, action.dbMessageId,
-      )
-      return state
-    }
-    case 'ws_queue_cancel': {
-      cancelPendingMessages(state, action.queueIds)
+      finalizeStreamingForDrain(state)
       return state
     }
     case 'stream_finalize': {

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本地资源引用演示 · ClawBench HTML 预览</title>
+
+<!-- 同目录样式表：相对路径 -->
+<link rel="stylesheet" href="style.css">
+
+<style>
+  /* 内联样式表永远生效，作为对照组。
+   * 注意它刻意不定义 --accent：那个变量只存在于外部 style.css 中，
+   * 所以 app.js 读到的值能真实反映「外部样式表是否被应用」。 */
+  .inline-deco {
+    width: 100%; height: 90px; border-radius: 8px;
+    background: url("../images/img_cute_cat.svg") center / contain no-repeat;
+    background-color: #dbeafe;
+  }
+</style>
+</head>
+<body>
+
+<h1>本地资源引用演示</h1>
+<div class="subtitle">
+  用于验证 HTML 文件预览能否加载<b>同目录及上级目录</b>的本地资源。
+  每个资源都带一个实时判据 —— 加载成功与否由浏览器实际解码结果决定，而不是「标签存在」。
+</div>
+
+<h2>加载结果</h2>
+<table>
+  <thead>
+    <tr><th style="width:34%">资源</th><th style="width:26%">引用方式</th><th>结果</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>style.css</code></td>
+      <td>外部样式表（同目录）</td>
+      <td><span id="style-status" class="result wait">检测中…</span></td>
+    </tr>
+    <tr>
+      <td><code>app.js</code></td>
+      <td>ES module 脚本（同目录）</td>
+      <td><span id="js-status" class="result wait">检测中…</span></td>
+    </tr>
+    <tr>
+      <td><code>img_cute_cat.svg</code></td>
+      <td><code>&lt;img&gt;</code>（上级目录）</td>
+      <td><span id="img-svg-status" class="result wait">检测中…</span></td>
+    </tr>
+    <tr>
+      <td><code>img_beauty_001.jpg</code></td>
+      <td><code>&lt;img&gt;</code>（上级目录）</td>
+      <td><span id="img-jpg-status" class="result wait">检测中…</span></td>
+    </tr>
+    <tr>
+      <td><code>img_cute_cat.svg</code></td>
+      <td>CSS <code>url()</code>（相对 CSS 自身）</td>
+      <td><span id="css-bg-status" class="result wait">检测中…</span></td>
+    </tr>
+    <tr>
+      <td><code>img_cute_cat.svg</code></td>
+      <td><code>&lt;object&gt;</code>（上级目录）</td>
+      <td><span id="obj-status" class="result wait">检测中…</span></td>
+    </tr>
+    <tr>
+      <td>内联 <code>&lt;svg&gt;</code></td>
+      <td>写在 HTML 里（对照组）</td>
+      <td><span id="inline-status" class="result wait">检测中…</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>外部样式表驱动的外观</h2>
+<div class="grid">
+  <div class="card">
+    <div class="label">.deco — CSS url() 背景</div>
+    <div class="deco"></div>
+  </div>
+  <div class="card">
+    <div class="label">.inline-deco — 内联 CSS url() 背景</div>
+    <div class="inline-deco"></div>
+  </div>
+  <div class="card">
+    <div class="label">&lt;img src="../images/…"&gt;</div>
+    <img class="thumb" src="../images/img_cute_cat.svg" alt="SVG 图片"
+         data-check="img-svg-status">
+  </div>
+  <div class="card">
+    <div class="label">&lt;object data="../images/…"&gt;</div>
+    <object type="image/svg+xml" data="../images/img_cute_cat.svg"
+            data-check="obj-status" style="width:100%;height:90px"></object>
+  </div>
+</div>
+
+<h2>JPEG 大图（约 310 KB）</h2>
+<div class="card">
+  <div class="label">../images/img_beauty_001.jpg</div>
+  <img class="thumb" src="../images/img_beauty_001.jpg" alt="JPEG 图片"
+       data-check="img-jpg-status">
+</div>
+
+<h2>内联 SVG（对照组）</h2>
+<div class="card">
+  <div class="label">直接写在 HTML 中，任何情况下都应显示</div>
+  <svg viewBox="0 0 200 200" width="120" height="120" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="100" cy="100" r="95" fill="#FFE8A3"/>
+    <circle cx="100" cy="100" r="55" fill="#F4A460"/>
+    <circle cx="80" cy="95" r="9" fill="white"/>
+    <circle cx="120" cy="95" r="9" fill="white"/>
+    <circle cx="82" cy="95" r="4.5" fill="#2B2B2B"/>
+    <circle cx="122" cy="95" r="4.5" fill="#2B2B2B"/>
+  </svg>
+</div>
+
+<div class="note">
+  <b>怎么读结果</b>：表格里每一项都由浏览器实际解码结果判定。
+  <br>
+  <b>修复前</b>：<code>style.css</code> 被当作 <code>application/octet-stream</code>，
+  浏览器静默丢弃（不报错、只是样式不生效）；所有相对路径还会解析到应用根目录而 404。
+  <br>
+  <b>修复后</b>：文档以真实 URL 载入，相对路径以本文档所在目录为基准解析，全部应为 ✓。
+</div>
+
+<!-- ES module：修复前会被 MIME 校验拒绝，修复后应正常执行 -->
+<script type="module" src="app.js"></script>
+
+</body>
+</html>

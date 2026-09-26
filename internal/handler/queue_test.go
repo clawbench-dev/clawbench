@@ -185,11 +185,21 @@ func TestQueueHandler_Enqueue_WithFilePaths(t *testing.T) {
 
 	assertOK(t, w)
 
-	// Message persisted with the file paths attached.
-	msgs, err := service.GetQueuedMessages(sessionID)
-	assert.NoError(t, err)
-	if len(msgs) > 0 {
-		assert.Equal(t, "check this file", msgs[0].Content)
+	// The idle session starts a drain goroutine that claims the message, so the
+	// queue may already be empty by the time we look. Claim the row ourselves
+	// to inspect it deterministically; if the goroutine got it first, read the
+	// materialized chat_history row instead.
+	row, _, ok, err := service.ClaimNextAndMaterialize(sessionID)
+	if ok {
+		require.NoError(t, err)
+		assert.Equal(t, "check this file", row.Content)
+		require.Len(t, row.Files, 2, "both file paths must be attached")
+	} else {
+		messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
+		require.NoError(t, err)
+		require.Len(t, messages, 1, "the message must be persisted")
+		require.Len(t, messages[0].Files, 2, "both file paths must be attached")
+		assert.Equal(t, "check this file", messages[0].Content)
 	}
 
 	service.CancelSession(sessionID)
@@ -503,11 +513,18 @@ func TestQueueHandler_Delete_ByQueueID(t *testing.T) {
 	assert.Equal(t, 1, service.GetQueuedCount(sessionID))
 	var q1Rows int
 	err = service.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id = ?",
+		"SELECT COUNT(*) FROM queued_messages WHERE session_id = ? AND queue_id = ?",
 		sessionID, "q-1",
 	).Scan(&q1Rows)
 	require.NoError(t, err)
-	assert.Zero(t, q1Rows, "canceled queued message must not remain in chat_history")
+	assert.Zero(t, q1Rows, "canceled queued message must be deleted from the queue table")
+	// The cancel must not have materialized anything into chat_history.
+	var historyRows int
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID,
+	).Scan(&historyRows)
+	require.NoError(t, err)
+	assert.Zero(t, historyRows, "a canceled queued message must never reach chat_history")
 }
 
 func TestQueueHandler_Delete_ClearAll(t *testing.T) {
@@ -530,11 +547,10 @@ func TestQueueHandler_Delete_ClearAll(t *testing.T) {
 	// formal messages in the session history.
 	var remaining int
 	err := service.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id IN ('q-1', 'q-2')",
-		sessionID,
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID,
 	).Scan(&remaining)
 	require.NoError(t, err)
-	assert.Zero(t, remaining, "cleared queued messages must not remain in chat_history")
+	assert.Zero(t, remaining, "cleared queued messages must never reach chat_history")
 }
 
 func TestQueueHandler_Delete_InvalidIndex(t *testing.T) {
@@ -726,12 +742,15 @@ func TestQueueHandler_Enqueue_RejectsPathTraversal(t *testing.T) {
 	assertStatus(t, w, http.StatusForbidden)
 }
 
-// TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID verifies the unified
-// POST /api/ai/queue endpoint broadcasts a user_message event carrying the
-// persisted DB message id (msgID > 0) and the sender's clientId — so other
-// devices see the new message even before it drains (cross-device sync, plan
-// 竞态 5).
-func TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID(t *testing.T) {
+// TestQueueHandler_Enqueue_EmitsQueueAdded verifies the unified POST
+// /api/ai/queue endpoint, when a turn is already running, broadcasts a
+// queue_added event carrying the queue entry's identity (queueId), text, files
+// and the sender's clientId — so other devices render it in the queue panel.
+//
+// A still-queued message has no chat_history row, so it must NOT be announced
+// as a user_message: that would make clients render a bubble with no DB row
+// behind it (a duplicate once the real drain materializes it).
+func TestQueueHandler_Enqueue_EmitsQueueAdded(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -752,6 +771,10 @@ func TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID(t *testing.T) {
 	mgr.StreamHub().Subscribe("test-queue-client", sessionID)
 	require.NotNil(t, sub)
 
+	// Mark the session running so the message is queued rather than started.
+	service.TrySetSessionRunning(sessionID)
+	defer service.SetSessionRunning(sessionID, false)
+
 	body := map[string]any{
 		"message":  "queue emit me",
 		"clientId": "sender-device-1",
@@ -761,7 +784,7 @@ func TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID(t *testing.T) {
 	w := callHandler(QueueHandler, req)
 	assertOK(t, w)
 
-	// The handler must have broadcast user_message with the real DB id.
+	// The handler must have broadcast queue_added with the entry's queueId.
 	var found *ws.ServerMessage
 	assert.Eventually(t, func() bool {
 		for _, ev := range sub.GetBufferedEvents() {
@@ -769,7 +792,7 @@ func TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID(t *testing.T) {
 				continue
 			}
 			data, ok := ev.Data.(ws.ChatStreamData)
-			if !ok || data.EventType != "user_message" {
+			if !ok || data.EventType != "queue_added" {
 				continue
 			}
 			found = &ev
@@ -778,23 +801,35 @@ func TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID(t *testing.T) {
 		return false
 	}, 2*time.Second, 20*time.Millisecond)
 
-	require.NotNil(t, found, "expected a user_message chat_stream event in the subscriber buffer")
+	require.NotNil(t, found, "expected a queue_added chat_stream event in the subscriber buffer")
 	data := found.Data.(ws.ChatStreamData)
 	payload, ok := data.Payload.(map[string]any)
 	require.True(t, ok)
-	// messageId is stored as the original int64 (the buffer holds the Go value,
-	// not JSON), so it may appear as int64 or float64 depending on marshaling.
-	msgID, _ := payload["messageId"].(int64)
-	if msgID == 0 {
-		if f, ok := payload["messageId"].(float64); ok {
-			msgID = int64(f)
+	assert.Equal(t, "sender-device-1", payload["senderClientId"])
+	assert.Equal(t, "queue emit me", payload["text"])
+	// The request sent no queueId, so the backend minted one. It must be
+	// present — it is the entry's only identity (cancel/inject address it).
+	assert.NotEmpty(t, payload["queueId"], "queue_added must carry the entry's queueId")
+	_, hasMsgID := payload["messageId"]
+	assert.False(t, hasMsgID, "queue_added must not carry a messageId — no chat_history row exists yet")
+
+	// The message must NOT be announced as a real user message: it has no
+	// chat_history row, so a bubble would be a duplicate with no DB backing.
+	for _, ev := range sub.GetBufferedEvents() {
+		if ev.Event != "chat_stream" {
+			continue
+		}
+		if d, ok := ev.Data.(ws.ChatStreamData); ok {
+			assert.NotEqual(t, "user_message", d.EventType,
+				"a queued message must not be announced as a real user message")
 		}
 	}
-	assert.Greater(t, msgID, int64(0), "user_message must carry the real persisted DB id (msgID > 0)")
-	assert.Equal(t, "sender-device-1", payload["senderClientId"])
-	assert.Equal(t, "queue emit me", payload["content"])
 
-	service.CancelSession(sessionID)
+	// It is genuinely queued, not persisted.
+	messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
+	require.NoError(t, err)
+	assert.Empty(t, messages, "a queued message must not be a chat_history row")
+	assert.Equal(t, 1, service.GetQueuedCount(sessionID))
 }
 
 // ── QueueInjectHandler ──────────────────────────────────────────────────────

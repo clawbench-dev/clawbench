@@ -8,32 +8,32 @@ import {
 
 describe('buildThumbUrl', () => {
   it('builds correct URL for root-level image', () => {
-    expect(buildThumbUrl('', 'photo.png')).toBe('/api/file/thumb?path=photo.png&w=200')
+    expect(buildThumbUrl('', 'photo.png')).toBe('/api/fs/thumb?target=photo.png&w=200')
   })
 
   it('builds correct URL for nested image', () => {
-    expect(buildThumbUrl('assets/img', 'logo.png')).toBe('/api/file/thumb?path=assets%2Fimg%2Flogo.png&w=200')
+    expect(buildThumbUrl('assets/img', 'logo.png')).toBe('/api/fs/thumb?target=assets%2Fimg%2Flogo.png&w=200')
   })
 
   it('respects custom width parameter', () => {
-    expect(buildThumbUrl('', 'photo.jpg', 400)).toBe('/api/file/thumb?path=photo.jpg&w=400')
+    expect(buildThumbUrl('', 'photo.jpg', 400)).toBe('/api/fs/thumb?target=photo.jpg&w=400')
   })
 
   it('encodes special characters in path', () => {
     expect(buildThumbUrl('my folder', 'test image.png')).toBe(
-      '/api/file/thumb?path=my%20folder%2Ftest%20image.png&w=200'
+      '/api/fs/thumb?target=my%20folder%2Ftest%20image.png&w=200'
     )
   })
 
   it('encodes unicode characters', () => {
     expect(buildThumbUrl('图片', '截图.png')).toBe(
-      '/api/file/thumb?path=%E5%9B%BE%E7%89%87%2F%E6%88%AA%E5%9B%BE.png&w=200'
+      '/api/fs/thumb?target=%E5%9B%BE%E7%89%87%2F%E6%88%AA%E5%9B%BE.png&w=200'
     )
   })
 
   it('handles deeply nested paths', () => {
     expect(buildThumbUrl('a/b/c/d', 'file.png')).toBe(
-      '/api/file/thumb?path=a%2Fb%2Fc%2Fd%2Ffile.png&w=200'
+      '/api/fs/thumb?target=a%2Fb%2Fc%2Fd%2Ffile.png&w=200'
     )
   })
 })

@@ -127,7 +127,7 @@ describe('ImagePreview', () => {
     const wrapper = mountPreview()
     const img = wrapper.find('.image-preview-img')
     expect(img.exists()).toBe(true)
-    expect(img.attributes('src')).toContain('/api/local-file/')
+    expect(img.attributes('src')).toContain('/api/fs/raw/')
     expect(img.attributes('alt')).toBe('image.png')
   })
 

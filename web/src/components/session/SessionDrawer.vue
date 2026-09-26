@@ -1,63 +1,85 @@
 <template>
-  <BottomSheet ref="bottomSheetRef" :open="open" auto panel-class="session-drawer-sheet" :title="t('session.title')" @close="$emit('close')">
-    <template #header>
-      <SessionListHeader
-        :session-count="sessionCount"
-        :session-max-count="sessionMaxCount"
-        @open-search="$emit('open-session-search')"
-        @create="handleCreateClick"
-      >
-        <template #actions>
-          <button v-if="isWideScreen" class="header-action-btn" data-action="pin" @click.stop="$emit('pin')" :title="t('session.pinToSidebar')">
-            <PanelRight :size="16" />
-          </button>
-        </template>
-      </SessionListHeader>
-    </template>
+  <!-- Single root wrapper. Every child here is an overlay that Teleports to
+       <body> (BottomSheet, AgentSelectorDrawer, SharedSessionsDrawer), so this
+       wrapper is empty in the DOM and `display: contents` keeps it
+       layout-transparent. Without it the template is a FRAGMENT, and a fragment
+       root cannot receive fallthrough attributes: a host binding `v-show` (which
+       compiles to a `style` fallthrough) gets "Extraneous non-props attributes
+       (style)" and the attribute is silently dropped, so the drawer would never
+       hide. No host does that today (they all use the :open prop), but the trap
+       is one attribute away — SessionSidebar hit exactly this when a sibling
+       drawer was added beside its root div. -->
+  <div class="session-drawer-roots">
+    <BottomSheet ref="bottomSheetRef" :open="open" auto panel-class="session-drawer-sheet" :title="t('session.title')" @close="$emit('close')">
+      <template #header>
+        <SessionListHeader
+          :session-count="sessionCount"
+          :session-max-count="sessionMaxCount"
+          @open-search="$emit('open-session-search')"
+          @create="handleCreateClick"
+        >
+          <template #actions>
+            <!-- Only when this project actually has a shared conversation:
+                 with nothing to manage the button is pure header clutter.
+                 hasAnySharedSession stays false until the list loads, so it
+                 does not flash in for the common "nothing shared" case. -->
+            <button v-if="hasAnySharedSession" class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
+              <MessageSquareShare :size="16" />
+            </button>
+            <button v-if="isWideScreen" class="header-action-btn" data-action="pin" @click.stop="$emit('pin')" :title="t('session.pinToSidebar')">
+              <PanelRight :size="16" />
+            </button>
+          </template>
+        </SessionListHeader>
+      </template>
 
-    <SessionList
-      ref="listRef"
-      v-model:active-tab="activeTab"
-      :current-session-id="currentSessionId"
-      :running-session-ids="runningSessionIds"
-      :is-active="open"
-      @select="handleSelect"
-      @archive="handleArchive"
-      @destroy="$emit('destroy', $event)"
+      <SessionList
+        ref="listRef"
+        v-model:active-tab="activeTab"
+        :current-session-id="currentSessionId"
+        :running-session-ids="runningSessionIds"
+        :is-active="open"
+        @select="handleSelect"
+        @archive="handleArchive"
+        @destroy="$emit('destroy', $event)"
+      />
+
+      <!-- Tab bar lives in the footer slot, NOT inside SessionList: BottomSheet's
+           auto mode sizes the panel to its content, so an in-flow tab bar at the
+           bottom of the list would be pushed off-screen by the growing scroll
+           area. .bs-footer is flex-shrink:0, so it stays pinned. -->
+      <template #footer>
+        <SessionListTabs v-model:active-tab="activeTab" />
+      </template>
+    </BottomSheet>
+
+    <!-- Agent selector drawer -->
+    <AgentSelectorDrawer
+      ref="agentSelectorRef"
+      :open="agentSelectorDrawer.effectiveOpen.value"
+      :title="t('session.selectAgent')"
+      :default-badge="t('chat.sessionSetting.defaultBadge')"
+      :set-default-title="t('session.setAsDefaultAgent')"
+      :config-title="t('session.configAgent')"
+      @update:open="v => v ? agentSelectorDrawer.open() : agentSelectorDrawer.close()"
+      @select="createSession"
     />
-
-    <!-- Tab bar lives in the footer slot, NOT inside SessionList: BottomSheet's
-         auto mode sizes the panel to its content, so an in-flow tab bar at the
-         bottom of the list would be pushed off-screen by the growing scroll
-         area. .bs-footer is flex-shrink:0, so it stays pinned. -->
-    <template #footer>
-      <SessionListTabs v-model:active-tab="activeTab" />
-    </template>
-  </BottomSheet>
-
-  <!-- Agent selector drawer -->
-  <AgentSelectorDrawer
-    ref="agentSelectorRef"
-    :open="agentSelectorDrawer.effectiveOpen.value"
-    :title="t('session.selectAgent')"
-    :default-badge="t('chat.sessionSetting.defaultBadge')"
-    :set-default-title="t('session.setAsDefaultAgent')"
-    :config-title="t('session.configAgent')"
-    @update:open="v => v ? agentSelectorDrawer.open() : agentSelectorDrawer.close()"
-    @select="createSession"
-  />
+    <SharedSessionsDrawer ref="sharedSessionsRef" @select-session="$emit('select', $event)" />
+  </div>
 </template>
 
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PanelRight } from 'lucide-vue-next'
+import { PanelRight, MessageSquareShare } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
+import SharedSessionsDrawer from '@/components/session/SharedSessionsDrawer.vue'
 import SessionListTabs from '@/components/session/SessionListTabs.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
+import { useSessionShare } from '@/composables/useSessionShare'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { store } from '@/stores/app.ts'
@@ -76,7 +98,9 @@ const { isWideScreen } = useWideScreenLayout()
 
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
+const { hasAnySharedSession } = useSessionShare()
 const listRef = ref(null)
+const sharedSessionsRef = ref(null)
 // Which pane the list shows. Owned here (not in SessionList) because the tab bar
 // is rendered in the BottomSheet footer, outside the list's scroll area.
 const activeTab = ref('project')
@@ -138,6 +162,15 @@ watch(() => store.state.sessionCount, async () => {
    component's scope attribute never lands on .bs-footer's ancestors and the
    selector fails to match. panelClass is bound on .bs-panel itself, so the
    non-scoped selector can target it reliably. */
+
+/* The single-root wrapper exists only to keep this component out of FRAGMENT
+   territory (see the template comment). All of its children teleport to <body>,
+   so it holds nothing — `display: contents` removes it from the layout box tree
+   entirely, guaranteeing it cannot introduce a flex/grid item in either host
+   (.app-container and .chat-input-wrapper are both flex columns). */
+.session-drawer-roots {
+  display: contents;
+}
 </style>
 
 <style>

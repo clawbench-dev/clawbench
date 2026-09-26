@@ -1,5 +1,6 @@
 import { ref, reactive } from 'vue'
 import { appLog } from '@/utils/appLog'
+import { getShareThinking } from '@/share/shareMode'
 
 const TAG = 'ThinkingContent'
 
@@ -44,6 +45,14 @@ export function useThinkingContent() {
 }
 
 async function doFetch(thinkId: string, msgId: string | number, sessionId?: string): Promise<string> {
+  // Session-share mode inlines the thinking text into the snapshot, so the
+  // authenticated detail endpoint is never reachable (and never needed).
+  const shared = getShareThinking(msgId, thinkId)
+  if (shared !== undefined) {
+    thinkingTextCache.set(thinkId, shared)
+    return shared
+  }
+
   let url = `/api/ai/chat/thinking?think_id=${encodeURIComponent(thinkId)}&message_id=${encodeURIComponent(msgId)}`
   if (sessionId) url += `&session_id=${encodeURIComponent(sessionId)}`
   let resp: Response

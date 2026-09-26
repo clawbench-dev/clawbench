@@ -52,6 +52,7 @@ import { handleToolAction, handleToolContentHeaderClick, updateAskSubmitState } 
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { readLineTargetFromEl } from '@/composables/useFilePathAnnotation.ts'
+import { getShareToolCall } from '@/share/shareMode'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -163,6 +164,19 @@ async function fetchDiff(item) {
     return
   }
   try {
+    // Session-share mode inlines the tool payload; render the diff from the
+    // snapshot without touching the authenticated detail endpoint.
+    const shared = getShareToolCall(props.msgId, String(item.toolId))
+    if (shared) {
+      if (shared.input) {
+        item.inputHtml = renderDiff(shared.input, item.name || props.toolName, shared.done !== false, shared.status || '', shared.output || '')
+        item.error = false
+      } else {
+        item.error = true
+      }
+      return
+    }
+
     let url = `/api/ai/chat/tool-call?tool_id=${encodeURIComponent(item.toolId)}&message_id=${encodeURIComponent(props.msgId)}`
     if (props.sessionId) url += `&session_id=${encodeURIComponent(props.sessionId)}`
     const resp = await fetch(url)

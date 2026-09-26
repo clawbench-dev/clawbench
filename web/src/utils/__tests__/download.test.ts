@@ -21,28 +21,28 @@ afterEach(() => {
 describe('buildLocalFileUrl', () => {
   it('encodes path segments individually', () => {
     expect(buildLocalFileUrl('foo/bar baz/file.pdf')).toBe(
-      '/api/local-file/foo/bar%20baz/file.pdf'
+      '/api/fs/raw/foo/bar%20baz/file.pdf'
     )
   })
 
   it('adds download=1 query param', () => {
     expect(buildLocalFileUrl('doc.pdf', { download: true })).toBe(
-      '/api/local-file/doc.pdf?download=1'
+      '/api/fs/raw/doc.pdf?download=1'
     )
   })
 
   it('handles simple filename without slashes', () => {
-    expect(buildLocalFileUrl('readme.md')).toBe('/api/local-file/readme.md')
+    expect(buildLocalFileUrl('readme.md')).toBe('/api/fs/raw/readme.md')
   })
 
   it('uses ?path= query param for absolute paths', () => {
     const url = buildLocalFileUrl('/home/user/docs/report.pdf')
-    expect(url).toBe('/api/local-file/?path=%2Fhome%2Fuser%2Fdocs%2Freport.pdf')
+    expect(url).toBe('/api/fs/raw/?target=%2Fhome%2Fuser%2Fdocs%2Freport.pdf')
   })
 
   it('uses ?path= query param for absolute paths with download', () => {
     const url = buildLocalFileUrl('/tmp/data.csv', { download: true })
-    expect(url).toBe('/api/local-file/?download=1&path=%2Ftmp%2Fdata.csv')
+    expect(url).toBe('/api/fs/raw/?download=1&target=%2Ftmp%2Fdata.csv')
   })
 })
 
@@ -73,7 +73,7 @@ describe('buildLocalFileUrl in share mode', () => {
     setShareToken('tok123')
     expect(buildLocalFileUrl('readme.md')).toContain('/api/share/tok123/')
     setShareToken(null)
-    expect(buildLocalFileUrl('readme.md')).toBe('/api/local-file/readme.md')
+    expect(buildLocalFileUrl('readme.md')).toBe('/api/fs/raw/readme.md')
   })
 })
 
@@ -90,7 +90,7 @@ describe('downloadFileByPath', () => {
 
     expect(appendChildSpy).toHaveBeenCalled()
     const anchor = appendChildSpy.mock.calls[0][0] as HTMLAnchorElement
-    expect(anchor.href).toContain('/api/local-file/test.pdf')
+    expect(anchor.href).toContain('/api/fs/raw/test.pdf')
     expect(anchor.href).toContain('download=1')
     expect(anchor.download).toBe('test.pdf')
 
@@ -99,14 +99,14 @@ describe('downloadFileByPath', () => {
     anchor.remove()
   })
 
-  it('creates anchor element with ?path= for absolute paths', () => {
+  it('creates anchor element with ?target= for absolute paths', () => {
     const appendChildSpy = vi.spyOn(document.body, 'appendChild')
     downloadFileByPath('/home/user/docs/report.pdf')
 
     expect(appendChildSpy).toHaveBeenCalled()
     const anchor = appendChildSpy.mock.calls[0][0] as HTMLAnchorElement
-    expect(anchor.href).toContain('/api/local-file/')
-    expect(anchor.href).toContain('path=')
+    expect(anchor.href).toContain('/api/fs/raw/')
+    expect(anchor.href).toContain('target=')
     expect(anchor.download).toBe('report.pdf')
 
     appendChildSpy.mockRestore()

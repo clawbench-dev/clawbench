@@ -800,12 +800,70 @@ func TestAccumulateBlock_TwoSubAgentsStaySeparate(t *testing.T) {
 	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "A", ParentToolCallID: "call_a"})
 	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "B", ParentToolCallID: "call_b"})
 	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "A2", ParentToolCallID: "call_a"})
-	// call_a's second chunk must NOT merge back into its first block (blocked by
-	// the interleaved call_b block + parent boundary), so a third block is made.
-	require.Len(t, blocks, 3)
+	// call_a's second chunk merges back into ITS OWN block: the interleaved
+	// call_b block belongs to another parent, so it is stepped over rather than
+	// acting as a boundary. Only a same-parent tool_use separates.
+	require.Len(t, blocks, 2)
 	assert.Equal(t, "call_a", blocks[0].ParentToolCallID)
+	assert.Equal(t, "AA2", blocks[0].Text)
 	assert.Equal(t, "call_b", blocks[1].ParentToolCallID)
-	assert.Equal(t, "call_a", blocks[2].ParentToolCallID)
+	assert.Equal(t, "B", blocks[1].Text)
+}
+
+// TestAccumulateBlock_InterleavedSubAgentThinkingCoalesces reproduces the
+// reported symptom: one continuous thought (of a single sub-agent) appearing as
+// several fragments, each separated by another sub-agent's interleaved events.
+func TestAccumulateBlock_InterleavedSubAgentThinkingCoalesces(t *testing.T) {
+	var blocks []model.ContentBlock
+	think := func(parent, txt string) {
+		AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: txt, ParentToolCallID: parent})
+	}
+	// A and B stream concurrently; each one's reasoning is continuous.
+	think("A", "Let")
+	think("B", "I will inspect the handler first")
+	think("A", " me look at the key files: useChatSession")
+	think("B", " then check the reducer")
+	think("A", ".ts, chatBlocks.ts, ContentBlocks.vue.")
+
+	// Exactly one thinking block per agent, each holding its full text.
+	var aText, bText string
+	aCount, bCount := 0, 0
+	for _, b := range blocks {
+		if b.Type != "thinking" {
+			continue
+		}
+		switch b.ParentToolCallID {
+		case "A":
+			aCount++
+			aText += b.Text
+		case "B":
+			bCount++
+			bText += b.Text
+		}
+	}
+	assert.Equal(t, 1, aCount, "agent A's continuous thought must not be fragmented")
+	assert.Equal(t, 1, bCount, "agent B's continuous thought must not be fragmented")
+	assert.Equal(t, "Let me look at the key files: useChatSession.ts, chatBlocks.ts, ContentBlocks.vue.", aText)
+	assert.Equal(t, "I will inspect the handler first then check the reducer", bText)
+}
+
+// TestAccumulateBlock_OwnToolUseStillSeparatesThinking pins the boundary that
+// must survive: a tool_use of the SAME parent separates that parent's thinking.
+func TestAccumulateBlock_OwnToolUseStillSeparatesThinking(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "before", ParentToolCallID: "call_a"})
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{
+		Name: "Read", ID: "t1", Input: `{}`, Done: true, ParentToolCallID: "call_a",
+	}})
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "after", ParentToolCallID: "call_a"})
+	// A foreign agent's interleaved block must not resurrect the merge either.
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "other", ParentToolCallID: "call_b"})
+
+	require.Len(t, blocks, 4)
+	assert.Equal(t, "before", blocks[0].Text)
+	assert.Equal(t, "tool_use", blocks[1].Type)
+	assert.Equal(t, "after", blocks[2].Text)
+	assert.Equal(t, "other", blocks[3].Text)
 }
 
 func TestAccumulateBlock_ToolCallCarriesParent(t *testing.T) {

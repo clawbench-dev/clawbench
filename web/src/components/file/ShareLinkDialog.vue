@@ -106,6 +106,9 @@ import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
 import { useFileShare } from '@/composables/useFileShare.ts'
 import { copyText } from '@/utils/clipboard.ts'
+// Shared notice + link-bar chrome. Imported (not global) so only the two share
+// dialogs load it; see the file header for why it cannot be scoped.
+import '@/assets/share-dialog.css'
 
 const props = defineProps({
   open: Boolean,
@@ -209,22 +212,6 @@ async function revokeLink() {
 </script>
 
 <style scoped>
-.share-dialog-body {
-  padding: var(--space-6) var(--space-7) 14px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-.share-dialog-hint {
-  font-size: var(--font-size-md);
-  color: var(--text-secondary, #57606a);
-  line-height: var(--line-height-normal);
-}
-.share-dialog-error {
-  font-size: var(--font-size-md);
-  color: #cf222e;
-  word-break: break-word;
-}
 
 /* ── File identity: prominent name over a muted full path ── */
 .share-dialog-file-block {
@@ -253,108 +240,4 @@ async function revokeLink() {
   white-space: nowrap;
 }
 
-/* ── Combined notice: info box with an embedded, icon-less warning row ── */
-.share-notice {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-  padding: 9px 11px;
-  border-radius: var(--radius-sm);
-  font-size: 12.5px;
-  line-height: 1.55;
-}
-.share-notice-icon {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-.share-notice-info {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 9%, var(--bg-primary, #fff));
-}
-:root[data-theme-base='dark'] .share-notice-info {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, var(--bg-primary, #fff));
-}
-.share-notice-info > .share-notice-icon {
-  color: var(--accent-color, #0066cc);
-}
-.share-notice-content {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-.share-notice-text {
-  color: var(--text-secondary, #57606a);
-  word-break: break-word;
-}
-.share-notice-divider {
-  height: 1px;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
-}
-.share-notice-warning {
-  font-weight: var(--font-weight-medium);
-  color: #b45309;
-  word-break: break-word;
-}
-:root[data-theme-base='dark'] .share-notice-warning {
-  color: #fcd34d;
-}
-
-/* ── Link bar: full-width row whose input embeds two icon buttons ── */
-.share-dialog-link-bar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-.share-dialog-link-input-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.share-dialog-link-input {
-  flex: 1;
-  min-width: 0;
-  width: 100%;
-  padding:7px 84px 7px var(--space-5); /* right padding clears the two embedded buttons */
-  border: 1px solid var(--border-color, #dee2e6);
-  border-radius: var(--radius-sm, 6px);
-  font-size: var(--font-size-md);
-  font-family: var(--font-mono);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  outline: none;
-}
-.share-dialog-link-input:focus {
-  border-color: var(--accent-color, #0066cc);
-}
-.share-dialog-link-btn {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  right: 4px;
-  width: 34px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary, #666);
-  cursor: pointer;
-}
-.share-dialog-link-btn + .share-dialog-link-btn {
-  right: 38px;
-}
-.share-dialog-link-btn:disabled { opacity: var(--opacity-muted); cursor: default; }
-.share-dialog-spin {
-  animation: share-dialog-spin 0.8s linear infinite;
-}
-@keyframes share-dialog-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-@media (hover: hover) {
-  .share-dialog-link-btn:hover { background: var(--bg-tertiary, #f0f0f0); color: var(--accent-color, #0066cc); }
-}
 </style>

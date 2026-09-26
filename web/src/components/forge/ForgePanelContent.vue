@@ -198,6 +198,9 @@
               :key="run.id"
               class="forge-row forge-pipeline-row"
               :class="{ unread: run.unread }"
+              draggable="true"
+              @dragstart="onPipelineDragStart(run, $event)"
+              @dragend="cleanupDragGhost()"
               @click="openPipelineDetail(run)"
             >
               <span class="forge-state-dot" :class="`pipeline-${run.status}`"></span>
@@ -291,6 +294,9 @@
             :key="`${it.type}-${it.number}`"
             class="forge-row"
             :class="{ unread: it.unread }"
+            draggable="true"
+            @dragstart="onForgeItemDragStart(it, $event)"
+            @dragend="cleanupDragGhost()"
             @click="openDetail(it)"
           >
             <span class="forge-state-dot" :class="`state-${it.state}`"></span>
@@ -419,6 +425,8 @@ import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/uti
 import { useForgeUnread } from '@/composables/useForgeUnread'
 import { consumePendingForgeTarget, pendingForgeTarget } from '@/composables/useForgeNavigation'
 import { appLog } from '@/utils/appLog'
+import { startQuoteDrag, forgeItemDragPayload, pipelineDragPayload } from '@/utils/quoteDrag'
+import { cleanupDragGhost } from '@/utils/attachDrag'
 
 const TAG = 'ForgePanel'
 const props = defineProps<{
@@ -522,8 +530,17 @@ function setActiveTab(key: ForgeTabKey) {
     // DOM updates. Critically, it must NOT reach items.setType, which only
     // accepts an item type.
   } else {
-    // The issue/PR list shares one composable; changing the type reloads it.
+    // The issue/PR list shares one composable. setType() only reloads when the
+    // type actually changes, and the panel mounts on the Activity tab with the
+    // list already defaulting to 'issue' — so the first switch to Issues would
+    // change nothing and fetch nothing, leaving the list's untouched state on
+    // screen with no request at all. Every other tab refreshes on entry
+    // (Pipelines calls load() directly; Activity remounts and its own watcher
+    // fetches), so this tab must too: load explicitly when setType had nothing
+    // to change.
+    const typeChanged = items.type.value !== key
     items.setType(key)
+    if (!typeChanged) void items.load()
   }
 }
 
@@ -852,6 +869,24 @@ async function submitBinding(input: {
 
 function onQuote(payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string } }) {
   emit('quote', payload)
+}
+
+/**
+ * Start dragging an issue/PR row into the chat: dropping it stages a quote card
+ * for that object (no annotation). The URL is the locator and the jump target —
+ * the object lives outside the app, so the card opens it in the browser.
+ */
+function onForgeItemDragStart(it: ForgeItem, e: DragEvent) {
+  if (!startQuoteDrag(e, forgeItemDragPayload(it))) e.preventDefault()
+}
+
+/**
+ * Start dragging a CI run row into the chat. The payload carries both the run's
+ * address and the commit it built, which is what distinguishes it from a plain
+ * commit quote.
+ */
+function onPipelineDragStart(run: ForgePipelineRun, e: DragEvent) {
+  if (!startQuoteDrag(e, pipelineDragPayload(run))) e.preventDefault()
 }
 
 /**

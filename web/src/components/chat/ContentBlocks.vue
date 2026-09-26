@@ -370,12 +370,13 @@ import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
+import { getShareToolCall } from '@/share/shareMode'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
 import { isThinkingUserAwayFromBottom } from '@/utils/thinkingScroll'
-import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
+import { verifyFilePaths, invalidateNegativePathCache } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 // Footer pill buttons (.fbtn) — the PermissionApproval card buttons share this
 // language, so the styles must be present wherever the chat surfaces render.
@@ -451,6 +452,17 @@ onMounted(() => {
   }
 })
 async function fetchToolCallInputForAutoExpand(block: any, msgId: string | number) {
+  // Session-share mode inlines tool input/output into the snapshot, so consult
+  // the provider before reaching for the authenticated detail endpoint.
+  const shared = getShareToolCall(msgId, block.id)
+  if (shared) {
+    if (shared.input && (!block.input || Object.keys(block.input).length === 0)) block.input = shared.input
+    if (shared.output && !block.output) block.output = shared.output
+    if (shared.status) block.status = shared.status
+    if (shared.done !== undefined) block.done = shared.done
+    return
+  }
+
   try {
     let url = `/api/ai/chat/tool-call?tool_id=${encodeURIComponent(block.id)}&message_id=${encodeURIComponent(msgId)}`
     if (props.sessionId) url += `&session_id=${encodeURIComponent(props.sessionId)}`
@@ -579,6 +591,11 @@ const props = defineProps({
   // resolve correctly at any depth.
   nested: { type: Boolean, default: false },
   rootBlocks: { type: Array as () => any[], default: null },
+  // Read-only rendering (public share page): interactive tool actions that POST
+  // back to the server (permission approval, ask-question submit, session reset)
+  // are suppressed. Display-only affordances (expanding a tool, copying, opening
+  // the detail drawer) keep working.
+  readOnly: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session', 'reset-session'])
@@ -1256,6 +1273,11 @@ function followThinkingScrollToBottom() {
 
 /** Click inside expanded tool-detail: dispatch to tool action handlers first, then fall through to generic behavior. */
 function handleToolDetailClick(event: Event) {
+  // Read-only (share) mode: never dispatch a tool action. handleToolAction can
+  // POST to the server (permission respond, ask-question submit), which an
+  // anonymous viewer must not do and which would fail anyway.
+  if (props.readOnly) return
+
   // Try tool-specific action handler first (via data-tool-name on the .tool-detail container)
   const el = event.currentTarget as HTMLElement | null
   const toolName = el?.dataset?.toolName
@@ -1561,6 +1583,16 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
     _blockFlushScheduler.cancelAll()
+    // A turn that creates files usually names them BEFORE writing them. The
+    // thinking block rendered mid-stream verifies those paths while they do
+    // not exist yet, caching 'none' — and because a cached 'none' is never
+    // re-checked, the final text's annotation is stripped even though the
+    // file now exists (only a hard refresh recovered it).
+    //
+    // Drop the negative entries before the post-streaming re-render below
+    // re-verifies every span, so this turn's newly created files resolve.
+    // Verified 'file'/'dir' entries are kept — a turn cannot invalidate them.
+    invalidateNegativePathCache()
     // Collapse all completed thinking blocks when message ends
     for (const blockKey of _collapseElKeys) {
       delete thinkingExpanded.value[blockKey]

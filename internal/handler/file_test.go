@@ -126,7 +126,7 @@ func TestGetFile_OpenAPIYAML_ReturnsSubtype(t *testing.T) {
 	yamlContent := "openapi: '3.0.0'\ninfo:\n  title: Test API\n  version: '1.0'\npaths: {}"
 	createTestFile(t, env.ProjectDir, "openapi.yaml", yamlContent)
 
-	req := newRequest(t, http.MethodGet, "/api/file/openapi.yaml", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file/openapi.yaml", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -145,7 +145,7 @@ func TestGetFile_OpenAPIJSON_ReturnsSubtype(t *testing.T) {
 	jsonContent := `{"openapi":"3.0.0","info":{"title":"Test API","version":"1.0"},"paths":{}}`
 	createTestFile(t, env.ProjectDir, "openapi.json", jsonContent)
 
-	req := newRequest(t, http.MethodGet, "/api/file/openapi.json", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file/openapi.json", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -163,7 +163,7 @@ func TestGetFile_RegularYAML_ReturnsNoSubtype(t *testing.T) {
 
 	createTestFile(t, env.ProjectDir, "config.yaml", "foo: bar\nbaz: 123")
 
-	req := newRequest(t, http.MethodGet, "/api/file/config.yaml", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file/config.yaml", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -198,7 +198,7 @@ func TestServeLocalFile_ExternalPath_ServesFile(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(extFile, pngData, 0o644))
 
-	req := newRequest(t, http.MethodGet, "/api/local-file/?path="+url.QueryEscape(extFile), nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/?target="+url.QueryEscape(extFile), nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeLocalFile, req)
@@ -215,7 +215,7 @@ func TestServeLocalFile_ExternalPath_DownloadMode(t *testing.T) {
 	extFile := filepath.Join(extDir, "data.csv")
 	require.NoError(t, os.WriteFile(extFile, []byte("a,b,c\n1,2,3\n"), 0o644))
 
-	req := newRequest(t, http.MethodGet, "/api/local-file/?download=1&path="+url.QueryEscape(extFile), nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/?download=1&target="+url.QueryEscape(extFile), nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeLocalFile, req)
@@ -228,7 +228,7 @@ func TestServeLocalFile_ExternalPath_NotFound_Returns404(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodGet, "/api/local-file/?path="+url.QueryEscape(filepath.Join(env.WatchDir, "nonexistent.txt")), nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/?target="+url.QueryEscape(filepath.Join(env.WatchDir, "nonexistent.txt")), nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeLocalFile, req)
@@ -240,7 +240,7 @@ func TestServeLocalFile_ExternalPath_RelativePath_Returns400(t *testing.T) {
 	defer teardown()
 
 	// ?path= with a relative path should be rejected
-	req := newRequest(t, http.MethodGet, "/api/local-file/?path=relative/path.txt", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/?target=relative/path.txt", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeLocalFile, req)
@@ -255,7 +255,7 @@ func TestServeLocalFile_ExternalPath_OutsideRoot_Returns403(t *testing.T) {
 	// On most systems /etc/hostname exists, but it's outside env.WatchDir
 	// We construct a path that is definitely outside WatchDir
 	outsidePath := "/proc/version" // unlikely to be under WatchDir
-	req := newRequest(t, http.MethodGet, "/api/local-file/?path="+url.QueryEscape(outsidePath), nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/?target="+url.QueryEscape(outsidePath), nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeLocalFile, req)
@@ -271,7 +271,7 @@ func TestGetFile_ExternalPath_OutsideRoot_Returns403(t *testing.T) {
 
 	// Try to access a path outside the configured root paths
 	outsidePath := "/proc/version"
-	req := newRequest(t, http.MethodGet, "/api/file/?path="+url.QueryEscape(outsidePath), nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file/?target="+url.QueryEscape(outsidePath), nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -286,7 +286,7 @@ func TestGetFile_ExternalPath_UnderRoot_ServesFile(t *testing.T) {
 	extFile := filepath.Join(env.WatchDir, "external-readme.md")
 	require.NoError(t, os.WriteFile(extFile, []byte("# Hello"), 0o644))
 
-	req := newRequest(t, http.MethodGet, "/api/file/?path="+url.QueryEscape(extFile), nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file/?target="+url.QueryEscape(extFile), nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -302,14 +302,14 @@ func TestGetFile_DoubleSlashPath(t *testing.T) {
 	t.Run("DoubleSlashPath_ReturnsFileContent", func(t *testing.T) {
 		// Regression test: when encodeURIComponent("/path") produces %2Fpath,
 		// Go's ServeMux decodes it back to /, creating a double-slash URL like
-		// /api/file//docs/dev/file.md. This should NOT return InvalidFilePath.
+		// /api/fs/file//docs/dev/file.md. This should NOT return InvalidFilePath.
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
 		createTestFile(t, env.ProjectDir, "docs/dev/test.md", "# Hello")
 
 		// Simulate the double-slash URL that results from encodeURIComponent("/path")
-		req := newRequest(t, http.MethodGet, "/api/file//docs/dev/test.md", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file//docs/dev/test.md", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -328,7 +328,7 @@ func TestGetFile_DoubleSlashPath(t *testing.T) {
 
 		createTestFile(t, env.ProjectDir, "docs/dev/test.md", "# Hello")
 
-		req := newRequest(t, http.MethodGet, "/api/file/docs/dev/test.md", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/docs/dev/test.md", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -348,7 +348,7 @@ func TestGetFile(t *testing.T) {
 
 		createTestFile(t, env.ProjectDir, "test.txt", "hello world")
 
-		req := newRequest(t, http.MethodGet, "/api/file/test.txt", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/test.txt", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -368,7 +368,7 @@ func TestGetFile(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := newRequest(t, http.MethodGet, "/api/file/nonexistent.txt", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/nonexistent.txt", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -379,7 +379,7 @@ func TestGetFile(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := newRequest(t, http.MethodGet, "/api/file/test.txt", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/test.txt", nil)
 
 		w := callHandler(GetFile, req)
 		assertStatus(t, w, http.StatusForbidden)
@@ -389,7 +389,7 @@ func TestGetFile(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := newRequest(t, http.MethodGet, "/api/file/../../../etc/passwd", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/../../../etc/passwd", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -403,7 +403,7 @@ func TestGetFile(t *testing.T) {
 
 		_ = os.MkdirAll(filepath.Join(env.ProjectDir, "mydir"), 0o755)
 
-		req := newRequest(t, http.MethodGet, "/api/file/mydir", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/mydir", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -432,7 +432,7 @@ func TestServeLocalFile(t *testing.T) {
 		_ = os.MkdirAll(filepath.Dir(fullPath), 0o755)
 		_ = os.WriteFile(fullPath, pngData, 0o644)
 
-		req := newRequest(t, http.MethodGet, "/api/local-file/test.png", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/raw/test.png", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(ServeLocalFile, req)
@@ -444,7 +444,7 @@ func TestServeLocalFile(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := newRequest(t, http.MethodGet, "/api/local-file/missing.png", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/raw/missing.png", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(ServeLocalFile, req)
@@ -455,7 +455,7 @@ func TestServeLocalFile(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := newRequest(t, http.MethodGet, "/api/local-file/test.png", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/raw/test.png", nil)
 
 		w := callHandler(ServeLocalFile, req)
 		assertStatus(t, w, http.StatusForbidden)
@@ -481,7 +481,7 @@ func TestServeLocalFile(t *testing.T) {
 		_ = os.MkdirAll(filepath.Dir(fullPath), 0o755)
 		_ = os.WriteFile(fullPath, pngData, 0o644)
 
-		req := newRequest(t, http.MethodGet, "/api/local-file//assets/img/test.png", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/raw//assets/img/test.png", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(ServeLocalFile, req)
@@ -1168,7 +1168,7 @@ func TestGetFile_ExternalAbsolutePath(t *testing.T) {
 	externalFile := filepath.Join(env.WatchDir, "external.txt")
 	require.NoError(t, os.WriteFile(externalFile, []byte("external content"), 0o644))
 
-	req := newRequest(t, http.MethodGet, "/api/file?path="+externalFile, nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file?target="+externalFile, nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -1184,7 +1184,7 @@ func TestGetFile_ExternalRelativePath_Returns400(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodGet, "/api/file?path=relative/path.txt", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file?target=relative/path.txt", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -1197,7 +1197,7 @@ func TestGetFile_ExternalPathNotExisting_Returns404(t *testing.T) {
 
 	// Use a path under WatchDir (root path) that doesn't exist
 	missingPath := filepath.Join(env.WatchDir, "nonexistent", "file.txt")
-	req := newRequest(t, http.MethodGet, "/api/file?path="+url.QueryEscape(missingPath), nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file?target="+url.QueryEscape(missingPath), nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -1214,7 +1214,7 @@ func TestGetFile_BinaryFile_ReturnsIsBinary(t *testing.T) {
 	binFile := filepath.Join(env.ProjectDir, "test.exe")
 	require.NoError(t, os.WriteFile(binFile, []byte{0x4D, 0x5A, 0x90, 0x00}, 0o644))
 
-	req := newRequest(t, http.MethodGet, "/api/file/test.exe", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file/test.exe", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -1235,7 +1235,7 @@ func TestGetFile_BinaryFileWithForceText(t *testing.T) {
 	require.NoError(t, os.WriteFile(binFile, []byte{0x4D, 0x5A, 0x90, 0x00}, 0o644))
 
 	// forceText=1 overrides binary detection, returns sanitized content
-	req := newRequest(t, http.MethodGet, "/api/file/test.exe?forceText=1", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file/test.exe?forceText=1", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -1261,7 +1261,7 @@ func TestGetFile_LargeFile_Returns400(t *testing.T) {
 	require.NoError(t, f.Truncate(11*1024*1024))
 	require.NoError(t, f.Close())
 
-	req := newRequest(t, http.MethodGet, "/api/file/large.txt", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file/large.txt", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -1273,7 +1273,7 @@ func TestGetFile_PathTraversalViaURL_Returns400(t *testing.T) {
 	defer teardown()
 
 	// ".." as the file path should be rejected
-	req := newRequest(t, http.MethodGet, "/api/file/..", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file/..", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -1285,7 +1285,7 @@ func TestGetFile_AbsolutePathInURL_Returns400(t *testing.T) {
 	defer teardown()
 
 	// Absolute path in URL (after stripping prefix) should be rejected
-	req := newRequest(t, http.MethodGet, "/api/file//etc/passwd", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file//etc/passwd", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	// Double slash gets trimmed to "etc/passwd" which is a valid relative path
@@ -1303,7 +1303,7 @@ func TestServeLocalFile_DownloadMode(t *testing.T) {
 
 	createTestFile(t, env.ProjectDir, "test.txt", "download me")
 
-	req := newRequest(t, http.MethodGet, "/api/local-file/test.txt?download=1", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/test.txt?download=1", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeLocalFile, req)
@@ -1317,7 +1317,7 @@ func TestServeLocalFile_Directory_Returns400(t *testing.T) {
 
 	_ = os.MkdirAll(filepath.Join(env.ProjectDir, "mydir"), 0o755)
 
-	req := newRequest(t, http.MethodGet, "/api/local-file/mydir", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/mydir", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeLocalFile, req)
@@ -1328,7 +1328,7 @@ func TestServeLocalFile_PathTraversal_Returns400(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodGet, "/api/local-file/..", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/..", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeLocalFile, req)
@@ -1341,12 +1341,105 @@ func TestServeLocalFile_UnknownMime(t *testing.T) {
 
 	createTestFile(t, env.ProjectDir, "test.xyz", "unknown")
 
-	req := newRequest(t, http.MethodGet, "/api/local-file/test.xyz", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/test.xyz", nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeLocalFile, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
+}
+
+// The HTML file preview loads a document through /api/fs/raw/ and lets the
+// browser fetch its own subresources relative to it. Every asset type the
+// browser will accept must therefore be served with its real MIME type: the
+// octet-stream fallback silently drops stylesheets, refuses ES modules, and
+// makes the browser download the document instead of rendering it.
+func TestServeLocalFile_WebAssets_CorrectMime(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cases := []struct{ name, wantMime string }{
+		{"index.html", "text/html"},
+		{"page.htm", "text/html"},
+		{"style.css", "text/css"},
+		{"app.js", "text/javascript"},
+		{"mod.mjs", "text/javascript"},
+		{"data.json", "application/json"},
+		{"font.woff2", "font/woff2"},
+		{"font.woff", "font/woff"},
+		{"font.ttf", "font/ttf"},
+	}
+	for _, tc := range cases {
+		createTestFile(t, env.ProjectDir, tc.name, "x")
+
+		req := newRequest(t, http.MethodGet, "/api/fs/raw/"+tc.name, nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeLocalFile, req)
+		assert.Equal(t, http.StatusOK, w.Code, tc.name)
+		assert.Equal(t, tc.wantMime, w.Header().Get("Content-Type"), tc.name)
+	}
+}
+
+// http.ServeFile treats a file named "index.html" as a directory index and
+// answers 301 to "./". That breaks the HTML preview, whose iframe points
+// straight at .../index.html: the redirect rewrites the URL to the parent
+// directory and the preview renders a directory error instead of the document.
+// ServeContent has no such special case.
+func TestServeLocalFile_IndexHtml_NoRedirect(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "index.html", "<h1>hi</h1>")
+
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/index.html", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusOK, w.Code, "index.html must be served, not redirected")
+	assert.Empty(t, w.Header().Get("Location"), "must not redirect")
+	assert.Equal(t, "text/html", w.Header().Get("Content-Type"))
+	assert.Equal(t, "<h1>hi</h1>", w.Body.String())
+}
+
+// Same fix on the absolute ?target= form, which the preview also uses for files
+// outside the project directory.
+func TestServeLocalFile_IndexHtml_TargetForm_NoRedirect(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "index.html", "<h1>hi</h1>")
+	abs := filepath.Join(env.ProjectDir, "index.html")
+
+	req := newRequest(t, http.MethodGet, "/api/fs/raw/?target="+url.QueryEscape(abs), nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, w.Header().Get("Location"))
+	assert.Equal(t, "text/html", w.Header().Get("Content-Type"))
+}
+
+// The web-asset MIME additions must NOT leak into the base table, because that
+// table is shared with the PUBLIC token-scoped share endpoint. Serving text/html
+// from an unauthenticated endpoint turns any shared .html file into same-origin
+// script execution for a logged-in visitor (it would run with their session
+// cookie). Verified in a browser: with text/html the shared page reached
+// authenticated APIs; with the octet-stream fallback the browser downloads it.
+func TestWebAssetMimeTypes_NotSharedWithPublicShareEndpoint(t *testing.T) {
+	for _, ext := range []string{".html", ".htm", ".xhtml", ".js", ".mjs", ".css"} {
+		_, inBase := mimeTypes[ext]
+		assert.False(t, inBase,
+			"%s must not be in mimeTypes: that table is served by the unauthenticated share endpoint", ext)
+	}
+
+	// The authenticated resolver still yields them.
+	assert.Equal(t, "text/html", mimeForLocalFile(".html"))
+	assert.Equal(t, "text/css", mimeForLocalFile(".css"))
+	assert.Equal(t, "text/javascript", mimeForLocalFile(".js"))
+	// ...and the base table's own entries still win / fall through correctly.
+	assert.Equal(t, "image/png", mimeForLocalFile(".png"))
+	assert.Equal(t, "application/octet-stream", mimeForLocalFile(".xyz"))
 }
 
 // --- ServeProjects method handling ---
@@ -1471,7 +1564,7 @@ func TestGetFile_ExternalBinaryFile(t *testing.T) {
 	binFile := filepath.Join(env.WatchDir, "test.exe")
 	require.NoError(t, os.WriteFile(binFile, []byte{0x4D, 0x5A, 0x00}, 0o644))
 
-	req := newRequest(t, http.MethodGet, "/api/file?path="+binFile, nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/file?target="+binFile, nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)
@@ -1504,7 +1597,7 @@ func TestServeLocalFile_NoApiPrefix_Returns404or403(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// URL without /api/local-file/ prefix — handler sees no prefix match, returns 404
+	// URL without /api/fs/raw/ prefix — handler sees no prefix match, returns 404
 	req := newRequest(t, http.MethodGet, "/other-path/test.txt", nil)
 
 	w := callHandler(ServeLocalFile, req)
@@ -1759,7 +1852,7 @@ func TestGetFile_BrokenSymlink(t *testing.T) {
 			t.Fatalf("failed to create symlink: %v", err)
 		}
 
-		req := newRequest(t, http.MethodGet, "/api/file/broken_link", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/broken_link", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1789,7 +1882,7 @@ func TestGetFile_BrokenSymlink(t *testing.T) {
 			t.Fatalf("failed to create symlink: %v", err)
 		}
 
-		req := newRequest(t, http.MethodGet, "/api/file/good_link", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/good_link", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1807,7 +1900,7 @@ func TestGetFile_BrokenSymlink(t *testing.T) {
 		defer teardown()
 
 		createTestFile(t, env.ProjectDir, "plain.txt", "hello")
-		req := newRequest(t, http.MethodGet, "/api/file/plain.txt", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/plain.txt", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1833,7 +1926,7 @@ func TestGetFileLineWindow(t *testing.T) {
 		}
 		createTestFile(t, env.ProjectDir, "big.txt", strings.Join(lines, "\n"))
 
-		req := newRequest(t, http.MethodGet, "/api/file/big.txt?lineStart=101&lineEnd=105", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/big.txt?lineStart=101&lineEnd=105", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1854,7 +1947,7 @@ func TestGetFileLineWindow(t *testing.T) {
 
 		createTestFile(t, env.ProjectDir, "a.txt", "one\ntwo\nthree")
 
-		req := newRequest(t, http.MethodGet, "/api/file/a.txt?lineStart=2", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/a.txt?lineStart=2", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1874,7 +1967,7 @@ func TestGetFileLineWindow(t *testing.T) {
 
 		createTestFile(t, env.ProjectDir, "crlf.txt", "a\r\nb\r\nc")
 
-		req := newRequest(t, http.MethodGet, "/api/file/crlf.txt?lineStart=2&lineEnd=3", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/crlf.txt?lineStart=2&lineEnd=3", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1893,7 +1986,7 @@ func TestGetFileLineWindow(t *testing.T) {
 		// "a\n" splits to ["a", ""] in JS — 2 lines, matching the frontend.
 		createTestFile(t, env.ProjectDir, "trail.txt", "a\n")
 
-		req := newRequest(t, http.MethodGet, "/api/file/trail.txt?lineStart=2&lineEnd=2", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/trail.txt?lineStart=2&lineEnd=2", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1913,7 +2006,7 @@ func TestGetFileLineWindow(t *testing.T) {
 
 		createTestFile(t, env.ProjectDir, "short.txt", "a\nb\nc")
 
-		req := newRequest(t, http.MethodGet, "/api/file/short.txt?lineStart=500&lineEnd=510", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/short.txt?lineStart=500&lineEnd=510", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1933,7 +2026,7 @@ func TestGetFileLineWindow(t *testing.T) {
 
 		createTestFile(t, env.ProjectDir, "empty.txt", "")
 
-		req := newRequest(t, http.MethodGet, "/api/file/empty.txt?lineStart=1&lineEnd=10", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/empty.txt?lineStart=1&lineEnd=10", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1955,7 +2048,7 @@ func TestGetFileLineWindow(t *testing.T) {
 		}
 		createTestFile(t, env.ProjectDir, "huge.txt", strings.Join(lines, "\n"))
 
-		req := newRequest(t, http.MethodGet, "/api/file/huge.txt?lineStart=1&lineEnd=5000", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/huge.txt?lineStart=1&lineEnd=5000", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -1978,7 +2071,7 @@ func TestGetFileLineWindow(t *testing.T) {
 		giant := strings.Repeat("x", maxWindowBytes+1)
 		createTestFile(t, env.ProjectDir, "giant.txt", giant+"\nshort\nlines")
 
-		req := newRequest(t, http.MethodGet, "/api/file/giant.txt?lineStart=1&lineEnd=3", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/giant.txt?lineStart=1&lineEnd=3", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -2003,7 +2096,7 @@ func TestGetFileLineWindow(t *testing.T) {
 		// separator, and the Go reader must agree.
 		createTestFile(t, env.ProjectDir, "cr.txt", "a\rb\rc")
 
-		req := newRequest(t, http.MethodGet, "/api/file/cr.txt?lineStart=2&lineEnd=3", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/cr.txt?lineStart=2&lineEnd=3", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -2022,7 +2115,7 @@ func TestGetFileLineWindow(t *testing.T) {
 		// "\n".split(/\r\n|\r|\n/) === ["", ""] — two empty lines.
 		createTestFile(t, env.ProjectDir, "nl.txt", "\n")
 
-		req := newRequest(t, http.MethodGet, "/api/file/nl.txt?lineStart=1&lineEnd=2", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/nl.txt?lineStart=1&lineEnd=2", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -2050,7 +2143,7 @@ func TestGetFileLineWindow(t *testing.T) {
 
 				createTestFile(t, env.ProjectDir, "a.txt", "one\ntwo\nthree")
 
-				req := newRequest(t, http.MethodGet, "/api/file/a.txt?"+q, nil)
+				req := newRequest(t, http.MethodGet, "/api/fs/file/a.txt?"+q, nil)
 				withProjectCookie(req, env.ProjectDir)
 
 				w := callHandler(GetFile, req)
@@ -2071,7 +2164,7 @@ func TestGetFileLineWindow(t *testing.T) {
 
 		for _, q := range []string{"lineStart=0", "lineStart=10&lineEnd=5", "lineEnd=10"} {
 			t.Run(q, func(t *testing.T) {
-				req := newRequest(t, http.MethodGet, "/api/file/blob.bin?"+q, nil)
+				req := newRequest(t, http.MethodGet, "/api/fs/file/blob.bin?"+q, nil)
 				withProjectCookie(req, env.ProjectDir)
 
 				w := callHandler(GetFile, req)
@@ -2081,7 +2174,7 @@ func TestGetFileLineWindow(t *testing.T) {
 		}
 
 		// And a VALID range on the same binary file keeps its 200 isBinary body.
-		req := newRequest(t, http.MethodGet, "/api/file/blob.bin?lineStart=1&lineEnd=2", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/blob.bin?lineStart=1&lineEnd=2", nil)
 		withProjectCookie(req, env.ProjectDir)
 		w := callHandler(GetFile, req)
 		assertOK(t, w)
@@ -2097,7 +2190,7 @@ func TestGetFileLineWindow(t *testing.T) {
 
 		createTestFile(t, env.ProjectDir, "a.txt", "one\ntwo\nthree")
 
-		req := newRequest(t, http.MethodGet, "/api/file/a.txt", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/a.txt", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -2118,7 +2211,7 @@ func TestGetFileLineWindow(t *testing.T) {
 		// be line-windowed (sanitization rewrites bytes, not lines).
 		createTestFile(t, env.ProjectDir, "data.bin", "one\ntwo\nthree")
 
-		req := newRequest(t, http.MethodGet, "/api/file/data.bin?forceText=1&lineStart=2&lineEnd=2", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/file/data.bin?forceText=1&lineStart=2&lineEnd=2", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(GetFile, req)
@@ -2134,14 +2227,14 @@ func TestGetFileLineWindow(t *testing.T) {
 func TestHandleStatError(t *testing.T) {
 	t.Run("permission_error_returns_500", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/file/test", http.NoBody)
+		req := httptest.NewRequest(http.MethodGet, "/api/fs/file/test", http.NoBody)
 		handleStatError(w, req, "/some/path", fmt.Errorf("permission denied"))
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 
 	t.Run("not_found_error_returns_404", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/file/test", http.NoBody)
+		req := httptest.NewRequest(http.MethodGet, "/api/fs/file/test", http.NoBody)
 		handleStatError(w, req, "/some/nonexistent", os.ErrNotExist)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
@@ -2156,7 +2249,7 @@ func TestHandleStatError(t *testing.T) {
 		require.NoError(t, err)
 
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/file/test", http.NoBody)
+		req := httptest.NewRequest(http.MethodGet, "/api/fs/file/test", http.NoBody)
 		handleStatError(w, req, brokenLink, os.ErrNotExist)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 		// Response should mention the broken symlink target (cross-platform: may use \ or /)

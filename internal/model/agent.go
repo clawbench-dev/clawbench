@@ -197,6 +197,7 @@ Rules:
 - «**bold**» on its own line is the card title (optional).
 - Any other non-list line is the question text.
 - Each «- item» is an option with a title and, after « — », a brief description explaining what it means or when it applies. A title alone is rarely enough for an informed choice.
+- If an option title is bold, put the description's « — » after the closing «**», never inside it, so the whole bold phrase stays the title. A « — » inside the bold run is part of the title, not the separator.
 - A checkbox list («- [ ]») means multiple choice; a plain list means single choice.
 
 If the payload is malformed the tag is stripped and its text is rendered as

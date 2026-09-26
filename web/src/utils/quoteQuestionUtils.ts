@@ -108,64 +108,25 @@ export function relativizeProjectPath(filePath: string, projectRoot: string): st
 }
 
 /**
- * Build a message that embeds quoted code as a fenced code block.
- * The code block includes language prefix, file path, and optional line range
- * so the AI can identify the source context precisely.
- */
-export function buildQuoteMessage(
-  userMessage: string,
-  text: string,
-  filePath: string,
-  language: string,
-  startLine: number,
-  endLine: number,
-): string {
-  const langPrefix = language ? `${language}:` : ':'
-  let lineSuffix = ''
-  if (startLine && endLine && startLine !== endLine) {
-    lineSuffix = `:${startLine}-${endLine}`
-  } else if (startLine) {
-    lineSuffix = `:${startLine}`
-  }
-  return `${userMessage.trim()}\n\n\`\`\`${langPrefix}${filePath}${lineSuffix}\n${text}\n\`\`\``
-}
-
-export interface QuoteMessageItem {
-  text: string
-  filePath: string
+ * A labelled quote source region, as read from `data-quote-*` attributes. */
+export interface QuoteSource {
+  label: string
   language: string
-  startLine: number
-  endLine: number
-  note?: string
-}
-
-export function buildQuoteBlock(quote: QuoteMessageItem): string {
-  const langPrefix = quote.language ? `${quote.language}:` : ':'
-  let lineSuffix = ''
-  if (quote.startLine && quote.endLine && quote.startLine !== quote.endLine) {
-    lineSuffix = `:${quote.startLine}-${quote.endLine}`
-  } else if (quote.startLine) {
-    lineSuffix = `:${quote.startLine}`
-  }
-  return `\`\`\`${langPrefix}${quote.filePath}${lineSuffix}\n${quote.text}\n\`\`\``
-}
-
-/**
- * Build a message whose quoted block comes FIRST, then a single newline, then
- * the user's own input.
- *
- * This is deliberately NOT `buildMultiQuoteMessage`: that one puts the prompt
- * first and joins with a blank line, which is right for the file-preview quote
- * flow. Here the quote is the subject of the message and the input is the
- * instruction about it, so the block leads.
- *
- * An empty input still emits the trailing newline, so the caret lands on the
- * line after the block and the user can start typing straight away.
- */
-export function buildQuoteFirstMessage(quoteBlock: string, userMessage: string): string {
-  const input = userMessage.trim()
-  if (!quoteBlock) return input
-  return input ? `${quoteBlock}\n${input}` : `${quoteBlock}\n`
+  url: string
+  /**
+   * Machine-readable locators for the origin. Each is optional and read from
+   * the SAME element as the label, so a region either carries a whole identity
+   * or none of it.
+   *
+   * They exist so the quote can jump back to its source and so the AI can
+   * address it: the label is a human-readable name ("每日构建"), which is not
+   * enough to find anything.
+   */
+  commitSha?: string
+  taskId?: number
+  sessionId?: string
+  messageId?: number
+  executionId?: string
 }
 
 /**
@@ -180,18 +141,42 @@ export function buildQuoteFirstMessage(quoteBlock: string, userMessage: string):
  * `data-quote-url` carries the object's address so a forge quote can offer a
  * real jump-to-source action. Without it the label alone is not openable.
  *
+ * The locator attributes (`data-quote-commit`, `-task-id`, `-session-id`,
+ * `-message-id`, `-execution-id`) are read from the same element: they are the
+ * machine keys behind the human-readable label.
+ *
  * Returns null when the container is not inside a labelled region, so callers
  * can fall back to the normal file-path handling.
  */
-export function getQuoteSource(container: HTMLElement): { label: string; language: string; url: string } | null {
+export function getQuoteSource(container: HTMLElement): QuoteSource | null {
   const el = container.closest<HTMLElement>('[data-quote-source]')
   const label = el?.getAttribute('data-quote-source') || ''
   if (!label) return null
+  const taskId = intAttr(el, 'data-quote-task-id')
+  const messageId = intAttr(el, 'data-quote-message-id')
+  const commitSha = el?.getAttribute('data-quote-commit') || ''
+  const sessionId = el?.getAttribute('data-quote-session-id') || ''
+  const executionId = el?.getAttribute('data-quote-execution-id') || ''
   return {
     label,
     language: el?.getAttribute('data-quote-language') || '',
     url: el?.getAttribute('data-quote-url') || '',
+    // Omitted (not undefined-valued) when absent, so a caller spreading this
+    // into a quote does not write empty keys that then round-trip as set.
+    ...(commitSha ? { commitSha } : {}),
+    ...(taskId !== undefined ? { taskId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(messageId !== undefined ? { messageId } : {}),
+    ...(executionId ? { executionId } : {}),
   }
+}
+
+/** Parse a positive-integer attribute; undefined when absent or not a number. */
+function intAttr(el: HTMLElement | null, name: string): number | undefined {
+  const raw = el?.getAttribute(name)
+  if (!raw) return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
 /**
@@ -205,19 +190,4 @@ export function messageIdFromKey(key: string | null | undefined): number | undef
   if (!key || !key.startsWith('db-')) return undefined
   const id = Number(key.slice(3))
   return Number.isFinite(id) && id > 0 ? id : undefined
-}
-
-/** Build one prompt from an optional overall question and ordered quoted selections. */
-export function buildMultiQuoteMessage(userMessage: string, quotes: QuoteMessageItem[]): string {
-  const parts: string[] = []
-  const prompt = userMessage.trim()
-  if (prompt) parts.push(prompt)
-
-  for (const quote of quotes) {
-    const note = quote.note?.trim()
-    if (note) parts.push(note)
-    parts.push(buildQuoteBlock(quote))
-  }
-
-  return parts.join('\n\n')
 }

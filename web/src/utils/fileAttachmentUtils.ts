@@ -26,6 +26,32 @@ export interface FileEntry {
   note?: string
   /** Quote-only: fence language (e.g. "go", "issue"). */
   language?: string
+  /**
+   * Quote-only: where the quote came from ('file' | 'url' | 'message' |
+   * 'selection' | 'terminal'). Persisted so the detail drawer can label a sent
+   * quote correctly after a reload — inference alone cannot distinguish a
+   * terminal quote from a chat quote (both carry no url and no path).
+   */
+  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal'
+  /**
+   * Quote-only source locators. Each is a MACHINE-readable key that both the
+   * jump handler and the AI prompt use to find the origin; the human-readable
+   * name goes in `path` (which is already documented as a label, not a path).
+   *
+   * They are persisted rather than re-derived because the quoted text carries
+   * no trace of them: after a reload nothing else identifies which commit,
+   * task or message a sent quote came from.
+   */
+  /** Commit SHA a git-history or CI-pipeline quote came from. */
+  commitSha?: string
+  /** Scheduled task id a task quote came from. */
+  taskId?: number
+  /** Chat session id a message/session quote came from. */
+  sessionId?: string
+  /** DB chat-message id the quote was taken from (for scroll-to-message). */
+  messageId?: number
+  /** Task execution id, when the quote came from one run's detail view. */
+  executionId?: string
 }
 
 /** Whether an entry is a quoted snippet rather than a file or URL. */
@@ -76,6 +102,18 @@ export function normalizeFileEntry(f: string | FileEntry): FileEntry {
     ...(f.text !== undefined ? { text: f.text } : {}),
     ...(f.note !== undefined ? { note: f.note } : {}),
     ...(f.language ? { language: f.language } : {}),
+    // The source kind decides how the drawer labels the quote. Dropping it here
+    // (this runs on every render and dedupe pass) silently degrades a terminal
+    // quote to a "chat message" label after a reload.
+    ...(f.sourceKind ? { sourceKind: f.sourceKind } : {}),
+    // Source locators. Same hazard as above, one step worse: these are the ONLY
+    // way back to the commit/task/message, so dropping one here silently makes
+    // the quote unjumpable with no visible symptom until the user clicks.
+    ...(f.commitSha ? { commitSha: f.commitSha } : {}),
+    ...(f.taskId ? { taskId: f.taskId } : {}),
+    ...(f.sessionId ? { sessionId: f.sessionId } : {}),
+    ...(f.messageId ? { messageId: f.messageId } : {}),
+    ...(f.executionId ? { executionId: f.executionId } : {}),
   }
 }
 

@@ -1019,6 +1019,464 @@ func TestStoreNotifiableEventStoreError(t *testing.T) {
 	StoreNotifiableEvent(msg)
 }
 
+// setupReadGateDB builds an in-memory DB with the three tables the read gate
+// touches: pending_events, chat_sessions and chat_history. The read-state
+// helpers query chat_sessions/chat_history by session id, so those must exist
+// even though only pending_events is directly under test.
+func setupReadGateDB(t *testing.T) (*sql.DB, func()) {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS pending_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_id TEXT NOT NULL UNIQUE,
+			event_type TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS chat_sessions (
+			id TEXT PRIMARY KEY,
+			project_path TEXT NOT NULL,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			title TEXT NOT NULL DEFAULT '',
+			archived INTEGER NOT NULL DEFAULT 0,
+			last_read_at DATETIME
+		);
+		CREATE TABLE IF NOT EXISTS chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_path TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			session_id TEXT,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			streaming INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
+		);
+		CREATE TABLE IF NOT EXISTS task_executions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id INTEGER NOT NULL,
+			session_id TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'running',
+			read_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	require.NoError(t, err)
+	return db, func() { db.Close() }
+}
+
+// sessionEventPayload builds a stored session_update payload for a session.
+func sessionEventPayload(t *testing.T, sessionID, status string) string {
+	t.Helper()
+	msg := ws.ServerMessage{
+		Type:  "event",
+		ID:    "evt_payload",
+		Event: "session_update",
+		Data:  &ws.SessionUpdateData{SessionID: sessionID, Status: status},
+	}
+	raw, err := json.Marshal(msg)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+// taskEventPayload builds a stored task_update payload.
+//
+// It mirrors emitTaskEvent (scheduler.go) exactly: SessionID is set alongside
+// ExecutionID. An earlier version omitted SessionID, which hid a real bug — the
+// gate checked the session first, so a read session suppressed an UNREAD task
+// result. Fixtures must carry both ids or the task read state is never the one
+// being exercised.
+func taskEventPayload(t *testing.T, executionID, status string) string {
+	t.Helper()
+	return taskEventPayloadWithSession(t, executionID, "s_task_session", status)
+}
+
+// taskEventPayloadWithSession is taskEventPayload with an explicit session id,
+// for cases where the session's own read state is the variable under test.
+func taskEventPayloadWithSession(t *testing.T, executionID, sessionID, status string) string {
+	t.Helper()
+	msg := ws.ServerMessage{
+		Type:  "event",
+		ID:    "evt_payload",
+		Event: "task_update",
+		Data:  &ws.TaskUpdateData{TaskID: "1", ExecutionID: executionID, SessionID: sessionID, Status: status},
+	}
+	raw, err := json.Marshal(msg)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+// TestGetPendingEvents_ReadSessionSuppressed is the regression guard for the
+// reported bug: a reply the user already read must not re-notify on recovery.
+func TestGetPendingEvents_ReadSessionSuppressed(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	// Session read at "now"; the reply landed before that, so it is read.
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_read', '/p', datetime('now'))`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
+		VALUES ('/p', 'assistant', 'reply', 's_read', 0, datetime('now','-1 hour'))`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_read", "session_update", sessionEventPayload(t, "s_read", "completed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1, "a read event must still be returned so the cursor can advance past it")
+	assert.True(t, events[0].SuppressNotification, "an already-read completion must suppress its notification")
+}
+
+// TestGetPendingEvents_ProjectPathCorrelation pins the h.project_path =
+// s.project_path clause in the read predicate.
+//
+// It is redundant for rows written by current code but NOT for historic ones:
+// ISS-420 persisted some messages under the cookie's project instead of the
+// session's. Without the correlation those rows would be counted as "newer than
+// last_read_at" here, so the gate would conclude the session is unread and keep
+// notifying — while the unread badge (which does carry the same clause) shows it
+// as read. The two sides must agree or the user sees a notification for a
+// session the list says is read.
+//
+// The fixture puts the reply under a DIFFERENT project than the session, so
+// removing the clause flips this test.
+func TestGetPendingEvents_ProjectPathCorrelation(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	// Session lives in /p and was read one hour ago. The timestamps must be
+	// distinct: the comparison is `>`, so equal (same-second) values would make
+	// this test pass with or without the correlation and prove nothing.
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_mismatch', '/p', datetime('now','-1 hour'))`)
+	require.NoError(t, err)
+	// The reply row carries the OTHER project (the ISS-420 shape) and is NEWER
+	// than last_read_at, so only the project_path correlation excludes it.
+	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
+		VALUES ('/other', 'assistant', 'reply', 's_mismatch', 0, datetime('now'))`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_mismatch", "session_update", sessionEventPayload(t, "s_mismatch", "completed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.True(t, events[0].SuppressNotification,
+		"a reply under a different project must not count as unread for this session")
+}
+
+// TestGetPendingEvents_UnreadSessionNotifies is the converse: an unread reply
+// must still notify, or the fix would silence real completions.
+func TestGetPendingEvents_UnreadSessionNotifies(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	// last_read_at is before the reply, so the reply is unread.
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_unread', '/p', datetime('now','-2 hours'))`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
+		VALUES ('/p', 'assistant', 'reply', 's_unread', 0, datetime('now','-1 hour'))`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_unread", "session_update", sessionEventPayload(t, "s_unread", "completed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.False(t, events[0].SuppressNotification, "an unread completion must keep notifying")
+}
+
+// TestGetPendingEvents_NeverReadSessionNotifies: last_read_at IS NULL means the
+// user never opened the session, so its completion must notify.
+func TestGetPendingEvents_NeverReadSessionNotifies(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path) VALUES ('s_new', '/p')`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_new", "session_update", sessionEventPayload(t, "s_new", "completed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.False(t, events[0].SuppressNotification, "a never-read session must notify")
+}
+
+// TestGetPendingEvents_PermissionPendingNeverSuppressed: an approval request is
+// not a reply to read; it must keep notifying until answered.
+func TestGetPendingEvents_PermissionPendingNeverSuppressed(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	// Fully read session — but permission_pending is exempt from the gate.
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_perm', '/p', datetime('now'))`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_perm", "session_update", sessionEventPayload(t, "s_perm", "permission_pending"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.False(t, events[0].SuppressNotification,
+		"permission_pending is an approval request, not a read reply — it must keep notifying")
+}
+
+// TestGetPendingEvents_ReadExecutionSuppressed covers the task family, whose
+// read state lives in task_executions.read_at rather than the session.
+func TestGetPendingEvents_ReadExecutionSuppressed(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	_, err := db.Exec(`INSERT INTO task_executions (id, task_id, session_id, status, read_at)
+		VALUES (7, 1, 's_task', 'completed', datetime('now'))`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_task", "task_update", taskEventPayload(t, "7", "completed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.True(t, events[0].SuppressNotification, "a read task execution must suppress its notification")
+}
+
+// TestGetPendingEvents_UnreadExecutionNotifies is the task-side converse.
+func TestGetPendingEvents_UnreadExecutionNotifies(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	_, err := db.Exec(`INSERT INTO task_executions (id, task_id, session_id, status) VALUES (8, 1, 's_task', 'completed')`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_task_unread", "task_update", taskEventPayload(t, "8", "completed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.False(t, events[0].SuppressNotification, "an unread task execution must notify")
+}
+
+// TestGetPendingEvents_TaskExecutionIsAuthorityOverSession is the regression
+// guard for a real bug found in review.
+//
+// A task_update carries BOTH a session_id and an execution_id (emitTaskEvent
+// sets SessionID alongside ExecutionID). Task unread is tracked PER EXECUTION
+// (task_executions.read_at) and is independent of the session's read state —
+// the task badge stays lit until that specific run is opened. An earlier
+// version of the gate checked the session first and short-circuited, so a read
+// session silently suppressed an unread task result: the badge said unread
+// while the notification never arrived.
+//
+// The fixture deliberately makes the two states disagree: session READ,
+// execution UNREAD. The notification must survive.
+func TestGetPendingEvents_TaskExecutionIsAuthorityOverSession(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	// Session fully read, with no newer reply after the read.
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_both', '/p', datetime('now'))`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
+		VALUES ('/p', 'assistant', 'reply', 's_both', 0, datetime('now','-1 hour'))`)
+	require.NoError(t, err)
+
+	// The run itself is UNREAD (no read_at) — the task badge is lit.
+	_, err = db.Exec(`INSERT INTO task_executions (id, task_id, session_id, status) VALUES (99, 1, 's_both', 'completed')`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_both", "task_update",
+		taskEventPayloadWithSession(t, "99", "s_both", "completed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.False(t, events[0].SuppressNotification,
+		"the task run is unread, so its session being read must NOT suppress the notification")
+}
+
+// TestGetPendingEvents_ReadTaskExecutionWithReadSessionSuppressed is the other
+// half of the pairing above: when the run IS read, its session's state is
+// irrelevant and the notification is suppressed.
+func TestGetPendingEvents_ReadTaskExecutionWithReadSessionSuppressed(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_both2', '/p', datetime('now'))`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO task_executions (id, task_id, session_id, status, read_at)
+		VALUES (100, 1, 's_both2', 'completed', datetime('now'))`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_both2", "task_update",
+		taskEventPayloadWithSession(t, "100", "s_both2", "completed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.True(t, events[0].SuppressNotification,
+		"a read task run must suppress its notification")
+}
+
+// TestGetPendingEvents_TaskEventWithoutExecutionIdNotifies pins the early-failure
+// shape: emitTaskEvent is called with an empty executionID when the task fails
+// before an execution row exists (scheduler.go). With no execution there is no
+// read state to consult, so it must keep notifying rather than being suppressed
+// by its session.
+func TestGetPendingEvents_TaskEventWithoutExecutionIdNotifies(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_noexec', '/p', datetime('now'))`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_noexec", "task_update",
+		taskEventPayloadWithSession(t, "", "s_noexec", "failed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.False(t, events[0].SuppressNotification,
+		"a task event with no execution row has no read state — it must notify")
+}
+
+// TestGetPendingEvents_CursorAdvancesPastSuppressedEvent proves the suppressed
+// event still participates in cursor paging: fetching "after" a suppressed event
+// must move past it rather than returning it forever.
+func TestGetPendingEvents_CursorAdvancesPastSuppressedEvent(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_read2', '/p', datetime('now'))`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
+		VALUES ('/p', 'assistant', 'reply', 's_read2', 0, datetime('now','-1 hour'))`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_a", "session_update", sessionEventPayload(t, "s_read2", "completed"), expiresAt))
+	require.NoError(t, StorePendingEvent("evt_b", "session_update", sessionEventPayload(t, "s_read2", "completed"), expiresAt))
+
+	// Both suppressed...
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	assert.True(t, events[0].SuppressNotification)
+	assert.True(t, events[1].SuppressNotification)
+
+	// ...and the cursor can advance past the first, leaving only the second.
+	events, err = GetPendingEvents("evt_a")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "evt_b", events[0].EventID)
+}
+
+// TestGetPendingEvents_UserMessageNotReadGated: chat_stream user_message has no
+// read model, so it must never be suppressed by this gate.
+func TestGetPendingEvents_UserMessageNotReadGated(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_um', '/p', datetime('now'))`)
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_um_gate", "chat_stream",
+		`{"event":"chat_stream","data":{"session_id":"s_um","event_type":"user_message"}}`, expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.False(t, events[0].SuppressNotification, "user_message has no read state and must not be gated")
+}
+
+// TestGetPendingEvents_MalformedPayloadNotSuppressed: a payload that cannot be
+// parsed must fall back to notifying (pre-existing behavior) rather than being
+// silently dropped.
+func TestGetPendingEvents_MalformedPayloadNotSuppressed(t *testing.T) {
+	db, teardown := setupReadGateDB(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_bad", "session_update", `{not json`, expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.False(t, events[0].SuppressNotification, "unparseable payload must default to notifying")
+}
+
+// TestGetPendingEvents_ReadGateMissingTablesIsNonFatal: the gate queries
+// chat_sessions/chat_history. If those are unavailable the event must still be
+// returned (notifying) rather than the whole fetch failing.
+func TestGetPendingEvents_ReadGateMissingTablesIsNonFatal(t *testing.T) {
+	db, teardown := setupTestDBForPendingEvents(t) // only pending_events exists
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_no_tables", "session_update", sessionEventPayload(t, "s_x", "completed"), expiresAt))
+
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.False(t, events[0].SuppressNotification, "a failed read-state lookup must not suppress the notification")
+}
+
+// TestAnyToString covers the execution_id renderings the lookup must match.
+func TestAnyToString(t *testing.T) {
+	assert.Equal(t, "7", anyToString("7"))
+	assert.Equal(t, "7", anyToString(float64(7)))
+	assert.Equal(t, "7.5", anyToString(float64(7.5)))
+	assert.Equal(t, "", anyToString(nil))
+	assert.Equal(t, "", anyToString(map[string]any{}))
+}
+
+// TestSQLPlaceholders pins the IN-clause builder used by both lookups.
+func TestSQLPlaceholders(t *testing.T) {
+	assert.Equal(t, "", sqlPlaceholders(0))
+	assert.Equal(t, "?", sqlPlaceholders(1))
+	assert.Equal(t, "?,?,?", sqlPlaceholders(3))
+}
+
 // TestStoreNotifiableEvent_ConnectedButNotSubscribed is the regression guard
 // for a permanently lost cross-device message.
 //

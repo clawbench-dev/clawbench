@@ -208,4 +208,31 @@ describe('TaskChatCard', () => {
       expect(wrapper.text()).not.toContain('View detail')
     })
   })
+
+  describe('quote source identity', () => {
+    // Selecting the card's title is how a task gets quoted, so the card must
+    // expose the task id as a machine key: a name is not addressable, and both
+    // the jump handler and the AI prompt need the id.
+    it('exposes the task id and a labelled source', () => {
+      const wrapper = mountCard({ task: cronTask })
+
+      expect(wrapper.attributes('data-quote-task-id')).toBe('7')
+      expect(wrapper.attributes('data-quote-source')).toBe('Nightly build (#7)')
+    })
+
+    // A card that has not resolved its task has no id to offer. Claiming one
+    // would make a quote jump to a task that does not exist.
+    it('exposes no task id while loading', () => {
+      const wrapper = mountCard({ task: null, loading: true })
+
+      expect(wrapper.attributes('data-quote-task-id')).toBe('')
+      expect(wrapper.attributes('data-quote-source')).toBe('')
+    })
+
+    it('exposes no task id for a deleted task', () => {
+      const wrapper = mountCard({ task: cronTask, deleted: true })
+
+      expect(wrapper.attributes('data-quote-task-id')).toBe('')
+    })
+  })
 })

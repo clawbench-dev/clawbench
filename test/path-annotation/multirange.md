@@ -102,7 +102,7 @@ Windows 盘符（盘符不应被当成行号后缀）：
 点击后应打开文件管理器列出该目录（走 `/api/projects`），而不是弹
 「仅支持项目内的路径跳转」。项目外目录的标注**不再**被校验撤销。
 
-## 8. 项目外媒体渲染（改写为 `/api/local-file/?path=<绝对路径>`）
+## 8. 项目外媒体渲染（改写为 `/api/fs/raw/?target=<绝对路径>`）
 
 - `/usr/share/pixmaps/debian-logo.png` — 项目外图片，应正常显示（历史缺陷：404 不显示）
 - `/tmp/diagram.svg` — 项目外 SVG（存在时）
