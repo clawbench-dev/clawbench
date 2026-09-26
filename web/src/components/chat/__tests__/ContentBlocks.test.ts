@@ -2780,3 +2780,53 @@ describe('path verification after a cache hit', () => {
     expect(wrapper.html()).toContain('reasoning about src/real.go')
   })
 })
+
+describe('provisional thinking text is replaced on finish', () => {
+  it('refetches the full reasoning when a block that was fetched mid-stream finishes', async () => {
+    // The auto-prefix-load runs while the block streams, so its result is
+    // whatever chat_thinking had been flushed at that instant — a PREFIX of the
+    // reasoning. Once the block is done that snapshot is stale, and the render
+    // path serves the cache whenever an entry exists, so without a refetch the
+    // block stayed frozen mid-sentence forever. Reported case: a 25131-char
+    // reasoning frozen at its first 10175 chars.
+    let call = 0
+    const fetchMock = vi.fn().mockImplementation(() => {
+      call++
+      const text = call === 1 ? 'PARTIAL-PREFIX-ONLY' : 'PARTIAL-PREFIX-ONLY-AND-THE-REST-OF-THE-THOUGHT'
+      return Promise.resolve({ ok: true, json: async () => ({ think_id: 'th_x', text }) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const w = mountBlocks({
+      msgId: 'm1', sessionId: 's1', streaming: true, active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_x', in_progress: true }],
+    })
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+
+    // The block finishes: content carries only the slim {done:true} marker.
+    await w.setProps({ streaming: false, blocks: [{ type: 'thinking', think_id: 'th_x', done: true }] })
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+
+    const html = w.find('.thinking-inline-content').html()
+    expect(fetchMock.mock.calls.length, 'must refetch the final text').toBe(2)
+    expect(html).toContain('AND-THE-REST')
+  })
+
+  it('does not refetch a done block whose text was never fetched mid-stream', async () => {
+    // Gating matters: a long conversation must not fire one request per
+    // completed thinking block on every render.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ think_id: 'th_done', text: 'reasoning' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const w = mountBlocks({
+      msgId: 'm1', sessionId: 's1', streaming: false, active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_done', done: true }],
+    })
+    await flushPromises(); await nextTick()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})

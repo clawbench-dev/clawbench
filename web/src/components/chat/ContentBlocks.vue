@@ -1746,9 +1746,44 @@ watch(
   (joined: string) => {
     if (!joined) return
     for (const thinkId of joined.split('|')) {
-      if (thinkingContent.cachedText(thinkId) !== undefined) continue
       if (thinkingContent.errors.value[thinkId]) continue
-      thinkingContent.loadThinking(thinkId, props.msgId, props.sessionId)
+      // Skip only a FINAL cached value. A provisional snapshot must be
+      // refetched: it holds whatever chat_thinking had at that instant, which
+      // is a prefix of the reasoning, and the block may have grown since.
+      const cached = thinkingContent.cachedText(thinkId)
+      if (cached !== undefined && !thinkingContent.isProvisional(thinkId)) continue
+      // `provisional: true` — the block is still streaming, so this snapshot may
+      // be incomplete. It is cached for immediate rendering but flagged, so the
+      // final fetch below replaces it once the block finishes.
+      thinkingContent.loadThinking(thinkId, props.msgId, props.sessionId, true)
+        .catch(() => { /* error surfaced via errors ref */ })
+    }
+  },
+  { immediate: true },
+)
+
+// A thinking block that FINISHED while its cached text was a provisional
+// mid-stream snapshot must refetch the final reasoning.
+//
+// The auto-load above runs while the block streams, so its result is whatever
+// had been flushed to chat_thinking at that moment. Once the block is done that
+// snapshot is stale — and nothing else would ever replace it, because the render
+// path serves the cached value whenever one exists. The user saw the block stop
+// mid-sentence and never continue (a 25131-char reasoning frozen at its first
+// 10175 chars, in the reported case).
+//
+// Gated on isProvisional so a DONE block whose text was never fetched mid-stream
+// keeps its lazy-load-on-expand behavior — no request storm on a long history.
+watch(
+  () => props.blocks
+    .filter((b: any) => b?.type === 'thinking' && b.think_id && b.done && thinkingContent.isProvisional(b.think_id))
+    .map((b: any) => b.think_id as string)
+    .join('|'),
+  (joined: string) => {
+    if (!joined) return
+    for (const thinkId of joined.split('|')) {
+      thinkingContent.loadThinking(thinkId, props.msgId, props.sessionId, false)
+        .then(() => { invalidateBlockHtml() })
         .catch(() => { /* error surfaced via errors ref */ })
     }
   },
