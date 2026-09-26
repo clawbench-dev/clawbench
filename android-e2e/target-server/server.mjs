@@ -47,9 +47,6 @@ const CONTROL_HOST = process.env.CONTROL_HOST || '0.0.0.0';
 /** Every request body the target has received, newest last. */
 const received = [];
 
-/** The last raw `Cookie` header the APP sent (see /__cookie/record). */
-let lastCookie = '';
-
 /**
  * The target protocol: behave like a real HTTP/1.1 server — reply as soon as the
  * request headers are complete — with a deterministic body that ECHOES what it
@@ -183,28 +180,6 @@ const control = http.createServer((req, res) => {
       json(res, 200, { ok: false, error: 'timeout' });
     });
     return;
-  }
-  if (path === '/__cookie/record') {
-    // The app's `downloadUrl` bridge builds `Cookie: <getCookie(url)>` and
-    // requests this path. Record what it sent so the runner can read it back
-    // via GET /__cookie (the runner's own request carries no app cookie).
-    const raw = req.headers.cookie || '';
-    lastCookie = raw;
-    console.log(`[target] /__cookie/record saw: ${JSON.stringify(raw)}`);
-    return json(res, 200, { ok: true });
-  }
-  if (path === '/__cookie') {
-    return json(res, 200, {
-      cookie: lastCookie,
-      names: lastCookie
-        .split(';')
-        .map((c) => c.trim().split('=')[0])
-        .filter(Boolean),
-    });
-  }
-  if (path === '/__cookie/reset' && req.method === 'POST') {
-    lastCookie = '';
-    return json(res, 200, { ok: true });
   }
   if (path === '/__reverse/probe') {
     // The server-side client for `-R`. The reverse listener is bound on the

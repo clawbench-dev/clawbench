@@ -210,13 +210,13 @@ describe('Tier 2 — h2 tunnel -L', () => {
         `the classification did not carry the server's 502 status: ${JSON.stringify(failureLine)}`,
       );
 
-      // The SESSION-level error surface must stay empty. A per-connection dial
-      // failure is deliberately NOT written to BackgroundService.lastError: the
-      // session is healthy, and overwriting the session error with a transient
-      // target failure would misreport tunnel health (and would trip the live-
-      // session assertion in the first `-L` test). Asserting emptiness here is
-      // the meaningful check — asserting a non-empty type would be asserting a
-      // bug.
+      // The SESSION-level error surface must stay empty. The per-connection
+      // dial failure path never writes BackgroundService.lastError: `serve()`
+      // logs the classified kind and closes the relay, and returns. So the
+      // session error is only ever set by session-level failures (auth,
+      // connect, stream teardown), not by one dead target. Asserting emptiness
+      // here is the meaningful check — asserting a non-empty type would be
+      // asserting a bug.
       const errorType = await getTunnelErrorType();
       const error = await getTunnelError();
       console.log(

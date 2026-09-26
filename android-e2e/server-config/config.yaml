@@ -8,7 +8,7 @@
 #
 # If this combination regressed, /api/tunnel/stream would answer 503
 # ("PortForwardUnavailable") instead of 401 (unauthenticated), which is the
-# first assertion in tests/tunnel.probe.mjs.
+# first assertion in tests/tunnel.server.mjs.
 port: 20000
 
 # A known password. Without one the server generates a random value into
