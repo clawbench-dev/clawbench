@@ -66,6 +66,17 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 		}
 	case "thinking":
 		parent := event.ParentToolCallID
+		// Empty deltas carry no content and must not open a block. The WS
+		// coalescer filters them, but it only gates the outbound frame — the
+		// accumulator is fed the RAW event (session_executor.handleNonTerminalEvent),
+		// so without this guard a stray empty delta appended
+		// `{type:"thinking", text:""}` with no think_id and no done, which
+		// rendered as an empty spinner and got a think_id + a text-less marker
+		// at Finalize (a lazy-load that 404s). Merging into an existing block is
+		// also a no-op for an empty delta, so skipping is strictly better.
+		if event.Content == "" {
+			return
+		}
 		// Coalesce incremental thinking deltas into the most recent thinking block.
 		if idx, found := findLastBlockOfType("thinking", parent); found {
 			(*blocks)[idx].Text += event.Content
@@ -73,9 +84,21 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 			*blocks = append(*blocks, model.ContentBlock{Type: "thinking", Text: event.Content, ParentToolCallID: parent})
 		}
 	case "thinking_done":
-		// Mark the last thinking block as done — the thinking content is complete.
-		// Without this, the frontend spinner stays until the entire response finishes.
+		// Mark the most recent thinking block OF THIS PARENT as done — the
+		// thinking content is complete. Without this, the frontend spinner stays
+		// until the entire response finishes.
+		//
+		// The parent filter is required, not cosmetic: with concurrent
+		// sub-agents interleaving on the wire, an unfiltered "mark the last
+		// thinking block" let agent B's completion mark agent A's block, while
+		// B's own block stayed done=false — which the frontend renders as a
+		// perpetual spinner with no content once the DB marker is adopted.
+		// Other parents' blocks are stepped over (interleaving noise).
+		parent := event.ParentToolCallID
 		for i := len(*blocks) - 1; i >= 0; i-- {
+			if (*blocks)[i].ParentToolCallID != parent {
+				continue
+			}
 			if (*blocks)[i].Type == "thinking" {
 				(*blocks)[i].Done = true
 				break
@@ -201,6 +224,26 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 			ErrorDetail: event.ErrorDetail,
 		})
 	}
+}
+
+// MarkAllThinkingDone flags every thinking block as complete. Call it on a
+// terminal path (turn end / finalize): once the turn is over no thinking block
+// can still be running, so a lingering done=false is stale by definition.
+//
+// This exists because thinking_done is not guaranteed per block. It is emitted
+// on the transitions the ACP layer observes (a following content chunk, a tool
+// call, a completed think-tool), so a turn that ENDS on reasoning — or a
+// sub-agent whose completion signal was never routed — leaves its last block
+// done=false. The frontend renders such a block as a spinner forever, and
+// Finalize persists the same flag, so a session switch surfaced a headless
+// "输出中" block with no content.
+func MarkAllThinkingDone(blocks []model.ContentBlock) []model.ContentBlock {
+	for i := range blocks {
+		if blocks[i].Type == "thinking" {
+			blocks[i].Done = true
+		}
+	}
+	return blocks
 }
 
 // MergeConsecutiveThinkingBlocks merges adjacent thinking blocks, including

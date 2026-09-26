@@ -713,10 +713,17 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 }
 
 // postProcessBlocks applies finalize post-processing on blocks:
-// clawbench-ask-question conversion, rejected-tool removal, thinking-block merging.
+// clawbench-ask-question conversion, rejected-tool removal, thinking-block merging,
+// and terminal thinking completion.
 // Shared by buildResult and Finalize to prevent divergence.
 // NOTE: persistAskToolCalls must be called separately after Finalize
 // uses postProcessBlocks, to avoid double-persisting from buildResult.
+//
+// Every caller is a TERMINAL path (buildResult on done/error/ctx.Done, Finalize,
+// and the steer split's "before" half), which is what makes MarkAllThinkingDone
+// correct here: no thinking block can still be running once the turn is over.
+// It is deliberately not applied on the streaming flush path, where done=false
+// is a real, current fact.
 func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Ask-question detection (interactive mode only)
 	if e.cfg.Mode == ModeInteractive {
@@ -728,6 +735,10 @@ func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model
 	// Common block post-processing (idempotent, cheap)
 	blocks = ai.RemoveRejectedToolBlocks(blocks)
 	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
+	// Merge first (it drops empty-text blocks), then close everything that
+	// survives: a turn ending on reasoning never receives thinking_done, so its
+	// last block would otherwise persist as done=false and render as a spinner.
+	blocks = ai.MarkAllThinkingDone(blocks)
 
 	return blocks
 }

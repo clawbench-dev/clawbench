@@ -590,7 +590,7 @@ export type ChatMessageAction =
   // ── WS block-level (in-place blocks mutation, same array reference) ──
   | { type: 'ws_content'; text: string; parentToolCallId?: string }
   | { type: 'ws_thinking'; text: string; key?: string; parentToolCallId?: string }
-  | { type: 'ws_thinking_done' }
+  | { type: 'ws_thinking_done'; parentToolCallId?: string }
   | { type: 'ws_content_reset' }
   | { type: 'ws_tool_use'; data: ToolUseEventData }
   | { type: 'ws_tool_result'; data: ToolUseEventData }
@@ -1393,6 +1393,11 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       if (!sm) return state
       const blocks = sm.blocks!
       const parent = action.parentToolCallId
+      // An empty delta must not open a block: it would render as an empty
+      // spinner, and appending it to an existing block is a no-op anyway.
+      // Mirrors AccumulateBlock's guard — the backend coalescer filters the WS
+      // frame but the accumulator sees raw events, so both layers guard.
+      if (!action.text) return state
       const existing = findBlockByTypeBackward(blocks, 'thinking', parent)
       if (existing) existing.text += action.text
       else blocks.push({ type: 'thinking', text: action.text, ...(action.key ? { _key: action.key } : {}), ...(parent ? { parent_tool_call_id: parent } : {}) })
@@ -1436,14 +1441,16 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
     case 'ws_thinking_done': {
       const sm = state.find((m) => m.role === 'assistant' && m.streaming)
       if (!sm || !sm.blocks) return state
-      // thinking_done has no parent in the payload; it marks the most recently
-      // emitted thinking block (which may belong to a sub-agent). Scan backward
-      // with the tool_use boundary (original semantics) but WITHOUT the parent
-      // boundary — a parent-aware lookup returns undefined for the whole
-      // duration of a sub-agent run, leaving child thinking marked done in the
-      // DB but not live.
+      // Marks the most recently emitted thinking block OF THIS PARENT as done.
+      // The parent filter matters with concurrent sub-agents: an unfiltered
+      // "last thinking block" let agent B's completion mark agent A's block,
+      // leaving B's own block done=false — rendered as a perpetual spinner once
+      // the DB marker is adopted. Other parents' blocks are stepped over
+      // (interleaving noise); a same-parent tool_use still ends the search.
+      const parent = action.parentToolCallId || ''
       for (let i = sm.blocks.length - 1; i >= 0; i--) {
         const b = sm.blocks[i]
+        if ((b.parent_tool_call_id || '') !== parent) continue
         if (b.type === 'thinking') {
           b.done = true
           break

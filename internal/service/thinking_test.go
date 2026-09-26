@@ -302,6 +302,61 @@ func TestSlimThinkingInContent(t *testing.T) {
 	})
 }
 
+// TestSlimThinkingInContent_ForcesDoneOnSlimMarker pins the invariant that a
+// text-less slim marker must never claim to be in-progress. Such a marker is
+// rendered by the frontend as a perpetual "输出中" spinner with no content (the
+// text was just moved to chat_thinking, so nothing will ever arrive to finish
+// it). Production accumulated ~181k of these because Finalize slimmed
+// unconditionally while the live flush path gated on done.
+func TestSlimThinkingInContent_ForcesDoneOnSlimMarker(t *testing.T) {
+	in := `{"blocks":[
+		{"type":"thinking","text":"still open reasoning","done":false},
+		{"type":"text","text":"reply"}
+	]}`
+	slim, records, err := slimThinkingInContent(in)
+	if err != nil {
+		t.Fatalf("slimThinkingInContent: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	var parsed struct {
+		Blocks []map[string]any `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(slim), &parsed); err != nil {
+		t.Fatalf("unmarshal slim: %v", err)
+	}
+	if parsed.Blocks[0]["done"] != true {
+		t.Errorf("slim marker must be done=true, got %v (a done=false marker renders as a permanent spinner)",
+			parsed.Blocks[0]["done"])
+	}
+	if _, hasText := parsed.Blocks[0]["text"]; hasText {
+		t.Error("slim marker must not carry text")
+	}
+}
+
+// TestSlimThinkingInContent_DoneAbsentBecomesTrue covers rows written before the
+// done field existed: an absent flag must also become true on the terminal path.
+func TestSlimThinkingInContent_DoneAbsentBecomesTrue(t *testing.T) {
+	in := `{"blocks":[{"type":"thinking","text":"legacy reasoning"}]}`
+	slim, records, err := slimThinkingInContent(in)
+	if err != nil {
+		t.Fatalf("slimThinkingInContent: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	var parsed struct {
+		Blocks []map[string]any `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(slim), &parsed); err != nil {
+		t.Fatalf("unmarshal slim: %v", err)
+	}
+	if parsed.Blocks[0]["done"] != true {
+		t.Errorf("absent done must become true on slim, got %v", parsed.Blocks[0]["done"])
+	}
+}
+
 func TestPersistThinkingToDB_ParseErrorFallback(t *testing.T) {
 	dbDir := t.TempDir()
 	if err := initTestDB(dbDir); err != nil {

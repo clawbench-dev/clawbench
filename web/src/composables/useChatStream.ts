@@ -609,7 +609,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'thinking_done': {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'thinking_done', payload); noteDroppedEvent('thinking_done', 'buffered until placeholder'); return }
-        dispatch({ type: 'ws_thinking_done' })
+        // Carry the parent so a sub-agent's completion closes ITS OWN thinking
+        // block (concurrent sub-agents interleave on the wire).
+        const doneData = payload as unknown as ThinkingEventData
+        dispatch({ type: 'ws_thinking_done', parentToolCallId: doneData.parent_tool_call_id })
         onRenderNeeded()
         break
       }

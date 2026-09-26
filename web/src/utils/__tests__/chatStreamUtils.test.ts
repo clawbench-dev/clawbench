@@ -2847,23 +2847,47 @@ describe('sub-agent thinking_done', () => {
     id: 1, role: 'assistant', content: '', blocks: [], streaming: true, createdAt: '2026-01-01T00:00:00Z',
   })
 
-  it('marks a sub-agent thinking block done (parent boundary must not block it)', () => {
+  it('marks a sub-agent thinking block done when done carries its parent', () => {
     let s = [streamingMsg()]
     s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child thought', parentToolCallId: 'call_p' })
-    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done', parentToolCallId: 'call_p' })
     const think = s[0].blocks!.find((b: any) => b.type === 'thinking')!
     expect(think.done).toBe(true)
     expect(think.parent_tool_call_id).toBe('call_p')
   })
 
-  it('marks the last thinking block done when child follows parent', () => {
+  it('thinking_done is parent-scoped (closes its own agent, not the last block)', () => {
     let s = [streamingMsg()]
-    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'parent thought' })
-    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child thought', parentToolCallId: 'call_p' })
-    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    // A starts, B interleaves, A emits one more delta, then A finishes. The
+    // LAST block belongs to B, so an unfiltered done would wrongly close B.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'A reasoning', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'B reasoning', parentToolCallId: 'call_b' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' more A', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done', parentToolCallId: 'call_a' })
     const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
-    expect(thinks[1].done).toBe(true)
-    expect(thinks[0].done).toBeUndefined()
+    expect(thinks.length).toBe(2)
+    expect(thinks[0]).toMatchObject({ parent_tool_call_id: 'call_a', done: true })
+    expect(thinks[1]).toMatchObject({ parent_tool_call_id: 'call_b' })
+    expect(thinks[1].done).toBeFalsy()
+  })
+
+  it('top-level thinking_done does not close a sub-agent block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child', parentToolCallId: 'call_p' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    const think = s[0].blocks!.find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBeFalsy()
+  })
+
+  it('empty ws_thinking does not open a block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: '', parentToolCallId: 'call_a' })
+    expect(s[0].blocks!.filter((b: any) => b.type === 'thinking').length).toBe(0)
+    // A real delta afterwards still creates the block normally.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'real', parentToolCallId: 'call_a' })
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(1)
+    expect(thinks[0].text).toBe('real')
   })
 })
 

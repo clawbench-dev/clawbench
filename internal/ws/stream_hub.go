@@ -263,7 +263,16 @@ func EmitToSession(sessionID string, event ai.StreamEvent) {
 func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one branch per stream-event type; splitting would not simplify it
 	// Simple empty-payload signal events
 	switch event.Type {
-	case "thinking_done", "done", "replay_done":
+	case "thinking_done":
+		// thinking_done carries the parent so the frontend closes the thinking
+		// block of the sub-agent that finished, not whichever block happens to
+		// be last (concurrent sub-agents interleave on the wire).
+		payload := map[string]any{}
+		if event.ParentToolCallID != "" {
+			payload["parent_tool_call_id"] = event.ParentToolCallID
+		}
+		return payload
+	case "done", "replay_done":
 		return map[string]any{}
 	}
 

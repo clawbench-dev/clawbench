@@ -345,6 +345,85 @@ func TestAccumulateBlock_ThinkingDoneNoThinkingBlock(t *testing.T) {
 	assert.Len(t, blocks, 0)
 }
 
+// TestAccumulateBlock_ThinkingDoneIsParentScoped pins the fix for the reported
+// "headless thinking block stuck on 输出中": an unfiltered thinking_done marked
+// whichever thinking block happened to be last, so with concurrent sub-agents
+// agent A's completion closed agent B's block (B interleaved a delta after A's
+// last one) while A's own stayed done=false.
+func TestAccumulateBlock_ThinkingDoneIsParentScoped(t *testing.T) {
+	var blocks []model.ContentBlock
+	think := func(parent, txt string) {
+		AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: txt, ParentToolCallID: parent})
+	}
+	// A starts, B interleaves, A emits one more delta, then A finishes. The
+	// LAST thinking block belongs to B, so an unfiltered done would close B.
+	think("A", "A reasoning")
+	think("B", "B reasoning")
+	think("A", " more A reasoning")
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking_done", ParentToolCallID: "A"})
+
+	require.Len(t, blocks, 2)
+	assert.Equal(t, "A", blocks[0].ParentToolCallID)
+	assert.True(t, blocks[0].Done, "A emitted thinking_done — its own block must close")
+	assert.Equal(t, "B", blocks[1].ParentToolCallID)
+	assert.False(t, blocks[1].Done, "B never finished — its block must stay open")
+}
+
+// TestAccumulateBlock_ThinkingDoneMarksOwnMostRecent pins the two behaviors that
+// together fix the reported "headless thinking block stuck on 输出中": a parent's
+// deltas coalesce into ONE block, and thinking_done closes THAT block rather than
+// whichever block happens to be last (a foreign agent's interleaved one).
+func TestAccumulateBlock_ThinkingDoneMarksOwnMostRecent(t *testing.T) {
+	var blocks []model.ContentBlock
+	think := func(parent, txt string) {
+		AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: txt, ParentToolCallID: parent})
+	}
+	think("A", "A first")
+	think("B", "B interleaved")
+	think("A", "A second")
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking_done", ParentToolCallID: "A"})
+
+	require.Len(t, blocks, 2, "each agent's deltas coalesce into one block")
+	assert.Equal(t, "A firstA second", blocks[0].Text, "A's deltas must coalesce into one block")
+	assert.True(t, blocks[0].Done, "A emitted thinking_done — its block must close")
+	assert.Equal(t, "B interleaved", blocks[1].Text)
+	assert.False(t, blocks[1].Done, "B never finished — the unfiltered scan would have closed this one")
+}
+
+// TestAccumulateBlock_EmptyThinkingDeltaIgnored covers the other empty-spinner
+// source: an empty thinking delta must not create a text-less block.
+func TestAccumulateBlock_EmptyThinkingDeltaIgnored(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "", ParentToolCallID: "A"})
+	assert.Empty(t, blocks, "an empty thinking delta must not open a block")
+
+	// A real delta afterwards still creates the block normally.
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "real", ParentToolCallID: "A"})
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "real", blocks[0].Text)
+}
+
+// TestMarkAllThinkingDone covers the terminal-path sweep: a turn ending on
+// reasoning never receives thinking_done, so its last block would persist as
+// done=false and render as a spinner.
+func TestMarkAllThinkingDone(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "thinking", Text: "open", Done: false},
+		{Type: "tool_use", ID: "t1", Done: true},
+		{Type: "thinking", Text: "also open", Done: false},
+		{Type: "text", Text: "reply"},
+	}
+	got := MarkAllThinkingDone(blocks)
+	for _, b := range got {
+		if b.Type == "thinking" {
+			assert.True(t, b.Done, "every thinking block must be closed on a terminal path")
+		}
+	}
+	// Non-thinking blocks are untouched.
+	assert.Equal(t, "tool_use", got[1].Type)
+	assert.Equal(t, "reply", got[3].Text)
+}
+
 func TestAccumulateBlock_ToolCallUpdateMergeInput(t *testing.T) {
 	// When tool_call_update carries partial input, existing fields are preserved
 	// and new fields are added/overwritten
